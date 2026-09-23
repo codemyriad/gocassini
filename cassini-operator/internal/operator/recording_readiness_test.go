@@ -178,7 +178,7 @@ func TestReadinessAdmissionAndPublicResponse(t *testing.T) {
 		t.Fatal("no public guidance")
 	}
 	rt.recordingSetup.checkedAt = time.Now().Add(-2 * readinessTTL)
-	if got, want := rt.publicRecordingState(context.Background()), rt.readiness(context.Background()).State; got != want || got == "passed" {
+	if got, want := rt.publicRecordingState(context.Background()), rt.readiness(context.Background()).RecordingState; got != want || got == "passed" {
 		t.Fatalf("public status=%s admin=%s; expired results must not pass", got, want)
 	}
 }
@@ -247,6 +247,251 @@ func TestReadinessUnreadableSetupDoesNotClaimMissingSecret(t *testing.T) {
 		if c.Code == "internal_secret_missing" {
 			t.Fatal("unreadable credential reported as absent")
 		}
+	}
+}
+
+func TestReadinessSearchCoverageKeepsArchiveScopeUnknownAndRemediesSpecific(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	searchCheck := func() readinessCheck {
+		t.Helper()
+		for _, check := range rt.readiness(ctx).Checks {
+			if check.ID == "archive.search" {
+				return check
+			}
+		}
+		t.Fatal("archive.search check missing")
+		return readinessCheck{}
+	}
+	hasBackfillCommand := func(check readinessCheck) bool {
+		return strings.Contains(check.Message, "cassini-operator backfill-search")
+	}
+
+	if check := searchCheck(); check.Code != "search_coverage_empty" || check.State != "not_verified" {
+		t.Fatalf("empty index check = %+v", check)
+	}
+	seedSearchable(t, rt.searchStore, "INDEXED.opus", seg("s1", "S1", 0, 1000, "words"))
+	if check := searchCheck(); check.Code != "search_coverage_scope_unknown" || check.State != "not_verified" || !strings.Contains(check.Message, "archive has not been listed") {
+		t.Fatalf("index alone claimed archive completeness: %+v", check)
+	}
+	if err := rt.searchStore.MarkUnavailable(ctx, "MISSING.opus", searchIngestReasonNoTranscript); err != nil {
+		t.Fatal(err)
+	}
+	if check := searchCheck(); check.Code != "search_coverage_partial" || !strings.Contains(check.Message, "1 with missing transcripts") || hasBackfillCommand(check) {
+		t.Fatalf("missing transcript got wrong reason or backfill remedy: %+v", check)
+	}
+	for name, reason := range map[string]string{
+		"SILENT.opus":   searchIngestReasonCompletedEmpty,
+		"DISABLED.opus": searchIngestReasonDisabled,
+		"NO-MODEL.opus": searchIngestReasonModelUnavailable,
+		"FAILED.opus":   searchIngestReasonTranscriptionFail,
+	} {
+		if err := rt.searchStore.MarkUnavailable(ctx, name, reason); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := searchCheck()
+	for _, fragment := range []string{"1 silent after completed transcription", "1 intentionally without transcription", "1 without transcription because a model was unavailable", "1 with failed transcription"} {
+		if !strings.Contains(check.Message, fragment) {
+			t.Errorf("check message %q missing %q", check.Message, fragment)
+		}
+	}
+	if hasBackfillCommand(check) {
+		t.Errorf("untranscribed recordings were prescribed index backfill: %+v", check)
+	}
+	if err := rt.searchStore.MarkUnavailable(ctx, "NO-BUNDLE.opus", searchBackfillReasonNoBundle); err != nil {
+		t.Fatal(err)
+	}
+	if check := searchCheck(); !hasBackfillCommand(check) || !strings.Contains(check.Message, "1 awaiting archive or bundle verification") {
+		t.Fatalf("real backfill candidate lacks its remedy: %+v", check)
+	}
+}
+
+func TestReadinessSearchCoverageCanPassAgainstLocalCatalogAndDetectLegacyGaps(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	if err := os.MkdirAll(rt.cfg.SiteRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeCatalog := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(rt.cfg.SiteRoot, "catalog.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func() readinessCheck {
+		t.Helper()
+		for _, row := range rt.readiness(context.Background()).Checks {
+			if row.ID == "archive.search" {
+				return row
+			}
+		}
+		t.Fatal("archive.search missing")
+		return readinessCheck{}
+	}
+	seedSearchable(t, rt.searchStore, "LIVE.opus", seg("s1", "S1", 0, 1000, "words"))
+	seedSearchable(t, rt.searchStore, "STALE.opus", seg("s1", "S1", 0, 1000, "old words"))
+	writeCatalog(`{"meetings":[{"id":"LIVE","audioPath":"./meetings/LIVE.opus"}]}`)
+	if row := check(); row.State != "passed" || row.Code != "search_archive_files_accounted_for" || row.CheckedAt == "" || strings.Contains(row.Message, "2 indexed") {
+		t.Fatalf("catalog-matched coverage = %+v; stale index rows must not offset archive names", row)
+	}
+	writeCatalog(`{"meetings":[{"id":"LIVE","audioPath":"./meetings/LIVE.opus"},{"id":"OLD","audioPath":"./meetings/OLD.opus"}]}`)
+	if row := check(); row.State != "warn" || !strings.Contains(row.Message, "1 archive Opus recordings without index rows") {
+		t.Fatalf("untracked legacy Opus meeting = %+v", row)
+	}
+	writeCatalog(`{"meetings":[{"id":"LIVE","audioPath":"./meetings/LIVE.opus"},{"id":"LEGACY","artifactPath":"./meetings/LEGACY"}]}`)
+	if row := check(); row.State != "warn" || !strings.Contains(row.Message, "1 legacy or non-Opus archive entries outside search") {
+		t.Fatalf("legacy directory-shaped meeting = %+v", row)
+	}
+}
+
+// Holding the only search DB connection turns any coverage query into a wait.
+// The public route needs only the core recording verdict, so it must finish
+// without consulting the archive even when no admin coverage result is cached.
+func TestPublicSetupDoesNotQuerySearchCoverage(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.searchStore.db.SetMaxOpenConns(1)
+	conn, err := rt.searchStore.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+		done <- rec
+	}()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"recording_state"`) {
+			t.Fatalf("public setup = %d %s", rec.Code, rec.Body.String())
+		}
+	case <-time.After(time.Second):
+		_ = conn.Close()
+		<-done
+		t.Fatal("public setup waited for the search database")
+	}
+}
+
+func TestReadinessPollReusesCoverageAndIndexWritesInvalidateIt(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	if err := os.MkdirAll(rt.cfg.SiteRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rt.cfg.SiteRoot, "catalog.json"), []byte(`{"meetings":[{"audioPath":"./meetings/LIVE.opus"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	seedSearchable(t, rt.searchStore, "LIVE.opus", seg("s1", "S1", 0, 1000, "words"))
+	searchCheck := func() readinessCheck {
+		t.Helper()
+		for _, check := range rt.readiness(ctx).Checks {
+			if check.ID == "archive.search" {
+				return check
+			}
+		}
+		t.Fatal("archive.search check missing")
+		return readinessCheck{}
+	}
+	if check := searchCheck(); check.State != "passed" {
+		t.Fatalf("initial coverage = %+v", check)
+	}
+	rt.searchStore.db.SetMaxOpenConns(1)
+	conn, err := rt.searchStore.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		rt.readinessHandler(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+		done <- rec
+	}()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"search_archive_files_accounted_for"`) {
+			t.Fatalf("cached health = %d %s", rec.Code, rec.Body.String())
+		}
+	case <-time.After(time.Second):
+		_ = conn.Close()
+		<-done
+		t.Fatal("repeated health GET waited for a second coverage scan")
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.searchStore.MarkUnavailable(ctx, "LIVE.opus", searchIngestReasonNoTranscript); err != nil {
+		t.Fatal(err)
+	}
+	if check := searchCheck(); check.State != "warn" || check.Code != "search_coverage_partial" {
+		t.Fatalf("index write left a cached green verdict: %+v", check)
+	}
+	seedSearchable(t, rt.searchStore, "LIVE.opus", seg("s2", "S2", 0, 1000, "new words"))
+	if check := searchCheck(); check.State != "passed" {
+		t.Fatalf("replacement did not refresh coverage: %+v", check)
+	}
+	if err := rt.searchStore.ForgetMeeting(ctx, "LIVE.opus"); err != nil {
+		t.Fatal(err)
+	}
+	if check := searchCheck(); check.State != "warn" || !strings.Contains(check.Message, "without index rows") {
+		t.Fatalf("forget left a cached green verdict: %+v", check)
+	}
+}
+
+func TestExplicitHealthCheckRefreshesCoverageAfterExternalIndexWrite(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	if check := rt.readiness(context.Background()); check.State == "" {
+		t.Fatal("initial readiness missing")
+	}
+	// A separate index writer cannot increment this Runtime's in-memory
+	// revision. A normal GET may use the bounded cache; explicit check must not.
+	_, err := rt.searchStore.db.Exec(`INSERT INTO meeting_index (opus_name, state, reason, indexed_at) VALUES (?, ?, ?, ?)`,
+		"MISSING.opus", searchStateUnavailable, searchIngestReasonNoTranscript, nowUTCString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.checkedAt = time.Now() // coalesce host/network work in this test
+	rt.recordingSetup.mu.Unlock()
+	get := httptest.NewRecorder()
+	rt.readinessHandler(get, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if strings.Contains(get.Body.String(), `"search_coverage_partial"`) {
+		t.Fatalf("ordinary GET unexpectedly bypassed coverage cache: %s", get.Body.String())
+	}
+	post := httptest.NewRecorder()
+	rt.readinessHandler(post, httptest.NewRequest(http.MethodPost, "/health/check", nil))
+	if post.Code != http.StatusOK || !strings.Contains(post.Body.String(), `"search_coverage_partial"`) {
+		t.Fatalf("explicit check did not refresh archive coverage: %d %s", post.Code, post.Body.String())
+	}
+}
+
+func TestSearchCoverageCacheExpiresForExternalIndexWrites(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	if check := rt.cachedSearchReadinessCheck(ctx); check.Code != "search_coverage_empty" {
+		t.Fatalf("initial search coverage = %+v", check)
+	}
+	// Model a second process writing the sidecar: it has no access to this
+	// Runtime's revision counter, so the TTL is the fallback invalidation.
+	_, err := rt.searchStore.db.Exec(`INSERT INTO meeting_index (opus_name, state, reason, indexed_at) VALUES (?, ?, ?, ?)`,
+		"MISSING.opus", searchStateUnavailable, searchIngestReasonNoTranscript, nowUTCString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check := rt.cachedSearchReadinessCheck(ctx); check.Code != "search_coverage_empty" {
+		t.Fatalf("unexpired cache unexpectedly changed: %+v", check)
+	}
+	rt.searchReadiness.mu.Lock()
+	rt.searchReadiness.at = time.Now().Add(-searchReadinessCacheTTL - time.Second)
+	rt.searchReadiness.mu.Unlock()
+	if check := rt.cachedSearchReadinessCheck(ctx); check.Code != "search_coverage_partial" {
+		t.Fatalf("expired cache did not reveal external index write: %+v", check)
 	}
 }
 
@@ -421,20 +666,20 @@ func TestReadinessKeepsCurrentStorageAdmissionBlockActionable(t *testing.T) {
 	t.Fatal("missing storage check")
 }
 
-// D-798 V2: host checks come from `cassini doctor --json`, read by id.
+// D-798 V2: media host checks come from `cassini doctor --json`, read by id.
 func TestRunDoctorProbeMapsTheDoctorLadder(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
 	  {"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
-	  {"id":"model.cache","status":"warn","summary":"model missing","advice":"it downloads on first use"},
+	  {"id":"workdir.space","status":"warn","summary":"low disk space","advice":"free disk space"},
 	  {"id":"tmpdir.space","status":"fail","summary":"out of space","advice":"free some"}]`)
 
 	checks, err := rt.runDoctorProbe(context.Background())
 	if err != nil {
 		t.Fatalf("probe: %v", err)
 	}
-	want := map[string]string{"host.ffmpeg": "passed", "host.model.cache": "warn", "host.tmpdir.space": "needs_action"}
+	want := map[string]string{"host.ffmpeg": "passed", "host.workdir.space": "warn", "host.tmpdir.space": "needs_action"}
 	got := map[string]string{}
 	for _, c := range checks {
 		got[c.ID] = c.State
@@ -452,6 +697,53 @@ func TestRunDoctorProbeMapsTheDoctorLadder(t *testing.T) {
 		if !strings.Contains(c.Message, "—") {
 			t.Errorf("%s dropped doctor's advice: %q", c.ID, c.Message)
 		}
+	}
+}
+
+func TestRunDoctorProbeChecksMediaOnTheRecordingWorkVolume(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	workVolume := t.TempDir()
+	rt.cfg.WorkRoot = filepath.Join(workVolume, "jobs")
+	bin := filepath.Join(t.TempDir(), "cassini")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '[{\"id\":\"workdir\",\"status\":\"ok\",\"summary\":\"%s|%s\"}]\\n' \"$(pwd)\" \"$*\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt.cfg.CassiniBin = bin
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := workVolume + "|doctor --target media --json"
+	if len(checks) != 1 || checks[0].Message != want {
+		t.Fatalf("doctor checked %v, want %q", checks, want)
+	}
+}
+
+func TestRunDoctorProbeDoesNotPassOperatorSecrets(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	for name := range operatorOnlySecretEnv() {
+		t.Setenv(name, "sensitive")
+	}
+	bin := filepath.Join(t.TempDir(), "cassini")
+	body := `#!/bin/sh
+if [ -n "${APP_SECRET+x}" ] || [ -n "${CASSINI_TALK_RECORDING_SECRET+x}" ] || [ -n "${TALK_RECORDING_SECRET+x}" ] || [ -n "${CASSINI_TALK_SIGNALING_INTERNAL_SECRET+x}" ] || [ -n "${CASSINI_OPERATOR_API_TOKEN+x}" ]; then
+  printf '[{"id":"secrets","status":"fail","summary":"secret leaked"}]\n'
+else
+  printf '[{"id":"secrets","status":"ok","summary":"operator secrets absent"}]\n'
+fi
+`
+	if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt.cfg.CassiniBin = bin
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checks) != 1 || checks[0].State != "passed" {
+		t.Fatalf("doctor received operator secrets: %+v", checks)
 	}
 }
 
@@ -478,6 +770,7 @@ func TestReadinessReportsUnreachableHostChecksAsAWarning(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "does-not-exist")
+	rt.checkRecordingReadiness(context.Background())
 
 	report := rt.readiness(context.Background())
 	found := false
@@ -492,6 +785,47 @@ func TestReadinessReportsUnreachableHostChecksAsAWarning(t *testing.T) {
 	if !found {
 		t.Fatal("an unreachable doctor was reported as nothing at all")
 	}
+}
+
+func TestHealthGETUsesCachedMediaHostAndExplicitCheckRefreshesIt(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"}]`)
+	rt.checkRecordingReadiness(context.Background())
+
+	// Removing the binary proves GET does not invoke doctor again.
+	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "does-not-exist")
+	for i := 0; i < 2; i++ {
+		report := rt.readiness(context.Background())
+		found := false
+		for _, check := range report.Checks {
+			if check.ID == "host.ffmpeg" {
+				found = true
+				if check.State != "passed" || check.CheckedAt == "" {
+					t.Fatalf("cached host finding lost its verdict or age: %+v", check)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("GET did not return the cached host finding")
+		}
+	}
+
+	// The next explicit check refreshes the finding. The short coalescing
+	// window applies to rapid duplicate clicks, so age it for this test.
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.checkedAt = time.Time{}
+	rt.recordingSetup.mu.Unlock()
+	rt.checkRecordingReadiness(context.Background())
+	for _, check := range rt.readiness(context.Background()).Checks {
+		if check.Code == "host_checks_unavailable" {
+			if check.State != "warn" || check.CheckedAt == "" {
+				t.Fatalf("explicit refresh did not report inaccessible doctor: %+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("explicit check retained stale host pass")
 }
 
 // warn sits between passed and needs_action and must not collapse into either.
@@ -515,6 +849,46 @@ func TestWorstReadinessStateOrdersByWhatItCostsToIgnore(t *testing.T) {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
 	}
+}
+
+func TestRecordingCapabilityStateExcludesOptionalProcessingAndArchive(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "storage", State: "passed"},
+		{ID: "talk.hpb", State: "passed"},
+		{ID: "processing", State: "warn", Code: "transcription_unavailable"},
+		{ID: "archive.search", State: "warn", Code: "search_coverage_partial"},
+	}
+	if got := recordingCapabilityState(checks); got != "passed" {
+		t.Fatalf("optional warnings made audio recording look broken: %s", got)
+	}
+	checks = append(checks, readinessCheck{ID: "host.ffmpeg", State: "needs_action"})
+	if got := recordingCapabilityState(checks); got != "needs_action" {
+		t.Fatalf("recording host failure was hidden: %s", got)
+	}
+}
+
+func TestUnavailableEnabledTranscriptionWarnsWithoutBlockingAudio(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.setSettings(STTSettings{
+		TranscriptionEnabled: true,
+		Quality:              sttQualityBalanced,
+		DeviceOverride:       deviceCUDA,
+	})
+	report := rt.readiness(context.Background())
+	for _, check := range report.Checks {
+		if check.ID != "processing" {
+			continue
+		}
+		if check.State != "warn" || check.Code != "transcription_unavailable" || check.Action != "settings" {
+			t.Fatalf("enabled but unavailable transcription: %+v", check)
+		}
+		if report.RecordingState != recordingCapabilityState(report.Checks) {
+			t.Fatalf("recording state included optional processing: %s", report.RecordingState)
+		}
+		return
+	}
+	t.Fatal("no optional processing check")
 }
 
 func writeFakeDoctorBin(t *testing.T, body string) string {

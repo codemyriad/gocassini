@@ -296,6 +296,10 @@ jq -e '.talk.secret_configured == true and .talk.signaling_internal_secret_confi
   <<<"$status_json" >/dev/null || fail "manifest-gated Talk configuration is incomplete"
 
 ci_phase_end
+ci_phase_begin "Prepare and explicitly enable transcription through AppAPI"
+OPERATOR_URL="$PROXY_URL/operator" DEVICE=cpu LOG_DIR="$LOG_DIR/model-setup" \
+  bash "$SCRIPT_DIR/configure-test-transcription.sh"
+ci_phase_end
 RESULT="running"
 # The run now commits to driving a real recording; record that as a fact so
 # summary.json's control.recording_performed is true here and false on the D-403

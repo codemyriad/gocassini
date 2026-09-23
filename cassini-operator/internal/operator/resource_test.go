@@ -176,7 +176,7 @@ func TestApplyToEnv(t *testing.T) {
 	}
 }
 
-func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
+func TestExecuteBuildCLIPreservesAudioWithoutCUDARuntime(t *testing.T) {
 	// An impossible RAM floor proves CUDA capability is checked first. A
 	// portable image must block immediately, not spend five minutes waiting for
 	// memory that cannot make its missing execution provider appear.
@@ -211,6 +211,8 @@ func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
 			// Emulate a portable image installed on a GPU daemon. Visible GPU
 			// hardware must not override the missing CUDA execution provider;
 			// admission must fail before cmd.Run can start the ASR process.
+			TranscriptionEnabled: true,
+			ActiveModel:          modelParakeetV3Fp32, ActiveRevision: "pinned",
 			DeviceOverride: "cuda",
 		},
 	}
@@ -219,12 +221,11 @@ func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
 	_, err = rt.executeBuildCLI(ctx, buildTask{
 		JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath,
 	})
-	var unavailable *resourceUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.resource != "CUDA runtime" || !unavailable.permanent {
-		t.Fatalf("executeBuildCLI() error = %v, want permanent CUDA runtime resourceUnavailableError", err)
+	if err == nil || !strings.Contains(err.Error(), "build output missing") {
+		t.Fatalf("expected mock build to run the audio path: %v", err)
 	}
-	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("Cassini subprocess ran on CPU (marker stat error = %v)", statErr)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("audio build never ran: %v", err)
 	}
 }
 
@@ -843,89 +844,204 @@ func TestCPUFloorsRankByTierCost(t *testing.T) {
 	}
 }
 
-func TestModelNeedsDownload(t *testing.T) {
-	// Each image carries the models for the device it serves. A tier outside
-	// that set arrives by one download into the persistent cache (D-704).
-	bundledRoot := t.TempDir()
-	cacheRoot := t.TempDir()
-	rt := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: cacheRoot}}
-
-	seed := func(root, model string, complete bool) {
-		t.Helper()
-		dir := filepath.Join(root, "models", model)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "encoder.onnx"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if complete {
-			if err := os.WriteFile(filepath.Join(dir, modelCompletionMarker), []byte("t\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-
-	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
-		t.Error("a model in neither root must read as a download")
-	}
-
-	seed(bundledRoot, modelParakeetV3Fp32, false)
-	if rt.modelNeedsDownload(modelParakeetV3Fp32) {
-		t.Error("a model baked into the image must not be downloaded")
-	}
-
-	// An interrupted download leaves files without the marker. That directory
-	// must still read as a download, or the operator would promise a build the
-	// recorder cannot start.
-	seed(cacheRoot, modelParakeetV3Int8, false)
-	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
-		t.Error("an unfinished cache directory must still read as a download")
-	}
-
-	seed(cacheRoot, modelParakeetV3Int8, true)
-	if rt.modelNeedsDownload(modelParakeetV3Int8) {
-		t.Error("a completed download must not be fetched again")
+func TestAirGapAllowsAudioOnlyAdmission(t *testing.T) {
+	rt := &Runtime{cfg: Config{DisallowModelDownload: true, ModelCacheRoot: t.TempDir()}}
+	model, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU)
+	if err != nil || model != "" {
+		t.Fatalf("audio-only admission: %s %v", model, err)
 	}
 }
 
-func TestAdmitModelForDeviceHonoursTheAirGapSwitch(t *testing.T) {
-	// An administrator who forbids downloads must get a blocked build with a
-	// message, not a build that reaches for the network and fails there.
-	bundledRoot := t.TempDir()
-	rt := &Runtime{cfg: Config{
-		BundledModelRoot:      bundledRoot,
-		ModelCacheRoot:        t.TempDir(),
-		DisallowModelDownload: true,
-	}}
+// fakeModelCassini is a cassini stand-in for build admission tests. `models
+// list` prints inventoryJSON, or fails when it is empty. `build` refuses a
+// non-empty --out as the real meeting build does; with transcription on it
+// leaves the checkpoint and exits as a native crash would, and with it off it
+// writes a bundle recording the reason it was given.
+func fakeModelCassini(t *testing.T, inventoryJSON string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "cassini")
+	script := `#!/bin/sh
+case "$1" in
+models)
+  if [ "$2" = probe ]; then echo "probe refused" >&2; exit "${FAKE_PROBE_EXIT:-1}"; fi
+  [ -n "$FAKE_INVENTORY" ] || { echo "inventory broken" >&2; exit 1; }
+  printf '%s\n' "$FAKE_INVENTORY"
+  exit 0 ;;
+build)
+  out=""; prev=""
+  for a in "$@"; do [ "$prev" = "--out" ] && out="$a"; prev="$a"; done
+  if [ -d "$out" ] && [ -n "$(ls -A "$out")" ]; then echo "output directory is not empty: $out" >&2; exit 1; fi
+  mkdir -p "$out"
+  if [ "$CASSINI_TRANSCRIPTION" = "on" ]; then
+    : > "$out/cassini.json"; : > "$out/.transcription-started"; exit 134
+  fi
+  echo '{}' > "$out/cassini.json"
+  printf '%s' "$CASSINI_TRANSCRIPTION_REASON" > "$out/reason"
+  exit 0 ;;
+esac
+exit 2
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake cassini: %v", err)
+	}
+	t.Setenv("FAKE_INVENTORY", inventoryJSON)
+	return bin
+}
 
-	_, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU)
+func newAdmissionTestRuntime(t *testing.T, cassiniBin, jobID string) (*Runtime, string) {
+	t.Helper()
+	origMem, origCPU := probeAvailableMem, probeOnlineCPUs
+	t.Cleanup(func() { probeAvailableMem, probeOnlineCPUs = origMem, origCPU })
+	probeAvailableMem = func() int { return 64000 }
+	probeOnlineCPUs = func() int { return 4 }
+	tmp := t.TempDir()
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	insertJob(t, store.db, jobID, nowUTCString())
+	runPath := seedReadyRunBundle(t, filepath.Join(tmp, "jobs"), jobID)
+	if err := store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	rt := &Runtime{
+		ctx:    context.Background(),
+		store:  store,
+		cfg:    Config{CassiniBin: cassiniBin, WorkRoot: filepath.Join(tmp, "jobs"), ModelCacheRoot: filepath.Join(tmp, "models")},
+		logger: log.New(io.Discard, "", 0),
+		settings: STTSettings{
+			TranscriptionEnabled: true,
+			ActiveModel:          modelParakeetV3Int8, ActiveRevision: "r1",
+			Quality: sttQualityBalanced, DeviceOverride: deviceCPU,
+		},
+		maxBuildResourceDeferrals: 2,
+	}
+	return rt, runPath
+}
+
+const readyInt8Inventory = `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":true,"ready":true,"device":"cpu"}]`
+
+// A native crash after media preparation leaves a partial bundle. The audio-only
+// rebuild must start from an empty directory, or the meeting build refuses it
+// and the audio is never published.
+func TestExecuteBuildCLIFallbackRebuildsIntoACleanBundle(t *testing.T) {
+	const jobID = "native-crash"
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, readyInt8Inventory), jobID)
+	meetingPath, err := rt.executeBuildCLI(context.Background(), buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath})
+	if err != nil {
+		t.Fatalf("executeBuildCLI() = %v, want the audio preserved", err)
+	}
+	reason, err := os.ReadFile(filepath.Join(meetingPath, "reason"))
+	if err != nil || string(reason) != "transcription_failed" {
+		t.Fatalf("fallback bundle reason = %q (%v), want transcription_failed", reason, err)
+	}
+	if _, err := os.Stat(filepath.Join(meetingPath, ".transcription-started")); !os.IsNotExist(err) {
+		t.Fatalf("the crashed attempt's checkpoint survived into the fallback bundle (stat err = %v)", err)
+	}
+}
+
+// A model check refused for lack of memory may run later. Below the retry
+// ceiling the build defers, as any resource wait does; at the ceiling it keeps
+// the audio.
+func TestExecuteBuildCLIDefersTransientTranscriptionAdmission(t *testing.T) {
+	const jobID = "probe-deferred"
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), jobID)
+	t.Setenv("FAKE_PROBE_EXIT", "75")
+	task := buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}
+
+	meetingPath, err := rt.executeBuildCLI(context.Background(), task)
 	var unavailable *resourceUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.resource != "model bundle" {
-		t.Fatalf("admission error = %v, want a model bundle refusal", err)
+	if !errors.As(err, &unavailable) || unavailable.permanent {
+		t.Fatalf("executeBuildCLI() = %v, want a transient resource error so the job defers", err)
 	}
-	if !unavailable.permanent {
-		t.Error("no download can arrive while the switch is set; want a permanent block")
-	}
-	if !strings.Contains(unavailable.detail, "CASSINI_DISALLOW_MODEL_DOWNLOAD") {
-		t.Errorf("detail %q does not name the setting that blocks the build", unavailable.detail)
+	if _, statErr := os.Stat(meetingPath); !os.IsNotExist(statErr) {
+		t.Fatalf("a deferred build still launched (stat err = %v)", statErr)
 	}
 
-	// The tier the image bakes still runs on the same air-gapped host.
-	dir := filepath.Join(bundledRoot, "models", modelParakeetV3Int8)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
+	task.DeferralCount = rt.buildResourceDeferralLimit()
+	meetingPath, err = rt.executeBuildCLI(context.Background(), task)
+	if err != nil {
+		t.Fatalf("executeBuildCLI() at the retry ceiling = %v, want the audio preserved", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "encoder.int8.onnx"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
+	reason, err := os.ReadFile(filepath.Join(meetingPath, "reason"))
+	if err != nil || string(reason) != "model_unavailable" {
+		t.Fatalf("ceiling bundle reason = %q (%v), want model_unavailable", reason, err)
 	}
-	if _, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU); err != nil {
-		t.Fatalf("a bundled tier was blocked on an air-gapped host: %v", err)
-	}
+}
 
-	// Without the switch the same missing model is a download, not a block.
-	open := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: t.TempDir()}}
-	if _, err := open.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU); err != nil {
-		t.Fatalf("admission blocked a downloadable tier: %v", err)
+// A model inventory that fails outright is a broken install, not a busy host.
+// Waiting hours for it would only delay the audio.
+func TestExecuteBuildCLIKeepsAudioWhenTheInventoryIsBroken(t *testing.T) {
+	const jobID = "inventory-broken"
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, ""), jobID)
+	meetingPath, err := rt.executeBuildCLI(context.Background(), buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath})
+	if err != nil {
+		t.Fatalf("executeBuildCLI() = %v, want the audio preserved at once", err)
+	}
+	reason, err := os.ReadFile(filepath.Join(meetingPath, "reason"))
+	if err != nil || string(reason) != "model_unavailable" {
+		t.Fatalf("bundle reason = %q (%v), want model_unavailable", reason, err)
+	}
+}
+
+// A ready model on a host that never frees enough RAM for it: at the ceiling
+// the build keeps the audio, which needs far less, instead of blocking.
+func TestExecuteBuildCLIKeepsAudioWhenModelRAMNeverFrees(t *testing.T) {
+	const jobID = "ram-short"
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, readyInt8Inventory), jobID)
+	t.Setenv("CASSINI_BUILD_MEM_WAIT_SECS", "0")
+	limits := resourceLimitsFromEnv()
+	audioFloor, modelFloor := limits.minFreeMemForBuild(deviceCPU, ""), limits.minFreeMemForBuild(deviceCPU, modelParakeetV3Int8)
+	if audioFloor >= modelFloor {
+		t.Fatalf("audio floor %d is not below the model floor %d", audioFloor, modelFloor)
+	}
+	probeAvailableMem = func() int { return audioFloor + 1 }
+	task := buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath, DeferralCount: rt.buildResourceDeferralLimit()}
+	meetingPath, err := rt.executeBuildCLI(context.Background(), task)
+	if err != nil {
+		t.Fatalf("executeBuildCLI() = %v, want the audio preserved", err)
+	}
+	reason, err := os.ReadFile(filepath.Join(meetingPath, "reason"))
+	if err != nil || string(reason) != "model_unavailable" {
+		t.Fatalf("bundle reason = %q (%v), want model_unavailable", reason, err)
+	}
+}
+
+// A model that is not installed will not install itself by waiting: keep the
+// audio at once rather than defer.
+func TestExecuteBuildCLIKeepsAudioWhenTheModelIsNotInstalled(t *testing.T) {
+	const jobID = "model-missing"
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":false,"ready":false,"device":"cpu"}]`), jobID)
+	meetingPath, err := rt.executeBuildCLI(context.Background(), buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath})
+	if err != nil {
+		t.Fatalf("executeBuildCLI() = %v, want the audio preserved", err)
+	}
+	reason, err := os.ReadFile(filepath.Join(meetingPath, "reason"))
+	if err != nil || string(reason) != "model_unavailable" {
+		t.Fatalf("bundle reason = %q (%v), want model_unavailable", reason, err)
+	}
+}
+
+func TestTranscriptionUnavailableNamesTheModel(t *testing.T) {
+	rt, _ := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), "readiness")
+	rt.computeProbe = func(string) (bool, string) { return true, "cpu" }
+	if detail := rt.transcriptionUnavailable(rt.settings, deviceCPU); !strings.Contains(detail, "runtime check") {
+		t.Fatalf("transcriptionUnavailable() = %q, want the unchecked model named", detail)
+	}
+	t.Setenv("FAKE_INVENTORY", readyInt8Inventory)
+	rt.invalidateModelInventory()
+	if detail := rt.transcriptionUnavailable(rt.settings, deviceCPU); detail != "" {
+		t.Fatalf("transcriptionUnavailable() = %q for a ready model", detail)
+	}
+}
+
+func TestChildEnvUsesTheOperatorModelRoot(t *testing.T) {
+	t.Setenv(envCacheRoot, "/image/default/models")
+	rt := &Runtime{cfg: Config{ModelCacheRoot: "/persist/operator/models"}}
+	for _, kv := range rt.childEnv() {
+		if strings.HasPrefix(kv, envCacheRoot+"=") && kv != envCacheRoot+"=/persist/operator/models" {
+			t.Fatalf("child env has %s, want the operator's model root", kv)
+		}
 	}
 }

@@ -13,6 +13,21 @@ describe("recording setup", () => {
  it("preserves unknown state on older servers", () => {
   expect(readSetupHealth({ok:true,state:"provisioned"})?.recordingState).toBeUndefined();
   expect(readSetupHealth({ok:true,state:"provisioned",recording_state:"needs_action"})?.recordingState).toBe("needs_action");
+  expect(readSetupHealth({ok:true,state:"provisioned",recording_state:"warn"})?.recordingState).toBe("warn");
+ });
+ it("names optional transcription separately from audio recording", () => {
+  const report = {
+   state: "warn", recording_state: "passed",
+   checks: [{ id: "processing", state: "warn", code: "transcription_unavailable", message: "Model unavailable" }],
+  } as RecordingReadiness;
+  expect(readinessTitle(report)).toBe("Recording ready; transcription needs attention");
+  report.recording_state = "not_verified";
+  expect(readinessTitle(report)).toBe("Recording setup needs verification; transcription needs attention");
+  report.recording_state = "needs_action";
+  report.checks.push({ id: "storage", state: "needs_action", code: "storage_incomplete", message: "" });
+  expect(readinessTitle(report)).toBe("One recording check needs attention");
+  report.recording_state = "warn";
+  expect(readinessTitle(report)).toBe("Recording checks need attention");
  });
 });
 
@@ -51,10 +66,9 @@ describe("check severity", () => {
   });
 
   // "Nobody looked" is not "impaired". Folding them together would make one
-  // colour mean two different facts, and the operator already downgrades
-  // expired evidence to not_verified rather than to a weaker pass.
+  // colour mean two different facts. Aged findings show their time separately.
   it("is neutral, not a warning, for a check nobody has run", () => {
-    expect(checkTone(check({ state: "not_verified", code: "storage_check_expired" }))).toBe("neutral");
+    expect(checkTone(check({ state: "not_verified", code: "storage_not_checked" }))).toBe("neutral");
   });
 
   // These two look like a middle state and are not. "Configured" claims a

@@ -101,6 +101,10 @@ type ncAccessSubstrateStatus struct {
 	// state field could carry.
 	probe    ncStorageProbe
 	hasProbe bool
+	// When the archive entries above were last listed. checkedAtUTC can move
+	// after a later preflight fails before it reaches setProbe, so it cannot
+	// timestamp this cached inventory.
+	probeAtUTC string
 	// checkedAtUTC is when the preflight last ran to completion or gave up.
 	// Empty means it has not run yet.
 	checkedAtUTC string
@@ -262,6 +266,7 @@ func (s *ncAccessSubstrateStatus) setProbe(probe ncStorageProbe) {
 	defer s.mu.Unlock()
 	s.probe = probe
 	s.hasProbe = true
+	s.probeAtUTC = nowUTCString()
 }
 
 // lastProbe returns the recorded probe, and whether there has been one. The
@@ -272,6 +277,12 @@ func (s *ncAccessSubstrateStatus) lastProbe() (ncStorageProbe, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.probe, s.hasProbe
+}
+
+func (s *ncAccessSubstrateStatus) lastProbeWithTime() (ncStorageProbe, string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.probe, s.probeAtUTC, s.hasProbe
 }
 
 // usable reports whether the substrate is proven enough to write recordings

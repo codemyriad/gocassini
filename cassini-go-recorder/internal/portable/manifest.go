@@ -39,14 +39,25 @@ const (
 	RoleDisplay              = "display"
 )
 
+type Processing struct {
+	Transcription TranscriptionStatus `json:"transcription"`
+}
+type TranscriptionStatus struct {
+	Status   string `json:"status"`
+	Reason   string `json:"reason,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Revision string `json:"revision,omitempty"`
+}
+
 type Manifest struct {
-	Kind      string    `json:"kind"`
-	Version   int       `json:"version"`
-	Profile   string    `json:"profile"`
-	Meeting   Meeting   `json:"meeting"`
-	Audio     Audio     `json:"audio"`
-	Integrity Integrity `json:"integrity"`
-	Speakers  []Speaker `json:"speakers"`
+	Processing *Processing `json:"processing,omitempty"`
+	Kind       string      `json:"kind"`
+	Version    int         `json:"version"`
+	Profile    string      `json:"profile"`
+	Meeting    Meeting     `json:"meeting"`
+	Audio      Audio       `json:"audio"`
+	Integrity  Integrity   `json:"integrity"`
+	Speakers   []Speaker   `json:"speakers"`
 	// Transcript bodies live in independent OpusTag chunk sets referenced by
 	// these descriptors. Keeping the index separate lets one meeting carry
 	// multiple word transcripts alongside their display documents.

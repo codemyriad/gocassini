@@ -366,65 +366,62 @@ func TestSearchStoreOpensWithConcurrencyPragmas(t *testing.T) {
 	}
 }
 
-// D-798 R2.2: a shortfall counts against health only when someone can act on
-// it. The demo sandbox has exactly one silent meeting out of 138, so getting
-// this wrong leaves an instance permanently short of full coverage for a
-// meeting nobody spoke in.
-func TestCoverageSeparatesFaultsFromCorrectOutcomes(t *testing.T) {
+// Optional transcription makes four different empty transcripts look alike
+// at the row level. Coverage retains their producer outcomes and never turns
+// an old reason without provenance into proof of silence.
+func TestCoverageRetainsDistinctEmptyTranscriptOutcomes(t *testing.T) {
 	store := newTestSearchStore(t)
 	ctx := context.Background()
-
 	seedSearchable(t, store, "INDEXED.opus", seg("s1", "S1", 0, 1000, "words"))
-	// Correct, and unfixable: nobody spoke.
-	if err := store.MarkUnavailable(ctx, "SILENT.opus", searchIngestReasonNoSegments); err != nil {
-		t.Fatalf("mark silent: %v", err)
+	for name, reason := range map[string]string{
+		"SILENT.opus":       searchIngestReasonCompletedEmpty,
+		"DISABLED.opus":     searchIngestReasonDisabled,
+		"NO-MODEL.opus":     searchIngestReasonModelUnavailable,
+		"FAILED.opus":       searchIngestReasonTranscriptionFail,
+		"LEGACY.opus":       searchIngestReasonNoSegments,
+		"MISSING.opus":      searchIngestReasonNoTranscript,
+		"UNREADABLE.opus":   searchIngestReasonUnreadable,
+		"NEEDS-COPY.opus":   searchBackfillReasonNoBundle,
+		"UNCLASSIFIED.opus": "some-reason-from-the-future",
+	} {
+		if err := store.MarkUnavailable(ctx, name, reason); err != nil {
+			t.Fatalf("mark %s: %v", name, err)
+		}
 	}
-	// A fault: the format families behind D-739 / D-765 / D-766.
-	if err := store.MarkUnavailable(ctx, "BROKEN.opus", searchIngestReasonUnreadable); err != nil {
-		t.Fatalf("mark unreadable: %v", err)
-	}
-
 	coverage, err := store.Coverage(ctx)
 	if err != nil {
 		t.Fatalf("coverage: %v", err)
 	}
-	if coverage.Indexed != 1 {
-		t.Errorf("Indexed = %d, want 1", coverage.Indexed)
+	want := (searchCoverage{
+		Indexed: 1, Unavailable: 9, Silent: 1, Disabled: 1,
+		ModelUnavailable: 1, TranscriptionFailed: 1, UnknownEmpty: 1,
+		MissingTranscript: 1, UnreadableTranscript: 1, BackfillCandidates: 1,
+		OtherUnavailable: 1,
+	})
+	if coverage != want {
+		t.Errorf("coverage = %+v, want %+v", coverage, want)
 	}
-	if coverage.Unavailable != 2 {
-		t.Errorf("Unavailable = %d, want 2", coverage.Unavailable)
-	}
-	if coverage.Unindexable != 1 {
-		t.Errorf("Unindexable = %d, want 1 (the silent meeting)", coverage.Unindexable)
-	}
-	if got := coverage.Fixable(); got != 1 {
-		t.Errorf("Fixable() = %d, want 1 — only the unreadable one is actionable", got)
-	}
-	// The denominator excludes what can never be searched, so an archive whose
-	// only shortfall is a silent meeting reads as complete.
-	if got := coverage.Searchable(); got != 2 {
-		t.Errorf("Searchable() = %d, want 2", got)
+	if coverage.NeedsAttention() != 7 {
+		t.Errorf("NeedsAttention = %d, want 7", coverage.NeedsAttention())
 	}
 }
 
-func TestCoverageIsCompleteWhenTheOnlyShortfallIsSilence(t *testing.T) {
+func TestCoverageDoesNotTreatKnownSilenceOrDisabledTranscriptionAsFault(t *testing.T) {
 	store := newTestSearchStore(t)
 	ctx := context.Background()
 	seedSearchable(t, store, "A.opus", seg("s1", "S1", 0, 1000, "words"))
-	if err := store.MarkUnavailable(ctx, "SILENT.opus", searchIngestReasonNoSegments); err != nil {
+	if err := store.MarkUnavailable(ctx, "SILENT.opus", searchIngestReasonCompletedEmpty); err != nil {
 		t.Fatalf("mark: %v", err)
 	}
-
+	if err := store.MarkUnavailable(ctx, "DISABLED.opus", searchIngestReasonDisabled); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
 	coverage, err := store.Coverage(ctx)
 	if err != nil {
 		t.Fatalf("coverage: %v", err)
 	}
-	if coverage.Fixable() != 0 {
-		t.Errorf("Fixable() = %d; a silent meeting is not a fault", coverage.Fixable())
-	}
-	if coverage.Indexed != coverage.Searchable() {
-		t.Errorf("indexed %d of searchable %d; an archive whose only gap is silence is fully covered",
-			coverage.Indexed, coverage.Searchable())
+	if coverage.NeedsAttention() != 0 {
+		t.Errorf("NeedsAttention = %d; silence and intentional disabling are not faults", coverage.NeedsAttention())
 	}
 }
 
@@ -441,7 +438,21 @@ func TestCoverageTreatsAnUnclassifiedReasonAsAFault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("coverage: %v", err)
 	}
-	if coverage.Fixable() != 1 {
-		t.Errorf("Fixable() = %d, want 1 — an unrecognised reason must stay visible", coverage.Fixable())
+	if coverage.OtherUnavailable != 1 || coverage.NeedsAttention() != 1 {
+		t.Errorf("coverage = %+v; an unrecognised reason must stay visible", coverage)
+	}
+}
+
+func TestCoverageForArchiveUsesNamesSoStaleRowsCannotHideUntrackedMeetings(t *testing.T) {
+	store := newTestSearchStore(t)
+	ctx := context.Background()
+	seedSearchable(t, store, "LIVE.opus", seg("s1", "S1", 0, 1000, "words"))
+	seedSearchable(t, store, "STALE.opus", seg("s1", "S1", 0, 1000, "old words"))
+	coverage, err := store.CoverageForArchive(ctx, []string{"LIVE.opus", "OLD.opus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.Indexed != 1 || coverage.Untracked != 1 || coverage.NeedsAttention() != 1 {
+		t.Fatalf("coverage = %+v, want only LIVE indexed and OLD untracked", coverage)
 	}
 }
