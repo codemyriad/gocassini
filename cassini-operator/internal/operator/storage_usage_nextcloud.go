@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"time"
 )
 
 func (c ExAppConfig) nextcloudStorageUsageHandler(rt *Runtime) http.Handler {
@@ -48,7 +47,6 @@ func (rt *Runtime) refreshNextcloudStorageUsage(ctx context.Context, c ExAppConf
 }
 
 func (c ExAppConfig) scanNextcloudStorageUsage(ctx context.Context) storageUsageResponse {
-	started := time.Now()
 	result := storageUsageResponse{}
 	roots := []struct {
 		id, label, root string
@@ -57,7 +55,6 @@ func (c ExAppConfig) scanNextcloudStorageUsage(ctx context.Context) storageUsage
 		{"access-controlled", "Access-controlled storage mode", recordingsRootFor(true)},
 	}
 	for _, root := range roots {
-		sourceStarted := time.Now()
 		source := storageUsageSource{
 			ID:       root.id,
 			Label:    root.label,
@@ -66,12 +63,10 @@ func (c ExAppConfig) scanNextcloudStorageUsage(ctx context.Context) storageUsage
 		if strings.TrimSpace(c.NextcloudURL) == "" {
 			source.Error = "Nextcloud Files is not configured"
 		} else {
-			source.Bytes, source.Files, source.Collections, source.Requests, source.Error = c.ncArchiveLogicalBytes(ctx, root.root)
+			source.Bytes, _, _, _, source.Error = c.ncArchiveLogicalBytes(ctx, root.root)
 		}
-		source.DurationMS = elapsedMilliseconds(sourceStarted)
 		result.Sources = append(result.Sources, source)
 	}
-	result.DurationMS = elapsedMilliseconds(started)
 	result.MeasuredAt = nowUTCString()
 	return result
 }

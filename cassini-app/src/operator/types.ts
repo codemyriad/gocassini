@@ -259,7 +259,6 @@ export interface ArtifactStorageRoot {
 
 export interface ArtifactStorageUsage {
   measured_at: string;
-  duration_ms: number;
   roots: ArtifactStorageRoot[];
 }
 
