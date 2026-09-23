@@ -101,20 +101,31 @@ export function planBulkTag(entries: readonly MeetingCatalogEntry[], byMeeting: 
   return { remove, targets, request };
 }
 
-// A write answers with the meeting's document, so its row and the picker's
-// ticks need not wait for the vocabulary to reload. A newly created tag is
-// admitted from the returned document; aggregate counts still come from reload.
+// A write answers with the meeting's document, so its row, picker ticks and
+// aggregate counts need not wait for the vocabulary reload. The vocabulary's
+// totals are adjusted by this meeting's before/after contribution; a later
+// authoritative reload still reconciles concurrent changes elsewhere.
 export function withMeetingResult(vocabulary: TagVocabulary, result: MeetingAnnotations): TagVocabulary {
   const meetings = new Map(vocabulary.meetings.map((meeting) => [meeting.meetingId, meeting]));
   const vocabularyTags = new Map(vocabulary.tags.map((tag) => [tag.tagId, { ...tag }]));
+  const contribution = (held: { tagId: string; whole: boolean; stretches: number }[]) =>
+    new Map(
+      held
+        .filter(({ whole, stretches }) => whole || stretches > 0)
+        .map(({ tagId, whole, stretches }) => [
+          tagId,
+          { meetings: 1, marks: Number(whole) + stretches },
+        ]),
+    );
+  const before = contribution(meetings.get(result.meetingId)?.tags ?? []);
   const tags = groupByTag(result.annotations).map(({ tag, whole, stretches }) => {
     if (!vocabularyTags.has(tag.id)) {
       vocabularyTags.set(tag.id, {
         tagId: tag.id,
         namespace: result.annotations?.tagNamespace ?? "",
         label: tag.label,
-        meetings: 1,
-        marks: Number(whole !== null) + stretches.length,
+        meetings: 0,
+        marks: 0,
         color: "",
         icon: "",
       });
@@ -127,11 +138,18 @@ export function withMeetingResult(vocabulary: TagVocabulary, result: MeetingAnno
       icon: tag.icon,
     };
   });
+  const after = contribution(tags);
+  for (const tagId of new Set([...before.keys(), ...after.keys()])) {
+    const tag = vocabularyTags.get(tagId);
+    if (!tag) continue;
+    const oldUse = before.get(tagId) ?? { meetings: 0, marks: 0 };
+    const newUse = after.get(tagId) ?? { meetings: 0, marks: 0 };
+    tag.meetings = Math.max(0, tag.meetings + newUse.meetings - oldUse.meetings);
+    tag.marks = Math.max(0, tag.marks + newUse.marks - oldUse.marks);
+  }
   meetings.set(result.meetingId, { meetingId: result.meetingId, tags });
   return {
     ...vocabulary,
-    // Existing aggregate counts remain untouched until the authoritative
-    // reload; only the changed meeting document is exact in this response.
     tags: [...vocabularyTags.values()],
     meetings: [...meetings.values()],
   };

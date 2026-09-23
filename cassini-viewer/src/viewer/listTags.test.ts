@@ -44,7 +44,11 @@ const meetings = [
   entry("m4", "Standup", "r2"),
 ];
 const vocabulary: TagVocabulary = {
-  tags: [tag("t_h", "hiring"), tag("t_b", "budget"), tag("t_x", "exec")],
+  tags: [
+    { ...tag("t_h", "hiring"), meetings: 2, marks: 2 },
+    { ...tag("t_b", "budget"), meetings: 2, marks: 4 },
+    { ...tag("t_x", "exec"), meetings: 0, marks: 0 },
+  ],
   meetings: [
     { meetingId: "m1", tags: [{ tagId: "t_h", whole: true, stretches: 0 }] },
     { meetingId: "m2", tags: [{ tagId: "t_b", whole: false, stretches: 2 }] },
@@ -147,9 +151,15 @@ describe("whole-meeting tags", () => {
         ],
       },
     };
-    const next = tagsByMeeting(withMeetingResult(vocabulary, answer));
+    const reconciled = withMeetingResult(vocabulary, answer);
+    const next = tagsByMeeting(reconciled);
     expect(next.get("m1")?.map(({ tag, whole }) => [tag.tagId, whole])).toEqual([["t_b", true]]);
-    expect(next.get("m3")).toEqual(byMeeting.get("m3"));
+    expect(next.get("m3")?.map(({ tag, whole, stretches }) => [tag.tagId, whole, stretches])).toEqual([
+      ["t_b", true, 1],
+      ["t_h", true, 0],
+    ]);
+    expect(reconciled.tags.find(({ tagId }) => tagId === "t_h")).toMatchObject({ meetings: 1, marks: 1 });
+    expect(reconciled.tags.find(({ tagId }) => tagId === "t_b")).toMatchObject({ meetings: 3, marks: 5 });
   });
 });
 
@@ -221,8 +231,10 @@ describe("writing tags", () => {
 
     session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
     expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).toContain("t_b");
+    expect(get(session).vocabulary!.tags.find(({ tagId }) => tagId === "t_b")?.meetings).toBe(3);
     session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
     expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+    expect(get(session).vocabulary!.tags.find(({ tagId }) => tagId === "t_b")?.meetings).toBe(2);
 
     await settle();
     expect(requests).toEqual([expect.objectContaining({
@@ -244,6 +256,7 @@ describe("writing tags", () => {
 
     // The first server answer says ON, but the later click stays visibly OFF.
     expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+    expect(get(session).vocabulary!.tags.find(({ tagId }) => tagId === "t_b")?.meetings).toBe(2);
     expect(requests[1]).toEqual(expect.objectContaining({
       requestId: expect.any(String),
       ops: [{ op: "unmark-tag", tagId: "t_b", target: { kind: "meeting" } }],
@@ -258,6 +271,7 @@ describe("writing tags", () => {
     });
     await settle();
     expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+    expect(get(session).vocabulary!.tags.find(({ tagId }) => tagId === "t_b")?.meetings).toBe(2);
   });
 
   it("resolves an optimistic new tag id before a fast second click removes it", async () => {
