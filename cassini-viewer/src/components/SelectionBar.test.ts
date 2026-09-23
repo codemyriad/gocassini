@@ -75,7 +75,13 @@ describe("SelectionBar tagging", () => {
   });
 
   it("opens the picker over every selected meeting, ticked and half-ticked", () => {
-    expect(selectionBarSource).toMatch(/multiple\s+selected=\{tagSelected\}\s+mixed=\{tagMixed\}\s+anchor=\{tagButton\}/);
+    expect(selectionBarSource).toMatch(
+      /multiple\s+order=\{count === 1 \? "alphabetical" : "relevance"\}\s+selected=\{tagSelected\}\s+mixed=\{tagMixed\}\s+anchor=\{tagButton\}/,
+    );
+  });
+
+  it("alphabetizes one meeting without changing bulk picker ordering", () => {
+    expect(selectionBarSource).toContain('order={count === 1 ? "alphabetical" : "relevance"}');
   });
 
   it("disables another bulk edit and exposes a safe retry", () => {
