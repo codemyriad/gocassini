@@ -63,7 +63,7 @@ func (c ExAppConfig) scanNextcloudStorageUsage(ctx context.Context) storageUsage
 		if strings.TrimSpace(c.NextcloudURL) == "" {
 			source.Error = "Nextcloud Files is not configured"
 		} else {
-			source.Bytes, _, _, _, source.Error = c.ncArchiveLogicalBytes(ctx, root.root)
+			source.Bytes, source.Error = c.ncArchiveLogicalBytes(ctx, root.root)
 		}
 		result.Sources = append(result.Sources, source)
 	}
