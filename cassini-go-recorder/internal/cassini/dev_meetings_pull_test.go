@@ -3,6 +3,7 @@ package cassini
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -58,6 +59,7 @@ func servePackArchive(catalog string, bodies map[string][]byte, gets map[string]
 		// http.ServeContent-free on purpose: setting the length explicitly is
 		// what the real proxy relays, and it is what the pull checks against.
 		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+		w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sha256.Sum256(body)))
 		if r.Method == http.MethodHead {
 			return
 		}

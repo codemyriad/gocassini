@@ -861,7 +861,7 @@ func TestResolveDevStackPlanPublishedSeed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(seed, "meetings", "daily--10:30.opus"), []byte("opus"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(seed, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[{"audioPath":"./meetings/daily--10:30.opus"}]}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(seed, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[{"id":"daily","audioPath":"./meetings/daily--10:30.opus"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plan, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--seed-published", seed}, testEnv(nil))

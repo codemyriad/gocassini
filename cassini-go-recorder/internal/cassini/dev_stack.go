@@ -648,11 +648,19 @@ func resolveDevStackPublishedSeedDir(value string) (string, error) {
 		return "", fmt.Errorf("--seed-published %q catalog.json must be %s with at least one meeting", value, meetingsCatalogVersion)
 	}
 	seen := make(map[string]bool, len(catalog.Meetings))
+	seenIDs := make(map[string]bool, len(catalog.Meetings))
+	if info, err := os.Lstat(filepath.Join(absolute, "meetings")); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("seed meetings must be a real directory")
+	}
 	for index, item := range catalog.Meetings {
 		var entry meetingsCatalogEntry
 		if err := json.Unmarshal(item, &entry); err != nil {
 			return "", fmt.Errorf("--seed-published %q catalog meeting %d is invalid: %w", value, index, err)
 		}
+		if strings.TrimSpace(entry.ID) == "" || seenIDs[entry.ID] {
+			return "", fmt.Errorf("seed contains missing or duplicate meeting ID %q", entry.ID)
+		}
+		seenIDs[entry.ID] = true
 		rel, err := packRelativeAsset(entry.AudioPath)
 		if err != nil || !strings.HasPrefix(rel, "meetings/") || !validPublishedSeedAssetName(filepath.Base(rel)) {
 			return "", fmt.Errorf("--seed-published %q catalog meeting %d has invalid audioPath %q", value, index, entry.AudioPath)
@@ -665,6 +673,9 @@ func resolveDevStackPublishedSeedDir(value string) (string, error) {
 		if err != nil || !assetInfo.Mode().IsRegular() || assetInfo.Size() == 0 {
 			return "", fmt.Errorf("--seed-published %q catalog meeting %d has no non-empty regular asset %s", value, index, rel)
 		}
+	}
+	if err := validateSeedManifest(absolute, catalog); err != nil {
+		return "", err
 	}
 	return absolute, nil
 }

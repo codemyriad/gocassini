@@ -75,6 +75,16 @@ docker run --rm \
   --mount "type=bind,src=$PACK_DIR,dst=$SEED_MOUNT,readonly" \
   --entrypoint /bin/sh "$image" -c "set -eu; cp -a $SEED_MOUNT/. $VOLUME_MOUNT/"
 
+# Nextcloud IDs belong to the source instance, and transcript indexes must be
+# verified against the destination archive. A combined seed takes annotations
+# from its portable meeting pack; preflight rejects unconfirmed source edits.
+derived="meetings.sqlite3 search.sqlite3"
+if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" ]]; then
+  derived="$derived annotations.sqlite3"
+fi
+docker run --rm --volumes-from "$CONTAINER_NAME" --entrypoint /bin/sh "$image" \
+  -c 'for name in $1; do rm -f "/nc_app_gocassini_data/operator/$name" "/nc_app_gocassini_data/operator/$name-wal" "/nc_app_gocassini_data/operator/$name-shm"; done' seed "$derived"
+
 trap - EXIT
 docker start "$CONTAINER_NAME" >/dev/null
 seed_log "copied operator volume seed; source remains unchanged at $PACK_DIR"

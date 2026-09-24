@@ -1370,35 +1370,55 @@ CALL_URL="$(./bin/cassini dev room create --name "Basic video room" | tail -n1)"
 
 Use `cassini dev meetings pull --out harness/runtime/seed/prod` to download
 recordings visible to your Nextcloud account. The output is a confidential local
-static archive. To import it into a local installed ExApp stack:
+static archive. New pulls write a `cassini.seed.pack.v2` manifest with SHA-256
+hashes, remote ETags, selection/completeness information, and the annotation
+policy. Resume skips a recording only when its strong ETag and local hash match;
+servers without ETags are downloaded again. A failed/partial v2 pull must be
+resumed before seeding. Existing v1 and catalog-only packs remain supported.
+
+By default, `--annotations embedded` exports the marks already in the delivered
+recording. Use `--annotations current` to read the authenticated annotations API
+and embed its accepted document into the local recording, including edits still
+waiting to synchronize on the server. This requires local FFmpeg/ffprobe and a
+server with the annotation API. It preserves IDs, revisions, and attribution;
+it does not copy edit history or write to the source server. The export is a
+per-meeting snapshot, not a transaction across the entire source archive.
+
+To import it into a local installed ExApp stack:
 
 ```bash
 ./bin/cassini dev stack up --cassini installed-exapp \
   --seed-published harness/runtime/seed/prod
 ```
 
-The harness validates `catalog.json` and every referenced `.opus`, copies the
+Before building images or changing containers, the harness validates the
+manifest, `catalog.json`, and every referenced portable `.opus` with local
+`ffprobe`. It then copies the
 recordings into the private `cassini/CassiniRecordings/meetings` directory, scans
 them into Nextcloud Files, and creates a read-only share for `admin` on each
 file. No other recipient is inferred from the source pack. Production account
 names in the original meeting are not assumed to exist locally.
 
 ```text
-static pack             private Nextcloud Files         visibility
-catalog.json --names--> CassiniRecordings/meetings/ --> admin read shares
-meetings/*.opus --copy-->       *.opus
+pack files -> Nextcloud Files -> destination file IDs + admin read shares
+                                      |
+catalog metadata --------------------> meetings.sqlite3
+recording transcripts ---------------> search.sqlite3 (rebuild)
+recording annotations --------------> annotations.sqlite3 (import)
 ```
 
 Reusing the same pack skips files with identical bytes and existing `admin`
 shares. A filename collision with different bytes stops the import. The
-installed app does not store a remote catalog, so imported meetings without a
-local metadata row initially use filename-based titles; their embedded audio
-and transcript remain available. Keep the pack out of version control.
+operator imports catalog metadata using destination file IDs, preserving room
+names and other catalog-only fields. Search and annotation backfills must finish
+without read/index errors; recordings with no transcript are reported explicitly
+as outside search coverage. Startup verifies the complete admin listing
+against the catalog, including metadata. Keep the pack out of version control.
 
 ### 9.6 Seeding the installed operator volume
 
 `--seed-operator` copies an AppAPI persistent-volume root containing
-`operator/jobs/` into a fresh installed ExApp volume. The harness checks the
+`operator/jobs/` and `operator/jobs.sqlite3` into a fresh installed ExApp volume. The harness checks the
 source before startup and bind-mounts it read-only for the copy. It refuses
 `--resume`, since a seed belongs to a fresh volume.
 
@@ -1408,6 +1428,22 @@ source before startup and bind-mounts it read-only for the copy. It refuses
 ```
 
 Keep enough free Docker storage for the copied volume and new recordings.
+
+Capture the source volume while its operator is stopped, or use a consistent
+snapshot/SQLite backup process. Include SQLite WAL files when present; copying
+only the main database can omit committed data. Preflight checks integrity and
+annotation schema compatibility on temporary copies, leaving the seed untouched.
+These checks cannot establish that an arbitrary live filesystem copy was atomic.
+
+When both seed flags are supplied, the meeting pack supplies recordings,
+metadata, and annotations; the operator snapshot supplies processing history.
+Source search and meeting-metadata indexes are discarded in the destination.
+The destination annotation store is also rebuilt from the pack in this combined
+mode. Preflight rejects a source snapshot with pending annotation edits: first
+export those using `--annotations current` and capture a synchronized snapshot.
+An operator-only restore retains its durable annotation database. Source
+Nextcloud file IDs and shares are never portable, and importing an operator
+volume alone does not populate Nextcloud Files.
 
 ## 10. Repository structure and operational reference
 
