@@ -83,7 +83,11 @@ type devStackPlan struct {
 	// is up, or "" for an ordinary stack. Absolute, because compose binds it
 	// as a host path and the harness scripts do not share this process's
 	// working directory.
-	SeedDir               string
+	SeedDir string
+	// OperatorSeedDir is a copy of an AppAPI persistent-volume root. The
+	// harness bind-mounts it read-only into a short-lived copier and copies it
+	// into the freshly-created ExApp volume after AppAPI has deployed Cassini.
+	OperatorSeedDir       string
 	DownSuspend           bool
 	DownVolumes           bool
 	DownFull              bool
@@ -105,6 +109,8 @@ type devStackFlagOptions struct {
 	exAppImageMode      string
 	patchMode           string
 	seedDir             string
+	seedPublishedDir    string
+	seedOperatorDir     string
 	storageMode         string
 	skipStorageScaffold bool
 	build               bool
@@ -144,7 +150,9 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	storageMode := stringFlag("storage-mode", "recording storage mode the stack is built in and the ExApp starts in: default, acl-enabled, undecided, or empty (build the access-controlled substrate and let the app's Setup tab choose)")
 	skipStorageScaffold := fs.Bool("debug-skip-storage-scaffold", false,
 		"debug: build no recordings storage at all — no cassini service account, no Team folder, and neither native app")
-	seedDir := stringFlag("seed", "seed pack to load into the recordings tree after the stack is up")
+	seedDir := stringFlag("seed", "deprecated alias for --seed-published")
+	seedPublishedDir := stringFlag("seed-published", "seed pack to load into the recordings tree after the stack is up")
+	seedOperatorDir := stringFlag("seed-operator", "AppAPI operator-volume seed to copy into a fresh installed ExApp")
 	build := fs.Bool("build", false, "build the Cassini ExApp image before registration")
 	resume := fs.Bool("resume", false, "reuse matching stopped containers or retained harness volumes")
 	reset := fs.Bool("reset", false, "stop/remove/recreate resources for the resolved stack")
@@ -168,6 +176,8 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	}
 
 	opts.seedDir = *seedDir
+	opts.seedPublishedDir = *seedPublishedDir
+	opts.seedOperatorDir = *seedOperatorDir
 	opts.publicMode = *publicMode
 	opts.publicURL = *publicURL
 	opts.publicHost = *publicHost
@@ -252,7 +262,17 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	}
 	plan.SkipStorageScaffold = opts.skipStorageScaffold ||
 		(!opts.set["debug-skip-storage-scaffold"] && get("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD") == "1")
-	plan.SeedDir = pick("seed", opts.seedDir, "CASSINI_HARNESS_SEED_DIR", "")
+	if opts.set["seed"] && opts.set["seed-published"] && opts.seedDir != opts.seedPublishedDir {
+		return plan, rest, errors.New("--seed and --seed-published disagree; use --seed-published")
+	}
+	if opts.set["seed-published"] {
+		plan.SeedDir = opts.seedPublishedDir
+	} else {
+		// Keep the old environment variable and harness plumbing intact. This
+		// is the published-files seed formerly exposed as --seed.
+		plan.SeedDir = pick("seed", opts.seedDir, "CASSINI_HARNESS_SEED_DIR", "")
+	}
+	plan.OperatorSeedDir = pick("seed-operator", opts.seedOperatorDir, "CASSINI_HARNESS_SEED_OPERATOR_DIR", "")
 	plan.DownSuspend = opts.suspend
 	plan.DownVolumes = opts.downVolumes
 	plan.DownFull = opts.downFull
@@ -267,8 +287,8 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	if command != "down" && (opts.suspend || opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend, --volumes, and --full apply only to stack down")
 	}
-	if opts.set["seed"] && command != "up" && command != "plan" {
-		return plan, rest, errors.New("--seed applies only to stack up")
+	if (opts.set["seed"] || opts.set["seed-published"] || opts.set["seed-operator"]) && command != "up" && command != "plan" {
+		return plan, rest, errors.New("--seed, --seed-published, and --seed-operator apply only to stack up")
 	}
 	if plan.SeedDir != "" {
 		// Resolved and checked here rather than in the harness script, because
@@ -281,6 +301,13 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 			return plan, rest, err
 		}
 		plan.SeedDir = resolved
+	}
+	if plan.OperatorSeedDir != "" {
+		resolved, err := resolveDevStackOperatorSeedDir(plan.OperatorSeedDir)
+		if err != nil {
+			return plan, rest, err
+		}
+		plan.OperatorSeedDir = resolved
 	}
 	if opts.suspend && (opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend keeps containers and cannot be combined with --volumes or --full")
@@ -549,6 +576,12 @@ func validateDevStackPlan(plan devStackPlan) error {
 	if plan.CassiniMode == devStackCassiniNone && plan.ExAppImageMode == devStackImageBuild {
 		return errors.New("--build / ExApp image mode build requires --cassini installed-exapp")
 	}
+	if plan.OperatorSeedDir != "" && plan.CassiniMode != devStackCassiniInstalledExApp {
+		return errors.New("--seed-operator requires --cassini installed-exapp")
+	}
+	if plan.OperatorSeedDir != "" && plan.ExistingResourceMode == devStackExistingResume {
+		return errors.New("--seed-operator cannot be combined with --resume: it only copies into a freshly-created ExApp volume")
+	}
 	return nil
 }
 
@@ -634,6 +667,7 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL=" + plan.SignalingPublicURL,
 		"CASSINI_TALK_BACKEND_URL=" + plan.TalkBackendURL,
 		"CASSINI_HARNESS_SEED_DIR=" + plan.SeedDir,
+		"CASSINI_HARNESS_SEED_OPERATOR_DIR=" + plan.OperatorSeedDir,
 	}
 	// What the ExApp itself is told. The harness speaks `acl-enabled`; the
 	// app's own vocabulary — its config file, its API, its UI — says
@@ -671,6 +705,28 @@ func resolveDevStackSeedDir(value string) (string, error) {
 	return absolute, nil
 }
 
+// resolveDevStackOperatorSeedDir checks the durable part of an AppAPI ExApp
+// volume. A seed is the volume root, not its operator/ child: copying it into
+// APP_PERSISTENT_STORAGE preserves the documented layout, including caches.
+func resolveDevStackOperatorSeedDir(value string) (string, error) {
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("--seed-operator %q: %w", value, err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return "", fmt.Errorf("--seed-operator %q: %w", value, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("--seed-operator %q is not a directory; it should be the root of an AppAPI Cassini data volume", value)
+	}
+	jobs, err := os.Stat(filepath.Join(absolute, "operator", "jobs"))
+	if err != nil || !jobs.IsDir() {
+		return "", fmt.Errorf("--seed-operator %q is not an operator-volume seed: expected operator/jobs/ beneath the volume root", value)
+	}
+	return absolute, nil
+}
+
 func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "command: %s\n", plan.Command)
 	fmt.Fprintln(w, "public:")
@@ -696,7 +752,8 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "  exapp_initial_mode: %s\n", yamlValueOrNull(devStackExAppStorageMode(plan.StorageMode)))
 	fmt.Fprintf(w, "  skip_scaffold: %t\n", plan.SkipStorageScaffold)
 	fmt.Fprintln(w, "seed:")
-	fmt.Fprintf(w, "  pack: %s\n", yamlValueOrNull(plan.SeedDir))
+	fmt.Fprintf(w, "  published_pack: %s\n", yamlValueOrNull(plan.SeedDir))
+	fmt.Fprintf(w, "  operator_volume: %s\n", yamlValueOrNull(plan.OperatorSeedDir))
 	fmt.Fprintln(w, "lifecycle:")
 	fmt.Fprintf(w, "  existing_resources: %s\n", plan.ExistingResourceMode)
 	fmt.Fprintf(w, "  down_suspend: %t\n", plan.DownSuspend)

@@ -35,6 +35,7 @@ func clearDevStackAmbient(t *testing.T) {
 		"CASSINI_HARNESS_PATCH_MODE",
 		"CASSINI_HARNESS_EXISTING",
 		"CASSINI_HARNESS_SEED_DIR",
+		"CASSINI_HARNESS_SEED_OPERATOR_DIR",
 		"SPREED_PROFILE",
 	} {
 		t.Setenv(key, "")
@@ -1014,7 +1015,7 @@ func TestResolveDevStackPlanSeedPack(t *testing.T) {
 		t.Fatalf("write catalog: %v", err)
 	}
 
-	plan, _, err := resolveDevStackPlan("up", []string{"--seed", pack}, testEnv(nil))
+	plan, _, err := resolveDevStackPlan("up", []string{"--seed-published", pack}, testEnv(nil))
 	if err != nil {
 		t.Fatalf("resolveDevStackPlan: %v", err)
 	}
@@ -1029,6 +1030,50 @@ func TestResolveDevStackPlanSeedPack(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("CASSINI_HARNESS_SEED_DIR is not in the plan's environment: %v", plan.env())
+	}
+}
+
+func TestResolveDevStackPlanOperatorSeed(t *testing.T) {
+	clearDevStackAmbient(t)
+	seed := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(seed, "operator", "jobs"), 0o700); err != nil {
+		t.Fatalf("make operator seed: %v", err)
+	}
+
+	plan, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--seed-operator", seed}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !filepath.IsAbs(plan.OperatorSeedDir) {
+		t.Errorf("OperatorSeedDir = %q, want absolute", plan.OperatorSeedDir)
+	}
+	if !containsEnv(plan.env(), "CASSINI_HARNESS_SEED_OPERATOR_DIR="+plan.OperatorSeedDir) {
+		t.Errorf("operator seed is not in the plan environment: %v", plan.env())
+	}
+}
+
+func TestResolveDevStackPlanRejectsInvalidOrUnsafeOperatorSeed(t *testing.T) {
+	clearDevStackAmbient(t)
+	empty := t.TempDir()
+	good := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(good, "operator", "jobs"), 0o700); err != nil {
+		t.Fatalf("make operator seed: %v", err)
+	}
+
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"wrong shape": {[]string{"--cassini", "installed-exapp", "--seed-operator", empty}, "expected operator/jobs"},
+		"no ExApp":    {[]string{"--seed-operator", good}, "requires --cassini installed-exapp"},
+		"resume":      {[]string{"--cassini", "installed-exapp", "--resume", "--seed-operator", good}, "cannot be combined with --resume"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := resolveDevStackPlan("up", tc.args, testEnv(nil))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

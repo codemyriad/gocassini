@@ -25,6 +25,13 @@ if [[ -n "${CASSINI_HARNESS_SEED_DIR:-}" ]]; then
   "$SCRIPT_DIR/seed-nc-files.sh" --pack "$CASSINI_HARNESS_SEED_DIR"
 fi
 
+# AppAPI creates the ExApp volume only while deploying Cassini. Seed it after
+# that deployment through a short-lived copier with a read-only source bind;
+# the live ExApp never gets a writable mount of the user's archive.
+if [[ -n "${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}" ]]; then
+  "$SCRIPT_DIR/seed-operator-volume.sh" --pack "$CASSINI_HARNESS_SEED_OPERATOR_DIR"
+fi
+
 log "Stack is up."
 log "Create a room: $REPO_ROOT/bin/cassini dev room create --name 'Local room'"
 log "Stream media:  $REPO_ROOT/harness/bin/stream-video.sh --duration 20"
