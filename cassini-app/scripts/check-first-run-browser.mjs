@@ -701,6 +701,7 @@ try {
   let sawPoll;
   const pollStarted = new Promise(resolve => { sawPoll = resolve; });
   let savedSecret = false;
+  let servedMountRead = false;
   const readinessReport = configured => ({
     state: configured ? "not_verified" : "needs_action",
     checks: [{ id: "talk.discovery", state: "not_verified", code: "test_room_required", message: "Choose a test room.", action: "test_room" }],
@@ -711,6 +712,18 @@ try {
     firstRun: false, accountExists: true,
     readiness: async (route, request) => {
       if (request.method() === "GET") {
+        // The panel READS before it re-probes, so the first GET is the mount
+        // read that puts the checklist on screen — answer it, or nothing ever
+        // renders and there is no "Talk authentication" to click.
+        //
+        // The poll this scenario is about is the one after it: held open across
+        // the save, then released, so a response describing the world BEFORE
+        // the save arrives after it. That is the race being tested — a stale
+        // poll must not overwrite a saved secret.
+        if (!servedMountRead) {
+          servedMountRead = true;
+          return route.fulfill({ json: readinessReport(savedSecret) });
+        }
         await new Promise(resolve => { releasePoll = resolve; sawPoll(); });
         return route.fulfill({ json: readinessReport(false) });
       }
