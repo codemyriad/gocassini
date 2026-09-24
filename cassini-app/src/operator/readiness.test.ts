@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hasCommands, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hasCommands, isReprobedOnCheck, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -9,6 +9,17 @@ describe("recording setup", () => {
   report.state = "needs_action";
   report.checks = [{ id: "talk.hpb", state: "needs_action", code: "hpb_missing", message: "missing" }];
   expect(readinessTitle(report)).toBe("One recording check needs attention");
+ });
+ it("marks as checking only the rows a re-probe actually re-runs", () => {
+  // The panel shows a spinner on these while POST /health/check is in flight.
+  for (const id of ["storage", "host", "host.disk", "talk.discovery", "talk.hpb", "archive.search"]) {
+   expect(isReprobedOnCheck(id)).toBe(true);
+  }
+  // These are read from saved configuration and are already true when the
+  // panel renders. A spinner on them would be waiting for nothing.
+  for (const id of ["configuration", "talk.authentication", "talk.handoff", "processing", "test"]) {
+   expect(isReprobedOnCheck(id)).toBe(false);
+  }
  });
  it("preserves unknown state on older servers", () => {
   expect(readSetupHealth({ok:true,state:"provisioned"})?.recordingState).toBeUndefined();

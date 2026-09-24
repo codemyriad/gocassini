@@ -3,7 +3,7 @@
   import { initialEnvironment } from './operator/deploymentGuidance';
   import { onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, hasCommands, OCC_NOTE, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, hasCommands, isReprobedOnCheck, OCC_NOTE, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
   let report: RecordingReadiness | null = null;
@@ -19,11 +19,15 @@
   let provisioningURL = "";
   let alive = true;
   let polling = false;
+  // True only while a re-probe is in flight, so a row can say it is being
+  // checked. Distinct from `busy`, which is also set by a plain read and by
+  // saving an edit — neither of which re-probes anything.
+  let checking = false;
   let reportVersion = 0;
 
   async function load(check = false) {
     if (busy || polling) return;
-    busy = true; error = "";
+    busy = true; checking = check; error = "";
     try {
       const next = check ? await operatorClient.checkReadiness() : await operatorClient.getReadiness();
       if (!alive) return;
@@ -32,7 +36,7 @@
       if (changed) notifySetupChanged();
       if (!room) room = next.test_room_url;
     } catch (e) { if (alive) { stale = true; error = e instanceof Error ? e.message : String(e); } }
-    finally { busy = false; }
+    finally { busy = false; checking = false; }
   }
   async function save(payload: RecordingSetupUpdate) {
     if (busy) return;
@@ -59,7 +63,16 @@
   }
   onMount(() => {
     alive = true;
-    void load(true);
+    // Read before re-probing. A POST /health/check runs the media doctor, the
+    // Talk probe and the storage preflight before it answers, and the list was
+    // hidden behind `{#if report}` for the whole of it — so the panel sat empty
+    // for seconds and then every row appeared at once. The GET is a read of
+    // findings the operator already holds (startup establishes them), so the
+    // checklist is on screen immediately and the re-probe updates it in place.
+    void (async () => {
+      await load(false);
+      if (alive) await load(true);
+    })();
     const unsubscribe = onSetupChanged(() => void load(true));
     const timer = window.setInterval(async () => {
       if (busy || polling || !report || document.hidden) return;
@@ -93,7 +106,7 @@
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span></p>
+              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && isReprobedOnCheck(check.id)}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/60"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
               {#if (check.steps ?? []).length > 0}
                 <!-- Behind a disclosure, as SetupNotice does it: an

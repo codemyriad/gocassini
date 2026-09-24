@@ -30,6 +30,22 @@ export const OCC_NOTE =
   "occ here is however your deployment invokes it — for example sudo -u www-data php occ …, " +
   "or docker exec -u www-data <nextcloud-container> php occ …";
 
+// Which rows a full check actually re-probes. The rest are read from saved
+// configuration and are already true the moment the panel renders, so marking
+// them "checking" would be theatre — and a progress indicator that lies about
+// what it is waiting for is worse than none.
+//
+// Keep in step with checkRecordingReadiness: it runs the media doctor, the Talk
+// connection probe and the storage preflight, and invalidates archive coverage.
+export function isReprobedOnCheck(id: string): boolean {
+  return id === "storage"
+    || id === "host"
+    || id.startsWith("host.")
+    || id === "talk.discovery"
+    || id === "talk.hpb"
+    || id.startsWith("archive.");
+}
+
 // Whether any step in a check carries commands, which is what the note above
 // qualifies. No commands, no note.
 export function hasCommands(check: ReadinessCheck): boolean {
