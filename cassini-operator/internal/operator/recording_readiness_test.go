@@ -658,6 +658,46 @@ func TestReadinessStorageCarriesTheAgeAndApplicabilityOfItsEvidence(t *testing.T
 	}
 }
 
+// A preflight in flight is not a failed preflight. beginRun() clears the verdict
+// and keeps the timestamp, so mid-run the snapshot reads state:"" with OK:false
+// — which used to render as "the Nextcloud storage preflight did not pass" and
+// made a healthy install flash red for as long as the run took. The panel polls
+// every five seconds, so it was seen.
+func TestReadinessDoesNotReportAnInFlightPreflightAsAFailure(t *testing.T) {
+	resetSubstrateRecord(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	storage := func() readinessCheck {
+		t.Helper()
+		for _, c := range rt.readiness(context.Background()).Checks {
+			if c.ID == "storage" {
+				return c
+			}
+		}
+		t.Fatal("missing storage check")
+		return readinessCheck{}
+	}
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.record(ncSubstrateProvisioned, "test preflight", nil)
+	if c := storage(); c.State != "passed" {
+		t.Fatalf("setup did not establish a passing verdict: %+v", c)
+	}
+
+	// Exactly what preflightNCStorageLocked does on entry, and nothing else.
+	ncAccessSubstrate.beginRun()
+	if c := storage(); c.State == "needs_action" {
+		t.Fatalf("a running preflight was reported as a failed one: %+v", c)
+	} else if c.State != "not_verified" || c.Code != "storage_check_running" {
+		t.Fatalf("a running preflight = %+v; want not_verified/storage_check_running", c)
+	}
+
+	// And the run's own verdict still lands when it records one.
+	ncAccessSubstrate.record(ncSubstrateProvisioned, "test preflight", nil)
+	if c := storage(); c.State != "passed" {
+		t.Fatalf("completed preflight did not report its verdict: %+v", c)
+	}
+}
+
 func TestReadinessKeepsCurrentStorageAdmissionBlockActionable(t *testing.T) {
 	resetSubstrateRecord(t)
 	rt, cleanup := readinessRuntime(t)
