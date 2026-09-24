@@ -80,13 +80,10 @@ Common combinations:
 | Docker Desktop for Mac installed-ExApp dev | `lan-http` | `full` | `installed-exapp` | `installed-exapp` | See [Docker Desktop for Mac](#52-docker-desktop-for-mac) for the required LAN signaling flags. |
 | Remote browser / macOS browser through HTTPS proxy | `remote-https` | `full-remote` | optional | matching backend | `./bin/cassini dev stack up --public-mode remote-https --services full-remote ...` |
 
-> **macOS note:** the full local stack works with Docker Desktop when Talk
-> signaling uses the Mac's LAN IP. The default Linux bridge-gateway signaling
-> address is not browser-reachable on macOS. Follow the
-> [Docker Desktop for Mac guide](#52-docker-desktop-for-mac), or use the
-> [remote HTTPS guide](#6-guide-remote-https-dev-setup). The media services
-> run on the compose network with published ports, so Docker Desktop's
-> "Enable host networking" option is not needed.
+> **macOS note:** use the Mac's LAN IP for signaling, as described in the
+> [Docker Desktop for Mac guide](#52-docker-desktop-for-mac). The stack uses
+> published ports and does not require Docker Desktop host networking.
+> This topology has been tested on Linux; macOS validation is pending.
 
 ---
 
@@ -539,11 +536,9 @@ This is the production-shaped local development path: Nextcloud installs Cassini
 as a real AppAPI ExApp through HaRP, Talk points its recording backend at the
 AppAPI proxy, and the ExApp records through HPB-internal signaling auth.
 
-Supported hosts are Linux with Docker Engine + Compose v2, and macOS with Docker
-Desktop. Installed-ExApp status
-verification also requires `jq`; stack startup checks for it before creating
-resources. The macOS command differs because one signaling address must be
-reachable from both the Nextcloud container and the browser.
+Use Docker Engine + Compose v2 on Linux, or Docker Desktop on macOS (validation
+pending). Installed-ExApp status verification also requires `jq`. On macOS,
+configure a LAN signaling address reachable from both Nextcloud and the browser.
 
 ### 5.1 Start the full installed-ExApp stack
 
@@ -1587,14 +1582,16 @@ is smaller.
 | Janus RTP range | `20000-20100` (UDP) |
 | Coturn relay range | `49160-49200` (UDP) |
 
-Every service, media included, runs on the compose network; the ports above
-are published from it. Janus's WebSocket (`28188`) and NATS (`4222`) are
-reached only by the signaling server over the compose network and are not
-published. The signaling server calls Nextcloud at the URL the browser
-presented, which locally is `http://127.0.0.1:28080`: the `signaling-loopback`
-sidecar shares the signaling container's network namespace and forwards that
-loopback port to the Nextcloud container. `harness/compose.yml` explains the
-design next to each service.
+All services in `harness/compose.yml` use the Compose network. The ports above
+are published on the host; signaling reaches NATS (`4222`) and Janus's WebSocket
+(`28188`) through Docker DNS.
+
+Signaling calls Nextcloud at the browser's URL, usually `http://127.0.0.1:28080`.
+The `signaling-loopback` sidecar shares signaling's network namespace and forwards
+that loopback port to `nextcloud:80`, honoring `NEXTCLOUD_HOST_PORT` overrides.
+
+Running multiple stacks on one host still requires separate published ports and
+project-specific container and ExApp volume names.
 
 ### 10.3 Runtime outputs
 

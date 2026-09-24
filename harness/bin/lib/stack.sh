@@ -131,9 +131,7 @@ general: {
 }
 
 nat: {
-  # Rendered for remote browser access. Advertised to peers outside the
-  # compose network; keep_private_host keeps the container address for peers
-  # on it (the installed ExApp). See harness/config/janus/janus.jcfg.
+  # Advertise both the media host and container address for external/internal peers.
   nat_1_1_mapping = "$media_host"
   keep_private_host = true
 }
@@ -153,8 +151,7 @@ EOF_CONF
 listening-port=13479
 tls-listening-port=0
 
-# Advertised relay address; the relay binds the container's address and the
-# published relay range carries it here. See harness/config/turnserver.conf.
+# Advertise the host address; relay sockets bind the container address.
 external-ip=$media_host
 
 min-port=49160

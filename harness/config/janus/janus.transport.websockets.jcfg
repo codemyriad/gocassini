@@ -1,8 +1,7 @@
 general: {
   json = "indented"
   ws = true
-  # Bound on all container interfaces: the signaling server dials it over the
-  # compose network as ws://janus:28188. The port is not published.
+  # Signaling connects to ws://janus:28188; this port is not published.
   ws_port = 28188
   wss = false
 }

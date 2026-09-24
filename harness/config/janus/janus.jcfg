@@ -7,13 +7,9 @@ general: {
 }
 
 nat: {
-  # Local harness default. For remote access set this to your reachable host IP.
-  # Advertised to peers outside the compose network (host browsers, bots, an
-  # operator on --network host), who reach the published RTP range there.
+  # Host address for published RTP ports; use a reachable IP for remote peers.
   nat_1_1_mapping = "127.0.0.1"
-  # Keep the container's own address in the candidate list too: peers on the
-  # compose network (the installed ExApp) reach Janus directly through it,
-  # while 127.0.0.1 would be their own loopback.
+  # Also advertise the container address for peers on the Compose network.
   keep_private_host = true
 }
 

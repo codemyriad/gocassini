@@ -92,8 +92,7 @@ services:
     image: ${COMPAT_NATS_IMAGE:-nats:2.11.17-alpine}
     profiles: ["full"]
     restart: unless-stopped
-    # Reached only by the signaling server, over the compose network as
-    # nats:4222. No host port.
+    # Signaling connects to nats:4222 over the Compose network.
     command: ["-js"]
 
   janus:
@@ -109,15 +108,9 @@ services:
     depends_on:
       - nats
     ports:
-      # RTP/RTCP for every WebRTC peer that is not on the compose network
-      # (browsers and bots on the host, an operator run with --network host).
-      # Janus advertises these ports at nat_1_1_mapping (127.0.0.1 locally,
-      # the media host remotely); Docker's userland proxy relays loopback
-      # traffic into the container. Peers on the compose network (the
-      # installed ExApp) use the container's own address instead, which
-      # keep_private_host = true keeps in the candidate list. The websocket
-      # (28188) and HTTP (28088) transports stay internal: only the signaling
-      # server dials them.
+      # Match Janus's advertised RTP range; host and container ports must agree.
+      # keep_private_host also lets peers on the Compose network connect directly.
+      # Janus control ports stay internal.
       - "20000-20100:20000-20100/udp"
     volumes:
       - ${JANUS_CONF:-./config/janus/janus.jcfg}:/usr/local/etc/janus/janus.jcfg:ro
@@ -134,10 +127,8 @@ services:
     profiles: ["full"]
     restart: unless-stopped
     ports:
-      # Published on every host interface on purpose: Talk has ONE signaling
-      # URL for both browsers and Nextcloud's PHP, and the harness configures
-      # the bridge gateway address (default_signaling_url), which Nextcloud
-      # reaches through this published port. Browsers use 127.0.0.1:28082.
+      # Bind all host interfaces so browsers and Nextcloud can reach signaling
+      # through their configured host, bridge-gateway or LAN address.
       - "28082:28082"
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -152,20 +143,9 @@ services:
       # render a per-run copy and point SIGNALING_CONF at it.
       - ${SIGNALING_CONF:-./config/signaling.conf}:/config/server.conf:ro
 
-  # Why the media services are NOT on the host network any more, and what
-  # replaces the one thing host networking gave them.
-  #
-  # The signaling server calls Nextcloud at whatever URL the browser
-  # presented in its hello message (nextcloud-spreed-signaling looks the
-  # backend up by that URL and performs its OCS requests against it). In the
-  # local harness that URL is http://127.0.0.1:28080 or http://localhost:28080.
-  # On the host network, 127.0.0.1:28080 *was* Nextcloud's published port; in
-  # a bridge container it is the container's own loopback and nothing is
-  # listening. This sidecar shares the signaling container's network
-  # namespace and listens on that loopback port, forwarding to the Nextcloud
-  # container, so the URLs browsers present keep resolving exactly as they
-  # did on the host network. Every other host-network dependency is a plain
-  # published port (see janus, signaling, coturn).
+  # Signaling calls Nextcloud at the URL supplied by the browser. For localhost
+  # URLs, forward its container loopback to Nextcloud by sharing its network
+  # namespace. See README.md, "Default local ports", for the network layout.
   signaling-loopback:
     image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
     profiles: ["full"]
@@ -175,10 +155,7 @@ services:
       - signaling
       - nextcloud
     environment:
-      # Same port the browser uses for Nextcloud, so the URL it presents to
-      # the signaling server is reachable verbatim from inside the signaling
-      # container. Run-scoped ports (ci-e2e-talk-record-roundtrip.sh) flow
-      # through the same variable as the nextcloud service's port mapping.
+      # Match Nextcloud's published port, including overrides used by CI.
       NEXTCLOUD_LOOPBACK_PORT: "${NEXTCLOUD_HOST_PORT:-28080}"
     command:
       - /bin/sh
@@ -223,9 +200,7 @@ services:
     profiles: ["full"]
     restart: unless-stopped
     ports:
-      # TURN listener and relay range. external-ip in turnserver.conf is the
-      # address these are advertised at (127.0.0.1 locally, the media host
-      # remotely); the relay itself binds the container's address.
+      # Preserve relay port numbers at the configured external-ip.
       - "13479:13479/udp"
       - "13479:13479/tcp"
       - "49160-49200:49160-49200/udp"

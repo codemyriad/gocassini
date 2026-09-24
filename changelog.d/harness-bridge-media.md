@@ -1,2 +1,2 @@
 ### Changed
-- The local harness's Talk media services (signaling, NATS, Janus, Coturn) now run on the compose network with published ports instead of the host network. Docker Desktop's "Enable host networking" option is no longer needed on macOS, and several harness stacks can share one host once their published ports differ.
+- Move the harness's Talk media services to the Compose network with published ports, removing their host-networking requirement. This prepares for isolated branch stacks; separate ports and resource names remain follow-up work. macOS validation is pending.
