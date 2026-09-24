@@ -75,13 +75,9 @@ MIN_LEVENSHTEIN="${MIN_LEVENSHTEIN:-0.40}"
 # flows into compose.yml's "${NEXTCLOUD_HOST_PORT:-28080}:80" mapping and
 # into common.sh's NEXTCLOUD_URL default for callees (bootstrap.sh,
 # stream-synthetic-meeting.sh). Other harness flows keep the stock 28080.
+# The media services publish only 28082, 13479 and their RTP/relay ranges;
+# nothing else of ours sits inside the derived range.
 NEXTCLOUD_HOST_PORT="${NEXTCLOUD_HOST_PORT:-$(( 28100 + $$ % 900 ))}"
-# janus binds ws_port 28188 on the host network (harness/config/janus/
-# janus.transport.websockets.jcfg), which sits inside the derived range;
-# step over it so PID % 900 == 88 cannot collide with our own stack.
-if [ "$NEXTCLOUD_HOST_PORT" -eq 28188 ]; then
-  NEXTCLOUD_HOST_PORT=28189
-fi
 export NEXTCLOUD_HOST_PORT
 CONTAINER_NAME="${CONTAINER_NAME:-cassini-talk-rec-e2e-app}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-talk-rec-e2e-$$}"

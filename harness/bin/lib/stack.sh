@@ -107,11 +107,11 @@ EOF_CONF
     done
     cat <<EOF_CONF
 [nats]
-url = nats://127.0.0.1:14222
+url = nats://nats:4222
 
 [mcu]
 type = janus
-url = ws://127.0.0.1:28188
+url = ws://janus:28188
 adminkey = 01e2fcd0d226d7f4cf34a8a61397f110693f05042e57ab68e94f8476a4b8f22a
 
 [turn]
@@ -131,8 +131,11 @@ general: {
 }
 
 nat: {
-  # Rendered by harness/bin/common.sh for remote browser access.
+  # Rendered for remote browser access. Advertised to peers outside the
+  # compose network; keep_private_host keeps the container address for peers
+  # on it (the installed ExApp). See harness/config/janus/janus.jcfg.
   nat_1_1_mapping = "$media_host"
+  keep_private_host = true
 }
 
 media: {
@@ -150,8 +153,9 @@ EOF_CONF
 listening-port=13479
 tls-listening-port=0
 
+# Advertised relay address; the relay binds the container's address and the
+# published relay range carries it here. See harness/config/turnserver.conf.
 external-ip=$media_host
-relay-ip=$media_host
 
 min-port=49160
 max-port=49200
@@ -353,13 +357,13 @@ harness_verify_lan_signaling_reachability() {
   echo "Talk signaling is not reachable from the host at $signaling_url." >&2
   if [[ "$(uname -s)" == "Darwin" ]]; then
     cat >&2 <<'EOF'
-On macOS, enable Docker Desktop > Settings > Resources > Network >
-"Enable host networking", apply/restart, and configure both the browser and
-Nextcloud container to use the Mac LAN IP for signaling. See the macOS local
-installed-ExApp guide in harness/README.md.
+On macOS, configure both the browser and the Nextcloud container to use the
+Mac LAN IP for signaling (--signaling-public-url http://<LAN_IP>:28082) and
+check that the firewall lets Docker Desktop accept connections. See the macOS
+local installed-ExApp guide in harness/README.md.
 EOF
   else
-    echo "Inspect the signaling container and host-network port 28082." >&2
+    echo "Inspect the signaling container and its published port 28082." >&2
   fi
   return 1
 }
@@ -437,10 +441,10 @@ harness_compose_services_for_mode() {
       printf '%s\n' db nextcloud appapi-harp reverse-proxy
       ;;
     full)
-      printf '%s\n' db nextcloud appapi-harp reverse-proxy nats janus signaling coturn
+      printf '%s\n' db nextcloud appapi-harp reverse-proxy nats janus signaling signaling-loopback coturn
       ;;
     full-remote)
-      printf '%s\n' db nextcloud appapi-harp reverse-proxy nats janus signaling coturn signaling-public-proxy
+      printf '%s\n' db nextcloud appapi-harp reverse-proxy nats janus signaling signaling-loopback coturn signaling-public-proxy
       ;;
     legacy-default)
       return 1
@@ -592,7 +596,7 @@ harness_render_stack_configs() {
     # The local installed ExApp calls Nextcloud through Docker DNS
     # (reverse-proxy). Nextcloud then authenticates signaling backend updates
     # with that internal origin, which is intentionally not a fixed backend URL
-    # in the host-network signaling config. Local harness only: accept the
+    # in the rendered signaling config. Local harness only: accept the
     # shared backend secret for Docker-internal callback origins.
     harness_render_full_profile_configs true
   fi

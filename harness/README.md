@@ -80,12 +80,13 @@ Common combinations:
 | Docker Desktop for Mac installed-ExApp dev | `lan-http` | `full` | `installed-exapp` | `installed-exapp` | See [Docker Desktop for Mac](#52-docker-desktop-for-mac) for the required LAN signaling flags. |
 | Remote browser / macOS browser through HTTPS proxy | `remote-https` | `full-remote` | optional | matching backend | `./bin/cassini dev stack up --public-mode remote-https --services full-remote ...` |
 
-> **macOS note:** the full local stack works with Docker Desktop 4.34 or newer
-> when **Enable host networking** is on and Talk signaling uses the Mac's LAN IP.
-> The default Linux bridge-gateway signaling address is not browser-reachable on
-> macOS. Follow the [Docker Desktop for Mac guide](#52-docker-desktop-for-mac),
-> or use the [remote HTTPS guide](#6-guide-remote-https-dev-setup) when Docker
-> Desktop host networking is unavailable.
+> **macOS note:** the full local stack works with Docker Desktop when Talk
+> signaling uses the Mac's LAN IP. The default Linux bridge-gateway signaling
+> address is not browser-reachable on macOS. Follow the
+> [Docker Desktop for Mac guide](#52-docker-desktop-for-mac), or use the
+> [remote HTTPS guide](#6-guide-remote-https-dev-setup). The media services
+> run on the compose network with published ports, so Docker Desktop's
+> "Enable host networking" option is not needed.
 
 ---
 
@@ -539,7 +540,7 @@ as a real AppAPI ExApp through HaRP, Talk points its recording backend at the
 AppAPI proxy, and the ExApp records through HPB-internal signaling auth.
 
 Supported hosts are Linux with Docker Engine + Compose v2, and macOS with Docker
-Desktop 4.34 or newer plus host networking enabled. Installed-ExApp status
+Desktop. Installed-ExApp status
 verification also requires `jq`; stack startup checks for it before creating
 resources. The macOS command differs because one signaling address must be
 reachable from both the Nextcloud container and the browser.
@@ -602,7 +603,7 @@ and media use the explicitly configured Mac LAN address:
 ```text
 Browser ── http://127.0.0.1:28080 ──> Nextcloud container
    │
-   └────── http://<MAC_LAN_IP>:28082 ──> Docker Desktop host network
+   └────── http://<MAC_LAN_IP>:28082 ──> published port of the signaling container
                                                 │
 Nextcloud container ─────────────────────────────┤
                                                 v
@@ -613,14 +614,12 @@ Cassini ExApp ── http://reverse-proxy ──> Nextcloud/Talk callbacks
 
 #### Step 1: prepare Docker Desktop and the checkout
 
-1. Install Docker Desktop 4.34 or newer.
-2. Open Docker Desktop → **Settings** → **Resources** → **Network**.
-3. Enable **Enable host networking**, then apply and restart Docker Desktop.
-4. Install Go (`brew install go`); `bin/cassini` builds the CLI on every run.
-5. Keep the checkout outside `~/Documents`, or grant Docker access to that
+1. Install Docker Desktop.
+2. Install Go (`brew install go`); `bin/cassini` builds the CLI on every run.
+3. Keep the checkout outside `~/Documents`, or grant Docker access to that
    directory. macOS TCC can otherwise reject Compose bind mounts with
    `operation not permitted`.
-6. Allow incoming connections for Docker Desktop if the macOS firewall prompts.
+4. Allow incoming connections for Docker Desktop if the macOS firewall prompts.
 
 Confirm the command-line prerequisites:
 
@@ -766,7 +765,7 @@ Two independent configuration mistakes otherwise produce the same Talk symptom:
 | Symptom | Action |
 |---|---|
 | Plan rejects LAN configuration | Supply every required value from the configuration table; do not substitute loopback for media or signaling. |
-| Host signaling preflight fails | Confirm Docker Desktop host networking is enabled, the LAN IP has not changed, the firewall permits Docker, and `curl http://$LAN_IP:28082/api/v1/welcome` works. |
+| Host signaling preflight fails | Confirm the LAN IP has not changed, the firewall permits Docker, and `curl http://$LAN_IP:28082/api/v1/welcome` works. |
 | Bind mount reports `operation not permitted` | Move the checkout outside `~/Documents` or grant Docker Desktop access to the directory. |
 | ExApp build times out fetching base-image metadata | Pre-pull the four build images below, then rerun the same command. |
 | Python reports `No module named expat`, a missing `_XML_*` symbol, or fails while parsing `appinfo/info.xml` | The selected interpreter's native `pyexpat` extension is incompatible with its runtime Expat library. Pin the harness to Python 3.12, reload direnv, and run the import check below before retrying. |
@@ -1033,7 +1032,7 @@ Remote mode renders:
 
 - signaling backend allowlist entries for local, host, and public Nextcloud URLs
 - Janus `nat_1_1_mapping` using `CASSINI_HARNESS_MEDIA_HOST`
-- Coturn `external-ip` / `relay-ip` using `CASSINI_HARNESS_MEDIA_HOST`
+- Coturn `external-ip` using `CASSINI_HARNESS_MEDIA_HOST`
 - a Docker-network HTTPS helper (`signaling-public-proxy`) for Nextcloud's
   server-side HPB notification checks on hosts where containers cannot hairpin
   to host ports
@@ -1584,11 +1583,18 @@ is smaller.
 |---|---:|
 | Nextcloud HTTP | `28080` |
 | Standalone signaling HTTP | `28082` |
-| Janus WebSocket (signaling -> Janus) | `28188` on loopback |
-| NATS | `14222` on loopback |
 | TURN | `13479` |
-| Janus RTP range | `20000-20100` |
-| Coturn relay range | `49160-49200` |
+| Janus RTP range | `20000-20100` (UDP) |
+| Coturn relay range | `49160-49200` (UDP) |
+
+Every service, media included, runs on the compose network; the ports above
+are published from it. Janus's WebSocket (`28188`) and NATS (`4222`) are
+reached only by the signaling server over the compose network and are not
+published. The signaling server calls Nextcloud at the URL the browser
+presented, which locally is `http://127.0.0.1:28080`: the `signaling-loopback`
+sidecar shares the signaling container's network namespace and forwards that
+loopback port to the Nextcloud container. `harness/compose.yml` explains the
+design next to each service.
 
 ### 10.3 Runtime outputs
 
