@@ -12,14 +12,15 @@ import (
 var ErrJobNotEligibleForRerun = errors.New("job is not eligible for rerun")
 
 type JobAttempt struct {
-	JobID               string  `json:"job_id"`
-	AttemptNumber       int     `json:"attempt_number"`
-	TriggerKind         string  `json:"trigger_kind"`
-	RequestJSON         string  `json:"request_json"`
-	Stage               string  `json:"stage"`
-	State               string  `json:"state"`
-	ArtifactRunPath     *string `json:"artifact_run_path"`
-	ArtifactMeetingPath *string `json:"artifact_meeting_path"`
+	FilesPresent        map[string]bool `json:"files_present,omitempty"`
+	JobID               string          `json:"job_id"`
+	AttemptNumber       int             `json:"attempt_number"`
+	TriggerKind         string          `json:"trigger_kind"`
+	RequestJSON         string          `json:"request_json"`
+	Stage               string          `json:"stage"`
+	State               string          `json:"state"`
+	ArtifactRunPath     *string         `json:"artifact_run_path"`
+	ArtifactMeetingPath *string         `json:"artifact_meeting_path"`
 	// ArtifactOpusPath is this attempt's sealed portable meeting,
 	// runs/<job>--attempt-NNN.opus. It is immutable: no other attempt of the
 	// same job can write it, which is what lets the publish worker deliver the

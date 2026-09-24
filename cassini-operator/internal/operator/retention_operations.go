@@ -38,6 +38,12 @@ type artifactOperation struct {
 	Deadline string   `json:"deadline,omitempty"`
 }
 
+func decodeArtifactOperation(raw string) (artifactOperation, error) {
+	var op artifactOperation
+	err := json.Unmarshal([]byte(raw), &op)
+	return op, err
+}
+
 func validArtifactJob(id string) bool {
 	return id != "" && id != "." && id != ".." && filepath.Base(id) == id && !strings.ContainsAny(id, `/\`)
 }
