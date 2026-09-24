@@ -120,3 +120,69 @@ func TestRetentionSupersessionRequiresSuccessfulPublish(t *testing.T) {
 	rt.runRetentionSweep(context.Background(), now)
 	assertGone(t, attemptSealDir(rt.cfg.WorkRoot, id, 1), "later successful publish")
 }
+
+func TestRetentionCanonicalArchivesIndependentAndRerunDenied(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	id := "canonical"
+	seedRetentionJob(t, rt, id)
+	if err := os.RemoveAll(attemptRunPath(rt.cfg.WorkRoot, id, 1)); err != nil {
+		t.Fatal(err)
+	}
+	source := seedReadyRunBundle(t, rt.cfg.WorkRoot, id)
+	var promoteErr error
+	source, promoteErr = promoteRunBundle(rt.cfg.WorkRoot, source, id)
+	if promoteErr != nil {
+		t.Fatal(promoteErr)
+	}
+	_, err := rt.store.db.Exec(`UPDATE jobs SET artifact_run_path=? WHERE id=?`, source, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = rt.store.db.Exec(`UPDATE job_attempts SET record_finished_at='2026-01-01T10:00:00Z' WHERE job_id=?`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meeting := canonicalMeetingPath(rt.cfg.WorkRoot, id)
+	if err = os.MkdirAll(meeting, 0755); err != nil {
+		t.Fatal(err)
+	}
+	opus := canonicalOpusPath(rt.cfg.WorkRoot, id)
+	if err = os.WriteFile(opus, []byte("published"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	seal := attemptOpusPath(rt.cfg.WorkRoot, id, 1)
+	if err = os.Link(opus, seal); err != nil {
+		t.Fatal(err)
+	}
+	_, err = rt.store.db.Exec(`INSERT INTO artifact_availability(job_id,published_attempt,output) VALUES(?,1,'present')`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = rt.store.db.Exec(`UPDATE job_attempts SET state='succeeded',publish_finished_at='2026-02-01T00:00:00Z' WHERE job_id=?`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &rt.retention.settings
+	s.Recordings.Policy = retentionPolicy{Count: 1, Unit: "months"}
+	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	rt.runRetentionSweep(context.Background(), now)
+	assertGone(t, source, "source policy")
+	assertGone(t, attemptRunPath(rt.cfg.WorkRoot, id, 1), "source duplicate cannot survive")
+	assertExists(t, opus, "independent output policy")
+	job := mustGetJob(t, rt.store, id)
+	if _, err = rt.store.QueueRerunAttempt(context.Background(), job, nowUTCString()); err != ErrJobNotEligibleForRerun {
+		t.Fatal("expired source accepted", err)
+	}
+	if got := rt.artifactAvailability(job); got.Source != "expired" || got.RerunBlockedReason == "" {
+		t.Fatal(got)
+	}
+	s.Current = retentionPolicy{Count: 1, Unit: "weeks"}
+	rt.runRetentionSweep(context.Background(), now)
+	assertGone(t, meeting, "coupled archive")
+	assertGone(t, opus, "coupled archive")
+	assertGone(t, seal, "same-version hard link")
+	if _, err = rt.store.GetJob(context.Background(), id); err != nil {
+		t.Fatal("metadata removed", err)
+	}
+}

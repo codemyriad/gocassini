@@ -124,6 +124,11 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artifact_operations WHERE job_id=?`, job.ID).Scan(&pending); err != nil || pending != 0 {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
+	var source string
+	_ = s.db.QueryRowContext(ctx, `SELECT source FROM artifact_availability WHERE job_id=?`, job.ID).Scan(&source)
+	if source == "expired" {
+		return Job{}, ErrJobNotEligibleForRerun
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, fmt.Errorf("begin rerun attempt: %w", err)

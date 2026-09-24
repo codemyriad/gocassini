@@ -171,6 +171,37 @@ func (rt *Runtime) expireJobArtifacts(ctx context.Context, id string, s retentio
 			return err
 		}
 	}
+	return rt.expireCanonicalArchives(job, attempts, s, now)
+}
+
+func (rt *Runtime) expireCanonicalArchives(job Job, attempts []JobAttempt, s retentionSettings, now time.Time) error {
+	id := job.ID
+	// Source age remains the original capture's age, not a rerun's date.
+	if job.ArtifactRunPath != nil && *job.ArtifactRunPath == canonicalRunPath(rt.cfg.WorkRoot, id) {
+		for _, a := range attempts {
+			if a.RecordFinishedAt == nil {
+				continue
+			}
+			if err := rt.expirePaths(id, a.AttemptNumber, "audio", s.Recordings.policyFor("audio"), retentionAnchor(a.RecordFinishedAt), now, s.Revision, canonicalRunPath(rt.cfg.WorkRoot, id), attemptRunPath(rt.cfg.WorkRoot, id, a.AttemptNumber)); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	var published int
+	if err := rt.store.db.QueryRow(`SELECT published_attempt FROM artifact_availability WHERE job_id=?`, id).Scan(&published); err != nil || published == 0 {
+		return nil
+	}
+	for _, a := range attempts {
+		if a.AttemptNumber != published {
+			continue
+		}
+		if a.State != "succeeded" || a.PublishFinishedAt == nil {
+			return nil
+		}
+		// Include the latest seal's hardlink/copy, but not different versions.
+		return rt.expirePaths(id, published, "current", s.Current, retentionAnchor(a.PublishFinishedAt), now, s.Revision, canonicalMeetingPath(rt.cfg.WorkRoot, id), canonicalOpusPath(rt.cfg.WorkRoot, id), attemptSealDir(rt.cfg.WorkRoot, id, published), attemptMeetingPath(rt.cfg.WorkRoot, id, published))
+	}
 	return nil
 }
 func (rt *Runtime) expirePaths(id string, attempt int, kind string, p retentionPolicy, anchor, now time.Time, revision int, paths ...string) error {
