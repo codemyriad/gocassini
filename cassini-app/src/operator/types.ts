@@ -84,6 +84,7 @@ export interface JobAttempt {
 }
 
 export interface JobDetailResponse {
+  availability?: { source: string; output: string; video: string; published_attempt: number; rerun_blocked_reason?: string };
   job: Job;
   attempts: JobAttempt[];
 }

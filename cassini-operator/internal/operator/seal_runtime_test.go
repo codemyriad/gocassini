@@ -60,23 +60,11 @@ func TestSealQueuesPublishWithTheArtifactItSealed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("digest the sealed artifact: %v", err)
 	}
-	if job.ArtifactOpusSHA256 == nil || *job.ArtifactOpusSHA256 != sealedDigest {
-		t.Fatalf("recorded digest = %v, want %s", job.ArtifactOpusSHA256, sealedDigest)
+	// Until publication succeeds only the attempt owns this seal.
+	if job.ArtifactOpusPath != nil || job.ArtifactOpusSHA256 != nil {
+		t.Fatal("unpublished seal replaced current archive")
 	}
-
-	// The canonical `.opus` is a promotion of the sealed artifact, byte for
-	// byte — not a second, independent pack of the same meeting.
-	canonical := canonicalOpusPath(rt.cfg.WorkRoot, "seal-ok")
-	if job.ArtifactOpusPath == nil || *job.ArtifactOpusPath != canonical {
-		t.Fatalf("job artifact_opus_path = %v, want %s", job.ArtifactOpusPath, canonical)
-	}
-	canonicalDigest, err := fileSHA256(canonical)
-	if err != nil {
-		t.Fatalf("digest the canonical artifact: %v", err)
-	}
-	if canonicalDigest != sealedDigest {
-		t.Fatalf("canonical digest %s != sealed digest %s", canonicalDigest, sealedDigest)
-	}
+	assertGone(t, canonicalOpusPath(rt.cfg.WorkRoot, "seal-ok"), "not published")
 
 	// The publish task carries the immutable path, not a name to resolve later.
 	select {

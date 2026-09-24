@@ -28,8 +28,6 @@ func (rt *Runtime) startPublishWorker() {
 	// again: a crash between replaceStagedDirectory's two renames leaves the
 	// destination (including the live published site) missing with only the
 	// ".backup" copy surviving in the staging root.
-	rt.reconcilePromotionLeftovers()
-	rt.sweepArtifactRetention()
 	rt.workerWG.Add(1)
 	go rt.publishWorker()
 }
@@ -66,6 +64,8 @@ func (rt *Runtime) publishWorker() {
 }
 
 func (rt *Runtime) runPublishJob(task publishTask) {
+	unlock := rt.store.lockArtifacts(task.JobID)
+	defer unlock()
 	if err := rt.waitForRecordingIdle(); err != nil {
 		return
 	}
@@ -158,6 +158,10 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// policy would prune for the current attempt is already gone above; the
 	// removal is idempotent, and the policy still governs the attempt `.run`,
 	// `.meeting` and every superseded attempt.
+	if err := rt.promotePublishedPair(task.JobID, task.AttemptNumber); err != nil {
+		rt.logger.Printf("published archive promotion pending id=%s: %v", task.JobID, err)
+		return
+	}
 	rt.pruneArtifactsForJob(task.JobID)
 }
 
