@@ -26,6 +26,8 @@ describe("transcript export", () => {
   it("names an empty transcript and makes distinct safe file names", () => {
     expect(transcriptText(null, [])).toBe("Meeting transcript\n\nNo transcript available.\n");
     expect(safeMeetingStem({ title: "Review / launch", id: "id:1" })).toBe("Review-launch-id-1");
+    expect(safeMeetingStem({ title: "Qualitätssicherung", id: "one" })).toBe("Qualitätssicherung-one");
+    expect(safeMeetingStem({ title: "Daily Standup", id: "Daily-Standup--2026-03-13" })).toBe("Daily-Standup--2026-03-13");
     expect(safeMeetingStem({ title: "Review / launch", id: "id:2" })).not.toBe(
       safeMeetingStem({ title: "Review / launch", id: "id:1" }),
     );

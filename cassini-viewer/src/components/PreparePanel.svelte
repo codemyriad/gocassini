@@ -71,7 +71,7 @@
   // set, so the request for the SET answers 404: the bundle cannot be assembled
   // at all, and neither can a question be asked of it. The row says "Blocks
   // Prepare", and the actions have to agree with it.
-  $: blocked = overCap || entries.some((entry) => lacksPortableAudio(entry));
+  $: blocked = entries.length === 0 || overCap || entries.some((entry) => lacksPortableAudio(entry));
 
   $: downloadName = `cassini-context-${new Date().toISOString().slice(0, 10)}.md`;
 
@@ -108,7 +108,7 @@
       if (key !== selectionKey) throw new Error("The selection changed — press again.");
       sections.push(transcriptText(entry, displaySegmentsForArtifact(artifact)));
     }
-    const text = sections.join("\n");
+    const text = sections.join("\n--- Next meeting ---\n\n");
     transcriptsText = text;
     transcriptsKey = key;
     return text;
@@ -165,18 +165,20 @@
     busy = true;
     status = { tone: "ok", text: "Preparing meeting files…" };
     const key = selectionKey;
+    const selected = [...entries];
     try {
       const files = [];
-      for (const entry of [...entries]) {
+      for (const entry of selected) {
         files.push(await loadAudioFile(entry));
-        if (key !== selectionKey) throw new Error("The selection changed — press again.");
       }
       if (files.length === 1) {
-        saveBlob(new Blob([files[0]!.bytes.buffer], { type: "audio/ogg" }), files[0]!.name);
+        saveBlob(files[0]!.blob, files[0]!.name);
       } else {
-        saveBlob(zipAudioFiles(files), `cassini-meeting-files-${new Date().toISOString().slice(0, 10)}.zip`);
+        saveBlob(await zipAudioFiles(files), `cassini-meeting-files-${new Date().toISOString().slice(0, 10)}.zip`);
       }
-      status = { tone: "ok", text: files.length === 1 ? "Meeting file downloaded." : "Meeting files downloaded." };
+      status = { tone: "ok", text: key === selectionKey
+        ? files.length === 1 ? "Meeting file downloaded." : "Meeting files downloaded."
+        : "Meeting files from the earlier selection downloaded." };
     } catch (error) {
       status = { tone: "error", text: describeError(error) };
     } finally {
@@ -254,19 +256,7 @@
     status = { tone: "ok", text: "Preparing…" };
     try {
       const text = await ensureBundle();
-      const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = downloadName;
-      // In the host document, not the shadow root: the download is a navigation
-      // the page performs, and an anchor inside a shadow tree does not reliably
-      // get one.
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      // After the click has been dispatched, not during it — revoking the URL
-      // in the same task cancels the save in some browsers.
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      saveBlob(new Blob([text], { type: "text/markdown;charset=utf-8" }), downloadName);
       status = { tone: "ok", text: `Downloaded ${downloadName}.` };
     } catch (error) {
       status = { tone: "error", text: describeError(error) };

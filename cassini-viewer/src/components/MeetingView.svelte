@@ -164,8 +164,12 @@
   // switcher instead of taking over the whole "meeting failed to load" state.
   let transcriptSwitchError = "";
   let errorMessage = "";
-  let exportBusy = false;
+  let audioExportBusy = false;
+  let copyExportBusy = false;
   let exportStatus = "";
+  let exportRequestId = 0;
+  let audioRequestId = 0;
+  let copyRequestId = 0;
   // lastBundled tracks the previous value of the `bundled` prop so the reactive
   // block below fires on transitions only. Initialised from the prop because
   // onMount already loads when it starts true; without that, mounting bundled
@@ -243,6 +247,11 @@
   }
 
   function applyArtifact(artifact: LoadedArtifact) {
+    exportRequestId += 1;
+    audioRequestId += 1;
+    copyRequestId += 1;
+    audioExportBusy = false;
+    copyExportBusy = false;
     exportStatus = "";
     stopPlaybackClock();
     audioEl?.pause();
@@ -290,6 +299,11 @@
   }
 
   function resetLoadedArtifact() {
+    exportRequestId += 1;
+    audioRequestId += 1;
+    copyRequestId += 1;
+    audioExportBusy = false;
+    copyExportBusy = false;
     exportStatus = "";
     stopPlaybackClock();
     audioEl?.pause();
@@ -321,40 +335,50 @@
   }
 
   async function copyTranscript() {
+    if (copyExportBusy) return;
     const text = transcriptText(meeting, displaySegments);
     if (!navigator.clipboard?.writeText) {
       exportStatus = "Clipboard unavailable here — use Download transcript.";
       return;
     }
+    const requestId = ++exportRequestId;
+    const copyId = ++copyRequestId;
+    copyExportBusy = true;
     try {
       await navigator.clipboard.writeText(text);
-      exportStatus = "Transcript copied.";
+      if (requestId === exportRequestId) exportStatus = "Transcript copied.";
     } catch {
-      exportStatus = "Clipboard blocked here — use Download transcript.";
+      if (requestId === exportRequestId) exportStatus = "Clipboard blocked here — use Download transcript.";
+    } finally {
+      if (copyId === copyRequestId) copyExportBusy = false;
     }
   }
 
   function downloadTranscript() {
+    exportRequestId += 1;
     saveTranscript(transcriptText(meeting, displaySegments), `${exportStem()}-transcript.txt`);
     exportStatus = "Transcript downloaded.";
   }
 
   async function downloadAudio() {
-    if (!audioSrc || exportBusy) return;
-    exportBusy = true;
+    if (!audioSrc || audioExportBusy) return;
+    const requestId = ++exportRequestId;
+    const audioId = ++audioRequestId;
+    const source = audioSrc;
+    audioExportBusy = true;
     exportStatus = "Preparing meeting file…";
     try {
       const file = await loadAudioFile({
         id: meeting?.id ?? "meeting",
         title: meeting?.title ?? "Meeting",
-        audioPath: audioSrc,
+        audioPath: source,
       });
-      saveBlob(new Blob([file.bytes.buffer], { type: "audio/ogg" }), file.name);
-      exportStatus = "Meeting file downloaded.";
+      saveBlob(file.blob, file.name);
+      if (requestId === exportRequestId) exportStatus = "Meeting file downloaded.";
     } catch (error) {
-      exportStatus = error instanceof Error ? error.message : String(error);
+      if (requestId === exportRequestId) exportStatus = error instanceof Error ? error.message : String(error);
     } finally {
-      exportBusy = false;
+      if (audioId === audioRequestId) audioExportBusy = false;
     }
   }
 
@@ -1044,13 +1068,13 @@
     {/if}
     {#if transcriptIndex}
       <div class="mt-2 flex flex-wrap items-center gap-1" role="group" aria-label="Take this meeting with you">
-        <button class="btn btn-ghost btn-xs" type="button" disabled={displaySegments.length === 0} on:click={copyTranscript}>
+        <button class="btn btn-ghost btn-xs" type="button" disabled={copyExportBusy || displaySegments.length === 0} on:click={copyTranscript}>
           <Copy size={14} aria-hidden="true" /> Copy transcript
         </button>
         <button class="btn btn-ghost btn-xs" type="button" disabled={displaySegments.length === 0} on:click={downloadTranscript}>
           <Download size={14} aria-hidden="true" /> Download transcript
         </button>
-        <button class="btn btn-ghost btn-xs" type="button" disabled={!audioSrc || exportBusy} on:click={downloadAudio}>
+        <button class="btn btn-ghost btn-xs" type="button" disabled={!audioSrc || audioExportBusy} on:click={downloadAudio}>
           <Download size={14} aria-hidden="true" /> Download audio
         </button>
         <span class="text-xs text-base-content/70" role="status">{exportStatus}</span>

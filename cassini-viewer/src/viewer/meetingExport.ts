@@ -70,7 +70,12 @@ export function transcriptText(entry: Pick<MeetingCatalogEntry, "title" | "dateL
 }
 
 export function safeMeetingStem(entry: Pick<MeetingCatalogEntry, "title" | "id">): string {
-  const title = entry.title.normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 80) || "meeting";
+  const title = Array.from(entry.title.normalize("NFC").replace(/[^\p{L}\p{N}]+/gu, "-"))
+    .slice(0, 80).join("").replace(/^-|-$/g, "") || "meeting";
   const id = entry.id.replace(/[^a-zA-Z0-9_-]/g, "-");
+  if (id.toLowerCase() === title.toLowerCase()) return title;
+  if (id.toLowerCase().startsWith(`${title.toLowerCase()}-`)) {
+    return id;
+  }
   return `${title}-${id}`;
 }
