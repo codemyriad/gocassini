@@ -17,6 +17,10 @@ wait_for_nextcloud 420
 harness_configure_appapi_phase
 harness_install_exapp_phase
 
+if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" ]]; then
+  "$SCRIPT_DIR/seed-published.sh" --pack "$CASSINI_HARNESS_SEED_PUBLISHED_DIR"
+fi
+
 if [[ -n "${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}" ]]; then
   "$SCRIPT_DIR/seed-operator-volume.sh" --pack "$CASSINI_HARNESS_SEED_OPERATOR_DIR"
 fi

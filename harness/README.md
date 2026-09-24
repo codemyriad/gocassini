@@ -223,6 +223,8 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--debug-skip-storage-scaffold` | `CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1` | off | Build no recordings storage at all. Debug only. See §2.8.1. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |
+| `stack up --seed-published DIR` | `CASSINI_HARNESS_SEED_PUBLISHED_DIR` | unset | Import a static meeting pack and give `admin` read access to each recording. Requires an installed ExApp. |
+| `stack up --seed-operator DIR` | `CASSINI_HARNESS_SEED_OPERATOR_DIR` | unset | Restore an AppAPI operator volume into a fresh ExApp volume. |
 | `stack down --suspend` | n/a | false | Down-only; stop containers but keep them. |
 | `stack down --volumes` | n/a | false | Down-only; remove project volumes too. |
 | `stack down --full` | n/a | false | Down-only; remove all known harness resources. |
@@ -1363,12 +1365,34 @@ CALL_URL="$(./bin/cassini dev room create --name "Basic video room" | tail -n1)"
 
 ---
 
-### 9.5 Downloading a local archive
+### 9.5 Seeding published recordings
 
 Use `cassini dev meetings pull --out harness/runtime/seed/prod` to download
 recordings visible to your Nextcloud account. The output is a confidential local
-static archive. The harness records its own meetings through Talk so tests use
-Nextcloud shares created by Cassini.
+static archive. To import it into a local installed ExApp stack:
+
+```bash
+./bin/cassini dev stack up --cassini installed-exapp \
+  --seed-published harness/runtime/seed/prod
+```
+
+The harness validates `catalog.json` and every referenced `.opus`, copies the
+recordings into the private `cassini/CassiniRecordings/meetings` directory, scans
+them into Nextcloud Files, and creates a read-only share for `admin` on each
+file. No other recipient is inferred from the source pack. Production account
+names in the original meeting are not assumed to exist locally.
+
+```text
+static pack             private Nextcloud Files         visibility
+catalog.json --names--> CassiniRecordings/meetings/ --> admin read shares
+meetings/*.opus --copy-->       *.opus
+```
+
+Reusing the same pack skips files with identical bytes and existing `admin`
+shares. A filename collision with different bytes stops the import. The
+installed app does not store a remote catalog, so imported meetings without a
+local metadata row initially use filename-based titles; their embedded audio
+and transcript remain available. Keep the pack out of version control.
 
 ### 9.6 Seeding the installed operator volume
 

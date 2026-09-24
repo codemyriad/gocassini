@@ -34,6 +34,7 @@ func clearDevStackAmbient(t *testing.T) {
 		"CASSINI_HARNESS_EXAPP_IMAGE_MODE",
 		"CASSINI_HARNESS_PATCH_MODE",
 		"CASSINI_HARNESS_EXISTING",
+		"CASSINI_HARNESS_SEED_PUBLISHED_DIR",
 		"CASSINI_HARNESS_SEED_OPERATOR_DIR",
 		"SPREED_PROFILE",
 	} {
@@ -849,6 +850,34 @@ func containsEnv(env []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestResolveDevStackPlanPublishedSeed(t *testing.T) {
+	clearDevStackAmbient(t)
+	seed := t.TempDir()
+	if err := os.WriteFile(filepath.Join(seed, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--seed-published", seed}, testEnv(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.PublishedSeedDir != seed || !containsEnv(plan.env(), "CASSINI_HARNESS_SEED_PUBLISHED_DIR="+seed) {
+		t.Fatalf("published seed was not propagated: %q", plan.PublishedSeedDir)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--seed-published", seed}, "requires --cassini installed-exapp"},
+		{[]string{"--cassini", "installed-exapp", "--debug-skip-storage-scaffold", "--seed-published", seed}, "requires the recordings owner"},
+		{[]string{"--cassini", "installed-exapp", "--seed-published", t.TempDir()}, "has no catalog.json"},
+	} {
+		_, _, err := resolveDevStackPlan("up", tc.args, testEnv(nil))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("args %v: error = %v, want %q", tc.args, err, tc.want)
+		}
+	}
 }
 
 func TestResolveDevStackPlanOperatorSeed(t *testing.T) {

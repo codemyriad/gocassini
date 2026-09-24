@@ -153,6 +153,9 @@ Common options:
 up options:
   --resume   reuse matching stopped containers or retained harness volumes
   --reset    remove and recreate containers and volumes
+  --seed-published DIR
+             import a static meeting pack and share each meeting read-only
+             with admin; requires --cassini installed-exapp
   --seed-operator DIR
              copy an AppAPI persistent-volume root containing operator/jobs/
              into a fresh installed ExApp volume after deployment

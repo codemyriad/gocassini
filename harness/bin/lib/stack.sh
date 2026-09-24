@@ -261,6 +261,10 @@ EOF_CONF
 }
 
 compose() {
+  local -a compose_args=(-p "$PROJECT_NAME" -f "$COMPOSE_FILE")
+  if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" ]]; then
+    compose_args+=(-f "$TEST_DIR/compose.seed-published.yml")
+  fi
   local profile_args=()
   if [[ "$SPREED_PROFILE" == "full" ]]; then
     profile_args+=(--profile full)
@@ -269,10 +273,10 @@ compose() {
     profile_args+=(--profile remote)
   fi
   if ((${#profile_args[@]} > 0)); then
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
+    docker compose "${compose_args[@]}" "${profile_args[@]}" "$@"
   else
     # Avoid expanding an empty array under macOS Bash 3.2 + `set -u`.
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+    docker compose "${compose_args[@]}" "$@"
   fi
 }
 
