@@ -250,6 +250,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// the binary's job is to be the operator, and a subcommand is the exception.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
+		case "import-meeting-metadata":
+			return runImportMeetingMetadata(ctx, args[1:], stdout, stderr)
 		case backfillSearchCommand:
 			return runBackfillSearch(ctx, args[1:], stdout, stderr)
 		case backfillAnnotationsCommand:

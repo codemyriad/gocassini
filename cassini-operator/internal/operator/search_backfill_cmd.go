@@ -47,6 +47,7 @@ const (
 func runBackfillSearch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini-operator "+backfillSearchCommand, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	strict := fs.Bool("strict", false, "fail unless every recording is searchable")
 	dryRun := fs.Bool("dry-run", false,
 		"list what would be indexed, without opening or writing the index")
 	fs.Usage = func() {
@@ -151,6 +152,9 @@ Flags:
 		// partially covered index is the normal state of a real archive, and an
 		// operator should know it is expected rather than a broken run.
 		fmt.Fprintf(stdout, "meetings that could not be indexed are recorded with a reason and reported as outside search coverage, not as having no matches\n")
+		if *strict {
+			return backfillSearchExitFailed
+		}
 	}
 	return backfillSearchExitOK
 }
@@ -165,7 +169,7 @@ func (c ExAppConfig) archiveBackfillTargets(ctx context.Context) ([]searchBackfi
 	targets := make([]searchBackfillTarget, 0, len(names))
 	for _, name := range names {
 		jobID := strings.TrimSuffix(name, ".opus")
-		if !isPlainMeetingID(jobID) {
+		if jobID == "" || strings.ContainsAny(jobID, "/\\\x00\r\n") {
 			continue
 		}
 		targets = append(targets, searchBackfillTarget{JobID: jobID, OpusName: name})

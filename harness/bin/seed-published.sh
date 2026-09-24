@@ -117,6 +117,13 @@ for candidate in nc_app_gocassini cassini-exapp; do
   fi
 done
 [[ -n "$exapp_container" ]] || die "installed ExApp container is not running after published seeding"
+# Import descriptions through the operator, mapping names to this Nextcloud's
+# file IDs. Neither a source database nor source shares can supply those IDs.
+docker cp "$PACK_DIR/catalog.json" "$exapp_container:/tmp/cassini-seed-catalog.json"
+docker exec "$exapp_container" /usr/local/bin/cassini-operator import-meeting-metadata --catalog /tmp/cassini-seed-catalog.json
+docker exec "$exapp_container" rm -f /tmp/cassini-seed-catalog.json
+docker exec "$exapp_container" /usr/local/bin/cassini-operator backfill-search --strict
+docker exec "$exapp_container" /usr/local/bin/cassini-operator backfill-annotations --strict
 log "Restarting $exapp_container so its recording inventory includes the imported archive"
 docker restart "$exapp_container" >/dev/null
 
@@ -126,5 +133,13 @@ meetings_json="$(harness_http_body_with_retry "seeded meetings list" -u "$ADMIN_
 actual_count="$(jq '.meetings | length' <<<"$meetings_json")"
 [[ "$actual_count" == "$expected_count" ]] \
   || die "imported $expected_count recording(s), but admin sees $actual_count after the ExApp restart"
+python3 - "$PACK_DIR/catalog.json" "$meetings_json" <<'PY'
+import json, sys
+expected = json.load(open(sys.argv[1]))['meetings']
+actual = {e['audioPath']: e for e in json.loads(sys.argv[2])['meetings']}
+for entry in expected:
+    if actual.get(entry['audioPath']) != entry:
+        raise SystemExit('seeded metadata differs from catalog: ' + entry['audioPath'])
+PY
 
 echo "[published-seed] imported $copied recording(s); admin can list all $actual_count seeded recording(s)"
