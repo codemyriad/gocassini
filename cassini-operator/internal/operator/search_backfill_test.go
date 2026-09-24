@@ -124,6 +124,17 @@ func TestBackfillIndexesAPublishedMeeting(t *testing.T) {
 	}
 }
 
+func TestBackfillReportsEmptyTranscriptSeparatelyFromReadFailure(t *testing.T) {
+	f := newBackfillFixture(t)
+	archive := func(context.Context, string) (searchArchiveCopy, func(), error) {
+		return searchArchiveCopy{Digest: digestOf("empty")}, func() {}, nil
+	}
+	report, err := f.rt.backfillSearchIndex(context.Background(), []searchBackfillTarget{{JobID: "EMPTY", OpusName: "EMPTY.opus"}}, deliveredNoChecksum(), archive)
+	if err != nil || report.Empty != 1 || report.Unavailable != 1 || report.Failed != 0 {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+}
+
 // THE check (review B1). current/ tracks the last attempt that BUILT; a rerun
 // that built and then failed to publish leaves a transcript there that does
 // not match the delivered .opus. The delivered digest comes from the ARCHIVE'S

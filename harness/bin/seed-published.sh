@@ -25,11 +25,12 @@ PACK_DIR="$(cd "$PACK_DIR" && pwd)"
 # Validate the complete pack before modifying Nextcloud. Only the catalog's
 # recordings are copied; a static pack can also contain unrelated site assets.
 names_file="$(mktemp)"
+listing_file="$(mktemp)"
 container_id=""
 container_manifest=""
 temporary=""
 cleanup() {
-  rm -f "$names_file"
+  rm -f "$names_file" "$listing_file"
   if [[ -n "$container_id" && -n "$temporary" ]]; then
     docker exec "$container_id" rm -f -- "$temporary" >/dev/null 2>&1 || true
   fi
@@ -133,10 +134,11 @@ meetings_json="$(harness_http_body_with_retry "seeded meetings list" -u "$ADMIN_
 actual_count="$(jq '.meetings | length' <<<"$meetings_json")"
 [[ "$actual_count" == "$expected_count" ]] \
   || die "imported $expected_count recording(s), but admin sees $actual_count after the ExApp restart"
-python3 - "$PACK_DIR/catalog.json" "$meetings_json" <<'PY'
+printf '%s' "$meetings_json" > "$listing_file"
+python3 - "$PACK_DIR/catalog.json" "$listing_file" <<'PY'
 import json, sys
 expected = json.load(open(sys.argv[1]))['meetings']
-actual = {e['audioPath']: e for e in json.loads(sys.argv[2])['meetings']}
+actual = {e['audioPath']: e for e in json.load(open(sys.argv[2]))['meetings']}
 for entry in expected:
     if actual.get(entry['audioPath']) != entry:
         raise SystemExit('seeded metadata differs from catalog: ' + entry['audioPath'])

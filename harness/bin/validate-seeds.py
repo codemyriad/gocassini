@@ -97,6 +97,12 @@ def validate(published, operator):
                     tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                     if name == 'jobs.sqlite3' and not {'jobs', 'job_attempts', 'schema_migrations'} <= tables:
                         raise ValueError('jobs.sqlite3: incompatible operator database')
+                    if name == 'jobs.sqlite3':
+                        migrations = pathlib.Path(__file__).resolve().parents[2] / 'cassini-operator/internal/operator/migrations'
+                        known = sorted(int(p.name.split('_')[0]) for p in migrations.glob('*.up.sql'))
+                        applied = [r[0] for r in db.execute('SELECT version FROM schema_migrations ORDER BY version')]
+                        if applied != known[:len(applied)]:
+                            raise ValueError('jobs.sqlite3: unknown or non-contiguous migration history')
                     if name == 'annotations.sqlite3':
                         version = db.execute('PRAGMA user_version').fetchone()[0]
                         if version not in range(2, 8):

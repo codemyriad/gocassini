@@ -47,7 +47,7 @@ const (
 func runBackfillSearch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini-operator "+backfillSearchCommand, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	strict := fs.Bool("strict", false, "fail unless every recording is searchable")
+	strict := fs.Bool("strict", false, "fail on unreadable recordings or indexing failures (empty transcripts are reported)")
 	dryRun := fs.Bool("dry-run", false,
 		"list what would be indexed, without opening or writing the index")
 	fs.Usage = func() {
@@ -147,12 +147,15 @@ Flags:
 
 	fmt.Fprintf(stdout, "indexed=%d unchanged=%d not-searchable=%d failed=%d of %d meeting(s)\n",
 		report.Indexed, report.Unchanged, report.Unavailable, report.Failed, len(targets))
+	if report.Empty > 0 {
+		fmt.Fprintf(stdout, "empty-transcripts=%d (readable recordings without searchable words)\n", report.Empty)
+	}
 	if report.Unavailable > 0 || report.Failed > 0 {
 		// Said out loud rather than left to be inferred from the counts: a
 		// partially covered index is the normal state of a real archive, and an
 		// operator should know it is expected rather than a broken run.
 		fmt.Fprintf(stdout, "meetings that could not be indexed are recorded with a reason and reported as outside search coverage, not as having no matches\n")
-		if *strict {
+		if *strict && (report.Failed > 0 || report.Unavailable > report.Empty) {
 			return backfillSearchExitFailed
 		}
 	}
