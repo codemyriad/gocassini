@@ -104,4 +104,27 @@ container_manifest="/tmp/cassini-published-seed-$$.txt"
 docker exec -i "$container_id" sh -c 'cat > "$1"' seed "$container_manifest" < "$names_file"
 docker exec "$container_id" chmod 644 "$container_manifest"
 compose exec -T -u www-data nextcloud php /usr/local/bin/cassini-seed-published-shares.php "$container_manifest"
-echo "[published-seed] imported $copied recording(s); all pack recordings have admin read access"
+
+# The operator can have populated its owner-inventory cache while the AppAPI
+# deployment was still starting on an empty archive. Restart after the import
+# so its first inventory sees the files that have just been scanned and shared.
+# This makes the seed visible immediately instead of waiting for the cache TTL.
+exapp_container=""
+for candidate in nc_app_gocassini cassini-exapp; do
+  if docker inspect "$candidate" >/dev/null 2>&1; then
+    exapp_container="$candidate"
+    break
+  fi
+done
+[[ -n "$exapp_container" ]] || die "installed ExApp container is not running after published seeding"
+log "Restarting $exapp_container so its recording inventory includes the imported archive"
+docker restart "$exapp_container" >/dev/null
+
+expected_count="$(wc -l < "$names_file" | tr -d ' ')"
+proxy_url="http://127.0.0.1:${NEXTCLOUD_HOST_PORT:-28080}/index.php/apps/app_api/proxy/gocassini"
+meetings_json="$(harness_http_body_with_retry "seeded meetings list" -u "$ADMIN_USER:$ADMIN_PASSWORD" "$proxy_url/published/meetings-list")"
+actual_count="$(jq '.meetings | length' <<<"$meetings_json")"
+[[ "$actual_count" == "$expected_count" ]] \
+  || die "imported $expected_count recording(s), but admin sees $actual_count after the ExApp restart"
+
+echo "[published-seed] imported $copied recording(s); admin can list all $actual_count seeded recording(s)"
