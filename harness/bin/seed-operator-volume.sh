@@ -18,7 +18,8 @@ Usage: harness/bin/seed-operator-volume.sh --pack DIR
 
 Copy an AppAPI Cassini persistent-volume root into the installed ExApp's
 fresh persistent volume. DIR must contain operator/jobs/. The source is bind
-mounted read-only into a short-lived copier container.
+mounted read-only into a short-lived copier container. It must also contain
+operator/jobs.sqlite3.
 EOF
 }
 
@@ -36,6 +37,7 @@ done
 [[ -n "$PACK_DIR" ]] || { usage >&2; die "--pack is required"; }
 [[ -d "$PACK_DIR" ]] || die "$PACK_DIR is not a directory"
 [[ -d "$PACK_DIR/operator/jobs" ]] || die "$PACK_DIR is not an operator-volume seed: expected operator/jobs/"
+[[ -s "$PACK_DIR/operator/jobs.sqlite3" ]] || die "$PACK_DIR is not an operator-volume seed: expected non-empty operator/jobs.sqlite3"
 [[ -n "$(find "$PACK_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] || die "$PACK_DIR is empty"
 
 if [[ -z "$CONTAINER_NAME" ]]; then

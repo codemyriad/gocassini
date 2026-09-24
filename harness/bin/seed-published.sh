@@ -41,7 +41,6 @@ trap cleanup EXIT
 python3 - "$PACK_DIR" > "$names_file" <<'PY' || die "seed pack is invalid"
 import json
 import pathlib
-import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -54,9 +53,11 @@ if data.get('version') != 'cassini.viewer.catalog.v1' or not isinstance(data.get
 seen = set()
 for entry in data['meetings']:
     path = entry.get('audioPath') if isinstance(entry, dict) else None
-    if not isinstance(path, str) or not re.fullmatch(r'\./meetings/([A-Za-z0-9][A-Za-z0-9._-]*\.opus)', path):
+    if not isinstance(path, str) or not path.startswith('./meetings/'):
         raise SystemExit(f'invalid meeting audioPath: {path!r}')
     name = path.split('/')[-1]
+    if path != './meetings/' + name or name in ('', '.', '..') or not name.endswith('.opus') or any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise SystemExit(f'invalid meeting audioPath: {path!r}')
     source = root / 'meetings' / name
     if name in seen or source.is_symlink() or not source.is_file() or source.stat().st_size == 0:
         raise SystemExit(f'duplicate, missing, linked, or empty recording: {name}')

@@ -144,6 +144,9 @@ Common options:
   --exapp-image-mode build|reuse-local|pull
   --build
   --patch=auto|none|force
+  --storage-mode acl-enabled
+             compatibility setting for existing harness commands; installed
+             ExApps use private Files shares for recording access
   --debug-skip-storage-scaffold
              build no recordings storage at all: no cassini service account,
              The state a real Nextcloud is

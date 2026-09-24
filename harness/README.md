@@ -220,6 +220,7 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
+| `--storage-mode acl-enabled` | `CASSINI_HARNESS_STORAGE_MODE` | unset | Accepted for existing harness commands. Installed ExApps always use private Files shares. |
 | `--debug-skip-storage-scaffold` | `CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1` | off | Build no recordings storage at all. Debug only. See §2.8.1. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |

@@ -1,6 +1,7 @@
 package cassini
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -61,6 +62,7 @@ type devStackPlan struct {
 	PatchMode             string
 	ExistingResourceMode  string
 	SkipStorageScaffold   bool
+	StorageMode           string
 	PublishedSeedDir      string
 	OperatorSeedDir       string
 	DownSuspend           bool
@@ -83,6 +85,7 @@ type devStackFlagOptions struct {
 	recordingBackend    string
 	exAppImageMode      string
 	patchMode           string
+	storageMode         string
 	skipStorageScaffold bool
 	seedPublishedDir    string
 	seedOperatorDir     string
@@ -120,6 +123,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	recordingBackend := stringFlag("recording-backend", "Talk recording backend: legacy, direct-operator, installed-exapp, none")
 	exAppImageMode := stringFlag("exapp-image-mode", "ExApp image mode: build, reuse-local, pull")
 	patchMode := stringFlag("patch", "patch mode: auto, none, force")
+	storageMode := stringFlag("storage-mode", "deprecated compatibility setting: acl-enabled")
 	skipStorageScaffold := fs.Bool("debug-skip-storage-scaffold", false,
 		"debug: build no recordings storage at all — no cassini service account, no Team folder, and neither native app")
 	seedPublishedDir := stringFlag("seed-published", "static meeting pack to import into the private recordings archive")
@@ -157,6 +161,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	opts.recordingBackend = *recordingBackend
 	opts.exAppImageMode = *exAppImageMode
 	opts.patchMode = *patchMode
+	opts.storageMode = *storageMode
 	opts.skipStorageScaffold = *skipStorageScaffold
 	opts.seedPublishedDir = *seedPublishedDir
 	opts.seedOperatorDir = *seedOperatorDir
@@ -219,6 +224,7 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	plan.RecordingBackend = pick("recording-backend", opts.recordingBackend, "CASSINI_HARNESS_RECORDING_BACKEND", devStackRecordingLegacy)
 	plan.ExAppImageMode = pick("exapp-image-mode", opts.exAppImageMode, "CASSINI_HARNESS_EXAPP_IMAGE_MODE", devStackImageReuseLocal)
 	plan.PatchMode = pick("patch", opts.patchMode, "CASSINI_HARNESS_PATCH_MODE", devStackPatchAuto)
+	plan.StorageMode = pick("storage-mode", opts.storageMode, "CASSINI_HARNESS_STORAGE_MODE", "")
 	plan.SkipStorageScaffold = opts.skipStorageScaffold ||
 		(!opts.set["debug-skip-storage-scaffold"] && get("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD") == "1")
 	plan.PublishedSeedDir = pick("seed-published", opts.seedPublishedDir, "CASSINI_HARNESS_SEED_PUBLISHED_DIR", "")
@@ -253,6 +259,9 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	}
 	if command != "down" && (opts.suspend || opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend, --volumes, and --full apply only to stack down")
+	}
+	if plan.StorageMode != "" && plan.StorageMode != "acl-enabled" {
+		return plan, rest, fmt.Errorf("--storage-mode %q is unsupported; use acl-enabled", plan.StorageMode)
 	}
 	if opts.suspend && (opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend keeps containers and cannot be combined with --volumes or --full")
@@ -527,6 +536,9 @@ func validateDevStackPlan(plan devStackPlan) error {
 	if plan.PublishedSeedDir != "" && plan.SkipStorageScaffold {
 		return errors.New("--seed-published requires the recordings owner account")
 	}
+	if plan.StorageMode != "" && plan.CassiniMode != devStackCassiniInstalledExApp {
+		return errors.New("--storage-mode requires --cassini installed-exapp")
+	}
 	if plan.OperatorSeedDir != "" && plan.ExistingResourceMode == devStackExistingResume {
 		return errors.New("--seed-operator cannot be combined with --resume: it only copies into a fresh ExApp volume")
 	}
@@ -589,6 +601,7 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_PATCH_MODE=" + plan.PatchMode,
 		"CASSINI_HARNESS_EXISTING=" + plan.ExistingResourceMode,
 		"CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=" + boolEnv(plan.SkipStorageScaffold),
+		"CASSINI_HARNESS_STORAGE_MODE=" + plan.StorageMode,
 		"SPREED_PROFILE=" + plan.SpreedProfile,
 		"CASSINI_HARNESS_PUBLIC_URL=" + plan.PublicURL,
 		"CASSINI_HARNESS_PUBLIC_HOST=" + plan.PublicHost,
@@ -601,7 +614,8 @@ func (plan devStackPlan) env() []string {
 	return env
 }
 
-// resolveDevStackPublishedSeedDir checks the static pack before startup.
+// resolveDevStackPublishedSeedDir checks every catalog entry before startup so
+// a malformed pull never gets as far as creating a container or volume.
 func resolveDevStackPublishedSeedDir(value string) (string, error) {
 	absolute, err := filepath.Abs(value)
 	if err != nil {
@@ -614,10 +628,57 @@ func resolveDevStackPublishedSeedDir(value string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("--seed-published %q is not a directory", value)
 	}
-	if _, err := os.Stat(filepath.Join(absolute, "catalog.json")); err != nil {
-		return "", fmt.Errorf("--seed-published %q has no catalog.json", value)
+	catalogPath := filepath.Join(absolute, "catalog.json")
+	catalogInfo, err := os.Lstat(catalogPath)
+	if err != nil || !catalogInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("--seed-published %q has no regular catalog.json", value)
+	}
+	raw, err := os.ReadFile(catalogPath)
+	if err != nil {
+		return "", fmt.Errorf("--seed-published %q: read catalog.json: %w", value, err)
+	}
+	if len(raw) > maxCatalogBytes {
+		return "", fmt.Errorf("--seed-published %q catalog.json exceeds %d bytes", value, maxCatalogBytes)
+	}
+	var catalog meetingsCatalog
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		return "", fmt.Errorf("--seed-published %q has invalid catalog.json: %w", value, err)
+	}
+	if catalog.Version != meetingsCatalogVersion || len(catalog.Meetings) == 0 {
+		return "", fmt.Errorf("--seed-published %q catalog.json must be %s with at least one meeting", value, meetingsCatalogVersion)
+	}
+	seen := make(map[string]bool, len(catalog.Meetings))
+	for index, item := range catalog.Meetings {
+		var entry meetingsCatalogEntry
+		if err := json.Unmarshal(item, &entry); err != nil {
+			return "", fmt.Errorf("--seed-published %q catalog meeting %d is invalid: %w", value, index, err)
+		}
+		rel, err := packRelativeAsset(entry.AudioPath)
+		if err != nil || !strings.HasPrefix(rel, "meetings/") || !validPublishedSeedAssetName(filepath.Base(rel)) {
+			return "", fmt.Errorf("--seed-published %q catalog meeting %d has invalid audioPath %q", value, index, entry.AudioPath)
+		}
+		if seen[rel] {
+			return "", fmt.Errorf("--seed-published %q catalog names %s more than once", value, rel)
+		}
+		seen[rel] = true
+		assetInfo, err := os.Lstat(filepath.Join(absolute, filepath.FromSlash(rel)))
+		if err != nil || !assetInfo.Mode().IsRegular() || assetInfo.Size() == 0 {
+			return "", fmt.Errorf("--seed-published %q catalog meeting %d has no non-empty regular asset %s", value, index, rel)
+		}
 	}
 	return absolute, nil
+}
+
+func validPublishedSeedAssetName(name string) bool {
+	if name == "" || name == "." || name == ".." || filepath.Ext(name) != ".opus" {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveDevStackOperatorSeedDir checks the AppAPI volume root before startup.
@@ -636,6 +697,10 @@ func resolveDevStackOperatorSeedDir(value string) (string, error) {
 	jobs, err := os.Stat(filepath.Join(absolute, "operator", "jobs"))
 	if err != nil || !jobs.IsDir() {
 		return "", fmt.Errorf("--seed-operator %q is not an operator-volume seed: expected operator/jobs/ beneath the volume root", value)
+	}
+	db, err := os.Lstat(filepath.Join(absolute, "operator", "jobs.sqlite3"))
+	if err != nil || !db.Mode().IsRegular() || db.Size() == 0 {
+		return "", fmt.Errorf("--seed-operator %q is not an operator-volume seed: expected non-empty operator/jobs.sqlite3", value)
 	}
 	return absolute, nil
 }
@@ -661,6 +726,7 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintln(w, "patch:")
 	fmt.Fprintf(w, "  mode: %s\n", plan.PatchMode)
 	fmt.Fprintln(w, "storage:")
+	fmt.Fprintf(w, "  mode: %s\n", yamlValueOrNull(plan.StorageMode))
 	fmt.Fprintf(w, "  skip_scaffold: %t\n", plan.SkipStorageScaffold)
 	fmt.Fprintln(w, "seed:")
 	fmt.Fprintf(w, "  published_pack: %s\n", yamlValueOrNull(plan.PublishedSeedDir))

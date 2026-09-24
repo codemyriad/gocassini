@@ -855,7 +855,13 @@ func containsEnv(env []string, want string) bool {
 func TestResolveDevStackPlanPublishedSeed(t *testing.T) {
 	clearDevStackAmbient(t)
 	seed := t.TempDir()
-	if err := os.WriteFile(filepath.Join(seed, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[]}`), 0o600); err != nil {
+	if err := os.Mkdir(filepath.Join(seed, "meetings"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "meetings", "daily--10:30.opus"), []byte("opus"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[{"audioPath":"./meetings/daily--10:30.opus"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plan, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--seed-published", seed}, testEnv(nil))
@@ -871,7 +877,8 @@ func TestResolveDevStackPlanPublishedSeed(t *testing.T) {
 	}{
 		{[]string{"--seed-published", seed}, "requires --cassini installed-exapp"},
 		{[]string{"--cassini", "installed-exapp", "--debug-skip-storage-scaffold", "--seed-published", seed}, "requires the recordings owner"},
-		{[]string{"--cassini", "installed-exapp", "--seed-published", t.TempDir()}, "has no catalog.json"},
+		{[]string{"--cassini", "installed-exapp", "--seed-published", t.TempDir()}, "has no regular catalog.json"},
+		{[]string{"--cassini", "installed-exapp", "--storage-mode", "default", "--seed-published", seed}, "storage-mode \"default\" is unsupported"},
 	} {
 		_, _, err := resolveDevStackPlan("up", tc.args, testEnv(nil))
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -885,6 +892,9 @@ func TestResolveDevStackPlanOperatorSeed(t *testing.T) {
 	seed := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(seed, "operator", "jobs"), 0o700); err != nil {
 		t.Fatalf("make operator seed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "operator", "jobs.sqlite3"), []byte("SQLite format 3\x00"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	plan, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--seed-operator", seed}, testEnv(nil))
@@ -906,14 +916,22 @@ func TestResolveDevStackPlanRejectsInvalidOrUnsafeOperatorSeed(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(good, "operator", "jobs"), 0o700); err != nil {
 		t.Fatalf("make operator seed: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(good, "operator", "jobs.sqlite3"), []byte("SQLite format 3\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	for name, tc := range map[string]struct {
 		args []string
 		want string
 	}{
 		"wrong shape": {[]string{"--cassini", "installed-exapp", "--seed-operator", empty}, "expected operator/jobs"},
-		"no ExApp":    {[]string{"--seed-operator", good}, "requires --cassini installed-exapp"},
-		"resume":      {[]string{"--cassini", "installed-exapp", "--resume", "--seed-operator", good}, "cannot be combined with --resume"},
+		"missing database": {[]string{"--cassini", "installed-exapp", "--seed-operator", func() string {
+			missing := t.TempDir()
+			_ = os.MkdirAll(filepath.Join(missing, "operator", "jobs"), 0o700)
+			return missing
+		}()}, "expected non-empty operator/jobs.sqlite3"},
+		"no ExApp": {[]string{"--seed-operator", good}, "requires --cassini installed-exapp"},
+		"resume":   {[]string{"--cassini", "installed-exapp", "--resume", "--seed-operator", good}, "cannot be combined with --resume"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, err := resolveDevStackPlan("up", tc.args, testEnv(nil))

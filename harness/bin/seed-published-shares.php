@@ -29,7 +29,7 @@ $created = 0;
 $alreadyShared = 0;
 
 foreach (file($argv[1], FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $name) {
-    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*\.opus$/D', $name)) {
+    if ($name === '' || $name === '.' || $name === '..' || !str_ends_with($name, '.opus') || str_contains($name, '/') || preg_match('/[\x00-\x1f\x7f]/', $name)) {
         throw new RuntimeException("invalid recording name in manifest: $name");
     }
     $node = $folder->get($name);
