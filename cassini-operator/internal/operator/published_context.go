@@ -312,13 +312,15 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 // segment of the characters a published meeting id is made of, and not a dot
 // segment.
 func isPlainMeetingID(id string) bool {
-	if id == "." || id == ".." {
+	if id == "" || id == "." || id == ".." {
 		return false
 	}
 	for _, r := range id {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '-', r == '_', r == '.':
+		// Historical portable exports include wall-clock times in their IDs.
+		// A colon is safe within this single path segment; separators are not.
+		case r == '-', r == '_', r == '.', r == ':':
 		default:
 			return false
 		}
