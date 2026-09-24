@@ -8,41 +8,13 @@ import (
 	"strings"
 )
 
-// Artifact retention (D-583).
-//
-// Until now nothing in the operator pruned anything, and the work root grew
-// with every job and every rerun. This is a deliberately narrow first policy:
-// it touches attempt-scoped payloads under runs/ and nothing else.
-//
-//	workRoot/
-//	  current/                      NEVER pruned — canonical .run/.meeting/.opus,
-//	                                which is what reruns and debugging read
-//	  runs/
-//	    <job>--attempt-NNN.run      ┐
-//	    <job>--attempt-NNN.meeting  ├─ heavy, and duplicated in current/ or transient
-//	    <job>--attempt-NNN.site     │
-//	    <job>--attempt-NNN.seal     ┘  (kept for the current attempt: it is the
-//	                                    artifact that was delivered, and its
-//	                                    digest is the evidence)
-//	    <job>--attempt-NNN.logs     NEVER pruned — the forensic record, and small
-//	  siteRoot/                     NEVER pruned — deleting published recordings
-//	                                is a separate, user-facing decision (D-521)
-//
-// What stays unbounded, stated plainly: the number of jobs, current/, and the
-// live site. A byte or age cap over the whole work root is a different feature
-// with different failure modes, and it is not this.
+// Legacy names remain accepted by the deprecated CLI/environment option.
+// They no longer select a pruner. Successful duplicate cleanup below is
+// independent of age policies; retention_worker.go owns all optional expiry.
 const (
-	// artifactRetentionAll keeps everything — the behaviour before this policy
-	// existed, and the escape hatch when something needs to be dug out of a
-	// completed attempt.
-	artifactRetentionAll = "all"
-	// artifactRetentionSuperseded prunes only attempts a rerun has replaced.
+	artifactRetentionAll        = "all"
 	artifactRetentionSuperseded = "superseded"
-	// artifactRetentionSealed additionally prunes a succeeded attempt's inputs
-	// and staging tree, keeping its sealed `.opus`.
-	artifactRetentionSealed = "sealed"
-	// defaultArtifactRetention is what an unset selection resolves to.
-	defaultArtifactRetention = artifactRetentionSealed
+	artifactRetentionSealed     = "sealed"
 )
 
 func artifactRetentionNames() []string {
@@ -51,11 +23,8 @@ func artifactRetentionNames() []string {
 	return names
 }
 
-// validateArtifactRetentionName accepts the empty name (meaning "unset", which
-// resolves to the default) and every known policy. A non-empty unrecognised name
-// is an error: silently keeping everything when an operator asked for pruning,
-// or silently pruning when they asked for something else, are both worse than
-// refusing to start.
+// Retain syntax validation for legacy deployment values during deprecation.
+// None of these values changes the saved calendar policies.
 func validateArtifactRetentionName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -69,97 +38,8 @@ func validateArtifactRetentionName(name string) error {
 	return fmt.Errorf("unknown artifact retention policy %q (known policies: %s)", name, strings.Join(artifactRetentionNames(), ", "))
 }
 
-func artifactRetentionOrDefault(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return defaultArtifactRetention
-	}
-	return name
-}
-
-// pruneJobArtifacts removes one job's prunable attempt payloads and returns what
-// it removed, so the caller can log it — a retention policy that prunes silently
-// reads, in an incident, exactly like a policy that lost data.
-//
-// Every removal is guarded on the artifact that replaces it actually existing.
-// A record that failed before promotion keeps its attempt `.run`, because there
-// is no canonical run to rebuild from; a build that failed keeps its `.meeting`
-// for the same reason. Nothing here removes the last copy of anything.
-func pruneJobArtifacts(workRoot, jobID string, currentAttempt int, succeeded bool, policy string) ([]string, error) {
-	policy = artifactRetentionOrDefault(policy)
-	if policy == artifactRetentionAll || strings.TrimSpace(workRoot) == "" || strings.TrimSpace(jobID) == "" {
-		return nil, nil
-	}
-
-	var removed []string
-	remove := func(path, why string) error {
-		if _, err := os.Stat(path); err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return fmt.Errorf("stat prunable artifact %s: %w", path, err)
-		}
-		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("prune %s: %w", path, err)
-		}
-		removed = append(removed, fmt.Sprintf("%s (%s)", path, why))
-		return nil
-	}
-	exists := func(path string) bool {
-		_, err := os.Stat(path)
-		return err == nil
-	}
-
-	// Superseded attempts: a rerun replaced them, and nothing reads them. The
-	// rerun rebuilds from current/<job>.run, never from an attempt directory.
-	for attempt := 1; attempt < currentAttempt; attempt++ {
-		if exists(canonicalRunPath(workRoot, jobID)) {
-			if err := remove(attemptRunPath(workRoot, jobID, attempt), "superseded attempt"); err != nil {
-				return removed, err
-			}
-		}
-		if exists(canonicalMeetingPath(workRoot, jobID)) {
-			if err := remove(attemptMeetingPath(workRoot, jobID, attempt), "superseded attempt"); err != nil {
-				return removed, err
-			}
-		}
-		if err := remove(attemptSitePath(workRoot, jobID, attempt), "superseded attempt"); err != nil {
-			return removed, err
-		}
-		if exists(canonicalOpusPath(workRoot, jobID)) {
-			if err := remove(attemptSealDir(workRoot, jobID, attempt), "superseded attempt"); err != nil {
-				return removed, err
-			}
-		}
-	}
-
-	// The current attempt, once it has succeeded: its `.run` and `.meeting` are
-	// byte-duplicated in current/, and its `.site` was a staging tree whose only
-	// unique content — the `.opus` — is both sealed in the attempt's `.seal`
-	// directory and delivered to the live site. The seal itself is kept: it is
-	// the artifact that was published, and its digest is what proves it.
-	if policy == artifactRetentionSealed && succeeded {
-		if exists(canonicalRunPath(workRoot, jobID)) {
-			if err := remove(attemptRunPath(workRoot, jobID, currentAttempt), "promoted into current/"); err != nil {
-				return removed, err
-			}
-		}
-		if exists(canonicalMeetingPath(workRoot, jobID)) {
-			if err := remove(attemptMeetingPath(workRoot, jobID, currentAttempt), "promoted into current/"); err != nil {
-				return removed, err
-			}
-		}
-		if err := remove(attemptSitePath(workRoot, jobID, currentAttempt), "delivered to the sink"); err != nil {
-			return removed, err
-		}
-	}
-	return removed, nil
-}
-
-// pruneArtifactsForJob applies the configured policy to one job and logs every
-// removal. It never fails the caller: retention is housekeeping, and a job that
-// published correctly must not be reported as failed because a directory could
-// not be removed.
+// pruneArtifactsForJob removes only proven successful duplicates, independent
+// of age policies. It never turns a successful publication into a failed job.
 func (rt *Runtime) pruneArtifactsForJob(jobID string) {
 	if !validArtifactJob(jobID) || rt.pendingArtifactOperation(jobID) {
 		return

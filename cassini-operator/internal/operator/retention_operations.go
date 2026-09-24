@@ -11,14 +11,23 @@ import (
 	"sync"
 )
 
-// Readers share the archive gate; expiry uses TryLock and delays when busy.
-// The job gate serializes pipeline handoffs and rerun admission.
+// The per-job gate serializes pipeline handoffs, rerun admission and expiry.
+// Archive-wide backfill readers additionally reserve artifactGate: long-running
+// recording jobs must not prevent unrelated terminal jobs from being cleaned.
 func (s *Store) lockArtifacts(job string) func() {
-	s.artifactGate.RLock()
 	m, _ := s.artifactJobs.LoadOrStore(job, &sync.Mutex{})
 	mu := m.(*sync.Mutex)
 	mu.Lock()
-	return func() { mu.Unlock(); s.artifactGate.RUnlock() }
+	return mu.Unlock
+}
+
+func (s *Store) tryLockArtifacts(job string) (func(), bool) {
+	m, _ := s.artifactJobs.LoadOrStore(job, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	if !mu.TryLock() {
+		return nil, false
+	}
+	return mu.Unlock, true
 }
 func (s *Store) ensureRetentionSchema() error {
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS artifact_operations (job_id TEXT PRIMARY KEY, operation TEXT NOT NULL);
@@ -28,14 +37,15 @@ func (s *Store) ensureRetentionSchema() error {
 
 // This is a pending-operation journal, not retained eviction-event history.
 type artifactOperation struct {
-	Job      string   `json:"job"`
-	Attempt  int      `json:"attempt"`
-	Action   string   `json:"action"`
-	Kind     string   `json:"kind"`
-	Targets  []string `json:"targets"`
-	Digest   string   `json:"digest,omitempty"`
-	Revision int      `json:"revision,omitempty"`
-	Deadline string   `json:"deadline,omitempty"`
+	MissingMeeting bool     `json:"missing_meeting,omitempty"`
+	Job            string   `json:"job"`
+	Attempt        int      `json:"attempt"`
+	Action         string   `json:"action"`
+	Kind           string   `json:"kind"`
+	Targets        []string `json:"targets"`
+	Digest         string   `json:"digest,omitempty"`
+	Revision       int      `json:"revision,omitempty"`
+	Deadline       string   `json:"deadline,omitempty"`
 }
 
 func decodeArtifactOperation(raw string) (artifactOperation, error) {
@@ -88,6 +98,9 @@ func validateArtifactTree(root, path string) error {
 		if d.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("symlink in artifact: %s", p)
 		}
+		if !d.IsDir() && !d.Type().IsRegular() {
+			return fmt.Errorf("non-regular artifact: %s", p)
+		}
 		return nil
 	})
 }
@@ -132,15 +145,21 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 		if err := validateArtifactTree(rt.cfg.WorkRoot, dst); err != nil {
 			return err
 		}
+		if op.Action == "promote" || op.Action == "video" {
+			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+				return err
+			}
+		}
 		staged := filepath.Join(dir, fmt.Sprintf("new-%d", i))
 		old := filepath.Join(dir, fmt.Sprintf("old-%d", i))
-		if op.Action == "promote" || op.Action == "video" {
+		removeOnly := op.Action == "remove" || (op.Action == "promote" && op.MissingMeeting && i == 0)
+		if !removeOnly && (op.Action == "promote" || op.Action == "video") {
 			if _, err := os.Stat(staged); os.IsNotExist(err) {
 				continue
 			} else if err != nil {
 				return err
 			}
-		} else if op.Action != "remove" {
+		} else if !removeOnly {
 			return errors.New("unknown artifact operation")
 		}
 		if _, err := os.Stat(old); os.IsNotExist(err) {
@@ -150,7 +169,7 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 		} else if err != nil {
 			return err
 		}
-		if op.Action != "remove" {
+		if !removeOnly {
 			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 				return err
 			}
@@ -171,7 +190,11 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 			return err
 		}
 		defer tx.Rollback()
-		if _, err = tx.Exec(`UPDATE jobs SET artifact_meeting_path=?,artifact_opus_path=?,artifact_opus_sha256=? WHERE id=?`, canonicalMeetingPath(rt.cfg.WorkRoot, op.Job), canonicalOpusPath(rt.cfg.WorkRoot, op.Job), op.Digest, op.Job); err != nil {
+		var meeting any = canonicalMeetingPath(rt.cfg.WorkRoot, op.Job)
+		if op.MissingMeeting {
+			meeting = nil
+		}
+		if _, err = tx.Exec(`UPDATE jobs SET artifact_meeting_path=?,artifact_opus_path=?,artifact_opus_sha256=? WHERE id=?`, meeting, canonicalOpusPath(rt.cfg.WorkRoot, op.Job), op.Digest, op.Job); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(`INSERT INTO artifact_availability(job_id,published_attempt,output) VALUES(?,?,'present') ON CONFLICT(job_id) DO UPDATE SET published_attempt=excluded.published_attempt,output='present'`, op.Job, op.Attempt); err != nil {
@@ -202,6 +225,7 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 		return err
 	}
 	rt.logger.Printf("artifact operation completed job=%s attempt=%d action=%s kind=%s deadline=%s revision=%d", op.Job, op.Attempt, op.Action, op.Kind, op.Deadline, op.Revision)
+	rt.store.emitStateChange(context.Background(), "job.updated", op.Job, op.Attempt)
 	return nil
 }
 
@@ -295,22 +319,44 @@ func (rt *Runtime) promotePublishedPair(job string, attempt int) error {
 	if prior == 0 {
 		cp := canonicalOpusPath(rt.cfg.WorkRoot, job)
 		mp := canonicalMeetingPath(rt.cfg.WorkRoot, job)
+		for _, p := range []string{cp, mp} {
+			if e := validateArtifactTree(rt.cfg.WorkRoot, p); e != nil {
+				return e
+			}
+		}
 		if digest, e := fileSHA256(cp); e == nil && digest == *a.ArtifactOpusSHA256 {
 			var m MeetingBundleManifest
 			b, e := os.ReadFile(filepath.Join(mp, "cassini.json"))
-			matches := os.IsNotExist(e)
+			_, statErr := os.Stat(mp)
+			matches := os.IsNotExist(statErr)
 			if e == nil && json.Unmarshal(b, &m) == nil {
 				matches = m.JobID == job && m.AttemptNumber == attempt
 			}
 			if matches {
-				_, err = rt.store.db.Exec(`INSERT INTO artifact_availability(job_id,published_attempt,output) VALUES(?,?,'present') ON CONFLICT(job_id) DO UPDATE SET published_attempt=excluded.published_attempt,output='present'`, job, attempt)
-				return err
+				var meeting any = mp
+				if os.IsNotExist(statErr) {
+					meeting = nil
+				}
+				tx, e := rt.store.db.Begin()
+				if e != nil {
+					return e
+				}
+				defer tx.Rollback()
+				if _, e = tx.Exec(`UPDATE jobs SET artifact_meeting_path=?,artifact_opus_path=?,artifact_opus_sha256=? WHERE id=?`, meeting, cp, digest, job); e != nil {
+					return e
+				}
+				if _, e = tx.Exec(`INSERT INTO artifact_availability(job_id,published_attempt,output) VALUES(?,?,'present') ON CONFLICT(job_id) DO UPDATE SET published_attempt=excluded.published_attempt,output='present'`, job, attempt); e != nil {
+					return e
+				}
+				return tx.Commit()
 			}
 		}
-		// Do not replace unidentified legacy current files: they may be the
-		// only remaining failed intermediate. A manual repair is safer.
+		// Preserve identified failed output in its attempt namespace before
+		// restoring the last published seal. Unknown lineage fails closed.
 		if _, e := os.Stat(cp); e == nil {
-			return errors.New("ambiguous legacy current archive; preserve for manual reconciliation")
+			if err := rt.preserveLegacyFailedPair(job, attempts); err != nil {
+				return err
+			}
 		}
 	}
 	meeting, opus := attemptMeetingPath(rt.cfg.WorkRoot, job, attempt), attemptOpusPath(rt.cfg.WorkRoot, job, attempt)
@@ -336,15 +382,23 @@ func (rt *Runtime) promotePublishedPair(job string, attempt int) error {
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	if err = copyDirectory(meeting, filepath.Join(dir, "new-0")); err != nil {
-		return err
+	missingMeeting := false
+	if _, e := os.Stat(meeting); os.IsNotExist(e) && prior == 0 {
+		missingMeeting = true
+	} else if e != nil {
+		return e
+	}
+	if !missingMeeting {
+		if err = copyDirectory(meeting, filepath.Join(dir, "new-0")); err != nil {
+			return err
+		}
 	}
 	if err = os.Link(opus, filepath.Join(dir, "new-1")); err != nil {
 		if err = copyFile(opus, filepath.Join(dir, "new-1"), 0600); err != nil {
 			return err
 		}
 	}
-	op := artifactOperation{Job: job, Attempt: attempt, Action: "promote", Digest: *a.ArtifactOpusSHA256}
+	op := artifactOperation{Job: job, Attempt: attempt, Action: "promote", Digest: *a.ArtifactOpusSHA256, MissingMeeting: missingMeeting}
 	for _, p := range []string{canonicalMeetingPath(rt.cfg.WorkRoot, job), canonicalOpusPath(rt.cfg.WorkRoot, job)} {
 		rel, _ := filepath.Rel(rt.cfg.WorkRoot, p)
 		op.Targets = append(op.Targets, rel)
@@ -353,4 +407,69 @@ func (rt *Runtime) promotePublishedPair(job string, attempt int) error {
 		return err
 	}
 	return rt.finishOperation(op)
+}
+
+func (rt *Runtime) preserveLegacyFailedPair(job string, attempts []JobAttempt) error {
+	mp, cp := canonicalMeetingPath(rt.cfg.WorkRoot, job), canonicalOpusPath(rt.cfg.WorkRoot, job)
+	for _, p := range []string{mp, cp} {
+		if err := validateArtifactTree(rt.cfg.WorkRoot, p); err != nil {
+			return err
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(mp, "cassini.json"))
+	if err != nil {
+		return errors.New("ambiguous legacy intermediate")
+	}
+	var m MeetingBundleManifest
+	if json.Unmarshal(b, &m) != nil || m.JobID != job {
+		return errors.New("ambiguous legacy lineage")
+	}
+	for _, a := range attempts {
+		if a.AttemptNumber != m.AttemptNumber || a.State != "failed" || a.ArtifactOpusSHA256 == nil {
+			continue
+		}
+		digest, err := fileSHA256(cp)
+		if err != nil || digest != *a.ArtifactOpusSHA256 {
+			return errors.New("legacy seal lineage mismatch")
+		}
+		meeting, opus := attemptMeetingPath(rt.cfg.WorkRoot, job, a.AttemptNumber), attemptOpusPath(rt.cfg.WorkRoot, job, a.AttemptNumber)
+		for _, p := range []string{meeting, opus} {
+			if err = validateArtifactTree(rt.cfg.WorkRoot, p); err != nil {
+				return err
+			}
+		}
+		if _, err = os.Stat(meeting); os.IsNotExist(err) {
+			if err = copyDirectory(mp, meeting); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else {
+			// Existing attempt content must identify the same generation.
+			am, ok, e := LoadMeetingBundleManifest(meeting)
+			if e != nil || !ok || am.JobID != job || am.AttemptNumber != a.AttemptNumber {
+				return errors.New("ambiguous legacy attempt intermediate")
+			}
+		}
+		if _, err = os.Stat(opus); os.IsNotExist(err) {
+			if err = os.MkdirAll(filepath.Dir(opus), 0755); err != nil {
+				return err
+			}
+			if err = copyFile(cp, opus, 0600); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else {
+			d, e := fileSHA256(opus)
+			if e != nil || d != digest {
+				return errors.New("legacy attempt seal mismatch")
+			}
+		}
+		if err = syncArtifactTree(meeting); err != nil {
+			return err
+		}
+		return syncArtifactTree(filepath.Dir(opus))
+	}
+	return errors.New("ambiguous legacy current archive; preserve for manual reconciliation")
 }

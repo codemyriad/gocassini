@@ -47,14 +47,10 @@ func (rt *Runtime) sealWorker() {
 //  1. claim               seal/queued -> seal/running (conditional)
 //  2. pack                attempt .meeting -> attempt .opus  (verified by cassini pack)
 //  3. digest              sha256 of the sealed file
-//  4. promote             attempt .opus -> current/<job>.opus (atomic rename)
-//  5. MarkSealSucceeded   records both paths + the digest AND queues publish
+//  4. MarkSealSucceeded   records the attempt path/digest and queues publish
 //
-// A crash between 4 and 5 leaves a correct canonical `.opus` and a seal/queued
-// row the requeue dispatcher re-runs — packing the same bundle again produces
-// the same artifact, so the retry costs nothing. A crash the other way round
-// would advertise a canonical artifact that was never promoted, which is why
-// the promotion comes first.
+// Only successful delivery promotes current output. A failed seal or publish
+// therefore cannot replace the last successfully published local archive.
 func (rt *Runtime) runSealJob(task sealTask) {
 	unlock := rt.store.lockArtifacts(task.JobID)
 	defer unlock()

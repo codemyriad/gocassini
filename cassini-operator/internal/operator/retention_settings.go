@@ -220,13 +220,13 @@ func (c *retentionConfig) save(s retentionSettings) error {
 func (rt *Runtime) retentionHandler(w http.ResponseWriter, r *http.Request) {
 	c := rt.retention
 	if c == nil {
-		http.Error(w, "retention configuration unavailable", 503)
+		writeJSONError(w, 503, "retention configuration unavailable")
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.loadErr != nil {
-		http.Error(w, "Retention is disabled: repair retention_settings.json and restart: "+c.loadErr.Error(), 503)
+		writeJSONError(w, 503, "Retention is disabled: repair retention_settings.json and restart: "+c.loadErr.Error())
 		return
 	}
 	switch r.Method {
@@ -236,31 +236,31 @@ func (rt *Runtime) retentionHandler(w http.ResponseWriter, r *http.Request) {
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&s); err != nil {
-			http.Error(w, "invalid retention settings", 400)
+			writeJSONError(w, 400, "invalid retention settings")
 			return
 		}
 		var extra any
 		if dec.Decode(&extra) != io.EOF {
-			http.Error(w, "trailing retention settings data", 400)
+			writeJSONError(w, 400, "trailing retention settings data")
 			return
 		}
 		if r.Header.Get("If-Match") != fmt.Sprintf("\"%d\"", c.settings.Revision) || s.Revision != c.settings.Revision {
-			http.Error(w, "Settings changed; reload before saving", 412)
+			writeJSONError(w, 412, "Settings changed; reload before saving")
 			return
 		}
 		if err := s.validate(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeJSONError(w, 400, err.Error())
 			return
 		}
 		s.Revision++
 		if err := c.save(s); err != nil {
-			http.Error(w, "Could not persist retention settings", 500)
+			writeJSONError(w, 500, "Could not persist retention settings")
 			return
 		}
 		c.settings = s
 	default:
 		w.Header().Set("Allow", "GET, PUT")
-		http.Error(w, "method not allowed", 405)
+		writeJSONError(w, 405, "method not allowed")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

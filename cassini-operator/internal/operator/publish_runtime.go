@@ -24,10 +24,7 @@ type publishTask struct {
 }
 
 func (rt *Runtime) startPublishWorker() {
-	// Reconcile leftover promotion staging before any worker can promote
-	// again: a crash between replaceStagedDirectory's two renames leaves the
-	// destination (including the live published site) missing with only the
-	// ".backup" copy surviving in the staging root.
+	// NewRuntime completes archive recovery before starting any workers.
 	rt.workerWG.Add(1)
 	go rt.publishWorker()
 }
@@ -152,12 +149,9 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish staging cleanup failed id=%s attempt=%d path=%s: %v", task.JobID, task.AttemptNumber, attemptArtifactSitePath, err)
 	}
 
-	// The job is terminal now, so its attempt payloads are prunable under the
-	// configured policy (D-583). Housekeeping, after the success is recorded:
-	// nothing here can turn a published meeting into a failed job. The site this
-	// policy would prune for the current attempt is already gone above; the
-	// removal is idempotent, and the policy still governs the attempt `.run`,
-	// `.meeting` and every superseded attempt.
+	// Record the current archive only after successful delivery and indexing.
+	// Recoverable paired promotion precedes successful duplicate cleanup;
+	// superseded versions belong to the scheduled age-policy worker.
 	if err := rt.promotePublishedPair(task.JobID, task.AttemptNumber); err != nil {
 		rt.logger.Printf("published archive promotion pending id=%s: %v", task.JobID, err)
 		return

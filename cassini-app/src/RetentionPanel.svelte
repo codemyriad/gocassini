@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
+  import { unsavedChanges, leavePrompt, cancelLeave, confirmLeave, guardLeave } from "./operator/unsaved";
   import type { OperatorClient } from "./operator/client";
   import { changeRetentionMode, retentionLabels, type RetentionSettings } from "./operator/retention";
   import RetentionPolicyField from "./RetentionPolicyField.svelte";
@@ -10,7 +11,7 @@
   async function load() {
     busy = true; error = ""; notice = "";
     try { if (!operatorClient) throw new Error("Operator unavailable"); settings = await operatorClient.getRetention(); saved = JSON.stringify(settings);
-      split = { recordings: !!settings.recordings.fine_initialized, history: !!settings.history.fine_initialized };
+      split = { recordings: settings.recordings.mode === "fine" || !!settings.recordings.fine_initialized, history: settings.history.mode === "fine" || !!settings.history.fine_initialized };
     } catch (e) { error = e instanceof Error ? e.message : String(e); } finally { busy = false; }
   }
   function mode(key: "recordings" | "history", value: string) {
@@ -24,11 +25,13 @@
     catch (e) { error = e instanceof Error ? e.message : String(e); } finally { busy = false; }
   }
   onMount(load);
+  $: unsavedChanges.set(!!settings && JSON.stringify(settings) !== saved);
+  onDestroy(() => { unsavedChanges.set(false); leavePrompt.set(null); });
 </script>
 <section class="grid gap-4">
   <h2 class="text-xl font-semibold">Storage</h2>
   <p>Container-local retention. All categories default to keep forever. External published recordings and job metadata are not deleted.</p>
-  <p class="text-sm">Dates use UTC. Months clamp to the last day of the destination month. Cleanup is planned for startup and daily at 02:00 UTC; enforcement is not yet active in this development slice.</p>
+  <p class="text-sm">Dates use UTC. Months clamp to the last day of the destination month. Cleanup runs at startup and daily at 02:00 UTC. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
   {#if error}<p class="alert alert-error" role="alert">{error}</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
   {#if settings}
@@ -58,5 +61,12 @@
       </fieldset>
     </form>
   {/if}
-  <button class="btn btn-ghost justify-self-start" disabled={busy} on:click={load}>Reload saved settings</button>
+  <button class="btn btn-ghost justify-self-start" disabled={busy} on:click={() => guardLeave(load)}>Reload saved settings</button>
+  {#if $leavePrompt}
+    <div class="alert" role="alertdialog" tabindex="-1" aria-label="Leave without saving?">
+      <p>You have unsaved changes. Leave without saving?</p>
+      <button class="btn btn-sm" on:click={cancelLeave}>Stay</button>
+      <button class="btn btn-sm" on:click={confirmLeave}>Leave</button>
+    </div>
+  {/if}
 </section>
