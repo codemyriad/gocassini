@@ -907,11 +907,11 @@
   $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
   $: rerunBlockedReason =
-    rerunVisible && !selectedJob?.job.artifact_run_path
+    selectedJob?.availability?.rerun_blocked_reason || (rerunVisible && !selectedJob?.job.artifact_run_path
       ? "This run produced no recording to rerun from."
-      : "";
+      : "");
   $: canStopSelectedJob = !submittingStop && stopApplies;
-  $: canRerunSelectedJob = !submittingRerun && rerunApplies;
+  $: canRerunSelectedJob = !submittingRerun && rerunApplies && !rerunBlockedReason;
 </script>
 
 <svelte:head>
@@ -1098,6 +1098,10 @@
               <RefreshCw size={16} aria-hidden="true" />
             </button>
           </header>
+          {#if selectedJob?.availability}
+            <p class="text-sm">Local source: {selectedJob.availability.source}. Current archive: {selectedJob.availability.output} (published attempt {selectedJob.availability.published_attempt || "unknown"}).</p>
+            {#if rerunBlockedReason}<p class="text-sm">{rerunBlockedReason}</p>{/if}
+          {/if}
 
           {#if jobsError}
             <div class="px-4 py-4">

@@ -187,6 +187,10 @@ func (rt *Runtime) backfillOneMeeting(
 	ctx context.Context, target searchBackfillTarget, opusName string,
 	indexed map[string]searchIndexedState, delivered searchDeliveredStateReader, archive searchArchiveReader,
 ) (searchBackfillOutcome, string) {
+	if rt.store != nil {
+		rt.store.artifactGate.RLock()
+		defer rt.store.artifactGate.RUnlock()
+	}
 	// What was DELIVERED is the archive's record to give. The job database
 	// cannot answer it — its digest is written at seal time, in the same step
 	// that promotes current/, so the two move together across attempts and

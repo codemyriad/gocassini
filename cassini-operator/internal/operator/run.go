@@ -243,8 +243,9 @@ type createJobResponse struct {
 }
 
 type jobDetailResponse struct {
-	Job      Job          `json:"job"`
-	Attempts []JobAttempt `json:"attempts"`
+	Availability artifactAvailability `json:"availability"`
+	Job          Job                  `json:"job"`
+	Attempts     []JobAttempt         `json:"attempts"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -292,6 +293,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg.TalkSecretSource = prov.SecretSource
 	cfg.TalkRecordingBackendURL = prov.BackendURL
 
+	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "work root: %v\n", err)
+		return 1
+	}
+	defer unlockRoot()
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
@@ -450,7 +457,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// (and is commonly empty in an ExApp), so applying the standalone default to
 	// it here would misreport the resolved nextcloud-files sink as local.
 	logger.Printf("publish_sink -> %s", sink.Name())
-	logger.Printf("artifact_retention -> %s", artifactRetentionOrDefault(cfg.ArtifactRetention))
+	if cfg.ArtifactRetention != "" {
+		logger.Printf("artifact-retention / CASSINI_ARTIFACT_RETENTION is deprecated and ignored; configure Operator → Storage (default keep forever)")
+	}
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
@@ -874,6 +883,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		}
 		return rt.runRecordDoctorContext(probeCtx)
 	})
+	rt.reconcilePromotionLeftovers()
+	rt.recoverArtifactOperations()
+	rt.sweepArtifactRetention()
 	rt.startModelWorker()
 	rt.startProcessingMonitor()
 	rt.startBuildWorkers()
@@ -1152,6 +1164,8 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 }
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
+	unlock := rt.store.lockArtifacts(job.ID)
+	defer unlock()
 	defer rt.recordWG.Done()
 	// The record slot is freed as soon as the record subprocess exits (the
 	// releaseSlot call below): post-record bookkeeping — Talk delivery with
@@ -1209,6 +1223,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
+	rt.removeSuccessfulCaptureDuplicate(job.ID, job.CurrentAttemptNumber)
 	// Tell spreed the recording stopped. Status only — the meeting itself
 	// goes to Nextcloud as the published .opus, never through Talk's
 	// recording store (D-551). Retried with backoff but never fails the
@@ -1337,6 +1352,8 @@ func looksLikeRepoRoot(dir string) bool {
 }
 
 type Store struct {
+	artifactGate         sync.RWMutex
+	artifactJobs         sync.Map
 	db                   *sql.DB
 	stateChangePublisher stateChangePublisher
 }
@@ -1362,6 +1379,10 @@ func OpenStore(path string) (*Store, error) {
 
 	store := &Store{db: db}
 	if err := store.ensureSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.ensureRetentionSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -1950,7 +1971,7 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("list job attempts: %v", err))
 		return
 	}
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts})
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job)})
 }
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {

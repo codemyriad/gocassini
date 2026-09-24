@@ -161,18 +161,62 @@ func pruneJobArtifacts(workRoot, jobID string, currentAttempt int, succeeded boo
 // published correctly must not be reported as failed because a directory could
 // not be removed.
 func (rt *Runtime) pruneArtifactsForJob(jobID string) {
-	job, err := rt.store.GetJob(context.Background(), jobID)
-	if err != nil {
-		rt.logger.Printf("artifact retention skipped id=%s: %v", jobID, err)
+	if !validArtifactJob(jobID) || rt.pendingArtifactOperation(jobID) {
 		return
 	}
-	succeeded := job.Stage == "done" && job.State == "succeeded"
-	removed, err := pruneJobArtifacts(rt.cfg.WorkRoot, jobID, job.CurrentAttemptNumber, succeeded, rt.cfg.ArtifactRetention)
-	for _, path := range removed {
-		rt.logger.Printf("artifact retention removed id=%s policy=%s %s", jobID, artifactRetentionOrDefault(rt.cfg.ArtifactRetention), path)
-	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), jobID)
 	if err != nil {
-		rt.logger.Printf("artifact retention failed id=%s: %v", jobID, err)
+		return
+	}
+	var current int
+	_ = rt.store.db.QueryRow(`SELECT published_attempt FROM artifact_availability WHERE job_id=?`, jobID).Scan(&current)
+	for _, a := range attempts {
+		rt.removeSuccessfulCaptureDuplicate(jobID, a.AttemptNumber)
+		if a.State != "succeeded" || a.PublishFinishedAt == nil {
+			continue
+		}
+		paths := []string{attemptSitePath(rt.cfg.WorkRoot, jobID, a.AttemptNumber)}
+		if a.AttemptNumber == current {
+			paths = append(paths, attemptMeetingPath(rt.cfg.WorkRoot, jobID, a.AttemptNumber))
+		}
+		for _, p := range paths {
+			if err := validateArtifactTree(rt.cfg.WorkRoot, p); err == nil {
+				err = os.RemoveAll(p)
+				if err != nil {
+					rt.logger.Printf("duplicate cleanup failed job=%s: %v", jobID, err)
+				}
+			}
+		}
+	}
+}
+
+func (rt *Runtime) removeSuccessfulCaptureDuplicate(jobID string, attempt int) {
+	if !validArtifactJob(jobID) {
+		return
+	}
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil || job.ArtifactRunPath == nil || *job.ArtifactRunPath != canonicalRunPath(rt.cfg.WorkRoot, jobID) {
+		return
+	}
+	if _, err := requireReadyRunBundle(*job.ArtifactRunPath); err != nil {
+		return
+	}
+	p := attemptRunPath(rt.cfg.WorkRoot, jobID, attempt)
+	// Only the initial recording can own a promoted capture duplicate.
+	attempts, err := rt.store.ListJobAttempts(context.Background(), jobID)
+	if err != nil {
+		return
+	}
+	for _, a := range attempts {
+		if a.AttemptNumber == attempt && a.RecordFinishedAt != nil && a.ArtifactRunPath != nil && *a.ArtifactRunPath == p {
+			if err := validateArtifactTree(rt.cfg.WorkRoot, p); err != nil {
+				return
+			}
+			if err := os.RemoveAll(p); err != nil {
+				rt.logger.Printf("capture duplicate cleanup failed job=%s: %v", jobID, err)
+			}
+			return
+		}
 	}
 }
 
@@ -180,9 +224,6 @@ func (rt *Runtime) pruneArtifactsForJob(jobID string) {
 // deployment that has been running without one — or was restarted mid-pipeline —
 // converges instead of waiting for each job to publish again.
 func (rt *Runtime) sweepArtifactRetention() {
-	if artifactRetentionOrDefault(rt.cfg.ArtifactRetention) == artifactRetentionAll {
-		return
-	}
 	jobs, err := rt.store.ListJobs(context.Background())
 	if err != nil {
 		rt.logger.Printf("startup artifact retention sweep failed: %v", err)
@@ -193,6 +234,15 @@ func (rt *Runtime) sweepArtifactRetention() {
 		// directories, and a worker is reading them right now.
 		if job.Stage != "done" {
 			continue
+		}
+		attempts, _ := rt.store.ListJobAttempts(context.Background(), job.ID)
+		for _, a := range attempts {
+			if a.State == "succeeded" && a.PublishFinishedAt != nil {
+				if err := rt.promotePublishedPair(job.ID, a.AttemptNumber); err != nil {
+					rt.logger.Printf("archive adoption skipped job=%s: %v", job.ID, err)
+				}
+				break
+			}
 		}
 		rt.pruneArtifactsForJob(job.ID)
 	}

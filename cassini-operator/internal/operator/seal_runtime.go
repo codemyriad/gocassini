@@ -56,6 +56,8 @@ func (rt *Runtime) sealWorker() {
 // would advertise a canonical artifact that was never promoted, which is why
 // the promotion comes first.
 func (rt *Runtime) runSealJob(task sealTask) {
+	unlock := rt.store.lockArtifacts(task.JobID)
+	defer unlock()
 	if err := rt.waitForRecordingIdle(); err != nil {
 		return
 	}
@@ -86,11 +88,7 @@ func (rt *Runtime) runSealJob(task sealTask) {
 		return
 	}
 
-	canonicalOpus, err := promoteOpusFile(rt.cfg.WorkRoot, attemptOpus, task.JobID)
-	if err != nil {
-		rt.failSeal(task, attemptOpus, err, finishedAt)
-		return
-	}
+	canonicalOpus := attemptOpus // promotion follows successful delivery
 
 	if err := rt.enqueuePublishAfterSeal(task, canonicalOpus, attemptOpus, digest, finishedAt); err != nil {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
