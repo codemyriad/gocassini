@@ -259,6 +259,16 @@ func TestMeetingsContextAnswers404WhenTheFetchIsDeniedAfterTheScan(t *testing.T)
 	}
 }
 
+func TestMeetingsContextAnswers404WhenCallerHasNoShares(t *testing.T) {
+	srv, _ := stubRecordingsDAV(t, contextCatalog, []byte("OPUSBYTES"))
+	handler := contextTestConfig(srv.URL, writeFakeCassini(t, "exit 9\n")).meetingsContextHandler(nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, contextRequest("/published/meetings-context?id=MEETING1"))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404 for a healthy empty share list (%s)", w.Code, w.Body.String())
+	}
+}
+
 // Loud failures: none of these may look like a bundle, and none may look empty.
 func TestMeetingsContextFailsLoudly(t *testing.T) {
 	opus := []byte("OPUSBYTES")
@@ -322,10 +332,7 @@ func TestMeetingsContextFailsLoudly(t *testing.T) {
 	})
 
 	t.Run("the per-caller scan failed", func(t *testing.T) {
-		// serveFilteredCatalog fails CLOSED: a PROPFIND that errors is served as
-		// an empty catalog, and an empty readable set used to send every id to
-		// the 404 branch — telling somebody who has just browsed their own
-		// meetings that one of them is not theirs (D-740).
+		// A failed OCS share lookup must not look like an empty list.
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if serveTestShares(w, r, []string{"MEETING1.opus"}, http.StatusInternalServerError) {
 				return
@@ -349,7 +356,7 @@ func TestMeetingsContextFailsLoudly(t *testing.T) {
 			t.Fatalf("code = %d, want 502 — a scan that never ran is not a denial (%s)", w.Code, w.Body.String())
 		}
 		if !strings.Contains(logs.String(), "per-caller catalog") {
-			t.Errorf("the log must say the empty set was read as an outage: %s", logs.String())
+			t.Errorf("the log must identify the failed catalog lookup: %s", logs.String())
 		}
 	})
 }

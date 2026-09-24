@@ -1,10 +1,7 @@
 package operator
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -221,27 +218,6 @@ func (c ExAppConfig) verifyUploadedLeaf(ctx context.Context, client *http.Client
 		return fmt.Errorf("%s: Nextcloud stored %d bytes of %d — the upload was interrupted and the remote copy is truncated", relPath, state.Size, size)
 	}
 	return nil
-}
-
-func (c ExAppConfig) davPutBytes(ctx context.Context, client *http.Client, userID, relPath string, body []byte, contentType string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.davFileURL(userID, relPath), bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	c.setAppAPIDAVHeadersForUser(req, userID)
-	req.Header.Set("Content-Type", contentType)
-	sum := sha256.Sum256(body)
-	req.Header.Set("OC-Checksum", "SHA256:"+hex.EncodeToString(sum[:]))
-	req.ContentLength = int64(len(body))
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer drainClose(resp.Body)
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	return fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
 }
 
 func defaultPublishSinkFor(exapp ExAppConfig) string {

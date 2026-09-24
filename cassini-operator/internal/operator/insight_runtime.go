@@ -446,15 +446,12 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 	defer cancel()
 
 	readable, catalog, ok := s.exapp.readableMeetingsForCaller(ctx, s.client, run.CreatedBy, s.logger)
-	if !ok || len(readable) == 0 {
-		// An empty readable set is the shape a FAILED scan takes, because
-		// serveFilteredCatalog fails closed (see the same guard in
-		// insight_handlers.go). Reading it as a denial would write
-		// meeting-unavailable permanently onto the run row — a card that keeps
-		// asserting a permission change nobody made, and says it again on every
-		// retry.
-		s.logf("insights: run=%s caller=%s has no readable meetings (ok=%t) — failing as an outage rather than a denial", run.ID, run.CreatedBy, ok)
+	if !ok {
+		s.logf("insights: run=%s caller=%s meeting list could not be read", run.ID, run.CreatedBy)
 		return "", insightFailure(insightReasonCatalogFailed), false
+	}
+	if len(readable) == 0 {
+		return "", insightFailure(insightReasonMeetingUnavailable), false
 	}
 
 	catalogPath := filepath.Join(staging, "catalog.json")

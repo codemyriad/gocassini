@@ -95,6 +95,11 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 		}
 	}
 	result := directShareSnapshot{entries: []json.RawMessage{}, paths: map[string]string{}}
+	type datedEntry struct {
+		entry     json.RawMessage
+		dateLabel string
+	}
+	dated := make([]datedEntry, 0, len(shares))
 	for _, share := range shares {
 		if share.UIDFileOwner != ncRecordingsOwner || share.FileSource <= 0 || share.Permissions&ncShareRead == 0 || (share.ItemType != "" && share.ItemType != "file") {
 			continue
@@ -105,14 +110,17 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 		}
 		entry := known[share.FileSource]
 		name := ""
+		dateLabel := ""
 		if entry != nil {
 			var probe struct {
 				AudioPath string `json:"audioPath"`
+				DateLabel string `json:"dateLabel"`
 			}
 			if json.Unmarshal(entry, &probe) != nil {
 				continue
 			}
 			name = catalogEntryOpusName(probe.AudioPath, "")
+			dateLabel = probe.DateLabel
 		} else {
 			// The owner's current archive inventory gives the original name
 			// even if the recipient renamed their share mount. It also keeps
@@ -138,18 +146,16 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 			continue
 		}
 		result.paths[name] = recipientPath
-		result.entries = append(result.entries, entry)
+		dated = append(dated, datedEntry{entry: entry, dateLabel: dateLabel})
 	}
 	// Stable newest-first presentation even though OCS can return user, group
 	// and Team shares in separate buckets.
-	sort.SliceStable(result.entries, func(i, j int) bool {
-		var left, right struct {
-			DateLabel string `json:"dateLabel"`
-		}
-		_ = json.Unmarshal(result.entries[i], &left)
-		_ = json.Unmarshal(result.entries[j], &right)
-		return left.DateLabel > right.DateLabel
+	sort.SliceStable(dated, func(i, j int) bool {
+		return dated[i].dateLabel > dated[j].dateLabel
 	})
+	for _, item := range dated {
+		result.entries = append(result.entries, item.entry)
+	}
 	if c.sharePaths != nil {
 		c.sharePaths.put(caller, result.paths)
 	}

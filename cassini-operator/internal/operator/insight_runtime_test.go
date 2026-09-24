@@ -635,11 +635,9 @@ func TestPerformRefusesAMeetingTheCallerCanNoLongerRead(t *testing.T) {
 	}
 }
 
-// A per-caller scan that FAILED reaches the run path as an empty readable set,
-// because serveFilteredCatalog fails closed. Reading that as a denial would
-// write meeting-unavailable permanently onto the run — a card that keeps
-// asserting a permission change nobody made, and repeats it on retry.
-func TestPerformCallsAnUnreadableMeetingListAnOutageAndNotADenial(t *testing.T) {
+// A successful OCS response with no shares means the requested meeting is no
+// longer available to the caller, including on an insight retry.
+func TestPerformTreatsAnEmptyShareListAsMeetingUnavailable(t *testing.T) {
 	dav := newInsightDAV(t, insightTestCatalog)
 	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
 	service, _ := insightTestService(t, dav.server.URL, bin, nil)
@@ -649,9 +647,28 @@ func TestPerformCallsAnUnreadableMeetingListAnOutageAndNotADenial(t *testing.T) 
 	if outcome.Status != insightStatusFailed {
 		t.Fatalf("status = %q, want failed", outcome.Status)
 	}
-	if outcome.Error != insightReasonCatalogFailed {
-		t.Errorf("error = %q, want the outage %q, not a permission change out of a failed scan", outcome.Error, insightReasonCatalogFailed)
+	if outcome.Error != insightReasonMeetingUnavailable {
+		t.Errorf("error = %q, want %q for a healthy empty share list", outcome.Error, insightReasonMeetingUnavailable)
 	}
+}
+
+func TestPerformCallsAFailedShareLookupAnOutage(t *testing.T) {
+	srv := newFailingSharesServer(t)
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	service, _ := insightTestService(t, srv.URL, bin, nil)
+	outcome := service.perform(context.Background(), insightTestRun())
+	if outcome.Error != insightReasonCatalogFailed {
+		t.Errorf("error = %q, want %q for a failed share lookup", outcome.Error, insightReasonCatalogFailed)
+	}
+}
+
+func newFailingSharesServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // Every way perform can fail stores one token from insight_reasons.go and
@@ -675,9 +692,9 @@ func TestEveryFailurePathStoresAReasonToken(t *testing.T) {
 			return service, logs, context.Background()
 		}, insightReasonStagingFailed},
 		{"meeting list cannot be read", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
-			dav := newInsightDAV(t, insightTestCatalog)
+			srv := newFailingSharesServer(t)
 			bin, _ := fakeInsightCassini(t, document, 0)
-			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			service, logs := insightTestService(t, srv.URL, bin, nil)
 			return service, logs, context.Background()
 		}, insightReasonCatalogFailed},
 		{"a meeting is not in the readable set", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {

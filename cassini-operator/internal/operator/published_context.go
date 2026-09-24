@@ -144,17 +144,12 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 	defer cancel()
 
 	readable, catalog, ok := c.readableMeetingsForCaller(ctx, client, caller, logger)
-	if !ok || len(readable) == 0 {
-		// Empty is an outage here, not an answer — the same guard the insight
-		// handler has. serveFilteredCatalog fails CLOSED, so a per-caller scan
-		// that errored arrives as an empty catalog with ok=true, and the loop
-		// below would then serve a substrate failure as "not one of yours".
-		// Nobody reaches this route without having just listed their own
-		// meetings, so a readable set of nothing is the failure, not the fact.
-		if logger != nil {
-			logger.Printf("meetings context: caller=%s has no readable meetings (ok=%t) — refusing as an outage rather than a denial", caller, ok)
-		}
+	if !ok {
 		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+		return
+	}
+	if len(readable) == 0 {
+		http.NotFound(w, r)
 		return
 	}
 
@@ -394,7 +389,13 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 		if _, taken := readable[id]; !taken {
 			rel, err := c.recipientRecordingPath(ctx, client, caller, base, c.meetingMetadata)
 			if err != nil {
-				continue
+				if errors.Is(err, errRecordingNotShared) {
+					continue
+				}
+				if logger != nil {
+					logger.Printf("meetings context: resolve caller=%s recording=%s: %v", caller, base, err)
+				}
+				return nil, nil, false
 			}
 			readable[id] = rel
 		}
