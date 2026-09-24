@@ -151,7 +151,7 @@ Remote mode derived values:
 | `legacy-default` | Historical behavior. Uses `SPREED_PROFILE` when set; otherwise starts the full media profile. | Backwards compatibility for old scripts and manual lab use. Prefer explicit modes for new flows. |
 | `core` | `db`, `nextcloud` | Fast Nextcloud/Talk API checks; no AppAPI/HaRP services and no WebRTC media services. |
 | `appapi` | `db`, `nextcloud`, `appapi-harp`, `reverse-proxy` | AppAPI/HaRP install, proxy route, control-panel/viewer checks without Janus/signaling/TURN media. |
-| `full` | `db`, `nextcloud`, `appapi-harp`, `reverse-proxy`, `nats`, `janus`, `signaling`, `coturn` | Full local Talk media path for recorder/player E2E and direct operator debugging. |
+| `full` | `db`, `nextcloud`, `appapi-harp`, `reverse-proxy`, `nats`, `janus`, `signaling`, `signaling-loopback`, `coturn` | Full local Talk media path for recorder/player E2E and direct operator debugging. |
 | `full-remote` | `full` plus `signaling-public-proxy` | Full media path plus remote HTTPS helper for browser access from another machine. Requires `--public-mode remote-https`. |
 
 Validation rules worth remembering:

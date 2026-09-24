@@ -111,7 +111,7 @@ fi
 log "3. Starting nextcloud, db, appapi-harp, reverse-proxy..."
 compose_services=(nextcloud db appapi-harp reverse-proxy)
 if [[ "$SPREED_PROFILE" == "full" ]]; then
-  compose_services+=(nats janus signaling coturn)
+  compose_services+=(nats janus signaling signaling-loopback coturn)
   if harness_remote_config_requested; then
     compose_services+=(signaling-public-proxy)
   fi
