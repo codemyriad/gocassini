@@ -246,6 +246,11 @@ Documentation: https://gocassini.com/docs]]></description>
         <verb>GET,POST,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <route>
+        <url>^operator\/storage\/retention\/?$</url>
+        <verb>GET,PUT</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,
            Talk config presence, DB/storage health — never secret values) -->
       <route>

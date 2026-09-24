@@ -83,6 +83,7 @@ type Config struct {
 }
 
 type Runtime struct {
+	retention   *retentionConfig
 	modelMu     sync.Mutex
 	modelCancel context.CancelFunc
 	modelJobID  string
@@ -768,6 +769,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	rt := &Runtime{
+		retention:    newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
 		ctx:          ctx,
 		cancel:       cancel,
 		store:        store,
@@ -954,6 +956,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage", exappCfg.storageHandler(rt)},
+		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the
 		// old hand-rolled list because main moved route registration into this

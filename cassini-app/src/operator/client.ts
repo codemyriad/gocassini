@@ -1,4 +1,5 @@
 import type { RecordingReadiness, RecordingSetupUpdate } from "./readiness";
+import type { RetentionSettings } from "./retention";
 import type {
   InsightWorkflow,
   Job,
@@ -192,6 +193,16 @@ export class OperatorClient {
 
   async getStorage(): Promise<StorageStatus> {
     return normalizeStorage(await this.#request<unknown>("/storage"));
+  }
+
+  getRetention(): Promise<RetentionSettings> {
+    return this.#request<RetentionSettings>("/storage/retention");
+  }
+  putRetention(settings: RetentionSettings): Promise<RetentionSettings> {
+    return this.#request<RetentionSettings>("/storage/retention", {
+      method: "PUT", headers: { "Content-Type": "application/json", "If-Match": `"${settings.revision}"` },
+      body: JSON.stringify(settings),
+    });
   }
 
   // putStorage switches the storage model, which MOVES every published

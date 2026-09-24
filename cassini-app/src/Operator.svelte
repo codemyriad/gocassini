@@ -30,6 +30,7 @@
         { id: "endpoints", label: "AI providers" },
         { id: "pipeline", label: "Publish pipeline" },
         { id: "templates", label: "Insight templates" },
+        { id: "storage", label: "Storage" },
       ],
     },
   ];

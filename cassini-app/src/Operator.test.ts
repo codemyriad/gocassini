@@ -289,11 +289,12 @@ describe("Operator left nav (D-723)", () => {
 
   it("groups the rows as Console then Settings, in the prototype's order", () => {
     expect(navGroups.map((group) => group.label)).toEqual(["Console", "Settings"]);
-    expect(navPanels).toEqual(["recordings", "endpoints", "pipeline", "templates"]);
+    expect(navPanels).toEqual(["recordings", "endpoints", "pipeline", "templates", "storage"]);
     expect(navGroups[1].items.map((item) => item.label)).toEqual([
       "AI providers",
       "Publish pipeline",
       "Insight templates",
+      "Storage",
     ]);
   });
 
