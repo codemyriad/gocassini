@@ -3,6 +3,9 @@
   import { Copy, Download, FileText, TriangleAlert, X } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
+  import type { LoadedArtifact } from "../viewer/loadArtifact";
+  import { displaySegmentsForArtifact, transcriptText } from "../viewer/meetingExport";
+  import { loadAudioFile, saveBlob, saveTranscript, zipAudioFiles } from "../viewer/exportTransfer";
   import {
     MAX_SELECTED_MEETINGS,
     formatSelectionWordCount,
@@ -33,6 +36,7 @@
   // which implementation, and the panel only knows there are bytes at the end
   // of it. It is not called until Copy or Download is pressed.
   export let loadBundle: () => Promise<string>;
+  export let loadMeeting: (entry: MeetingCatalogEntry) => Promise<LoadedArtifact>;
 
   const dispatch = createEventDispatcher<{ close: void; unpick: MeetingCatalogEntry }>();
 
@@ -45,6 +49,8 @@
   // and getting two answers — and a second press is instant.
   let bundleText: string | null = null;
   let bundleKey = "";
+  let transcriptsText: string | null = null;
+  let transcriptsKey = "";
 
   const WORD_COUNT_FORMAT = new Intl.NumberFormat("en-GB");
 
@@ -56,6 +62,7 @@
     bundleText = null;
     status = null;
   }
+  $: if (selectionKey !== transcriptsKey) transcriptsText = null;
   // The list is live behind this panel, so a set can grow past the operator's
   // cap while it is open. Every action below is refused above it — the gap
   // sentence says so — and the controls follow (D-749).
@@ -89,6 +96,92 @@
 
   function describeError(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  async function ensureTranscripts(): Promise<string> {
+    if (transcriptsText !== null && transcriptsKey === selectionKey) return transcriptsText;
+    const key = selectionKey;
+    const selected = [...entries];
+    const sections: string[] = [];
+    for (const entry of selected) {
+      const artifact = await loadMeeting(entry);
+      if (key !== selectionKey) throw new Error("The selection changed — press again.");
+      sections.push(transcriptText(entry, displaySegmentsForArtifact(artifact)));
+    }
+    const text = sections.join("\n");
+    transcriptsText = text;
+    transcriptsKey = key;
+    return text;
+  }
+
+  async function handleTranscriptCopy() {
+    busy = true;
+    status = { tone: "ok", text: "Preparing transcripts…" };
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) {
+      status = { tone: "warn", text: "Clipboard unavailable here — use Download transcripts." };
+      busy = false;
+      return;
+    }
+    const pending = ensureTranscripts();
+    let copied = false;
+    if (typeof ClipboardItem === "function" && typeof clipboard.write === "function") {
+      try {
+        await clipboard.write([new ClipboardItem({
+          "text/plain": pending.then((text) => new Blob([text], { type: "text/plain" })),
+        })]);
+        copied = true;
+      } catch {
+        // Some browsers reject a promised clipboard item. Try the plain API
+        // after the text is ready, and keep it cached for another click.
+      }
+    }
+    try {
+      const text = await pending;
+      if (!copied) await clipboard.writeText(text);
+      status = { tone: "ok", text: "Transcripts copied." };
+    } catch (error) {
+      // A refused async clipboard can succeed on a second press from the cache.
+      status = { tone: "warn", text: `Couldn't copy transcripts: ${describeError(error)}. Press again or download them.` };
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function handleTranscriptDownload() {
+    busy = true;
+    status = { tone: "ok", text: "Preparing transcripts…" };
+    try {
+      saveTranscript(await ensureTranscripts(), `cassini-transcripts-${new Date().toISOString().slice(0, 10)}.txt`);
+      status = { tone: "ok", text: "Transcripts downloaded." };
+    } catch (error) {
+      status = { tone: "error", text: describeError(error) };
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function handleAudioDownload() {
+    busy = true;
+    status = { tone: "ok", text: "Preparing meeting files…" };
+    const key = selectionKey;
+    try {
+      const files = [];
+      for (const entry of [...entries]) {
+        files.push(await loadAudioFile(entry));
+        if (key !== selectionKey) throw new Error("The selection changed — press again.");
+      }
+      if (files.length === 1) {
+        saveBlob(new Blob([files[0]!.bytes.buffer], { type: "audio/ogg" }), files[0]!.name);
+      } else {
+        saveBlob(zipAudioFiles(files), `cassini-meeting-files-${new Date().toISOString().slice(0, 10)}.zip`);
+      }
+      status = { tone: "ok", text: files.length === 1 ? "Meeting file downloaded." : "Meeting files downloaded." };
+    } catch (error) {
+      status = { tone: "error", text: describeError(error) };
+    } finally {
+      busy = false;
+    }
   }
 
   async function handleCopy() {
@@ -271,6 +364,17 @@
       >
         <Download size={14} aria-hidden="true" />
         Download
+      </button>
+    </section>
+    <section class="prep-section prep-actions" aria-label="Take the selected meetings with you">
+      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleTranscriptCopy}>
+        <Copy size={14} aria-hidden="true" /> Copy {entries.length === 1 ? "transcript" : "transcripts"}
+      </button>
+      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleTranscriptDownload}>
+        <Download size={14} aria-hidden="true" /> Download {entries.length === 1 ? "transcript" : "transcripts"}
+      </button>
+      <button type="button" class="prep-action prep-audio-action" disabled={busy || blocked} on:click={handleAudioDownload}>
+        <Download size={14} aria-hidden="true" /> Download audio
       </button>
     </section>
     <p class="prep-status" data-tone={status?.tone ?? "ok"} role="status">
@@ -483,6 +587,9 @@
     font-size: 0.8125rem;
     font-weight: 550;
     color: var(--color-base-content);
+  }
+  .prep-audio-action {
+    grid-column: 1 / -1;
   }
   .prep-action:hover:not(:disabled) {
     background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
