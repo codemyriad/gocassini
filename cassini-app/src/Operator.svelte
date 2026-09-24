@@ -1601,25 +1601,25 @@
                               {#if attempt.record_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}{attempt.files_present?.record_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.build_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Build log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}{attempt.files_present?.build_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.seal_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Seal log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}{attempt.files_present?.seal_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.publish_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Publish log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}{attempt.files_present?.publish_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                             </dl>

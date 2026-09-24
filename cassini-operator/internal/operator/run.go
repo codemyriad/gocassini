@@ -893,6 +893,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.startPublishWorker()
 	rt.workerWG.Add(1)
 	go rt.requeueDispatcher()
+	rt.startRetentionWorker()
 	return rt
 }
 
@@ -1970,6 +1971,16 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("list job attempts: %v", err))
 		return
+	}
+	for i := range attempts {
+		a := &attempts[i]
+		a.FilesPresent = map[string]bool{}
+		for key, p := range map[string]*string{"run": a.ArtifactRunPath, "meeting": a.ArtifactMeetingPath, "opus": a.ArtifactOpusPath, "site": a.ArtifactSitePath, "record_log": a.RecordLogPath, "build_log": a.BuildLogPath, "seal_log": a.SealLogPath, "publish_log": a.PublishLogPath} {
+			if p != nil {
+				_, e := os.Stat(*p)
+				a.FilesPresent[key] = e == nil
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job)})
 }
