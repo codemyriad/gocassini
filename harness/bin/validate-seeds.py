@@ -11,6 +11,15 @@ import sqlite3
 import subprocess
 import tempfile
 
+PORTABLE_TAGS = {
+    'CASSINI_FORMAT': 'org.cassini.portable-meeting/1',
+    'CASSINI_PROFILE': 'ogg-opus',
+    'CASSINI_PAYLOAD_MIME': 'application/vnd.cassini.portable-meeting+json',
+    'CASSINI_PAYLOAD_ENCODING': 'base64url+gzip+utf8json',
+    'CASSINI_PAYLOAD_SCHEMA': 'https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json',
+    'CASSINI_AUDIO_MATCH_POLICY': 'exact-opus-audio-v1',
+}
+
 
 def validate(published, operator):
     if published:
@@ -23,7 +32,7 @@ def validate(published, operator):
         for entry in catalog['meetings']:
             rel = entry.get('audioPath', '').removeprefix('./')
             parts = pathlib.PurePosixPath(rel).parts
-            if len(parts) != 2 or parts[0] != 'meetings' or not parts[1].endswith('.opus') or rel in expected or not entry.get('id') or entry['id'] in ids:
+            if entry.get('audioPath') != './' + rel or len(parts) != 2 or parts[0] != 'meetings' or not parts[1].endswith('.opus') or any(ord(c) < 32 or ord(c) == 127 for c in rel) or rel in expected or not entry.get('id') or entry['id'] in ids:
                 raise ValueError('invalid or duplicate catalog entry')
             asset = root / rel
             if asset.is_symlink() or (root / 'meetings').is_symlink() or not asset.is_file() or asset.stat().st_size == 0:
@@ -70,10 +79,14 @@ def validate(published, operator):
             for stream in probe.get('streams', []):
                 tags.update(stream.get('tags', {}))
             tags = {k.upper(): v for k, v in tags.items()}
-            if tags.get('CASSINI_FORMAT') != 'org.cassini.portable-meeting/1' or not tags.get('CASSINI_PAYLOAD_000'):
-                raise ValueError(f'{asset.name}: not a portable meeting recording')
+            for key, expected_value in PORTABLE_TAGS.items():
+                if tags.get(key) != expected_value:
+                    raise ValueError(f'{asset.name}: unsupported {key}')
             encoded = ''.join(tags[f'CASSINI_PAYLOAD_{n:03d}'] for n in range(int(tags['CASSINI_PAYLOAD_CHUNK_COUNT'])))
-            payload = json.loads(gzip.decompress(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4))))
+            raw = gzip.decompress(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+            if hashlib.sha256(raw).hexdigest() != tags.get('CASSINI_PAYLOAD_SHA256'):
+                raise ValueError(f'{asset.name}: portable payload checksum mismatch')
+            payload = json.loads(raw)
             if payload.get('version') != 1 or payload.get('kind') != 'cassini-portable-meeting':
                 raise ValueError(f'{asset.name}: unsupported portable payload')
         print(f'[seed-preflight] {len(catalog["meetings"])} portable recordings readable', flush=True)

@@ -662,7 +662,7 @@ func resolveDevStackPublishedSeedDir(value string) (string, error) {
 		}
 		seenIDs[entry.ID] = true
 		rel, err := packRelativeAsset(entry.AudioPath)
-		if err != nil || !strings.HasPrefix(rel, "meetings/") || !validPublishedSeedAssetName(filepath.Base(rel)) {
+		if err != nil || entry.AudioPath != "./"+rel || !strings.HasPrefix(rel, "meetings/") || strings.Count(rel, "/") != 1 || !validPublishedSeedAssetName(filepath.Base(rel)) {
 			return "", fmt.Errorf("--seed-published %q catalog meeting %d has invalid audioPath %q", value, index, entry.AudioPath)
 		}
 		if seen[rel] {

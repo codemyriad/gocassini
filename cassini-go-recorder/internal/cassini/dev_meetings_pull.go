@@ -139,7 +139,7 @@ func runDevMeetingsPull(ctx context.Context, args []string, stdout, stderr io.Wr
 	room := fs.String("room", "", "only meetings from this room, as printed by `cassini meetings rooms`")
 	limit := fs.Int("limit", 0, "keep only the newest N of the selected meetings (0 means all of them)")
 	dryRun := fs.Bool("dry-run", false, "report what would be pulled, and how many bytes, without writing anything")
-	force := fs.Bool("force", false, "re-download meetings already present at the expected size")
+	force := fs.Bool("force", false, "re-download meetings even when their ETag and local hash match")
 	annotations := fs.String("annotations", "embedded", "embedded: delivered file marks; current: embed the latest authenticated annotation document")
 	asJSON := fs.Bool("json", false, "write the manifest to stdout instead of a progress log")
 	fs.Usage = func() {
@@ -440,9 +440,8 @@ func packRelativeAsset(raw string) (string, error) {
 // pullOneMeeting downloads one meeting unless an identical copy is already
 // there, and reports the size and whether it was skipped.
 //
-// The size the server reports is asked for first, and used twice: to decide
-// whether the local file is already the whole meeting, and to check that what
-// arrived is the length that was promised. A transfer cut short mid-body is
+// Resume requires a strong ETag and a verified local content hash. The size
+// check also detects a transfer cut short mid-body, which is
 // otherwise indistinguishable from a short meeting — which is exactly how a
 // sibling tool in this repo ended up writing corrupt media (D-714).
 func (c *meetingsClient) pullOneMeeting(ctx context.Context, plan *seedPackPlan, force bool) (int64, bool, error) {

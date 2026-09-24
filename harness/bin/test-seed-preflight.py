@@ -2,6 +2,7 @@
 import importlib.util
 import base64
 import gzip
+import hashlib
 import json
 import pathlib
 import sqlite3
@@ -29,8 +30,10 @@ class SeedPreflightTests(unittest.TestCase):
             db.execute('INSERT INTO annotation_head VALUES(2,1,NULL)')
             db.commit()
             db.close()
-            payload = base64.urlsafe_b64encode(gzip.compress(json.dumps({'kind': 'cassini-portable-meeting', 'version': 1}).encode())).decode()
-            probe = {'format': {'tags': {'CASSINI_FORMAT': 'org.cassini.portable-meeting/1', 'CASSINI_PAYLOAD_CHUNK_COUNT': '1', 'CASSINI_PAYLOAD_000': payload}}}
+            raw = json.dumps({'kind': 'cassini-portable-meeting', 'version': 1}).encode()
+            payload = base64.urlsafe_b64encode(gzip.compress(raw)).decode()
+            tags = dict(preflight.PORTABLE_TAGS, CASSINI_PAYLOAD_CHUNK_COUNT='1', CASSINI_PAYLOAD_000=payload, CASSINI_PAYLOAD_SHA256=hashlib.sha256(raw).hexdigest())
+            probe = {'format': {'tags': tags}}
             with patch.object(preflight.subprocess, 'run', return_value=SimpleNamespace(stdout=json.dumps(probe))):
                 with self.assertRaisesRegex(ValueError, 'pending annotation edits'):
                     preflight.validate(temp, temp)

@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -21,6 +22,9 @@ func runImportMeetingMetadata(ctx context.Context, args []string, stdout, stderr
 	fs.SetOutput(stderr)
 	catalogFile := fs.String("catalog", "", "portable catalog.json to import")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if *catalogFile == "" || fs.NArg() != 0 {

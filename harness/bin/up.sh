@@ -5,7 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
-python3 "$SCRIPT_DIR/validate-seeds.py" --published "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" --operator "${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}"
+if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}" ]]; then
+  python3 "$SCRIPT_DIR/validate-seeds.py" --published "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" --operator "${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}"
+fi
 harness_stack_init
 harness_check_existing_resources_for_up
 harness_prepare_exapp_image
