@@ -258,32 +258,14 @@ a specific attempt's artifact rather than whatever is currently canonical:
 
 ## Retention
 
-Attempt-local payloads under `runs/` are pruned by an explicit policy,
-`--artifact-retention` / `CASSINI_ARTIFACT_RETENTION`:
+Configure container-local retention in Operator → Storage. All policies default
+to keep forever; recordings, attempt history, current output archives and stage
+logs can expire independently using UTC calendar dates. Job metadata and external
+published recordings remain. Successful duplicate cleanup is independent of age.
+The old artifact-retention flag/environment variable is deprecated and ignored.
 
-| Policy | Prunes |
-|--------|--------|
-| `all` | nothing |
-| `superseded` | the `.run`, `.meeting`, `.site` and `.seal` of attempts a rerun has replaced |
-| `sealed` **(default)** | `superseded`, plus a succeeded attempt's `.run`, `.meeting` and `.site` |
-
-One removal happens outside this policy and `all` does not disable it: a
-successfully delivered attempt's `.site` is removed as soon as the sink accepts
-it (D-550). That is an access boundary rather than housekeeping — the attempt
-site is a full copy of the recording on the app's own volume, outside the
-Nextcloud access model — so retention is not a way to keep one.
-
-Never pruned, under any policy: everything in `current/`, every attempt `.logs`
-directory, the retained `.seal` of a succeeded attempt, and the live site. Every
-removal is additionally guarded on the artifact that replaces it existing, so a
-record that failed before promotion keeps its attempt `.run` and a failed job
-keeps everything — nothing here removes the last copy of anything.
-
-Attempt rows keep the paths of artifacts that were pruned. The row is the record
-of what that attempt produced; the retention policy governs whether the bytes are
-still there. So an `artifact_site_path` on a succeeded attempt under the `sealed`
-policy names a directory that no longer exists, by design — the operator log line
-`artifact retention removed id=… policy=… <path> (…)` is what says why.
+See [container retention](../container-retention.md) for categories, date anchors,
+video/audio constraints, recovery, deployment and diagnostics.
 
 ## Live site lineage
 

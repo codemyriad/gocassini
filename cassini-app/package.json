@@ -11,7 +11,8 @@
     "build:all": "npm run build && npm run build:embedded",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
-    "test:first-run-browser": "node ./scripts/check-first-run-browser.mjs"
+    "test:first-run-browser": "node ./scripts/check-first-run-browser.mjs",
+    "test:retention-browser": "node ./scripts/check-retention-browser.mjs"
   },
   "dependencies": {
     "@melt-ui/svelte": "^0.86.6",

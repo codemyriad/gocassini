@@ -71,16 +71,23 @@ func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) {
 			if !validArtifactJob(id) || !rt.store.artifactGate.TryLock() {
 				continue
 			}
+			unlock, owned := rt.store.tryLockArtifacts(id)
+			if !owned {
+				rt.store.artifactGate.Unlock()
+				continue
+			}
 			rt.retention.mu.Lock()
 			if rt.retention.loadErr != nil {
 				rt.logger.Printf("retention disabled: %v", rt.retention.loadErr)
 				rt.retention.mu.Unlock()
+				unlock()
 				rt.store.artifactGate.Unlock()
 				return
 			}
 			settings := rt.retention.settings
-			err = rt.expireJobArtifacts(ctx, id, settings, now)
 			rt.retention.mu.Unlock()
+			err = rt.expireJobArtifacts(ctx, id, settings, now)
+			unlock()
 			rt.store.artifactGate.Unlock()
 			if err != nil {
 				rt.logger.Printf("retention failed job=%s revision=%d: %v", id, settings.Revision, err)
@@ -171,10 +178,10 @@ func (rt *Runtime) expireJobArtifacts(ctx context.Context, id string, s retentio
 			return err
 		}
 	}
-	return rt.expireCanonicalArchives(job, attempts, s, now)
+	return rt.expireCanonicalArchives(ctx, job, attempts, s, now)
 }
 
-func (rt *Runtime) expireCanonicalArchives(job Job, attempts []JobAttempt, s retentionSettings, now time.Time) error {
+func (rt *Runtime) expireCanonicalArchives(ctx context.Context, job Job, attempts []JobAttempt, s retentionSettings, now time.Time) error {
 	id := job.ID
 	// Source age remains the original capture's age, not a rerun's date.
 	if job.ArtifactRunPath != nil && *job.ArtifactRunPath == canonicalRunPath(rt.cfg.WorkRoot, id) {
@@ -183,6 +190,15 @@ func (rt *Runtime) expireCanonicalArchives(job Job, attempts []JobAttempt, s ret
 				continue
 			}
 			if err := rt.expirePaths(id, a.AttemptNumber, "audio", s.Recordings.policyFor("audio"), retentionAnchor(a.RecordFinishedAt), now, s.Revision, canonicalRunPath(rt.cfg.WorkRoot, id), attemptRunPath(rt.cfg.WorkRoot, id, a.AttemptNumber)); err != nil {
+				return err
+			}
+			video := s.Recordings.policyFor("video")
+			audio := s.Recordings.policyFor("audio")
+			anchor := retentionAnchor(a.RecordFinishedAt)
+			if !audio.Forever && (video.Forever || audio.deadline(anchor).Before(video.deadline(anchor))) {
+				video = audio
+			}
+			if err := rt.expireCaptureVideo(ctx, job, a.AttemptNumber, video, anchor, now, s.Revision); err != nil {
 				return err
 			}
 			break
@@ -246,6 +262,22 @@ func (rt *Runtime) expirePaths(id string, attempt int, kind string, p retentionP
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
+	}
+	return rt.startExpiryOperation(op)
+}
+
+// Staging/remuxing does not hold the settings mutex. Immediately before the
+// destructive boundary, recheck the revision and linearize it with Save.
+func (rt *Runtime) startExpiryOperation(op artifactOperation) error {
+	if rt.retention != nil {
+		rt.retention.mu.Lock()
+		defer rt.retention.mu.Unlock()
+		if rt.retention.loadErr != nil {
+			return rt.retention.loadErr
+		}
+		if rt.retention.settings.Revision != op.Revision {
+			return fmt.Errorf("settings changed before deletion; reconsider on next pass")
+		}
 	}
 	if err := rt.saveOperation(op); err != nil {
 		return err

@@ -319,9 +319,10 @@ could not use.
 
 ## Deletion & uninstall
 
-- **Attempt history is pruned by policy.** Per-attempt working artifacts under
-  the operator volume are removed according to `CASSINI_ARTIFACT_RETENTION`
-  (default `sealed`); the delivered copy in Nextcloud Files is the durable one.
+- **Container-local artefacts expire only under configured policies.** Operator
+  → Storage separately controls recordings, attempt history, current output and
+  stage logs. The default is keep forever. Expiring source audio prevents reruns;
+  job/attempt database rows remain. The delivered Nextcloud copy is independent.
   See [Retention](./reference/artifacts-and-filesystem.md#retention).
 - **A delivered attempt's staging copy is removed once Nextcloud accepts it**, so
   the full recording does not linger on the app volume outside the Nextcloud

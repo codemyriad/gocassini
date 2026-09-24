@@ -3,9 +3,12 @@ package operator
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -79,5 +82,76 @@ func TestRetentionSettingsAPI(t *testing.T) {
 	}
 	if newRetentionConfig(path).loadErr == nil {
 		t.Fatal("invalid config must disable expiry")
+	}
+}
+
+func TestRetentionRouteIsAdminAndRequiresStandaloneToken(t *testing.T) {
+	b, err := os.ReadFile("../../../appinfo/info.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		External struct {
+			Routes []struct {
+				URL    string `xml:"url"`
+				Verb   string `xml:"verb"`
+				Access string `xml:"access_level"`
+			} `xml:"routes>route"`
+		} `xml:"external-app"`
+	}
+	if err = xml.Unmarshal(b, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, route := range manifest.External.Routes {
+		if strings.Contains(route.URL, `storage\/retention`) {
+			found = true
+			if route.Access != "ADMIN" || route.Verb != "GET,PUT" {
+				t.Fatal(route)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("ADMIN manifest route missing")
+	}
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	rt.retention = newRetentionConfig(filepath.Join(t.TempDir(), "retention.json"))
+	rt.cfg.APIToken = "test-token"
+	rt.cfg.BasePath = "/operator"
+	h := newHTTPHandler(rt.logger, rt, ExAppConfig{})
+	for _, token := range []string{"", "Bearer test-token"} {
+		req := httptest.NewRequest(http.MethodGet, "/operator/storage/retention", nil)
+		req.Header.Set("Authorization", token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		want := http.StatusUnauthorized
+		if token != "" {
+			want = 200
+		}
+		if w.Code != want {
+			t.Fatalf("status %d want %d: %s", w.Code, want, w.Body.String())
+		}
+	}
+}
+
+func TestRetentionSaveFailureKeepsActivePolicy(t *testing.T) {
+	dir := t.TempDir()
+	c := newRetentionConfig(filepath.Join(dir, "settings"))
+	rt := &Runtime{retention: c}
+	// A regular file cannot serve as a settings directory.
+	if err := os.WriteFile(filepath.Join(dir, "file"), []byte("file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c.path = filepath.Join(dir, "file", "settings")
+	s := defaultRetentionSettings()
+	s.Logs = retentionPolicy{Count: 1, Unit: "days"}
+	b, _ := json.Marshal(s)
+	r := httptest.NewRequest("PUT", "/storage/retention", bytes.NewReader(b))
+	r.Header.Set("If-Match", `"0"`)
+	w := httptest.NewRecorder()
+	rt.retentionHandler(w, r)
+	if w.Code != 500 || !c.settings.Logs.Forever || c.settings.Revision != 0 {
+		t.Fatal(w.Code, c.settings)
 	}
 }

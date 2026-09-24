@@ -137,6 +137,14 @@ Flags:
 		return backfillSearchExitOK
 	}
 
+	// This maintenance process reads local current bundles as well as the
+	// remote archive. Do not race the server's promotion/retention worker.
+	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "local archive is in use; stop the operator before backfill: %v\n", err)
+		return backfillSearchExitNotStarted
+	}
+	defer unlockRoot()
 	index, err := openSearchStore(searchStorePath(cfg.DBPath), logger)
 	if err != nil {
 		fmt.Fprintf(stderr, "open search index: %v\nnothing was written\n", err)

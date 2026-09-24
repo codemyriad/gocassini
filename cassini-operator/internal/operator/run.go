@@ -76,9 +76,8 @@ type Config struct {
 	// Empty means unset, which resolves to the default; a non-empty unknown
 	// name is rejected at startup.
 	PublishSink string
-	// ArtifactRetention names which attempt-scoped payloads under runs/ are
-	// pruned (retention.go, D-583). Empty means unset, which resolves to the
-	// default; a non-empty unknown name is rejected at startup.
+	// ArtifactRetention is a deprecated compatibility option. Known legacy
+	// values are accepted but ignored; Operator → Storage owns retention.
 	ArtifactRetention string
 }
 
@@ -590,7 +589,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
 	fs.StringVar(&cfg.PublishSink, "sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
-	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "which attempt artifacts under runs/ are pruned (policies: "+strings.Join(artifactRetentionNames(), ", ")+"; default "+defaultArtifactRetention+")")
+	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "deprecated and ignored; configure Operator → Storage (default keep forever)")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
