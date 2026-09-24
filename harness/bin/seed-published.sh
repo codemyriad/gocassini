@@ -27,8 +27,12 @@ PACK_DIR="$(cd "$PACK_DIR" && pwd)"
 names_file="$(mktemp)"
 container_id=""
 container_manifest=""
+temporary=""
 cleanup() {
   rm -f "$names_file"
+  if [[ -n "$container_id" && -n "$temporary" ]]; then
+    docker exec "$container_id" rm -f -- "$temporary" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$container_id" && -n "$container_manifest" ]]; then
     docker exec "$container_id" rm -f -- "$container_manifest" >/dev/null 2>&1 || true
   fi
@@ -88,6 +92,7 @@ while IFS= read -r name; do
   docker exec "$container_id" cp -- "$source" "$temporary"
   docker exec "$container_id" chown www-data:www-data -- "$temporary"
   docker exec "$container_id" mv -- "$temporary" "$target"
+  temporary=""
   copied=$((copied + 1))
 done < "$names_file"
 
