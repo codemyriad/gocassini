@@ -62,10 +62,8 @@ What Cassini writes is described in [docs/portable-meeting-format.md](docs/porta
 - Talk with the High-performance backend (standalone signalling). Cassini joins
    calls as an internal signalling client, so it needs the signalling server's
    `internalsecret`. This is the one value you have to supply by hand.
-- _Optional_: the [Team folders](https://apps.nextcloud.com/apps/groupfolders)
-   and [Everyone Group](https://apps.nextcloud.com/apps/group_everyone) apps, which
-   let Cassini restrict each recording to the people who were in the meeting.
-   Without them, every account on the instance can see every recording.
+- Nextcloud Files sharing enabled. Cassini uses built-in direct shares; no
+   Team folders or Everyone Group app is needed.
 - _Optional_: an NVIDIA GPU with the Container Toolkit (x86_64) for faster
    transcription. CPU is the default and runs on amd64 and arm64.
 
@@ -77,7 +75,7 @@ What Cassini writes is described in [docs/portable-meeting-format.md](docs/porta
 2. **Open Cassini as an administrator.** It creates the `cassini` service
    account that owns the meeting archive. Nextcloud 34.0.2 and later ask you to
    confirm with your password first.
-3. **Choose who can see recordings**, under Operator › Settings. A fresh install makes every recording visible to everyone with an account on your Nextcloud. To limit each recording to the people who were in that meeting, enable the "Team folders" and "Everyone Group" apps first, then change the setting to "meeting participants". Cassini sets up the folder and permissions itself.
+3. **Check recording sharing**, under Operator › Settings. Cassini shares each recording with the local people, groups and Teams captured from its Talk room. For public meetings, those participants can share onward when your Nextcloud allows resharing. Cassini creates no public link. Existing installations can follow the [one-user cutover](docs/direct-shares-cutover.md).
 4. **Point Talk at Cassini.** Back up Talk's current `recording_servers`
    value, then apply the one Cassini generates for you.
 5. **Record a test call** in a private room and watch it arrive in Cassini.

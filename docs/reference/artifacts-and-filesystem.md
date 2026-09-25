@@ -198,24 +198,12 @@ and the live site itself is:
 > directory is staging either way, and is removed once the sink accepts the
 > meeting. See `docs/reference/configuration.md` for `--sink`.
 
-Which path in Nextcloud Files depends on the storage mode, and the two roots are
-deliberately distinct so that neither can shadow the other:
-
-```text
-  default mode            CassiniNoACL/Recordings/   the service account's own
-                                                     private directory
-  access-controlled mode  Cassini/Recordings/        inside the `Cassini` Team
-                                                     folder, under advanced ACLs
-
-  either root:  meetings/<job-id>.opus
-                catalog.json
-```
-
-The shape inside is identical, so nothing downstream of the root string changes
-with the mode. Only one root holds the archive at a time; switching modes copies
-it across and then empties the other. `/status` reports the active one as
+Nextcloud Files holds installed ExApp recordings at
+`cassini/CassiniRecordings/meetings/<job-id>.opus`. This private owner directory
+has no remote `catalog.json`. The app shares each file through Nextcloud's core
+sharing API and reads it as the caller. `/status` reports the owner root as
 `recordings_access.root`. See
-[Installing Cassini as a Nextcloud ExApp](../exapp-install.md#where-recordings-live).
+[Recording access and cutover](../direct-shares-cutover.md).
 
 ## Why both `current/` and `runs/` exist
 

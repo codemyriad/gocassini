@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -143,64 +144,6 @@ func TestResolveAdminIdentityFailsLoudlyWhenNoCandidateIsAnAdministrator(t *test
 
 // Provisioning must NOT proceed as an account that may not exist — that is the
 // behaviour this ticket exists to remove.
-func TestProvisionStopsWhenNoAdministratorCanBeResolved(t *testing.T) {
-	resetProvisioningUser(t)
-	resetSubstrateRecord(t)
-	mock := &provisionMock{
-		folders:     `[]`,
-		groups:      `[]`,
-		roster:      []string{"alice"},
-		adminActors: map[string]int{},
-	}
-	srv := httptest.NewServer(mock.handler(t))
-	defer srv.Close()
-
-	var logs strings.Builder
-	testExAppConfig(srv.URL).provisionNCFilesAccess(context.Background(), log.New(&logs, "", 0))
-
-	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users"); ok {
-		t.Fatal("provisioning created an account while acting as an unresolved administrator")
-	}
-	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
-		t.Fatal("provisioning created a folder while acting as an unresolved administrator")
-	}
-	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
-	if snap.State != string(ncSubstrateUnavailable) || snap.Step != "administrator" {
-		t.Fatalf("substrate = %+v, want unavailable/administrator", snap)
-	}
-	// The escape hatch has to be named where someone will read it. Before this
-	// ticket the zero-candidates branch logged nothing at all.
-	if !strings.Contains(logs.String(), envNCAdminUser) {
-		t.Fatalf("the log must name the override: %s", logs.String())
-	}
-	if !strings.Contains(snap.Detail, envNCAdminUser) {
-		t.Fatalf("/status must name the override: %q", snap.Detail)
-	}
-}
-
-// A missing route is an instance fault, not a statement about its accounts, so
-// it is degraded rather than unavailable — there is no app to install and no
-// name to set.
-func TestProvisionReportsDegradedWhenTheProvisioningRouteIsAbsent(t *testing.T) {
-	resetProvisioningUser(t)
-	resetSubstrateRecord(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/apps/app_api/api/v1/users") {
-			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":["admin"]}}`)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	testExAppConfig(srv.URL).provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
-
-	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
-	if snap.State != string(ncSubstrateDegraded) || snap.Step != "administrator_probe" {
-		t.Fatalf("substrate = %+v, want degraded/administrator_probe", snap)
-	}
-}
-
 // A large instance must not turn one enabled edge into an unbounded OCS scan.
 // The cap is logged when it bites, because silent truncation would look exactly
 // like "no administrator exists".
@@ -237,4 +180,65 @@ func TestAdminCandidatesSurviveAnUnreadableRoster(t *testing.T) {
 	if len(got) != 1 || got[0] != defaultNextcloudAdminUser {
 		t.Fatalf("candidates = %v, want just %q", got, defaultNextcloudAdminUser)
 	}
+}
+
+type recordedReq struct{ method, path, auth string }
+type provisionMock struct {
+	folders, groups string
+	roster          []string
+	adminList       string
+	adminActors     map[string]int
+	reqs            []recordedReq
+}
+
+func resetProvisioningUser(t *testing.T) {
+	t.Helper()
+	resolvedProvisioningUser.Store(nil)
+	resolvedAdminRoster.Store(nil)
+	t.Cleanup(func() { resolvedProvisioningUser.Store(nil); resolvedAdminRoster.Store(nil) })
+}
+func (m *provisionMock) find(method, suffix string) (recordedReq, bool) {
+	for _, req := range m.reqs {
+		if req.method == method && strings.HasSuffix(req.path, suffix) {
+			return req, true
+		}
+	}
+	return recordedReq{}, false
+}
+func (m *provisionMock) handler(t *testing.T) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m.reqs = append(m.reqs, recordedReq{r.Method, r.URL.Path, r.Header.Get("AUTHORIZATION-APP-API")})
+		switch r.URL.Path {
+		case "/ocs/v2.php/apps/app_api/api/v1/users":
+			roster := m.roster
+			if roster == nil {
+				roster = []string{"admin"}
+			}
+			raw, _ := json.Marshal(roster)
+			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":`+string(raw)+`}}`)
+		case "/ocs/v2.php/cloud/groups/admin":
+			auth, _ := base64.StdEncoding.DecodeString(r.Header.Get("AUTHORIZATION-APP-API"))
+			actor, _, _ := strings.Cut(string(auth), ":")
+			code := http.StatusUnauthorized
+			if m.adminActors == nil && actor == defaultNextcloudAdminUser {
+				code = http.StatusOK
+			}
+			if m.adminActors != nil {
+				if v, ok := m.adminActors[actor]; ok {
+					code = v
+				}
+			}
+			if code != http.StatusOK {
+				w.WriteHeader(code)
+				return
+			}
+			admins := m.adminList
+			if admins == "" {
+				admins = `["admin"]`
+			}
+			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":`+admins+`}}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
 }

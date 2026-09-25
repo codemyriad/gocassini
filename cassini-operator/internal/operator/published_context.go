@@ -32,19 +32,10 @@ import (
 // package the CLI renders from — it invokes the CLI, exactly as the build, seal
 // and publish stages already do, and streams what it printed.
 //
-// The CLI's own id path is closed to the operator: fetching a meeting by id
-// needs the caller's Nextcloud app password, which the operator does not hold
-// and cannot mint. So the operator fetches each recording itself — as the
-// caller, over WebDAV, so Nextcloud enforces the per-file ACL — and hands the
-// CLI the files (`meetings context --local`).
-//
-// Access is decided in exactly one place: serveFilteredCatalog, the same
-// authoritative-catalog-as-owner + PROPFIND-as-caller intersect the viewer's
-// catalog goes through. An id outside that set is a 404, identical to an id
-// that does not exist, because a recording you may not read must never reveal
-// that it exists (the same rule ncFilesProxy applies to meetings/<id>.opus).
-// The per-caller download is then a second, independent gate on the same
-// question, so the intersect is belt and braces rather than the only lock.
+// The operator has no caller app password. It resolves the caller's current
+// shares to select meetings, then downloads each recording as that caller over
+// WebDAV. Nextcloud checks each read. An id outside the caller's share set is a
+// 404, the same answer as an absent id.
 //
 // It is archive-relative, a sibling of catalog.json, so it rides the manifest's
 // existing `^published\/.+$` USER GET,HEAD route and needs no appinfo/info.xml
@@ -153,17 +144,12 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 	defer cancel()
 
 	readable, catalog, ok := c.readableMeetingsForCaller(ctx, client, caller, logger)
-	if !ok || len(readable) == 0 {
-		// Empty is an outage here, not an answer — the same guard the insight
-		// handler has. serveFilteredCatalog fails CLOSED, so a per-caller scan
-		// that errored arrives as an empty catalog with ok=true, and the loop
-		// below would then serve a substrate failure as "not one of yours".
-		// Nobody reaches this route without having just listed their own
-		// meetings, so a readable set of nothing is the failure, not the fact.
-		if logger != nil {
-			logger.Printf("meetings context: caller=%s has no readable meetings (ok=%t) — refusing as an outage rather than a denial", caller, ok)
-		}
+	if !ok {
 		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+		return
+	}
+	if len(readable) == 0 {
+		http.NotFound(w, r)
 		return
 	}
 
@@ -207,9 +193,8 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 		switch {
 		case err == nil:
 		case status == http.StatusNotFound || status == http.StatusUnauthorized || status == http.StatusForbidden:
-			// The second gate disagreed with the intersect — the ACL changed
-			// between the scan and the fetch, or the recording was removed. Same
-			// answer as the first gate gives.
+			// Access changed between the share list and the DAV read, or
+			// the recording was removed. Both answer 404.
 			if logger != nil {
 				logger.Printf("meetings context: caller=%s denied id=%s at fetch -> %d (served as 404)", caller, id, status)
 			}
@@ -327,13 +312,15 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 // segment of the characters a published meeting id is made of, and not a dot
 // segment.
 func isPlainMeetingID(id string) bool {
-	if id == "." || id == ".." {
+	if id == "" || id == "." || id == ".." {
 		return false
 	}
 	for _, r := range id {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '-', r == '_', r == '.':
+		// Historical portable exports include wall-clock times in their IDs.
+		// A colon is safe within this single path segment; separators are not.
+		case r == '-', r == '_', r == '.', r == ':':
 		default:
 			return false
 		}
@@ -356,17 +343,8 @@ func isPlainMeetingID(id string) bool {
 // is read from exactly the entry an id run would have read it from. That is
 // what makes the two documents identical rather than merely similar.
 //
-// A failed per-caller scan reaches here as an EMPTY catalog, not as an error —
-// serveFilteredCatalog fails closed — so the readable set comes back empty with
-// ok=true. That is the safe direction (over-restriction, never disclosure), and
-// both callers treat an empty set as the outage it almost always is and answer
-// 502 rather than 404: a caller who has just listed their own meetings and now
-// reads none of them has hit a failure, not a permission change. Telling the
-// two apart exactly needs the resolveCatalogForCaller extraction D-701 makes.
-//
-// Which model this instance runs is resolved inside that same resolution, so
-// this reads the caller's slice under access control and the whole archive under
-// the default model, without a mode branch of its own (D-616).
+// The catalog is assembled from the caller's current shares. A failed share
+// lookup answers 502, while a valid empty share set remains an empty catalog.
 func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (map[string]string, []byte, bool) {
 	captured := &capturedResponse{header: http.Header{}}
 	c.serveFilteredCatalog(ctx, captured, client, caller, logger)
@@ -395,7 +373,6 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 	// The root is taken with the identity the staging download will use, from
 	// the one place that pairs them: a path under the wrong model's root is a
 	// 404 at best and the other model's archive at worst.
-	_, root := ncArchiveReadIdentity(caller)
 	readable := make(map[string]string, len(document.Meetings))
 	for _, entry := range document.Meetings {
 		id := strings.TrimSpace(entry.ID)
@@ -412,19 +389,26 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 			continue
 		}
 		if _, taken := readable[id]; !taken {
-			readable[id] = root + "/meetings/" + base
+			rel, err := c.recipientRecordingPath(ctx, client, caller, base, c.meetingMetadata)
+			if err != nil {
+				if errors.Is(err, errRecordingNotShared) {
+					continue
+				}
+				if logger != nil {
+					logger.Printf("meetings context: resolve caller=%s recording=%s: %v", caller, base, err)
+				}
+				return nil, nil, false
+			}
+			readable[id] = rel
 		}
 	}
 	return readable, body, true
 }
 
-// stageMeetingForContext downloads one recording into destPath under the same
-// identity the read proxy would use: AS THE CALLER under access control, so
-// Nextcloud enforces the per-file ACL a second time; as the owner under the
-// default model, where reading as the caller would find nothing at all. It draws
-// down a shared byte budget so one request cannot stage the archive.
+// stageMeetingForContext downloads as the caller. Nextcloud checks this file
+// read, and the shared byte budget prevents one request staging an archive.
 func (c ExAppConfig) stageMeetingForContext(ctx context.Context, client *http.Client, caller, relPath, destPath string, budget *int64) (int, error) {
-	readAs, _ := ncArchiveReadIdentity(caller)
+	readAs := caller
 	written, status, err := c.stageRecording(ctx, client, readAs, relPath, destPath, *budget)
 	if err != nil {
 		return status, err
