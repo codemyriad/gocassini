@@ -10,7 +10,8 @@
     "build:embedded": "vite build --config vite.embedded.config.ts && node ./scripts/assert-embedded-single-bundle.mjs",
     "build:all": "npm run build && npm run build:embedded",
     "preview": "vite preview",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:retention-browser": "node ./scripts/check-retention-browser.mjs"
   },
   "dependencies": {
     "@melt-ui/svelte": "^0.86.6",

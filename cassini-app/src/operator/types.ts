@@ -42,6 +42,7 @@ export interface Job {
 }
 
 export interface JobAttempt {
+  files_present?: Record<string, boolean>;
   job_id: string;
   attempt_number: number;
   trigger_kind: string;
@@ -84,6 +85,7 @@ export interface JobAttempt {
 }
 
 export interface JobDetailResponse {
+  availability?: { source: string; output: string; published_attempt: number; rerun_blocked_reason?: string };
   job: Job;
   attempts: JobAttempt[];
 }

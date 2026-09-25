@@ -76,16 +76,17 @@ type Config struct {
 	// Empty means unset, which resolves to the default; a non-empty unknown
 	// name is rejected at startup.
 	PublishSink string
-	// ArtifactRetention names which attempt-scoped payloads under runs/ are
-	// pruned (retention.go, D-583). Empty means unset, which resolves to the
-	// default; a non-empty unknown name is rejected at startup.
+	// ArtifactRetention is a deprecated compatibility option. Known legacy
+	// values are accepted but ignored; Operator → Storage owns retention.
 	ArtifactRetention string
 }
 
 type Runtime struct {
-	modelMu     sync.Mutex
-	modelCancel context.CancelFunc
-	modelJobID  string
+	retention        *retentionConfig
+	retentionSweepMu sync.Mutex
+	modelMu          sync.Mutex
+	modelCancel      context.CancelFunc
+	modelJobID       string
 	// modelInventoryCache holds `cassini models list` results per device;
 	// see cachedModelInventory.
 	modelInventoryMu    sync.Mutex
@@ -240,8 +241,9 @@ type createJobResponse struct {
 }
 
 type jobDetailResponse struct {
-	Job      Job          `json:"job"`
-	Attempts []JobAttempt `json:"attempts"`
+	Availability artifactAvailability `json:"availability"`
+	Job          Job                  `json:"job"`
+	Attempts     []JobAttempt         `json:"attempts"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -289,6 +291,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg.TalkSecretSource = prov.SecretSource
 	cfg.TalkRecordingBackendURL = prov.BackendURL
 
+	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "work root: %v\n", err)
+		return 1
+	}
+	defer unlockRoot()
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
@@ -397,7 +405,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// (and is commonly empty in an ExApp), so applying the standalone default to
 	// it here would misreport the resolved nextcloud-files sink as local.
 	logger.Printf("publish_sink -> %s", sink.Name())
-	logger.Printf("artifact_retention -> %s", artifactRetentionOrDefault(cfg.ArtifactRetention))
+	if cfg.ArtifactRetention != "" {
+		logger.Printf("artifact-retention / CASSINI_ARTIFACT_RETENTION is deprecated and ignored; configure Operator → Storage (default keep forever)")
+	}
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
@@ -528,7 +538,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
 	fs.StringVar(&cfg.PublishSink, "sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
-	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "which attempt artifacts under runs/ are pruned (policies: "+strings.Join(artifactRetentionNames(), ", ")+"; default "+defaultArtifactRetention+")")
+	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "deprecated and ignored; configure Operator → Storage (default keep forever)")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
@@ -712,6 +722,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	rt := &Runtime{
+		retention:    newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
 		ctx:          ctx,
 		cancel:       cancel,
 		store:        store,
@@ -821,6 +832,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		}
 		return rt.runRecordDoctorContext(probeCtx)
 	})
+	rt.reconcilePromotionLeftovers()
+	rt.recoverArtifactOperations()
+	rt.reconcileArtifactDuplicatesOnStartup()
 	rt.startModelWorker()
 	rt.startProcessingMonitor()
 	rt.startBuildWorkers()
@@ -828,6 +842,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.startPublishWorker()
 	rt.workerWG.Add(1)
 	go rt.requeueDispatcher()
+	rt.startRetentionWorker()
 	return rt
 }
 
@@ -909,6 +924,8 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage", exappCfg.storageHandler(rt)},
+		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
+		{"/storage/retention/sweep", http.HandlerFunc(rt.retentionSweepHandler)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the
 		// old hand-rolled list because main moved route registration into this
@@ -1104,6 +1121,8 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 }
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
+	unlock := rt.store.lockArtifacts(job.ID)
+	defer unlock()
 	defer rt.recordWG.Done()
 	// The record slot is freed as soon as the record subprocess exits (the
 	// releaseSlot call below): post-record bookkeeping — Talk delivery with
@@ -1161,6 +1180,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
+	rt.removeSuccessfulCaptureDuplicate(job.ID, job.CurrentAttemptNumber)
 	// Tell spreed the recording stopped. Status only — the meeting itself
 	// goes to Nextcloud as the published .opus, never through Talk's
 	// recording store (D-551). Retried with backoff but never fails the
@@ -1289,6 +1309,8 @@ func looksLikeRepoRoot(dir string) bool {
 }
 
 type Store struct {
+	artifactGate         sync.RWMutex
+	artifactJobs         sync.Map
 	db                   *sql.DB
 	stateChangePublisher stateChangePublisher
 }
@@ -1314,6 +1336,10 @@ func OpenStore(path string) (*Store, error) {
 
 	store := &Store{db: db}
 	if err := store.ensureSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.ensureRetentionSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -1902,7 +1928,17 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("list job attempts: %v", err))
 		return
 	}
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts})
+	for i := range attempts {
+		a := &attempts[i]
+		a.FilesPresent = map[string]bool{}
+		for key, p := range map[string]*string{"run": a.ArtifactRunPath, "meeting": a.ArtifactMeetingPath, "opus": a.ArtifactOpusPath, "site": a.ArtifactSitePath, "record_log": a.RecordLogPath, "build_log": a.BuildLogPath, "seal_log": a.SealLogPath, "publish_log": a.PublishLogPath} {
+			if p != nil {
+				_, e := os.Stat(*p)
+				a.FilesPresent[key] = e == nil
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job)})
 }
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {

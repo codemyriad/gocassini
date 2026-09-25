@@ -1,0 +1,11 @@
+export interface RetentionPolicy { forever: boolean; count?: number; unit?: "days" }
+export interface RetentionGroup { mode: "group" | "fine"; fine_initialized?: boolean; policy: RetentionPolicy; fine: Record<string, RetentionPolicy> }
+export interface RetentionSettings { version: number; revision: number; schedule: { time: string; timezone: string }; recordings: RetentionPolicy; history: RetentionGroup; current: RetentionPolicy; logs: RetentionPolicy }
+export const retentionLabels: Record<string, string> = {
+  failed_capture: "Failed recordings",
+  failed_build: "Failed build / seal output", superseded: "Superseded successful output", failed_publish: "Failed publish staging",
+};
+// Undefined fine policies are first-split drafts; persisted policies preserve inactive values.
+export function changeRetentionMode(group: RetentionGroup, mode: "group" | "fine", firstSplit = false): RetentionGroup {
+  return { ...group, mode, fine_initialized: group.fine_initialized || mode === "fine", fine: firstSplit ? Object.fromEntries(Object.keys(group.fine).map(k => [k, { ...group.policy }])) : group.fine };
+}

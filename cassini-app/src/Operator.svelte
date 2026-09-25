@@ -30,6 +30,7 @@
         { id: "endpoints", label: "AI providers" },
         { id: "pipeline", label: "Publish pipeline" },
         { id: "templates", label: "Insight templates" },
+        { id: "storage", label: "Storage" },
       ],
     },
   ];
@@ -906,11 +907,11 @@
   $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
   $: rerunBlockedReason =
-    rerunVisible && !selectedJob?.job.artifact_run_path
+    selectedJob?.availability?.rerun_blocked_reason || (rerunVisible && !selectedJob?.job.artifact_run_path
       ? "This run produced no recording to rerun from."
-      : "";
+      : "");
   $: canStopSelectedJob = !submittingStop && stopApplies;
-  $: canRerunSelectedJob = !submittingRerun && rerunApplies;
+  $: canRerunSelectedJob = !submittingRerun && rerunApplies && !rerunBlockedReason;
 </script>
 
 <svelte:head>
@@ -1097,6 +1098,10 @@
               <RefreshCw size={16} aria-hidden="true" />
             </button>
           </header>
+          {#if selectedJob?.availability}
+            <p class="text-sm">Local source: {selectedJob.availability.source}. Current archive: {selectedJob.availability.output} (published attempt {selectedJob.availability.published_attempt || "unknown"}).</p>
+            {#if rerunBlockedReason}<p class="text-sm">{rerunBlockedReason}</p>{/if}
+          {/if}
 
           {#if jobsError}
             <div class="px-4 py-4">
@@ -1596,25 +1601,25 @@
                               {#if attempt.record_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}{attempt.files_present?.record_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.build_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Build log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}{attempt.files_present?.build_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.seal_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Seal log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}{attempt.files_present?.seal_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.publish_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Publish log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}{attempt.files_present?.publish_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                             </dl>
