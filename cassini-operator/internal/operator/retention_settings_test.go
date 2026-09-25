@@ -19,10 +19,11 @@ func TestRetentionCalendar(t *testing.T) {
 		p      retentionPolicy
 		want   string
 	}{
-		{"2024-01-31", retentionPolicy{Count: 1, Unit: "months"}, "2024-02-29"},
-		{"2023-01-31", retentionPolicy{Count: 1, Unit: "months"}, "2023-02-28"},
-		{"2024-02-29", retentionPolicy{Count: 12, Unit: "months"}, "2025-02-28"},
-		{"2026-09-24", retentionPolicy{Count: 1, Unit: "weeks"}, "2026-10-01"},
+		{"2024-01-31", retentionPolicy{Count: 30, Unit: "days"}, "2024-03-01"},
+		{"2023-01-31", retentionPolicy{Count: 30, Unit: "days"}, "2023-03-02"},
+		{"2024-02-29", retentionPolicy{Count: 60, Unit: "days"}, "2024-04-29"},
+		{"2026-09-24", retentionPolicy{Count: 7, Unit: "days"}, "2026-10-01"},
+		{"2026-09-24", retentionPolicy{Count: 90, Unit: "days"}, "2026-12-23"},
 	} {
 		a, _ := time.Parse("2006-01-02", tc.anchor)
 		d := tc.p.deadline(a)
@@ -53,12 +54,68 @@ func TestRetentionValidation(t *testing.T) {
 		t.Fatal("bound")
 	}
 }
+
+func TestRetentionRejectsOtherUnits(t *testing.T) {
+	for _, unit := range []string{"weeks", "months", "", "hours"} {
+		p := retentionPolicy{Count: 1, Unit: unit}
+		if p.validate() == nil || !p.deadline(time.Now()).IsZero() {
+			t.Fatalf("unsupported unit %q could expire an artifact", unit)
+		}
+		rt := &Runtime{retention: newRetentionConfig(filepath.Join(t.TempDir(), "settings.json"))}
+		s := defaultRetentionSettings()
+		s.Recordings = p
+		data, _ := json.Marshal(s)
+		r := httptest.NewRequest(http.MethodPut, "/storage/retention", bytes.NewReader(data))
+		r.Header.Set("If-Match", `"0"`)
+		w := httptest.NewRecorder()
+		rt.retentionHandler(w, r)
+		if w.Code != http.StatusBadRequest || rt.retention.settings.Revision != 0 {
+			t.Fatalf("unsupported unit %q accepted: %d", unit, w.Code)
+		}
+	}
+}
+
+func TestRetentionMigrateDays(t *testing.T) {
+	s := defaultRetentionSettings()
+	s.Version = 2
+	s.Recordings = retentionPolicy{Count: 2, Unit: "months"}
+	s.History.Policy = retentionPolicy{Count: 3, Unit: "weeks"}
+	s.History.Fine["superseded"] = retentionPolicy{Count: 1, Unit: "months"}
+	s.Current = retentionPolicy{Count: 90, Unit: "days"}
+	path := filepath.Join(t.TempDir(), "retention_settings.json")
+	data, _ := json.Marshal(s)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := newRetentionConfig(path)
+	if c.loadErr != nil {
+		t.Fatal(c.loadErr)
+	}
+	if c.settings.Version != 3 || c.settings.Recordings.Count != 62 || c.settings.History.Policy.Count != 21 || c.settings.History.Fine["superseded"].Count != 31 || c.settings.Current.Count != 90 || !c.settings.Logs.Forever {
+		t.Fatalf("unexpected converted settings: %+v", c.settings)
+	}
+	if err := c.save(c.settings); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded := newRetentionConfig(path); reloaded.loadErr != nil || reloaded.settings.Recordings != c.settings.Recordings {
+		t.Fatal("converted settings did not roundtrip", reloaded.loadErr)
+	}
+	// Never cap long legacy policies: that could delete recordings early.
+	s.Recordings = retentionPolicy{Count: 9999, Unit: "months"}
+	data, _ = json.Marshal(s)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if c = newRetentionConfig(path); c.loadErr == nil || !c.settings.Recordings.Forever {
+		t.Fatal("oversized conversion must disable expiry")
+	}
+}
 func TestRetentionSettingsAPI(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "retention_settings.json")
 	rt := &Runtime{retention: newRetentionConfig(path)}
 	s := defaultRetentionSettings()
-	s.Logs = retentionPolicy{Count: 2, Unit: "weeks"}
-	s.Recordings = retentionPolicy{Count: 1, Unit: "months"}
+	s.Logs = retentionPolicy{Count: 14, Unit: "days"}
+	s.Recordings = retentionPolicy{Count: 30, Unit: "days"}
 	data, _ := json.Marshal(s)
 	put := func(tag string) int {
 		r := httptest.NewRequest("PUT", "/storage/retention", bytes.NewReader(data))
@@ -162,9 +219,9 @@ func TestRetentionMigrateRecordingPolicy(t *testing.T) {
 		want             retentionPolicy
 		invalid          bool
 	}{
-		{"group", `{"mode":"group","policy":{"forever":false,"count":2,"unit":"months"},"fine":{"audio":{"forever":true},"video":{"forever":true}}}`, retentionPolicy{Count: 2, Unit: "months"}, false},
+		{"group", `{"mode":"group","policy":{"forever":false,"count":2,"unit":"months"},"fine":{"audio":{"forever":true},"video":{"forever":true}}}`, retentionPolicy{Count: 62, Unit: "days"}, false},
 		{"audio forever", `{"mode":"fine","policy":{"forever":false,"count":1,"unit":"days"},"fine":{"audio":{"forever":true},"video":{"forever":false,"count":1,"unit":"days"}}}`, retentionPolicy{Forever: true}, false},
-		{"audio finite", `{"mode":"fine","policy":{"forever":true},"fine":{"audio":{"forever":false,"count":3,"unit":"weeks"},"video":{"forever":false,"count":1,"unit":"days"}}}`, retentionPolicy{Count: 3, Unit: "weeks"}, false},
+		{"audio finite", `{"mode":"fine","policy":{"forever":true},"fine":{"audio":{"forever":false,"count":3,"unit":"weeks"},"video":{"forever":false,"count":1,"unit":"days"}}}`, retentionPolicy{Count: 21, Unit: "days"}, false},
 		{"missing audio", `{"mode":"fine","policy":{"forever":true},"fine":{"video":{"forever":true}}}`, retentionPolicy{}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -194,7 +251,7 @@ func TestRetentionMigrateRecordingPolicy(t *testing.T) {
 				}
 				return
 			}
-			if c.loadErr != nil || c.settings.Version != 2 || c.settings.Revision != 7 || c.settings.Recordings != tc.want {
+			if c.loadErr != nil || c.settings.Version != 3 || c.settings.Revision != 7 || c.settings.Recordings != tc.want {
 				t.Fatalf("migration: %+v, error %v", c.settings, c.loadErr)
 			}
 			if err = c.save(c.settings); err != nil {

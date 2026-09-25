@@ -34,7 +34,7 @@ func TestRetentionHistoryAndLogs(t *testing.T) {
 	s := &rt.retention.settings
 	s.History.Mode = "fine"
 	s.History.Fine["failed_build"] = retentionPolicy{Count: 1, Unit: "days"}
-	s.Logs = retentionPolicy{Count: 1, Unit: "weeks"}
+	s.Logs = retentionPolicy{Count: 7, Unit: "days"}
 	rt.runRetentionSweep(context.Background(), now)
 	assertGone(t, attemptMeetingPath(rt.cfg.WorkRoot, id, 1), "failed build policy")
 	assertGone(t, attemptSealDir(rt.cfg.WorkRoot, id, 1), "failed seal policy")
@@ -45,7 +45,7 @@ func TestRetentionHistoryAndLogs(t *testing.T) {
 		t.Fatal("metadata lost", err)
 	}
 	s.History.Mode = "group"
-	s.History.Policy = retentionPolicy{Count: 1, Unit: "months"}
+	s.History.Policy = retentionPolicy{Count: 31, Unit: "days"}
 	rt.runRetentionSweep(context.Background(), now)
 	assertGone(t, attemptRunPath(rt.cfg.WorkRoot, id, 1), "group policy")
 	assertGone(t, attemptSitePath(rt.cfg.WorkRoot, id, 1), "group policy")
@@ -173,7 +173,7 @@ func TestRetentionCanonicalArchivesIndependentAndRerunDenied(t *testing.T) {
 	}
 	rt.runRetentionSweep(context.Background(), time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
 	assertExists(t, filepath.Join(source, "video.mkv"), "default recordings policy retains all media")
-	s.Recordings = retentionPolicy{Count: 1, Unit: "months"}
+	s.Recordings = retentionPolicy{Count: 31, Unit: "days"}
 	rt.runRetentionSweep(context.Background(), time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC))
 	assertExists(t, filepath.Join(source, "capture.rtplog"), "recording not yet due")
 	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
@@ -188,7 +188,7 @@ func TestRetentionCanonicalArchivesIndependentAndRerunDenied(t *testing.T) {
 	if got := rt.artifactAvailability(job); got.Source != "expired" || got.RerunBlockedReason == "" {
 		t.Fatal(got)
 	}
-	s.Current = retentionPolicy{Count: 1, Unit: "weeks"}
+	s.Current = retentionPolicy{Count: 7, Unit: "days"}
 	rt.runRetentionSweep(context.Background(), now)
 	assertGone(t, meeting, "coupled archive")
 	assertGone(t, opus, "coupled archive")

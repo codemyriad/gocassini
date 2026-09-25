@@ -1,4 +1,4 @@
-export interface RetentionPolicy { forever: boolean; count?: number; unit?: "days" | "weeks" | "months" }
+export interface RetentionPolicy { forever: boolean; count?: number; unit?: "days" }
 export interface RetentionGroup { mode: "group" | "fine"; fine_initialized?: boolean; policy: RetentionPolicy; fine: Record<string, RetentionPolicy> }
 export interface RetentionSettings { version: number; revision: number; recordings: RetentionPolicy; history: RetentionGroup; current: RetentionPolicy; logs: RetentionPolicy }
 export const retentionLabels: Record<string, string> = {

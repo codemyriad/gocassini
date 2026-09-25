@@ -44,7 +44,7 @@ func defaultRetentionSettings() retentionSettings {
 		}
 		return g
 	}
-	return retentionSettings{Version: 2, Recordings: retentionPolicy{Forever: true}, History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
+	return retentionSettings{Version: 3, Recordings: retentionPolicy{Forever: true}, History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
 }
 func (g retentionGroup) policyFor(kind string) retentionPolicy {
 	if g.Mode == "fine" {
@@ -62,8 +62,8 @@ func (p retentionPolicy) validate() error {
 	if p.Count < 1 || p.Count > 9999 {
 		return errors.New("retention count must be an integer from 1 to 9999")
 	}
-	if p.Unit != "days" && p.Unit != "weeks" && p.Unit != "months" {
-		return errors.New("retention unit must be days, weeks or months")
+	if p.Unit != "days" {
+		return errors.New("retention unit must be days")
 	}
 	return nil
 }
@@ -75,29 +75,17 @@ func (p retentionPolicy) deadline(anchor time.Time) time.Time {
 	if p.Forever || anchor.IsZero() {
 		return time.Time{}
 	}
-	d := utcDate(anchor)
-	switch p.Unit {
-	case "days":
-		return d.AddDate(0, 0, p.Count)
-	case "weeks":
-		return d.AddDate(0, 0, p.Count*7)
-	case "months":
-		first := time.Date(d.Year(), d.Month()+time.Month(p.Count), 1, 0, 0, 0, 0, time.UTC)
-		last := first.AddDate(0, 1, -1).Day()
-		day := d.Day()
-		if day > last {
-			day = last
-		}
-		return first.AddDate(0, 0, day-1)
+	if p.validate() != nil {
+		return time.Time{}
 	}
-	return time.Time{}
+	return utcDate(anchor).AddDate(0, 0, p.Count)
 }
 func (p retentionPolicy) due(anchor, now time.Time) bool {
 	d := p.deadline(anchor)
 	return !d.IsZero() && !utcDate(now).Before(d)
 }
 func (s retentionSettings) validate() error {
-	if s.Version != 2 || s.Revision < 0 {
+	if s.Version != 3 || s.Revision < 0 {
 		return errors.New("unsupported retention settings version or revision")
 	}
 	if err := s.Recordings.validate(); err != nil {
@@ -193,6 +181,9 @@ func newRetentionConfig(path string) *retentionConfig {
 		}
 	}
 
+	if err == nil && s.Version == 2 {
+		err = s.migrateRetentionDays()
+	}
 	if err == nil {
 		err = s.validate()
 	}
@@ -202,6 +193,47 @@ func newRetentionConfig(path string) *retentionConfig {
 	}
 	c.settings = s
 	return c
+}
+
+// Convert every saved policy, including inactive history values. Thirty-one
+// days per month never shortens the old calendar deadline. Oversized converted
+// values fail validation rather than being capped to an earlier deletion date.
+func (s *retentionSettings) migrateRetentionDays() error {
+	convert := func(p retentionPolicy) (retentionPolicy, error) {
+		if p.Forever {
+			return p, p.validate()
+		}
+		if p.Count < 1 || p.Count > 9999 {
+			return p, errors.New("invalid legacy retention count")
+		}
+		switch p.Unit {
+		case "days":
+		case "weeks":
+			p.Count *= 7
+		case "months":
+			p.Count *= 31
+		default:
+			return p, errors.New("unknown legacy retention unit")
+		}
+		p.Unit = "days"
+		return p, p.validate()
+	}
+	for _, p := range []*retentionPolicy{&s.Recordings, &s.History.Policy, &s.Current, &s.Logs} {
+		converted, err := convert(*p)
+		if err != nil {
+			return err
+		}
+		*p = converted
+	}
+	for key, p := range s.History.Fine {
+		converted, err := convert(p)
+		if err != nil {
+			return err
+		}
+		s.History.Fine[key] = converted
+	}
+	s.Version = 3
+	return nil
 }
 func (c *retentionConfig) save(s retentionSettings) error {
 	data, err := json.MarshalIndent(s, "", "  ")

@@ -1,8 +1,8 @@
 # Container-local retention
 
 Administrators configure retention under **Operator → Storage**. Every category
-starts at **Keep forever**. Finite retention is a whole number from 1 to 9999
-days, weeks or months. Saving changes does not delete files immediately: existing
+starts at **Keep forever**. Choose **7, 30, 60, 90, or Custom days**. Custom
+retention accepts a whole number from 1 to 9999 days. Saving changes does not delete files immediately: existing
 artefacts are evaluated at startup and daily at **02:00 UTC**, using their original
 lifecycle dates. There is no byte/count cap or manual delete-now button.
 
@@ -27,8 +27,8 @@ Attempt history uses either one group policy or fine-grained policies. The first
 fine-grained split copies the group value; subsequent toggles preserve inactive
 values. Only the selected mode applies.
 
-UTC dates, not elapsed hours, determine expiry. January 31 plus one month is
-February 28 (29 in a leap year). One week is seven calendar days. Artefacts are
+UTC dates determine expiry: 30 days after January 31, 2026 is March 2, 2026.
+There are no week or month units. Artefacts are
 eligible on their expiry date. A busy job delays cleanup without resetting age.
 
 ## Lifecycles and safety
@@ -76,10 +76,14 @@ already-lost older `.meeting` cannot be recreated from its seal.
 ## Configuration, deployment and diagnostics
 
 Settings live in `retention_settings.json` beside the configured operator SQLite
-database. Settings version 2 stores one recordings policy. When loading a
+database. Settings version 3 uses days for all policies. When loading a
 version 1 file, the previous group policy (or the active captured-audio policy in
-fine-grained mode) becomes the recordings policy, preserving its whole-bundle
-deletion deadline. A previous video-only deadline no longer applies. The next
+fine-grained mode) becomes the recordings policy. A previous video-only deadline
+no longer applies. In version 1 and 2 files, weeks convert to 7 days each and
+months to 31 days each, including inactive attempt-history policies. This
+conversion never brings a deletion deadline forward. Values exceeding 9999 days
+after conversion disable expiry until the configuration is repaired; they are
+never capped to an earlier deadline. The next
 Save persists the new format. Saves use atomic replacement and a revision precondition, so a stale
 admin form cannot overwrite another save. Invalid startup configuration disables
 expiry and is shown as an error in Storage; repair the file and restart. The old

@@ -31,7 +31,7 @@
 <section class="grid gap-4">
   <h2 class="text-xl font-semibold">Storage</h2>
   <p>Container-local retention. All categories default to keep forever. External published recordings and job metadata are not deleted.</p>
-  <p class="text-sm">Dates use UTC. Months clamp to the last day of the destination month. Cleanup runs at startup and daily at 02:00 UTC. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
+  <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Dates use UTC. Cleanup runs at startup and daily at 02:00 UTC. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
   {#if error}<p class="alert alert-error" role="alert">{error}</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
   {#if settings}
