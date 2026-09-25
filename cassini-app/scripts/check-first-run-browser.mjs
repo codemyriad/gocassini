@@ -587,7 +587,7 @@ try {
     accountExists: true,
     recordingState: "passed",
     readiness: (route) => route.fulfill({ json: recordingReport({ checks: [
-      { id: "processing", state: "passed", code: "audio_only", message: "Transcription is off. Recordings can be published and played as audio." },
+      { id: "storage", state: "passed", code: "storage_ready", message: "The Nextcloud storage preflight passed." },
     ] }) }),
   }, async (page, { actions, ncWrites }) => {
     await visible(dialog(page));
@@ -599,17 +599,14 @@ try {
 
     await page.getByRole("button", { name: "Operator", exact: true }).click();
     await page.getByRole("navigation", { name: "Operator sections" }).getByRole("button", { name: "Publish pipeline" }).click();
-    await visible(page.getByRole("heading", { name: "Recording checks passed", exact: true }));
     await visible(page.getByText("Transcription: Off", { exact: true }));
     await visible(page.getByText("Recordings are available as audio. No model is needed.", { exact: true }));
-    await visibleCheckRow(page, "processing", "Transcription (optional)", "Passed");
-    await page.locator('[data-check-id="test"]').getByRole("button", { name: "Test a recording" }).click();
-    await visible(page.getByText("If transcription is enabled, check the transcript afterward. A transcript is not required to confirm audio playback.", { exact: true }));
   });
 
+  // Archive coverage is the one optional finding left: the transcription row was
+  // removed in the 2026-09-25 review, so it is no longer a second example.
   const optionalWarnings = recordingReport({ state: "warn", checks: [
-    { id: "processing", state: "warn", code: "transcription_unavailable", message: "The selected transcription model is unavailable. Audio recording still works." },
-    { id: "archive.search", state: "warn", code: "search_coverage_partial", message: "Some published recordings cannot be found in search yet." },
+    { id: "archive.search", state: "warn", code: "search_coverage_partial", message: "Some published recordings cannot be found in search yet.", repair: "backfill_search" },
   ] });
   await scenario("optional warnings: an ordinary user can still browse without a recording blocker", {
     nonAdmin: true,
@@ -624,7 +621,7 @@ try {
     await absent(page.getByRole("navigation", { name: "Cassini surfaces" }), "the operator surface remains admin-only");
   });
 
-  await scenario("optional warnings: the administrator sees separate transcription and archive rows", {
+  await scenario("optional warnings: the administrator sees the archive row and can repair it", {
     accountExists: true,
     firstRun: false,
     recordingState: "passed",
@@ -633,10 +630,12 @@ try {
     await absent(recordingBlocker(page),
       "optional warnings do not create a recording blocker for administrators either");
     await page.getByRole("button", { name: "Operator", exact: true }).click();
-    await page.getByRole("navigation", { name: "Operator sections" }).getByRole("button", { name: "Publish pipeline" }).click();
-    await visible(page.getByRole("heading", { name: "Recording ready; transcription and archive search need attention", exact: true }));
-    await visibleCheckRow(page, "processing", "Transcription (optional)", "Needs attention");
+    await page.getByRole("navigation", { name: "Operator sections" }).getByRole("button", { name: "Doctor" }).click();
+    await visible(page.getByRole("heading", { name: "Recording ready; archive search needs attention", exact: true }));
     await visibleCheckRow(page, "archive.search", "Archive search", "Needs attention");
+    // The remedy is a button the operator runs, not a command to go and type.
+    await visible(page.locator('[data-check-id="archive.search"]').getByRole("button", { name: "Re-index now", exact: true }));
+    await absent(page.getByText("cassini-operator backfill-search"), "the panel no longer prints a command to copy");
   });
 
   await scenario("core blocker: the recording banner wins over an optional warning", {
@@ -652,7 +651,7 @@ try {
     await page.getByRole("button", { name: "Open recording setup", exact: true }).click();
     await visible(page.getByRole("heading", { name: "One recording check needs attention", exact: true }));
     await visible(page.locator('[data-check-id="storage"]').getByText("Needs action", { exact: true }));
-    await visible(page.locator('[data-check-id="processing"]').getByText("Needs attention", { exact: true }));
+    await visible(page.locator('[data-check-id="archive.search"]').getByText("Needs attention", { exact: true }));
   });
 
   // (d) An install that cannot save recordings.
@@ -736,7 +735,7 @@ try {
     },
   }, async page => {
     await page.evaluate(() => {
-      window.location.hash = "surface=operator&panel=pipeline";
+      window.location.hash = "surface=operator&panel=doctor";
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     await page.getByRole("button", { name: "Talk authentication", exact: true }).click();

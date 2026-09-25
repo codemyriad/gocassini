@@ -287,10 +287,13 @@ describe("Operator left nav (D-723)", () => {
   const navGroups: { label: string; items: { id: string; label: string }[] }[] = OPERATOR_NAV;
   const navPanels = navGroups.flatMap((group) => group.items.map((item) => item.id));
 
-  it("groups the rows as Console then Settings, in the prototype's order", () => {
-    expect(navGroups.map((group) => group.label)).toEqual(["Console", "Settings"]);
-    expect(navPanels).toEqual(["recordings", "endpoints", "pipeline", "templates"]);
-    expect(navGroups[1].items.map((item) => item.label)).toEqual([
+  it("groups the rows as Console, Diagnostics, then Settings", () => {
+    // Doctor is its own group rather than a Settings row: it answers "is this
+    // working", which is not something you configure.
+    expect(navGroups.map((group) => group.label)).toEqual(["Console", "Diagnostics", "Settings"]);
+    expect(navPanels).toEqual(["recordings", "doctor", "endpoints", "pipeline", "templates"]);
+    expect(navGroups[1].items.map((item) => item.label)).toEqual(["Doctor"]);
+    expect(navGroups[2].items.map((item) => item.label)).toEqual([
       "AI providers",
       "Publish pipeline",
       "Insight templates",
@@ -304,8 +307,8 @@ describe("Operator left nav (D-723)", () => {
     expect(new Set(navPanels).size).toBe(navPanels.length);
   });
 
-  it("renders a panel for every Settings row, and the console for the Console row", () => {
-    for (const item of navGroups[1].items) {
+  it("renders a panel for every non-console row, and the console for the Console row", () => {
+    for (const item of navGroups.slice(1).flatMap((group) => group.items)) {
       expect(settingsSource).toContain(`panel === "${item.id}"`);
     }
     // Recordings is the operator's own markup, not something the settings host

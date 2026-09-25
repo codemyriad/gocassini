@@ -5,10 +5,14 @@ export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
 // One thing to do about a check that is not ok. Mirrors SetupNoticeStep, which
 // already renders this shape for storage faults: commands behind a disclosure,
 // so an administrator who just wants the button never reads a command line.
+// A remedy in words. No commands: this panel is ADMIN-only and the operator can
+// do the work, so where a repair is possible the row carries `repair` and the
+// panel renders a button (review 2026-09-25). Printing a shell line asked a
+// reader to find a terminal and the right container to trigger something the
+// process showing them the message could simply do — and how `occ` is invoked
+// varies by deployment, so the instruction was a guess as often as not.
 export interface ReadinessStep {
   label: string;
-  // Shell lines to run verbatim. Empty when the step is not a command.
-  commands?: string[];
 }
 
 export interface ReadinessCheck {
@@ -21,14 +25,18 @@ export interface ReadinessCheck {
   // `action`: plenty of remedies are not a place to navigate to, but a command
   // to run on a host this app cannot reach.
   steps?: ReadinessStep[];
+  // Something the operator can do about this check itself, rendered as a
+  // button. Replaces printing a command for an administrator to go and run:
+  // this panel is ADMIN-only and the operator can already do the work.
+  repair?: string;
   checked_at?: string;
 }
 
-// How occ is invoked varies by deployment, and a command that assumes wrong is
-// worse than none. Same sentence setupHealth.ts uses, for the same reason.
-export const OCC_NOTE =
-  "occ here is however your deployment invokes it — for example sudo -u www-data php occ …, " +
-  "or docker exec -u www-data <nextcloud-container> php occ …";
+// What a repair button says. The panel offers one only for actions the operator
+// can actually perform itself.
+export const repairLabels: Record<string, string> = {
+  backfill_search: "Re-index now",
+};
 
 // Which rows a full check actually re-probes. The rest are read from saved
 // configuration and are already true the moment the panel renders, so marking
@@ -46,11 +54,7 @@ export function isReprobedOnCheck(id: string): boolean {
     || id.startsWith("archive.");
 }
 
-// Whether any step in a check carries commands, which is what the note above
-// qualifies. No commands, no note.
-export function hasCommands(check: ReadinessCheck): boolean {
-  return (check.steps ?? []).some((step) => (step.commands ?? []).length > 0);
-}
+
 export interface RecordingReadiness {
   state: CheckState;
   // Audio recording remains available when optional processing warns.
@@ -78,13 +82,17 @@ export interface RecordingSetupUpdate {
 export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
-  processing: "Transcription (optional)",
   "archive.search": "Archive search",
   "talk.authentication": "Internal credential",
   "talk.discovery": "Talk connection",
   "talk.hpb": "High-performance backend",
-  "talk.handoff": "Recording connection",
-  test: "Test recording",
+  // Only appears when the credential could not be provisioned. The row used to
+  // double as "has Talk called us lately", which was inherently historical and
+  // could never legitimately read green, so that half is gone.
+  "talk.handoff": "Recording credential",
+  host: "Recording host",
+  "host.workdir": "Recording volume",
+  "host.tmpdir.writable": "Temporary space",
 };
 export const stateLabels: Record<CheckState, string> = {
   passed: "Passed", warn: "Needs attention", needs_action: "Needs action", not_verified: "Not verified",

@@ -56,6 +56,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 		}
 		check.Action = "recheck"
 		check.Steps = append([]readinessStep{{Label: "Check storage again to list the archive before judging search coverage"}}, searchCoverageSteps(coverage)...)
+		rt.describeSearchBackfill(&check, coverage)
 		return check
 	}
 
@@ -90,7 +91,31 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 	if coverage.NeedsAttention() > 0 && check.State == "not_verified" {
 		check.State, check.Code = "warn", "search_coverage_partial"
 	}
+	rt.describeSearchBackfill(&check, coverage)
 	return check
+}
+
+// describeSearchBackfill offers the repair, or reports the one already running.
+//
+// Backfill only helps meetings with no index row or an unverified bundle. It
+// cannot produce words transcription never created, so a row whose whole
+// shortfall is missing or failed transcription gets no button — offering one
+// there would be a button that changes nothing.
+func (rt *Runtime) describeSearchBackfill(check *readinessCheck, coverage searchCoverage) {
+	running, ran, report, err, finished := rt.searchRepair.snapshot()
+	switch {
+	case running:
+		check.Message += " Re-indexing is running now."
+		return
+	case err != nil:
+		check.Message += " The last re-index did not finish: " + err.Error()
+	case ran && !finished.IsZero():
+		check.Message += fmt.Sprintf(" Last re-index: %d indexed, %d unchanged, %d not searchable, %d failed.",
+			report.Indexed, report.Unchanged, report.Unavailable, report.Failed)
+	}
+	if coverage.Untracked+coverage.BackfillCandidates > 0 {
+		check.Repair = repairBackfillSearch
+	}
 }
 
 // Backfill helps only when an archive meeting has no index row or its bundle
@@ -98,9 +123,10 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 func searchCoverageSteps(c searchCoverage) []readinessStep {
 	var steps []readinessStep
 	if candidates := c.Untracked + c.BackfillCandidates; candidates > 0 {
+		// No command here on purpose. The row carries Repair instead, and the
+		// panel offers a button that runs it in this process.
 		steps = append(steps, readinessStep{
-			Label:    fmt.Sprintf("In the Cassini operator container or host, re-index the %d recording(s) with no index row or an unverified bundle", candidates),
-			Commands: []string{"cassini-operator backfill-search"},
+			Label: fmt.Sprintf("Re-index the %d recording(s) with no index row or an unverified bundle", candidates),
 		})
 	}
 	if c.ModelUnavailable+c.TranscriptionFailed > 0 {

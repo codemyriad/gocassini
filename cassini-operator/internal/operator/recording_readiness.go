@@ -28,16 +28,23 @@ type readinessCheck struct {
 	// Action is a verb the panel renders as a button. It answers "where do I go
 	// to fix this", and only inside the app.
 	Action string `json:"action,omitempty"`
-	// Steps are the remedy for a check that is not ok: what to do, and the
-	// commands to do it with (D-798 R0.1).
+	// Steps are the remedy for a check that is not ok, in words (D-798 R0.1).
+	// Where the operator can perform the remedy, Repair below carries it and the
+	// panel offers a button instead.
 	//
 	// Action cannot carry this. Plenty of remedies are not a place to navigate
 	// to — they are a command to run on a host the app cannot reach, or a
 	// sentence naming what to look at. Leaving those in the message told a
 	// reader what was wrong and not what to do, which is the failure the
 	// existing SetupNotice was built to avoid for storage faults.
-	Steps     []readinessStep `json:"steps,omitempty"`
-	CheckedAt string          `json:"checked_at,omitempty"`
+	Steps []readinessStep `json:"steps,omitempty"`
+	// Repair names something the operator can do about this check ITSELF, which
+	// the panel renders as a button. It is the answer to a remedy that used to
+	// be printed as a shell line for an administrator to go and run: this
+	// process can already do the work, and the panel is ADMIN-only, so asking
+	// someone to find a terminal and a container was never the shortest path.
+	Repair    string `json:"repair,omitempty"`
+	CheckedAt string `json:"checked_at,omitempty"`
 }
 
 // readinessStep mirrors SetupNoticeStep, deliberately: the app already renders
@@ -45,9 +52,6 @@ type readinessCheck struct {
 // administrator who just wants the button never reads a command line.
 type readinessStep struct {
 	Label string `json:"label"`
-	// Commands are shell lines to run verbatim. Empty when the step is not a
-	// command — most are not.
-	Commands []string `json:"commands,omitempty"`
 }
 
 type recordingSetupState struct {
@@ -404,10 +408,7 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 			ID: "host", State: "warn", Code: "host_checks_unavailable",
 			Message: "Cassini could not check disk space and ffmpeg on the recording volume.",
 			Action:  "recheck",
-			Steps: []readinessStep{{
-				Label:    "In the Cassini recorder environment, run media checks from the recording work volume",
-				Commands: []string{"cassini doctor --target media"},
-			}},
+			Steps:   []readinessStep{{Label: "Check the recorder's media tools and its recording volume, then run the checks again"}},
 		}}
 	}
 	for i := range host {
@@ -479,10 +480,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 			"Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.",
 			"repair_configuration",
 			readinessStep{Label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing"},
-			readinessStep{Label: "Re-run Cassini's setup, which runs when the app is enabled", Commands: []string{
-				"occ app_api:app:disable gocassini",
-				"occ app_api:app:enable gocassini",
-			}})
+			readinessStep{Label: "Disable and re-enable Cassini in Nextcloud, which re-runs its setup"})
 	}
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
 	// Parsed only to tell "a check has run" from "none has". How OLD it is rides
@@ -642,6 +640,24 @@ func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/health/check" && r.Method == http.MethodPost:
 		rt.checkRecordingReadiness(r.Context())
 		rt.invalidateSearchReadiness()
+	case r.URL.Path == "/health/repair" && r.Method == http.MethodPost:
+		// Starts work and reports the checklist as it stands. The run outlives
+		// the request — a backfill crosses the whole archive — so the row says
+		// it is running and the next read tells you how it went.
+		var body struct {
+			Action string `json:"action"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "unreadable repair request")
+			return
+		}
+		switch body.Action {
+		case repairBackfillSearch:
+			rt.startSearchBackfill()
+		default:
+			writeJSONError(w, http.StatusBadRequest, "unsupported repair action")
+			return
+		}
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported health operation")
 		return

@@ -1,11 +1,16 @@
 <script lang="ts">
   import DeploymentGuidance from './DeploymentGuidance.svelte';
   import { initialEnvironment } from './operator/deploymentGuidance';
-  import { onMount } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, hasCommands, isReprobedOnCheck, OCC_NOTE, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, isReprobedOnCheck, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
+  // Storage is configured in Publish pipeline, and the checks now live in their
+  // own Doctor panel — so this action has to move the reader there. It used to
+  // scrollIntoView an id that was on the same page; from here that id is not
+  // mounted at all, and the button would silently do nothing.
+  const dispatch = createEventDispatcher<{ openStorage: void }>();
   let report: RecordingReadiness | null = null;
   let secret = "";
   let room = "";
@@ -49,9 +54,21 @@
     } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
   }
+  // The operator performs the repair; this only asks it to start, and takes the
+  // checklist it answers with. The work outlives the request, so the row reports
+  // that it is running and the poll picks up how it went.
+  async function repair(action: string) {
+    if (!action || busy || polling) return;
+    busy = true; error = "";
+    try {
+      const next = await operatorClient.repairReadiness(action);
+      if (alive) { report = next; stale = false; error = ""; }
+    } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
+    finally { busy = false; }
+  }
   async function action(name: string, owner: string) {
     if (name === "recheck") { await load(true); return; }
-    if (name === "setup_storage") { document.getElementById("recording-storage")?.scrollIntoView({ behavior: "smooth" }); return; }
+    if (name === "setup_storage") { dispatch("openStorage"); return; }
     const closing = panel === name && panelOwner === owner;
     panelOwner = owner;
     panel = closing ? "" : name;
@@ -96,7 +113,7 @@
 <section class="rounded-box border border-base-300 bg-base-100 p-5 shadow-sm" aria-labelledby="recording-readiness-title" aria-busy={busy}>
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 id="recording-readiness-title" class="text-lg font-semibold {report && !stale ? toneClasses[reportTone(report)] : ''}">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
-    <button class="btn btn-sm" disabled={busy || polling} on:click={() => load(true)}>{busy ? "Checking…" : "Check again"}</button>
+    <button class="btn btn-sm" disabled={busy || polling} on:click={() => load(true)}>{busy ? "Checking…" : "Run all checks"}</button>
   </div>
   <p class="mt-2 text-sm text-base-content/70">Check the connection and recording storage, then verify a short recording through Talk.</p>
   {#if error}<p role="alert" class="mt-3 text-error">{error}</p>{/if}
@@ -117,22 +134,18 @@
                   <summary class="cursor-pointer text-xs text-base-content/70">What to do about it</summary>
                   <ul class="mt-2 space-y-2">
                     {#each check.steps ?? [] as step}
-                      <li class="text-xs">
-                        <p class="text-base-content/80">{step.label}</p>
-                        {#each step.commands ?? [] as command}
-                          <pre class="mt-1 overflow-x-auto rounded bg-base-200 p-2 text-xs"><code>{command}</code></pre>
-                        {/each}
-                      </li>
+                      <li class="text-xs text-base-content/80">{step.label}</li>
                     {/each}
                   </ul>
-                  {#if hasCommands(check)}
-                    <p class="mt-2 text-xs text-base-content/60">{OCC_NOTE}</p>
-                  {/if}
                 </details>
               {/if}
               {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
             </div>
             <div class="flex flex-wrap gap-2">
+              {#if check.repair}
+                <button class="btn btn-sm btn-primary" disabled={busy || polling}
+                  on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair] ?? "Fix this"}</button>
+              {/if}
               {#each rowActions(check) as item}
                 <button class="btn btn-sm btn-outline" disabled={busy || polling} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id)}>{item.label}</button>
               {/each}

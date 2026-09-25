@@ -264,15 +264,9 @@ func TestReadinessSearchCoverageKeepsArchiveScopeUnknownAndRemediesSpecific(t *t
 		t.Fatal("archive.search check missing")
 		return readinessCheck{}
 	}
+	// The remedy is a button the operator runs itself, not a command to copy.
 	hasBackfillCommand := func(check readinessCheck) bool {
-		for _, step := range check.Steps {
-			for _, command := range step.Commands {
-				if command == "cassini-operator backfill-search" {
-					return true
-				}
-			}
-		}
-		return false
+		return check.Repair == repairBackfillSearch
 	}
 
 	if check := searchCheck(); check.Code != "search_coverage_empty" || check.State != "not_verified" {

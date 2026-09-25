@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hasCommands, isReprobedOnCheck, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, isReprobedOnCheck, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -202,18 +202,18 @@ describe("what to do about a check", () => {
     id: "configuration", state: "needs_action", code: "setup_store_unreadable", message: "", ...over,
   });
 
-  it("knows when a remedy involves commands", () => {
-    expect(hasCommands(check({ steps: [{ label: "do a thing" }] }))).toBe(false);
-    expect(hasCommands(check({ steps: [{ label: "run this", commands: ["occ app:list"] }] }))).toBe(true);
+  it("carries a repair the operator can perform, and words otherwise", () => {
+    // Steps are words only now. A remedy the operator can perform arrives as
+    // `repair` and becomes a button, so no step carries a command to copy.
+    expect(check({ steps: [{ label: "do a thing" }] }).steps?.[0].label).toBe("do a thing");
+    expect(check({ repair: "backfill_search" }).repair).toBe("backfill_search");
   });
 
-  // The occ note qualifies commands. With none, it would be noise.
-  it("has nothing to qualify when there are no commands", () => {
-    expect(hasCommands(check())).toBe(false);
-    expect(hasCommands(check({ steps: [] }))).toBe(false);
-  });
-
-  it("survives a check from an operator that sends no steps", () => {
-    expect(hasCommands(check({ steps: undefined }))).toBe(false);
+  // A row with no remedy offers no button: "Fix this" with nothing behind it is
+  // worse than saying nothing.
+  it("offers no repair when the operator named none", () => {
+    expect(check().repair).toBeUndefined();
+    expect(check({ steps: [] }).repair).toBeUndefined();
+    expect(check({ steps: undefined }).steps).toBeUndefined();
   });
 });
