@@ -1,6 +1,6 @@
 export interface RetentionPolicy { forever: boolean; count?: number; unit?: "days" }
 export interface RetentionGroup { mode: "group" | "fine"; fine_initialized?: boolean; policy: RetentionPolicy; fine: Record<string, RetentionPolicy> }
-export interface RetentionSettings { version: number; revision: number; recordings: RetentionPolicy; history: RetentionGroup; current: RetentionPolicy; logs: RetentionPolicy }
+export interface RetentionSettings { version: number; revision: number; schedule: { time: string; timezone: string }; recordings: RetentionPolicy; history: RetentionGroup; current: RetentionPolicy; logs: RetentionPolicy }
 export const retentionLabels: Record<string, string> = {
   failed_capture: "Failed recordings",
   failed_build: "Failed build / seal output", superseded: "Superseded successful output", failed_publish: "Failed publish staging",

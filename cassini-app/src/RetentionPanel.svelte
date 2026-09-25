@@ -8,6 +8,8 @@
   let settings: RetentionSettings | null = null;
   let saved = "", error = "", notice = "", busy = false;
   let split = false;
+  const supportedZones = (Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
+  const timezones = [...new Set(["UTC", Intl.DateTimeFormat().resolvedOptions().timeZone, ...supportedZones])];
   async function load() {
     busy = true; error = ""; notice = "";
     try { if (!operatorClient) throw new Error("Operator unavailable"); settings = await operatorClient.getRetention(); saved = JSON.stringify(settings);
@@ -31,12 +33,23 @@
 <section class="grid gap-4">
   <h2 class="text-xl font-semibold">Storage</h2>
   <p>Container-local retention. All categories default to keep forever. External published recordings and job metadata are not deleted.</p>
-  <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Dates use UTC. Cleanup runs at startup and daily at 02:00 UTC. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
+  <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Retention ages use UTC dates. Cleanup runs at startup and on the daily schedule below. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
   {#if error}<p class="alert alert-error" role="alert">{error}</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
   {#if settings}
     <form class="grid gap-4" on:submit|preventDefault={save}>
       <fieldset disabled={busy} class="grid gap-4">
+        <section class="op-tint p-4 grid gap-3">
+          <h3 class="font-semibold">Daily cleanup schedule</h3>
+          <label class="text-sm">Sweep time
+            <input class="input input-bordered" type="time" step="60" required bind:value={settings.schedule.time} />
+          </label>
+          <label class="text-sm">Timezone
+            <input class="input input-bordered w-full" list="retention-timezones" required bind:value={settings.schedule.timezone} placeholder="UTC or Europe/Zagreb" />
+            <datalist id="retention-timezones">{#each timezones as timezone}<option value={timezone}></option>{/each}</datalist>
+          </label>
+          <p class="text-sm">Default: 02:00 UTC. Saving updates the next scheduled cleanup without restarting. If daylight saving skips the chosen time, cleanup runs at the first available time afterward; if the time repeats, it runs at the first occurrence only.</p>
+        </section>
         <section class="op-tint p-4">
           <h3 class="font-semibold">Recordings</h3>
           <RetentionPolicyField bind:policy={settings.recordings} label="Source recordings" />

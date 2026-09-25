@@ -3,7 +3,8 @@
 Administrators configure retention under **Operator → Storage**. Every category
 starts at **Keep forever**. Choose **7, 30, 60, 90, or Custom days**. Custom
 retention accepts a whole number from 1 to 9999 days. Saving changes does not delete files immediately: existing
-artefacts are evaluated at startup and daily at **02:00 UTC**, using their original
+artefacts are evaluated at startup and daily at the configured time (default
+**02:00 UTC**), using their original
 lifecycle dates. There is no byte/count cap or manual delete-now button.
 
 | Category | Contents | Age starts at |
@@ -30,6 +31,19 @@ values. Only the selected mode applies.
 UTC dates determine expiry: 30 days after January 31, 2026 is March 2, 2026.
 There are no week or month units. Artefacts are
 eligible on their expiry date. A busy job delays cleanup without resetting age.
+
+Set **Sweep time** and **Timezone** in Storage to choose the daily cleanup
+schedule. Time is entered in 24-hour format; timezone names such as
+`Europe/Zagreb` follow daylight-saving changes automatically. Save activates the
+new schedule without a restart. Startup still performs an expiry sweep, and
+retention ages continue to use UTC dates regardless of the sweep timezone.
+If a clock change skips the selected time, cleanup runs at the first available
+local time afterward. If a time repeats, only its first occurrence is used.
+
+```text
+Save time + timezone -> reset timer -> next local scheduled time -> expiry sweep
+Operator startup    -> expiry sweep -> next local scheduled time -> expiry sweep
+```
 
 ## Lifecycles and safety
 
@@ -89,6 +103,10 @@ admin form cannot overwrite another save. Invalid startup configuration disables
 expiry and is shown as an error in Storage; repair the file and restart. The old
 `--artifact-retention` / `CASSINI_ARTIFACT_RETENTION` values are deprecated, ignored
 and warned about, not translated into finite expiry policies.
+
+The `schedule` setting stores `time` (`HH:MM`) and `timezone` (for example `UTC`).
+Older files without this setting default to 02:00 UTC. Invalid schedule values
+are rejected. Timezone data is embedded in the operator for minimal containers.
 
 The admin API is `GET/PUT /operator/storage/retention` (or the configured base
 prefix). PUT requires the quoted revision in `If-Match` and in the JSON body.

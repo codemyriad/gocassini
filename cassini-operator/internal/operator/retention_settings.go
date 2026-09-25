@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	_ "time/tzdata" // Named zones must work in minimal container images.
 )
 
 // Retention dates deliberately have no duration-in-seconds representation.
@@ -26,12 +27,35 @@ type retentionGroup struct {
 	Fine            map[string]retentionPolicy `json:"fine"`
 }
 type retentionSettings struct {
-	Version    int             `json:"version"`
-	Revision   int             `json:"revision"`
-	Recordings retentionPolicy `json:"recordings"`
-	History    retentionGroup  `json:"history"`
-	Current    retentionPolicy `json:"current"`
-	Logs       retentionPolicy `json:"logs"`
+	Schedule   retentionSchedule `json:"schedule"`
+	Version    int               `json:"version"`
+	Revision   int               `json:"revision"`
+	Recordings retentionPolicy   `json:"recordings"`
+	History    retentionGroup    `json:"history"`
+	Current    retentionPolicy   `json:"current"`
+	Logs       retentionPolicy   `json:"logs"`
+}
+
+type retentionSchedule struct {
+	Time     string `json:"time"`
+	Timezone string `json:"timezone"`
+}
+
+func defaultRetentionSchedule() retentionSchedule {
+	return retentionSchedule{Time: "02:00", Timezone: "UTC"}
+}
+
+func (s retentionSchedule) validate() error {
+	if t, err := time.Parse("15:04", s.Time); err != nil || t.Format("15:04") != s.Time {
+		return errors.New("sweep time must be HH:MM in 24-hour format")
+	}
+	if s.Timezone == "" || s.Timezone == "Local" {
+		return errors.New("choose an explicit timezone, such as UTC or Europe/Zagreb")
+	}
+	if _, err := time.LoadLocation(s.Timezone); err != nil {
+		return errors.New("unknown sweep timezone")
+	}
+	return nil
 }
 
 var historyKinds = []string{"failed_capture", "failed_build", "superseded", "failed_publish"}
@@ -44,7 +68,7 @@ func defaultRetentionSettings() retentionSettings {
 		}
 		return g
 	}
-	return retentionSettings{Version: 3, Recordings: retentionPolicy{Forever: true}, History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
+	return retentionSettings{Schedule: defaultRetentionSchedule(), Version: 3, Recordings: retentionPolicy{Forever: true}, History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
 }
 func (g retentionGroup) policyFor(kind string) retentionPolicy {
 	if g.Mode == "fine" {
@@ -85,6 +109,9 @@ func (p retentionPolicy) due(anchor, now time.Time) bool {
 	return !d.IsZero() && !utcDate(now).Before(d)
 }
 func (s retentionSettings) validate() error {
+	if err := s.Schedule.validate(); err != nil {
+		return err
+	}
 	if s.Version != 3 || s.Revision < 0 {
 		return errors.New("unsupported retention settings version or revision")
 	}
@@ -123,6 +150,7 @@ func (s retentionSettings) validate() error {
 
 // The mutex also linearizes policy activation against the worker's deletion start.
 type retentionConfig struct {
+	changed  chan struct{}
 	mu       sync.Mutex
 	path     string
 	settings retentionSettings
@@ -130,7 +158,7 @@ type retentionConfig struct {
 }
 
 func newRetentionConfig(path string) *retentionConfig {
-	c := &retentionConfig{path: path, settings: defaultRetentionSettings()}
+	c := &retentionConfig{path: path, settings: defaultRetentionSettings(), changed: make(chan struct{}, 1)}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return c
@@ -143,12 +171,13 @@ func newRetentionConfig(path string) *retentionConfig {
 	// Version 1's audio policy already controlled whole-bundle deletion.
 	// Preserve that deadline when upgrading an existing settings file.
 	var stored struct {
-		Version    int             `json:"version"`
-		Revision   int             `json:"revision"`
-		Recordings json.RawMessage `json:"recordings"`
-		History    retentionGroup  `json:"history"`
-		Current    retentionPolicy `json:"current"`
-		Logs       retentionPolicy `json:"logs"`
+		Schedule   *retentionSchedule `json:"schedule"`
+		Version    int                `json:"version"`
+		Revision   int                `json:"revision"`
+		Recordings json.RawMessage    `json:"recordings"`
+		History    retentionGroup     `json:"history"`
+		Current    retentionPolicy    `json:"current"`
+		Logs       retentionPolicy    `json:"logs"`
 	}
 	dec := json.NewDecoder(io.LimitReader(f, 65537))
 	dec.DisallowUnknownFields()
@@ -159,6 +188,10 @@ func newRetentionConfig(path string) *retentionConfig {
 		}
 	}
 	s := retentionSettings{Version: stored.Version, Revision: stored.Revision, History: stored.History, Current: stored.Current, Logs: stored.Logs}
+	s.Schedule = defaultRetentionSchedule()
+	if stored.Schedule != nil {
+		s.Schedule = *stored.Schedule
+	}
 	if err == nil {
 		recordingDecoder := json.NewDecoder(bytes.NewReader(stored.Recordings))
 		recordingDecoder.DisallowUnknownFields()
@@ -309,6 +342,10 @@ func (rt *Runtime) retentionHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.settings = s
+		select {
+		case c.changed <- struct{}{}:
+		default:
+		}
 	default:
 		w.Header().Set("Allow", "GET, PUT")
 		writeJSONError(w, 405, "method not allowed")

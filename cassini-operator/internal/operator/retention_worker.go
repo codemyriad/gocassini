@@ -8,12 +8,36 @@ import (
 	"time"
 )
 
-func nextRetentionSweep(now time.Time) time.Time {
-	next := utcDate(now).Add(2 * time.Hour)
-	if !next.After(now) {
-		next = next.AddDate(0, 0, 1)
+func nextRetentionSweep(now time.Time, schedule retentionSchedule) time.Time {
+	loc, err := time.LoadLocation(schedule.Timezone)
+	if err != nil {
+		return time.Time{}
 	}
-	return next
+	clock, err := time.Parse("15:04", schedule.Time)
+	if err != nil {
+		return time.Time{}
+	}
+	local := now.In(loc)
+	date := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	wanted := clock.Hour()*60 + clock.Minute()
+	// Search real instants rather than relying on time.Date's unspecified choice
+	// at a DST transition. Use the first occurrence of a repeated time, or the
+	// first available minute after a skipped time. At most one run per local date.
+	for day := 0; day < 4; day++ {
+		d := date.AddDate(0, 0, day)
+		end := d.Add(48 * time.Hour)
+		for instant := d.Add(-24 * time.Hour); instant.Before(end); instant = instant.Add(time.Minute) {
+			wall := instant.In(loc)
+			if wall.Year() != d.Year() || wall.Month() != d.Month() || wall.Day() != d.Day() || wall.Hour()*60+wall.Minute() < wanted {
+				continue
+			}
+			if instant.After(now) {
+				return instant
+			}
+			break
+		}
+	}
+	return time.Time{}
 }
 func (rt *Runtime) startRetentionWorker() {
 	rt.workerWG.Add(1)
@@ -21,12 +45,24 @@ func (rt *Runtime) startRetentionWorker() {
 		defer rt.workerWG.Done()
 		rt.runRetentionSweep(rt.ctx, time.Now())
 		for {
-			timer := time.NewTimer(time.Until(nextRetentionSweep(time.Now())))
+			rt.retention.mu.Lock()
+			schedule := rt.retention.settings.Schedule
+			rt.retention.mu.Unlock()
+			timer := time.NewTimer(time.Until(nextRetentionSweep(time.Now(), schedule)))
 			select {
 			case <-rt.ctx.Done():
 				timer.Stop()
 				return
+			case <-rt.retention.changed:
+				timer.Stop()
+				continue
 			case <-timer.C:
+				rt.retention.mu.Lock()
+				unchanged := rt.retention.settings.Schedule == schedule
+				rt.retention.mu.Unlock()
+				if !unchanged {
+					continue
+				}
 				rt.runRetentionSweep(rt.ctx, time.Now())
 			}
 		}
