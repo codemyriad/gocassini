@@ -1510,6 +1510,7 @@
           totals={selectionTotals}
           gaps={selectionGaps}
           loadBundle={loadSelectedBundle}
+          loadMeeting={(entry) => dataProvider.loadMeetingForEntry(entry)}
           on:unpick={(event) => handlePick(event)}
           on:close={() => (prepareOpen = false)}
         >
