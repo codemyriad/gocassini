@@ -359,7 +359,7 @@ func TestReadinessPublicStatePrioritizesActionRegardlessOfOrder(t *testing.T) {
 }
 
 func TestReadinessStorageCarriesTheAgeAndApplicabilityOfItsEvidence(t *testing.T) {
-	resetSubstrateRecord(t)
+	resetDirectSubstrate(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	ncAccessSubstrate.mu.Lock()
@@ -409,13 +409,16 @@ func TestReadinessStorageCarriesTheAgeAndApplicabilityOfItsEvidence(t *testing.T
 	}
 }
 
-// A preflight in flight is not a failed preflight. beginRun() clears the verdict
-// and keeps the timestamp, so mid-run the snapshot reads state:"" with OK:false
-// — which used to render as "the Nextcloud storage preflight did not pass" and
-// made a healthy install flash red for as long as the run took. The panel polls
-// every five seconds, so it was seen.
+// A preflight in flight is not a failed preflight — reported from the running
+// demo as Recording storage flashing red and going green a second later.
+//
+// The property is what matters, not the mechanism. This branch fixed it by
+// reporting a run in progress distinctly; main fixed it by having beginRun keep
+// the last complete verdict while a new probe runs, which is better — there is
+// no window to report. The test stays, pinned to the property, so whichever
+// mechanism is in force has to keep it true.
 func TestReadinessDoesNotReportAnInFlightPreflightAsAFailure(t *testing.T) {
-	resetSubstrateRecord(t)
+	resetDirectSubstrate(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	storage := func() readinessCheck {
@@ -434,12 +437,12 @@ func TestReadinessDoesNotReportAnInFlightPreflightAsAFailure(t *testing.T) {
 		t.Fatalf("setup did not establish a passing verdict: %+v", c)
 	}
 
-	// Exactly what preflightNCStorageLocked does on entry, and nothing else.
+	// Exactly what the preflight does on entry, and nothing else.
 	ncAccessSubstrate.beginRun()
 	if c := storage(); c.State == "needs_action" {
 		t.Fatalf("a running preflight was reported as a failed one: %+v", c)
-	} else if c.State != "not_verified" || c.Code != "storage_check_running" {
-		t.Fatalf("a running preflight = %+v; want not_verified/storage_check_running", c)
+	} else if c.State != "passed" {
+		t.Fatalf("a running preflight lost the verdict it already had: %+v", c)
 	}
 
 	// And the run's own verdict still lands when it records one.
@@ -450,7 +453,7 @@ func TestReadinessDoesNotReportAnInFlightPreflightAsAFailure(t *testing.T) {
 }
 
 func TestReadinessKeepsCurrentStorageAdmissionBlockActionable(t *testing.T) {
-	resetSubstrateRecord(t)
+	resetDirectSubstrate(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	ncAccessSubstrate.record(ncSubstrateUnavailable, "storage prerequisite", nil)

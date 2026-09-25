@@ -25,7 +25,7 @@ SERVICES = {"nextcloud": "NEXTCLOUD_IMAGE", "db": "COMPAT_DB_IMAGE",
             "reverse-proxy": "COMPAT_PROXY_IMAGE", "appapi-harp": "COMPAT_HARP_IMAGE",
             "nats": "COMPAT_NATS_IMAGE", "janus": "COMPAT_JANUS_IMAGE",
             "signaling": "COMPAT_SIGNALING_IMAGE", "coturn": "COMPAT_COTURN_IMAGE"}
-APPS = {"spreed", "app_api", "groupfolders", "group_everyone"}
+APPS = {"spreed", "app_api"}
 DIGEST = re.compile(r"sha256:[a-f0-9]{64}")
 
 
@@ -72,7 +72,7 @@ def validate_stack(stack):
     for ref in stack["images"].values():
         require(isinstance(ref, str) and "@" in ref and
                 DIGEST.fullmatch(ref.rsplit("@", 1)[1]), f"image is not digest-pinned: {ref}")
-    require(set(stack["apps"]) == APPS, "stack must lock Talk, AppAPI and both ACL apps")
+    require(set(stack["apps"]) == APPS, "stack must lock Talk and AppAPI")
     for app, lock in stack["apps"].items():
         version(lock["version"])
         require(re.fullmatch(r"[a-f0-9]{64}", lock["sha256"]), f"invalid checksum for {app}")

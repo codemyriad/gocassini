@@ -124,24 +124,14 @@ func TestBackfillIndexesAPublishedMeeting(t *testing.T) {
 	}
 }
 
-func TestBackfillKeepsVerifiedDisabledTranscriptionDistinctFromSilence(t *testing.T) {
+func TestBackfillReportsEmptyTranscriptSeparatelyFromReadFailure(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", `{"version":"transcript.words.v1","segments":[]}`)
-	manifest := `{"processing":{"transcription":{"status":"skipped","reason":"disabled"}}}`
-	if err := os.WriteFile(filepath.Join(canonicalMeetingPath(f.workRoot, "JOB1"), "manifest.json"), []byte(manifest), 0o644); err != nil {
-		t.Fatal(err)
+	archive := func(context.Context, string) (searchArchiveCopy, func(), error) {
+		return searchArchiveCopy{Digest: digestOf("empty")}, func() {}, nil
 	}
-	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
-		deliveredState("sealed-audio-bytes"), nil)
-	if err != nil {
-		t.Fatalf("backfill: %v", err)
-	}
-	if report.Unavailable != 1 || report.Failed != 0 {
-		t.Fatalf("report = %+v, want known unsearchable meeting", report)
-	}
-	if got := reasonFor(t, f.rt.searchStore, "JOB1.opus"); got != searchIngestReasonDisabled {
-		t.Errorf("reason = %q, want disabled", got)
+	report, err := f.rt.backfillSearchIndex(context.Background(), []searchBackfillTarget{{JobID: "EMPTY", OpusName: "EMPTY.opus"}}, deliveredNoChecksum(), archive)
+	if err != nil || report.Empty != 1 || report.Unavailable != 1 || report.Failed != 0 {
+		t.Fatalf("report=%+v err=%v", report, err)
 	}
 }
 

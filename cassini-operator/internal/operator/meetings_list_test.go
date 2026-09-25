@@ -37,7 +37,15 @@ type meetingsListUpstream struct {
 
 func (u meetingsListUpstream) server(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestShares(w, r, u.visible, func() int {
+			if u.catalogStatus == http.StatusNotFound {
+				return 0
+			}
+			return max(u.catalogStatus, u.propfindStatus)
+		}()) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/catalog.json"):
 			if u.catalogStatus != 0 && u.catalogStatus != http.StatusOK {
@@ -68,6 +76,12 @@ func (u meetingsListUpstream) server(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	body := u.catalogBody
+	if body == "" {
+		body = meetingsListCatalog
+	}
+	registerTestCatalog(t, srv.URL, body)
+	return srv
 }
 
 // getMeetingsList drives the proxy the way the AppAPI route does.
@@ -126,8 +140,8 @@ func TestMeetingsListFiltersByDateWithinVisibleSet(t *testing.T) {
 	}
 	got := decodeMeetingsList(t, rec)
 	ids := listedIDs(t, got)
-	if strings.Join(ids, ",") != "a,b" {
-		t.Fatalf("ids = %v, want [a b] — c is invisible, d is undated", ids)
+	if strings.Join(ids, ",") != "b,a" {
+		t.Fatalf("ids = %v, want [b a] — c is invisible, d is undated", ids)
 	}
 	if got.Version != "cassini.viewer.catalog.v1" {
 		t.Fatalf("version = %q, want the catalog envelope version", got.Version)

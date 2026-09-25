@@ -389,7 +389,7 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
-		cfg.preflightNCStorage(ctx, rt.logger)
+		cfg.preflightDirectShares(ctx, rt.logger)
 	}
 	// The panel polls GET every five seconds. Probe the media host once per
 	// explicit check and retain its verdict with the time it was checked.
@@ -499,21 +499,6 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		add("storage", "not_verified", "storage_not_checked", "Nextcloud storage has not been checked yet. Check again to run it.", "recheck")
 	} else if access.OK {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "The Nextcloud storage preflight passed. A test recording verifies publication and playback.", CheckedAt: access.CheckedAt})
-	} else if access.State == "" {
-		// A preflight is RUNNING and has not recorded its verdict yet.
-		//
-		// beginRun() clears the previous run's state so a repaired fault cannot
-		// survive into this one, and deliberately keeps checkedAtUTC. Between
-		// those two facts the snapshot reads state:"" with OK:false — which is
-		// the absence of a verdict, not a failed one. Reporting it as
-		// storage_incomplete turned every check into a red flash that went green
-		// a second later, on an install with nothing wrong with it, and the
-		// panel polls every five seconds so it was seen.
-		//
-		// Distinct from the storage_not_checked branch above: that one is "no
-		// run has ever finished here" (no parseable timestamp), this one is
-		// "the answer is being worked out right now".
-		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "not_verified", Code: "storage_check_running", Message: "Cassini is checking Nextcloud storage now.", CheckedAt: access.CheckedAt})
 	} else {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "The Nextcloud storage preflight did not pass. Review the storage details below.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}

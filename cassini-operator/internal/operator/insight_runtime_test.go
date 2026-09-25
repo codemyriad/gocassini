@@ -78,6 +78,9 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 		dav.mu.Lock()
 		dav.calls++
 		dav.mu.Unlock()
+		if serveTestShares(w, r, visible, 0) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && base == "catalog.json":
 			_, _ = w.Write([]byte(catalog))
@@ -150,6 +153,7 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	registerTestCatalog(t, dav.server.URL, catalog)
 	t.Cleanup(dav.server.Close)
 	return dav
 }
@@ -331,8 +335,8 @@ func TestNewInsightServiceIsNilWhereARunCannotBePerformed(t *testing.T) {
 // shared archive, which the service account alone may perform and which is the
 // wrong place for a personal document even where it is allowed.
 func TestInsightsAreDeliveredOutsideTheRecordingsMount(t *testing.T) {
-	if firstPathSegment(ncInsightsRoot) == ncRecordingsMount {
-		t.Fatalf("ncInsightsRoot = %q is inside the %q Team-folder mount; an insight would be a write into the shared archive", ncInsightsRoot, ncRecordingsMount)
+	if ncInsightsRoot == ncRecordingsRoot {
+		t.Fatalf("ncInsightsRoot = %q is inside the %q Team-folder mount; an insight would be a write into the shared archive", ncInsightsRoot, ncRecordingsRoot)
 	}
 	if got, want := insightFolderChain(), []string{ncInsightsRoot}; len(got) != len(want) || got[0] != want[0] {
 		t.Errorf("insightFolderChain() = %v, want %v", got, want)
@@ -631,11 +635,9 @@ func TestPerformRefusesAMeetingTheCallerCanNoLongerRead(t *testing.T) {
 	}
 }
 
-// A per-caller scan that FAILED reaches the run path as an empty readable set,
-// because serveFilteredCatalog fails closed. Reading that as a denial would
-// write meeting-unavailable permanently onto the run — a card that keeps
-// asserting a permission change nobody made, and repeats it on retry.
-func TestPerformCallsAnUnreadableMeetingListAnOutageAndNotADenial(t *testing.T) {
+// A successful OCS response with no shares means the requested meeting is no
+// longer available to the caller, including on an insight retry.
+func TestPerformTreatsAnEmptyShareListAsMeetingUnavailable(t *testing.T) {
 	dav := newInsightDAV(t, insightTestCatalog)
 	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
 	service, _ := insightTestService(t, dav.server.URL, bin, nil)
@@ -645,9 +647,28 @@ func TestPerformCallsAnUnreadableMeetingListAnOutageAndNotADenial(t *testing.T) 
 	if outcome.Status != insightStatusFailed {
 		t.Fatalf("status = %q, want failed", outcome.Status)
 	}
-	if outcome.Error != insightReasonCatalogFailed {
-		t.Errorf("error = %q, want the outage %q, not a permission change out of a failed scan", outcome.Error, insightReasonCatalogFailed)
+	if outcome.Error != insightReasonMeetingUnavailable {
+		t.Errorf("error = %q, want %q for a healthy empty share list", outcome.Error, insightReasonMeetingUnavailable)
 	}
+}
+
+func TestPerformCallsAFailedShareLookupAnOutage(t *testing.T) {
+	srv := newFailingSharesServer(t)
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	service, _ := insightTestService(t, srv.URL, bin, nil)
+	outcome := service.perform(context.Background(), insightTestRun())
+	if outcome.Error != insightReasonCatalogFailed {
+		t.Errorf("error = %q, want %q for a failed share lookup", outcome.Error, insightReasonCatalogFailed)
+	}
+}
+
+func newFailingSharesServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // Every way perform can fail stores one token from insight_reasons.go and
@@ -671,9 +692,9 @@ func TestEveryFailurePathStoresAReasonToken(t *testing.T) {
 			return service, logs, context.Background()
 		}, insightReasonStagingFailed},
 		{"meeting list cannot be read", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
-			dav := newInsightDAV(t, insightTestCatalog)
+			srv := newFailingSharesServer(t)
 			bin, _ := fakeInsightCassini(t, document, 0)
-			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			service, logs := insightTestService(t, srv.URL, bin, nil)
 			return service, logs, context.Background()
 		}, insightReasonCatalogFailed},
 		{"a meeting is not in the readable set", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {

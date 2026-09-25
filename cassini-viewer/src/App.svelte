@@ -104,7 +104,7 @@
   // fact comes from the deployment's operator, which this layer cannot reach
   // and a standalone export does not have. "" is "nobody said", and the chip
   // renders nothing.
-  export let audience: "" | "everyone" | "participants" = "";
+  export let audience: "" | "participants" = "";
 
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
@@ -130,7 +130,7 @@
   // isEmbeddedViewer — this is deliberately not ncMode, which only reports
   // whether Nextcloud Theming was detected.
   const embedded = isEmbeddedViewer();
-  const CATALOG_REFRESH_INTERVAL_MS = 15_000;
+  const CATALOG_REFRESH_INTERVAL_MS = 60_000;
   let catalogMode = false;
   let catalogRefreshRunning = false;
   let catalogRefreshTimer: number | undefined;
@@ -788,6 +788,10 @@
   }
 
   async function hydrateCatalogMeetingMetadata(meetings: MeetingCatalogEntry[]) {
+    // The installed app's list is backed by Cassini's local metadata index.
+    // Fetching one .opus per card would turn a thousand-meeting list into a
+    // thousand serial network requests. Static exports still hydrate here.
+    if (embedded) return;
     const generation = ++catalogHydrationGeneration;
     for (const meeting of meetings) {
       if (generation !== catalogHydrationGeneration) {

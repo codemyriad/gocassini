@@ -14,7 +14,7 @@
 
 - Works in any Talk room, group calls and 1:1. Press *Record*; Cassini is the recording server behind the same button.
 - Transcripts with synced audio playback and the right name on every line, taken from Talk's signalling rather than guessed from voices.
-- An administrator chooses who can see recordings: everyone with an account, or only the people who were in the meeting. Nextcloud Files enforces it either way.
+- Recordings are shared with the local people, groups and Teams captured from each Talk room. Nextcloud Files checks access to every file.
 - Search and tags across meetings.
 - A CLI and an agent skill, so scripts and coding agents read the same meetings with the same permissions a person has.
 
@@ -22,7 +22,7 @@
 
 - Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
 - Talk's High-performance backend. Cassini joins calls as an internal signalling client and needs the signalling server's `internalsecret`, the one value you supply by hand.
-- Optional: the Team folders and Everyone Group apps, for recordings visible only to meeting participants.
+- Nextcloud Files sharing enabled. No Team folders or Everyone Group app is required.
 - Optional: an NVIDIA GPU with the Container Toolkit, for faster transcription. CPU works on amd64 and arm64.
 
 **What leaves your server**
@@ -96,17 +96,12 @@ Documentation: https://gocassini.com/docs]]></description>
       <variable>
         <name>CASSINI_NC_ADMIN_USER</name>
         <display-name>Administrator account for setup (optional)</display-name>
-        <description>The Nextcloud account Cassini acts as when it checks how this instance is set up: which apps are enabled, whether the "cassini" service account exists, whether there is a Cassini Team folder. That check is read-only; the only writes Cassini makes as this account are creating the "cassini" service account and its group when the app is enabled, and installing the two native apps when you ask for them from the app's settings. Leave empty to detect an administrator automatically; set it only if detection picks the wrong account. It is never used for storing or reading recordings, or for moving them when the storage mode changes — all of that acts as the dedicated "cassini" service account.</description>
+        <description>The Nextcloud administrator account Cassini uses to check whether its recordings account and built-in Files sharing are ready. Leave empty to detect an administrator automatically; set it only if detection picks the wrong account. Recordings themselves are stored by the dedicated "cassini" service account.</description>
       </variable>
       <variable>
         <name>CASSINI_PUBLISH_SINK</name>
         <display-name>Where published recordings are stored</display-name>
-        <description>Selects the publish destination: "nextcloud-files" stores recordings in the "cassini" service account's Nextcloud Files (the default for an installed app), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. Under nextcloud-files, WHO can see a recording is a separate setting, in the app under Operator, Settings, "Who can see recordings", and each audience keeps its archive in its own place: recordings visible to anyone with a Nextcloud account are stored in that account's own CassiniNoACL/Recordings and need nothing but the account; recordings visible to meeting participants only are stored in Cassini/Recordings inside a Cassini Team folder and additionally need the Group folders ("Team folders") and Everyone Group (group_everyone) apps. The two paths are separate so that neither can shadow the other, and switching copies the archive across rather than moving it. Cassini creates the service account where Nextcloud allows it and otherwise asks an administrator to; it installs neither app itself, and it reports what is missing and the command that fixes it. See docs/exapp-nextcloud-recordings-permissions.md.</description>
-      </variable>
-      <variable>
-        <name>CASSINI_STORAGE_MODE</name>
-        <display-name>Initial recording storage mode (development and CI only)</display-name>
-        <description>FOR DEVELOPMENT AND CI DEPLOYMENTS ONLY. Leave this empty on a production install: when the app is enabled Cassini resolves the audience from what is already on this Nextcloud, and an administrator changes it in the app under Operator, Settings, "Who can see recordings". A fresh install records as "everyone with a Nextcloud account"; an install whose Cassini Team folder already holds recordings keeps "meeting participants", because Cassini never widens an archive that already exists. What this option does, on a stack whose operator already knows what it built: "default" keeps recordings in the "cassini" service account's own CassiniNoACL/Recordings, visible to anyone with an account on this Nextcloud and needing no extra Nextcloud apps; "access_controlled" keeps them in Cassini/Recordings inside a Cassini Team folder, where each recording is visible only to the people who were in the call, and additionally needs the Group folders and Everyone Group apps plus a Team folder an administrator sets up. It is believed only where it fits: a declared mode whose prerequisites are missing, or that meets recordings in both folders, or the same recording in both, is refused loudly at enable time and NOT recorded — because a declaration that disagrees with the instance is a bug in the stack rather than an instruction. It only seeds the initial value: once a mode is recorded the settings section is where it changes, and changing this variable does not move an archive that already exists.</description>
+        <description>Selects the publish destination: "nextcloud-files" stores recordings in the "cassini" service account's private Nextcloud Files tree and grants direct Files shares to captured Talk room participants. This is the default for an installed app and requires no additional Nextcloud app. "local" keeps recordings on the app's own volume for standalone development. Leave empty for the installed app. See docs/direct-shares-cutover.md for existing recordings.</description>
       </variable>
       <variable>
         <name>CASSINI_ARTIFACT_RETENTION</name>
@@ -131,7 +126,7 @@ Documentation: https://gocassini.com/docs]]></description>
       <variable>
         <name>CASSINI_ROOM_ID_PEPPER</name>
         <display-name>Room id pepper (optional)</display-name>
-        <description>Deployment-wide secret mixed into the one-way derivation of each meeting's room id, so the Talk conversation token it is derived from cannot be recovered by enumeration. Recommended. Choose it ONCE: changing it changes every room id, and meetings already published keep the ids they were written with, so rooms split. Re-running scripts/backfill-catalog-rooms.sh --apply repairs every meeting this installation has a job row for; only recordings imported from elsewhere need the manual merge in scripts/reattribute-catalog-room.sh.</description>
+        <description>Deployment-wide secret mixed into the one-way derivation of each meeting room id. Recommended. Choose it once: changing it gives future meetings new room ids, while already published recordings keep their ids.</description>
       </variable>
       <variable>
         <name>CASSINI_OPERATOR_API_TOKEN</name>

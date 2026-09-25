@@ -243,7 +243,7 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 	operatorBaseURL := rt.operatorTalkBackendURL(publicBaseURL)
 	roomKey := talkRoomKey(publicBaseURL, token)
 
-	// Refuse before the room is reserved (D-616). A recording that provably
+	// Refuse before the room is reserved. A recording that provably
 	// cannot be stored is worse than no recording: the call is spent, the
 	// moderator believes it is being captured, and the failure only surfaces
 	// after everyone has hung up. Placed above reserveTalkRoom so there is no

@@ -92,7 +92,7 @@ type statusRecordingsAccess struct {
 	State string `json:"state"`
 	OK    bool   `json:"ok"`
 	// Step names the provisioning step that stopped, in a stable machine-readable
-	// form a monitor or a test can key on: "app_missing:group_everyone",
+	// form a monitor or a test can key on: "owner_account",
 	// "administrator", "mount_mapping:everyone".
 	Step   string `json:"step,omitempty"`
 	Detail string `json:"detail,omitempty"`
@@ -106,40 +106,11 @@ type statusRecordingsAccess struct {
 	// AdminUser is the account provisioning resolved and acted as. Its absence
 	// is itself the diagnosis when Step is "administrator".
 	AdminUser string `json:"admin_user,omitempty"`
-	// Mode is the resolved storage model — "default" or "access_controlled"
-	// (D-616) — and ModeSource is where that came from: "user" (chosen in the
-	// Setup tab), "env" (a development/CI deploy option), "migrating" (an
-	// interrupted first decision), "default"/"derived" (a build that decided on
-	// its own, which nothing does any more) or "configured" (a settings file of
-	// unknown provenance). Both are empty until a preflight has resolved one,
-	// which is not the same as "default": nobody has decided yet.
-	Mode       string `json:"mode,omitempty"`
-	ModeSource string `json:"mode_source,omitempty"`
-	// ModeConfirmed says the mode was CHOSEN. An unconfirmed mode governs — the
-	// archive is at its root and reads work — but publishing and recording are
-	// refused until somebody confirms it, because the two models differ in who
-	// can read a recording (D-708).
-	ModeConfirmed bool `json:"mode_confirmed"`
-	// Root is where THIS mode keeps recordings, so a monitor or an administrator
-	// reading /status does not have to know which constant goes with which mode.
-	Root string `json:"root,omitempty"`
-	// MigrationClean is false when a mode switch stopped before it finished
-	// tidying up. It is deliberately NOT a health failure: the archive is
-	// complete at Root, publishing and recording are unaffected, and the only
-	// consequence is a stale copy at the other root. The Setup tab has a button
-	// for it; /status is where a monitor would notice it.
-	MigrationClean *bool `json:"migration_clean,omitempty"`
-	// Prerequisites reports the native Nextcloud apps an ExApp cannot install
-	// for itself, so a missing one is named rather than inferred.
-	Prerequisites []statusPrerequisite `json:"prerequisites,omitempty"`
-	CheckedAt     string               `json:"checked_at,omitempty"`
-}
-
-// statusPrerequisite is one native app the recordings substrate depends on.
-type statusPrerequisite struct {
-	Name   string `json:"name"`
-	State  string `json:"state"`
-	Detail string `json:"detail,omitempty"`
+	Warning   string `json:"warning,omitempty"`
+	// Direct shares are the only recording model. Root names the owner archive.
+	Mode      string `json:"mode,omitempty"`
+	Root      string `json:"root,omitempty"`
+	CheckedAt string `json:"checked_at,omitempty"`
 }
 
 type statusSTT struct {
@@ -377,26 +348,7 @@ type setupResponse struct {
 	// unavailable / not_applicable / unknown) so the UI branches on the same
 	// vocabulary the admin-facing report and the docs already use.
 	State string `json:"state"`
-	// What is deliberately NOT here any more: `awaiting_choice`. It said the one
-	// thing missing was a DECISION — nobody had told Cassini which storage model
-	// to use — and since D-753 the enabled edge resolves the mode itself, so it
-	// has been a literal `false` on every response. A bit that cannot be true is
-	// not compatibility, it is a field a client has to read to learn nothing.
-	// /storage keeps its copy, because the app's StorageStatus still declares
-	// one; nothing in the app ever read this route's.
-	// Mode is the storage model in force — `default`, `access_controlled`, or
-	// empty before one is resolved (D-755).
-	//
-	// It is here so the audience chip — "Visible to anyone with a Nextcloud
-	// account" / "Visible to meeting participants" — renders for the people the
-	// sentence is ABOUT. Everyone can see a recording's audience in the app;
-	// only an administrator could find out what it was, because the mode lived
-	// on an ADMIN route.
-	//
-	// The name of a model and nothing else: no root, no counts, no provenance,
-	// no service account. A non-administrator learns who can read recordings,
-	// which is a fact about their own recordings, and not one thing about where
-	// they are kept or how to move them.
+	// The public audience hint names the single direct-share model.
 	Mode string `json:"mode"`
 	// Cause is why recordings cannot be served, in one plain sentence (D-759).
 	// Empty whenever they can, and empty whenever the honest cause cannot be
@@ -475,13 +427,6 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// viewer re-asks when the Prepare panel opens, and a cached "no AI
 	// endpoint" would defeat that (D-749).
 	w.Header().Set("Cache-Control", "no-store")
-	// The RECORDED mode, from the same singleton /storage reads, rather than the
-	// preflight snapshot the two fields above come from. The two are the same
-	// answer on any instance that has been enabled; they come apart on a bare
-	// container restart, where the file still names a mode and no enabled edge
-	// has re-run yet. The chip should say who can read recordings there too —
-	// and it has to agree with the admin surface, which is reading this.
-	mode, _ := ncStorage.snapshot()
 	writeJSON(w, http.StatusOK, setupResponse{
 		// RecordingState is this branch's own addition and is orthogonal to the
 		// storage model: it says whether RECORDING is verified to work, which is
@@ -489,17 +434,8 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 		RecordingState: rt.publicRecordingState(r.Context()),
 		OK:             access.OK,
 		State:          access.State,
-		// Mode and Cause come from D-751. AwaitingChoice, which this branch had
-		// here, is deliberately dropped rather than merged: the mode resolves
-		// automatically on enable (D-753), so nothing can be waiting for a
-		// choice. The field survives on /storage pinned to false for wire
-		// compatibility (storage_handler.go) — but that is a shape kept for old
-		// clients, not a state, and reintroducing it HERE would put the
-		// model-choice gate back into the public status that D-708 removed.
-		Mode: mode,
-		// The user-safe half of the cause table, which is empty for every step
-		// whose honest sentence would name an account or a path.
-		Cause: storageUserCauseFor(access.Step),
+		Mode:           "direct_shares",
+		Cause:          storageUserCauseFor(access.Step),
 		Features: setupFeatures{
 			Summaries: llm.Effective.Summary != nil,
 			Insights:  llm.Effective.Insight != nil,
