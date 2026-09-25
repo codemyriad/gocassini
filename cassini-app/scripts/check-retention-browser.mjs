@@ -8,7 +8,7 @@ import { createServer } from "vite";
 process.chdir(fileURLToPath(new URL("..", import.meta.url)));
 const forever = () => ({ forever: true });
 const group = keys => ({ mode: "group", fine_initialized: false, policy: forever(), fine: Object.fromEntries(keys.map(k => [k, forever()])) });
-let saved = { version: 3, revision: 0, recordings: forever(), history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]), current: forever(), logs: forever() };
+let saved = { version: 3, revision: 0, schedule: { time: "02:00", timezone: "UTC" }, recordings: forever(), history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]), current: forever(), logs: forever() };
 let puts = 0;
 const server = await createServer({ server: { host: "127.0.0.1", port: 0 } });
 await server.listen();
@@ -40,6 +40,10 @@ try {
   await page.getByText("Keep forever", { exact: true }).first().waitFor();
   assert.equal(await page.getByRole("checkbox").count(), 4);
   assert.equal(await page.getByRole("button", { name: "Save retention settings" }).isDisabled(), true);
+  assert.equal(await page.getByLabel("Sweep time", { exact: true }).inputValue(), "02:00");
+  assert.equal(await page.getByLabel("Timezone", { exact: true }).inputValue(), "UTC");
+  await page.getByLabel("Sweep time", { exact: true }).fill("15:45");
+  await page.getByLabel("Timezone", { exact: true }).fill("Europe/Zagreb");
   const recordings = page.locator("section").filter({ has: page.getByRole("heading", { name: "Recordings", exact: true }) }).last();
   await recordings.getByRole("checkbox").uncheck();
   for (const days of [7, 30, 60, 90]) {
@@ -66,6 +70,10 @@ try {
   await page.getByRole("button", { name: "Save retention settings" }).click();
   await page.getByRole("status").waitFor();
   await page.reload();
+  assert.equal(saved.schedule.time, "15:45");
+  assert.equal(saved.schedule.timezone, "Europe/Zagreb");
+  assert.equal(await page.getByLabel("Sweep time", { exact: true }).inputValue(), "15:45");
+  assert.equal(await page.getByLabel("Timezone", { exact: true }).inputValue(), "Europe/Zagreb");
   assert.equal(saved.recordings.count, 45);
   assert.equal(saved.recordings.unit, "days");
   assert.equal(await recordings.getByLabel("Source recordings days").inputValue(), "45");
