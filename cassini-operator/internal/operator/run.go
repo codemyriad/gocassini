@@ -82,10 +82,11 @@ type Config struct {
 }
 
 type Runtime struct {
-	retention   *retentionConfig
-	modelMu     sync.Mutex
-	modelCancel context.CancelFunc
-	modelJobID  string
+	retention        *retentionConfig
+	retentionSweepMu sync.Mutex
+	modelMu          sync.Mutex
+	modelCancel      context.CancelFunc
+	modelJobID       string
 	// modelInventoryCache holds `cassini models list` results per device;
 	// see cachedModelInventory.
 	modelInventoryMu    sync.Mutex
@@ -969,6 +970,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
+		{"/storage/retention/sweep", http.HandlerFunc(rt.retentionSweepHandler)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the
 		// old hand-rolled list because main moved route registration into this
