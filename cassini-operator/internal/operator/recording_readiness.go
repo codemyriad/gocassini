@@ -37,14 +37,8 @@ type readinessCheck struct {
 	// sentence naming what to look at. Leaving those in the message told a
 	// reader what was wrong and not what to do, which is the failure the
 	// existing SetupNotice was built to avoid for storage faults.
-	Steps []readinessStep `json:"steps,omitempty"`
-	// Repair names something the operator can do about this check ITSELF, which
-	// the panel renders as a button. It is the answer to a remedy that used to
-	// be printed as a shell line for an administrator to go and run: this
-	// process can already do the work, and the panel is ADMIN-only, so asking
-	// someone to find a terminal and a container was never the shortest path.
-	Repair    string `json:"repair,omitempty"`
-	CheckedAt string `json:"checked_at,omitempty"`
+	Steps     []readinessStep `json:"steps,omitempty"`
+	CheckedAt string          `json:"checked_at,omitempty"`
 }
 
 // readinessStep mirrors SetupNoticeStep, deliberately: the app already renders
@@ -547,10 +541,6 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 			resp.Checks = append(resp.Checks, probe)
 		}
 	}
-	if includeOptional {
-		resp.Checks = append(resp.Checks, rt.cachedSearchReadinessCheck(ctx))
-	}
-
 	// Host findings lead so a full disk can explain a storage failure. GET
 	// never launches the media doctor subprocess.
 	if len(host) == 0 {
@@ -639,25 +629,6 @@ func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/health" && r.Method == http.MethodGet:
 	case r.URL.Path == "/health/check" && r.Method == http.MethodPost:
 		rt.checkRecordingReadiness(r.Context())
-		rt.invalidateSearchReadiness()
-	case r.URL.Path == "/health/repair" && r.Method == http.MethodPost:
-		// Starts work and reports the checklist as it stands. The run outlives
-		// the request — a backfill crosses the whole archive — so the row says
-		// it is running and the next read tells you how it went.
-		var body struct {
-			Action string `json:"action"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "unreadable repair request")
-			return
-		}
-		switch body.Action {
-		case repairBackfillSearch:
-			rt.startSearchBackfill()
-		default:
-			writeJSONError(w, http.StatusBadRequest, "unsupported repair action")
-			return
-		}
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported health operation")
 		return

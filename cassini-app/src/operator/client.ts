@@ -89,17 +89,6 @@ export class OperatorClient {
     return this.#request<RecordingReadiness>("/health/check", { method: "POST" });
   }
 
-  // Starts a repair the operator performs itself and returns the checklist as
-  // it stands. The work outlives the request, so the row reports that it is
-  // running and the next read says how it went.
-  async repairReadiness(action: string): Promise<RecordingReadiness> {
-    return this.#request<RecordingReadiness>("/health/repair", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
-  }
-
   async updateRecordingSetup(payload: RecordingSetupUpdate): Promise<RecordingReadiness> {
     return this.#request<RecordingReadiness>("/talk/setup", {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),

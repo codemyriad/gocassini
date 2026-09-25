@@ -12,12 +12,12 @@ describe("recording setup", () => {
  });
  it("marks as checking only the rows a re-probe actually re-runs", () => {
   // The panel shows a spinner on these while POST /health/check is in flight.
-  for (const id of ["storage", "host", "host.disk", "talk.discovery", "talk.hpb", "archive.search"]) {
+  for (const id of ["storage", "host", "host.disk", "talk.discovery", "talk.hpb"]) {
    expect(isReprobedOnCheck(id)).toBe(true);
   }
   // These are read from saved configuration and are already true when the
   // panel renders. A spinner on them would be waiting for nothing.
-  for (const id of ["configuration", "talk.authentication", "talk.handoff", "processing", "test"]) {
+  for (const id of ["configuration", "talk.authentication", "talk.handoff", "archive.search"]) {
    expect(isReprobedOnCheck(id)).toBe(false);
   }
  });
@@ -202,18 +202,17 @@ describe("what to do about a check", () => {
     id: "configuration", state: "needs_action", code: "setup_store_unreadable", message: "", ...over,
   });
 
-  it("carries a repair the operator can perform, and words otherwise", () => {
+  it("carries its remedy as words, never a command to copy", () => {
     // Steps are words only now. A remedy the operator can perform arrives as
     // `repair` and becomes a button, so no step carries a command to copy.
     expect(check({ steps: [{ label: "do a thing" }] }).steps?.[0].label).toBe("do a thing");
-    expect(check({ repair: "backfill_search" }).repair).toBe("backfill_search");
+    expect(check({ steps: [] }).steps).toEqual([]);
   });
 
   // A row with no remedy offers no button: "Fix this" with nothing behind it is
   // worse than saying nothing.
-  it("offers no repair when the operator named none", () => {
-    expect(check().repair).toBeUndefined();
-    expect(check({ steps: [] }).repair).toBeUndefined();
+  it("survives a check from an operator that sends no steps", () => {
+    expect(check().steps).toBeUndefined();
     expect(check({ steps: undefined }).steps).toBeUndefined();
   });
 });

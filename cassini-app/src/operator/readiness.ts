@@ -25,18 +25,8 @@ export interface ReadinessCheck {
   // `action`: plenty of remedies are not a place to navigate to, but a command
   // to run on a host this app cannot reach.
   steps?: ReadinessStep[];
-  // Something the operator can do about this check itself, rendered as a
-  // button. Replaces printing a command for an administrator to go and run:
-  // this panel is ADMIN-only and the operator can already do the work.
-  repair?: string;
   checked_at?: string;
 }
-
-// What a repair button says. The panel offers one only for actions the operator
-// can actually perform itself.
-export const repairLabels: Record<string, string> = {
-  backfill_search: "Re-index now",
-};
 
 // Which rows a full check actually re-probes. The rest are read from saved
 // configuration and are already true the moment the panel renders, so marking
@@ -50,8 +40,7 @@ export function isReprobedOnCheck(id: string): boolean {
     || id === "host"
     || id.startsWith("host.")
     || id === "talk.discovery"
-    || id === "talk.hpb"
-    || id.startsWith("archive.");
+    || id === "talk.hpb";
 }
 
 
@@ -82,7 +71,6 @@ export interface RecordingSetupUpdate {
 export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
-  "archive.search": "Archive search",
   "talk.authentication": "Internal credential",
   "talk.discovery": "Talk connection",
   "talk.hpb": "High-performance backend",

@@ -100,9 +100,7 @@ type Runtime struct {
 	store    *Store
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
-	searchStore     *searchStore
-	searchReadiness searchReadinessCache
-	searchRepair    searchRepairState
+	searchStore *searchStore
 	// annotations is the marks projection (D-737); nil when it could not be
 	// opened, in which case writes still commit and only indexing is skipped.
 	annotations annotationIndex
@@ -976,7 +974,6 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// it. Renamed while it was days old and had one caller (D-798).
 		{"/health", http.HandlerFunc(rt.readinessHandler)},
 		{"/health/check", http.HandlerFunc(rt.readinessHandler)},
-		{"/health/repair", http.HandlerFunc(rt.readinessHandler)},
 		{"/talk/setup", http.HandlerFunc(rt.recordingSetupHandler)},
 	}
 }

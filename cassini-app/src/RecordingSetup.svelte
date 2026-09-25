@@ -3,7 +3,7 @@
   import { initialEnvironment } from './operator/deploymentGuidance';
   import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, isReprobedOnCheck, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, isReprobedOnCheck, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
   // Storage is configured in Publish pipeline, and the checks now live in their
@@ -51,18 +51,6 @@
     try {
       const next = await operatorClient.updateRecordingSetup(payload);
       if (alive) { report = next; stale = false; error = ""; secret = ""; notifySetupChanged(); }
-    } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
-    finally { busy = false; }
-  }
-  // The operator performs the repair; this only asks it to start, and takes the
-  // checklist it answers with. The work outlives the request, so the row reports
-  // that it is running and the poll picks up how it went.
-  async function repair(action: string) {
-    if (!action || busy || polling) return;
-    busy = true; error = "";
-    try {
-      const next = await operatorClient.repairReadiness(action);
-      if (alive) { report = next; stale = false; error = ""; }
     } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
   }
@@ -142,10 +130,6 @@
               {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
             </div>
             <div class="flex flex-wrap gap-2">
-              {#if check.repair}
-                <button class="btn btn-sm btn-primary" disabled={busy || polling}
-                  on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair] ?? "Fix this"}</button>
-              {/if}
               {#each rowActions(check) as item}
                 <button class="btn btn-sm btn-outline" disabled={busy || polling} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id)}>{item.label}</button>
               {/each}
