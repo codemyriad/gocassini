@@ -100,13 +100,13 @@ func (rt *Runtime) removeSuccessfulCaptureDuplicate(jobID string, attempt int) {
 	}
 }
 
-// sweepArtifactRetention applies the policy across every job at startup, so a
-// deployment that has been running without one — or was restarted mid-pipeline —
-// converges instead of waiting for each job to publish again.
-func (rt *Runtime) sweepArtifactRetention() {
+// reconcileArtifactDuplicatesOnStartup finishes unconditional lifecycle cleanup
+// left by a stopped operator. Timed expiry belongs exclusively to the retention
+// worker and never calls this pass.
+func (rt *Runtime) reconcileArtifactDuplicatesOnStartup() {
 	jobs, err := rt.store.ListJobs(context.Background())
 	if err != nil {
-		rt.logger.Printf("startup artifact retention sweep failed: %v", err)
+		rt.logger.Printf("startup artifact reconciliation failed: %v", err)
 		return
 	}
 	for _, job := range jobs {
