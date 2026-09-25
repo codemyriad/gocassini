@@ -4,7 +4,7 @@
   import CloseButton from "./ui/CloseButton.svelte";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import type { LoadedArtifact } from "../viewer/loadArtifact";
-  import { displaySegmentsForArtifact, transcriptText } from "../viewer/meetingExport";
+  import { displaySegmentsForArtifact, transcriptMarkdown } from "../viewer/meetingExport";
   import { loadAudioFile, saveBlob, saveTranscript, zipAudioFiles } from "../viewer/exportTransfer";
   import {
     MAX_SELECTED_MEETINGS,
@@ -106,9 +106,9 @@
     for (const entry of selected) {
       const artifact = await loadMeeting(entry);
       if (key !== selectionKey) throw new Error("The selection changed — press again.");
-      sections.push(transcriptText(entry, displaySegmentsForArtifact(artifact)));
+      sections.push(transcriptMarkdown(entry, displaySegmentsForArtifact(artifact)));
     }
-    const text = sections.join("\n--- Next meeting ---\n\n");
+    const text = sections.join("\n---\n\n");
     transcriptsText = text;
     transcriptsKey = key;
     return text;
@@ -152,7 +152,7 @@
     busy = true;
     status = { tone: "ok", text: "Preparing transcripts…" };
     try {
-      saveTranscript(await ensureTranscripts(), `cassini-transcripts-${new Date().toISOString().slice(0, 10)}.txt`);
+      saveTranscript(await ensureTranscripts(), `cassini-transcripts-${new Date().toISOString().slice(0, 10)}.md`);
       status = { tone: "ok", text: "Transcripts downloaded." };
     } catch (error) {
       status = { tone: "error", text: describeError(error) };

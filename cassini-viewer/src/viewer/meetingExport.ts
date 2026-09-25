@@ -54,8 +54,8 @@ export function displaySegmentsForArtifact(artifact: Pick<LoadedArtifact, "index
   }));
 }
 
-/** Plain text follows the reader's turn order and its inline interjections. */
-export function transcriptText(entry: Pick<MeetingCatalogEntry, "title" | "dateLabel"> | null, segments: JudgedDisplaySegment[]): string {
+/** Markdown follows the reader's turn order and its inline interjections. */
+export function transcriptMarkdown(entry: Pick<MeetingCatalogEntry, "title" | "dateLabel"> | null, segments: JudgedDisplaySegment[]): string {
   const heading = [entry?.title || "Meeting transcript", entry?.dateLabel].filter(Boolean).join(" — ");
   const rows = buildTranscriptRows(segments);
   const body = rows.map((row) => {
@@ -64,9 +64,13 @@ export function transcriptText(entry: Pick<MeetingCatalogEntry, "title" | "dateL
       ? member.block.text
       : `(${member.speakerLabel}: ${member.blocks.map((block) => block.text).join(" ")})`
     ).join(" ");
-    return `${row.speakerLabel}  ${formatClockTime(row.startMs)}${over}\n${prose}`;
+    return `**${escapeMarkdown(row.speakerLabel)}** [${formatClockTime(row.startMs)}]${escapeMarkdown(over)}\n\n${escapeMarkdown(prose)}`;
   }).join("\n\n");
-  return `${heading}\n\n${body || "No transcript available."}\n`;
+  return `# ${escapeMarkdown(heading.replace(/\s*\n\s*/g, " "))}\n\n${body || "No transcript available."}\n`;
+}
+
+function escapeMarkdown(text: string): string {
+  return text.replace(/([\\`*_{}\[\]<>#|~])/g, "\\$1");
 }
 
 export function safeMeetingStem(entry: Pick<MeetingCatalogEntry, "title" | "id">): string {

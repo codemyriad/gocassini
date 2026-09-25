@@ -57,7 +57,7 @@
     LoadedArtifact,
   } from "../viewer/loadArtifact";
   import type { PortableTranscriptDescriptor } from "../viewer/portable";
-  import { displaySegmentsForArtifact, safeMeetingStem, transcriptText } from "../viewer/meetingExport";
+  import { displaySegmentsForArtifact, safeMeetingStem, transcriptMarkdown } from "../viewer/meetingExport";
   import { loadAudioFile, saveBlob, saveTranscript } from "../viewer/exportTransfer";
   import { formatMeetingDate, hasMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
   import { hasRoom, roomLabelOf } from "../viewer/rooms";
@@ -336,7 +336,7 @@
 
   async function copyTranscript() {
     if (copyExportBusy) return;
-    const text = transcriptText(meeting, displaySegments);
+    const text = transcriptMarkdown(meeting, displaySegments);
     if (!navigator.clipboard?.writeText) {
       exportStatus = "Clipboard unavailable here — use Download transcript.";
       return;
@@ -356,7 +356,7 @@
 
   function downloadTranscript() {
     exportRequestId += 1;
-    saveTranscript(transcriptText(meeting, displaySegments), `${exportStem()}-transcript.txt`);
+    saveTranscript(transcriptMarkdown(meeting, displaySegments), `${exportStem()}-transcript.md`);
     exportStatus = "Transcript downloaded.";
   }
 

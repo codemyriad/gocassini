@@ -15,7 +15,7 @@ export function saveBlob(blob: Blob, name: string): void {
 }
 
 export function saveTranscript(text: string, name: string): void {
-  saveBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), name);
+  saveBlob(new Blob([text], { type: "text/markdown;charset=utf-8" }), name);
 }
 
 export interface AudioFile {
