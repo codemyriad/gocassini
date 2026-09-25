@@ -63,7 +63,7 @@ describe("probeOperatorAvailable", () => {
   // hid the operator surface from the one person able to fix the install, and
   // showed them the same "ask your administrator" everyone else got.
   it("reports available on 503 when the operator answered with its status payload", async () => {
-    const body = statusBody({ ok: false, state: "unavailable", step: "app_missing:groupfolders" });
+    const body = statusBody({ ok: false, state: "unavailable", step: "owner_account" });
     expect(await probeOperatorAvailable("/operator", fetchWithStatus(503, undefined, body))).toEqual({
       available: true,
       status: 503,

@@ -18,7 +18,8 @@ Usage: harness/bin/seed-operator-volume.sh --pack DIR
 
 Copy an AppAPI Cassini persistent-volume root into the installed ExApp's
 fresh persistent volume. DIR must contain operator/jobs/. The source is bind
-mounted read-only into a short-lived copier container.
+mounted read-only into a short-lived copier container. It must also contain
+operator/jobs.sqlite3.
 EOF
 }
 
@@ -36,6 +37,7 @@ done
 [[ -n "$PACK_DIR" ]] || { usage >&2; die "--pack is required"; }
 [[ -d "$PACK_DIR" ]] || die "$PACK_DIR is not a directory"
 [[ -d "$PACK_DIR/operator/jobs" ]] || die "$PACK_DIR is not an operator-volume seed: expected operator/jobs/"
+[[ -s "$PACK_DIR/operator/jobs.sqlite3" ]] || die "$PACK_DIR is not an operator-volume seed: expected non-empty operator/jobs.sqlite3"
 [[ -n "$(find "$PACK_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]] || die "$PACK_DIR is empty"
 
 if [[ -z "$CONTAINER_NAME" ]]; then
@@ -72,6 +74,16 @@ docker run --rm \
   --volumes-from "$CONTAINER_NAME" \
   --mount "type=bind,src=$PACK_DIR,dst=$SEED_MOUNT,readonly" \
   --entrypoint /bin/sh "$image" -c "set -eu; cp -a $SEED_MOUNT/. $VOLUME_MOUNT/"
+
+# Nextcloud IDs belong to the source instance, and transcript indexes must be
+# verified against the destination archive. A combined seed takes annotations
+# from its portable meeting pack; preflight rejects unconfirmed source edits.
+derived="meetings.sqlite3 search.sqlite3"
+if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" ]]; then
+  derived="$derived annotations.sqlite3"
+fi
+docker run --rm --volumes-from "$CONTAINER_NAME" --entrypoint /bin/sh "$image" \
+  -c 'for name in $1; do rm -f "/nc_app_gocassini_data/operator/$name" "/nc_app_gocassini_data/operator/$name-wal" "/nc_app_gocassini_data/operator/$name-shm"; done' seed "$derived"
 
 trap - EXIT
 docker start "$CONTAINER_NAME" >/dev/null

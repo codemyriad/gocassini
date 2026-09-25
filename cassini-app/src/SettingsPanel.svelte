@@ -23,7 +23,7 @@
   // the pipeline it applies to. Its own component because it is a page's worth
   // of state — a switch, its prerequisites, its progress — and none of it is
   // shared with the settings below.
-  import RecordingAccessPanel from "./RecordingAccessPanel.svelte";
+  import DirectShareAccessPanel from "./DirectShareAccessPanel.svelte";
   // D-763: whether recording WORKS, above who may see what it produces.
   //
   // That order is the point rather than a layout preference. Installing the
@@ -505,7 +505,7 @@
      component untouched and keeps the cross-link a property of the layout that
      places the two sections, which is where it belongs. -->
 <div id="recording-storage">
-  <RecordingAccessPanel {operatorClient} />
+  <DirectShareAccessPanel {operatorClient} />
 </div>
 
   {#if loadError}

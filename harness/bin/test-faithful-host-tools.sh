@@ -25,11 +25,10 @@ for script in "$ORCHESTRATOR" "$VALIDATOR"; do
     || fail "$(basename "$script") does not preflight media tools"
 done
 
-# This vertical asserts that a non-participant cannot see or fetch a recording,
-# so it must opt in to the access-controlled substrate now that fresh stacks use
-# the default storage model.
-grep -F '  --storage-mode acl-enabled' "$ORCHESTRATOR" >/dev/null \
-  || fail "faithful private-Talk orchestrator does not explicitly select the ACL storage mode"
+# One direct-share model applies to every installed scenario.
+if grep -F -- '--storage-mode' "$ORCHESTRATOR" >/dev/null; then
+  fail "faithful private-Talk orchestrator still chooses a storage mode"
+fi
 
 compatibility_job="$(sed -n '/^  compatibility:/,/^  faithful-installed-exapp-talk-cpu:/p' "$WORKFLOW")"
 grep -F 'uses: ./.github/actions/compatibility-tools' <<<"$compatibility_job" >/dev/null \

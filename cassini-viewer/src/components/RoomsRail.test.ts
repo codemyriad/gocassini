@@ -101,22 +101,18 @@ describe("RoomsRail audience notice", () => {
   const html = (audience: string) => render(RoomsRail as never, { props: { audience } } as never).body;
 
   it("names each audience in two words and explains it on hover, focus or tap", () => {
-    const everyone = html("everyone");
-    expect(everyone).toContain("Visible to all users");
-    expect(everyone).toContain("Anyone with an account on this Nextcloud can open every meeting here, including its recording and transcript");
-    expect(everyone).toMatch(/<button[^>]*aria-describedby="audience-detail"/);
     const participants = html("participants");
-    expect(participants).toContain("Members only");
+    expect(participants).toContain("Shared with participants");
     // The grant is the room's attendee list at publish, not who was present in
     // the call (talk_participants.go, audience_test.go), so the wording must not
     // say "in the call".
-    expect(participants).toContain("including anyone invited who didn't join the call");
+    expect(participants).toContain("including invited people who did not join");
     expect(participants).not.toContain("in each call");
   });
 
-  it("says under both that the setting is organisation-wide and who can change it", () => {
-    for (const audience of ["everyone", "participants"]) {
-      expect(html(audience)).toMatch(/class="audience-foot[^"]*">This is an organisation-wide setting\. Contact your Nextcloud admin to change it\.</);
+  it("points readers to Nextcloud Files for each recording's access", () => {
+    for (const audience of ["participants"]) {
+      expect(html(audience)).toContain("Nextcloud Files controls who can read each recording.");
     }
   });
 
@@ -127,6 +123,6 @@ describe("RoomsRail audience notice", () => {
   it("renders nothing when nobody said", () => {
     const rail = html("");
     expect(rail).not.toContain("Visible to all users");
-    expect(rail).not.toContain("Members only");
+    expect(rail).not.toContain("Shared with participants");
   });
 });
