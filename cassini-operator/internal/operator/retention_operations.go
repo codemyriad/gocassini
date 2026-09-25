@@ -204,11 +204,13 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 			return err
 		}
 	case "video":
+		// Finish a video-only operation journalled before whole-recording policies.
 		if _, err := rt.store.db.Exec(`INSERT INTO artifact_availability(job_id,video) VALUES(?,'expired') ON CONFLICT(job_id) DO UPDATE SET video='expired'`, op.Job); err != nil {
 			return err
 		}
 	case "remove":
-		if op.Kind == "audio" || op.Kind == "current" {
+		// "audio" and "video" remain supported only to recover pre-upgrade journals.
+		if op.Kind == "recordings" || op.Kind == "audio" || op.Kind == "current" {
 			column := "source"
 			if op.Kind == "current" {
 				column = "output"

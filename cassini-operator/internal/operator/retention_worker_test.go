@@ -164,7 +164,18 @@ func TestRetentionCanonicalArchivesIndependentAndRerunDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &rt.retention.settings
-	s.Recordings.Policy = retentionPolicy{Count: 1, Unit: "months"}
+	// Whole-bundle expiry includes arbitrary media, report attachments and raw
+	// packets without probing or rewriting them.
+	for _, name := range []string{"video.mkv", "cassini-report.v1.json", "capture.rtplog", "capture.idx"} {
+		if err = os.WriteFile(filepath.Join(source, name), []byte("retained payload"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt.runRetentionSweep(context.Background(), time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+	assertExists(t, filepath.Join(source, "video.mkv"), "default recordings policy retains all media")
+	s.Recordings = retentionPolicy{Count: 1, Unit: "months"}
+	rt.runRetentionSweep(context.Background(), time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC))
+	assertExists(t, filepath.Join(source, "capture.rtplog"), "recording not yet due")
 	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	rt.runRetentionSweep(context.Background(), now)
 	assertGone(t, source, "source policy")
