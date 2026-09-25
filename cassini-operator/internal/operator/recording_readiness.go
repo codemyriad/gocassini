@@ -292,7 +292,7 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 	if len(reported) == 0 {
 		return nil, errors.New("doctor reported no checks")
 	}
-	checks := make([]readinessCheck, 0, len(reported))
+	byID := make(map[string]readinessCheck, len(reported))
 	for _, r := range reported {
 		state := ""
 		switch r.Status {
@@ -322,9 +322,52 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 		if state != "passed" && strings.TrimSpace(r.Advice) != "" {
 			check.Steps = []readinessStep{{Label: r.Advice}}
 		}
-		checks = append(checks, check)
+		byID[r.ID] = check
 	}
-	return checks, nil
+	return hostChecklistRows(byID), nil
+}
+
+// hostChecklistRows is the small set the checklist shows, out of everything
+// doctor reports.
+//
+// doctor keeps all of it: it is a standalone host diagnostic and its text is a
+// shipped format, and ffmpeg or a filling disk is exactly what someone wants
+// from a terminal. The panel is a different audience with a different question
+// — "is there something here I can act on" — and free space, ffprobe and the
+// rest answered it with rows nobody ever acted on.
+//
+// workdir and workdir.writable are one fact to a reader: whether Cassini can
+// use its recording volume. They are reported separately because they fail for
+// different reasons, which matters to doctor and not to this list, so they
+// collapse into one row carrying the worse of the two.
+func hostChecklistRows(byID map[string]readinessCheck) []readinessCheck {
+	var rows []readinessCheck
+	if row, ok := worseOf(byID["workdir"], byID["workdir.writable"]); ok {
+		row.ID, row.Code = "host.workdir", "workdir"
+		rows = append(rows, row)
+	}
+	if row, ok := byID["tmpdir.writable"]; ok {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// worseOf returns whichever check reports the worse news, so a collapsed row
+// never reads better than its worst half. An absent check is not evidence of
+// health, so it simply yields to the one that is present.
+func worseOf(a, b readinessCheck) (readinessCheck, bool) {
+	switch {
+	case a.ID == "" && b.ID == "":
+		return readinessCheck{}, false
+	case a.ID == "":
+		return b, true
+	case b.ID == "":
+		return a, true
+	}
+	if readinessStateRank[b.State] > readinessStateRank[a.State] {
+		return b, true
+	}
+	return a, true
 }
 
 // Coalesce concurrent checks and put a ceiling on network/process work. GET
@@ -416,7 +459,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	s := &rt.recordingSetup
 	s.mu.Lock()
 	rt.loadRecordingSetupLocked()
-	state, failed, checkedAt, inbound := s.state, s.loadFailed, s.checkedAt, s.inboundAt
+	state, failed, checkedAt := s.state, s.loadFailed, s.checkedAt
 	probes := append([]readinessCheck(nil), s.checks...)
 	host := append([]readinessCheck(nil), s.hostChecks...)
 	s.mu.Unlock()
@@ -482,18 +525,6 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	} else {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "The Nextcloud storage preflight did not pass. Review the storage details below.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
-	if includeOptional {
-		settings := rt.currentSettings()
-		device := rt.effectiveFor(settings).Device
-		if !settings.TranscriptionEnabled {
-			add("processing", "passed", "audio_only", "Transcription is off. Recordings can be published and played as audio.", "")
-		} else if detail := rt.transcriptionUnavailable(settings, device); detail != "" {
-			add("processing", "warn", "transcription_unavailable", "Recordings keep their audio, but transcription cannot run: "+detail, "settings")
-		} else {
-			add("processing", "passed", "processing_ready", "Speech-processing prerequisites passed for "+device+".", "")
-		}
-	}
-
 	if secret == "" && !failed {
 		add("talk.authentication", "needs_action", "internal_secret_missing", "Enter the internal secret from your Talk signaling server.", "configure_talk")
 	}
@@ -518,13 +549,6 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 			resp.Checks = append(resp.Checks, probe)
 		}
 	}
-	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
-		// The actionable handoff row above already describes the missing credential.
-	} else if !inbound.IsZero() && time.Since(inbound) < readinessTTL {
-		resp.Checks = append(resp.Checks, readinessCheck{ID: "talk.handoff", State: "passed", Code: "talk_request_received", Message: "Talk recently sent an authenticated recording request to Cassini.", CheckedAt: inbound.UTC().Format(time.RFC3339)})
-	} else {
-		add("talk.handoff", "not_verified", "handoff_not_verified", "No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.", "test_recording")
-	}
 	if includeOptional {
 		resp.Checks = append(resp.Checks, rt.cachedSearchReadinessCheck(ctx))
 	}
@@ -536,9 +560,6 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	}
 	resp.Checks = append(host, resp.Checks...)
 	resp.Test = rt.readinessTest(ctx, state)
-	if resp.Test.PlaybackVerifiedAt == "" {
-		add("test", "not_verified", "test_not_verified", "Record a short test through Talk, then open it and confirm playback.", "test_recording")
-	}
 	resp.State = worstReadinessState(resp.Checks)
 	resp.RecordingState = recordingCapabilityState(resp.Checks)
 	return resp
@@ -564,9 +585,14 @@ func recordingCapabilityState(checks []readinessCheck) string {
 // thing still works, so it must neither be swallowed into "passed" nor promoted
 // into a blocking failure. `not_verified` ranks below warn — nothing has been
 // established, which is not the same as having found a problem.
+// readinessStateRank orders the states by how much it costs to ignore them.
+// One table, because two copies would eventually disagree about whether warn
+// outranks not_verified.
+var readinessStateRank = map[string]int{"passed": 0, "not_verified": 1, "warn": 2, "needs_action": 3}
+
 func worstReadinessState(checks []readinessCheck) string {
 	worst := "passed"
-	rank := map[string]int{"passed": 0, "not_verified": 1, "warn": 2, "needs_action": 3}
+	rank := readinessStateRank
 	for _, c := range checks {
 		if rank[c.State] > rank[worst] {
 			worst = c.State

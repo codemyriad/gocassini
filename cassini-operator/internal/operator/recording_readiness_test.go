@@ -587,26 +587,6 @@ func TestReadinessPublicStatePrioritizesActionRegardlessOfOrder(t *testing.T) {
 	}
 }
 
-func TestReadinessExpiredHandoffOffersTestWithoutInventingPass(t *testing.T) {
-	rt, cleanup := readinessRuntime(t)
-	defer cleanup()
-	putRecordingSetup(t, rt, `{"internal_secret":"internal","test_room_url":"https://cloud.test/call/room"}`, 200)
-	rt.recordingSetup.inboundAt = time.Now().Add(-2 * readinessTTL)
-	rt.recordingSetup.probe = func(context.Context, string) ([]readinessCheck, error) {
-		return []readinessCheck{{ID: "talk.hpb", State: "passed", Code: "hpb_authenticated"}}, nil
-	}
-	rt.checkRecordingReadiness(context.Background())
-	for _, check := range rt.readiness(context.Background()).Checks {
-		if check.ID == "talk.handoff" {
-			if check.State != "not_verified" || check.Action != "test_recording" {
-				t.Fatalf("handoff=%+v", check)
-			}
-			return
-		}
-	}
-	t.Fatal("missing handoff check")
-}
-
 func TestReadinessStorageCarriesTheAgeAndApplicabilityOfItsEvidence(t *testing.T) {
 	resetSubstrateRecord(t)
 	rt, cleanup := readinessRuntime(t)
@@ -718,38 +698,28 @@ func TestReadinessKeepsCurrentStorageAdmissionBlockActionable(t *testing.T) {
 }
 
 // D-798 V2: media host checks come from `cassini doctor --json`, read by id.
+// doctor speaks ok/warn/fail; the checklist speaks passed/warn/needs_action.
 func TestRunDoctorProbeMapsTheDoctorLadder(t *testing.T) {
-	rt, cleanup := readinessRuntime(t)
-	defer cleanup()
-	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
-	  {"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
-	  {"id":"workdir.space","status":"warn","summary":"low disk space","advice":"free disk space"},
-	  {"id":"tmpdir.space","status":"fail","summary":"out of space","advice":"free some"}]`)
-
-	checks, err := rt.runDoctorProbe(context.Background())
-	if err != nil {
-		t.Fatalf("probe: %v", err)
-	}
-	want := map[string]string{"host.ffmpeg": "passed", "host.workdir.space": "warn", "host.tmpdir.space": "needs_action"}
-	got := map[string]string{}
-	for _, c := range checks {
-		got[c.ID] = c.State
-	}
-	for id, state := range want {
-		if got[id] != state {
-			t.Errorf("%s = %q, want %q", id, got[id], state)
+	for status, want := range map[string]string{"ok": "passed", "warn": "warn", "fail": "needs_action"} {
+		rt, cleanup := readinessRuntime(t)
+		rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[{"id":"tmpdir.writable","status":"`+status+`","summary":"a finding","advice":"do the thing"}]`)
+		checks, err := rt.runDoctorProbe(context.Background())
+		if err != nil {
+			cleanup()
+			t.Fatalf("probe(%s): %v", status, err)
 		}
-	}
-	// A reader told what is wrong is owed what to do about it (R0.1). V2b
-	// appended the advice to the message as an interim; V4 moved it into a
-	// step, so the message stays the finding and the step stays the fix.
-	for _, c := range checks {
-		if c.State == "passed" {
-			continue
+		if len(checks) != 1 || checks[0].State != want {
+			cleanup()
+			t.Fatalf("doctor %q mapped to %+v; want state %q", status, checks, want)
 		}
-		if len(c.Steps) == 0 {
-			t.Errorf("%s dropped doctor's advice: %+v", c.ID, c)
+		// A reader told what is wrong is owed what to do about it (R0.1). V2b
+		// appended the advice to the message as an interim; V4 moved it into a
+		// step, so the message stays the finding and the step stays the fix.
+		if want != "passed" && len(checks[0].Steps) == 0 {
+			cleanup()
+			t.Fatalf("doctor %q dropped its advice: %+v", status, checks[0])
 		}
+		cleanup()
 	}
 }
 
@@ -782,9 +752,9 @@ func TestRunDoctorProbeDoesNotPassOperatorSecrets(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "cassini")
 	body := `#!/bin/sh
 if [ -n "${APP_SECRET+x}" ] || [ -n "${CASSINI_TALK_RECORDING_SECRET+x}" ] || [ -n "${TALK_RECORDING_SECRET+x}" ] || [ -n "${CASSINI_TALK_SIGNALING_INTERNAL_SECRET+x}" ] || [ -n "${CASSINI_OPERATOR_API_TOKEN+x}" ]; then
-  printf '[{"id":"secrets","status":"fail","summary":"secret leaked"}]\n'
+  printf '[{"id":"tmpdir.writable","status":"fail","summary":"secret leaked"}]\n'
 else
-  printf '[{"id":"secrets","status":"ok","summary":"operator secrets absent"}]\n'
+  printf '[{"id":"tmpdir.writable","status":"ok","summary":"operator secrets absent"}]\n'
 fi
 `
 	if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
@@ -843,7 +813,7 @@ func TestReadinessReportsUnreachableHostChecksAsAWarning(t *testing.T) {
 func TestHealthGETUsesCachedMediaHostAndExplicitCheckRefreshesIt(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
-	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"}]`)
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[{"id":"tmpdir.writable","status":"ok","summary":"temporary directory writable"}]`)
 	rt.checkRecordingReadiness(context.Background())
 
 	// Removing the binary proves GET does not invoke doctor again.
@@ -852,7 +822,7 @@ func TestHealthGETUsesCachedMediaHostAndExplicitCheckRefreshesIt(t *testing.T) {
 		report := rt.readiness(context.Background())
 		found := false
 		for _, check := range report.Checks {
-			if check.ID == "host.ffmpeg" {
+			if check.ID == "host.tmpdir.writable" {
 				found = true
 				if check.State != "passed" || check.CheckedAt == "" {
 					t.Fatalf("cached host finding lost its verdict or age: %+v", check)
@@ -918,30 +888,6 @@ func TestRecordingCapabilityStateExcludesOptionalProcessingAndArchive(t *testing
 	if got := recordingCapabilityState(checks); got != "needs_action" {
 		t.Fatalf("recording host failure was hidden: %s", got)
 	}
-}
-
-func TestUnavailableEnabledTranscriptionWarnsWithoutBlockingAudio(t *testing.T) {
-	rt, cleanup := readinessRuntime(t)
-	defer cleanup()
-	rt.setSettings(STTSettings{
-		TranscriptionEnabled: true,
-		Quality:              sttQualityBalanced,
-		DeviceOverride:       deviceCUDA,
-	})
-	report := rt.readiness(context.Background())
-	for _, check := range report.Checks {
-		if check.ID != "processing" {
-			continue
-		}
-		if check.State != "warn" || check.Code != "transcription_unavailable" || check.Action != "settings" {
-			t.Fatalf("enabled but unavailable transcription: %+v", check)
-		}
-		if report.RecordingState != recordingCapabilityState(report.Checks) {
-			t.Fatalf("recording state included optional processing: %s", report.RecordingState)
-		}
-		return
-	}
-	t.Fatal("no optional processing check")
 }
 
 func writeFakeDoctorBin(t *testing.T, body string) string {
@@ -1023,13 +969,72 @@ func TestNonOkChecksCarryARemedy(t *testing.T) {
 	}
 }
 
+// The checklist shows a deliberately small set of what doctor reports. doctor
+// itself keeps everything — it is a host diagnostic for a terminal — but free
+// space, ffmpeg and ffprobe produced rows in the panel that nobody acted on.
+func TestHostChecklistShowsOnlyTheRowsWorthActingOn(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
+		{"id":"workdir","status":"ok","summary":"working directory /work"},
+		{"id":"workdir.writable","status":"ok","summary":"working directory writable: /work"},
+		{"id":"workdir.space","status":"warn","summary":"low on space"},
+		{"id":"tmpdir.writable","status":"ok","summary":"temporary directory writable: /tmp"},
+		{"id":"tmpdir.space","status":"warn","summary":"low on space"},
+		{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
+		{"id":"ffprobe","status":"ok","summary":"ffprobe available"}
+	]`)
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	var ids []string
+	for _, c := range checks {
+		ids = append(ids, c.ID)
+	}
+	want := []string{"host.workdir", "host.tmpdir.writable"}
+	if len(ids) != len(want) {
+		t.Fatalf("checklist rows = %v; want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("checklist rows = %v; want %v", ids, want)
+		}
+	}
+}
+
+// workdir and workdir.writable are one fact to a reader. Collapsed, the row must
+// never read better than its worse half — a writable directory on a volume that
+// is not there is not a working recording volume.
+func TestCollapsedWorkdirRowKeepsTheWorseVerdict(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
+		{"id":"workdir","status":"ok","summary":"working directory /work"},
+		{"id":"workdir.writable","status":"fail","summary":"working directory not writable: /work","advice":"fix the mount"}
+	]`)
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if len(checks) != 1 || checks[0].ID != "host.workdir" {
+		t.Fatalf("want one collapsed host.workdir row, got %+v", checks)
+	}
+	if checks[0].State != "needs_action" {
+		t.Fatalf("collapsed row = %q; the failing half must win", checks[0].State)
+	}
+	if checks[0].Message != "working directory not writable: /work" {
+		t.Fatalf("collapsed row kept the wrong message: %q", checks[0].Message)
+	}
+}
+
 // doctor's advice is the remedy in prose. It belongs in a step, so the message
 // stays the finding.
 func TestDoctorAdviceBecomesAStepRatherThanPartOfTheMessage(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	rt.cfg.CassiniBin = writeFakeDoctorBin(t,
-		`[{"id":"tmpdir.space","status":"fail","summary":"out of space","advice":"free some space in /tmp"}]`)
+		`[{"id":"tmpdir.writable","status":"fail","summary":"out of space","advice":"free some space in /tmp"}]`)
 
 	checks, err := rt.runDoctorProbe(context.Background())
 	if err != nil {
@@ -1051,7 +1056,7 @@ func TestPassingChecksCarryNoSteps(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	rt.cfg.CassiniBin = writeFakeDoctorBin(t,
-		`[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available","advice":"this should not appear"}]`)
+		`[{"id":"tmpdir.writable","status":"ok","summary":"temporary directory writable","advice":"this should not appear"}]`)
 
 	checks, err := rt.runDoctorProbe(context.Background())
 	if err != nil {

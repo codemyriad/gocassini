@@ -49,7 +49,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 		check.Message = describeSearchCoverage(coverage) + " The archive has not been listed, so older recordings may be missing from this index."
 		if coverage.TotalKnown() == 0 {
 			check.Code = "search_coverage_empty"
-			check.Message = "The search index has no recorded meetings. Cassini cannot tell whether the archive is empty or holds older unindexed recordings."
+			check.Message = "No meetings have been recorded yet, so search has nothing to index."
 		}
 		if coverage.NeedsAttention() > 0 {
 			check.State, check.Code = "warn", "search_coverage_partial"
@@ -60,7 +60,17 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 	}
 
 	check.Message = describeSearchCoverage(coverage)
-	if !inventory.CatalogPresent {
+	if len(inventory.OpusNames) == 0 && coverage.TotalKnown() == 0 && coverage.NeedsAttention() == 0 {
+		// An archive nobody has recorded into yet is healthy, not unresolved.
+		//
+		// This has to come before the catalog branch below, because catalog.json
+		// does not exist until the first meeting is published — so a brand new
+		// install has no catalog for the same reason it has no meetings, and
+		// reporting that as "coverage cannot be established" put an unresolved
+		// row on an instance whose only fault was being new.
+		check.State, check.Code = "passed", "search_archive_empty"
+		check.Message = "No meetings have been recorded yet, so search has nothing to index."
+	} else if !inventory.CatalogPresent {
 		check.State, check.Code = "not_verified", "search_coverage_scope_unknown"
 		check.Message += " The recordings catalog was not found, so this listing alone cannot establish archive coverage."
 		check.Action = "recheck"

@@ -436,10 +436,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer listener.Close()
-	if exappCfg.Active {
-		runtime.workerWG.Add(1)
-		go func() { defer runtime.workerWG.Done(); runtime.checkRecordingReadiness(runtime.ctx) }()
-	}
+	// No health probe at startup, and none on a timer: the checks run when an
+	// administrator asks for them, from the Doctor panel.
+	//
+	// What used to be here ran the media doctor, the Talk probe and the storage
+	// preflight on every boot so the panel would open warm. It bought a verdict
+	// nobody was reading yet, at the cost of work on every restart, and the
+	// panel now renders its rows unchecked and offers a button instead.
+	//
+	// Provisioning is NOT what was removed: preflightOnRestart above owns the
+	// restart-convergence path (D-541/D-669) and still runs. This only stops the
+	// diagnostics.
 
 	fmt.Fprintf(stdout, "listening -> http://%s\n", listener.Addr().String())
 	logger.Printf("base_path -> %s", cfg.BasePath)
