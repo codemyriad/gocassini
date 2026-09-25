@@ -884,7 +884,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	})
 	rt.reconcilePromotionLeftovers()
 	rt.recoverArtifactOperations()
-	rt.sweepArtifactRetention()
+	rt.reconcileArtifactDuplicatesOnStartup()
 	rt.startModelWorker()
 	rt.startProcessingMonitor()
 	rt.startBuildWorkers()

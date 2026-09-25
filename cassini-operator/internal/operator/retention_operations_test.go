@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPublishedPairPreservesPreviousUntilSuccess(t *testing.T) {
@@ -145,6 +146,31 @@ func TestCaptureDuplicateCleanupDoesNotWaitForPublish(t *testing.T) {
 	rt.removeSuccessfulCaptureDuplicate(id, 1)
 	assertGone(t, attempt, "successful capture duplicate")
 	assertExists(t, canonical, "ready source before publication")
+}
+
+func TestTimedRetentionDoesNotRunDuplicateCleanup(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	id := "scheduled-cleanup"
+	insertJob(t, rt.store.db, id, "2026-01-01T00:00:00Z")
+	attempt := seedReadyRunBundle(t, rt.cfg.WorkRoot, id)
+	canonical, err := promoteRunBundle(rt.cfg.WorkRoot, attempt, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = rt.store.db.Exec(`UPDATE jobs SET stage='done',state='failed',artifact_run_path=? WHERE id=?`, canonical, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = rt.store.db.Exec(`UPDATE job_attempts SET stage='done',state='failed',artifact_run_path=?,record_finished_at='2026-01-01T01:00:00Z' WHERE job_id=?`, attempt, id); err != nil {
+		t.Fatal(err)
+	}
+	rt.retention = newRetentionConfig(filepath.Join(t.TempDir(), "retention.json"))
+
+	rt.runRetentionSweep(context.Background(), time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC))
+	assertExists(t, attempt, "timed retention must not perform duplicate cleanup")
+
+	rt.reconcileArtifactDuplicatesOnStartup()
+	assertGone(t, attempt, "startup reconciliation finishes duplicate cleanup")
 }
 
 func TestArtifactOperationRecoveryAndBoundaries(t *testing.T) {

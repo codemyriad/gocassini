@@ -105,39 +105,10 @@ func (rt *Runtime) expireJobArtifacts(ctx context.Context, id string, s retentio
 	if job.Stage != "done" || (job.State != "succeeded" && job.State != "failed" && job.State != "interrupted") {
 		return nil
 	}
-	if rt.pendingArtifactOperation(id) {
-		var raw string
-		if err = rt.store.db.QueryRowContext(ctx, `SELECT operation FROM artifact_operations WHERE job_id=?`, id).Scan(&raw); err != nil {
-			return err
-		}
-		op, err := decodeArtifactOperation(raw)
-		if err != nil {
-			return err
-		}
-		if err = rt.finishOperation(op); err != nil {
-			return err
-		}
-	}
 	attempts, err := rt.store.ListJobAttempts(ctx, id)
 	if err != nil {
 		return err
 	}
-	// A crash between the publication commit and journal creation is recovered
-	// here without redelivering. Unidentifiable legacy pairs are left untouched.
-	latest := 0
-	for _, a := range attempts {
-		if a.State == "succeeded" && a.PublishFinishedAt != nil {
-			latest = a.AttemptNumber
-			if err = rt.promotePublishedPair(id, latest); err != nil {
-				rt.logger.Printf("archive reconciliation skipped job=%s: %v", id, err)
-			}
-			break
-		}
-	}
-	if rt.pendingArtifactOperation(id) {
-		return nil
-	}
-	rt.pruneArtifactsForJob(id)
 	var replacement time.Time
 	for _, a := range attempts {
 		if ctx.Err() != nil {
