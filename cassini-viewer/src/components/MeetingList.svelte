@@ -227,7 +227,12 @@
     insights: visibleInsights,
     types,
   });
-  $: feedGroups = groupBrowseFeedByMonth(feedItems);
+  let displayLimit = 100;
+  $: displayedFeedItems = feedItems.slice(0, displayLimit);
+  $: feedGroups = groupBrowseFeedByMonth(displayedFeedItems);
+  $: renderedMeetings = displayedFeedItems.flatMap((item) =>
+    item.kind === "meeting" ? [item.meeting] : [],
+  );
   $: trimmedFilter = filter.trim();
   $: filterTags = tagFilterIds
     .map((id) => tags?.find((tag) => tag.tagId === id))
@@ -271,7 +276,7 @@
   // selection bar saying "3 meetings selected" over a list showing none of them
   // and omitting "3 not shown here" — the exact claim
   // selectionModel.countHiddenByView exists to prevent.
-  $: dispatch("visible", types.meetings ? visibleMeetings : []);
+  $: dispatch("visible", types.meetings ? renderedMeetings : []);
   $: if (tagging && !visibleMeetings.some((meeting) => meeting.id === tagging?.meeting.id)) {
     tagging = null;
   }
@@ -644,6 +649,11 @@
           {/if}
         {/each}
       {/each}
+      {#if feedItems.length > displayedFeedItems.length}
+        <button type="button" class="list-empty-action" on:click={() => (displayLimit += 100)}>
+          Show more ({feedItems.length - displayedFeedItems.length} remaining)
+        </button>
+      {/if}
     {/if}
   </div>
 

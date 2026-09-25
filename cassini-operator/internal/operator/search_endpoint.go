@@ -325,24 +325,13 @@ func (c ExAppConfig) serveSearch(
 func (c ExAppConfig) resolveVisibleMeetings(
 	ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger, route string,
 ) ([]catalogHydration, bool) {
-	resolved, outcome := c.resolveCatalogForCaller(ctx, client, caller, logger)
-	switch outcome {
-	case catalogResolveOK, catalogResolveNoArchive:
-	case catalogResolveUnavailable:
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive is unreachable; this is not an empty result")
-		return nil, false
-	case catalogResolveScanFailed:
+	resolved, err := c.resolveCatalogForCaller(ctx, client, caller, logger)
+	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
-		return nil, false
-	case catalogResolveNoMount:
-		writeJSONError(w, http.StatusBadGateway, "the recordings folder is not available to your account; this is not an empty result")
-		return nil, false
-	default:
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
 		return nil, false
 	}
 
-	entries, err := decodeCatalogEntries(resolved.body)
+	entries, err := decodeCatalogEntries(resolved)
 	if err != nil {
 		if logger != nil {
 			logger.Printf("%s: parse resolved catalog caller=%s: %v", route, caller, err)
@@ -449,8 +438,9 @@ SELECT COUNT(*) FROM meeting_index m
 // search, not the next restart. The index is a handle because it has a
 // lifetime; the aliases are a snapshot because they do not.
 type searchDeps struct {
-	index   *searchStore
-	aliases func() [][]string
+	index    *searchStore
+	metadata *meetingMetadataStore
+	aliases  func() [][]string
 	// limiter bounds how often one caller can make this app talk to Nextcloud.
 	// Nil outside a running operator, which the limiter itself tolerates.
 	limiter *searchRateLimiter

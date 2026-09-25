@@ -1,6 +1,7 @@
 package cassini
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,47 +44,27 @@ const (
 	devStackExistingFail   = "fail"
 	devStackExistingResume = "resume"
 	devStackExistingReset  = "reset"
-
-	// Which storage model the stack is brought up in, and which the ExApp is
-	// told to start in. Explicit rather than implied: the harness used to build
-	// the access-controlled substrate unconditionally, so "default mode" and
-	// "the substrate has not finished appearing yet" looked identical — and the
-	// ExApp derived its mode from whichever it happened to see.
-	devStackStorageDefault = "default"
-	devStackStorageACL     = "acl-enabled"
-	// devStackStorageUndecided builds the access-controlled substrate and tells
-	// the ExApp NOTHING, so it starts with no storage mode chosen.
-	//
-	// That is the state a real install is in on its first day, and since D-708 it
-	// is the state the setup wizard exists for — nothing falls back any more, so
-	// an app that is not told does not publish. Every other harness shape
-	// declares a mode precisely to skip it, which left the wizard unreachable
-	// from the harness at all.
-	devStackStorageUndecided = "undecided"
 )
 
 type devStackPlan struct {
-	Command              string
-	PublicMode           string
-	PublicURL            string
-	PublicHost           string
-	MediaHost            string
-	SignalingPublicURL   string
-	TalkBackendURL       string
-	ServiceMode          string
-	SpreedProfile        string
-	CassiniMode          string
-	RecordingBackend     string
-	ExAppImageMode       string
-	PatchMode            string
-	ExistingResourceMode string
-	StorageMode          string
-	SkipStorageScaffold  bool
-	// SeedDir is a seed pack to load into the recordings tree once the stack
-	// is up, or "" for an ordinary stack. Absolute, because compose binds it
-	// as a host path and the harness scripts do not share this process's
-	// working directory.
-	SeedDir               string
+	Command               string
+	PublicMode            string
+	PublicURL             string
+	PublicHost            string
+	MediaHost             string
+	SignalingPublicURL    string
+	TalkBackendURL        string
+	ServiceMode           string
+	SpreedProfile         string
+	CassiniMode           string
+	RecordingBackend      string
+	ExAppImageMode        string
+	PatchMode             string
+	ExistingResourceMode  string
+	SkipStorageScaffold   bool
+	StorageMode           string
+	PublishedSeedDir      string
+	OperatorSeedDir       string
 	DownSuspend           bool
 	DownVolumes           bool
 	DownFull              bool
@@ -104,9 +85,10 @@ type devStackFlagOptions struct {
 	recordingBackend    string
 	exAppImageMode      string
 	patchMode           string
-	seedDir             string
 	storageMode         string
 	skipStorageScaffold bool
+	seedPublishedDir    string
+	seedOperatorDir     string
 	build               bool
 	resume              bool
 	reset               bool
@@ -141,10 +123,11 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	recordingBackend := stringFlag("recording-backend", "Talk recording backend: legacy, direct-operator, installed-exapp, none")
 	exAppImageMode := stringFlag("exapp-image-mode", "ExApp image mode: build, reuse-local, pull")
 	patchMode := stringFlag("patch", "patch mode: auto, none, force")
-	storageMode := stringFlag("storage-mode", "recording storage mode the stack is built in and the ExApp starts in: default, acl-enabled, undecided, or empty (build the access-controlled substrate and let the app's Setup tab choose)")
+	storageMode := stringFlag("storage-mode", "deprecated compatibility setting: acl-enabled")
 	skipStorageScaffold := fs.Bool("debug-skip-storage-scaffold", false,
 		"debug: build no recordings storage at all — no cassini service account, no Team folder, and neither native app")
-	seedDir := stringFlag("seed", "seed pack to load into the recordings tree after the stack is up")
+	seedPublishedDir := stringFlag("seed-published", "static meeting pack to import into the private recordings archive")
+	seedOperatorDir := stringFlag("seed-operator", "AppAPI operator-volume seed to copy into a fresh installed ExApp")
 	build := fs.Bool("build", false, "build the Cassini ExApp image before registration")
 	resume := fs.Bool("resume", false, "reuse matching stopped containers or retained harness volumes")
 	reset := fs.Bool("reset", false, "stop/remove/recreate resources for the resolved stack")
@@ -167,7 +150,6 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 		opts.set["services"] = true
 	}
 
-	opts.seedDir = *seedDir
 	opts.publicMode = *publicMode
 	opts.publicURL = *publicURL
 	opts.publicHost = *publicHost
@@ -181,6 +163,8 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	opts.patchMode = *patchMode
 	opts.storageMode = *storageMode
 	opts.skipStorageScaffold = *skipStorageScaffold
+	opts.seedPublishedDir = *seedPublishedDir
+	opts.seedOperatorDir = *seedOperatorDir
 	opts.build = *build
 	opts.resume = *resume
 	opts.reset = *reset
@@ -240,19 +224,25 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	plan.RecordingBackend = pick("recording-backend", opts.recordingBackend, "CASSINI_HARNESS_RECORDING_BACKEND", devStackRecordingLegacy)
 	plan.ExAppImageMode = pick("exapp-image-mode", opts.exAppImageMode, "CASSINI_HARNESS_EXAPP_IMAGE_MODE", devStackImageReuseLocal)
 	plan.PatchMode = pick("patch", opts.patchMode, "CASSINI_HARNESS_PATCH_MODE", devStackPatchAuto)
-	// Match a fresh production install: build the dependency-free storage model
-	// unless a caller explicitly asks for the access-controlled substrate. Tests
-	// that exercise Team-folder permissions declare acl-enabled in their topology.
-	plan.StorageMode = pick("storage-mode", opts.storageMode, "CASSINI_HARNESS_STORAGE_MODE", devStackStorageDefault)
-	// An explicitly empty flag is the convenient CLI spelling of "do not choose
-	// an initial mode". Keep an absent flag distinct: it still selects the
-	// default model for ordinary harness use.
-	if opts.set["storage-mode"] && plan.StorageMode == "" {
-		plan.StorageMode = devStackStorageUndecided
-	}
+	plan.StorageMode = pick("storage-mode", opts.storageMode, "CASSINI_HARNESS_STORAGE_MODE", "")
 	plan.SkipStorageScaffold = opts.skipStorageScaffold ||
 		(!opts.set["debug-skip-storage-scaffold"] && get("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD") == "1")
-	plan.SeedDir = pick("seed", opts.seedDir, "CASSINI_HARNESS_SEED_DIR", "")
+	plan.PublishedSeedDir = pick("seed-published", opts.seedPublishedDir, "CASSINI_HARNESS_SEED_PUBLISHED_DIR", "")
+	if plan.PublishedSeedDir != "" {
+		resolved, err := resolveDevStackPublishedSeedDir(plan.PublishedSeedDir)
+		if err != nil {
+			return plan, rest, err
+		}
+		plan.PublishedSeedDir = resolved
+	}
+	plan.OperatorSeedDir = pick("seed-operator", opts.seedOperatorDir, "CASSINI_HARNESS_SEED_OPERATOR_DIR", "")
+	if plan.OperatorSeedDir != "" {
+		resolved, err := resolveDevStackOperatorSeedDir(plan.OperatorSeedDir)
+		if err != nil {
+			return plan, rest, err
+		}
+		plan.OperatorSeedDir = resolved
+	}
 	plan.DownSuspend = opts.suspend
 	plan.DownVolumes = opts.downVolumes
 	plan.DownFull = opts.downFull
@@ -264,23 +254,14 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	if command != "up" && (opts.resume || opts.reset) {
 		return plan, rest, errors.New("--resume and --reset apply only to stack up")
 	}
+	if command != "up" && command != "plan" && (opts.set["seed-published"] || opts.set["seed-operator"]) {
+		return plan, rest, errors.New("--seed-published and --seed-operator apply only to stack up")
+	}
 	if command != "down" && (opts.suspend || opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend, --volumes, and --full apply only to stack down")
 	}
-	if opts.set["seed"] && command != "up" && command != "plan" {
-		return plan, rest, errors.New("--seed applies only to stack up")
-	}
-	if plan.SeedDir != "" {
-		// Resolved and checked here rather than in the harness script, because
-		// a typo in a path is a usage error and the caller should hear it before
-		// a stack is built. Compose also needs an absolute host path: it binds
-		// this directory, and it does not resolve relative paths against this
-		// process's working directory.
-		resolved, err := resolveDevStackSeedDir(plan.SeedDir)
-		if err != nil {
-			return plan, rest, err
-		}
-		plan.SeedDir = resolved
+	if plan.StorageMode != "" && plan.StorageMode != "acl-enabled" {
+		return plan, rest, fmt.Errorf("--storage-mode %q is unsupported; use acl-enabled", plan.StorageMode)
 	}
 	if opts.suspend && (opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend keeps containers and cannot be combined with --volumes or --full")
@@ -472,9 +453,6 @@ func validateDevStackPlan(plan devStackPlan) error {
 	if !oneOf(plan.ExistingResourceMode, devStackExistingFail, devStackExistingResume, devStackExistingReset) {
 		return fmt.Errorf("invalid existing-resource mode %q", plan.ExistingResourceMode)
 	}
-	if !oneOf(plan.StorageMode, devStackStorageDefault, devStackStorageACL, devStackStorageUndecided) {
-		return fmt.Errorf("invalid storage mode %q (want %s, %s or %s)", plan.StorageMode, devStackStorageDefault, devStackStorageACL, devStackStorageUndecided)
-	}
 	if plan.PublicHost != "" && strings.Contains(plan.PublicHost, "://") {
 		return fmt.Errorf("public host must be a bare host, got %q", plan.PublicHost)
 	}
@@ -549,6 +527,21 @@ func validateDevStackPlan(plan devStackPlan) error {
 	if plan.CassiniMode == devStackCassiniNone && plan.ExAppImageMode == devStackImageBuild {
 		return errors.New("--build / ExApp image mode build requires --cassini installed-exapp")
 	}
+	if plan.OperatorSeedDir != "" && plan.CassiniMode != devStackCassiniInstalledExApp {
+		return errors.New("--seed-operator requires --cassini installed-exapp")
+	}
+	if plan.PublishedSeedDir != "" && plan.CassiniMode != devStackCassiniInstalledExApp {
+		return errors.New("--seed-published requires --cassini installed-exapp")
+	}
+	if plan.PublishedSeedDir != "" && plan.SkipStorageScaffold {
+		return errors.New("--seed-published requires the recordings owner account")
+	}
+	if plan.StorageMode != "" && plan.CassiniMode != devStackCassiniInstalledExApp {
+		return errors.New("--storage-mode requires --cassini installed-exapp")
+	}
+	if plan.OperatorSeedDir != "" && plan.ExistingResourceMode == devStackExistingResume {
+		return errors.New("--seed-operator cannot be combined with --resume: it only copies into a fresh ExApp volume")
+	}
 	return nil
 }
 
@@ -588,24 +581,6 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// devStackExAppStorageMode translates the harness's word into the app's. They
-// differ on purpose: `acl-enabled` is what reads well on a command line, and
-// `access_controlled` is the one vocabulary the config file, the API and the UI
-// already share.
-//
-// It answers "" for `undecided`, and the caller then declares nothing — which is
-// what makes the setup wizard reachable from the harness.
-func devStackExAppStorageMode(storageMode string) string {
-	switch storageMode {
-	case devStackStorageACL:
-		return "access_controlled"
-	case devStackStorageUndecided:
-		return ""
-	default:
-		return "default"
-	}
-}
-
 func boolEnv(v bool) string {
 	if v {
 		return "1"
@@ -625,48 +600,118 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_EXAPP_IMAGE_MODE=" + plan.ExAppImageMode,
 		"CASSINI_HARNESS_PATCH_MODE=" + plan.PatchMode,
 		"CASSINI_HARNESS_EXISTING=" + plan.ExistingResourceMode,
-		"CASSINI_HARNESS_STORAGE_MODE=" + plan.StorageMode,
 		"CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=" + boolEnv(plan.SkipStorageScaffold),
+		"CASSINI_HARNESS_STORAGE_MODE=" + plan.StorageMode,
 		"SPREED_PROFILE=" + plan.SpreedProfile,
 		"CASSINI_HARNESS_PUBLIC_URL=" + plan.PublicURL,
 		"CASSINI_HARNESS_PUBLIC_HOST=" + plan.PublicHost,
 		"CASSINI_HARNESS_MEDIA_HOST=" + plan.MediaHost,
 		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL=" + plan.SignalingPublicURL,
 		"CASSINI_TALK_BACKEND_URL=" + plan.TalkBackendURL,
-		"CASSINI_HARNESS_SEED_DIR=" + plan.SeedDir,
-	}
-	// What the ExApp itself is told. The harness speaks `acl-enabled`; the
-	// app's own vocabulary — its config file, its API, its UI — says
-	// `access_controlled`, and that is what crosses the boundary. For an
-	// undecided install, omit the variable rather than passing an invalid empty
-	// value.
-	if exappStorageMode := devStackExAppStorageMode(plan.StorageMode); exappStorageMode != "" {
-		env = append(env, "CASSINI_STORAGE_MODE="+exappStorageMode)
+		"CASSINI_HARNESS_SEED_PUBLISHED_DIR=" + plan.PublishedSeedDir,
+		"CASSINI_HARNESS_SEED_OPERATOR_DIR=" + plan.OperatorSeedDir,
 	}
 	return env
 }
 
-// resolveDevStackSeedDir turns a --seed value into an absolute directory that
-// looks like a seed pack, or explains why it is not one.
-//
-// Only the shape is checked here — the directory, and the catalog that makes it
-// a pack. The contents are validated in full by the seeder itself, which runs
-// against the built stack and is also the entry point for a pack that arrives
-// any other way.
-func resolveDevStackSeedDir(value string) (string, error) {
+// resolveDevStackPublishedSeedDir checks every catalog entry before startup so
+// a malformed pull never gets as far as creating a container or volume.
+func resolveDevStackPublishedSeedDir(value string) (string, error) {
 	absolute, err := filepath.Abs(value)
 	if err != nil {
-		return "", fmt.Errorf("--seed %q: %w", value, err)
+		return "", fmt.Errorf("--seed-published %q: %w", value, err)
 	}
 	info, err := os.Stat(absolute)
 	if err != nil {
-		return "", fmt.Errorf("--seed %q: %w", value, err)
+		return "", fmt.Errorf("--seed-published %q: %w", value, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("--seed %q is not a directory; it should be a seed pack, as written by `cassini dev meetings pull --out`", value)
+		return "", fmt.Errorf("--seed-published %q is not a directory", value)
 	}
-	if _, err := os.Stat(filepath.Join(absolute, "catalog.json")); err != nil {
-		return "", fmt.Errorf("--seed %q holds no catalog.json, so it is not a seed pack; create one with `cassini dev meetings pull --out %s`", value, value)
+	catalogPath := filepath.Join(absolute, "catalog.json")
+	catalogInfo, err := os.Lstat(catalogPath)
+	if err != nil || !catalogInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("--seed-published %q has no regular catalog.json", value)
+	}
+	raw, err := os.ReadFile(catalogPath)
+	if err != nil {
+		return "", fmt.Errorf("--seed-published %q: read catalog.json: %w", value, err)
+	}
+	if len(raw) > maxCatalogBytes {
+		return "", fmt.Errorf("--seed-published %q catalog.json exceeds %d bytes", value, maxCatalogBytes)
+	}
+	var catalog meetingsCatalog
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		return "", fmt.Errorf("--seed-published %q has invalid catalog.json: %w", value, err)
+	}
+	if catalog.Version != meetingsCatalogVersion || len(catalog.Meetings) == 0 {
+		return "", fmt.Errorf("--seed-published %q catalog.json must be %s with at least one meeting", value, meetingsCatalogVersion)
+	}
+	seen := make(map[string]bool, len(catalog.Meetings))
+	seenIDs := make(map[string]bool, len(catalog.Meetings))
+	if info, err := os.Lstat(filepath.Join(absolute, "meetings")); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("seed meetings must be a real directory")
+	}
+	for index, item := range catalog.Meetings {
+		var entry meetingsCatalogEntry
+		if err := json.Unmarshal(item, &entry); err != nil {
+			return "", fmt.Errorf("--seed-published %q catalog meeting %d is invalid: %w", value, index, err)
+		}
+		if strings.TrimSpace(entry.ID) == "" || seenIDs[entry.ID] {
+			return "", fmt.Errorf("seed contains missing or duplicate meeting ID %q", entry.ID)
+		}
+		seenIDs[entry.ID] = true
+		rel, err := packRelativeAsset(entry.AudioPath)
+		if err != nil || entry.AudioPath != "./"+rel || !strings.HasPrefix(rel, "meetings/") || strings.Count(rel, "/") != 1 || !validPublishedSeedAssetName(filepath.Base(rel)) {
+			return "", fmt.Errorf("--seed-published %q catalog meeting %d has invalid audioPath %q", value, index, entry.AudioPath)
+		}
+		if seen[rel] {
+			return "", fmt.Errorf("--seed-published %q catalog names %s more than once", value, rel)
+		}
+		seen[rel] = true
+		assetInfo, err := os.Lstat(filepath.Join(absolute, filepath.FromSlash(rel)))
+		if err != nil || !assetInfo.Mode().IsRegular() || assetInfo.Size() == 0 {
+			return "", fmt.Errorf("--seed-published %q catalog meeting %d has no non-empty regular asset %s", value, index, rel)
+		}
+	}
+	if err := validateSeedManifest(absolute, catalog); err != nil {
+		return "", err
+	}
+	return absolute, nil
+}
+
+func validPublishedSeedAssetName(name string) bool {
+	if name == "" || name == "." || name == ".." || filepath.Ext(name) != ".opus" {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveDevStackOperatorSeedDir checks the AppAPI volume root before startup.
+func resolveDevStackOperatorSeedDir(value string) (string, error) {
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("--seed-operator %q: %w", value, err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return "", fmt.Errorf("--seed-operator %q: %w", value, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("--seed-operator %q is not a directory", value)
+	}
+	jobs, err := os.Stat(filepath.Join(absolute, "operator", "jobs"))
+	if err != nil || !jobs.IsDir() {
+		return "", fmt.Errorf("--seed-operator %q is not an operator-volume seed: expected operator/jobs/ beneath the volume root", value)
+	}
+	db, err := os.Lstat(filepath.Join(absolute, "operator", "jobs.sqlite3"))
+	if err != nil || !db.Mode().IsRegular() || db.Size() == 0 {
+		return "", fmt.Errorf("--seed-operator %q is not an operator-volume seed: expected non-empty operator/jobs.sqlite3", value)
 	}
 	return absolute, nil
 }
@@ -692,11 +737,11 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintln(w, "patch:")
 	fmt.Fprintf(w, "  mode: %s\n", plan.PatchMode)
 	fmt.Fprintln(w, "storage:")
-	fmt.Fprintf(w, "  mode: %s\n", plan.StorageMode)
-	fmt.Fprintf(w, "  exapp_initial_mode: %s\n", yamlValueOrNull(devStackExAppStorageMode(plan.StorageMode)))
+	fmt.Fprintf(w, "  mode: %s\n", yamlValueOrNull(plan.StorageMode))
 	fmt.Fprintf(w, "  skip_scaffold: %t\n", plan.SkipStorageScaffold)
 	fmt.Fprintln(w, "seed:")
-	fmt.Fprintf(w, "  pack: %s\n", yamlValueOrNull(plan.SeedDir))
+	fmt.Fprintf(w, "  published_pack: %s\n", yamlValueOrNull(plan.PublishedSeedDir))
+	fmt.Fprintf(w, "  operator_volume: %s\n", yamlValueOrNull(plan.OperatorSeedDir))
 	fmt.Fprintln(w, "lifecycle:")
 	fmt.Fprintf(w, "  existing_resources: %s\n", plan.ExistingResourceMode)
 	fmt.Fprintf(w, "  down_suspend: %t\n", plan.DownSuspend)

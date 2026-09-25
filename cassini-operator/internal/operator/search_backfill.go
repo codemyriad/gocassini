@@ -50,6 +50,8 @@ type searchBackfillTarget struct {
 
 // searchBackfillReport is what a run did, in the terms an operator acts on.
 type searchBackfillReport struct {
+	// Empty recordings are readable but have no transcript to search.
+	Empty int
 	// Indexed: rows written.
 	Indexed int
 	// Unchanged: already indexed from the same delivered artifact.
@@ -98,6 +100,9 @@ func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBack
 			report.Unchanged++
 		case searchBackfillUnavailable:
 			report.Unavailable++
+			if reason == searchBackfillReasonNoSegments {
+				report.Empty++
+			}
 			rt.logger.Printf("search backfill: %s not searchable (%s)", name, reason)
 		default:
 			report.Failed++

@@ -224,16 +224,10 @@ SERVICE_AUTH=(
 )
 [[ -z "$aa_version" ]] || SERVICE_AUTH+=(-H "AA-VERSION: $aa_version")
 
-# The Team folder when there is one: that is the access-controlled model's
-# mount, and the one the design names as the risk. The default model's private
-# root otherwise.
-root="" code=""
-for candidate in Cassini/Recordings CassiniNoACL/Recordings; do
-  code="$(curl -sS -o /dev/null -w '%{http_code}' "${SERVICE_AUTH[@]}" -X PROPFIND -H 'Depth: 0' "$SERVICE_DAV_URL/$candidate")" || true
-  if [[ "$code" == 207 ]]; then root="$candidate"; break; fi
-done
-[[ -n "$root" ]] \
-  || fail "the service account reaches neither archive root (last HTTP $code); check the AppAPI credentials are accepted from this host"
+root="CassiniRecordings/meetings"
+code="$(curl -sS -o /dev/null -w '%{http_code}' "${SERVICE_AUTH[@]}" -X PROPFIND -H 'Depth: 0' "$SERVICE_DAV_URL/$root")" || true
+[[ "$code" == 207 ]] \
+  || fail "the service account cannot reach $root (HTTP $code)"
 PROBE_URL="$SERVICE_DAV_URL/$root/.cassini-ifmatch-probe-$$.txt"
 
 # put_probe <content> [if-match] prints "<status> <etag>".

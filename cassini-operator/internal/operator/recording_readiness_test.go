@@ -328,7 +328,7 @@ func TestReadinessExpiredHandoffOffersTestWithoutInventingPass(t *testing.T) {
 }
 
 func TestReadinessStorageClaimsRequireFreshApplicableEvidence(t *testing.T) {
-	resetSubstrateRecord(t)
+	resetDirectSubstrate(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	ncAccessSubstrate.mu.Lock()
@@ -360,7 +360,7 @@ func TestReadinessStorageClaimsRequireFreshApplicableEvidence(t *testing.T) {
 }
 
 func TestReadinessKeepsCurrentStorageAdmissionBlockActionable(t *testing.T) {
-	resetSubstrateRecord(t)
+	resetDirectSubstrate(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	ncAccessSubstrate.record(ncSubstrateUnavailable, "storage prerequisite", nil)

@@ -34,7 +34,8 @@ func clearDevStackAmbient(t *testing.T) {
 		"CASSINI_HARNESS_EXAPP_IMAGE_MODE",
 		"CASSINI_HARNESS_PATCH_MODE",
 		"CASSINI_HARNESS_EXISTING",
-		"CASSINI_HARNESS_SEED_DIR",
+		"CASSINI_HARNESS_SEED_PUBLISHED_DIR",
+		"CASSINI_HARNESS_SEED_OPERATOR_DIR",
 		"SPREED_PROFILE",
 	} {
 		t.Setenv(key, "")
@@ -803,102 +804,6 @@ func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 	}
 }
 
-// A fresh harness stack matches a fresh production install: the dependency-free
-// storage model is the default, while tests that exercise Team-folder ACLs ask
-// for that substrate explicitly.
-func TestResolveDevStackPlanStorageModeDefaultsToDefault(t *testing.T) {
-	plan, _, err := resolveDevStackPlan("plan", nil, testEnv(nil))
-	if err != nil {
-		t.Fatalf("resolveDevStackPlan: %v", err)
-	}
-	if plan.StorageMode != devStackStorageDefault {
-		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
-	}
-	if plan.SkipStorageScaffold {
-		t.Fatal("SkipStorageScaffold defaulted on")
-	}
-}
-
-func TestResolveDevStackPlanStorageModeFromFlagAndEnv(t *testing.T) {
-	plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageDefault}, testEnv(nil))
-	if err != nil {
-		t.Fatalf("resolveDevStackPlan: %v", err)
-	}
-	if plan.StorageMode != devStackStorageDefault {
-		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
-	}
-
-	plan, _, err = resolveDevStackPlan("plan", nil, testEnv(map[string]string{
-		"CASSINI_HARNESS_STORAGE_MODE": devStackStorageDefault,
-	}))
-	if err != nil {
-		t.Fatalf("resolveDevStackPlan: %v", err)
-	}
-	if plan.StorageMode != devStackStorageDefault {
-		t.Fatalf("env-sourced StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
-	}
-
-	// Flag beats env, like every other input here.
-	plan, _, err = resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageACL}, testEnv(map[string]string{
-		"CASSINI_HARNESS_STORAGE_MODE": devStackStorageDefault,
-	}))
-	if err != nil {
-		t.Fatalf("resolveDevStackPlan: %v", err)
-	}
-	if plan.StorageMode != devStackStorageACL {
-		t.Fatalf("flag did not beat env: StorageMode = %q", plan.StorageMode)
-	}
-
-	plan, _, err = resolveDevStackPlan("plan", []string{"--storage-mode", ""}, testEnv(nil))
-	if err != nil {
-		t.Fatalf("explicit empty storage mode: %v", err)
-	}
-	if plan.StorageMode != devStackStorageUndecided {
-		t.Fatalf("empty storage mode = %q, want %q", plan.StorageMode, devStackStorageUndecided)
-	}
-}
-
-// A typo must not quietly build the other model.
-func TestResolveDevStackPlanRejectsAnUnknownStorageMode(t *testing.T) {
-	_, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", "acl"}, testEnv(nil))
-	if err == nil {
-		t.Fatal("an unknown storage mode was accepted")
-	}
-	if !strings.Contains(err.Error(), devStackStorageACL) {
-		t.Fatalf("error %q does not offer the spellings that work", err)
-	}
-}
-
-// The harness speaks `acl-enabled` because it reads well on a command line; the
-// app's config file, API and UI all say `access_controlled`. Only one of those
-// crosses the boundary into the ExApp.
-func TestDevStackExportsTheExAppsOwnVocabulary(t *testing.T) {
-	for _, tc := range []struct{ harness, exapp string }{
-		{devStackStorageACL, "access_controlled"},
-		{devStackStorageDefault, "default"},
-		// `undecided` declares NOTHING. The empty value is what makes the
-		// harness omit the deploy option entirely, which is the only way to
-		// reach the state the app's setup wizard exists for (D-708).
-		{devStackStorageUndecided, ""},
-	} {
-		plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", tc.harness}, testEnv(nil))
-		if err != nil {
-			t.Fatalf("resolveDevStackPlan(%s): %v", tc.harness, err)
-		}
-		env := plan.env()
-		if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE="+tc.harness) {
-			t.Errorf("harness env missing CASSINI_HARNESS_STORAGE_MODE=%s: %v", tc.harness, env)
-		}
-		if tc.exapp == "" {
-			if containsEnv(env, "CASSINI_STORAGE_MODE=") {
-				t.Errorf("undecided ExApp env must omit CASSINI_STORAGE_MODE: %v", env)
-			}
-		} else if !containsEnv(env, "CASSINI_STORAGE_MODE="+tc.exapp) {
-			t.Errorf("ExApp env missing CASSINI_STORAGE_MODE=%s: %v", tc.exapp, env)
-		}
-	}
-}
-
 func TestResolveDevStackPlanSkipStorageScaffold(t *testing.T) {
 	plan, _, err := resolveDevStackPlan("plan", []string{"--debug-skip-storage-scaffold"}, testEnv(nil))
 	if err != nil {
@@ -911,20 +816,6 @@ func TestResolveDevStackPlanSkipStorageScaffold(t *testing.T) {
 		t.Fatalf("skip flag did not reach the scripts: %v", plan.env())
 	}
 
-	// It composes with the mode: skipping the scaffold does not change which
-	// mode the ExApp is told to start in, which is what makes
-	// "access control selected, nothing built" reachable — the state the app's
-	// own setup flow exists to fix.
-	plan, _, err = resolveDevStackPlan("plan", []string{
-		"--storage-mode", devStackStorageACL,
-		"--debug-skip-storage-scaffold",
-	}, testEnv(nil))
-	if err != nil {
-		t.Fatalf("resolveDevStackPlan: %v", err)
-	}
-	if !containsEnv(plan.env(), "CASSINI_STORAGE_MODE=access_controlled") {
-		t.Fatalf("skipping the scaffold changed the declared mode: %v", plan.env())
-	}
 }
 
 // Off by default, and only "1" turns it on: an ambient empty or "0" must not
@@ -961,132 +852,92 @@ func containsEnv(env []string, want string) bool {
 	return false
 }
 
-// `undecided` builds the access-controlled substrate and tells the ExApp
-// nothing (D-708).
-//
-// It is about what the app is TOLD, not about what exists: since nothing falls
-// back any more, an app that has not been told does not publish, and every other
-// harness shape declares a mode precisely to skip that state. A wizard with only
-// one usable mode would not be offering a choice, so the substrate is the full
-// one.
-func TestDevStackUndecidedBuildsTheSubstrateAndDeclaresNothing(t *testing.T) {
-	plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageUndecided}, testEnv(nil))
+func TestResolveDevStackPlanPublishedSeed(t *testing.T) {
+	clearDevStackAmbient(t)
+	seed := t.TempDir()
+	if err := os.Mkdir(filepath.Join(seed, "meetings"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "meetings", "daily--10:30.opus"), []byte("opus"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[{"id":"daily","audioPath":"./meetings/daily--10:30.opus"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--seed-published", seed}, testEnv(nil))
 	if err != nil {
-		t.Fatalf("resolveDevStackPlan(undecided): %v", err)
+		t.Fatal(err)
 	}
-	if plan.StorageMode != devStackStorageUndecided {
-		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageUndecided)
+	if plan.PublishedSeedDir != seed || !containsEnv(plan.env(), "CASSINI_HARNESS_SEED_PUBLISHED_DIR="+seed) {
+		t.Fatalf("published seed was not propagated: %q", plan.PublishedSeedDir)
 	}
-	env := plan.env()
-	if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE="+devStackStorageUndecided) {
-		t.Fatalf("harness env did not carry the mode: %v", env)
-	}
-	if containsEnv(env, "CASSINI_STORAGE_MODE=") {
-		t.Fatalf("undecided plan must omit CASSINI_STORAGE_MODE: %v", env)
-	}
-	for _, declared := range []string{"CASSINI_STORAGE_MODE=default", "CASSINI_STORAGE_MODE=access_controlled"} {
-		if containsEnv(env, declared) {
-			t.Fatalf("undecided declared %q to the ExApp: %v", declared, env)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--seed-published", seed}, "requires --cassini installed-exapp"},
+		{[]string{"--cassini", "installed-exapp", "--debug-skip-storage-scaffold", "--seed-published", seed}, "requires the recordings owner"},
+		{[]string{"--cassini", "installed-exapp", "--seed-published", t.TempDir()}, "has no regular catalog.json"},
+		{[]string{"--cassini", "installed-exapp", "--storage-mode", "default", "--seed-published", seed}, "storage-mode \"default\" is unsupported"},
+	} {
+		_, _, err := resolveDevStackPlan("up", tc.args, testEnv(nil))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("args %v: error = %v, want %q", tc.args, err, tc.want)
 		}
 	}
 }
 
-func TestDevStackUndecidedScrubsAmbientExAppMode(t *testing.T) {
-	env := devScriptEnvironment(
-		[]string{"PATH=/bin", "CASSINI_STORAGE_MODE=default", "OTHER=value"},
-		[]string{"CASSINI_HARNESS_STORAGE_MODE=undecided"},
-	)
-	if containsEnv(env, "CASSINI_STORAGE_MODE=default") {
-		t.Fatalf("undecided child retained an ambient ExApp mode: %v", env)
-	}
-	if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE=undecided") {
-		t.Fatalf("undecided child lost its harness mode: %v", env)
-	}
-}
-
-// --seed carries a pack through to the harness, and is checked before a stack
-// is built: a mistyped path is a usage error, and hearing it after a five-minute
-// bring-up is the expensive way to learn it.
-func TestResolveDevStackPlanSeedPack(t *testing.T) {
+func TestResolveDevStackPlanOperatorSeed(t *testing.T) {
 	clearDevStackAmbient(t)
-	pack := t.TempDir()
-	if err := os.WriteFile(filepath.Join(pack, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[]}`), 0o600); err != nil {
-		t.Fatalf("write catalog: %v", err)
+	seed := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(seed, "operator", "jobs"), 0o700); err != nil {
+		t.Fatalf("make operator seed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "operator", "jobs.sqlite3"), []byte("SQLite format 3\x00"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	plan, _, err := resolveDevStackPlan("up", []string{"--seed", pack}, testEnv(nil))
+	plan, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--seed-operator", seed}, testEnv(nil))
 	if err != nil {
 		t.Fatalf("resolveDevStackPlan: %v", err)
 	}
-	if !filepath.IsAbs(plan.SeedDir) {
-		t.Errorf("SeedDir = %q, want an absolute path: compose binds it as a host path", plan.SeedDir)
+	if !filepath.IsAbs(plan.OperatorSeedDir) {
+		t.Errorf("OperatorSeedDir = %q, want absolute", plan.OperatorSeedDir)
 	}
-	var found bool
-	for _, kv := range plan.env() {
-		if kv == "CASSINI_HARNESS_SEED_DIR="+plan.SeedDir {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("CASSINI_HARNESS_SEED_DIR is not in the plan's environment: %v", plan.env())
+	if !containsEnv(plan.env(), "CASSINI_HARNESS_SEED_OPERATOR_DIR="+plan.OperatorSeedDir) {
+		t.Errorf("operator seed is not in the plan environment: %v", plan.env())
 	}
 }
 
-// A stack that asks for no seed must carry an empty value, not an inherited
-// one: an ambient variable silently seeding a CI run would change what every
-// existing e2e leg is testing.
-func TestResolveDevStackPlanWithoutSeedCarriesNoPack(t *testing.T) {
+func TestResolveDevStackPlanRejectsInvalidOrUnsafeOperatorSeed(t *testing.T) {
 	clearDevStackAmbient(t)
-	plan, _, err := resolveDevStackPlan("up", nil, testEnv(nil))
-	if err != nil {
-		t.Fatalf("resolveDevStackPlan: %v", err)
+	empty := t.TempDir()
+	good := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(good, "operator", "jobs"), 0o700); err != nil {
+		t.Fatalf("make operator seed: %v", err)
 	}
-	if plan.SeedDir != "" {
-		t.Errorf("SeedDir = %q, want empty", plan.SeedDir)
+	if err := os.WriteFile(filepath.Join(good, "operator", "jobs.sqlite3"), []byte("SQLite format 3\x00"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	for _, kv := range plan.env() {
-		if strings.HasPrefix(kv, "CASSINI_HARNESS_SEED_DIR=") && kv != "CASSINI_HARNESS_SEED_DIR=" {
-			t.Errorf("unseeded plan exports %q", kv)
-		}
-	}
-}
 
-func TestResolveDevStackPlanRejectsAnUnusableSeedPack(t *testing.T) {
-	clearDevStackAmbient(t)
-	notADir := filepath.Join(t.TempDir(), "file")
-	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	emptyDir := t.TempDir()
-
-	for name, tc := range map[string]struct{ arg, want string }{
-		"absent":     {filepath.Join(t.TempDir(), "nope"), "no such file"},
-		"not a dir":  {notADir, "is not a directory"},
-		"no catalog": {emptyDir, "holds no catalog.json"},
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"wrong shape": {[]string{"--cassini", "installed-exapp", "--seed-operator", empty}, "expected operator/jobs"},
+		"missing database": {[]string{"--cassini", "installed-exapp", "--seed-operator", func() string {
+			missing := t.TempDir()
+			_ = os.MkdirAll(filepath.Join(missing, "operator", "jobs"), 0o700)
+			return missing
+		}()}, "expected non-empty operator/jobs.sqlite3"},
+		"no ExApp": {[]string{"--seed-operator", good}, "requires --cassini installed-exapp"},
+		"resume":   {[]string{"--cassini", "installed-exapp", "--resume", "--seed-operator", good}, "cannot be combined with --resume"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := resolveDevStackPlan("up", []string{"--seed", tc.arg}, testEnv(nil))
-			if err == nil {
-				t.Fatalf("accepted --seed %q", tc.arg)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error = %q, want it to mention %q", err, tc.want)
+			_, _, err := resolveDevStackPlan("up", tc.args, testEnv(nil))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want %q", err, tc.want)
 			}
 		})
-	}
-}
-
-// Seeding is a property of bringing a stack up. Accepting it on down or status
-// would silently do nothing, which is worse than saying so.
-func TestResolveDevStackPlanScopesSeedToUp(t *testing.T) {
-	clearDevStackAmbient(t)
-	pack := t.TempDir()
-	if err := os.WriteFile(filepath.Join(pack, "catalog.json"), []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write catalog: %v", err)
-	}
-	for _, command := range []string{"down", "status"} {
-		if _, _, err := resolveDevStackPlan(command, []string{"--seed", pack}, testEnv(nil)); err == nil {
-			t.Errorf("%s accepted --seed", command)
-		}
 	}
 }

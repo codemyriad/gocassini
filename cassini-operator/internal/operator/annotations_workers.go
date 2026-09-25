@@ -150,10 +150,6 @@ func (s *annotationService) snapshot(ctx context.Context, id int64) (annotateRes
 	return result, err
 }
 func (s *annotationService) syncAnnotation(ctx context.Context, name string) error {
-	// Storage transitions take the exclusive side; different workers may stage
-	// concurrently, while republish shares the per-recording lock below.
-	provisionMu.RLock()
-	defer provisionMu.RUnlock()
 	release, err := annotationWriteLocks.acquire(ctx, name)
 	if err != nil {
 		return err
@@ -171,7 +167,7 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 		return nil
 	}
 	// The storage root can move after acceptance; ownership is the catalog ID.
-	rel = recordingsRootFor(ncStorage.accessControlled()) + "/meetings/" + path.Base(name)
+	rel = ncRecordingsRoot + "/meetings/" + path.Base(name)
 	target, err := s.snapshot(ctx, desired)
 	if err != nil {
 		return err
@@ -189,10 +185,6 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	}
 	if state.ETag == "" {
 		return fmt.Errorf("missing ETag")
-	}
-	underACL := !annotationInPrivateRoot(rel)
-	if underACL && !everyoneRuleGovernsRead(state.Rules) {
-		return &annotationBlocked{"recording access needs repair; republish and retry"}
 	}
 	dir, err := os.MkdirTemp(s.rt.cfg.WorkRoot, "annotation-sync-")
 	if err != nil {
@@ -299,7 +291,7 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	if _, _, err = s.exapp.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, rel, out, ncRecordingsContentType, state.ETag); err != nil {
 		return err
 	}
-	if err = s.exapp.verifyUploadedLeaf(ctx, s.client, rel, info.Size(), underACL); err != nil {
+	if err = s.exapp.verifyUploadedLeaf(ctx, s.client, rel, info.Size()); err != nil {
 		return err
 	}
 	// OC-Checksum is supplied by the uploader, so it is not independent proof.

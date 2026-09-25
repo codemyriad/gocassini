@@ -104,7 +104,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   env is creation-time only, so a release adding a _required_ env var is a
   breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
-- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — who can see a recording: anyone with an account on this Nextcloud (`CassiniNoACL/Recordings`, nothing extra installed), or the room’s audience for private recordings (`Cassini/Recordings` in the Team folder, which needs Team folders + Everyone Group, a `cassini` service account and a mapped Team folder). Also how Cassini resolves that when the app is enabled, how switching copies an archive between the two roots, and how to manage who can see each recording.
+- **[Recording permissions](./direct-shares-cutover.md)** — built-in Nextcloud Files shares for each recording, the one-user cutover, and the metadata cache.
 - **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the optional LLM operations that can send text off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
