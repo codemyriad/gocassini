@@ -7,59 +7,6 @@ import (
 	"testing"
 )
 
-// The join key comes from each entry's audioPath, not from the catalog id —
-// they coincide by convention only, and a key that drifts matches nothing in
-// the visibility scan and fails silently.
-func TestParseBackfillTargetsTakesTheJoinKeyFromAudioPath(t *testing.T) {
-	targets, err := parseBackfillTargets([]byte(`{"version":"cassini.viewer.catalog.v1","meetings":[
-	  {"id":"MEETING-A","jobId":"JOB-A","audioPath":"./meetings/JOB-A--attempt-002.opus"}]}`))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if len(targets) != 1 {
-		t.Fatalf("targets = %+v, want 1", targets)
-	}
-	if targets[0].OpusName != "JOB-A--attempt-002.opus" {
-		t.Errorf("join key = %q, want the audioPath basename", targets[0].OpusName)
-	}
-	if targets[0].JobID != "JOB-A" {
-		t.Errorf("job = %q, want the explicit jobId", targets[0].JobID)
-	}
-}
-
-// jobId is only carried since D-640, so a meeting published before it falls
-// back to the catalog id rather than being dropped.
-func TestParseBackfillTargetsFallsBackToTheCatalogID(t *testing.T) {
-	targets, err := parseBackfillTargets([]byte(`{"meetings":[
-	  {"id":"JOB-OLD","audioPath":"./meetings/JOB-OLD.opus"}]}`))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if len(targets) != 1 || targets[0].JobID != "JOB-OLD" {
-		t.Fatalf("targets = %+v, want the id used as the job", targets)
-	}
-}
-
-// A directory-shaped legacy entry has no basename any visibility scan can
-// return, so indexing it would make it permanently unreachable.
-func TestParseBackfillTargetsSkipsEntriesWithNoAudioPath(t *testing.T) {
-	targets, err := parseBackfillTargets([]byte(`{"meetings":[
-	  {"id":"A","artifactPath":"./meetings/A"},
-	  {"id":"B","audioPath":"./meetings/B.opus"}]}`))
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if len(targets) != 1 || targets[0].OpusName != "B.opus" {
-		t.Fatalf("targets = %+v, want only the keyable entry", targets)
-	}
-}
-
-func TestParseBackfillTargetsRejectsAMalformedCatalog(t *testing.T) {
-	if _, err := parseBackfillTargets([]byte(`{not json`)); err == nil {
-		t.Fatal("expected an error for a malformed catalog")
-	}
-}
-
 // Outside an AppAPI deployment there is no archive catalog to read, so there is
 // nothing to backfill FROM — a different thing from an empty archive, and it
 // must not be reported as a completed run.

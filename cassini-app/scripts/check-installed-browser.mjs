@@ -43,6 +43,15 @@ try {
   checks.transcript = true;
   const audio = page.locator("audio").first();
   await audio.waitFor({ state: "attached" });
+  // A fresh installed app opens its one-time setup dialog over the viewer.
+  // The harness has already created the recordings account, so acknowledge
+  // the participant rule before checking playback behind the dialog.
+  const firstRun = page.getByRole("button", { name: "Start recording", exact: true });
+  if (await firstRun.isVisible()) {
+    await firstRun.click();
+    await firstRun.waitFor({ state: "hidden" });
+    checks.first_run_acknowledged = true;
+  }
   await audio.evaluate((element) => { element.muted = true; });
   await page.getByRole("button", { name: "Play", exact: true }).click();
   await page.waitForFunction(() => {

@@ -101,6 +101,9 @@ type Runtime struct {
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
 	searchStore *searchStore
+	// meetingMetadata is a disposable description index. Visibility always
+	// comes from the caller's current Nextcloud shares, never from these rows.
+	meetingMetadata *meetingMetadataStore
 	// annotations is the marks projection (D-737); nil when it could not be
 	// opened, in which case writes still commit and only indexing is skipped.
 	annotations annotationIndex
@@ -161,13 +164,8 @@ type Runtime struct {
 	// (talk_participants.go, D-553). Zero means the package default; tests
 	// shrink it.
 	talkAudienceRetryGap time.Duration
-	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
-	// applyNCFilesAccessFn writes the per-meeting advanced-ACL grants
-	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
-	// active — inside an ExApp per-participant access is the only model there
-	// is (D-554), so there is nothing left to opt into.
+	// fetchTalkParticipants resolves the room's local share recipients.
 	fetchTalkParticipants talkParticipantsFetcher
-	applyNCFilesAccessFn  ncFilesAccessApplier
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
@@ -252,15 +250,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// the binary's job is to be the operator, and a subcommand is the exception.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case backfillNCFilesCommand:
-			return runBackfillNCFiles(ctx, args[1:], stdout, stderr)
+		case "import-meeting-metadata":
+			return runImportMeetingMetadata(ctx, args[1:], stdout, stderr)
 		case backfillSearchCommand:
 			return runBackfillSearch(ctx, args[1:], stdout, stderr)
 		case backfillAnnotationsCommand:
 			return runBackfillAnnotations(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: %s, %s, %s)\n",
-			args[0], backfillNCFilesCommand, backfillSearchCommand, backfillAnnotationsCommand)
+		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s)\n",
+			args[0], backfillSearchCommand, backfillAnnotationsCommand)
 		return 2
 	}
 
@@ -297,13 +295,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer store.Close()
-	// The enabled edge asks this when Nextcloud cannot be believed about what
-	// the install already holds: an operator that has published nothing has no
-	// archive an open storage mode could strand (D-753, storageModeFromProbe).
-	// Registered here because the preflight runs from an ExAppConfig, which has
-	// no Store in it.
-	setDeliveredRecordingsCounter(store.CountDeliveredRecordings)
-	defer setDeliveredRecordingsCounter(nil)
 	interruptedAt := nowUTCString()
 	interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
 	if err != nil {
@@ -315,12 +306,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	exappCfg.meetingMetadata = runtime.meetingMetadata
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
-	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier(logger)
 
 	// Resolve the publish destination. An explicit name always wins; an unset
 	// one is resolved from the deployment shape, and in an ExApp that must be
@@ -330,6 +321,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	sinkName := cfg.PublishSink
 	if sinkName == "" {
 		sinkName = defaultPublishSinkFor(exappCfg)
+	}
+	if sinkName == publishSinkNextcloudFiles {
+		exappCfg.sharePaths = &recordingSharePathCache{}
 	}
 	sink, err := newPublishSinkFor(sinkName, cfg, exappCfg, runtime, logger)
 	if err != nil {
@@ -351,60 +345,20 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncAccessSubstrate.markApplicable()
 	}
 
-	// The storage mode (D-616) is read here, at startup, and not only on the
-	// enabled edge. The edge is what PROVES the mode against Nextcloud; this is
-	// what makes a plain container restart keep serving the archive the way the
-	// administrator chose, instead of falling back to the access-controlled read
-	// path for an instance that has no Team folder to read through. The file is
-	// local, so it costs no round-trip and cannot fail for want of Nextcloud.
-	//
-	// It deliberately does NOT make the substrate usable: publishing still waits
-	// for the edge (nc_access_status.go), because a recorded mode is a decision,
-	// not evidence that the storage behind it is still there.
 	ncStorage.setPath(storageSettingsPath(cfg))
 	settings, err := LoadStorageSettings(ncStorage.settingsPath())
-	// The first-run acknowledgement rides in the same file (D-755) and is
-	// mirrored here whatever the mode turns out to be — including on the error
-	// branch below, where the zero value is the honest answer: a file nothing
-	// could read is not evidence that anybody has seen the dialog.
-	ncStorage.setFirstRunAcknowledged(err == nil && settings.FirstRunAcknowledged)
 	if err != nil {
-		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
-		// Clean: an unreadable file is not evidence of a half-done migration.
-		ncStorage.set(true, storageModeSourceConfigured, true)
-	} else if settings.Configured() {
-		// The RECORDED source, carried through rather than flattened to
-		// "configured". It is what tells an administrator's click apart from a
-		// deploy option, and both apart from a mode a previous build wrote down
-		// on its own.
-		source := settings.Source
-		if source == "" {
-			source = storageModeSourceConfigured
-		}
-		ncStorage.set(settings.AccessControlled(), source, settings.Clean())
-		logger.Printf("storage_mode -> %s (recorded, source=%s, confirmed=%t)", settings.Mode(), source, settings.Confirmed())
-	} else if declared, ok, raw := storageModeFromEnv(os.Getenv); ok {
-		// Declared but not yet recorded: the first enabled edge checks it against
-		// the instance and persists it only if it fits. Logged here so a
-		// deployment can see its own setting arrived, without waiting for that
-		// edge — and warned about, because this is a development and CI option.
-		logger.Printf("WARNING: storage_mode -> %s (declared by %s=%s, a development/CI deploy option; recorded on first enable if this instance matches it)", storageModeName(declared), envStorageMode, raw)
-	} else if raw != "" {
-		// Refused at startup rather than only on the enabled edge, because this
-		// is where a deploy option's typo is cheapest to notice.
-		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and the mode will be resolved from this install's own recordings instead", envStorageMode, raw, storageModeEnvValues)
-	} else {
-		// Nothing recorded, nothing declared. Say so here rather than leaving an
-		// administrator to infer it from silence — and say what happens next,
-		// because since D-753 something does: the enabled edge resolves the mode
-		// from the archive this install already has.
-		logger.Printf("storage_mode -> not recorded yet (nothing recorded, nothing declared by %s); the next enabled edge resolves it from the recordings this install already has", envStorageMode)
+		logger.Printf("ERROR: read first-run settings: %v", err)
 	}
-
-	// The preflight remains tied to the AppAPI enabled edge, but not to the
-	// eager whole-archive uploader removed by D-613.
-	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
-	exappCfg.preflightOnRestart(runtime.ctx, logger)
+	ncStorage.setFirstRunAcknowledged(err == nil && settings.FirstRunAcknowledged)
+	if exappCfg.appAPIActive() && sink.Name() == publishSinkNextcloudFiles {
+		exappCfg.onEnabled = func(enabled bool) {
+			if enabled {
+				exappCfg.preflightDirectShares(runtime.ctx, logger)
+			}
+		}
+		go exappCfg.preflightDirectShares(runtime.ctx, logger)
+	}
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -592,9 +546,9 @@ Usage:
   cassini-operator --base-path /operator --db ./cassini-operator/runtime/jobs.sqlite3
 
 Commands:
-  `+backfillNCFilesCommand+`   one-shot migration of a legacy in-container archive
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
+  import-meeting-metadata import catalog descriptions using destination file IDs
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
 
@@ -676,12 +630,8 @@ func defaultSiteRoot(persistRoot, dataRoot string) string {
 		filepath.Join(dataRoot, "site"))
 }
 
-// defaultDBPath is where the job database lands when nothing overrides it.
-//
-// Factored out because the one-shot commands need it too: storage_settings.json
-// lives beside the database, and a command that has to know which storage model
-// this installation runs cannot ask the running operator — it is a separate
-// process with its own empty ncStorage.
+// defaultDBPath is the operator job database path, shared by the server and
+// one-shot maintenance commands.
 func defaultDBPath(persistRoot, dataRoot string) string {
 	return exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
@@ -812,6 +762,11 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	} else {
 		rt.searchStore = searchIndex
 	}
+	if metadata, err := openMeetingMetadataStore(meetingMetadataPath(cfg.DBPath), logger); err != nil {
+		logger.Printf("meeting metadata index unavailable (%v); list metadata will need archive recovery", err)
+	} else {
+		rt.meetingMetadata = metadata
+	}
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
 	// nil *annotationStore inside the interface would be a non-nil index.
 	if annotationIndex, err := openAnnotationStore(sidecarPath(cfg.DBPath, annotationsStoreFilename), logger); err != nil {
@@ -898,6 +853,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 func (rt *Runtime) searchDeps() searchDeps {
 	return searchDeps{
 		index:       rt.searchStore,
+		metadata:    rt.meetingMetadata,
 		limiter:     rt.searchLimiter,
 		annotations: rt.annotationReads(),
 		aliases: func() [][]string {
@@ -915,6 +871,11 @@ func (rt *Runtime) Shutdown() {
 	if rt.searchStore != nil {
 		if err := rt.searchStore.Close(); err != nil {
 			rt.logger.Printf("search index close failed: %v", err)
+		}
+	}
+	if rt.meetingMetadata != nil {
+		if err := rt.meetingMetadata.Close(); err != nil {
+			rt.logger.Printf("meeting metadata index close failed: %v", err)
 		}
 	}
 	if store := rt.annotationReads(); store != nil {
@@ -1429,8 +1390,8 @@ type Job struct {
 	// completed.
 	RoomName *string `json:"room_name"`
 	// RoomAudience is who had access to the Talk room while this recording was
-	// being made: a JSON array of advanced-ACL principals (users, groups,
-	// circles), captured at record time and never re-derived (D-769).
+	// being made: a JSON array of Files share recipients (users, groups,
+	// Teams), captured at record time and never re-derived (D-769).
 	//
 	// Withheld from the API for the same reason the binding and the token are.
 	// It is a roster, it is internal plumbing for deciding a recording's

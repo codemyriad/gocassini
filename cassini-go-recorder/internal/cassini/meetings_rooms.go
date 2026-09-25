@@ -53,10 +53,7 @@ The room= value is what `+"`cassini meetings list --room`"+` accepts. It is a
 derived id, not the conversation's Talk token — the token is never published,
 because for a public conversation it is also the link that joins it.
 
-Two rows can share a display name. That usually means one room identified from
-its token and one identified from its name by the catalog backfill: the same
-real conversation, which nothing in the data can prove. Merging them is a
-deliberate act — see scripts/reattribute-catalog-room.sh.
+Two rows can share a display name. Their distinct room ids are kept separate.
 
 `+"\n")
 		fs.PrintDefaults()
@@ -138,14 +135,8 @@ deliberate act — see scripts/reattribute-catalog-room.sh.
 // groupMeetingsByRoom folds a listing into one row per distinct room, plus a
 // count of the meetings that record no room whatsoever.
 //
-// Rows are keyed by the room id, and only by the id. Two rows can therefore
-// carry the same display name and stay separate — most often one room whose id
-// was derived from its Talk token and one whose id the catalog backfill derived
-// from its name, which are the same real conversation and cannot be shown to
-// be. Merging them on the name would be a guess nothing in the data supports:
-// two conversations can share a display name, and a room can be renamed between
-// recordings. That merge is a human judgement, made once and deliberately with
-// scripts/reattribute-catalog-room.sh.
+// Rows are keyed by room id. Two rooms may have the same display name, so
+// merging them by name would assert an identity the data cannot prove.
 func groupMeetingsByRoom(listing meetingsListing) (rooms []meetingsRoom, unattributed int) {
 	index := map[string]int{}
 	// Newest-first order comes from the listing itself, and the first and last

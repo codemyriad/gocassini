@@ -8,7 +8,7 @@
 # not refresh the allowlist, every upgraded install 404s on both, silently.
 #
 # Method:
-#   1. Nextcloud + AppAPI, as ci-e2e-install-exapp.sh brings them up.
+#   1. Bring up Nextcloud + AppAPI in this script's own core stack.
 #   2. Register with the real routes MINUS `^operator\/setup\/?$` — a route that
 #      really exists, is really served, and is really USER-level.
 #   3. Prove the proxy refuses it. Without that control a 404 later proves nothing.

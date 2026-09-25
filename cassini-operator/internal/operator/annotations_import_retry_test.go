@@ -31,7 +31,7 @@ func TestAnnotationImportWaitsForCapacity(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("preparing: %d %s", response.Code, response.Body.String())
 	}
-	if _, queued := s.imports.Load(annTestRecording); !queued {
+	if _, queued := s.imports.Load("MEETING1.opus"); !queued {
 		t.Fatal("discovered recording was dropped while imports were busy")
 	}
 	for i := 0; i < cap(annotationImportSlots); i++ {

@@ -162,8 +162,7 @@ func (rt *Runtime) resolveTalkRoomName(jobID, owner, roomToken string) {
 	}
 	// The audience consequence is the one worth stating: without the room
 	// object we do not know the conversation is public, so the recording keeps
-	// the participant-only ACL. Fail closed — an over-restricted recording is
-	// recoverable by a rerun; an over-shared one is not (D-552).
+	// participant shares without reshare permission.
 	rt.logger.Printf("talk room lookup failed id=%s room=%s: %v (meeting title falls back; recording treated as non-public)", jobID, roomToken, lastErr)
 }
 
