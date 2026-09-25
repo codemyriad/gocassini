@@ -2,8 +2,7 @@
   import { onMount } from "svelte";
   import { RefreshCw } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
-  import { accountSteps } from "./operator/firstRun";
-  import { isSetupAvailable, runSetupPlan } from "./operator/ncSetup";
+  import { accountSteps, isSetupAvailable, runSetupPlan } from "./operator/ncSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
   import type { StorageStatus } from "./operator/types";
 
@@ -34,9 +33,6 @@
     try {
       await runSetupPlan(accountSteps(status));
       status = await operatorClient.recheckStorage();
-      if (status.service_account.exists) {
-        status = await operatorClient.acknowledgeFirstRun();
-      }
       notifySetupChanged();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Could not create the recordings account.";

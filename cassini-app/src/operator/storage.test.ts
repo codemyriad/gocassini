@@ -9,7 +9,7 @@ function reply(body: unknown): Response {
 describe("recordings storage API", () => {
   it("reads a single setup plan and treats missing browser permission as false", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => reply({
-      first_run: true, service_account: { user: "cassini", known: true, exists: false },
+      service_account: { user: "cassini", known: true, exists: false },
       ok: false, state: "unavailable", step: "owner_account",
       setup: [{ id: "owner", action: "create_user", args: { user: "cassini" } }],
     })));
@@ -20,13 +20,12 @@ describe("recordings storage API", () => {
     }]);
     expect(status.service_account.exists).toBe(false);
   });
-  it("rechecks and acknowledges using the two supported actions", async () => {
+  it("rechecks using the one supported action", async () => {
     const fetchMock = vi.fn(async () => reply({ ok: true, state: "provisioned", setup: [] }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new OperatorClient("/operator");
     await client.recheckStorage();
-    await client.acknowledgeFirstRun();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ action: "recheck" });
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toEqual({ action: "acknowledge_first_run" });
   });
 });

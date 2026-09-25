@@ -229,7 +229,6 @@ export interface StorageSetupStep {
 }
 
 export interface StorageStatus {
-  first_run: boolean;
   service_account: StorageServiceAccount;
   ok: boolean;
   state: string;

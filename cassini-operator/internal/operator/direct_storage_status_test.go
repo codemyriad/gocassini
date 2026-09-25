@@ -16,7 +16,7 @@ func TestDirectStorageHasOnlyAccountSetup(t *testing.T) {
 	}
 }
 
-func TestDirectStorageOffersAccountCreationAndAcceptsFirstRun(t *testing.T) {
+func TestDirectStorageOffersAccountCreationAndRetiresOldActions(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	ncAccessSubstrate.reset()
@@ -36,15 +36,14 @@ func TestDirectStorageOffersAccountCreationAndAcceptsFirstRun(t *testing.T) {
 	if !foundAccount {
 		t.Fatalf("missing account creation step: %+v", status.Setup)
 	}
-	ack := httptest.NewRecorder()
-	cfg.storageHandler(rt).ServeHTTP(ack, httptest.NewRequest(http.MethodPost, "/storage", strings.NewReader(`{"action":"acknowledge_first_run"}`)))
-	if ack.Code != http.StatusOK {
-		t.Fatalf("first-run acknowledgement returned %d: %s", ack.Code, ack.Body.String())
-	}
-	rec := httptest.NewRecorder()
-	cfg.storageHandler(rt).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/storage", strings.NewReader(`{"action":"preview"}`)))
-	if rec.Code != http.StatusGone {
-		t.Fatalf("retired mode action returned %d, want 410", rec.Code)
+	// The mode preview and the first-run acknowledgement (D-756) are both gone
+	// with the single permission model; an old client gets 410, not a flag.
+	for _, action := range []string{"preview", "acknowledge_first_run"} {
+		rec := httptest.NewRecorder()
+		cfg.storageHandler(rt).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/storage", strings.NewReader(`{"action":"`+action+`"}`)))
+		if rec.Code != http.StatusGone {
+			t.Fatalf("retired action %q returned %d, want 410", action, rec.Code)
+		}
 	}
 }
 

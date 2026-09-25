@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isSetupAvailable, runSetupPlan } from "./ncSetup";
-import type { StorageSetupStep } from "./types";
+import { accountSteps, isSetupAvailable, runSetupPlan } from "./ncSetup";
+import type { StorageSetupStep, StorageStatus } from "./types";
 
 const create: StorageSetupStep = {
   id: "owner", action: "create_user", title: "Create recordings account",
@@ -24,6 +24,15 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("browser account setup", () => {
+  it("only runs the account creation step", () => {
+    const other = { ...create, id: "old", action: "create_team_folder" };
+    const status: StorageStatus = {
+      service_account: { user: "cassini", known: true, exists: false, reset_occ: "" },
+      ok: false, state: "unavailable", step: "owner_account", detail: "", checked_at: "", setup: [other, create],
+    };
+    expect(accountSteps(status)).toEqual([create]);
+    expect(accountSteps(null)).toEqual([]);
+  });
   it("creates only the owner account using Nextcloud's session and returns its credential", async () => {
     const fetchImpl = vi.fn(async () => response()) as unknown as typeof fetch;
     const outcome = await runSetupPlan([create], { fetchImpl });
