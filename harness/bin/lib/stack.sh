@@ -261,6 +261,10 @@ EOF_CONF
 }
 
 compose() {
+  local -a compose_args=(-p "$PROJECT_NAME" -f "$COMPOSE_FILE")
+  if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" ]]; then
+    compose_args+=(-f "$TEST_DIR/compose.seed-published.yml")
+  fi
   local profile_args=()
   if [[ "$SPREED_PROFILE" == "full" ]]; then
     profile_args+=(--profile full)
@@ -269,10 +273,10 @@ compose() {
     profile_args+=(--profile remote)
   fi
   if ((${#profile_args[@]} > 0)); then
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
+    docker compose "${compose_args[@]}" "${profile_args[@]}" "$@"
   else
     # Avoid expanding an empty array under macOS Bash 3.2 + `set -u`.
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+    docker compose "${compose_args[@]}" "$@"
   fi
 }
 
@@ -288,8 +292,16 @@ harness_install_app() {
     python3 "$REPO_ROOT/scripts/nextcloud_compatibility.py" install-app \
       --stack "$CASSINI_COMPAT_LOCK" --project "$PROJECT_NAME" "$app"
   else
-    occ_ignore_failure app:install "$app" >/dev/null 2>&1
-    occ app:enable "$app" >/dev/null
+    local attempt
+    for attempt in 1 2 3; do
+      occ_ignore_failure app:install "$app" >/dev/null 2>&1
+      if occ app:enable "$app"; then
+        return 0
+      fi
+      log "App '$app' could not be enabled (attempt $attempt/3); the app store may be temporarily unavailable"
+      if [[ "$attempt" != 3 ]]; then sleep 2; fi
+    done
+    return 1
   fi
 }
 

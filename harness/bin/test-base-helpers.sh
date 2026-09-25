@@ -93,4 +93,16 @@ preflight_output="$(harness_verify_lan_signaling_reachability)"
 [[ "$preflight_output" == *"Host can reach Talk signaling at $SIGNALING_URL"* ]] \
   || fail "host signaling preflight rejected a reachable endpoint: $preflight_output"
 
+# App-store fetches can fail transiently even while Nextcloud is healthy.
+unset CASSINI_COMPAT_LOCK
+enable_attempts=0
+occ() {
+  if [[ "$1" == app:install ]]; then return 1; fi
+  enable_attempts=$((enable_attempts + 1))
+  [[ "$enable_attempts" -ge 2 ]]
+}
+sleep() { :; }
+harness_install_app spreed >/dev/null || fail "app installation did not retry a transient store failure"
+[[ "$enable_attempts" == 2 ]] || fail "app installation did not stop after a successful enable"
+
 echo "PASS: core harness helpers handle macOS-compatible nounset and signaling paths (Bash ${BASH_VERSION})"

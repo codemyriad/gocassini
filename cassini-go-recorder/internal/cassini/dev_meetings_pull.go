@@ -1,6 +1,7 @@
 package cassini
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,7 +40,7 @@ import (
 // seedPackManifestVersion identifies the provenance document a pull leaves
 // beside the archive. Versioned because a consumer that finds a shape it does
 // not know must say so rather than guess.
-const seedPackManifestVersion = "cassini.seed.pack.v1"
+const seedPackManifestVersion = "cassini.seed.pack.v2"
 
 // seedPackCatalogName and seedPackManifestName are the pack's two index files.
 // The catalog name is fixed by the format; the manifest name is ours.
@@ -57,13 +58,17 @@ const (
 //
 // It deliberately holds no credential and no URL beyond the host.
 type seedPackManifest struct {
-	Version  string            `json:"version"`
-	Source   seedPackSource    `json:"source"`
-	PulledAt string            `json:"pulledAt"`
-	Filter   string            `json:"filter,omitempty"`
-	Limit    int               `json:"limit,omitempty"`
-	Totals   seedPackTotals    `json:"totals"`
-	Meetings []seedPackMeeting `json:"meetings"`
+	Complete    bool              `json:"complete"`
+	Selected    int               `json:"selected"`
+	Failed      []string          `json:"failed,omitempty"`
+	Annotations string            `json:"annotations"`
+	Version     string            `json:"version"`
+	Source      seedPackSource    `json:"source"`
+	PulledAt    string            `json:"pulledAt"`
+	Filter      string            `json:"filter,omitempty"`
+	Limit       int               `json:"limit,omitempty"`
+	Totals      seedPackTotals    `json:"totals"`
+	Meetings    []seedPackMeeting `json:"meetings"`
 }
 
 type seedPackSource struct {
@@ -82,9 +87,11 @@ type seedPackTotals struct {
 }
 
 type seedPackMeeting struct {
-	ID    string `json:"id"`
-	Path  string `json:"path"`
-	Bytes int64  `json:"bytes"`
+	SHA256 string `json:"sha256,omitempty"`
+	ETag   string `json:"etag,omitempty"`
+	ID     string `json:"id"`
+	Path   string `json:"path"`
+	Bytes  int64  `json:"bytes"`
 }
 
 // runDevMeetings routes the `dev meetings` group.
@@ -132,7 +139,8 @@ func runDevMeetingsPull(ctx context.Context, args []string, stdout, stderr io.Wr
 	room := fs.String("room", "", "only meetings from this room, as printed by `cassini meetings rooms`")
 	limit := fs.Int("limit", 0, "keep only the newest N of the selected meetings (0 means all of them)")
 	dryRun := fs.Bool("dry-run", false, "report what would be pulled, and how many bytes, without writing anything")
-	force := fs.Bool("force", false, "re-download meetings already present at the expected size")
+	force := fs.Bool("force", false, "re-download meetings even when their ETag and local hash match")
+	annotations := fs.String("annotations", "embedded", "embedded: delivered file marks; current: embed the latest authenticated annotation document")
 	asJSON := fs.Bool("json", false, "write the manifest to stdout instead of a progress log")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
@@ -148,8 +156,10 @@ By default it pulls everything the account can read. The filters narrow that
 and combine; --limit keeps the newest N of whatever survives them. Run with
 --dry-run first to see the size before committing to the transfer.
 
-Re-running is cheap: a meeting already on disk at the size the server reports
-is skipped, so an interrupted pull is resumed by repeating the command.
+Re-running skips an unchanged file only when its strong remote ETag and local
+SHA-256 match the previous manifest. Without an ETag it is downloaded again.
+--annotations current includes accepted edits not yet synchronized to the
+recording. This requires the annotations API and local ffmpeg/ffprobe.
 
 A pack contains real recordings — audio, transcripts and summaries. Keep the
 directory out of version control and treat it as confidential.
@@ -177,6 +187,10 @@ directory out of version control and treat it as confidential.
 		fmt.Fprintf(stderr, "pull configuration error: --limit must not be negative, got %d\n", *limit)
 		return 2
 	}
+	if *annotations != "embedded" && *annotations != "current" {
+		fmt.Fprintln(stderr, "--annotations must be embedded or current")
+		return 2
+	}
 	filter, err := parseMeetingsFilter(*fromDate, *toDate, *room)
 	if err != nil {
 		fmt.Fprintf(stderr, "pull configuration error: %v\n", err)
@@ -189,13 +203,12 @@ directory out of version control and treat it as confidential.
 	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
-	listing, err := client.fetchCatalog(ctx)
+	listing, result, err := client.fetchMeetings(ctx, filter)
 	if err != nil {
 		return reportMeetingsError(stderr, "pull", cfg, err)
 	}
 	warnAboutMeetingsSource(stderr, listing)
 
-	result := applyMeetingsFilter(listing.Items, filter)
 	// The catalog arrives newest first, and the filter preserves that order, so
 	// --limit is a prefix. Said out loud because "the newest N" is a promise the
 	// caller is relying on, not a side effect of how the slice happens to be
@@ -253,7 +266,21 @@ directory out of version control and treat it as confidential.
 		failed []string
 	)
 	for i, plan := range plans {
-		bytes, wasCached, err := client.pullOneMeeting(ctx, plan, *force)
+		fileBytes, wasCached, err := client.pullOneMeeting(ctx, &plan, *force || *annotations == "current")
+		if err == nil && *annotations == "current" {
+			err = client.embedCurrentSeedAnnotations(ctx, plan)
+			if err == nil {
+				var info os.FileInfo
+				info, err = os.Stat(plan.localPath)
+				if err == nil {
+					fileBytes = info.Size()
+				}
+			}
+		}
+		var digest string
+		if err == nil {
+			digest, err = annotateFileSHA256(plan.localPath)
+		}
 		if err != nil {
 			failed = append(failed, plan.entry.ID)
 			// Keep going. A pack missing four of 128 meetings is a smaller
@@ -268,9 +295,9 @@ directory out of version control and treat it as confidential.
 			state = "cached"
 			cached++
 		}
-		log("[%*d/%d] %s %s %s", len(fmt.Sprint(len(plans))), i+1, len(plans), plan.entry.ID, humanBytes(bytes), state)
-		pulled = append(pulled, seedPackMeeting{ID: plan.entry.ID, Path: plan.relPath, Bytes: bytes})
-		total += bytes
+		log("[%*d/%d] %s %s %s", len(fmt.Sprint(len(plans))), i+1, len(plans), plan.entry.ID, humanBytes(fileBytes), state)
+		pulled = append(pulled, seedPackMeeting{ID: plan.entry.ID, Path: plan.relPath, Bytes: fileBytes, SHA256: digest, ETag: plan.etag})
+		total += fileBytes
 	}
 
 	if len(pulled) == 0 {
@@ -287,6 +314,7 @@ directory out of version control and treat it as confidential.
 		return 1
 	}
 	manifest := seedPackManifest{
+		Complete: len(failed) == 0, Selected: len(plans), Failed: failed, Annotations: *annotations,
 		Version:  seedPackManifestVersion,
 		Source:   seedPackSource{Host: host, Account: cfg.user, Origin: listing.Source},
 		PulledAt: time.Now().UTC().Format(time.RFC3339),
@@ -322,6 +350,8 @@ directory out of version control and treat it as confidential.
 // seedPackPlan is one meeting's place in the pack: where to fetch it from and
 // where it belongs on disk.
 type seedPackPlan struct {
+	previous seedPackMeeting
+	etag     string
 	entry    meetingsCatalogEntry
 	raw      json.RawMessage
 	audioURL *url.URL
@@ -341,6 +371,15 @@ type seedPackPlan struct {
 // function's concern: an entry naming "../../.ssh/authorized_keys" must not be
 // able to place a download outside the directory the caller asked for.
 func planSeedPack(catalogURL *url.URL, outDir string, items []meetingsCatalogItem) ([]seedPackPlan, error) {
+	previous := map[string]seedPackMeeting{}
+	if raw, err := os.ReadFile(filepath.Join(outDir, seedPackManifestName)); err == nil {
+		var manifest seedPackManifest
+		if json.Unmarshal(raw, &manifest) == nil && manifest.Version == seedPackManifestVersion && manifest.Source.Host == catalogURL.Host && manifest.Annotations == "embedded" {
+			for _, entry := range manifest.Meetings {
+				previous[entry.Path] = entry
+			}
+		}
+	}
 	plans := make([]seedPackPlan, 0, len(items))
 	seen := map[string]bool{}
 	for _, item := range items {
@@ -360,6 +399,7 @@ func planSeedPack(catalogURL *url.URL, outDir string, items []meetingsCatalogIte
 		}
 		seen[rel] = true
 		plans = append(plans, seedPackPlan{
+			previous:  previous[rel],
 			entry:     item.entry,
 			raw:       item.raw,
 			audioURL:  audioURL,
@@ -400,19 +440,21 @@ func packRelativeAsset(raw string) (string, error) {
 // pullOneMeeting downloads one meeting unless an identical copy is already
 // there, and reports the size and whether it was skipped.
 //
-// The size the server reports is asked for first, and used twice: to decide
-// whether the local file is already the whole meeting, and to check that what
-// arrived is the length that was promised. A transfer cut short mid-body is
+// Resume requires a strong ETag and a verified local content hash. The size
+// check also detects a transfer cut short mid-body, which is
 // otherwise indistinguishable from a short meeting — which is exactly how a
 // sibling tool in this repo ended up writing corrupt media (D-714).
-func (c *meetingsClient) pullOneMeeting(ctx context.Context, plan seedPackPlan, force bool) (int64, bool, error) {
-	expected, err := c.meetingContentLength(ctx, plan.audioURL)
+func (c *meetingsClient) pullOneMeeting(ctx context.Context, plan *seedPackPlan, force bool) (int64, bool, error) {
+	expected, etag, err := c.meetingRemoteState(ctx, plan.audioURL)
+	plan.etag = etag
 	if err != nil {
 		return 0, false, err
 	}
-	if !force && expected > 0 {
+	if !force && expected > 0 && etag != "" && !strings.HasPrefix(etag, "W/") && etag == plan.previous.ETag && plan.previous.SHA256 != "" {
 		if info, statErr := os.Stat(plan.localPath); statErr == nil && !info.IsDir() && info.Size() == expected {
-			return info.Size(), true, nil
+			if digest, err := annotateFileSHA256(plan.localPath); err == nil && digest == plan.previous.SHA256 {
+				return info.Size(), true, nil
+			}
 		}
 	}
 	written, err := c.downloadMeeting(ctx, plan.audioURL, plan.localPath)
@@ -426,7 +468,31 @@ func (c *meetingsClient) pullOneMeeting(ctx context.Context, plan seedPackPlan, 
 		_ = os.Remove(plan.localPath)
 		return 0, false, fmt.Errorf("downloaded %d bytes but the server said %d; the transfer was cut short", written, expected)
 	}
+	if etag != "" {
+		_, after, err := c.meetingRemoteState(ctx, plan.audioURL)
+		if err != nil {
+			return 0, false, err
+		}
+		if after != etag {
+			return 0, false, fmt.Errorf("recording changed during download; retry pull")
+		}
+	}
 	return written, false, nil
+}
+
+func (c *meetingsClient) embedCurrentSeedAnnotations(ctx context.Context, plan seedPackPlan) error {
+	var answer meetingsAnnotationsAnswer
+	if _, err := c.getAnnotations(ctx, meetingsAnnotationsMeetingPath+url.PathEscape(plan.entry.ID), &answer); err != nil {
+		return err
+	}
+	if len(answer.Annotations) == 0 || string(answer.Annotations) == "null" {
+		return nil
+	}
+	var diagnostic bytes.Buffer
+	if code := runAnnotateSnapshot(ctx, []string{"--out", plan.localPath, "--json", plan.localPath}, bytes.NewReader(answer.Annotations), io.Discard, &diagnostic); code != 0 {
+		return fmt.Errorf("embed current annotations: %s", diagnostic.String())
+	}
+	return nil
 }
 
 // meetingContentLength asks how big a meeting is without downloading it.
@@ -436,27 +502,32 @@ func (c *meetingsClient) pullOneMeeting(ctx context.Context, plan seedPackPlan, 
 // promised length, and every caller here treats a negative length as "unknown"
 // rather than as zero.
 func (c *meetingsClient) meetingContentLength(ctx context.Context, target *url.URL) (int64, error) {
+	size, _, err := c.meetingRemoteState(ctx, target)
+	return size, err
+}
+
+func (c *meetingsClient) meetingRemoteState(ctx context.Context, target *url.URL) (int64, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target.String(), nil)
 	if err != nil {
-		return -1, err
+		return -1, "", err
 	}
 	req.SetBasicAuth(c.cfg.user, c.cfg.appPassword)
 	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := c.stream.Do(req)
 	if err != nil {
-		return -1, fmt.Errorf("HEAD %s: %w", target.Redacted(), err)
+		return -1, "", fmt.Errorf("HEAD %s: %w", target.Redacted(), err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return -1, &meetingsHTTPError{URL: target.Redacted(), Status: resp.StatusCode}
+		return -1, "", &meetingsHTTPError{URL: target.Redacted(), Status: resp.StatusCode}
 	}
 	if resp.ContentLength < 0 {
-		return -1, nil
+		return -1, resp.Header.Get("ETag"), nil
 	}
-	return resp.ContentLength, nil
+	return resp.ContentLength, resp.Header.Get("ETag"), nil
 }
 
 // reportSeedPackDryRun prints the selection and its total size, writing nothing.

@@ -144,6 +144,9 @@ Common options:
   --exapp-image-mode build|reuse-local|pull
   --build
   --patch=auto|none|force
+  --storage-mode acl-enabled
+             compatibility setting for existing harness commands; installed
+             ExApps use private Files shares for recording access
   --debug-skip-storage-scaffold
              build no recordings storage at all: no cassini service account,
              The state a real Nextcloud is
@@ -153,6 +156,9 @@ Common options:
 up options:
   --resume   reuse matching stopped containers or retained harness volumes
   --reset    remove and recreate containers and volumes
+  --seed-published DIR
+             import a static meeting pack and share each meeting read-only
+             with admin; requires --cassini installed-exapp
   --seed-operator DIR
              copy an AppAPI persistent-volume root containing operator/jobs/
              into a fresh installed ExApp volume after deployment

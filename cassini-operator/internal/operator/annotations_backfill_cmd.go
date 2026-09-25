@@ -23,6 +23,7 @@ const backfillAnnotationsTimeout = 2 * time.Hour
 func runBackfillAnnotations(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini-operator "+backfillAnnotationsCommand, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	strict := fs.Bool("strict", false, "fail unless every recording's annotations are readable")
 	dryRun := fs.Bool("dry-run", false,
 		"list the recordings that would be read, without opening or writing the index")
 	fs.Usage = func() {
@@ -108,6 +109,9 @@ Flags:
 		report.Indexed, report.Unchanged, report.Unavailable, report.Failed, len(targets))
 	if report.Unavailable > 0 || report.Failed > 0 {
 		fmt.Fprintf(stdout, "recordings whose marks could not be read are reported outside tag coverage, not as untagged\n")
+		if *strict {
+			return backfillSearchExitFailed
+		}
 	}
 	return backfillSearchExitOK
 }

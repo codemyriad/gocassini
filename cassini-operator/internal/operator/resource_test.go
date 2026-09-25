@@ -177,9 +177,11 @@ func TestApplyToEnv(t *testing.T) {
 }
 
 func TestExecuteBuildCLIPreservesAudioWithoutCUDARuntime(t *testing.T) {
-	// An impossible RAM floor proves CUDA capability is checked first. A
-	// portable image must block immediately, not spend five minutes waiting for
-	// memory that cannot make its missing execution provider appear.
+	// CUDA cannot meet its RAM floor, but the audio fallback has enough RAM.
+	// Stub the host probe: Darwin does not expose Linux /proc/meminfo.
+	originalProbe := probeAvailableMem
+	probeAvailableMem = func() int { return 8192 }
+	t.Cleanup(func() { probeAvailableMem = originalProbe })
 	t.Setenv("CASSINI_BUILD_MIN_FREE_MEM_MB", "999999")
 	t.Setenv("CASSINI_BUILD_MEM_WAIT_SECS", "300")
 	t.Setenv(envSTTCUDACapable, "0")
@@ -216,7 +218,9 @@ func TestExecuteBuildCLIPreservesAudioWithoutCUDARuntime(t *testing.T) {
 			DeviceOverride: "cuda",
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// This checks the selected execution path, not subprocess startup latency.
+	// Allow loaded dev machines enough time to launch the mock executable.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err = rt.executeBuildCLI(ctx, buildTask{
 		JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath,
