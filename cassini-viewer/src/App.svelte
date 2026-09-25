@@ -47,7 +47,6 @@
     type InsightRecord,
   } from "./viewer/insights";
   import {
-    describeAnnotationError,
     mergeVocabularyTags,
     tagsByMeeting,
     type AnnotationRequest,
@@ -56,6 +55,7 @@
     type TagVocabulary,
   } from "./viewer/annotations";
   import {
+    createListTagSession,
     createTagLoader,
     createWriteQueue,
     filterByTags,
@@ -236,6 +236,7 @@
   let selectedTagIds: string[] = [];
   let tagMatch: TagMatch = "any";
   let tagNotice = "";
+  let tagRetryable = false;
   let tagManagerOpen = false;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
@@ -404,9 +405,10 @@
   const tagLoader = createTagLoader(
     () => dataProvider.loadTagVocabulary!(),
     (vocabulary) => {
-      tagVocabulary = vocabulary ?? tagVocabulary;
+      if (vocabulary) listTagSession.setConfirmed(vocabulary);
       tagsFailed = !vocabulary;
     },
+    () => listTagSession.confirmedGeneration(),
   );
 
   // On open, on return to the tab and after writes; not on the catalog's timer.
@@ -418,23 +420,24 @@
 
   const queueTagWrite = createWriteQueue(() => refreshTags(true));
 
-  function applied(result: MeetingAnnotations) {
-    if (tagVocabulary) {
-      tagVocabulary = withMeetingResult(tagVocabulary, result);
-    }
+  const listTagSession = createListTagSession(
+    (meeting, request) => dataProvider.applyAnnotationOps!(meeting, request),
+    queueTagWrite,
+  );
+
+  $: tagVocabulary = $listTagSession.vocabulary;
+  $: tagNotice = $listTagSession.notice;
+  $: tagRetryable = $listTagSession.retryable;
+
+  // The session applies the click to its optimistic layer before this returns;
+  // queued writes reconcile the confirmed layer underneath it.
+  function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
+    listTagSession.toggle(meeting, pick);
   }
 
-  // Both plan from what the picker showed when it was clicked.
-  function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
-    const { remove, request } = planBulkTag([meeting], meetingTags, pick);
-    tagNotice = "";
-    void queueTagWrite(async () => {
-      try {
-        applied(await dataProvider.applyAnnotationOps!(meeting, request));
-      } catch (error) {
-        tagNotice = `Could not ${remove ? "untag" : "tag"} “${meeting.title}”: ${describeAnnotationError(error)}`;
-      }
-    });
+  function reconcileMeetingTags(result: MeetingAnnotations) {
+    listTagSession.updateConfirmed((vocabulary) => withMeetingResult(vocabulary, result));
+    refreshTags(true);
   }
 
   const bulkTags = createBulkTagSession(
@@ -445,7 +448,7 @@
       });
     }),
     (result) => {
-      if (tagVocabulary) tagVocabulary = withAnnotationBatch(tagVocabulary, result);
+      listTagSession.updateConfirmed((vocabulary) => withAnnotationBatch(vocabulary, result));
       refreshTags(true);
     },
   );
@@ -1375,9 +1378,11 @@
       tagFilterIds={activeTagIds}
       on:removeTag={(event) => toggleTagFilter(event.detail)}
       {tagNotice}
+      {tagRetryable}
       on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
       on:clearTags={() => (selectedTagIds = [])}
-      on:dismissTagNotice={() => (tagNotice = "")}
+      on:dismissTagNotice={() => listTagSession.dismissNotice()}
+      on:retryTag={() => listTagSession.retry()}
     />
     </div>
 
@@ -1483,7 +1488,7 @@
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}
             applyAnnotations={annotationCalls.apply}
-            on:tagsChanged={(event) => (applied(event.detail), refreshTags(true))}
+            on:tagsChanged={(event) => reconcileMeetingTags(event.detail)}
           />
         {/if}
       </aside>
