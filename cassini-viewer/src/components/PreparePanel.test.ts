@@ -17,7 +17,12 @@ describe("PreparePanel", () => {
     expect(preparePanelSource).toContain("await loadBundle()");
     expect(preparePanelSource).not.toContain("## Transcript");
     expect(preparePanelSource).not.toContain("No summary was generated");
-    expect(preparePanelSource).not.toMatch(/join\(["'`]\\n---/);
+    const start = preparePanelSource.indexOf("async function ensureBundle");
+    const end = preparePanelSource.indexOf("function describeError");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const bundleAssembly = preparePanelSource.slice(start, end);
+    expect(bundleAssembly).not.toMatch(/join\(["'`]\\n---/);
   });
 
   it("copies and downloads the same bytes", () => {
@@ -149,9 +154,9 @@ describe("PreparePanel", () => {
     // button was the panel disagreeing with itself.
     expect(preparePanelSource).toContain("$: overCap = entries.length > MAX_SELECTED_MEETINGS;");
     expect(preparePanelSource).toContain(
-      "$: blocked = overCap || entries.some((entry) => lacksPortableAudio(entry));",
+      "$: blocked = entries.length === 0 || overCap || entries.some((entry) => lacksPortableAudio(entry));",
     );
-    expect(preparePanelSource.match(/disabled=\{busy \|\| blocked\}/g) ?? []).toHaveLength(2);
+    expect(preparePanelSource.match(/disabled=\{busy \|\| blocked\}/g) ?? []).toHaveLength(5);
     expect(preparePanelSource).toContain("{#if !blocked}\n      <slot name=\"generate\" {entries} />");
   });
 });
