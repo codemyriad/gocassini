@@ -13,10 +13,19 @@ lifecycle dates. There is no byte/count cap or manual delete-now button.
 | Current output archive | Current `.meeting` and `.opus`, including its retained seal alias | Publication of that version |
 | Logs | Attempt stage logs, successful and failed | Attempt termination |
 
-Recordings and attempt history each use either one group policy or fine-grained
-policies. The first fine-grained split copies the group value; subsequent toggles
-preserve inactive values. Only the selected mode applies. Video cannot outlive
-audio, including differences between calendar months and fixed day counts.
+Recordings use one policy for the entire source `.run` bundle: captured audio,
+video, raw packets and supporting files expire together. There is no separate
+audio or video policy. Processed `.meeting`/`.opus` output uses the independent
+current-output policy.
+
+```text
+Recordings policy -> delete entire source .run -> rerun unavailable
+Current policy    -> delete current .meeting + .opus and retained seal alias
+```
+
+Attempt history uses either one group policy or fine-grained policies. The first
+fine-grained split copies the group value; subsequent toggles preserve inactive
+values. Only the selected mode applies.
 
 UTC dates, not elapsed hours, determine expiry. January 31 plus one month is
 February 28 (29 in a leap year). One week is seven calendar days. Artefacts are
@@ -41,13 +50,10 @@ attempt .meeting -> attempt .opus -> publish successfully
                               keep the immutable attempt seal
 ```
 
-Expiring audio removes the entire run, including video and raw packet captures.
-The UI explains why rerun is unavailable; the API also refuses it. Video-only
-expiry uses a private copy, removes video streams and packet logs, checks retained
-compressed audio packets, timestamps and track metadata, then swaps the validated
-bundle into place. It needs temporary disk headroom, potentially another copy of
-the run. Unknown/corrupt formats, symlinks, insufficient space or failed audio
-validation leave the original intact and produce an operator-log error.
+Expiring a recording removes the entire run, including video and raw packet
+captures. The UI explains why rerun is unavailable; the API also refuses it.
+Cleanup does not inspect or remux media, so embedded recorder report attachments
+do not affect expiry. Symlinks and unsafe paths are refused and logged.
 
 Cleanup skips active, queued and blocked jobs. Each job is reserved against
 pipeline/rerun use; archive-wide local backfill reads are protected too. A second
@@ -70,7 +76,11 @@ already-lost older `.meeting` cannot be recreated from its seal.
 ## Configuration, deployment and diagnostics
 
 Settings live in `retention_settings.json` beside the configured operator SQLite
-database. Saves use atomic replacement and a revision precondition, so a stale
+database. Settings version 2 stores one recordings policy. When loading a
+version 1 file, the previous group policy (or the active captured-audio policy in
+fine-grained mode) becomes the recordings policy, preserving its whole-bundle
+deletion deadline. A previous video-only deadline no longer applies. The next
+Save persists the new format. Saves use atomic replacement and a revision precondition, so a stale
 admin form cannot overwrite another save. Invalid startup configuration disables
 expiry and is shown as an error in Storage; repair the file and restart. The old
 `--artifact-retention` / `CASSINI_ARTIFACT_RETENTION` values are deprecated, ignored
@@ -95,7 +105,7 @@ unless finite policies are explicitly saved.
 
 ## Verification
 
-From the repository root, with Go, npm dependencies, FFmpeg/ffprobe and Playwright
+From the repository root, with Go, npm dependencies and Playwright
 Chromium available:
 
 ```sh
@@ -107,5 +117,6 @@ npm run test:retention-browser --workspace cassini-app
 npm run build:all --workspace cassini-app
 ```
 
-The browser check uses a synthetic API, never real recordings. Media tests use
-generated test tones and video, including two retained audio tracks.
+The browser check uses a synthetic API, never real recordings. Retention tests
+verify whole-bundle deletion, independent output retention, settings migration
+and unavailable-source rerun protection.

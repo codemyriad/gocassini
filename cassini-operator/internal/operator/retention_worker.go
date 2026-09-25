@@ -189,18 +189,10 @@ func (rt *Runtime) expireCanonicalArchives(ctx context.Context, job Job, attempt
 			if a.RecordFinishedAt == nil {
 				continue
 			}
-			if err := rt.expirePaths(id, a.AttemptNumber, "audio", s.Recordings.policyFor("audio"), retentionAnchor(a.RecordFinishedAt), now, s.Revision, canonicalRunPath(rt.cfg.WorkRoot, id), attemptRunPath(rt.cfg.WorkRoot, id, a.AttemptNumber)); err != nil {
+			if err := rt.expirePaths(id, a.AttemptNumber, "recordings", s.Recordings, retentionAnchor(a.RecordFinishedAt), now, s.Revision, canonicalRunPath(rt.cfg.WorkRoot, id), attemptRunPath(rt.cfg.WorkRoot, id, a.AttemptNumber)); err != nil {
 				return err
 			}
-			video := s.Recordings.policyFor("video")
-			audio := s.Recordings.policyFor("audio")
-			anchor := retentionAnchor(a.RecordFinishedAt)
-			if !audio.Forever && (video.Forever || audio.deadline(anchor).Before(video.deadline(anchor))) {
-				video = audio
-			}
-			if err := rt.expireCaptureVideo(ctx, job, a.AttemptNumber, video, anchor, now, s.Revision); err != nil {
-				return err
-			}
+
 			break
 		}
 	}

@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,13 +28,12 @@ type retentionGroup struct {
 type retentionSettings struct {
 	Version    int             `json:"version"`
 	Revision   int             `json:"revision"`
-	Recordings retentionGroup  `json:"recordings"`
+	Recordings retentionPolicy `json:"recordings"`
 	History    retentionGroup  `json:"history"`
 	Current    retentionPolicy `json:"current"`
 	Logs       retentionPolicy `json:"logs"`
 }
 
-var recordingKinds = []string{"audio", "video"}
 var historyKinds = []string{"failed_capture", "failed_build", "superseded", "failed_publish"}
 
 func defaultRetentionSettings() retentionSettings {
@@ -44,7 +44,7 @@ func defaultRetentionSettings() retentionSettings {
 		}
 		return g
 	}
-	return retentionSettings{Version: 1, Recordings: group(recordingKinds), History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
+	return retentionSettings{Version: 2, Recordings: retentionPolicy{Forever: true}, History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
 }
 func (g retentionGroup) policyFor(kind string) retentionPolicy {
 	if g.Mode == "fine" {
@@ -97,31 +97,30 @@ func (p retentionPolicy) due(anchor, now time.Time) bool {
 	return !d.IsZero() && !utcDate(now).Before(d)
 }
 func (s retentionSettings) validate() error {
-	if s.Version != 1 || s.Revision < 0 {
+	if s.Version != 2 || s.Revision < 0 {
 		return errors.New("unsupported retention settings version or revision")
 	}
-	for i, g := range []retentionGroup{s.Recordings, s.History} {
-		keys := recordingKinds
-		if i == 1 {
-			keys = historyKinds
+	if err := s.Recordings.validate(); err != nil {
+		return fmt.Errorf("recordings: %w", err)
+	}
+	g := s.History
+	keys := historyKinds
+	if g.Mode != "group" && g.Mode != "fine" {
+		return errors.New("policy mode must be group or fine")
+	}
+	if err := g.Policy.validate(); err != nil {
+		return err
+	}
+	if len(g.Fine) != len(keys) {
+		return errors.New("all fine-grained policies must be supplied")
+	}
+	for _, k := range keys {
+		p, ok := g.Fine[k]
+		if !ok {
+			return fmt.Errorf("missing %s policy", k)
 		}
-		if g.Mode != "group" && g.Mode != "fine" {
-			return errors.New("policy mode must be group or fine")
-		}
-		if err := g.Policy.validate(); err != nil {
-			return err
-		}
-		if len(g.Fine) != len(keys) {
-			return errors.New("all fine-grained policies must be supplied")
-		}
-		for _, k := range keys {
-			p, ok := g.Fine[k]
-			if !ok {
-				return fmt.Errorf("missing %s policy", k)
-			}
-			if err := p.validate(); err != nil {
-				return fmt.Errorf("%s: %w", k, err)
-			}
+		if err := p.validate(); err != nil {
+			return fmt.Errorf("%s: %w", k, err)
 		}
 	}
 	if err := s.Current.validate(); err != nil {
@@ -130,19 +129,7 @@ func (s retentionSettings) validate() error {
 	if err := s.Logs.validate(); err != nil {
 		return err
 	}
-	a, v := s.Recordings.policyFor("audio"), s.Recordings.policyFor("video")
-	if a.Forever {
-		return nil
-	}
-	if v.Forever {
-		return errors.New("video cannot outlive audio")
-	}
-	// One full Gregorian cycle covers all month lengths/leap-year placements.
-	for d, end := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2400, 1, 1, 0, 0, 0, 0, time.UTC); d.Before(end); d = d.AddDate(0, 0, 1) {
-		if v.deadline(d).After(a.deadline(d)) {
-			return errors.New("video cannot outlive audio (including calendar month boundaries)")
-		}
-	}
+
 	return nil
 }
 
@@ -165,15 +152,47 @@ func newRetentionConfig(path string) *retentionConfig {
 		return c
 	}
 	defer f.Close()
-	var s retentionSettings
+	// Version 1's audio policy already controlled whole-bundle deletion.
+	// Preserve that deadline when upgrading an existing settings file.
+	var stored struct {
+		Version    int             `json:"version"`
+		Revision   int             `json:"revision"`
+		Recordings json.RawMessage `json:"recordings"`
+		History    retentionGroup  `json:"history"`
+		Current    retentionPolicy `json:"current"`
+		Logs       retentionPolicy `json:"logs"`
+	}
 	dec := json.NewDecoder(io.LimitReader(f, 65537))
 	dec.DisallowUnknownFields()
-	if err = dec.Decode(&s); err == nil {
+	if err = dec.Decode(&stored); err == nil {
 		var extra any
 		if dec.Decode(&extra) != io.EOF {
 			err = errors.New("trailing retention settings data")
 		}
 	}
+	s := retentionSettings{Version: stored.Version, Revision: stored.Revision, History: stored.History, Current: stored.Current, Logs: stored.Logs}
+	if err == nil {
+		recordingDecoder := json.NewDecoder(bytes.NewReader(stored.Recordings))
+		recordingDecoder.DisallowUnknownFields()
+		if stored.Version == 1 {
+			var legacy retentionGroup
+			err = recordingDecoder.Decode(&legacy)
+			if err == nil {
+				switch legacy.Mode {
+				case "group":
+					s.Recordings = legacy.Policy
+				case "fine":
+					s.Recordings = legacy.Fine["audio"]
+				default:
+					err = errors.New("unknown legacy recordings policy mode")
+				}
+				s.Version = 2
+			}
+		} else {
+			err = recordingDecoder.Decode(&s.Recordings)
+		}
+	}
+
 	if err == nil {
 		err = s.validate()
 	}

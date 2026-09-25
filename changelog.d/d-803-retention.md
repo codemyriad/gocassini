@@ -1,6 +1,6 @@
 ### Added
 - Operator → Storage retention configuration for container recordings, attempt history, current output archives and stage logs. Policies default to keep forever and use UTC calendar days, weeks or months.
-- Startup/daily cleanup with restart recovery, video-only expiry that verifies preserved audio, and unavailable-source rerun protection. Only successful publication replaces the current local archive.
+- Startup/daily cleanup with restart recovery, whole-recording expiry (audio, video and supporting files together), and unavailable-source rerun protection. Only successful publication replaces the current local archive.
 
 ### Changed
 - The old artifact-retention flag/environment variable is deprecated and ignored. Successful capture/intermediate duplicate cleanup remains unconditional; historical payloads now default to keep forever.

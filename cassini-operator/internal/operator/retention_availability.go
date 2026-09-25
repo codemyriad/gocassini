@@ -31,7 +31,6 @@ func requireReadyRunBundle(path string) (string, error) {
 type artifactAvailability struct {
 	Source             string `json:"source"`
 	Output             string `json:"output"`
-	Video              string `json:"video"`
 	RerunBlockedReason string `json:"rerun_blocked_reason,omitempty"`
 	PublishedAttempt   int    `json:"published_attempt"`
 }
@@ -49,7 +48,7 @@ func (rt *Runtime) artifactAvailability(job Job) artifactAvailability {
 		}
 	}
 	var source, output string
-	_ = rt.store.db.QueryRow(`SELECT published_attempt,source,output,video FROM artifact_availability WHERE job_id=?`, job.ID).Scan(&a.PublishedAttempt, &source, &output, &a.Video)
+	_ = rt.store.db.QueryRow(`SELECT published_attempt,source,output FROM artifact_availability WHERE job_id=?`, job.ID).Scan(&a.PublishedAttempt, &source, &output)
 	if source == "expired" {
 		a.Source = source
 	}
