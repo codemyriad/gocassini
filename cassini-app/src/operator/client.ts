@@ -192,23 +192,6 @@ export class OperatorClient {
     );
   }
 
-  // acknowledgeFirstRun records that an administrator has seen the first-run
-  // dialog. It is kept in the operator's settings store, per install, so the
-  // dialog is shown once for this Nextcloud rather than once per browser.
-  //
-  // On the existing POST /storage, like every other action here: AppAPI learns
-  // an ExApp's routes when it is REGISTERED, so a new route would 404 on every
-  // installation that updated in place.
-  async acknowledgeFirstRun(): Promise<StorageStatus> {
-    return normalizeStorage(
-      await this.#request<unknown>("/storage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "acknowledge_first_run" }),
-      }),
-    );
-  }
-
   async listInsightWorkflows(): Promise<InsightWorkflow[]> {
     return normalizeInsightWorkflows(await this.#request<unknown>("/settings/workflows"));
   }
@@ -386,7 +369,6 @@ function asNonNegativeNumber(value: unknown): number {
 function normalizeStorage(raw: unknown): StorageStatus {
   const value = (raw ?? {}) as Record<string, unknown>;
   return {
-    first_run: value.first_run === true,
     service_account: normalizeServiceAccount(value.service_account),
     ok: value.ok === true,
     state: asString(value.state),

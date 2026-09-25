@@ -1,4 +1,4 @@
-import type { StorageSetupStep } from "./types";
+import type { StorageSetupStep, StorageStatus } from "./types";
 
 // Performing Cassini's setup from the administrator's browser (D-671).
 //
@@ -270,6 +270,12 @@ export interface SetupOutcome {
 interface RunOptions {
   onProgress?: (progress: SetupProgress) => void;
   fetchImpl?: typeof fetch;
+}
+
+// accountSteps picks the one setup action the browser still performs: creating
+// the `cassini` owner account. Anything else the operator lists is for occ.
+export function accountSteps(status: StorageStatus | null): StorageSetupStep[] {
+  return status?.setup.filter((step) => step.browser && step.action === "create_user") ?? [];
 }
 
 // runSetupPlan executes the steps the operator said the browser can do.

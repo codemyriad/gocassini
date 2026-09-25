@@ -345,12 +345,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncAccessSubstrate.markApplicable()
 	}
 
-	ncStorage.setPath(storageSettingsPath(cfg))
-	settings, err := LoadStorageSettings(ncStorage.settingsPath())
-	if err != nil {
-		logger.Printf("ERROR: read first-run settings: %v", err)
-	}
-	ncStorage.setFirstRunAcknowledged(err == nil && settings.FirstRunAcknowledged)
 	if exappCfg.appAPIActive() && sink.Name() == publishSinkNextcloudFiles {
 		exappCfg.onEnabled = func(enabled bool) {
 			if enabled {

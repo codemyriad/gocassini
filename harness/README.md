@@ -235,7 +235,8 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 The harness creates a private `CassiniRecordings/meetings` directory owned by
 the `cassini` account. The installed ExApp shares each new recording with the
 Talk room's Nextcloud participants. `--debug-skip-storage-scaffold` omits the
-service account so the app's first-run setup can be exercised.
+service account so the app's account setup in Operator › Publish pipeline can
+be exercised.
 
 ### 2.9 Supporting environment variables without stack flags
 

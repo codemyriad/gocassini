@@ -3,9 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"log"
 	"net/http"
 )
 
@@ -17,7 +15,6 @@ type storageServiceAccount struct {
 }
 
 type storageStatusResponse struct {
-	FirstRun       bool                  `json:"first_run"`
 	ServiceAccount storageServiceAccount `json:"service_account"`
 	OK             bool                  `json:"ok"`
 	State          string                `json:"state"`
@@ -50,11 +47,6 @@ func (c ExAppConfig) storageHandler(rt *Runtime) http.Handler {
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), ncProvisionTimeout)
 				defer cancel()
 				c.preflightDirectShares(ctx, rt.logger)
-			case "acknowledge_first_run":
-				if err := acknowledgeStorageFirstRun(rt.logger); err != nil {
-					writeJSONError(w, http.StatusInternalServerError, err.Error())
-					return
-				}
 			default:
 				writeJSONError(w, http.StatusGone, "this storage action is retired")
 				return
@@ -66,27 +58,10 @@ func (c ExAppConfig) storageHandler(rt *Runtime) http.Handler {
 	})
 }
 
-func acknowledgeStorageFirstRun(logger *log.Logger) error {
-	provisionMu.Lock()
-	defer provisionMu.Unlock()
-	file := ncStorage.settingsPath()
-	if file != "" {
-		if err := AcknowledgeStorageFirstRun(file); err != nil {
-			return fmt.Errorf("record first-run acknowledgement: %w", err)
-		}
-	}
-	ncStorage.setFirstRunAcknowledged(true)
-	if logger != nil {
-		logger.Printf("recording access: first run acknowledged")
-	}
-	return nil
-}
-
 func (c ExAppConfig) storageStatus(rt *Runtime) storageStatusResponse {
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
 	probe, probed := ncAccessSubstrate.lastProbe()
 	return storageStatusResponse{
-		FirstRun:       !ncStorage.acknowledgedFirstRun(),
 		ServiceAccount: storageServiceAccount{User: ncRecordingsOwner, Known: probed, Exists: probed && probe.ServiceAccount, ResetOcc: "occ user:resetpassword " + ncRecordingsOwner},
 		OK:             access.OK, State: access.State, Step: access.Step, Detail: access.Detail, CheckedAt: access.CheckedAt,
 		Setup: storageSetupPlan(probe),
