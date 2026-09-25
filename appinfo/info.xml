@@ -111,7 +111,7 @@ Documentation: https://gocassini.com/docs]]></description>
       <variable>
         <name>CASSINI_ARTIFACT_RETENTION</name>
         <display-name>Deprecated working-file retention</display-name>
-        <description>Deprecated and ignored. Configure container-local retention in Operator → Storage. All categories default to keep forever; finite policies use UTC calendar days, weeks or months. Successful duplicate working copies are cleaned independently. Published Nextcloud files and job metadata are not evicted.</description>
+        <description>Deprecated and ignored. Configure container-local retention in Operator → Storage. All categories default to keep forever; choose 7, 30, 60, 90 or custom days, evaluated on UTC dates. Successful duplicate working copies are cleaned independently. Published Nextcloud files and job metadata are not evicted.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>
