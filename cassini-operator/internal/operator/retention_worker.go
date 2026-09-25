@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,7 +44,9 @@ func (rt *Runtime) startRetentionWorker() {
 	rt.workerWG.Add(1)
 	go func() {
 		defer rt.workerWG.Done()
-		rt.runRetentionSweep(rt.ctx, time.Now())
+		if err := rt.runRetentionSweep(rt.ctx, time.Now()); err != nil {
+			rt.logger.Printf("startup retention sweep: %v", err)
+		}
 		for {
 			rt.retention.mu.Lock()
 			schedule := rt.retention.settings.Schedule
@@ -63,7 +66,9 @@ func (rt *Runtime) startRetentionWorker() {
 				if !unchanged {
 					continue
 				}
-				rt.runRetentionSweep(rt.ctx, time.Now())
+				if err := rt.runRetentionSweep(rt.ctx, time.Now()); err != nil {
+					rt.logger.Printf("scheduled retention sweep: %v", err)
+				}
 			}
 		}
 	}()
@@ -75,17 +80,32 @@ func retentionAnchor(value *string) time.Time {
 	t, _ := time.Parse(time.RFC3339Nano, *value)
 	return t
 }
-func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) {
-	if rt.retention == nil {
-		return
+
+var errRetentionSweepBusy = errors.New("retention sweep already running")
+var errRetentionUnavailable = errors.New("retention configuration unavailable or disabled")
+
+func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) error {
+	if !rt.retentionSweepMu.TryLock() {
+		return errRetentionSweepBusy
 	}
+	defer rt.retentionSweepMu.Unlock()
+	if rt.retention == nil {
+		return errRetentionUnavailable
+	}
+	rt.retention.mu.Lock()
+	disabled := rt.retention.loadErr != nil
+	rt.retention.mu.Unlock()
+	if disabled {
+		return errRetentionUnavailable
+	}
+	var failures error
 	// Read bounded pages; no SQLite transaction spans filesystem work.
 	after := ""
 	for {
 		rows, err := rt.store.db.QueryContext(ctx, `SELECT id FROM jobs WHERE id > ? ORDER BY id LIMIT 100`, after)
 		if err != nil {
 			rt.logger.Printf("retention list failed: %v", err)
-			return
+			return errors.Join(failures, err)
 		}
 		var ids []string
 		for rows.Next() {
@@ -95,13 +115,16 @@ func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) {
 			}
 			ids = append(ids, id)
 		}
-		rows.Close()
-		if err != nil || len(ids) == 0 {
-			return
+		err = errors.Join(err, rows.Err(), rows.Close())
+		if err != nil {
+			return errors.Join(failures, err)
+		}
+		if len(ids) == 0 {
+			return failures
 		}
 		for _, id := range ids {
 			if ctx.Err() != nil {
-				return
+				return errors.Join(failures, ctx.Err())
 			}
 			after = id
 			if !validArtifactJob(id) || !rt.store.artifactGate.TryLock() {
@@ -118,7 +141,7 @@ func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) {
 				rt.retention.mu.Unlock()
 				unlock()
 				rt.store.artifactGate.Unlock()
-				return
+				return errors.Join(failures, errRetentionUnavailable)
 			}
 			settings := rt.retention.settings
 			rt.retention.mu.Unlock()
@@ -127,6 +150,7 @@ func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) {
 			rt.store.artifactGate.Unlock()
 			if err != nil {
 				rt.logger.Printf("retention failed job=%s revision=%d: %v", id, settings.Revision, err)
+				failures = errors.Join(failures, fmt.Errorf("job %s: %w", id, err))
 			}
 		}
 	}

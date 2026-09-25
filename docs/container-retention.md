@@ -5,7 +5,8 @@ starts at **Keep forever**. Choose **7, 30, 60, 90, or Custom days**. Custom
 retention accepts a whole number from 1 to 9999 days. Saving changes does not delete files immediately: existing
 artefacts are evaluated at startup and daily at the configured time (default
 **02:00 UTC**), using their original
-lifecycle dates. There is no byte/count cap or manual delete-now button.
+lifecycle dates. There is no byte/count cap. A manual API sweep evaluates the
+same deadlines; it does not force unexpired artifacts to be deleted.
 
 | Category | Contents | Age starts at |
 |---|---|---|
@@ -114,6 +115,36 @@ It is ADMIN-only in the AppAPI manifest. Installed AppAPI registrations must pic
 up the new route through the normal versioned update workflow; a new image alone
 does not refresh a stale route allowlist. See
 [update constraints](./exapp-update-constraints.md#5a-routes-are-not-creation-time--an-in-place-update-rewrites-them-provided-the-release-bumps-version).
+
+### Run an expiry sweep manually
+
+`POST /operator/storage/retention/sweep` runs the same expiry pass as startup and
+scheduled runs, synchronously. It uses the current server time and saved policies;
+no body is required. Active/reserved jobs and artifacts that are not yet due
+remain protected. It does not run duplicate cleanup or change the daily schedule.
+
+For a standalone operator, set its base URL and configured API token:
+
+```sh
+export OPERATOR_URL=http://localhost:8080/operator
+read -s OPERATOR_TOKEN
+curl --fail-with-body --request POST \
+  --header "Authorization: Bearer $OPERATOR_TOKEN" \
+  "$OPERATOR_URL/storage/retention/sweep"
+```
+
+Success returns HTTP 200 with `{"status":"completed"}` after the pass finishes.
+This includes passes where nothing was due or busy jobs were skipped. HTTP 409
+means another manual or scheduled sweep is running. HTTP 503 means retention is
+unavailable or disabled. HTTP 500 reports a sweep failure; other jobs may already
+have been processed. Request cancellation or operator shutdown stops further
+iteration; completed deletions remain committed. A long pass may exceed a proxy's
+request timeout, so use a suitable client/proxy timeout when testing large archives.
+
+Installed Nextcloud deployments use the ADMIN-only AppAPI proxy route
+`/index.php/apps/app_api/proxy/gocassini/operator/storage/retention/sweep` with
+normal authenticated admin requests. The manifest route must be registered via
+the same versioned update workflow described above.
 
 Look for `artifact operation completed`, `retention failed`, `retention skipped`
 and `archive reconciliation skipped` in operator service logs. Completion logs

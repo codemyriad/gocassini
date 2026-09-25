@@ -161,7 +161,7 @@ func TestRetentionRouteIsAdminAndRequiresStandaloneToken(t *testing.T) {
 	}
 	found := false
 	for _, route := range manifest.External.Routes {
-		if strings.Contains(route.URL, `storage\/retention`) {
+		if strings.Contains(route.URL, `storage\/retention`) && !strings.Contains(route.URL, "sweep") {
 			found = true
 			if route.Access != "ADMIN" || route.Verb != "GET,PUT" {
 				t.Fatal(route)
