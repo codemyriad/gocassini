@@ -118,12 +118,36 @@ func TestReadinessChecksCoalesceExpireAndInvalidateOnEdit(t *testing.T) {
 	if !found {
 		t.Fatal("no successful result")
 	}
-	rt.recordingSetup.checkedAt = time.Now().Add(-2 * readinessTTL)
+	// An aged probe keeps its verdict and carries its age (D-798).
+	//
+	// This previously asserted the opposite — that an expired pass stopped
+	// being presented at all. That made the verdict and its freshness the same
+	// field, and since nothing re-probes on its own (readiness is a read; only
+	// checkRecordingReadiness probes), "expired" was the resting state of any
+	// idle panel rather than an exception. The concern it was written for is
+	// kept, not dropped: a stale pass must never look current, which is now
+	// enforced by requiring the timestamp rather than by deleting the result.
+	probedAt := time.Now().Add(-2 * readinessTTL)
+	rt.recordingSetup.checkedAt = probedAt
 	report = rt.readiness(context.Background())
+	aged := false
 	for _, c := range report.Checks {
-		if c.Code == "hpb_authenticated" {
-			t.Fatal("expired pass presented as current")
+		if c.Code != "hpb_authenticated" {
+			continue
 		}
+		aged = true
+		if c.State != "passed" {
+			t.Fatalf("aged probe lost its verdict: %+v", c)
+		}
+		if c.CheckedAt == "" {
+			t.Fatalf("aged probe presented as current, with no age: %+v", c)
+		}
+		if got, want := c.CheckedAt, probedAt.UTC().Format(time.RFC3339); got != want {
+			t.Fatalf("aged probe CheckedAt = %q, want when the probe ran (%q)", got, want)
+		}
+	}
+	if !aged {
+		t.Fatal("aged probe dropped entirely")
 	}
 	putRecordingSetup(t, rt, `{"internal_secret":"changed"}`, 200)
 	if !rt.recordingSetup.checkedAt.IsZero() || len(rt.recordingSetup.checks) != 0 {
@@ -154,7 +178,7 @@ func TestReadinessAdmissionAndPublicResponse(t *testing.T) {
 		t.Fatal("no public guidance")
 	}
 	rt.recordingSetup.checkedAt = time.Now().Add(-2 * readinessTTL)
-	if got, want := rt.publicRecordingState(context.Background()), rt.readiness(context.Background()).State; got != want || got == "passed" {
+	if got, want := rt.publicRecordingState(context.Background()), rt.readiness(context.Background()).RecordingState; got != want || got == "passed" {
 		t.Fatalf("public status=%s admin=%s; expired results must not pass", got, want)
 	}
 }
@@ -226,6 +250,33 @@ func TestReadinessUnreadableSetupDoesNotClaimMissingSecret(t *testing.T) {
 	}
 }
 
+func TestPublicSetupDoesNotQuerySearchCoverage(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.searchStore.db.SetMaxOpenConns(1)
+	conn, err := rt.searchStore.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+		done <- rec
+	}()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"recording_state"`) {
+			t.Fatalf("public setup = %d %s", rec.Code, rec.Body.String())
+		}
+	case <-time.After(time.Second):
+		_ = conn.Close()
+		<-done
+		t.Fatal("public setup waited for the search database")
+	}
+}
+
 func TestRecordingSetupRefusalIsAConflictBeforeJobCreation(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
@@ -252,7 +303,7 @@ func TestReadinessRoutesMountedAtRootAndPrefix(t *testing.T) {
 	// patterns explicitly rather than deriving them (operatorAPIRoutes). Naming
 	// them here makes the test stricter than it was: it now fails if a readiness
 	// route is dropped from the table, not merely if the mount is wrong.
-	readinessRoutes := []string{"/readiness", "/readiness/check", "/talk/setup"}
+	readinessRoutes := []string{"/health", "/health/check", "/talk/setup"}
 	for _, base := range []string{"", "/", "/operator"} {
 		root := http.NewServeMux()
 		mountBasePathOnto(root, base, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }), readinessRoutes)
@@ -307,27 +358,7 @@ func TestReadinessPublicStatePrioritizesActionRegardlessOfOrder(t *testing.T) {
 	}
 }
 
-func TestReadinessExpiredHandoffOffersTestWithoutInventingPass(t *testing.T) {
-	rt, cleanup := readinessRuntime(t)
-	defer cleanup()
-	putRecordingSetup(t, rt, `{"internal_secret":"internal","test_room_url":"https://cloud.test/call/room"}`, 200)
-	rt.recordingSetup.inboundAt = time.Now().Add(-2 * readinessTTL)
-	rt.recordingSetup.probe = func(context.Context, string) ([]readinessCheck, error) {
-		return []readinessCheck{{ID: "talk.hpb", State: "passed", Code: "hpb_authenticated"}}, nil
-	}
-	rt.checkRecordingReadiness(context.Background())
-	for _, check := range rt.readiness(context.Background()).Checks {
-		if check.ID == "talk.handoff" {
-			if check.State != "not_verified" || check.Action != "test_recording" {
-				t.Fatalf("handoff=%+v", check)
-			}
-			return
-		}
-	}
-	t.Fatal("missing handoff check")
-}
-
-func TestReadinessStorageClaimsRequireFreshApplicableEvidence(t *testing.T) {
+func TestReadinessStorageCarriesTheAgeAndApplicabilityOfItsEvidence(t *testing.T) {
 	resetDirectSubstrate(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
@@ -351,11 +382,73 @@ func TestReadinessStorageClaimsRequireFreshApplicableEvidence(t *testing.T) {
 	if c := storage(); c.State != "passed" || c.CheckedAt == "" {
 		t.Fatalf("fresh preflight missing timestamp: %+v", c)
 	}
+	// Aged evidence keeps its verdict and carries its age (D-798), rather than
+	// being erased into "not verified". The property this test was written for
+	// — stale evidence must not masquerade as current — is enforced by
+	// requiring the timestamp, which is what lets a reader judge it.
+	//
+	// Safe because this route reports rather than authorises: admission is
+	// decided by ncAccessSubstrate.recordingRefusal(), checked earlier in
+	// readiness() and not bounded by this TTL. See the admission-block test
+	// below, which still requires that path to be actionable.
+	aged := time.Now().Add(-2 * readinessTTL).UTC().Format(time.RFC3339)
 	ncAccessSubstrate.mu.Lock()
-	ncAccessSubstrate.checkedAtUTC = time.Now().Add(-2 * readinessTTL).UTC().Format(time.RFC3339)
+	ncAccessSubstrate.checkedAtUTC = aged
 	ncAccessSubstrate.mu.Unlock()
-	if c := storage(); c.State != "not_verified" || c.Code != "storage_check_expired" {
-		t.Fatalf("expired storage check claimed readiness: %+v", c)
+	if c := storage(); c.State != "passed" || c.CheckedAt != aged {
+		t.Fatalf("aged preflight lost its verdict or its age: %+v", c)
+	}
+
+	// Never checked at all is an absence, not a verdict: no parseable
+	// timestamp means no check has run here.
+	ncAccessSubstrate.mu.Lock()
+	ncAccessSubstrate.checkedAtUTC = ""
+	ncAccessSubstrate.mu.Unlock()
+	if c := storage(); c.State != "not_verified" || c.Code != "storage_not_checked" {
+		t.Fatalf("unchecked storage reported as a verdict: %+v", c)
+	}
+}
+
+// A preflight in flight is not a failed preflight — reported from the running
+// demo as Recording storage flashing red and going green a second later.
+//
+// The property is what matters, not the mechanism. This branch fixed it by
+// reporting a run in progress distinctly; main fixed it by having beginRun keep
+// the last complete verdict while a new probe runs, which is better — there is
+// no window to report. The test stays, pinned to the property, so whichever
+// mechanism is in force has to keep it true.
+func TestReadinessDoesNotReportAnInFlightPreflightAsAFailure(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	storage := func() readinessCheck {
+		t.Helper()
+		for _, c := range rt.readiness(context.Background()).Checks {
+			if c.ID == "storage" {
+				return c
+			}
+		}
+		t.Fatal("missing storage check")
+		return readinessCheck{}
+	}
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.record(ncSubstrateProvisioned, "test preflight", nil)
+	if c := storage(); c.State != "passed" {
+		t.Fatalf("setup did not establish a passing verdict: %+v", c)
+	}
+
+	// Exactly what the preflight does on entry, and nothing else.
+	ncAccessSubstrate.beginRun()
+	if c := storage(); c.State == "needs_action" {
+		t.Fatalf("a running preflight was reported as a failed one: %+v", c)
+	} else if c.State != "passed" {
+		t.Fatalf("a running preflight lost the verdict it already had: %+v", c)
+	}
+
+	// And the run's own verdict still lands when it records one.
+	ncAccessSubstrate.record(ncSubstrateProvisioned, "test preflight", nil)
+	if c := storage(); c.State != "passed" {
+		t.Fatalf("completed preflight did not report its verdict: %+v", c)
 	}
 }
 
@@ -376,4 +469,374 @@ func TestReadinessKeepsCurrentStorageAdmissionBlockActionable(t *testing.T) {
 		}
 	}
 	t.Fatal("missing storage check")
+}
+
+// D-798 V2: media host checks come from `cassini doctor --json`, read by id.
+// doctor speaks ok/warn/fail; the checklist speaks passed/warn/needs_action.
+func TestRunDoctorProbeMapsTheDoctorLadder(t *testing.T) {
+	for status, want := range map[string]string{"ok": "passed", "warn": "warn", "fail": "needs_action"} {
+		rt, cleanup := readinessRuntime(t)
+		rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[{"id":"tmpdir.writable","status":"`+status+`","summary":"a finding","advice":"do the thing"}]`)
+		checks, err := rt.runDoctorProbe(context.Background())
+		if err != nil {
+			cleanup()
+			t.Fatalf("probe(%s): %v", status, err)
+		}
+		if len(checks) != 1 || checks[0].State != want {
+			cleanup()
+			t.Fatalf("doctor %q mapped to %+v; want state %q", status, checks, want)
+		}
+		// A reader told what is wrong is owed what to do about it (R0.1). V2b
+		// appended the advice to the message as an interim; V4 moved it into a
+		// step, so the message stays the finding and the step stays the fix.
+		if want != "passed" && len(checks[0].Steps) == 0 {
+			cleanup()
+			t.Fatalf("doctor %q dropped its advice: %+v", status, checks[0])
+		}
+		cleanup()
+	}
+}
+
+func TestRunDoctorProbeChecksMediaOnTheRecordingWorkVolume(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	workVolume := t.TempDir()
+	rt.cfg.WorkRoot = filepath.Join(workVolume, "jobs")
+	bin := filepath.Join(t.TempDir(), "cassini")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '[{\"id\":\"workdir\",\"status\":\"ok\",\"summary\":\"%s|%s\"}]\\n' \"$(pwd)\" \"$*\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt.cfg.CassiniBin = bin
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := workVolume + "|doctor --target media --json"
+	if len(checks) != 1 || checks[0].Message != want {
+		t.Fatalf("doctor checked %v, want %q", checks, want)
+	}
+}
+
+func TestRunDoctorProbeDoesNotPassOperatorSecrets(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	for name := range operatorOnlySecretEnv() {
+		t.Setenv(name, "sensitive")
+	}
+	bin := filepath.Join(t.TempDir(), "cassini")
+	body := `#!/bin/sh
+if [ -n "${APP_SECRET+x}" ] || [ -n "${CASSINI_TALK_RECORDING_SECRET+x}" ] || [ -n "${TALK_RECORDING_SECRET+x}" ] || [ -n "${CASSINI_TALK_SIGNALING_INTERNAL_SECRET+x}" ] || [ -n "${CASSINI_OPERATOR_API_TOKEN+x}" ]; then
+  printf '[{"id":"tmpdir.writable","status":"fail","summary":"secret leaked"}]\n'
+else
+  printf '[{"id":"tmpdir.writable","status":"ok","summary":"operator secrets absent"}]\n'
+fi
+`
+	if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt.cfg.CassiniBin = bin
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checks) != 1 || checks[0].State != "passed" {
+		t.Fatalf("doctor received operator secrets: %+v", checks)
+	}
+}
+
+// A doctor this operator cannot read is not evidence the host is healthy.
+func TestRunDoctorProbeRefusesWhatItCannotUnderstand(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	for name, body := range map[string]string{
+		"unknown status": `[{"id":"ffmpeg","status":"probably-fine","summary":"x"}]`,
+		"no id":          `[{"id":"","status":"ok","summary":"x"}]`,
+		"empty array":    `[]`,
+		"not json":       `not json at all`,
+	} {
+		rt.cfg.CassiniBin = writeFakeDoctorBin(t, body)
+		if _, err := rt.runDoctorProbe(context.Background()); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// R2.3: a source that could not be reached is a finding about the check, never
+// a verdict about the thing it was going to check.
+func TestReadinessReportsUnreachableHostChecksAsAWarning(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "does-not-exist")
+	rt.checkRecordingReadiness(context.Background())
+
+	report := rt.readiness(context.Background())
+	found := false
+	for _, c := range report.Checks {
+		if c.Code == "host_checks_unavailable" {
+			found = true
+			if c.State != "warn" {
+				t.Errorf("unreachable host checks reported as %q, want warn", c.State)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("an unreachable doctor was reported as nothing at all")
+	}
+}
+
+func TestHealthGETUsesCachedMediaHostAndExplicitCheckRefreshesIt(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[{"id":"tmpdir.writable","status":"ok","summary":"temporary directory writable"}]`)
+	rt.checkRecordingReadiness(context.Background())
+
+	// Removing the binary proves GET does not invoke doctor again.
+	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "does-not-exist")
+	for i := 0; i < 2; i++ {
+		report := rt.readiness(context.Background())
+		found := false
+		for _, check := range report.Checks {
+			if check.ID == "host.tmpdir.writable" {
+				found = true
+				if check.State != "passed" || check.CheckedAt == "" {
+					t.Fatalf("cached host finding lost its verdict or age: %+v", check)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("GET did not return the cached host finding")
+		}
+	}
+
+	// The next explicit check refreshes the finding. The short coalescing
+	// window applies to rapid duplicate clicks, so age it for this test.
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.checkedAt = time.Time{}
+	rt.recordingSetup.mu.Unlock()
+	rt.checkRecordingReadiness(context.Background())
+	for _, check := range rt.readiness(context.Background()).Checks {
+		if check.Code == "host_checks_unavailable" {
+			if check.State != "warn" || check.CheckedAt == "" {
+				t.Fatalf("explicit refresh did not report inaccessible doctor: %+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("explicit check retained stale host pass")
+}
+
+// warn sits between passed and needs_action and must not collapse into either.
+func TestWorstReadinessStateOrdersByWhatItCostsToIgnore(t *testing.T) {
+	check := func(state string) readinessCheck { return readinessCheck{State: state} }
+	for _, tc := range []struct {
+		name   string
+		checks []readinessCheck
+		want   string
+	}{
+		{"all passing", []readinessCheck{check("passed"), check("passed")}, "passed"},
+		{"a warning is not a pass", []readinessCheck{check("passed"), check("warn")}, "warn"},
+		{"a warning is not a failure", []readinessCheck{check("warn")}, "warn"},
+		{"a failure outranks a warning", []readinessCheck{check("warn"), check("needs_action")}, "needs_action"},
+		{"a warning outranks nothing-established", []readinessCheck{check("not_verified"), check("warn")}, "warn"},
+		{"nothing-established outranks a pass", []readinessCheck{check("passed"), check("not_verified")}, "not_verified"},
+		{"order does not matter", []readinessCheck{check("needs_action"), check("passed"), check("warn")}, "needs_action"},
+		{"nothing at all", nil, "passed"},
+	} {
+		if got := worstReadinessState(tc.checks); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRecordingCapabilityStateExcludesOptionalProcessingAndArchive(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "storage", State: "passed"},
+		{ID: "talk.hpb", State: "passed"},
+		{ID: "processing", State: "warn", Code: "transcription_unavailable"},
+		{ID: "archive.search", State: "warn", Code: "search_coverage_partial"},
+	}
+	if got := recordingCapabilityState(checks); got != "passed" {
+		t.Fatalf("optional warnings made audio recording look broken: %s", got)
+	}
+	checks = append(checks, readinessCheck{ID: "host.ffmpeg", State: "needs_action"})
+	if got := recordingCapabilityState(checks); got != "needs_action" {
+		t.Fatalf("recording host failure was hidden: %s", got)
+	}
+}
+
+func writeFakeDoctorBin(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "cassini")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\ncat <<'JSON'\n"+body+"\nJSON\n"), 0o755); err != nil {
+		t.Fatalf("write fake doctor: %v", err)
+	}
+	return path
+}
+
+// The route table and the handler's own branching must name the same paths.
+//
+// They did not, briefly: the table was renamed to /health while the handler
+// still matched /readiness, which answers 405 for every request the mux sends
+// it. The mount test could not catch that — it checks that a path REACHES the
+// handler, not that the handler accepts it.
+func TestHealthHandlerAnswersAtTheRouteItIsRegisteredAt(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+
+	registered := []string{}
+	for _, route := range operatorAPIRoutes(rt, ExAppConfig{}) {
+		if route.pattern == "/health" || route.pattern == "/health/check" {
+			registered = append(registered, route.pattern)
+		}
+	}
+	if len(registered) != 2 {
+		t.Fatalf("health routes registered = %v, want /health and /health/check", registered)
+	}
+
+	rec := httptest.NewRecorder()
+	rt.readinessHandler(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /health = %d, want 200", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	rt.readinessHandler(rec, httptest.NewRequest(http.MethodPost, "/health/check", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("POST /health/check = %d, want 200", rec.Code)
+	}
+
+	// The old name is gone, not aliased: an alias is debt, and this route had
+	// one caller when it was renamed.
+	rec = httptest.NewRecorder()
+	rt.readinessHandler(rec, httptest.NewRequest(http.MethodGet, "/readiness", nil))
+	if rec.Code == http.StatusOK {
+		t.Error("the old /readiness path still answers")
+	}
+}
+
+// D-798 R0.1: a check that is not ok says what to do about it, and the remedy
+// is structured rather than buried in the sentence describing the fault.
+func TestNonOkChecksCarryARemedy(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	// An unreachable doctor, a broken setup store: both are faults whose remedy
+	// the app cannot perform on the reader's behalf.
+	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "absent")
+	rt.recordingSetup.loadFailed = true
+
+	report := rt.readiness(context.Background())
+	checked := 0
+	for _, c := range report.Checks {
+		if c.State == "passed" {
+			continue
+		}
+		// Every non-ok check offers SOMETHING: a button to press, or a step to
+		// follow. A check that says only what is broken is the failure this
+		// requirement exists to prevent.
+		if c.Action == "" && len(c.Steps) == 0 {
+			t.Errorf("%s (%s) says what is wrong and nothing about what to do", c.ID, c.Code)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no failing checks in a runtime rigged to fail")
+	}
+}
+
+// The checklist shows a deliberately small set of what doctor reports. doctor
+// itself keeps everything — it is a host diagnostic for a terminal — but free
+// space, ffmpeg and ffprobe produced rows in the panel that nobody acted on.
+func TestHostChecklistShowsOnlyTheRowsWorthActingOn(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
+		{"id":"workdir","status":"ok","summary":"working directory /work"},
+		{"id":"workdir.writable","status":"ok","summary":"working directory writable: /work"},
+		{"id":"workdir.space","status":"warn","summary":"low on space"},
+		{"id":"tmpdir.writable","status":"ok","summary":"temporary directory writable: /tmp"},
+		{"id":"tmpdir.space","status":"warn","summary":"low on space"},
+		{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
+		{"id":"ffprobe","status":"ok","summary":"ffprobe available"}
+	]`)
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	var ids []string
+	for _, c := range checks {
+		ids = append(ids, c.ID)
+	}
+	want := []string{"host.workdir", "host.tmpdir.writable"}
+	if len(ids) != len(want) {
+		t.Fatalf("checklist rows = %v; want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("checklist rows = %v; want %v", ids, want)
+		}
+	}
+}
+
+// workdir and workdir.writable are one fact to a reader. Collapsed, the row must
+// never read better than its worse half — a writable directory on a volume that
+// is not there is not a working recording volume.
+func TestCollapsedWorkdirRowKeepsTheWorseVerdict(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
+		{"id":"workdir","status":"ok","summary":"working directory /work"},
+		{"id":"workdir.writable","status":"fail","summary":"working directory not writable: /work","advice":"fix the mount"}
+	]`)
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if len(checks) != 1 || checks[0].ID != "host.workdir" {
+		t.Fatalf("want one collapsed host.workdir row, got %+v", checks)
+	}
+	if checks[0].State != "needs_action" {
+		t.Fatalf("collapsed row = %q; the failing half must win", checks[0].State)
+	}
+	if checks[0].Message != "working directory not writable: /work" {
+		t.Fatalf("collapsed row kept the wrong message: %q", checks[0].Message)
+	}
+}
+
+// doctor's advice is the remedy in prose. It belongs in a step, so the message
+// stays the finding.
+func TestDoctorAdviceBecomesAStepRatherThanPartOfTheMessage(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t,
+		`[{"id":"tmpdir.writable","status":"fail","summary":"out of space","advice":"free some space in /tmp"}]`)
+
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if len(checks) != 1 {
+		t.Fatalf("checks = %d, want 1", len(checks))
+	}
+	if got := checks[0].Message; got != "out of space" {
+		t.Errorf("message = %q; the advice should not be appended to the finding", got)
+	}
+	if len(checks[0].Steps) != 1 || checks[0].Steps[0].Label != "free some space in /tmp" {
+		t.Errorf("advice did not become a step: %+v", checks[0].Steps)
+	}
+}
+
+// A passing check needs no remedy, and offering one would be noise.
+func TestPassingChecksCarryNoSteps(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t,
+		`[{"id":"tmpdir.writable","status":"ok","summary":"temporary directory writable","advice":"this should not appear"}]`)
+
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if len(checks[0].Steps) != 0 {
+		t.Errorf("a passing check offered a remedy: %+v", checks[0].Steps)
+	}
 }

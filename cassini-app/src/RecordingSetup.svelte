@@ -1,11 +1,16 @@
 <script lang="ts">
   import DeploymentGuidance from './DeploymentGuidance.svelte';
   import { initialEnvironment } from './operator/deploymentGuidance';
-  import { onMount } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, isReprobedOnCheck, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
+  // Storage is configured in Publish pipeline, and the checks now live in their
+  // own Doctor panel — so this action has to move the reader there. It used to
+  // scrollIntoView an id that was on the same page; from here that id is not
+  // mounted at all, and the button would silently do nothing.
+  const dispatch = createEventDispatcher<{ openStorage: void }>();
   let report: RecordingReadiness | null = null;
   let secret = "";
   let room = "";
@@ -19,11 +24,15 @@
   let provisioningURL = "";
   let alive = true;
   let polling = false;
+  // True only while a re-probe is in flight, so a row can say it is being
+  // checked. Distinct from `busy`, which is also set by a plain read and by
+  // saving an edit — neither of which re-probes anything.
+  let checking = false;
   let reportVersion = 0;
 
   async function load(check = false) {
     if (busy || polling) return;
-    busy = true; error = "";
+    busy = true; checking = check; error = "";
     try {
       const next = check ? await operatorClient.checkReadiness() : await operatorClient.getReadiness();
       if (!alive) return;
@@ -32,7 +41,7 @@
       if (changed) notifySetupChanged();
       if (!room) room = next.test_room_url;
     } catch (e) { if (alive) { stale = true; error = e instanceof Error ? e.message : String(e); } }
-    finally { busy = false; }
+    finally { busy = false; checking = false; }
   }
   async function save(payload: RecordingSetupUpdate) {
     if (busy) return;
@@ -47,7 +56,7 @@
   }
   async function action(name: string, owner: string) {
     if (name === "recheck") { await load(true); return; }
-    if (name === "setup_storage") { document.getElementById("recording-storage")?.scrollIntoView({ behavior: "smooth" }); return; }
+    if (name === "setup_storage") { dispatch("openStorage"); return; }
     const closing = panel === name && panelOwner === owner;
     panelOwner = owner;
     panel = closing ? "" : name;
@@ -59,7 +68,16 @@
   }
   onMount(() => {
     alive = true;
-    void load(true);
+    // Read before re-probing. A POST /health/check runs the media doctor, the
+    // Talk probe and the storage preflight before it answers, and the list was
+    // hidden behind `{#if report}` for the whole of it — so the panel sat empty
+    // for seconds and then every row appeared at once. The GET is a read of
+    // findings the operator already holds (startup establishes them), so the
+    // checklist is on screen immediately and the re-probe updates it in place.
+    void (async () => {
+      await load(false);
+      if (alive) await load(true);
+    })();
     const unsubscribe = onSetupChanged(() => void load(true));
     const timer = window.setInterval(async () => {
       if (busy || polling || !report || document.hidden) return;
@@ -83,7 +101,7 @@
 <section class="rounded-box border border-base-300 bg-base-100 p-5 shadow-sm" aria-labelledby="recording-readiness-title" aria-busy={busy}>
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 id="recording-readiness-title" class="text-lg font-semibold {report && !stale ? toneClasses[reportTone(report)] : ''}">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
-    <button class="btn btn-sm" disabled={busy || polling} on:click={() => load(true)}>{busy ? "Checking…" : "Check again"}</button>
+    <button class="btn btn-sm" disabled={busy || polling} on:click={() => load(true)}>{busy ? "Checking…" : "Run all checks"}</button>
   </div>
   <p class="mt-2 text-sm text-base-content/70">Check the connection and recording storage, then verify a short recording through Talk.</p>
   {#if error}<p role="alert" class="mt-3 text-error">{error}</p>{/if}
@@ -93,9 +111,23 @@
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span></p>
+              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && isReprobedOnCheck(check.id)}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/60"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
-              {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50">{check.code === "test_playback" ? "Confirmed" : "Checked"} {new Date(check.checked_at).toLocaleString()}</p>{/if}
+              {#if (check.steps ?? []).length > 0}
+                <!-- Behind a disclosure, as SetupNotice does it: an
+                     administrator who wants to press a button never has to read
+                     a command line, and one who wants the commands can open
+                     them. -->
+                <details class="mt-2">
+                  <summary class="cursor-pointer text-xs text-base-content/70">What to do about it</summary>
+                  <ul class="mt-2 space-y-2">
+                    {#each check.steps ?? [] as step}
+                      <li class="text-xs text-base-content/80">{step.label}</li>
+                    {/each}
+                  </ul>
+                </details>
+              {/if}
+              {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
             </div>
             <div class="flex flex-wrap gap-2">
               {#each rowActions(check) as item}
@@ -163,6 +195,6 @@
         </li>
       {/each}
     </ul>
-    {#if report.test.playback_verified_at}<p class="mt-4 text-sm">Last test playback confirmed {new Date(report.test.playback_verified_at).toLocaleString()}. Connection checks expire after five minutes; test history does not replace current checks.</p>{/if}
+    {#if report.test.playback_verified_at}<p class="mt-4 text-sm">Last test playback confirmed {new Date(report.test.playback_verified_at).toLocaleString()}. Outbound connection findings show when they were checked; past playback does not verify the current handoff.</p>{/if}
   {/if}
 </section>

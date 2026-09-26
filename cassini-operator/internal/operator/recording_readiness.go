@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,12 +21,31 @@ var errRecordingSetup = errors.New("recording setup incomplete")
 const readinessTTL = 5 * time.Minute
 
 type readinessCheck struct {
-	ID        string `json:"id"`
-	State     string `json:"state"`
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Action    string `json:"action,omitempty"`
-	CheckedAt string `json:"checked_at,omitempty"`
+	ID      string `json:"id"`
+	State   string `json:"state"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Action is a verb the panel renders as a button. It answers "where do I go
+	// to fix this", and only inside the app.
+	Action string `json:"action,omitempty"`
+	// Steps are the remedy for a check that is not ok, in words (D-798 R0.1).
+	// Where the operator can perform the remedy, Repair below carries it and the
+	// panel offers a button instead.
+	//
+	// Action cannot carry this. Plenty of remedies are not a place to navigate
+	// to — they are a command to run on a host the app cannot reach, or a
+	// sentence naming what to look at. Leaving those in the message told a
+	// reader what was wrong and not what to do, which is the failure the
+	// existing SetupNotice was built to avoid for storage faults.
+	Steps     []readinessStep `json:"steps,omitempty"`
+	CheckedAt string          `json:"checked_at,omitempty"`
+}
+
+// readinessStep mirrors SetupNoticeStep, deliberately: the app already renders
+// that shape for storage faults, with the commands behind a disclosure so an
+// administrator who just wants the button never reads a command line.
+type readinessStep struct {
+	Label string `json:"label"`
 }
 
 type recordingSetupState struct {
@@ -44,6 +64,7 @@ type recordingSetup struct {
 	state      recordingSetupState
 	checks     []readinessCheck
 	checkedAt  time.Time
+	hostChecks []readinessCheck
 	inboundAt  time.Time
 	probe      func(context.Context, string) ([]readinessCheck, error)
 }
@@ -59,7 +80,9 @@ type readinessTest struct {
 }
 
 type readinessResponse struct {
-	State            string           `json:"state"`
+	State string `json:"state"`
+	// RecordingState excludes optional processing and archive findings.
+	RecordingState   string           `json:"recording_state"`
 	Checks           []readinessCheck `json:"checks"`
 	SecretConfigured bool             `json:"secret_configured"`
 	SecretSource     string           `json:"secret_source"`
@@ -214,8 +237,140 @@ func (rt *Runtime) runConnectionProbe(ctx context.Context, room string) ([]readi
 	return checks, nil
 }
 
+// Host checks, from the recorder (D-798 V2).
+//
+// Mirrors runConnectionProbe deliberately: same boundary, same discipline —
+// stderr discarded because upstream output is not ours to relay, states
+// validated on entry, an empty document treated as an error rather than as "no
+// problems found". The recorder's own host is the operator's host in the ExApp
+// image, so these findings describe the machine this API is served from.
+//
+// doctor speaks ok/warn/fail. Mapped here at the edge:
+//
+//	ok    -> passed
+//	warn  -> warn        the media host is impaired but still usable
+//	fail  -> needs_action
+//
+// This target checks the media host needed for recording and publication.
+// Optional speech-model readiness has its own processing row.
+func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error) {
+	bin := strings.TrimSpace(rt.cfg.CassiniBin)
+	if bin == "" {
+		return nil, errors.New("no recorder binary configured")
+	}
+	cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "media", "--json")
+	cmd.WaitDelay = 500 * time.Millisecond
+	// Doctor checks its working directory for writability and free space.
+	// Use the recording volume, which can differ from the image's CWD.
+	if rt.cfg.WorkRoot != "" {
+		cmd.Dir = filepath.Dir(rt.cfg.WorkRoot)
+	}
+	// Doctor checks media tools and disk space. It needs the recorder's runtime
+	// configuration, but not AppAPI impersonation or Talk credentials.
+	cmd.Env = withoutEnv(rt.childEnv(), operatorOnlySecretEnv())
+	cmd.Stderr = io.Discard
+	// A non-zero exit is how doctor reports `fail`, so the document is still
+	// what matters — read it whenever there is one.
+	out, err := cmd.Output()
+	if len(out) == 0 {
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("empty doctor output")
+	}
+	var reported []struct {
+		ID      string `json:"id"`
+		Status  string `json:"status"`
+		Summary string `json:"summary"`
+		Advice  string `json:"advice"`
+	}
+	if err := json.Unmarshal(out, &reported); err != nil {
+		return nil, err
+	}
+	if len(reported) == 0 {
+		return nil, errors.New("doctor reported no checks")
+	}
+	byID := make(map[string]readinessCheck, len(reported))
+	for _, r := range reported {
+		state := ""
+		switch r.Status {
+		case "ok":
+			state = "passed"
+		case "warn":
+			state = "warn"
+		case "fail":
+			state = "needs_action"
+		default:
+			// A doctor this operator does not understand is not evidence that
+			// the host is healthy.
+			return nil, fmt.Errorf("unknown doctor status %q", r.Status)
+		}
+		if strings.TrimSpace(r.ID) == "" {
+			return nil, errors.New("doctor check with no id")
+		}
+		check := readinessCheck{
+			ID:      "host." + r.ID,
+			State:   state,
+			Code:    r.ID,
+			Message: r.Summary,
+		}
+		// doctor's advice is already the remedy in prose. It becomes a step
+		// rather than being appended to the summary, so the message stays the
+		// finding and the step stays the fix.
+		if state != "passed" && strings.TrimSpace(r.Advice) != "" {
+			check.Steps = []readinessStep{{Label: r.Advice}}
+		}
+		byID[r.ID] = check
+	}
+	return hostChecklistRows(byID), nil
+}
+
+// hostChecklistRows is the small set the checklist shows, out of everything
+// doctor reports.
+//
+// doctor keeps all of it: it is a standalone host diagnostic and its text is a
+// shipped format, and ffmpeg or a filling disk is exactly what someone wants
+// from a terminal. The panel is a different audience with a different question
+// — "is there something here I can act on" — and free space, ffprobe and the
+// rest answered it with rows nobody ever acted on.
+//
+// workdir and workdir.writable are one fact to a reader: whether Cassini can
+// use its recording volume. They are reported separately because they fail for
+// different reasons, which matters to doctor and not to this list, so they
+// collapse into one row carrying the worse of the two.
+func hostChecklistRows(byID map[string]readinessCheck) []readinessCheck {
+	var rows []readinessCheck
+	if row, ok := worseOf(byID["workdir"], byID["workdir.writable"]); ok {
+		row.ID, row.Code = "host.workdir", "workdir"
+		rows = append(rows, row)
+	}
+	if row, ok := byID["tmpdir.writable"]; ok {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// worseOf returns whichever check reports the worse news, so a collapsed row
+// never reads better than its worst half. An absent check is not evidence of
+// health, so it simply yields to the one that is present.
+func worseOf(a, b readinessCheck) (readinessCheck, bool) {
+	switch {
+	case a.ID == "" && b.ID == "":
+		return readinessCheck{}, false
+	case a.ID == "":
+		return b, true
+	case b.ID == "":
+		return a, true
+	}
+	if readinessStateRank[b.State] > readinessStateRank[a.State] {
+		return b, true
+	}
+	return a, true
+}
+
 // Coalesce concurrent checks and put a ceiling on network/process work. GET
-// never launches a process. Every result expires, including successful ones.
+// reports cached host and connection findings; only startup and explicit
+// checks launch these probes. Aged findings keep their verdict and timestamp.
 func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	s := &rt.recordingSetup
 	s.checkMu.Lock()
@@ -236,6 +391,23 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
 		cfg.preflightDirectShares(ctx, rt.logger)
 	}
+	// The panel polls GET every five seconds. Probe the media host once per
+	// explicit check and retain its verdict with the time it was checked.
+	hostCtx, hostCancel := context.WithTimeout(ctx, 3*time.Second)
+	host, hostErr := rt.runDoctorProbe(hostCtx)
+	hostCancel()
+	hostAt := time.Now().UTC().Format(time.RFC3339)
+	if hostErr != nil {
+		host = []readinessCheck{{
+			ID: "host", State: "warn", Code: "host_checks_unavailable",
+			Message: "Cassini could not check disk space and ffmpeg on the recording volume.",
+			Action:  "recheck",
+			Steps:   []readinessStep{{Label: "Check the recorder's media tools and its recording volume, then run the checks again"}},
+		}}
+	}
+	for i := range host {
+		host[i].CheckedAt = hostAt
+	}
 	var checks []readinessCheck
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) {
 		var err error
@@ -249,6 +421,7 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 		checks[i].CheckedAt = now.Format(time.RFC3339)
 	}
 	s.mu.Lock()
+	s.hostChecks = host
 	// A configuration edit while the probe was running invalidates its answer.
 	if s.state.TestRoomURL == room {
 		s.checks = checks
@@ -270,45 +443,65 @@ func (rt *Runtime) transcriptionUnavailable(settings STTSettings, device string)
 }
 
 func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
+	return rt.readinessWithOptional(ctx, true)
+}
+
+// The public setup route needs only RecordingState. Optional transcription and
+// archive coverage cannot affect that verdict, so ordinary users do not run
+// those diagnostics whenever they open the app.
+func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bool) readinessResponse {
 	secret, source := rt.signalingSecret()
 	s := &rt.recordingSetup
 	s.mu.Lock()
 	rt.loadRecordingSetupLocked()
-	state, failed, checkedAt, inbound := s.state, s.loadFailed, s.checkedAt, s.inboundAt
+	state, failed, checkedAt := s.state, s.loadFailed, s.checkedAt
 	probes := append([]readinessCheck(nil), s.checks...)
+	host := append([]readinessCheck(nil), s.hostChecks...)
 	s.mu.Unlock()
 	resp := readinessResponse{State: "passed", Checks: []readinessCheck{}, SecretConfigured: secret != "", SecretSource: source, TestRoomURL: state.TestRoomURL}
 	add := func(id, state, code, message, action string) {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: id, State: state, Code: code, Message: message, Action: action})
 	}
+	// addWithSteps is for a remedy the app cannot perform on the reader's
+	// behalf: a command on a host it cannot reach, or a thing to go and look at.
+	addWithSteps := func(id, state, code, message, action string, steps ...readinessStep) {
+		resp.Checks = append(resp.Checks, readinessCheck{
+			ID: id, State: state, Code: code, Message: message, Action: action, Steps: steps,
+		})
+	}
 	if failed {
-		add("configuration", "needs_action", "setup_store_unreadable", "Cassini could not read its saved recording setup. Check the persistent volume and restore recording-setup.json.", "repair_configuration")
+		addWithSteps("configuration", "needs_action", "setup_store_unreadable",
+			"Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.",
+			"repair_configuration",
+			readinessStep{Label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing"},
+			readinessStep{Label: "Disable and re-enable Cassini in Nextcloud, which re-runs its setup"})
 	}
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
-	storageChecked, storageTimeErr := time.Parse(time.RFC3339, access.CheckedAt)
+	// Parsed only to tell "a check has run" from "none has". How OLD it is rides
+	// on CheckedAt in the response, not on a branch here.
+	_, storageTimeErr := time.Parse(time.RFC3339, access.CheckedAt)
 	if !access.Applicable {
 		add("storage", "not_verified", "storage_not_probed", "The Nextcloud storage check does not apply to this publish destination. Verify storage with a test recording.", "test_recording")
 	} else if ncAccessSubstrate.recordingRefusal() != "" {
 		add("storage", "needs_action", "storage_admission_blocked", "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", "setup_storage")
-	} else if storageTimeErr != nil || time.Since(storageChecked) > readinessTTL {
-		add("storage", "not_verified", "storage_check_expired", "There is no recent Nextcloud storage check. Check again to refresh it.", "recheck")
+	} else if storageTimeErr != nil {
+		// No parseable timestamp means no storage check has ever run here — an
+		// absence, not a verdict (D-798). Age is a separate matter: the branches
+		// below report what the last check FOUND and carry CheckedAt so a reader
+		// can see how old it is. Expiring a passing check into "not verified"
+		// made the resting state of an idle panel indistinguishable from a
+		// problem, because nothing re-probes on its own (readiness is a read;
+		// only checkRecordingReadiness probes).
+		//
+		// Safe because this panel reports rather than authorises: admission is
+		// decided separately by ncAccessSubstrate.recordingRefusal(), checked
+		// above and not bounded by this TTL.
+		add("storage", "not_verified", "storage_not_checked", "Nextcloud storage has not been checked yet. Check again to run it.", "recheck")
 	} else if access.OK {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "The Nextcloud storage preflight passed. A test recording verifies publication and playback.", CheckedAt: access.CheckedAt})
 	} else {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "The Nextcloud storage preflight did not pass. Review the storage details below.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
-	settings := rt.currentSettings()
-	device := rt.effectiveFor(settings).Device
-	if !settings.TranscriptionEnabled {
-		add("processing", "passed", "audio_only", "Transcription is off. Recordings can be published and played as audio.", "")
-	} else if detail := rt.transcriptionUnavailable(settings, device); detail != "" {
-		// Recording still works, so this stays passed until the health ladder
-		// (D-798) gives optional features their own warning state.
-		add("processing", "passed", "transcription_unavailable", "Recordings keep their audio, but transcription cannot run: "+detail, "settings")
-	} else {
-		add("processing", "passed", "processing_ready", "Speech-processing prerequisites passed for "+device+".", "")
-	}
-
 	if secret == "" && !failed {
 		add("talk.authentication", "needs_action", "internal_secret_missing", "Enter the internal secret from your Talk signaling server.", "configure_talk")
 	}
@@ -317,32 +510,68 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	}
 	if !rt.validTestRoom(state.TestRoomURL) {
 		add("talk.discovery", "not_verified", "test_room_required", "Choose a dedicated Talk room to verify the connection without recording it.", "test_room")
-	} else if time.Since(checkedAt) > readinessTTL || len(probes) == 0 {
-		add("talk.discovery", "not_verified", "connection_not_verified", "Check the Talk connection. Previous results have expired or this process restarted.", "recheck")
+	} else if len(probes) == 0 {
+		// The message this replaces named both cases — "Previous results have
+		// expired OR this process restarted" — while treating them as one. They
+		// are different facts: no probe result at all is an absence, whereas an
+		// aged one is a finding that happens to be old. Probe results are
+		// in-memory only, so a restart genuinely leaves nothing established.
+		add("talk.discovery", "not_verified", "connection_not_checked", "The Talk connection has not been checked yet. Check again to run it.", "recheck")
 	} else {
-		resp.Checks = append(resp.Checks, probes...)
+		// Stamped with when the probe ran, so its age travels with the verdict
+		// instead of replacing it.
+		probedAt := checkedAt.UTC().Format(time.RFC3339)
+		for _, probe := range probes {
+			probe.CheckedAt = probedAt
+			resp.Checks = append(resp.Checks, probe)
+		}
 	}
-	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
-		// The actionable handoff row above already describes the missing credential.
-	} else if !inbound.IsZero() && time.Since(inbound) < readinessTTL {
-		resp.Checks = append(resp.Checks, readinessCheck{ID: "talk.handoff", State: "passed", Code: "talk_request_received", Message: "Talk recently sent an authenticated recording request to Cassini.", CheckedAt: inbound.UTC().Format(time.RFC3339)})
-	} else {
-		add("talk.handoff", "not_verified", "handoff_not_verified", "No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.", "test_recording")
+	// Host findings lead so a full disk can explain a storage failure. GET
+	// never launches the media doctor subprocess.
+	if len(host) == 0 {
+		host = []readinessCheck{{ID: "host", State: "not_verified", Code: "host_not_checked", Message: "The recording host has not been checked yet.", Action: "recheck"}}
 	}
+	resp.Checks = append(host, resp.Checks...)
 	resp.Test = rt.readinessTest(ctx, state)
-	if resp.Test.PlaybackVerifiedAt == "" {
-		add("test", "not_verified", "test_not_verified", "Record a short test through Talk, then open it and confirm playback.", "test_recording")
-	}
-	for _, c := range resp.Checks {
-		if c.State == "needs_action" {
-			resp.State = "needs_action"
-			break
-		}
-		if c.State != "passed" {
-			resp.State = "not_verified"
-		}
-	}
+	resp.State = worstReadinessState(resp.Checks)
+	resp.RecordingState = recordingCapabilityState(resp.Checks)
 	return resp
+}
+
+// Optional processing and archive coverage deserve their own findings, but
+// cannot turn a working audio recorder into a reported recording failure.
+func recordingCapabilityState(checks []readinessCheck) string {
+	core := make([]readinessCheck, 0, len(checks))
+	for _, check := range checks {
+		if check.ID == "processing" || strings.HasPrefix(check.ID, "archive.") {
+			continue
+		}
+		core = append(core, check)
+	}
+	return worstReadinessState(core)
+}
+
+// worstReadinessState is the instance's worst news, ordered by how much it
+// costs to ignore.
+//
+// `warn` sits between passed and needs_action: something is impaired but the
+// thing still works, so it must neither be swallowed into "passed" nor promoted
+// into a blocking failure. `not_verified` ranks below warn — nothing has been
+// established, which is not the same as having found a problem.
+// readinessStateRank orders the states by how much it costs to ignore them.
+// One table, because two copies would eventually disagree about whether warn
+// outranks not_verified.
+var readinessStateRank = map[string]int{"passed": 0, "not_verified": 1, "warn": 2, "needs_action": 3}
+
+func worstReadinessState(checks []readinessCheck) string {
+	worst := "passed"
+	rank := readinessStateRank
+	for _, c := range checks {
+		if rank[c.State] > rank[worst] {
+			worst = c.State
+		}
+	}
+	return worst
 }
 
 func (rt *Runtime) readinessTest(ctx context.Context, setup recordingSetupState) readinessTest {
@@ -382,11 +611,11 @@ func (rt *Runtime) readinessTest(ctx context.Context, setup recordingSetupState)
 func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	switch {
-	case r.URL.Path == "/readiness" && r.Method == http.MethodGet:
-	case r.URL.Path == "/readiness/check" && r.Method == http.MethodPost:
+	case r.URL.Path == "/health" && r.Method == http.MethodGet:
+	case r.URL.Path == "/health/check" && r.Method == http.MethodPost:
 		rt.checkRecordingReadiness(r.Context())
 	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported readiness operation")
+		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported health operation")
 		return
 	}
 	writeJSON(w, http.StatusOK, rt.readiness(r.Context()))
@@ -512,9 +741,9 @@ func (rt *Runtime) recordingConfigurationRefusal(req TriggerRequest) string {
 // Public callers receive one coarse state. No network calls, account names,
 // room URLs, secret source, job ids, or diagnostic details leave this boundary.
 func (rt *Runtime) publicRecordingState(ctx context.Context) string {
-	// Use the same aggregate as the admin report, including storage, compute,
-	// and the current published test job. Return only the coarse state.
+	// An optional model or an incomplete search index cannot make playable
+	// audio appear broken to everyone who opens the app.
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	return rt.readiness(ctx).State
+	return rt.readinessWithOptional(ctx, false).RecordingState
 }

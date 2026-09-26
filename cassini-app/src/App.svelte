@@ -211,7 +211,10 @@
       return;
     }
     const url = new URL(window.location.href);
-    url.hash = applyPanel(applySurface(window.location.hash, "operator"), "pipeline").replace(/^#/, "");
+    // The checks live in Doctor now. This button exists because the banner said
+    // recording is broken, so it has to land on the screen that says what is
+    // broken — not on the panel that used to host it.
+    url.hash = applyPanel(applySurface(window.location.hash, "operator"), "doctor").replace(/^#/, "");
     window.history.pushState({}, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }

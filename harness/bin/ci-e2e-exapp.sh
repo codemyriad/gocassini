@@ -194,7 +194,7 @@ assert_status "GET /viewer/<spa-route> (SPA fallback)" 200 "${got}"
 
 # These checks exercise transport authentication. ADMIN-vs-USER authorization
 # is enforced by the real AppAPI proxy and tested by the installed vertical.
-assert_status "GET readiness without AppAPI authentication" 401 "$(curl_with_headers GET /operator/readiness)"
+assert_status "GET health without AppAPI authentication" 401 "$(curl_with_headers GET /operator/health)"
 assert_status "PUT Talk setup without AppAPI authentication" 401 "$(curl_with_headers PUT /operator/talk/setup)"
 body=$(curl -fsS -X PUT -H "$(auth_header admin)" \
   -H "EX-APP-ID: ${APP_ID}" -H "EX-APP-VERSION: ${APP_VERSION}" \
@@ -233,7 +233,7 @@ assert_status "GET /operator/jobs after restart" 200 "${got}"
 
 body=$(curl -fsS -H "$(auth_header admin)" \
   -H "EX-APP-ID: ${APP_ID}" -H "EX-APP-VERSION: ${APP_VERSION}" \
-  "http://127.0.0.1:${PORT}/operator/readiness")
+  "http://127.0.0.1:${PORT}/operator/health")
 jq -e '.secret_configured == true and .secret_source == "setup" and all(.checks[]; .id != "talk.handoff" or .state != "passed")' <<<"$body" >/dev/null
 log 'OK   saved internal credential survives restart without inventing handoff evidence'
 

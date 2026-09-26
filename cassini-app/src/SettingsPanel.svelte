@@ -37,7 +37,6 @@
   // same reason "Who can see recordings" does: it is a page's worth of state
   // that applies to the pipeline below it, and it is admin-only, which this
   // panel already is.
-  import RecordingSetup from "./RecordingSetup.svelte";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
@@ -496,7 +495,6 @@
   </header>
 
 {#if operatorClient}
-  <RecordingSetup {operatorClient} />
 {/if}
 
 <!-- The readiness checks offer a "Set up storage" action that scrolls here,

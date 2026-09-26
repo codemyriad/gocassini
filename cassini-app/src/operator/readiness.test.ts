@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, isReprobedOnCheck, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -10,9 +10,49 @@ describe("recording setup", () => {
   report.checks = [{ id: "talk.hpb", state: "needs_action", code: "hpb_missing", message: "missing" }];
   expect(readinessTitle(report)).toBe("One recording check needs attention");
  });
+ it("marks as checking only the rows a re-probe actually re-runs", () => {
+  // The panel shows a spinner on these while POST /health/check is in flight.
+  for (const id of ["storage", "host", "host.disk", "talk.discovery", "talk.hpb"]) {
+   expect(isReprobedOnCheck(id)).toBe(true);
+  }
+  // These are read from saved configuration and are already true when the
+  // panel renders. A spinner on them would be waiting for nothing.
+  for (const id of ["configuration", "talk.authentication", "talk.handoff", "archive.search"]) {
+   expect(isReprobedOnCheck(id)).toBe(false);
+  }
+ });
  it("preserves unknown state on older servers", () => {
   expect(readSetupHealth({ok:true,state:"provisioned"})?.recordingState).toBeUndefined();
   expect(readSetupHealth({ok:true,state:"provisioned",recording_state:"needs_action"})?.recordingState).toBe("needs_action");
+  expect(readSetupHealth({ok:true,state:"provisioned",recording_state:"warn"})?.recordingState).toBe("warn");
+ });
+ it("names optional transcription separately from audio recording", () => {
+  const report = {
+   state: "warn", recording_state: "passed",
+   checks: [{ id: "processing", state: "warn", code: "transcription_unavailable", message: "Model unavailable" }],
+  } as RecordingReadiness;
+  expect(readinessTitle(report)).toBe("Recording ready; transcription needs attention");
+  report.recording_state = "not_verified";
+  expect(readinessTitle(report)).toBe("Recording setup needs verification; transcription needs attention");
+  report.recording_state = "needs_action";
+  report.checks.push({ id: "storage", state: "needs_action", code: "storage_incomplete", message: "" });
+  expect(readinessTitle(report)).toBe("One recording check needs attention");
+  report.recording_state = "warn";
+  expect(readinessTitle(report)).toBe("Recording checks need attention");
+ });
+ it("names archive warnings and unverified coverage beside ready audio", () => {
+  const report = {
+   state: "warn", recording_state: "passed",
+   checks: [{ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "" }],
+  } as RecordingReadiness;
+  expect(readinessTitle(report)).toBe("Recording ready; archive search needs attention");
+  report.checks.unshift({ id: "processing", state: "warn", code: "transcription_unavailable", message: "" });
+  expect(readinessTitle(report)).toBe("Recording ready; transcription and archive search need attention");
+  report.checks[1].state = "not_verified";
+  expect(readinessTitle(report)).toBe("Recording ready; transcription needs attention; archive search coverage not verified");
+  report.checks.shift();
+  report.state = "not_verified";
+  expect(readinessTitle(report)).toBe("Recording ready; archive search coverage not verified");
  });
 });
 
@@ -51,10 +91,9 @@ describe("check severity", () => {
   });
 
   // "Nobody looked" is not "impaired". Folding them together would make one
-  // colour mean two different facts, and the operator already downgrades
-  // expired evidence to not_verified rather than to a weaker pass.
+  // colour mean two different facts. Aged findings show their time separately.
   it("is neutral, not a warning, for a check nobody has run", () => {
-    expect(checkTone(check({ state: "not_verified", code: "storage_check_expired" }))).toBe("neutral");
+    expect(checkTone(check({ state: "not_verified", code: "storage_not_checked" }))).toBe("neutral");
   });
 
   // These two look like a middle state and are not. "Configured" claims a
@@ -91,5 +130,89 @@ describe("the instance's worst news", () => {
   it("counts a synthesised row that has not been verified", () => {
     const noPlayback = { ...report([]), test: { state: "idle", published: false } };
     expect(reportTone(noPlayback)).toBe("neutral");
+  });
+});
+
+// Freshness travels beside the verdict rather than inside it (D-798 V1).
+describe("how old a check is", () => {
+  const now = new Date("2026-09-22T12:00:00Z");
+  const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
+
+  it("says just now inside the first minute", () => {
+    expect(formatAge(ago(5_000), now)).toBe("just now");
+  });
+
+  it("counts minutes, hours and days", () => {
+    expect(formatAge(ago(6 * 60_000), now)).toBe("6 minutes ago");
+    expect(formatAge(ago(3 * 3_600_000), now)).toBe("3 hours ago");
+    expect(formatAge(ago(2 * 86_400_000), now)).toBe("2 days ago");
+  });
+
+  it("does not say 'minutes' for one", () => {
+    expect(formatAge(ago(60_000), now)).toBe("1 minute ago");
+    expect(formatAge(ago(3_600_000), now)).toBe("1 hour ago");
+  });
+
+  // A clock skewed forward must not produce "in 3 minutes"; the reader only
+  // needs to know the check is current.
+  it("does not go negative on a skewed clock", () => {
+    expect(formatAge(new Date(now.getTime() + 180_000).toISOString(), now)).toBe("just now");
+  });
+
+  it("says nothing it cannot parse", () => {
+    expect(formatAge("", now)).toBe("");
+    expect(formatAge("not a date", now)).toBe("");
+  });
+});
+
+// D-798 V2: amber exists now because the host checks can legitimately produce
+// one — a model that downloads on first use, a disk getting full.
+describe("the warning tone, now that something can produce it", () => {
+  const check = (over: Partial<ReadinessCheck> = {}): ReadinessCheck => ({
+    id: "host.model.cache", state: "warn", code: "model.cache", message: "", ...over,
+  });
+
+  it("is amber for a check that is impaired but working", () => {
+    expect(checkTone(check())).toBe("warning");
+  });
+
+  it("still distinguishes the other three", () => {
+    expect(checkTone(check({ state: "passed" }))).toBe("success");
+    expect(checkTone(check({ state: "needs_action" }))).toBe("error");
+    expect(checkTone(check({ state: "not_verified" }))).toBe("neutral");
+  });
+
+  it("orders the heading by what it costs to ignore", () => {
+    const report = (states: ReadinessCheck["state"][]): RecordingReadiness => ({
+      state: "passed",
+      checks: states.map((s, i) => ({ id: `c${i}`, state: s, code: "x", message: "" })),
+      secret_configured: true, secret_source: "env", test_room_url: "",
+      test: { state: "idle", published: false, playback_verified_at: "2026-09-01T00:00:00Z" },
+    });
+    expect(reportTone(report(["passed", "warn"]))).toBe("warning");
+    expect(reportTone(report(["warn", "needs_action"]))).toBe("error");
+    // A warning is louder than something nobody has run.
+    expect(reportTone(report(["not_verified", "warn"]))).toBe("warning");
+  });
+});
+
+// D-798 R0.1: a reader told what is wrong is owed what to do about it.
+describe("what to do about a check", () => {
+  const check = (over: Partial<ReadinessCheck> = {}): ReadinessCheck => ({
+    id: "configuration", state: "needs_action", code: "setup_store_unreadable", message: "", ...over,
+  });
+
+  it("carries its remedy as words, never a command to copy", () => {
+    // Steps are words only now. A remedy the operator can perform arrives as
+    // `repair` and becomes a button, so no step carries a command to copy.
+    expect(check({ steps: [{ label: "do a thing" }] }).steps?.[0].label).toBe("do a thing");
+    expect(check({ steps: [] }).steps).toEqual([]);
+  });
+
+  // A row with no remedy offers no button: "Fix this" with nothing behind it is
+  // worse than saying nothing.
+  it("survives a check from an operator that sends no steps", () => {
+    expect(check().steps).toBeUndefined();
+    expect(check({ steps: undefined }).steps).toBeUndefined();
   });
 });

@@ -326,9 +326,10 @@ func (rt *Runtime) indexFromLocalBundle(
 	}
 	rows := searchRowsFromSegments(bundleTranscriptSegments(transcript))
 	if len(rows) == 0 {
-		// The bundle parsed and holds no speech. The archive would say the same,
-		// so this is settled rather than worth a download.
-		outcome, reason := rt.recordUnavailable(ctx, opusName, searchBackfillReasonNoSegments)
+		// The verified local bundle has the producer's processing outcome.
+		// Empty words may be silence, disabled transcription or a failure; the
+		// archived transcript alone cannot distinguish those cases.
+		outcome, reason := rt.recordUnavailable(ctx, opusName, emptyBundleTranscriptReason(canonicalMeetingPath(rt.cfg.WorkRoot, target.JobID)))
 		return outcome, reason, true
 	}
 	if err := rt.searchStore.ReplaceMeeting(ctx, opusName, delivered, searchRowSourceSegments, rows); err != nil {

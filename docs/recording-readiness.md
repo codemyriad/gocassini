@@ -1,9 +1,9 @@
 # Get from installation to a verified recording
 
-Cassini → Operator → Publish pipeline checks recording storage, speech
-processing, Talk connectivity,
-HPB authentication, and the recording handoff. Existing recordings remain
-available when the recording connection needs attention.
+Cassini → Operator → Publish pipeline checks recording storage, the media host,
+Talk connectivity, HPB authentication, and the recording handoff. It reports
+optional transcription and archive search coverage separately. Existing
+recordings remain available when the recording connection needs attention.
 
 ## Before installation
 
@@ -29,7 +29,7 @@ manifest. Check the App Store for current release availability.
 
 When upgrading an existing registration to this feature, refresh its manifest
 routes using the documented [update procedure](exapp-update-constraints.md).
-The new ADMIN routes are `/operator/readiness`, `/operator/readiness/check`, and
+The new ADMIN routes are `/operator/health`, `/operator/health/check`, and
 `/operator/talk/setup`. Deploying only a new container image may leave these
 routes inaccessible until registration metadata is refreshed.
 
@@ -115,17 +115,21 @@ Talk,
 check the selected room, moderator permission, and recording-backend handoff.
 Do not prepare another test while your intended test is already recording.
 
-Live check results expire after five minutes and are discarded on restart.
-The last test's playback confirmation is retained as historical evidence while
-its published job remains in Cassini. Removing that job removes the confirmation
-from the readiness report. Storage preflight results also expire, but a local storage admission block stays
-actionable until cleared. A destination
-not covered by the Nextcloud preflight is reported as unverified. Speech
-processing checks establish prerequisites, not a successful transcription.
-**Check again** refreshes outbound connectivity and storage. It cannot verify
-that Talk can still call Cassini: the expired incoming-connection check offers
-**Test a recording**, while the previous playback confirmation remains visible. An expired result is
-**Not verified**, never a green pass or a permanent veto on recording.
+Outbound Talk and nonblocking storage preflight results retain their last
+verdict and show when they were checked, even after five minutes. An older pass
+shows what worked at that time, not proof of the current connection. **Check
+again** refreshes these checks. Outbound Talk results live in memory and are
+lost on ExApp restart; then the connection is **Not verified** until checked
+again. A local storage admission block is reported separately and stays
+actionable until cleared. A destination not covered by the Nextcloud preflight
+is reported as unverified. Speech processing checks establish prerequisites,
+not a successful transcription.
+
+**Check again** cannot verify that Talk can still call Cassini. A real incoming
+recording request verifies that handoff for five minutes; afterward the handoff
+is **Not verified** and offers **Test a recording**. The last test's playback
+confirmation remains visible as historical evidence while its published job
+remains in Cassini. Removing that job removes the confirmation from the report.
 
 ## AIO restart persistence
 
@@ -194,11 +198,15 @@ disabled, restore that choice through Talk's administration settings.
 
 ## API and testing
 
-- `GET /operator/readiness`: current local checks and cached network evidence;
-  returns 200 even when setup needs action, with `Cache-Control: no-store`.
-- `POST /operator/readiness/check`: bounded, coalesced checks, using the recorder's
-  `cassini talk-check` command. That command shares discovery and hello/auth
-  protocol implementations with live recording and produces redacted JSON.
+- `GET /operator/health`: media-host, recording, optional transcription, and
+  archive search checks, using cached host, network, and coverage findings.
+  `recording_state` covers recording and playback; aggregate `state` also
+  includes optional processing and archive coverage.
+  It returns 200 even when setup needs action, with `Cache-Control: no-store`.
+- `POST /operator/health/check`: bounded, coalesced checks, using the recorder's
+  `cassini talk-check` and `cassini doctor --target media --json` commands.
+  The former shares discovery and hello/auth protocol implementations with
+  live recording and produces redacted JSON.
 - `PUT /operator/talk/setup`: save an internal secret or test room, prepare a
   test, or confirm playback of the matching published job. ADMIN only.
 - `GET /operator/setup`: adds only a coarse `recording_state` for ordinary
@@ -206,11 +214,20 @@ disabled, restore that choice through Talk's administration settings.
 
 Basic health and archive access are independent of recording readiness. Missing
 recording credentials produce an actionable recording refusal, not a container
-restart loop. CPU readiness follows the same device/model policy as processing.
+restart loop. Transcription readiness follows the selected speech model;
+recording and audio playback can work without it.
+
+The search check compares index rows with a separately observed recordings
+archive. It does not claim complete coverage from the index alone, because
+older recordings can have no index row. Completed silence and intentionally
+audio-only recordings are named without treating them as repairable indexing
+failures. The **backfill-search** command is offered for missing index rows or
+unverified bundles; missing or failed transcription points to model and bundle
+diagnosis instead.
 
 Tests cover HTTP/WebSocket authentication with no room joins, missing HPB,
 incorrect credentials, secret persistence/redaction, trusted diagnostic targets,
-coalescing and expiry, configuration edits, Talk-only test selection, publication
+coalescing and age reporting, configuration edits, Talk-only test selection, publication
 and playback confirmation, and restart invalidation of live evidence.
 
 The installed-stack check is `IMAGE_REF=<built-image>
@@ -269,7 +286,6 @@ Diagnostic network findings are advisory and do not reject new recordings: an
 administrator may have repaired Nextcloud or HPB since the check. The recorder
 validates the actual connection. Missing local credentials and storage admission
 requirements still refuse recording early. The ordinary-user attention banner
-reflects current actionable evidence only; its disappearance after evidence
-expires does not establish that a problem was repaired. The checks report that
-state
-as not verified.
+can reflect the last network finding even when it is old; its age is visible in
+the administrator's checks. A restart discards that network finding, so the
+banner's disappearance does not establish that the problem was repaired.

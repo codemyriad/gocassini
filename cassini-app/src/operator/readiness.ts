@@ -1,14 +1,53 @@
-export type CheckState = "passed" | "needs_action" | "not_verified";
+// `warn` arrived with the host checks (D-798 V2): something is impaired but
+// audio recording remains possible, such as a disk getting low on space or an
+// enabled optional transcription model being unavailable.
+export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
+// One thing to do about a check that is not ok. Mirrors SetupNoticeStep, which
+// already renders this shape for storage faults: commands behind a disclosure,
+// so an administrator who just wants the button never reads a command line.
+// A remedy in words. No commands: this panel is ADMIN-only and the operator can
+// do the work, so where a repair is possible the row carries `repair` and the
+// panel renders a button (review 2026-09-25). Printing a shell line asked a
+// reader to find a terminal and the right container to trigger something the
+// process showing them the message could simply do — and how `occ` is invoked
+// varies by deployment, so the instruction was a guess as often as not.
+export interface ReadinessStep {
+  label: string;
+}
+
 export interface ReadinessCheck {
   id: string;
   state: CheckState;
   code: string;
   message: string;
   action?: string;
+  // The remedy, for a check that is not ok (D-798 R0.1). Distinct from
+  // `action`: plenty of remedies are not a place to navigate to, but a command
+  // to run on a host this app cannot reach.
+  steps?: ReadinessStep[];
   checked_at?: string;
 }
+
+// Which rows a full check actually re-probes. The rest are read from saved
+// configuration and are already true the moment the panel renders, so marking
+// them "checking" would be theatre — and a progress indicator that lies about
+// what it is waiting for is worse than none.
+//
+// Keep in step with checkRecordingReadiness: it runs the media doctor, the Talk
+// connection probe and the storage preflight, and invalidates archive coverage.
+export function isReprobedOnCheck(id: string): boolean {
+  return id === "storage"
+    || id === "host"
+    || id.startsWith("host.")
+    || id === "talk.discovery"
+    || id === "talk.hpb";
+}
+
+
 export interface RecordingReadiness {
   state: CheckState;
+  // Audio recording remains available when optional processing warns.
+  recording_state?: CheckState;
   checks: ReadinessCheck[];
   secret_configured: boolean;
   secret_source: "env" | "setup" | "unset";
@@ -32,20 +71,40 @@ export interface RecordingSetupUpdate {
 export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
-  processing: "Speech processing",
   "talk.authentication": "Internal credential",
   "talk.discovery": "Talk connection",
   "talk.hpb": "High-performance backend",
-  "talk.handoff": "Recording connection",
-  test: "Test recording",
+  // Only appears when the credential could not be provisioned. The row used to
+  // double as "has Talk called us lately", which was inherently historical and
+  // could never legitimately read green, so that half is gone.
+  "talk.handoff": "Recording credential",
+  host: "Recording host",
+  "host.workdir": "Recording volume",
+  "host.tmpdir.writable": "Temporary space",
 };
 export const stateLabels: Record<CheckState, string> = {
-  passed: "Passed", needs_action: "Needs action", not_verified: "Not verified",
+  passed: "Passed", warn: "Needs attention", needs_action: "Needs action", not_verified: "Not verified",
 };
 export function readinessTitle(report: RecordingReadiness): string {
-  const count = report.checks.filter(c => c.state === "needs_action").length;
-  if (count) return `${count === 1 ? "One recording check needs" : `${count} recording checks need`} attention`;
-  if (report.state !== "passed") return "Recording setup needs verification";
+  const recordingState = report.recording_state ?? report.state;
+  const optional = (id: string) => id === "processing" || id.startsWith("archive.");
+  const transcriptionWarns = report.checks.some(c => c.id === "processing" && c.state === "warn");
+  const archiveWarns = report.checks.some(c => c.id.startsWith("archive.") && c.state === "warn");
+  const archiveUnknown = report.checks.some(c => c.id.startsWith("archive.") && c.state === "not_verified");
+  const warning = transcriptionWarns && archiveWarns
+    ? "transcription and archive search need attention"
+    : transcriptionWarns ? "transcription needs attention" : archiveWarns ? "archive search needs attention" : "";
+  const optionalDetail = [warning, archiveUnknown ? "archive search coverage not verified" : ""].filter(Boolean).join("; ");
+  if (recordingState === "needs_action") {
+    const count = report.checks.filter(c => c.state === "needs_action" &&
+      (report.recording_state === undefined || !optional(c.id))).length;
+    return count ? `${count === 1 ? "One recording check needs" : `${count} recording checks need`} attention` : "Recording setup needs attention";
+  }
+  if (recordingState === "not_verified") {
+    return optionalDetail ? `Recording setup needs verification; ${optionalDetail}` : "Recording setup needs verification";
+  }
+  if (recordingState === "warn") return "Recording checks need attention";
+  if (optionalDetail) return `Recording ready; ${optionalDetail}`;
   return "Recording checks passed";
 }
 // Ignore check timestamps and job progress: the shell only needs health changes.
@@ -86,11 +145,9 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
 // beside it on purpose — the state word is always rendered, so nothing here is
 // the only carrier of meaning for a reader who cannot see the difference.
 //
-// THREE tones, and deliberately no amber. Every check here answers one binary
-// question — will recording work? — and the operator already resolves the
-// middle ground itself: evidence older than its TTL is downgraded to
-// not_verified at the source (recording_readiness.go) rather than reported as a
-// weaker pass. So there is no state left that means "working but impaired".
+// Host checks, optional processing and archive coverage can warn without
+// blocking audio.
+// An aged connection finding keeps its verdict and exposes its time separately.
 //
 // The two rows readinessRows synthesises look like candidates and are not.
 // "Configured" claims only that a secret is saved, which is true and verified;
@@ -99,21 +156,23 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
 // inherently historical, so amber would be its permanent ceiling. A colour a
 // healthy install can never clear is one people learn to ignore.
 //
-// Amber belongs to coverage instead — "search can read 129 of 138 meetings" is
-// working-but-incomplete, which is a different question from readiness and has
-// its own numbers. It is not represented here yet.
-export type CheckTone = "success" | "error" | "neutral";
+export type CheckTone = "success" | "warning" | "error" | "neutral";
 
 export function checkTone(check: ReadinessCheck): CheckTone {
   if (check.state === "needs_action") return "error";
-  // Nobody looked, or the evidence expired. NOT a fault: a colour that means
-  // both "impaired" and "unknown" means neither.
+  // Impaired but working. #322 deliberately shipped no amber because nothing
+  // could legitimately produce one; the host checks can, so it exists now for
+  // a real producer rather than an invented one.
+  if (check.state === "warn") return "warning";
+  // Nobody looked, or the incoming handoff is no longer recent. NOT a fault:
+  // a colour that means both "impaired" and "unknown" means neither.
   if (check.state === "not_verified") return "neutral";
   return "success";
 }
 
 export const toneClasses: Record<CheckTone, string> = {
   success: "text-success",
+  warning: "text-warning",
   error: "text-error",
   neutral: "text-base-content/60",
 };
@@ -124,9 +183,44 @@ export const toneClasses: Record<CheckTone, string> = {
 // disagree with what is under it.
 export function reportTone(report: RecordingReadiness): CheckTone {
   const tones = readinessRows(report).map(checkTone);
+  // Ordered by how much it costs to ignore.
   if (tones.includes("error")) return "error";
+  if (tones.includes("warning")) return "warning";
   if (tones.includes("neutral")) return "neutral";
   return "success";
+}
+
+// How long ago a check established what it established.
+//
+// Relative rather than absolute because the question a reader has is "is this
+// still true?", and "6 minutes ago" answers it where "22/09/2026, 12:45:00"
+// makes them do arithmetic. The absolute time stays available as a title, for
+// the reader who wants to correlate with a log.
+//
+// This carries the freshness that used to be smuggled into the state itself:
+// an aged check keeps its verdict and says how old it is, rather than decaying
+// into "not verified" and making an idle panel look broken (D-798).
+export function formatAge(checkedAt: string, now: Date = new Date()): string {
+  const at = new Date(checkedAt);
+  if (Number.isNaN(at.getTime())) {
+    return "";
+  }
+  const seconds = Math.round((now.getTime() - at.getTime()) / 1000);
+  // A clock skewed forward should not produce "in 3 minutes"; the reader only
+  // needs to know it is current.
+  if (seconds < 60) {
+    return "just now";
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 export function checkStateLabel(check: ReadinessCheck): string {

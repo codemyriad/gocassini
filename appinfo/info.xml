@@ -157,12 +157,17 @@ Documentation: https://gocassini.com/docs]]></description>
 
     <routes>
       <route>
-        <url>^operator\/readiness$</url>
+        <url>^operator\/health$</url>
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^operator\/readiness\/check$</url>
+        <url>^operator\/health\/check$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/health\/repair$</url>
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
