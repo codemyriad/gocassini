@@ -92,8 +92,8 @@ services:
     image: ${COMPAT_NATS_IMAGE:-nats:2.11.17-alpine}
     profiles: ["full"]
     restart: unless-stopped
-    network_mode: host
-    command: ["-js", "-a", "127.0.0.1", "-p", "14222"]
+    # Signaling connects to nats:4222 over the Compose network.
+    command: ["-js"]
 
   janus:
     # Pinned by digest: this repo publishes no release tags, only mutable
@@ -105,9 +105,13 @@ services:
     image: ${COMPAT_JANUS_IMAGE:-canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1}
     profiles: ["full"]
     restart: unless-stopped
-    network_mode: host
     depends_on:
       - nats
+    ports:
+      # Match Janus's advertised RTP range; host and container ports must agree.
+      # keep_private_host also lets peers on the Compose network connect directly.
+      # Janus control ports stay internal.
+      - "20000-20100:20000-20100/udp"
     volumes:
       - ${JANUS_CONF:-./config/janus/janus.jcfg}:/usr/local/etc/janus/janus.jcfg:ro
       - ./config/janus/janus.transport.websockets.jcfg:/usr/local/etc/janus/janus.transport.websockets.jcfg:ro
@@ -122,7 +126,10 @@ services:
     image: ${COMPAT_SIGNALING_IMAGE:-strukturag/nextcloud-spreed-signaling:2.1.1}
     profiles: ["full"]
     restart: unless-stopped
-    network_mode: host
+    ports:
+      # Bind all host interfaces so browsers and Nextcloud can reach signaling
+      # through their configured host, bridge-gateway or LAN address.
+      - "28082:28082"
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "${CASSINI_HARNESS_PUBLIC_HOST:-nextcloud-public.invalid}:${CASSINI_HARNESS_MEDIA_HOST:-127.0.0.1}"
@@ -135,6 +142,29 @@ services:
       # config pins port 28080. Runs that re-scope NEXTCLOUD_HOST_PORT
       # render a per-run copy and point SIGNALING_CONF at it.
       - ${SIGNALING_CONF:-./config/signaling.conf}:/config/server.conf:ro
+
+  # Signaling calls Nextcloud at the URL supplied by the browser. For localhost
+  # URLs, forward its container loopback to Nextcloud by sharing its network
+  # namespace. See README.md, "Default local ports", for the network layout.
+  signaling-loopback:
+    image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
+    profiles: ["full"]
+    restart: unless-stopped
+    network_mode: "service:signaling"
+    depends_on:
+      - signaling
+      - nextcloud
+    environment:
+      # Match Nextcloud's published port, including overrides used by CI.
+      NEXTCLOUD_LOOPBACK_PORT: "${NEXTCLOUD_HOST_PORT:-28080}"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        printf 'events {}\nstream { server { listen 127.0.0.1:%s; proxy_pass nextcloud:80; } }\n' \
+          "$$NEXTCLOUD_LOOPBACK_PORT" > /etc/nginx/nginx.conf
+        exec nginx -g 'daemon off;'
 
   signaling-public-proxy:
     image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
@@ -169,7 +199,11 @@ services:
     image: ${COMPAT_COTURN_IMAGE:-coturn/coturn:4.6.3-alpine}
     profiles: ["full"]
     restart: unless-stopped
-    network_mode: host
+    ports:
+      # Preserve relay port numbers at the configured external-ip.
+      - "13479:13479/udp"
+      - "13479:13479/tcp"
+      - "49160-49200:49160-49200/udp"
     command: ["-c", "/etc/coturn/turnserver.conf"]
     volumes:
       - ${TURN_CONF:-./config/turnserver.conf}:/etc/coturn/turnserver.conf:ro
