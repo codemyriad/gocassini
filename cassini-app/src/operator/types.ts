@@ -1,4 +1,6 @@
 export interface Job {
+	/** True when retention has deleted the original source recording. */
+	source_expired?: boolean;
   id: string;
   provider: string;
   request_json: string;

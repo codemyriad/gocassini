@@ -1061,6 +1061,27 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("list jobs: %v", err))
 			return
 		}
+		rows, err := rt.store.db.QueryContext(r.Context(), `SELECT job_id FROM artifact_availability WHERE source='expired'`)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load recording availability")
+			return
+		}
+		expired := map[string]bool{}
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				break
+			}
+			expired[id] = true
+		}
+		err = errors.Join(err, rows.Err(), rows.Close())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load recording availability")
+			return
+		}
+		for i := range jobs {
+			jobs[i].SourceExpired = expired[jobs[i].ID]
+		}
 		writeJSON(w, http.StatusOK, jobs)
 	case http.MethodPost:
 		rt.handleCreateJob(w, r)
@@ -1351,6 +1372,7 @@ func (s *Store) Close() error {
 }
 
 type Job struct {
+	SourceExpired        bool    `json:"source_expired,omitempty"`
 	ID                   string  `json:"id"`
 	Provider             string  `json:"provider"`
 	RequestJSON          string  `json:"request_json"`
