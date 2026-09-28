@@ -253,7 +253,7 @@ published recordings remain. Successful duplicate cleanup is independent of age.
 The old artifact-retention flag/environment variable is deprecated and ignored.
 
 See [container retention](../container-retention.md) for categories, date anchors,
-video/audio constraints, recovery, deployment and diagnostics.
+exact deletion paths, whole-recording expiry, recovery, deployment and diagnostics.
 
 ## Live site lineage
 
