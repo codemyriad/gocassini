@@ -2,7 +2,7 @@
 //
 // One recording, in any page, from a URL:
 //
-//   <script src="https://gocassini.com/embed/v1/viewer.js"></script>
+//   <script src="https://dist.gocassini.com/embed/v1/viewer.js"></script>
 //   <cassini-meeting src="https://gocassini.com/talk/talk.opus"></cassini-meeting>
 //
 // The attribute contract is ATTRIBUTES.md, which is the published surface; this

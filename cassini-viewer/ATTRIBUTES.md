@@ -4,7 +4,7 @@ Show one Cassini recording — its audio, transcript, speakers, summary and the
 tags inside it — in any page, from a URL.
 
 ```html
-<script src="https://gocassini.com/embed/v1/viewer.js"></script>
+<script src="https://dist.gocassini.com/embed/v1/viewer.js"></script>
 <cassini-meeting src="https://gocassini.com/nextcloud-conf-2026/talk.opus"></cassini-meeting>
 ```
 
@@ -89,9 +89,18 @@ and picks up every compatible release without being re-pasted. A breaking change
 to the attributes above ships as `/embed/v2/` alongside it, and `/embed/v1/`
 keeps answering.
 
-Exact-version pins (`/embed/v1.2.3/`) are not published yet. They are additive —
-a new directory beside this one — so they can be introduced without moving
-anything, once somebody needs to freeze a version.
+Every Cassini release is also published at its own version,
+`/embed/<version>/` (for example `/embed/0.2.0/`), and never changes after that.
+Pin one when you need the viewer to stay exactly as you tested it.
+
+Each release attaches the pair to its GitHub release as
+`cassini-embed-<version>.tar.gz` (`viewer.js`, `viewer.css`, `SHA256SUMS`). To
+host the embed yourself, unpack it into one directory and serve it as described
+above.
+
+The embed was first served from `gocassini.com/embed/v1/`. That address now
+redirects to `dist.gocassini.com/embed/v1/`, so snippets pasted against it keep
+working.
 
 ## Styling and isolation
 

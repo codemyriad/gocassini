@@ -5,8 +5,8 @@ import tailwindcss from "@tailwindcss/vite";
 // Public-embed build (D-775).
 //
 // Emits ONE classic IIFE (dist/public/viewer.js) + ONE stylesheet
-// (dist/public/viewer.css) — the pair published under gocassini.com/embed/v1/
-// and /embed/v<semver>/. src/public.ts resolves the stylesheet as a sibling of
+// (dist/public/viewer.css) — the pair published under dist.gocassini.com/embed/v1/
+// and /embed/<version>/ from the release asset scripts/pack-embed.mjs makes. src/public.ts resolves the stylesheet as a sibling of
 // its own script URL, so the two must be published together in one directory
 // and nothing about the version is compiled in.
 //
