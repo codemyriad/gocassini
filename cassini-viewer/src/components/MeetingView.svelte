@@ -68,6 +68,7 @@
   } from "../viewer/insights";
   import type { DataProvider } from "../viewer/dataProvider";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "../viewer/hashRouting";
+  import { eventIsInside, followScrollTop, ownsLocationHash } from "../viewer/embedHost";
 
   // The single-meeting reading surface (D-420 V1). It is "smart": given a
   // DataProvider and a meeting entry (or bundled mode) it loads the artifact,
@@ -121,6 +122,9 @@
     enriched: MeetingCatalogEntry;
     openInsight: InsightRecord;
     tagsChanged: AnnotationResult;
+    // The audio would not play. Said out loud because the embed has no other
+    // way to tell the page around it; src/public.ts re-dispatches it (D-838).
+    playbackerror: string;
   }>();
   const marks = createMarksSession((result) => dispatch("tagsChanged", result));
   let openedMarksFor: string | null = null;
@@ -209,6 +213,7 @@
   // component's ROOT NODE — the shadow root in the embedded build, the document
   // in standalone — since document.getElementById can't see shadow-tree nodes.
   let viewRootEl: HTMLElement | undefined;
+  let scrollPaneEl: HTMLElement | undefined;
 
 
   // attemptedKey guards the reactive load: it is set to meeting.id BEFORE the
@@ -238,8 +243,19 @@
 
   // Routing is hash-only (see src/viewer/hashRouting.ts for why and the wire
   // format). These thin wrappers bind the pure helpers to the live location.
+  //
+  // As an embed the fragment is the host page's: its own anchors, which we
+  // must neither read as ours nor rewrite (D-838). Every read goes through
+  // hostHash() and every write checks ownsLocationHash, so an embed keeps its
+  // transcript choice and start time to itself.
+  $: ownsHash = ownsLocationHash(surface);
+
+  function hostHash(): string {
+    return ownsHash ? window.location.hash : "";
+  }
+
   function currentViewerHash() {
-    return readViewerHash(window.location.hash);
+    return readViewerHash(hostHash());
   }
 
   function viewerHref(hash: string): string {
@@ -401,7 +417,7 @@
     resetLoadedArtifact();
     loading = true;
     errorMessage = "";
-    pendingSeekMs = parseTimeHash(window.location.hash);
+    pendingSeekMs = parseTimeHash(hostHash());
     try {
       const artifact = await dataProvider.loadMeetingForEntry(entry);
       applyArtifact(artifact);
@@ -419,7 +435,7 @@
   async function loadBundled() {
     loading = true;
     errorMessage = "";
-    pendingSeekMs = parseTimeHash(window.location.hash);
+    pendingSeekMs = parseTimeHash(hostHash());
     try {
       const artifact = await dataProvider.loadBundledArtifact();
       applyArtifact(artifact);
@@ -460,6 +476,7 @@
   }
 
   function writeTranscriptUrlParam(targetId: string) {
+    if (!ownsHash) return;
     const current = currentViewerHash();
     const tx = targetId && targetId !== defaultTranscriptId ? targetId : "";
     window.history.replaceState(
@@ -470,6 +487,7 @@
   }
 
   function clearTranscriptUrlParam() {
+    if (!ownsHash) return;
     const current = currentViewerHash();
     if (current.tx) {
       window.history.replaceState(
@@ -572,7 +590,9 @@
       return;
     }
     if (audioEl.paused) {
-      void audioEl.play();
+      void audioEl.play().catch(() => {
+        dispatch("playbackerror", "Playback could not start. Try again or download the audio file.");
+      });
       return;
     }
     audioEl.pause();
@@ -625,7 +645,24 @@
     const id = segmentDomId(segmentId);
     const root = viewRootEl?.getRootNode() as Document | ShadowRoot | undefined;
     const element = root?.getElementById?.(id) ?? document.getElementById(id);
+    // As an embed, scroll only our own pane: scrollIntoView would also scroll
+    // the page we are embedded in (D-838).
+    if (surface === "embed") {
+      if (element && scrollPaneEl) {
+        const top = followScrollTop(
+          scrollPaneEl.getBoundingClientRect(),
+          element.getBoundingClientRect(),
+          scrollPaneEl.scrollTop,
+        );
+        if (top !== null) scrollPaneEl.scrollTo({ top, behavior });
+      }
+      return;
+    }
     element?.scrollIntoView({ behavior, block: "center" });
+  }
+
+  function handleAudioError() {
+    dispatch("playbackerror", "This browser could not play the audio file. You can download it to listen in an Opus player.");
   }
 
   // Paused, the playhead is as often in a silence between turns as in one, and
@@ -673,6 +710,11 @@
     // whatever surface is actually visible (button activation, scrolling) and we
     // never toggle the hidden player's audio.
     if (!viewRootEl || viewRootEl.offsetParent === null) {
+      return;
+    }
+    // As an embed, Space is ours only when it was pressed inside the viewer;
+    // everywhere else on the page it scrolls the page (D-838).
+    if (surface === "embed" && !eventIsInside(event, viewRootEl)) {
       return;
     }
     if (keyboardEventTargetsControl(event)) {
@@ -983,10 +1025,11 @@
        `scrollbar-gutter: stable` reserves the scrollbar gutter persistently
        so content width never shifts as scrollbar appears/disappears. -->
   <div
+    bind:this={scrollPaneEl}
     bind:clientHeight={scrollHeight}
     bind:offsetWidth={scrollOuterWidth}
     bind:clientWidth={scrollInnerWidth}
-    class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
+    class="mv-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
     <!-- Sticky header — the meeting's identity, and the transcript flows under
          it. It used to be a strip of status badges with the title in a second,
          SCROLLING header below, so the one thing that says which meeting you
@@ -998,7 +1041,8 @@
          two pages at once. -->
     <header class="sticky top-0 z-20 flex-none min-h-12 px-4 py-3 min-[981px]:px-6 bg-base-200 border-b border-base-300" bind:offsetHeight={headerHeight}>
     <div class="flex items-center gap-2 min-w-0">
-    {#if !isDesktop && !inSheet}
+    <!-- An embed has no list to go back to, however narrow it is (D-838). -->
+    {#if !isDesktop && !inSheet && surface !== "embed"}
       <button
         on:click={() => dispatch("back")}
         class="btn btn-square btn-neutral btn-xs flex-none"
@@ -1009,7 +1053,7 @@
       </button>
     {/if}
 
-    <h1 class="flex-1 min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
+    <h1 class="mv-title flex-1 min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
       {meeting ? meeting.title : "Meeting transcript viewer"}
     </h1>
 
@@ -1134,7 +1178,9 @@
     </div>
   {:else if transcriptIndex}
   <div out:fade={contentFadeConfig()}>
-  <main class="mv-main flex flex-col m-4 min-[981px]:mx-6 min-[981px]:mb-8">
+  <!-- A page embedding us has its own <main>; a second one is a landmark
+       screen readers would announce as the page's content (D-838). -->
+  <svelte:element this={surface === "embed" ? "div" : "main"} class="mv-main flex flex-col m-4 min-[981px]:mx-6 min-[981px]:mb-8">
     {#if summaryHtml}
       <!-- A card on the sheet's ground under a heading, like the insights and
            the transcript under it: three sections of one sheet, titled the
@@ -1350,7 +1396,7 @@
       </div>
 
       {#if visibleSegments.length > 0 && transcriptIndex && (timingPrecision || artifactMetadata)}
-        <section class="grid gap-3 mt-8">
+        <section class="mv-details grid gap-3 mt-8">
           <div class="border-b border-base-300 pb-3">
             <p class="text-lg font-medium text-base-content">
               Meeting metadata
@@ -1425,7 +1471,7 @@
         </section>
       {/if}
     {/if}
-  </main>
+  </svelte:element>
   </div>
   {/if}
   </div>
@@ -1456,7 +1502,7 @@
   <footer
     bind:offsetHeight={playerHeight}
     style:right="{scrollGutter}px"
-    class="absolute bottom-0 left-0 z-30 p-2 min-[981px]:px-4 min-[981px]:pb-4 pointer-events-none [will-change:opacity]"
+    class="mv-player absolute bottom-0 left-0 z-30 p-2 min-[981px]:px-4 min-[981px]:pb-4 pointer-events-none [will-change:opacity]"
     transition:fade={playerFadeConfig()}
   >
     <div class="card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
@@ -1468,6 +1514,7 @@
             preload="metadata"
             src={audioSrc}
             on:durationchange={handleDurationChange}
+            on:error={handleAudioError}
             on:ended={handlePause}
             on:loadedmetadata={handleLoadedMetadata}
             on:pause={handlePause}
