@@ -167,6 +167,12 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test -w ${{ matrix.package }}
+      # The public embed is published from the release asset this packs
+      # (D-838), so every change to the viewer proves it still builds as one
+      # classic script plus one stylesheet, and packs to a checked tarball.
+      - name: Pack the public embed
+        if: matrix.package == 'cassini-viewer'
+        run: npm run pack:embed -w cassini-viewer -- --version ci --out "$RUNNER_TEMP/embed"
 
   unit:
     name: Unit tests (${{ matrix.module }})

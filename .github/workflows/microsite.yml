@@ -22,7 +22,6 @@ on:
   pull_request:
     paths:
       - 'cassini-microsite/**'
-      - 'cassini-viewer/**'
       - '.github/workflows/microsite.yml'
 
 permissions:
@@ -67,36 +66,13 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # The public embed (D-775) is built from cassini-viewer and COMMITTED under
-  # cassini-microsite/public/embed/v1/. Committed build output drifts unless
-  # something checks it, so this is that something: it rebuilds the bundle and
-  # fails if the committed pair is not what the source produces. See
-  # cassini-microsite/scripts/sync-embed.mjs for why it is committed at all.
-  embed:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: cassini-microsite/.nvmrc
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install the web workspace
-        run: npm ci
-
-      - name: The committed embed is what the source builds
-        run: node cassini-microsite/scripts/sync-embed.mjs --check
-
   # Deploy what the build job tested. `wrangler deploy` reads wrangler.jsonc
   # (Worker name, account, custom domains) and uploads ./dist as static assets.
   # Needs the CLOUDFLARE_API_TOKEN repo secret: an account token with the
   # "Edit Cloudflare Workers" permissions on the Code Myriad account.
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, embed]
+    needs: [build]
     runs-on: ubuntu-latest
     environment:
       name: gocassini.com

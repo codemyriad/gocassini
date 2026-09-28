@@ -31,7 +31,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "build:public": "vite build --config vite.public.config.ts && node ./scripts/assert-embedded-single-bundle.mjs --dir dist/public --js viewer.js --css viewer.css",
-    "demo:embed": "node ./scripts/serve-embed-demo.mjs"
+    "demo:embed": "node ./scripts/serve-embed-demo.mjs",
+    "pack:embed": "node ./scripts/pack-embed.mjs"
   },
   "devDependencies": {
     "@lucide/svelte": "^1.11.0",

@@ -111,8 +111,10 @@ const description = showInsights
           </p>
         </div>
       </div>
-      {/* Unbundled on purpose: the script finds viewer.css beside its own URL. */}
-      <script is:inline src={`${base}embed/v1/viewer.js`}></script>
+      {/* The published embed (cassini-viewer/ATTRIBUTES.md), loaded the way any
+        other page loads it. Unbundled on purpose: the script finds viewer.css
+        beside its own URL. */}
+      <script is:inline src="https://dist.gocassini.com/embed/v1/viewer.js"></script>
     </div>
 
     {/* ===================== Transcription and insights =====================

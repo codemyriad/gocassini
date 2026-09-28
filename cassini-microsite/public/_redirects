@@ -4,3 +4,8 @@
 /docs/getting-started/quick-start   /docs/getting-started/install    301
 /docs/guides/overview               /docs                            301
 /docs/guides/configuration          /docs/guides/ai-providers        301
+
+# The public embed moved to dist.gocassini.com (D-838). Snippets pasted against
+# gocassini.com/embed/v1/ keep working: the script redirects there, and the
+# stylesheet it resolves beside its own URL redirects with it.
+/embed/*  https://dist.gocassini.com/embed/:splat  301

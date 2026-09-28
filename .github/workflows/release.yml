@@ -230,6 +230,21 @@ jobs:
             build/artifacts/appstore/gocassini.tar.gz qualified/release-evidence.json \
             > qualified/release-package.json
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # The public <cassini-meeting> embed, as its own asset (D-838). It is what
+      # gets served as https://dist.gocassini.com/embed/<version>/, and what
+      # anyone self-hosting the embed downloads.
+      - name: Pack the public embed
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run pack:embed -w cassini-viewer -- --version "$VERSION" --out "$GITHUB_WORKSPACE/build/artifacts/embed"
+
       - name: Create or update the GitHub release and attach the asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -248,6 +263,7 @@ jobs:
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             build/artifacts/appstore/gocassini.tar.gz build/artifacts/appstore/gocassini.tar.gz.sha256 \
+            "build/artifacts/embed/cassini-embed-${VERSION}.tar.gz" "build/artifacts/embed/cassini-embed-${VERSION}.tar.gz.sha256" \
             qualified/release-evidence.json qualified/release-evidence.md qualified/release-package.json
 
       - name: Publish to apps.nextcloud.com
