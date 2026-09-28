@@ -107,11 +107,11 @@ EOF_CONF
     done
     cat <<EOF_CONF
 [nats]
-url = nats://127.0.0.1:14222
+url = nats://nats:4222
 
 [mcu]
 type = janus
-url = ws://127.0.0.1:28188
+url = ws://janus:28188
 adminkey = 01e2fcd0d226d7f4cf34a8a61397f110693f05042e57ab68e94f8476a4b8f22a
 
 [turn]
@@ -131,8 +131,9 @@ general: {
 }
 
 nat: {
-  # Rendered by harness/bin/common.sh for remote browser access.
+  # Advertise both the media host and container address for external/internal peers.
   nat_1_1_mapping = "$media_host"
+  keep_private_host = true
 }
 
 media: {
@@ -150,8 +151,8 @@ EOF_CONF
 listening-port=13479
 tls-listening-port=0
 
+# Advertise the host address; relay sockets bind the container address.
 external-ip=$media_host
-relay-ip=$media_host
 
 min-port=49160
 max-port=49200
@@ -182,8 +183,10 @@ server {
   ssl_certificate /etc/nginx/certs/signaling.crt;
   ssl_certificate_key /etc/nginx/certs/signaling.key;
 
+  resolver 127.0.0.11 valid=10s ipv6=off;
   location / {
-    proxy_pass http://nextcloud:80;
+    set $nextcloud_backend nextcloud:80;
+    proxy_pass http://$nextcloud_backend;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Host $host;
@@ -233,22 +236,32 @@ basicConstraints = CA:FALSE
 keyUsage = digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 EOF_CONF
-  if command -v openssl >/dev/null 2>&1; then
-    openssl req -x509 -nodes -newkey rsa:2048 -days 14 \
-      -keyout "$proxy_key" \
-      -out "$proxy_cert" \
-      -config "$proxy_cert_conf" >/dev/null 2>&1
-  elif command -v docker >/dev/null 2>&1; then
-    docker run --rm --user "$(id -u):$(id -g)" \
-      -v "$generated_dir:/out" \
-      alpine/openssl req -x509 -nodes -newkey rsa:2048 -days 14 \
-      -keyout "/out/$(basename "$proxy_key")" \
-      -out "/out/$(basename "$proxy_cert")" \
-      -config "/out/$(basename "$proxy_cert_conf")" >/dev/null 2>&1
-  else
-    echo "openssl or Docker is required to generate the remote signaling proxy certificate" >&2
-    return 1
+  local -a openssl_command=(openssl)
+  if ! command -v openssl >/dev/null 2>&1; then
+    if ! command -v docker >/dev/null 2>&1; then
+      echo "openssl or Docker is required to generate the remote signaling proxy certificate" >&2
+      return 1
+    fi
+    openssl_command=(docker run --rm --user "$(id -u):$(id -g)"
+      -v "$generated_dir:/out" -w /out alpine/openssl)
   fi
+  # Both nginx and Go cache certificates in memory. Reuse a valid matching
+  # pair across renders so an independent restart cannot change its identity.
+  # Regeneration (host change or expiry) requires restarting both services.
+  (
+    cd "$generated_dir" || exit 1
+    cert_name="$(basename "$proxy_cert")"
+    key_name="$(basename "$proxy_key")"
+    cert_config_name="$(basename "$proxy_cert_conf")"
+    if [[ -s "$cert_name" && -s "$key_name" ]] \
+      && "${openssl_command[@]}" x509 -in "$cert_name" -noout -checkend 604800 >/dev/null 2>&1 \
+      && "${openssl_command[@]}" x509 -in "$cert_name" -noout -text \
+        | sed 's/^[[:space:]]*//' | grep -Fx "DNS:$public_host" >/dev/null; then
+      exit 0
+    fi
+    "${openssl_command[@]}" req -x509 -nodes -newkey rsa:2048 -days 825 \
+      -keyout "$key_name" -out "$cert_name" -config "$cert_config_name" >/dev/null 2>&1
+  ) || return 1
   chmod 0600 "$proxy_key"
 
   export SIGNALING_CONF="$signaling_conf"
@@ -347,13 +360,13 @@ harness_verify_lan_signaling_reachability() {
   echo "Talk signaling is not reachable from the host at $signaling_url." >&2
   if [[ "$(uname -s)" == "Darwin" ]]; then
     cat >&2 <<'EOF'
-On macOS, enable Docker Desktop > Settings > Resources > Network >
-"Enable host networking", apply/restart, and configure both the browser and
-Nextcloud container to use the Mac LAN IP for signaling. See the macOS local
-installed-ExApp guide in harness/README.md.
+On macOS, configure both the browser and the Nextcloud container to use the
+Mac LAN IP for signaling (--signaling-public-url http://<LAN_IP>:28082) and
+check that the firewall lets Docker Desktop accept connections. See the macOS
+local installed-ExApp guide in harness/README.md.
 EOF
   else
-    echo "Inspect the signaling container and host-network port 28082." >&2
+    echo "Inspect signaling and port 28082 published by reverse-proxy." >&2
   fi
   return 1
 }
@@ -432,6 +445,9 @@ harness_compose_services_for_mode() {
       ;;
     full)
       printf '%s\n' db nextcloud appapi-harp reverse-proxy nats janus signaling coturn
+      if harness_remote_config_requested; then
+        printf '%s\n' signaling-public-proxy
+      fi
       ;;
     full-remote)
       printf '%s\n' db nextcloud appapi-harp reverse-proxy nats janus signaling coturn signaling-public-proxy
@@ -485,6 +501,33 @@ harness_diff_lines() {
   rm -f "$left_file" "$right_file"
 }
 
+# Old stopped proxies bind-mount the unexpanded nginx configuration and own no
+# signaling port. Starting them against the new template would break callbacks.
+# This service has no generated config paths, so its hash can be checked before
+# the render phase, without changing files mounted into existing containers.
+harness_resume_proxy_hashes() {
+  local container_id expected actual
+  container_id="$(compose ps -a -q reverse-proxy)" || return 1
+  [[ -n "$container_id" ]] || return 1
+  expected="$(compose config --hash reverse-proxy)" || return 1
+  expected="${expected#* }"
+  actual="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.config-hash" }}' "$container_id")" || return 1
+  [[ -n "$expected" && -n "$actual" ]] || return 1
+  printf '%s\n%s\n' "$expected" "$actual"
+}
+
+harness_validate_resume_proxy() {
+  local hashes expected actual
+  if hashes="$(harness_resume_proxy_hashes)"; then
+    expected="${hashes%%$'\n'*}"
+    actual="${hashes#*$'\n'}"
+    [[ "$expected" == "$actual" ]] && return 0
+  fi
+  echo "Cannot --resume: the stopped reverse-proxy configuration changed or could not be verified." >&2
+  echo "Run 'cassini dev stack down', then 'cassini dev stack up --resume' with the same topology flags to recreate containers around the retained data volumes." >&2
+  return 1
+}
+
 harness_validate_resume_resources() {
   local desired existing running retained_volumes missing extra
   desired="$(harness_desired_compose_services)"
@@ -524,6 +567,9 @@ harness_validate_resume_resources() {
     fi
     echo "Use 'cassini dev stack up --reset' to recreate resources for the resolved config." >&2
     return 1
+  fi
+  if grep -Fxq reverse-proxy <<<"$existing"; then
+    harness_validate_resume_proxy || return 1
   fi
 }
 
@@ -586,7 +632,7 @@ harness_render_stack_configs() {
     # The local installed ExApp calls Nextcloud through Docker DNS
     # (reverse-proxy). Nextcloud then authenticates signaling backend updates
     # with that internal origin, which is intentionally not a fixed backend URL
-    # in the host-network signaling config. Local harness only: accept the
+    # in the rendered signaling config. Local harness only: accept the
     # shared backend secret for Docker-internal callback origins.
     harness_render_full_profile_configs true
   fi

@@ -52,22 +52,36 @@ services:
       # See the file's own comment for the measurement.
       - ./php/zz-harness-no-jit.ini:/usr/local/etc/php/conf.d/zz-harness-no-jit.ini:ro
 
-  # Internal reverse proxy. Mirrors the production topology HaRP expects:
-  # /exapps/<appId>/... goes to HaRP (which forwards over FRP tunnel to
-  # the ExApp container), everything else goes to Nextcloud. AppAPI's
-  # daemon nextcloud_url points at this service (via Docker DNS), so
-  # AppAPI's internal heartbeat probe, the ExApp container's callbacks,
-  # and NC's server-side proxy fetches all path-split correctly. No
-  # host port mapping — the browser hits Nextcloud directly on 28080;
-  # only NC's PHP and the ExApp container resolve "reverse-proxy" via
-  # the compose network.
+  # AppAPI routes and the local Nextcloud callback listener share this nginx.
+  # Signaling shares its network namespace, so browser-supplied localhost URLs
+  # reach the listener without a separate forwarding container.
   reverse-proxy:
     image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
     restart: unless-stopped
     depends_on:
       - nextcloud
+    ports:
+      # A shared network namespace publishes ports on its owning service.
+      - "28082:28082"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "${CASSINI_HARNESS_SIGNALING_HOST_ALIAS:-nextcloud-public.invalid}:${CASSINI_HARNESS_MEDIA_HOST:-127.0.0.1}"
+    networks:
+      default:
+        aliases:
+          # Keep the service name usable by peers despite the shared namespace.
+          - signaling
+    environment:
+      NEXTCLOUD_LOOPBACK_PORT: "${NEXTCLOUD_HOST_PORT:-28080}"
+      NGINX_ENVSUBST_FILTER: "^NEXTCLOUD_LOOPBACK_PORT$"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$$NEXTCLOUD_LOOPBACK_PORT/.cassini-listener"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
     volumes:
-      - ./nginx-frontproxy.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx-frontproxy.conf:/etc/nginx/templates/default.conf.template:ro
 
   # AppAPI HaRP deploy daemon: the Nextcloud-recommended ExApp orchestrator
   # for NC 32+. Pulls images, spawns containers, and proxies traffic to
@@ -92,8 +106,8 @@ services:
     image: ${COMPAT_NATS_IMAGE:-nats:2.11.17-alpine}
     profiles: ["full"]
     restart: unless-stopped
-    network_mode: host
-    command: ["-js", "-a", "127.0.0.1", "-p", "14222"]
+    # Signaling connects to nats:4222 over the Compose network.
+    command: ["-js"]
 
   janus:
     # Pinned by digest: this repo publishes no release tags, only mutable
@@ -105,9 +119,13 @@ services:
     image: ${COMPAT_JANUS_IMAGE:-canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1}
     profiles: ["full"]
     restart: unless-stopped
-    network_mode: host
     depends_on:
       - nats
+    ports:
+      # Match Janus's advertised RTP range; host and container ports must agree.
+      # keep_private_host also lets peers on the Compose network connect directly.
+      # Janus control ports stay internal.
+      - "20000-20100:20000-20100/udp"
     volumes:
       - ${JANUS_CONF:-./config/janus/janus.jcfg}:/usr/local/etc/janus/janus.jcfg:ro
       - ./config/janus/janus.transport.websockets.jcfg:/usr/local/etc/janus/janus.transport.websockets.jcfg:ro
@@ -122,19 +140,23 @@ services:
     image: ${COMPAT_SIGNALING_IMAGE:-strukturag/nextcloud-spreed-signaling:2.1.1}
     profiles: ["full"]
     restart: unless-stopped
-    network_mode: host
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-      - "${CASSINI_HARNESS_PUBLIC_HOST:-nextcloud-public.invalid}:${CASSINI_HARNESS_MEDIA_HOST:-127.0.0.1}"
+    network_mode: "service:reverse-proxy"
     depends_on:
-      - nats
-      - janus
-      - nextcloud
+      nats:
+        condition: service_started
+      janus:
+        condition: service_started
+      reverse-proxy:
+        condition: service_healthy
+        restart: true
     volumes:
       # The signaling server whitelists Nextcloud backend URLs; the stock
       # config pins port 28080. Runs that re-scope NEXTCLOUD_HOST_PORT
       # render a per-run copy and point SIGNALING_CONF at it.
       - ${SIGNALING_CONF:-./config/signaling.conf}:/config/server.conf:ro
+      # Remote callbacks use the existing Docker-network HTTPS helper. Trust
+      # its generated certificate while retaining normal backend TLS checks.
+      - ${SIGNALING_PUBLIC_PROXY_CERT:-./config/signaling-extra-ca.pem}:/etc/ssl/certs/cassini-harness.crt:ro
 
   signaling-public-proxy:
     image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
@@ -169,7 +191,11 @@ services:
     image: ${COMPAT_COTURN_IMAGE:-coturn/coturn:4.6.3-alpine}
     profiles: ["full"]
     restart: unless-stopped
-    network_mode: host
+    ports:
+      # Preserve relay port numbers at the configured external-ip.
+      - "13479:13479/udp"
+      - "13479:13479/tcp"
+      - "49160-49200:49160-49200/udp"
     command: ["-c", "/etc/coturn/turnserver.conf"]
     volumes:
       - ${TURN_CONF:-./config/turnserver.conf}:/etc/coturn/turnserver.conf:ro
