@@ -11,14 +11,14 @@
     ArrowLeft,
     Users,
     CassetteTape,
+    Copy,
+    Download,
   } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import {
     formatClockTime,
     isLikelyCrosstalkAcrossBlocks,
     filterDisplaySegmentsByQuery,
-    judgedDisplaySegments,
-    normalizeSpeakerLabel,
     parseTimeHash,
     type JudgedDisplaySegment,
   } from "../core/transcript";
@@ -32,15 +32,12 @@
   import { createWordHighlighter } from "../core/wordHighlight";
   import {
     keyboardEventTargetsControl,
-    tokensPreserveText,
     transcriptWordParts,
     type TranscriptWordPart,
   } from "../core/wordInteraction";
   import {
     buildTranscriptRows,
     followRowKeyForBlocks,
-    repairTurnFinalWordInflation,
-    sortBlocksInReadingOrder,
     type TranscriptRow,
   } from "../core/overlap";
   import {
@@ -59,7 +56,9 @@
     ArtifactTimingPrecision,
     LoadedArtifact,
   } from "../viewer/loadArtifact";
-  import { buildDisplayTranscriptFromArtifacts, type PortableTranscriptDescriptor } from "../viewer/portable";
+  import type { PortableTranscriptDescriptor } from "../viewer/portable";
+  import { displaySegmentsForArtifact, safeMeetingStem, transcriptMarkdown } from "../viewer/meetingExport";
+  import { loadAudioFile, saveBlob, saveTranscript } from "../viewer/exportTransfer";
   import { formatMeetingDate, hasMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
   import { hasRoom, roomLabelOf } from "../viewer/rooms";
   import {
@@ -165,6 +164,12 @@
   // switcher instead of taking over the whole "meeting failed to load" state.
   let transcriptSwitchError = "";
   let errorMessage = "";
+  let audioExportBusy = false;
+  let copyExportBusy = false;
+  let exportStatus = "";
+  let exportRequestId = 0;
+  let audioRequestId = 0;
+  let copyRequestId = 0;
   // lastBundled tracks the previous value of the `bundled` prop so the reactive
   // block below fires on transitions only. Initialised from the prop because
   // onMount already loads when it starts true; without that, mounting bundled
@@ -242,6 +247,12 @@
   }
 
   function applyArtifact(artifact: LoadedArtifact) {
+    exportRequestId += 1;
+    audioRequestId += 1;
+    copyRequestId += 1;
+    audioExportBusy = false;
+    copyExportBusy = false;
+    exportStatus = "";
     stopPlaybackClock();
     audioEl?.pause();
     playing = false;
@@ -288,6 +299,12 @@
   }
 
   function resetLoadedArtifact() {
+    exportRequestId += 1;
+    audioRequestId += 1;
+    copyRequestId += 1;
+    audioExportBusy = false;
+    copyExportBusy = false;
+    exportStatus = "";
     stopPlaybackClock();
     audioEl?.pause();
     playing = false;
@@ -311,6 +328,58 @@
     durationMs = 0;
     manualScrollLock = false;
     lastAutoScrollRowKey = "";
+  }
+
+  function exportStem(): string {
+    return safeMeetingStem(meeting ?? { title: "Meeting", id: "transcript" });
+  }
+
+  async function copyTranscript() {
+    if (copyExportBusy) return;
+    const text = transcriptMarkdown(meeting, displaySegments);
+    if (!navigator.clipboard?.writeText) {
+      exportStatus = "Clipboard unavailable here — use Download transcript.";
+      return;
+    }
+    const requestId = ++exportRequestId;
+    const copyId = ++copyRequestId;
+    copyExportBusy = true;
+    try {
+      await navigator.clipboard.writeText(text);
+      if (requestId === exportRequestId) exportStatus = "Transcript copied.";
+    } catch {
+      if (requestId === exportRequestId) exportStatus = "Clipboard blocked here — use Download transcript.";
+    } finally {
+      if (copyId === copyRequestId) copyExportBusy = false;
+    }
+  }
+
+  function downloadTranscript() {
+    exportRequestId += 1;
+    saveTranscript(transcriptMarkdown(meeting, displaySegments), `${exportStem()}-transcript.md`);
+    exportStatus = "Transcript downloaded.";
+  }
+
+  async function downloadAudio() {
+    if (!audioSrc || audioExportBusy) return;
+    const requestId = ++exportRequestId;
+    const audioId = ++audioRequestId;
+    const source = audioSrc;
+    audioExportBusy = true;
+    exportStatus = "Preparing meeting file…";
+    try {
+      const file = await loadAudioFile({
+        id: meeting?.id ?? "meeting",
+        title: meeting?.title ?? "Meeting",
+        audioPath: source,
+      });
+      saveBlob(file.blob, file.name);
+      if (requestId === exportRequestId) exportStatus = "Meeting file downloaded.";
+    } catch (error) {
+      if (requestId === exportRequestId) exportStatus = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (audioId === audioRequestId) audioExportBusy = false;
+    }
   }
 
   function mergeMeetingRuntimeSummary(
@@ -613,61 +682,6 @@
     togglePlayback();
   }
 
-  function buildDisplaySegments(
-    index: TranscriptIndex,
-    readable: ReadableTranscriptV1 | null,
-    display: DisplayTranscriptV1 | null,
-  ): DisplaySegment[] {
-    if (display) {
-      // The whole projection lives in core/transcript.ts: the canonical words a
-      // block is judged on and the tokens still allowed to vote on that
-      // judgement have to come out of one compatibility pass, and that has to
-      // be somewhere a test can reach. See judgedDisplaySegments.
-      return judgedDisplaySegments(index, display);
-    }
-
-    if (!readable) {
-      return index.segments.map((segment) => ({
-        id: segment.id,
-        speaker: segment.speaker,
-        speakerLabel: normalizeSpeakerLabel(segment.speakerLabel),
-        startMs: segment.startMs,
-        endMs: segment.endMs,
-        text: segment.text,
-        tokens: [],
-        words: segment.words,
-        sourceSegmentIds: [segment.id],
-      }));
-    }
-
-    // Reuse the artifact projection's existing readable-to-source alignment;
-    // retain this view's block IDs/extents and canonical acoustic evidence.
-    const projected = buildDisplayTranscriptFromArtifacts(index.transcript, readable);
-    const canonicalById = new Map(index.segments.map((segment) => [segment.id, segment]));
-    return readable.segments.map((segment, segmentIndex) => {
-      const sourceSegments = segment.sourceSegmentIds
-        .map((segmentId) => canonicalById.get(segmentId))
-        .filter((value): value is NonNullable<typeof value> => Boolean(value));
-      const words = sourceSegments.flatMap((sourceSegment) => sourceSegment.words);
-      const speakerLabel = segment.speaker
-        ? normalizeSpeakerLabel(index.speakersById.get(segment.speaker)?.label ?? segment.speaker)
-        : normalizeSpeakerLabel(sourceSegments[0]?.speakerLabel ?? "Unknown speaker");
-      return {
-        id: segment.id,
-        speaker: segment.speaker,
-        speakerLabel,
-        startMs: segment.startMs,
-        endMs: segment.endMs,
-        text: segment.text,
-        tokens: tokensPreserveText(segment.text, projected.blocks[segmentIndex]?.tokens ?? [])
-          ? projected.blocks[segmentIndex]!.tokens
-          : [],
-        words,
-        sourceSegmentIds: [...segment.sourceSegmentIds],
-      };
-    });
-  }
-
   // Tooltip fragment for a low-confidence word. Guarded against non-finite
   // gaps (hosts can mount this published component with unvalidated data):
   // never render "NaN dB" or "Infinity dB" — fall back to the unmeasured
@@ -896,12 +910,12 @@
   }
 
   $: displaySegments = transcriptIndex
-    ? sortBlocksInReadingOrder(
-        repairTurnFinalWordInflation(
-          buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript),
-          { endsBoundedByAudio: wordEndsBoundedByAudio },
-        ),
-      )
+    ? displaySegmentsForArtifact({
+        index: transcriptIndex,
+        readableTranscript,
+        displayTranscript,
+        wordEndsBoundedByAudio,
+      })
     : [];
   // The seam this was always for. The filter lives in core/transcript.ts
   // because the interesting half is the mapping from matched canonical segments
@@ -1051,6 +1065,20 @@
          meeting this is, and both are worth having while reading it. -->
     {#if meeting}
       <MeetingTags session={marks} vocabulary={tagVocabulary} />
+    {/if}
+    {#if transcriptIndex}
+      <div class="mt-2 flex flex-wrap items-center gap-1" role="group" aria-label="Take this meeting with you">
+        <button class="btn btn-ghost btn-xs" type="button" disabled={copyExportBusy || displaySegments.length === 0} on:click={copyTranscript}>
+          <Copy size={14} aria-hidden="true" /> Copy transcript
+        </button>
+        <button class="btn btn-ghost btn-xs" type="button" disabled={displaySegments.length === 0} on:click={downloadTranscript}>
+          <Download size={14} aria-hidden="true" /> Download transcript
+        </button>
+        <button class="btn btn-ghost btn-xs" type="button" disabled={!audioSrc || audioExportBusy} on:click={downloadAudio}>
+          <Download size={14} aria-hidden="true" /> Download audio
+        </button>
+        <span class="text-xs text-base-content/70" role="status">{exportStatus}</span>
+      </div>
     {/if}
   </header>
 

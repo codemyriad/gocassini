@@ -234,7 +234,8 @@ export function findByLabel(
   return tags.find((tag) => labelKey(tag.label) === key);
 }
 
-// Prefix matches first, then the most used, then by label.
+// Tag matches are always alphabetical. Usage counts change after tagging and
+// must not move an option while somebody is interacting with the list.
 // mergeVocabularyTags folds entries that share a tagId into one.
 //
 // The operator returns the vocabulary per (namespace, tagId): the same tag
@@ -264,10 +265,13 @@ export function mergeVocabularyTags(tags: readonly VocabularyTag[]): VocabularyT
 
 export function matchTags(tags: readonly VocabularyTag[], query: string): VocabularyTag[] {
   const key = labelKey(query);
-  const rank = (tag: VocabularyTag) => (labelKey(tag.label).startsWith(key) ? 0 : 1);
   return tags
     .filter((tag) => labelKey(tag.label).includes(key))
-    .sort((a, b) => rank(a) - rank(b) || b.meetings - a.meetings || a.label.localeCompare(b.label));
+    .sort(
+      (a, b) =>
+        a.label.localeCompare(b.label, undefined, { sensitivity: "base" }) ||
+        a.tagId.localeCompare(b.tagId),
+    );
 }
 
 export function timeRange(startMs: number, endMs: number): TimeRangeTarget {

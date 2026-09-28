@@ -43,6 +43,11 @@ stretches in the file are drawn, and no control is offered that would change
 one. This is not a restricted mode of the app — it is the whole of what a file
 on its own can honestly support.
 
+Readers can copy or download the transcript they are viewing and download the
+whole meeting file. That file plays as audio and can also carry the transcript,
+summary and tags. These controls are also available in the Nextcloud meeting
+view.
+
 Tag colours are **not** in the file (the format carries a tag's id and label
 only, tracked as D-774), so the embed deals each tag a colour from its palette
 in the file's own tag order. Colours are stable for a given file and will not
