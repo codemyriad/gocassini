@@ -41,8 +41,10 @@
   const dispatch = createEventDispatcher<{ close: void; unpick: MeetingCatalogEntry }>();
 
   type StatusTone = "ok" | "warn" | "error";
+  type ExportContent = "context" | "transcripts" | "audio";
   let status: { tone: StatusTone; text: string } | null = null;
   let busy = false;
+  let exportContent: ExportContent = "context";
 
   // The assembled bytes, kept for the second action. Copy and Download hand
   // over exactly the same document, so pressing both must not risk asking twice
@@ -119,7 +121,7 @@
     status = { tone: "ok", text: "Preparing transcripts…" };
     const clipboard = navigator.clipboard;
     if (!clipboard?.writeText) {
-      status = { tone: "warn", text: "Clipboard unavailable here — use Download transcripts." };
+      status = { tone: "warn", text: "Clipboard unavailable here — use Download." };
       busy = false;
       return;
     }
@@ -264,6 +266,16 @@
       busy = false;
     }
   }
+
+  function handleSelectedCopy() {
+    if (exportContent === "audio") return;
+    return exportContent === "transcripts" ? handleTranscriptCopy() : handleCopy();
+  }
+
+  function handleSelectedDownload() {
+    if (exportContent === "audio") return handleAudioDownload();
+    return exportContent === "transcripts" ? handleTranscriptDownload() : handleDownload();
+  }
 </script>
 
 <!-- A drawer over the list, like the meeting sheet but narrower: this is a
@@ -339,33 +351,39 @@
       </section>
     {/if}
 
-    <!-- Two equal outputs directly under the set: the same bytes either way,
-         and the way out on a deployment with no model configured at all. -->
-    <section class="prep-section prep-actions">
-      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleCopy}>
-        <Copy size={14} aria-hidden="true" />
-        Copy
-      </button>
-      <button
-        type="button"
-        class="prep-action"
-        disabled={busy || blocked}
-        on:click={handleDownload}
+    <section class="prep-section prep-export" aria-label="Take the selected meetings with you">
+      <label class="prep-export-label" for="prep-export-content">Content</label>
+      <select
+        id="prep-export-content"
+        class="prep-export-select"
+        bind:value={exportContent}
+        disabled={busy}
+        on:change={() => (status = null)}
       >
-        <Download size={14} aria-hidden="true" />
-        Download
-      </button>
-    </section>
-    <section class="prep-section prep-actions" aria-label="Take the selected meetings with you">
-      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleTranscriptCopy}>
-        <Copy size={14} aria-hidden="true" /> Copy {entries.length === 1 ? "transcript" : "transcripts"}
-      </button>
-      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleTranscriptDownload}>
-        <Download size={14} aria-hidden="true" /> Download {entries.length === 1 ? "transcript" : "transcripts"}
-      </button>
-      <button type="button" class="prep-action prep-audio-action" disabled={busy || blocked} on:click={handleAudioDownload}>
-        <Download size={14} aria-hidden="true" /> Download audio
-      </button>
+        <option value="context">Transcripts and summaries</option>
+        <option value="transcripts">Transcripts only</option>
+        <option value="audio">Audio</option>
+      </select>
+      <div class="prep-actions">
+        <button
+          type="button"
+          class="prep-action"
+          disabled={busy || blocked || exportContent === "audio"}
+          on:click={handleSelectedCopy}
+        >
+          <Copy size={14} aria-hidden="true" />
+          Copy
+        </button>
+        <button
+          type="button"
+          class="prep-action"
+          disabled={busy || blocked}
+          on:click={handleSelectedDownload}
+        >
+          <Download size={14} aria-hidden="true" />
+          Download
+        </button>
+      </div>
     </section>
     <p class="prep-status" data-tone={status?.tone ?? "ok"} role="status">
       {status?.text ?? ""}
@@ -558,11 +576,28 @@
     color: var(--color-warning, #b45309);
   }
 
+  .prep-export-label {
+    display: block;
+    margin-bottom: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-base-content);
+  }
+  .prep-export-select {
+    width: 100%;
+    padding: 8px 12px;
+    background-color: var(--color-base-100);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
+    border-radius: var(--radius-field, 0.5rem);
+    font: inherit;
+    font-size: 0.8125rem;
+    color: var(--color-base-content);
+  }
   .prep-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    margin-top: 0.5rem;
   }
   .prep-action {
     display: inline-flex;
@@ -577,9 +612,6 @@
     font-size: 0.8125rem;
     font-weight: 550;
     color: var(--color-base-content);
-  }
-  .prep-audio-action {
-    grid-column: 1 / -1;
   }
   .prep-action:hover:not(:disabled) {
     background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
