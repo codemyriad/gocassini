@@ -156,7 +156,8 @@ describe("PreparePanel", () => {
     expect(preparePanelSource).toContain(
       "$: blocked = entries.length === 0 || overCap || entries.some((entry) => lacksPortableAudio(entry));",
     );
-    expect(preparePanelSource.match(/disabled=\{busy \|\| blocked\}/g) ?? []).toHaveLength(5);
+    expect(preparePanelSource.match(/disabled=\{busy \|\| blocked\}/g) ?? []).toHaveLength(1);
+    expect(preparePanelSource).toContain('disabled={busy || blocked || exportContent === "audio"}');
     expect(preparePanelSource).toContain("{#if !blocked}\n      <slot name=\"generate\" {entries} />");
   });
 });
