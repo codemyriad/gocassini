@@ -369,10 +369,9 @@ cd cassini-operator
 go test ./internal/operator -run 'TestRetention|TestPublishedPair|TestArtifactOperation'
 cd ..
 npm test --workspace cassini-app
-npm run test:retention-browser --workspace cassini-app
 npm run build:all --workspace cassini-app
 ```
 
-The browser check uses a synthetic API, never real recordings. Retention tests
+The browser tests use synthetic APIs, never real recordings. Retention tests
 verify whole-bundle deletion, independent output retention, settings migration
 and unavailable-source rerun protection.
