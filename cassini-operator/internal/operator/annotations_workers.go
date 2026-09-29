@@ -156,6 +156,14 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 		return err
 	}
 	defer release()
+	if s.exapp.lifecycle != nil {
+		var pending int
+		if err := s.exapp.lifecycle.db.QueryRowContext(ctx, `SELECT count(*) FROM remote_retention_operation WHERE name=? AND status!='completed'`, name).Scan(&pending); err != nil {
+			return err
+		} else if pending > 0 {
+			return &annotationBlocked{"retention transition is awaiting recovery"}
+		}
+	}
 	store := s.rt.annotationReads()
 	var desired, confirmed int64
 	var flight sql.NullInt64

@@ -68,6 +68,11 @@ func retentionOpusFixture(t *testing.T) []byte {
 }
 
 func TestTranscriptionPreservation(t *testing.T) {
+	if output := os.Getenv("TRANSCRIPTION_OPUS_FIXTURE"); output != "" {
+		if err := os.WriteFile(output, retentionOpusFixture(t), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	now := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
 	raw, report, err := ExportTranscription(bytes.NewReader(retentionOpusFixture(t)), TranscriptionOptions{DocumentID: "fixture-document", AgeAnchor: now.AddDate(0, 0, -90), AnchorSource: "recording-completed", EvictedAt: now, PolicyRevision: 7, Checkpoint: AnnotationCheckpoint{StateToken: "fixture:12", Revision: 0}})
 	if err != nil {

@@ -73,7 +73,7 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 	}
 	if lifecycle, ok, err := s.cfg.lifecycle.meetingLifecycle(ctx, path.Base(remote)); err != nil {
 		return "", err
-	} else if ok && lifecycle.Representation != "opus" {
+	} else if ok && (lifecycle.Representation != "opus" || lifecycle.State != "active") {
 		return "", fmt.Errorf("audio has expired; publication cannot restore it")
 	}
 

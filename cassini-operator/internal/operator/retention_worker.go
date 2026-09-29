@@ -99,6 +99,12 @@ func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) error {
 		return errRetentionUnavailable
 	}
 	var failures error
+	rt.remoteRetentionMu.RLock()
+	remote := rt.remoteRetention
+	rt.remoteRetentionMu.RUnlock()
+	if remote != nil {
+		failures = remote.runRemoteRetention(ctx, now)
+	}
 	// Read bounded pages; no SQLite transaction spans filesystem work.
 	after := ""
 	for {

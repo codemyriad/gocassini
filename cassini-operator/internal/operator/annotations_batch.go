@@ -149,6 +149,11 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 		return response, err
 	}
 	defer release()
+	for _, name := range names {
+		if err := s.exapp.meetingNotRetired(ctx, name); err != nil {
+			return response, annotateNotFound(err)
+		}
+	}
 	encoded, _ := json.Marshal(request)
 	sum := sha256.Sum256(encoded)
 	hash := hex.EncodeToString(sum[:])

@@ -358,6 +358,7 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 		ctx, cancel := context.WithTimeout(base, annotateRequestTimeout)
 		sum := sha256.Sum256([]byte(job.ID + "/" + name))
 		request.RequestID = hex.EncodeToString(sum[:])
+		expired := errors.Is(s.exapp.meetingNotRetired(ctx, name), errMeetingRetired)
 		rel, err := s.exapp.recipientRecordingPath(ctx, s.client, job.Actor, name, s.exapp.meetingMetadata)
 		if err == nil {
 			_, err = s.commitAndRecord(ctx, name, name, rel, nil, job.Actor, request)
@@ -373,6 +374,10 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 		if err != nil {
 			s.logf("annotations: %s job %s: %s: %v", job.Kind, job.ID, name, err)
 			failure = &tagJobFailure{Meeting: cmp.Or(titles[name], name), Error: tagJobError(err)}
+			if expired {
+				failure.Meeting = name
+				failure.Error = "expired"
+			}
 		}
 		s.jobs.progress(job, failure)
 		if err := s.updateTagJob(job); err != nil {

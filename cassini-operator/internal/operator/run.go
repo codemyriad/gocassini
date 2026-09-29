@@ -82,11 +82,13 @@ type Config struct {
 }
 
 type Runtime struct {
-	retention        *retentionConfig
-	retentionSweepMu sync.Mutex
-	modelMu          sync.Mutex
-	modelCancel      context.CancelFunc
-	modelJobID       string
+	remoteRetentionMu sync.RWMutex
+	remoteRetention   *annotationService
+	retention         *retentionConfig
+	retentionSweepMu  sync.Mutex
+	modelMu           sync.Mutex
+	modelCancel       context.CancelFunc
+	modelJobID        string
 	// modelInventoryCache holds `cassini models list` results per device;
 	// see cachedModelInventory.
 	modelInventoryMu    sync.Mutex
@@ -981,7 +983,16 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	exappCfg.lifecycle = rt.store
 	annotations := newAnnotationService(rt, exappCfg, logger)
+	rt.remoteRetentionMu.Lock()
+	rt.remoteRetention = annotations
+	rt.remoteRetentionMu.Unlock()
+	if annotations != nil {
+		if err := annotations.recoverRemoteRetention(rt.ctx); err != nil {
+			logger.Printf("remote retention recovery: %v", err)
+		}
+	}
 	search := rt.searchDeps()
 	if annotations != nil {
 		search.importAnnotations = annotations.importListedDocuments
