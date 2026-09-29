@@ -220,21 +220,7 @@ func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Tim
 		if effect.Action != "convert" && effect.Action != "retire" {
 			continue
 		}
-		jobID := strings.TrimSuffix(m.Name, ".opus")
-		job, err := s.rt.store.GetJob(ctx, jobID)
-		if err != nil {
-			failures = errors.Join(failures, err)
-			continue
-		}
-		if job.Stage != "done" {
-			continue
-		}
-		unlock, ok := s.rt.store.tryLockArtifacts(jobID)
-		if !ok {
-			continue
-		}
 		err = s.prepareRemoteRetention(ctx, m, effect.Action, settings.Revision)
-		unlock()
 		if err != nil {
 			failures = errors.Join(failures, fmt.Errorf("%s: %w", m.Name, err))
 		}
@@ -243,6 +229,21 @@ func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Tim
 }
 
 func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetingLifecycle, action string, revision int) error {
+	jobID := strings.TrimSuffix(m.Name, ".opus")
+	unlock, ok := s.rt.store.tryLockArtifacts(jobID)
+	if !ok {
+		return nil
+	}
+	defer unlock()
+	// Rerun admission uses this same lock. Read eligibility only after acquiring
+	// it, and keep it through journaling and the remote mutation.
+	job, err := s.rt.store.GetJob(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if job.Stage != "done" {
+		return nil
+	}
 	// Reconcile ambiguous uploads, but capture ordinary pending edits directly
 	// into JSON. Rewriting Opus first is unnecessary and can lose duplicate tags.
 	if action == "convert" {
@@ -458,12 +459,18 @@ func (s *annotationService) recoverRemoteRetention(ctx context.Context) error {
 	}
 	var failures error
 	for _, op := range operations {
+		unlock, ok := s.rt.store.tryLockArtifacts(strings.TrimSuffix(op.Name, ".opus"))
+		if !ok {
+			continue
+		}
 		release, err := annotationWriteLocks.acquire(ctx, op.Name)
 		if err != nil {
+			unlock()
 			return err
 		}
 		err = s.resumeRemoteRetention(ctx, op)
 		release()
+		unlock()
 		if err != nil {
 			_, _ = s.rt.store.db.ExecContext(ctx, `UPDATE remote_retention_operation SET last_error=?,updated_at=? WHERE name=?`, "Remote identity or delivery could not be verified; recovery will retry.", nowUTCString(), op.Name)
 			failures = errors.Join(failures, fmt.Errorf("recover %s: %w", op.Name, err))

@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,8 +14,76 @@ import (
 	"testing"
 )
 
+func TestRemoteRetentionSkipsAdmittedRerun(t *testing.T) {
+	for _, action := range []string{"convert", "retire"} {
+		t.Run(action, func(t *testing.T) {
+			rt, close := newBareSealRuntime(t)
+			defer close()
+			ctx := context.Background()
+			insertJob(t, rt.store.db, "m", nowUTCString())
+			run := seedReadyRunBundle(t, rt.cfg.WorkRoot, "m")
+			if _, err := rt.store.db.Exec(`UPDATE jobs SET stage='done',state='succeeded',artifact_run_path=? WHERE id='m'`, run); err != nil {
+				t.Fatal(err)
+			}
+			m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", Representation: "opus", State: "active", Anchor: "2020-01-01T00:00:00Z", AnchorSource: "recording-completed"}
+			if err := rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
+				t.Fatal(err)
+			}
+			// The sweep selected this terminal job, then rerun admission won the
+			// artifact lock before remote preparation started.
+			job := mustGetJob(t, rt.store, "m")
+			if _, err := rt.store.QueueRerunAttempt(ctx, job, nowUTCString()); err != nil {
+				t.Fatal(err)
+			}
+			service := &annotationService{rt: rt, client: &http.Client{Transport: annotationRoundTripper(func(*http.Request) (*http.Response, error) {
+				t.Error("remote retention contacted Nextcloud for a queued rerun")
+				return nil, errors.New("unexpected remote request")
+			})}}
+			if err := service.prepareRemoteRetention(ctx, m, action, 0); err != nil {
+				t.Fatal(err)
+			}
+			pending, err := rt.store.pendingRemoteOperations(ctx)
+			if err != nil || len(pending) != 0 {
+				t.Fatalf("queued rerun acquired retention intent: %+v, %v", pending, err)
+			}
+			got, _, err := rt.store.meetingLifecycle(ctx, m.Name)
+			if err != nil || got != m {
+				t.Fatalf("queued rerun lifecycle changed: %+v, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestRerunWaitsForRemoteRetentionCompletion(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	ctx := context.Background()
+	insertJob(t, rt.store.db, "m", nowUTCString())
+	run := seedReadyRunBundle(t, rt.cfg.WorkRoot, "m")
+	if _, err := rt.store.db.Exec(`UPDATE jobs SET stage='done',state='succeeded',artifact_run_path=? WHERE id='m'`, run); err != nil {
+		t.Fatal(err)
+	}
+	op := remoteRetentionOperation{Name: "m.opus", Action: "convert"}
+	if err := rt.store.saveRemoteOperation(ctx, op, "prepared"); err != nil {
+		t.Fatal(err)
+	}
+	job := mustGetJob(t, rt.store, "m")
+	if _, err := rt.store.QueueRerunAttempt(ctx, job, nowUTCString()); !errors.Is(err, ErrJobNotEligibleForRerun) {
+		t.Fatalf("pending remote operation admitted rerun: %v", err)
+	}
+	if got := mustGetJob(t, rt.store, "m"); got.Stage != "done" || got.CurrentAttemptNumber != 1 {
+		t.Fatalf("rejected rerun changed job: %+v", got)
+	}
+	if err := rt.store.saveRemoteOperation(ctx, op, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := rt.store.QueueRerunAttempt(ctx, job, nowUTCString()); err != nil || got.Stage != "build" || got.CurrentAttemptNumber != 2 {
+		t.Fatalf("completed remote operation blocked rerun: %+v, %v", got, err)
+	}
+}
+
 func TestRemoteRetentionRecovery(t *testing.T) {
-	for _, start := range []string{"input", "json-at-source", "json-at-destination", "collision", "external-edit", "lost-put", "lost-move"} {
+	for _, start := range []string{"input", "json-at-source", "json-at-destination", "collision", "external-edit", "lost-put", "lost-move", "busy"} {
 		t.Run(start, func(t *testing.T) {
 			rt, close := newBareSealRuntime(t)
 			defer close()
@@ -113,6 +182,18 @@ func TestRemoteRetentionRecovery(t *testing.T) {
 			op := remoteRetentionOperation{Name: m.Name, Action: "convert", Source: old, Destination: dest, FileID: 42, InputETag: `"1"`, InputSHA: input, OutputSHA: output, Directory: dir}
 			if err := rt.store.saveRemoteOperation(ctx, op, "prepared"); err != nil {
 				t.Fatal(err)
+			}
+			if start == "busy" {
+				unlock := rt.store.lockArtifacts("m")
+				err := service.recoverRemoteRetention(ctx)
+				unlock()
+				if err != nil || files[old] != "audio" {
+					t.Fatalf("recovery changed a reserved job: %q, %v", files[old], err)
+				}
+				pending, err := rt.store.pendingRemoteOperations(ctx)
+				if err != nil || len(pending) != 1 {
+					t.Fatalf("busy recovery lost its pending operation: %+v, %v", pending, err)
+				}
 			}
 			err = service.recoverRemoteRetention(ctx)
 			if start == "collision" || start == "external-edit" {
