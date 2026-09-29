@@ -110,6 +110,6 @@ cd cassini-operator
 go test ./...
 ```
 
-Browser checks start an isolated Vite server and supply synthetic API responses;
+Vitest browser checks mount the real Svelte UI with synthetic operator responses;
 they do not contact a running operator or real recordings. Storage screenshots
-are written to gitignored `scratch/storage-charts/`.
+are written to gitignored `cassini-app/node_modules/.cache/vitest-screenshots/`.
