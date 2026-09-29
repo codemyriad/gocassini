@@ -108,6 +108,18 @@ describe("OperatorClient storage", () => {
     });
   });
 
+  it("reads lifecycle categories and preserves unknown dates and classification errors", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => reply({ categories: [{
+      id: "recordings", bytes: 15, files: 2, undated_bytes: 5, undated_files: 1,
+      days: [{ date: "2026-09-01", bytes: 10, files: 1 }],
+    }], category_error: "Lifecycle records unavailable" })));
+    const usage = await new OperatorClient("/operator").getDetailedStorageUsage();
+    expect(usage.category_error).toBe("Lifecycle records unavailable");
+    expect(usage.categories[0]).toEqual({ id: "recordings", bytes: 15, files: 2,
+      undated_bytes: 5, undated_files: 1, days: [{date: "2026-09-01", bytes: 10, files: 1}],
+    });
+  });
+
   it("recalculates the combined detailed index only through an explicit POST", async () => {
     const fetchMock = vi.fn(async () => reply({ measured_at: "", published: [], directories: [] }));
     vi.stubGlobal("fetch", fetchMock);

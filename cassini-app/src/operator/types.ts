@@ -215,51 +215,6 @@ export interface LLMModel {
   context_length?: number;
 }
 
-// StorageUsage is the first-pass accounting view (D-804): apparent file bytes
-// in the folders that hold a recording or its build artifacts. It deliberately
-// does not claim filesystem allocation, free space, or a de-duplicated total.
-export interface StorageUsageSource {
-  id: string;
-  label: string;
-  location: string;
-  bytes: number;
-  duration_ms: number;
-  files: number;
-  collections: number;
-  requests: number;
-  error: string;
-}
-
-export interface StorageUsage {
-  measured_at: string;
-  duration_ms: number;
-  sources: StorageUsageSource[];
-}
-
-export interface ArtifactStorageFileType {
-  extension: string;
-  bytes: number;
-  files: number;
-}
-
-export interface DetailedStorageDirectory {
-  id: string;
-  label: string;
-  location: string;
-  bytes: number;
-  files: number;
-  collections: number;
-  formats: ArtifactStorageFileType[];
-  error: string;
-}
-
-export interface DetailedStorageUsage {
-  measured_at: string;
-  duration_ms: number;
-  published: StorageUsageSource[];
-  directories: DetailedStorageDirectory[];
-}
-
 // One Nextcloud share model. The browser only provisions Cassini's owner account.
 export interface StorageServiceAccount {
   user: string;
@@ -324,4 +279,56 @@ export interface SpeechModelJob {
 }
 export interface SpeechModelInventory {
   models: SpeechModel[]; jobs: SpeechModelJob[]; downloads_allowed: boolean; device: string;
+}
+
+// StorageUsage is the first-pass accounting view (D-804): apparent file bytes
+// in the folders that hold a recording or its build artifacts. It deliberately
+// does not claim filesystem allocation, free space, or a de-duplicated total.
+export interface StorageUsageSource {
+  id: string;
+  label: string;
+  location: string;
+  bytes: number;
+  duration_ms: number;
+  files: number;
+  collections: number;
+  requests: number;
+  error: string;
+}
+
+export interface StorageUsage {
+  measured_at: string;
+  duration_ms: number;
+  sources: StorageUsageSource[];
+}
+
+export interface ArtifactStorageFileType {
+  extension: string;
+  bytes: number;
+  files: number;
+}
+
+export interface DetailedStorageDirectory {
+  id: string;
+  label: string;
+  location: string;
+  bytes: number;
+  files: number;
+  collections: number;
+  formats: ArtifactStorageFileType[];
+  error: string;
+}
+
+export interface StorageUsageDay { date: string; bytes: number; files: number }
+export interface StorageUsageCategory {
+  id: string; bytes: number; files: number;
+  undated_bytes: number; undated_files: number; days: StorageUsageDay[];
+}
+export interface DetailedStorageUsage {
+  categories: StorageUsageCategory[];
+  category_error: string;
+  measured_at: string;
+  duration_ms: number;
+  published: StorageUsageSource[];
+  directories: DetailedStorageDirectory[];
 }

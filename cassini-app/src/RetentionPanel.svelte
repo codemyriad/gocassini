@@ -30,8 +30,8 @@
   $: unsavedChanges.set(!!settings && JSON.stringify(settings) !== saved);
   onDestroy(() => { unsavedChanges.set(false); leavePrompt.set(null); });
 </script>
-<section class="grid gap-4">
-  <h2 class="text-xl font-semibold">Storage</h2>
+<section class="grid gap-4" id="retention-policies">
+  <h2 class="text-xl font-semibold">Retention policies</h2>
   <p>Container-local retention. All categories default to keep forever. External published recordings and job metadata are not deleted.</p>
   <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Retention ages use UTC dates. Cleanup runs at startup and on the daily schedule below. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
   {#if error}<p class="alert alert-error" role="alert">{error}</p>{/if}

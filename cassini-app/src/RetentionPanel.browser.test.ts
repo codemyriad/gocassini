@@ -55,7 +55,7 @@ function mountPanel() {
 describe("retention settings in the browser", () => {
   it("keeps edits local until Save, retains fine controls, and handles stale revisions", async () => {
     mountPanel();
-    await expect.element(page.getByRole("heading", { name: "Storage", exact: true })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).toBeVisible();
     await expect.element(page.getByText("Keep forever", { exact: true }).first()).toBeVisible();
     expect(page.getByRole("checkbox").all().length).toBe(4);
     await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeDisabled();
