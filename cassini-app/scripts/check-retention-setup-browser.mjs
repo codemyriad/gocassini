@@ -98,6 +98,14 @@ try {
   await source.getByRole("button", { name: "60 days", exact: true }).click();
   await page.getByRole("button", { name: "Save and continue" }).click();
   await page.getByRole("alert").filter({ hasText: "Settings changed" }).waitFor();
+  failGet = true;
+  await page.getByRole("button", { name: "Reload saved settings" }).click();
+  await page.getByRole("button", { name: "Leave", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Synthetic retention read failure" }).waitFor();
+  await page.getByRole("button", { name: "Set up later" }).click();
+  await page.getByRole("alertdialog").waitFor();
+  await page.getByRole("button", { name: "Stay", exact: true }).click();
+  failGet = false;
   await page.getByRole("button", { name: "Reload saved settings" }).click();
   await page.getByRole("button", { name: "Leave", exact: true }).click();
   await source.getByRole("checkbox").waitFor();
