@@ -78,11 +78,44 @@ Current demo-data behavior and limitations:
 
 ## Validation
 
+From the repository root, install the workspace and Chromium once:
+
 ```bash
-cd cassini-viewer
-npm test
-npm run build
+npm ci
+npm exec -w cassini-viewer -- playwright install chromium
 ```
+
+The normal test command runs both Node unit tests and headless Chromium tests.
+CI runs the same command and installs Chromium with its Linux system dependencies.
+
+```bash
+npm test -w cassini-viewer
+npm run build -w cassini-viewer
+```
+
+To run only one test project, or inspect the browser while a test runs:
+
+```bash
+npm test -w cassini-viewer -- --project=unit
+npm test -w cassini-viewer -- --project=browser
+npm test -w cassini-viewer -- --project=browser --browser.headless=false
+```
+
+Browser tests use `*.browser.test.ts` beside the components they exercise. They
+mount the real Svelte UI with synthetic data and require no Nextcloud instance,
+recordings, or credentials. Node tests retain their existing `*.test.ts` names.
+
+```text
+npm test -w cassini-viewer
+  +-- unit:    Node logic and server-rendered component tests
+  +-- browser: Chromium interaction tests with controlled provider responses
+```
+
+Annotation browser tests cover pending whole-meeting edits across dialog navigation,
+dependent region moves/removals, and text selection through region creation and
+reopening in both the document and an embedded shadow root. Fresh app mounts verify
+that saved provider data restores the region without an optimistic cache. These
+tests verify frontend behavior; actual backend persistence is covered separately.
 
 ## Mechanical Timing Audit
 

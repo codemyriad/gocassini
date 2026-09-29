@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import appSource from "./App.svelte?raw";
 
 describe("the shell's answer to meeting-detail tag writes", () => {
-  it("reconciles the list session and refreshes the vocabulary", () => {
+  it("reconciles the list session and refreshes once the shared queue drains", () => {
     const handler = appSource.slice(
       appSource.indexOf("function reconcileMeetingTags"),
       appSource.indexOf("const bulkTags"),
@@ -11,7 +11,10 @@ describe("the shell's answer to meeting-detail tag writes", () => {
     expect(handler).toContain(
       "listTagSession.updateConfirmed((vocabulary) => withMeetingResult(vocabulary, result));",
     );
-    expect(handler).toContain("refreshTags(true);");
+    expect(handler).not.toContain("refreshTags(true);");
+    expect(appSource).toContain("createWriteQueue(() => refreshTags(true))");
+    expect(appSource).toContain("createMeetingMarksSessions(queueTagWrite, reconcileMeetingTags)");
+    expect(appSource).toContain("marksSession={annotationCalls.session}");
     expect(appSource).toContain(
       "on:tagsChanged={(event) => reconcileMeetingTags(event.detail)}",
     );
@@ -21,9 +24,9 @@ describe("the shell's answer to meeting-detail tag writes", () => {
 
 describe("the shell's recovery for an unknown list-tag outcome", () => {
   it("passes retry state and action between the session and meeting list", () => {
-    expect(appSource).toContain("$: tagRetryable = $listTagSession.retryable;");
+    expect(appSource).toContain("annotationNotice ? annotationNotice.retryable : $listTagSession.retryable;");
     expect(appSource).toContain("{tagRetryable}");
-    expect(appSource).toContain("on:retryTag={() => listTagSession.retry()}");
+    expect(appSource).toContain("on:retryTag={() => annotationNotice ? meetingMarks.retry(annotationNotice.meetingId) : listTagSession.retry()}");
   });
 });
 

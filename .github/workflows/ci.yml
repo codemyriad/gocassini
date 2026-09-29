@@ -165,6 +165,8 @@ jobs:
       # dependency tree than the lockfile pins.
       - name: Install workspace
         run: npm ci
+      - name: Install Chromium for browser tests
+        run: npm exec -w ${{ matrix.package }} -- playwright install --with-deps chromium
       - name: Run tests
         run: npm test -w ${{ matrix.package }}
 
