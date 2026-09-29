@@ -946,6 +946,8 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
 		{"/storage/retention/sweep", http.HandlerFunc(rt.retentionSweepHandler)},
+		{"/storage/retention/preview", http.HandlerFunc(rt.remoteRetentionPreviewHandler)},
+		{"/storage/retention/operations", http.HandlerFunc(rt.remoteRetentionOperationsHandler)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the
 		// old hand-rolled list because main moved route registration into this

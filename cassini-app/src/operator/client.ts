@@ -208,6 +208,9 @@ export class OperatorClient {
     );
   }
 
+  previewRetention(settings: RetentionSettings): Promise<import("./retention").RetentionPreview> {
+ return this.#request("/storage/retention/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(settings)});
+ }
   getRetention(): Promise<RetentionSettings> {
     return this.#request<RetentionSettings>("/storage/retention");
   }

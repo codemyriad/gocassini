@@ -7,6 +7,14 @@
   export let operatorClient: OperatorClient | null = null;
   let settings: RetentionSettings | null = null;
   let saved = "", error = "", notice = "", busy = false;
+  let preview: import("./operator/retention").RetentionPreview | null = null;
+  let previewSettings = "";
+  async function previewNextcloud() {
+   if (!settings || !operatorClient) return;
+   busy=true; error="";
+   try { preview=await operatorClient.previewRetention(settings);previewSettings=JSON.stringify(settings); }
+   catch(e) {error=e instanceof Error?e.message:String(e);} finally {busy=false;}
+  }
   let split = false;
   const supportedZones = (Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
   const timezones = [...new Set(["UTC", Intl.DateTimeFormat().resolvedOptions().timeZone, ...supportedZones])];
@@ -32,7 +40,7 @@
 </script>
 <section class="grid gap-4" id="retention-policies">
   <h2 class="text-xl font-semibold">Retention policies</h2>
-  <p>Container-local retention. All categories default to keep forever. External published recordings and job metadata are not deleted.</p>
+  <p>Container storage and Nextcloud Files have separate policies. All categories default to keep forever. Job metadata is retained.</p>
   <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Retention ages use UTC dates. Cleanup runs at startup and on the daily schedule below. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
   {#if error}<p class="alert alert-error" role="alert">{error}</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
@@ -70,6 +78,24 @@
         </section>
         <section class="op-tint p-4"><RetentionPolicyField bind:policy={settings.current} label="Current output archive" /><p class="text-sm">The current .meeting and .opus expire together.</p></section>
         <section class="op-tint p-4"><RetentionPolicyField bind:policy={settings.logs} label="Logs" /><p class="text-sm">Attempt stage logs, not operator service logs.</p></section>
+        {#if settings.nextcloud}
+        <section class="op-tint p-4 grid gap-3">
+          <h3 class="font-semibold">Nextcloud Files</h3>
+          <RetentionPolicyField bind:policy={settings.nextcloud.recordings} label="Recordings (audio)" />
+          <RetentionPolicyField bind:policy={settings.nextcloud.transcriptions} label="Transcriptions and meeting data" />
+          <p class="text-sm">Transcriptions must be kept at least as long as audio. Audio expiry leaves the transcription and meeting notes. Transcription expiry removes the whole active meeting. Equal deadlines remove the meeting directly.</p>
+          <p class="text-sm">Ages use the original recording date, including existing managed meetings. Nextcloud manages previous versions and Deleted files; their storage usage is unknown.</p>
+          <button class="btn btn-secondary justify-self-start" type="button" on:click={previewNextcloud}>Preview Nextcloud retention</button>
+          {#if preview && previewSettings === JSON.stringify(settings)}
+            <div role="status">
+              <p>{preview.convert} audio conversions; {preview.retire} meeting removals due as of {preview.now}.</p>
+              {#if !preview.capability}<p>{preview.reason}</p>{/if}
+              <p>{preview.historyNotice}</p>
+              <ul>{#each preview.meetings as effect}<li>{effect.name}: {effect.action}{effect.audioDeadline ? `; audio ${effect.audioDeadline}` : ""}{effect.transcriptionDeadline ? `; transcription ${effect.transcriptionDeadline}` : ""}{effect.reason ? `; ${effect.reason}` : ""}</li>{/each}</ul>
+            </div>
+          {/if}
+        </section>
+        {/if}
         <p class="text-sm">Saving applies to existing artefacts at the next daily/startup cleanup, using their original lifecycle dates. Saving does not delete files immediately.</p>
         <button class="btn btn-primary justify-self-start" type="submit" disabled={JSON.stringify(settings) === saved}>Save retention settings</button>
       </fieldset>
