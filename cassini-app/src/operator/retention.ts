@@ -11,4 +11,5 @@ export function changeRetentionMode(group: RetentionGroup, mode: "group" | "fine
   return { ...group, mode, fine_initialized: group.fine_initialized || mode === "fine", fine: firstSplit ? Object.fromEntries(Object.keys(group.fine).map(k => [k, { ...group.policy }])) : group.fine };
 }
 
-export interface RetentionPreview {now:string; revision:number; capability:boolean; reason?:string; historyNotice:string; convert:number; retire:number; meetings:{name:string;action:string;audioDeadline?:string;transcriptionDeadline?:string;reason?:string}[]}
+export interface RetentionOperations { operations: {name:string;status:string;error:string;updatedAt:string}[]; offset:number; nextOffset:number; historyNotice:string }
+export interface RetentionPreview {audio?:{count:number;bytes:number};transcription?:{count:number;bytes:number};now:string; revision:number; capability:boolean; reason?:string; historyNotice:string; convert:number; retire:number; meetings:{name:string;action:string;audioDeadline?:string;transcriptionDeadline?:string;reason?:string}[]}

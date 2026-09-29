@@ -379,12 +379,27 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 				failure.Error = "expired"
 			}
 		}
+		release, lockErr := annotationMutationLocks.acquire(base, s.rt.annotationReads().path)
+		if lockErr != nil {
+			return
+		}
+		if failure != nil && errors.Is(s.exapp.meetingNotRetired(base, name), errMeetingRetired) {
+			failure.Meeting = name
+			failure.Error = "expired"
+		}
 		s.jobs.progress(job, failure)
-		if err := s.updateTagJob(job); err != nil {
+		err = s.updateTagJob(job)
+		release()
+		if err != nil {
 			s.logf("annotations: persist tag progress: %v", err)
 			return
 		}
 	}
+	release, err := annotationMutationLocks.acquire(context.WithoutCancel(base), s.rt.annotationReads().path)
+	if err != nil {
+		return
+	}
+	defer release()
 	s.jobs.finish(job, state)
 	_ = s.updateTagJob(job)
 }

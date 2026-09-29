@@ -7,14 +7,22 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // Enabled only after the installed compatibility and complete lifecycle gates.
-const remoteRetentionImplemented = false
+const remoteRetentionImplemented = true
 const nextcloudHistoryNotice = "Nextcloud manages previous versions and Deleted files. Logical active-file bytes do not measure physical disk reclamation."
 
+type retentionLogicalUsage struct {
+	Count int   `json:"count"`
+	Bytes int64 `json:"bytes"`
+}
+
 type remoteRetentionPreview struct {
+	Audio         retentionLogicalUsage   `json:"audio"`
+	Transcription retentionLogicalUsage   `json:"transcription"`
 	Now           string                  `json:"now"`
 	Revision      int                     `json:"revision"`
 	Capability    bool                    `json:"capability"`
@@ -25,6 +33,7 @@ type remoteRetentionPreview struct {
 	Meetings      []remoteRetentionEffect `json:"meetings"`
 }
 type remoteRetentionEffect struct {
+	Bytes                 *int64 `json:"bytes,omitempty"`
 	Name                  string `json:"name"`
 	Action                string `json:"action"`
 	AudioDeadline         string `json:"audioDeadline,omitempty"`
@@ -110,13 +119,44 @@ func (rt *Runtime) remoteRetentionPreviewHandler(w http.ResponseWriter, r *http.
 	if !result.Capability {
 		result.Reason = "Remote lifecycle and storage compatibility certification is not complete; remote expiry is unavailable."
 	}
+	rt.remoteRetentionMu.RLock()
+	remote := rt.remoteRetention
+	rt.remoteRetentionMu.RUnlock()
 	meetings, err := rt.store.retainedMeetings(r.Context())
+	if remote != nil {
+		if e := remote.remoteRetentionCapability(r.Context()); e != nil {
+			result.Capability = false
+			result.Reason = e.Error()
+		}
+		var skipped []remoteRetentionEffect
+		meetings, skipped, err = remote.retentionInventory(r.Context())
+		result.Meetings = append(result.Meetings, skipped...)
+	}
 	if err != nil {
 		writeJSONError(w, 500, "could not read managed meeting inventory")
 		return
 	}
 	for _, m := range meetings {
 		effect := evaluateRemoteRetention(m, proposed.Nextcloud, now)
+		if remote != nil && m.State != "retired" && m.State != "retiring" {
+			state, e := remote.exapp.davRetentionLeaf(r.Context(), remote.client, m.Path)
+			if e != nil || !state.Exists || state.FileID != m.FileID {
+				effect.Action = "skip"
+				effect.Reason = "Current file identity or location could not be verified."
+			} else {
+				effect.Bytes = &state.Size
+				usage := &result.Audio
+				if m.Representation == "transcription" {
+					usage = &result.Transcription
+				}
+				usage.Count++
+				usage.Bytes += state.Size
+			}
+			if job, e := rt.store.GetJob(r.Context(), strings.TrimSuffix(m.Name, ".opus")); e == nil && job.Stage != "done" {
+				effect.Action = "skip"
+				effect.Reason = "Meeting is busy."
+			}
+		}
 		result.Meetings = append(result.Meetings, effect)
 		if effect.Action == "convert" {
 			result.Convert++
@@ -130,6 +170,10 @@ func (rt *Runtime) remoteRetentionPreviewHandler(w http.ResponseWriter, r *http.
 func (rt *Runtime) remoteRetentionOperationsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, 405, "method not allowed")
+		return
+	}
+	if rt.store == nil {
+		writeJSONError(w, 503, "operations unavailable")
 		return
 	}
 	offset := 0

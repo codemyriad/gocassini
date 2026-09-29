@@ -153,11 +153,25 @@ func (s *annotationService) reconcileRetentionInventory(ctx context.Context) err
 }
 
 func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Time) error {
-	if err := s.recoverRemoteRetention(ctx); err != nil {
-		return err
-	}
 	if !remoteRetentionImplemented {
 		return nil
+	}
+	if s.rt.retention != nil {
+		s.rt.retention.mu.Lock()
+		forever := s.rt.retention.settings.Nextcloud.Recordings.Forever && s.rt.retention.settings.Nextcloud.Transcriptions.Forever
+		s.rt.retention.mu.Unlock()
+		if forever {
+			pending, err := s.rt.store.pendingRemoteOperations(ctx)
+			if err != nil || len(pending) == 0 {
+				return err
+			}
+		}
+	}
+	if err := s.remoteRetentionCapability(ctx); err != nil {
+		return err
+	}
+	if err := s.recoverRemoteRetention(ctx); err != nil {
+		return err
 	}
 	if err := s.reconcileRetentionInventory(ctx); err != nil {
 		return err
@@ -229,10 +243,23 @@ func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Tim
 }
 
 func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetingLifecycle, action string, revision int) error {
-	// Finish any old write-behind attempt before taking the upload reservation.
+	// Reconcile ambiguous uploads, but capture ordinary pending edits directly
+	// into JSON. Rewriting Opus first is unnecessary and can lose duplicate tags.
 	if action == "convert" {
-		if err := s.syncAnnotation(ctx, m.Name); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		store := s.rt.annotationReads()
+		if store == nil {
+			return fmt.Errorf("durable annotation store unavailable")
+		}
+		var flight sql.NullInt64
+		var republish []byte
+		err := store.db.QueryRowContext(ctx, `SELECT in_flight,republish_json FROM annotation_head WHERE opus_name=?`, m.Name).Scan(&flight, &republish)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+		if flight.Valid || republish != nil {
+			if err := s.syncAnnotation(ctx, m.Name); err != nil {
+				return err
+			}
 		}
 	}
 	release, err := annotationWriteLocks.acquire(ctx, m.Name)
@@ -545,4 +572,56 @@ func (s *annotationService) finishRemoteRetention(ctx context.Context, op remote
 	op.OutputSHA = ""
 	op.Desired = 0
 	return s.rt.store.saveRemoteOperation(ctx, op, "completed")
+}
+
+// No network probe is needed for the default, never-used lifecycle. Pending
+// journals are resumed only on a currently supported substrate.
+func (s *annotationService) recoverRemoteRetentionAtStartup(ctx context.Context) error {
+	if err := s.cleanupUnjournaledRetention(ctx); err != nil {
+		return err
+	}
+	pending, err := s.rt.store.pendingRemoteOperations(ctx)
+	if err != nil || len(pending) == 0 {
+		return err
+	}
+	if !remoteRetentionImplemented {
+		return remoteRetentionBlockedError()
+	}
+	if err = s.remoteRetentionCapability(ctx); err != nil {
+		return err
+	}
+	return s.recoverRemoteRetention(ctx)
+}
+
+// A crash before journal commit leaves no remote intent, only private staging.
+// Work-root ownership excludes a second operator; startup precedes remote work.
+func (s *annotationService) cleanupUnjournaledRetention(ctx context.Context) error {
+	pending, err := s.rt.store.pendingRemoteOperations(ctx)
+	if err != nil {
+		return err
+	}
+	keep := map[string]bool{}
+	for _, op := range pending {
+		keep[filepath.Clean(op.Directory)] = true
+	}
+	entries, err := os.ReadDir(s.rt.cfg.WorkRoot)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "remote-retention-") {
+			continue
+		}
+		dir := filepath.Join(s.rt.cfg.WorkRoot, entry.Name())
+		if keep[filepath.Clean(dir)] {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }

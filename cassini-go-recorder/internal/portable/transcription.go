@@ -245,7 +245,7 @@ func ExportTranscription(reader io.Reader, opts TranscriptionOptions) ([]byte, P
 	if err != nil {
 		return fail(err)
 	}
-	if decoded.Integrity.OpusSHA256 != integrity.SHA256 {
+	if decoded.Integrity.OpusSHA256 != integrity.SHA256 || decoded.Integrity.SampleCount != integrity.SampleCount || decoded.Audio.SampleCount != integrity.SampleCount || decoded.Audio.DurationMS != integrity.DurationMS {
 		return fail(fmt.Errorf("manifest audio identity mismatch"))
 	}
 	if len(decoded.Annotations) > 0 {
@@ -344,7 +344,7 @@ func ExportTranscription(reader io.Reader, opts TranscriptionOptions) ([]byte, P
 		"identity":  map[string]any{"meetingId": decoded.Meeting.ID, "documentId": opts.DocumentID, "originalAudioSha256": integrity.SHA256},
 		"media":     map[string]any{"state": "evicted", "reason": "retention", "evictedAt": opts.EvictedAt.UTC().Format(time.RFC3339Nano), "durationMs": decoded.Meeting.DurationMS},
 		"retention": map[string]any{"ageAnchor": opts.AgeAnchor.UTC().Format(time.RFC3339Nano), "anchorSource": opts.AnchorSource, "policyRevision": opts.PolicyRevision},
-		"current":   map[string]any{"manifest": json.RawMessage(raw), "payloads": payloads, "extraTags": extra, "vendor": vendor, "annotationCheckpoint": opts.Checkpoint},
+		"current":   map[string]any{"sourceManifest": TranscriptionPayload{"base64", base64.StdEncoding.EncodeToString(raw), transcriptionDigest(raw), len(raw), "application/json"}, "manifest": json.RawMessage(raw), "payloads": payloads, "extraTags": extra, "vendor": vendor, "annotationCheckpoint": opts.Checkpoint},
 	}
 	output, err := json.Marshal(document)
 	if err != nil {
@@ -397,12 +397,38 @@ func ReadTranscription(raw []byte) (TranscriptionDocument, error) {
 		return doc, err
 	}
 	var current struct {
-		Manifest   json.RawMessage                 `json:"manifest"`
-		Payloads   map[string]TranscriptionPayload `json:"payloads"`
-		Checkpoint AnnotationCheckpoint            `json:"annotationCheckpoint"`
+		Manifest       json.RawMessage                 `json:"manifest"`
+		Payloads       map[string]TranscriptionPayload `json:"payloads"`
+		Checkpoint     AnnotationCheckpoint            `json:"annotationCheckpoint"`
+		SourceManifest *TranscriptionPayload           `json:"sourceManifest"`
 	}
 	if err := json.Unmarshal(doc.Raw["current"], &current); err != nil {
 		return doc, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(doc.Raw["current"], &fields); err != nil {
+		return doc, err
+	}
+	for _, key := range []string{"manifest", "payloads", "extraTags", "vendor", "annotationCheckpoint"} {
+		if _, ok := fields[key]; !ok {
+			return doc, fmt.Errorf("missing retained %s", key)
+		}
+	}
+	var extraTags []string
+	var vendor string
+	if err := json.Unmarshal(fields["extraTags"], &extraTags); err != nil {
+		return doc, err
+	}
+	if err := json.Unmarshal(fields["vendor"], &vendor); err != nil {
+		return doc, err
+	}
+	if current.Checkpoint.Revision < 0 {
+		return doc, fmt.Errorf("invalid annotation checkpoint")
+	}
+	if current.SourceManifest != nil {
+		if _, err := current.SourceManifest.Bytes(); err != nil {
+			return doc, err
+		}
 	}
 	manifest, err := DecodePublishedManifest(current.Manifest)
 	if err != nil {

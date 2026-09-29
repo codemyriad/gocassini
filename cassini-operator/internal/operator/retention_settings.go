@@ -369,6 +369,19 @@ func (rt *Runtime) retentionHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 400, err.Error())
 			return
 		}
+		if !s.Nextcloud.Recordings.Forever || !s.Nextcloud.Transcriptions.Forever {
+			rt.remoteRetentionMu.RLock()
+			remote := rt.remoteRetention
+			rt.remoteRetentionMu.RUnlock()
+			if !remoteRetentionImplemented || remote == nil {
+				writeJSONError(w, 409, "Remote retention is unavailable until the installed lifecycle is certified")
+				return
+			}
+			if err := remote.remoteRetentionCapability(r.Context()); err != nil {
+				writeJSONError(w, 409, err.Error())
+				return
+			}
+		}
 		s.Revision++
 		if err := c.save(s); err != nil {
 			writeJSONError(w, 500, "Could not persist retention settings")

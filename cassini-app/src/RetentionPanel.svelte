@@ -9,6 +9,12 @@
   let saved = "", error = "", notice = "", busy = false;
   let preview: import("./operator/retention").RetentionPreview | null = null;
   let previewSettings = "";
+  let operations: import("./operator/retention").RetentionOperations | null = null;
+  async function loadOperations(offset = 0) {
+    if (!operatorClient) return;
+    try { operations = await operatorClient.retentionOperations(offset); }
+    catch(e) { error=e instanceof Error?e.message:String(e); }
+  }
   async function previewNextcloud() {
    if (!settings || !operatorClient) return;
    busy=true; error="";
@@ -59,7 +65,7 @@
           <p class="text-sm">Default: 02:00 UTC. Saving updates the next scheduled cleanup without restarting. If daylight saving skips the chosen time, cleanup runs at the first available time afterward; if the time repeats, it runs at the first occurrence only.</p>
         </section>
         <section class="op-tint p-4">
-          <h3 class="font-semibold">Recordings</h3>
+          <h3 class="font-semibold">Container recordings</h3>
           <RetentionPolicyField bind:policy={settings.recordings} label="Source recordings" />
           <p class="text-sm">Deletes the entire original recording, including captured audio, video and supporting files. Once deleted, the job cannot be rerun.</p>
         </section>
@@ -91,7 +97,17 @@
               <p>{preview.convert} audio conversions; {preview.retire} meeting removals due as of {preview.now}.</p>
               {#if !preview.capability}<p>{preview.reason}</p>{/if}
               <p>{preview.historyNotice}</p>
+              {#if preview.audio}<p>Active Nextcloud audio: {preview.audio.count} files, {preview.audio.bytes.toLocaleString()} logical bytes.</p>{/if}
+              {#if preview.transcription}<p>Active Nextcloud transcription documents: {preview.transcription.count} files, {preview.transcription.bytes.toLocaleString()} logical bytes.</p>{/if}
               <ul>{#each preview.meetings as effect}<li>{effect.name}: {effect.action}{effect.audioDeadline ? `; audio ${effect.audioDeadline}` : ""}{effect.transcriptionDeadline ? `; transcription ${effect.transcriptionDeadline}` : ""}{effect.reason ? `; ${effect.reason}` : ""}</li>{/each}</ul>
+            </div>
+          {/if}
+          <button class="btn btn-secondary justify-self-start" type="button" on:click={() => loadOperations()}>Refresh Nextcloud operation status</button>
+          {#if operations}
+            <div aria-label="Nextcloud retention operations">
+              {#if operations.operations.length === 0}<p>No operations on this page.</p>{/if}
+              <ul>{#each operations.operations as operation}<li>{operation.name}: {operation.status} ({operation.updatedAt}){operation.error ? `; ${operation.error}` : ""}</li>{/each}</ul>
+              {#if operations.operations.length === 100}<button class="btn btn-ghost" type="button" on:click={() => loadOperations(operations?.nextOffset)}>Next operations</button>{/if}
             </div>
           {/if}
         </section>

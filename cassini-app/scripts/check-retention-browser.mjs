@@ -8,7 +8,7 @@ import { createServer } from "vite";
 process.chdir(fileURLToPath(new URL("..", import.meta.url)));
 const forever = () => ({ forever: true });
 const group = keys => ({ mode: "group", fine_initialized: false, policy: forever(), fine: Object.fromEntries(keys.map(k => [k, forever()])) });
-let saved = { version: 3, revision: 0, schedule: { time: "02:00", timezone: "UTC" }, recordings: forever(), history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]), current: forever(), logs: forever() };
+let saved = { version: 4, nextcloud: {recordings:forever(),transcriptions:forever()}, revision: 0, schedule: { time: "02:00", timezone: "UTC" }, recordings: forever(), history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]), current: forever(), logs: forever() };
 let puts = 0;
 const server = await createServer({ server: { host: "127.0.0.1", port: 0 } });
 await server.listen();
@@ -25,7 +25,10 @@ import '/src/app.css';
 mount(Panel, {target: document.getElementById('app'), props: {operatorClient: new OperatorClient('/operator')}});
 </script></body></html>` }));
 await page.route(`${origin}operator/**`, async route => {
-  assert.equal(new URL(route.request().url()).pathname, "/operator/storage/retention");
+  const pathname = new URL(route.request().url()).pathname;
+  if (pathname.endsWith('/preview')) return route.fulfill({contentType:'application/json',body:JSON.stringify({now:'2026-09-29T12:00:00Z',revision:saved.revision,capability:false,reason:'Storage capability is unavailable.',historyNotice:'Nextcloud manages previous versions and Deleted files.',convert:1,retire:0,audio:{count:1,bytes:2048},transcription:{count:0,bytes:0},meetings:[{name:'fixture.opus',action:'convert',audioDeadline:'2026-09-01'}]})});
+  if (pathname.endsWith('/operations')) return route.fulfill({contentType:'application/json',body:JSON.stringify({operations:[{name:'fixture.opus',status:'completed',error:'',updatedAt:'2026-09-29T12:00:00Z'}],offset:0,nextOffset:1,historyNotice:'Nextcloud manages history.'})});
+  assert.equal(pathname, "/operator/storage/retention");
   if (route.request().method() === "PUT") {
     puts++;
     if (route.request().headers()["if-match"] !== `"${saved.revision}"`) return route.fulfill({ status: 412, contentType: "application/json", body: JSON.stringify({ error: "Settings changed; reload before saving" }) });
@@ -38,13 +41,13 @@ try {
   await page.goto(new URL("retention-fixture", origin).href);
   await page.getByRole("heading", { name: "Retention policies", exact: true }).waitFor();
   await page.getByText("Keep forever", { exact: true }).first().waitFor();
-  assert.equal(await page.getByRole("checkbox").count(), 4);
+  assert.equal(await page.getByRole("checkbox").count(), 6);
   assert.equal(await page.getByRole("button", { name: "Save retention settings" }).isDisabled(), true);
   assert.equal(await page.getByLabel("Sweep time", { exact: true }).inputValue(), "02:00");
   assert.equal(await page.getByLabel("Timezone", { exact: true }).inputValue(), "UTC");
   await page.getByLabel("Sweep time", { exact: true }).fill("15:45");
   await page.getByLabel("Timezone", { exact: true }).fill("Europe/Zagreb");
-  const recordings = page.locator("section").filter({ has: page.getByRole("heading", { name: "Recordings", exact: true }) }).last();
+  const recordings = page.locator("section").filter({ has: page.getByRole("heading", { name: "Container recordings", exact: true }) }).last();
   await recordings.getByRole("checkbox").uncheck();
   for (const days of [7, 30, 60, 90]) {
     const button = recordings.getByRole("button", { name: `${days} days`, exact: true });
@@ -97,6 +100,13 @@ try {
     await page.setViewportSize({ width, height: 900 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "horizontal overflow");
   }
+  await page.getByRole('button',{name:'Preview Nextcloud retention',exact:true}).click();
+  await page.getByText('Storage capability is unavailable.',{exact:true}).waitFor();
+  await page.getByText('Active Nextcloud audio: 1 files, 2,048 logical bytes.',{exact:true}).waitFor();
+  const writesBeforePreview=puts;
+  await page.getByRole('button',{name:'Refresh Nextcloud operation status',exact:true}).click();
+  await page.getByText('fixture.opus: completed',{exact:false}).waitFor();
+  assert.equal(puts,writesBeforePreview);
   assert.deepEqual(errors, []);
   console.log("Retention browser checks passed: defaults, group/fine, saved values, explicit Save, reload, stale saves, unsaved guard, responsive layout.");
 } finally { await browser.close(); await server.close(); }

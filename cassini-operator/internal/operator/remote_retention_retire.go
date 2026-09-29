@@ -148,9 +148,20 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 					job.Failed[i] = tagJobFailure{Meeting: op.Name, Error: "expired"}
 				}
 			}
+			{
+				s.jobs.mu.Lock()
+				if live := s.jobs.last[r.caller]; live != nil && live.ID == job.ID {
+					for i := range live.Failed {
+						if live.Failed[i].Meeting == title || live.Failed[i].Meeting == op.Name {
+							live.Failed[i] = tagJobFailure{Meeting: op.Name, Error: "expired"}
+						}
+					}
+				}
+				s.jobs.mu.Unlock()
+			}
 			labels, _ := json.Marshal(titles)
 			data, _ := json.Marshal(job)
-			if _, err := tx.ExecContext(ctx, `UPDATE annotation_tag_job SET titles=?,job_json=? WHERE caller=?`, labels, data, r.caller); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE annotation_tag_job SET titles=?,job_json=?,op=CASE WHEN ? THEN ? ELSE op END WHERE caller=?`, labels, data, len(titles) == 0, []byte(`{"ops":[]}`), r.caller); err != nil {
 				return err
 			}
 		}

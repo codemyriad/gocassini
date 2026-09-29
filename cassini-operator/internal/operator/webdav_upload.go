@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -289,6 +290,10 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 				if v := resp.Header.Get(h); v != "" {
 					w.Header().Set(h, v)
 				}
+			}
+			if m, ok, err := c.lifecycle.meetingLifecycle(r.Context(), path.Base(relPath)); err == nil && ok && m.Representation == "transcription" {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": path.Base(m.Path)}))
 			}
 			w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
 			w.WriteHeader(resp.StatusCode)

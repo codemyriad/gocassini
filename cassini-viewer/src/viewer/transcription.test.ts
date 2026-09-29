@@ -37,3 +37,12 @@ describe("portable retained meetings", () => {
     }
   });
 });
+
+it("rejects duplicate keys and excessive extension nesting", async () => {
+  const duplicate = fixture.toString().replace('"format":"cassini.transcription.v1"', '"format":"cassini.transcription.v1","format":"cassini.transcription.v1"');
+  expect(duplicate).not.toBe(fixture.toString());
+  await expect(extractPortableManifestFromArrayBuffer(new TextEncoder().encode(duplicate))).rejects.toThrow(/Duplicate/);
+  const document = JSON.parse(fixture.toString());
+  document.futureDepth = JSON.parse('['.repeat(70) + '0' + ']'.repeat(70));
+  await expect(extractPortableManifestFromArrayBuffer(new TextEncoder().encode(JSON.stringify(document)))).rejects.toThrow(/nesting/);
+});

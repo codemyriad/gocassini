@@ -989,7 +989,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	rt.remoteRetention = annotations
 	rt.remoteRetentionMu.Unlock()
 	if annotations != nil {
-		if err := annotations.recoverRemoteRetention(rt.ctx); err != nil {
+		if err := annotations.recoverRemoteRetentionAtStartup(rt.ctx); err != nil {
 			logger.Printf("remote retention recovery: %v", err)
 		}
 	}
@@ -1014,6 +1014,17 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	if annotations != nil {
 		rt.startInitialAnnotationBuild(exappCfg, logger)
 		annotations.register(root)
+		if rt.ctx != nil && rt.retention != nil {
+			rt.workerWG.Add(1)
+			go func() {
+				defer rt.workerWG.Done()
+				rt.retentionSweepMu.Lock()
+				defer rt.retentionSweepMu.Unlock()
+				if err := annotations.runRemoteRetention(rt.ctx, time.Now()); err != nil {
+					logger.Printf("startup remote retention: %v", err)
+				}
+			}()
+		}
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)

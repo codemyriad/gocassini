@@ -22,7 +22,17 @@ func retentionOpusFixture(t *testing.T) []byte {
 			left -= 255
 		}
 		segments = append(segments, byte(left))
-		return joinOggPages(testOggPage(2, 11, 0, 0, testOpusHead(1, 312)), testOggPageWithSegments(0, 11, 1, 0, segments, tags), testOggPage(4, 11, 2, 960, []byte{0xf8, 0xff, 0xfe}))
+		pages := [][]byte{testOggPage(2, 11, 0, 0, testOpusHead(1, 312)), testOggPageWithSegments(0, 11, 1, 0, segments, tags)}
+		for i := 0; i < 3001; i++ {
+			flag := byte(0)
+			granule := uint64((i + 1) * 960)
+			if i == 3000 {
+				flag = 4
+				granule = 2880000 + 312
+			}
+			pages = append(pages, testOggPage(flag, 11, uint32(i+2), granule, []byte{0xf8, 0xff, 0xfe}))
+		}
+		return joinOggPages(pages...)
 	}
 	integrity, err := ComputeOpusAudioIntegrity(bytes.NewReader(makeFile(testOpusTags("fixture"))))
 	if err != nil {

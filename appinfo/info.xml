@@ -32,7 +32,7 @@ Recording and transcription never leave your hardware. If you configure a langua
 **Cassini is in beta.** We run it daily on our own Nextcloud, but expect rough edges. Read the changelog before you update and open an issue if something breaks.
 
 Documentation: https://gocassini.com/docs]]></description>
-  <version>0.2.0-beta.7</version>
+  <version>0.2.0-beta.8</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
@@ -66,7 +66,7 @@ Documentation: https://gocassini.com/docs]]></description>
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.7</image-tag>
+      <image-tag>0.2.0-beta.8</image-tag>
     </docker-install>
 
     <!--

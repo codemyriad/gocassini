@@ -222,6 +222,12 @@ func ReadTranscriptionFile(path string) (portable.TranscriptionDocument, bool, e
 	if err != nil {
 		return portable.TranscriptionDocument{}, true, err
 	}
+	var header struct {
+		Format string `json:"format"`
+	}
+	if json.Unmarshal(raw, &header) == nil && !strings.HasPrefix(header.Format, "cassini.transcription.") && !strings.HasSuffix(path, ".cassini.transcription.json") {
+		return portable.TranscriptionDocument{}, false, nil
+	}
 	doc, err := portable.ReadTranscription(raw)
 	return doc, true, err
 }

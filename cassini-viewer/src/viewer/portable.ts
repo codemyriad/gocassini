@@ -2053,9 +2053,56 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 const MAX_RETAINED_BYTES = 64 * 1024 * 1024;
 
+// Validate before JSON.parse so duplicate members and deeply nested extension
+// data cannot disagree with the recorder's bounded parser.
+function parseRetainedJSON(bytes: Uint8Array): any {
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  let at = 0;
+  const whitespace = () => { while (/\s/.test(text[at] ?? "") && at < text.length) at++; };
+  const string = (): string => {
+    const match = /^"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/.exec(text.slice(at));
+    if (!match) throw new Error("Invalid retained JSON string");
+    at += match[0].length;
+    return JSON.parse(match[0]);
+  };
+  const value = (depth: number): void => {
+    if (depth > 64) throw new Error("Retained JSON nesting exceeds limit");
+    whitespace();
+    const token = text[at];
+    if (token === "{") {
+      at++; whitespace(); const keys = new Set<string>();
+      if (text[at] === "}") { at++; return; }
+      for (;;) {
+        whitespace(); const key = string();
+        if (keys.has(key)) throw new Error("Duplicate retained JSON member");
+        keys.add(key); whitespace();
+        if (text[at++] !== ":") throw new Error("Invalid retained JSON object");
+        value(depth + 1); whitespace();
+        const next = text[at++]; if (next === "}") return;
+        if (next !== ",") throw new Error("Invalid retained JSON object");
+      }
+    }
+    if (token === "[") {
+      at++; whitespace(); if (text[at] === "]") { at++; return; }
+      for (;;) {
+        value(depth + 1); whitespace();
+        const next = text[at++]; if (next === "]") return;
+        if (next !== ",") throw new Error("Invalid retained JSON array");
+      }
+    }
+    if (token === '"') { string(); return; }
+    const scalar = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(text.slice(at));
+    if (!scalar) throw new Error("Invalid retained JSON value");
+    at += scalar[0].length;
+  };
+  value(0); whitespace();
+  if (at !== text.length) throw new Error("Trailing retained JSON data");
+  return JSON.parse(text);
+}
+
 async function extractRetainedTranscription(bytes: Uint8Array): Promise<ExtractedPortableManifest> {
   if (bytes.byteLength > MAX_RETAINED_BYTES) throw new Error("Retained meeting exceeds size limit");
-  const document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  const document = parseRetainedJSON(bytes);
   if (document?.format !== "cassini.transcription.v1" || document.media?.state !== "evicted" ||
       document.media.reason !== "retention" || !Number.isFinite(Date.parse(document.media.evictedAt))) {
     throw new Error("Invalid retained meeting format or media state");
@@ -2066,6 +2113,18 @@ async function extractRetainedTranscription(bytes: Uint8Array): Promise<Extracte
       document.identity.originalAudioSha256 !== manifest.integrity?.opusAudioSha256 ||
       !document.retention?.anchorSource || !Number.isFinite(Date.parse(document.retention.ageAnchor))) {
     throw new Error("Retained meeting identity or age anchor mismatch");
+  }
+  if (!Array.isArray(document.current.extraTags) || !document.current.extraTags.every((v: unknown) => typeof v === "string") ||
+      typeof document.current.vendor !== "string" || typeof document.current.annotationCheckpoint?.stateToken !== "string" ||
+      !Number.isSafeInteger(document.current.annotationCheckpoint?.revision) || document.current.annotationCheckpoint.revision < 0) {
+    throw new Error("Invalid retained comments or annotation checkpoint");
+  }
+  if (document.current.sourceManifest) {
+    const p = document.current.sourceManifest;
+    if (p.encoding !== "base64" || typeof p.dataBase64 !== "string") throw new Error("Invalid source manifest");
+    const source = Uint8Array.from(atob(p.dataBase64), c => c.charCodeAt(0));
+    if (source.byteLength !== p.rawBytes || await sha256Hex(source) !== p.sha256) throw new Error("Source manifest integrity mismatch");
+    parseRetainedJSON(source);
   }
   const tags: Record<string, string> = Object.create(null);
   let total = 0;
@@ -2081,7 +2140,7 @@ async function extractRetainedTranscription(bytes: Uint8Array): Promise<Extracte
     if (total > MAX_RETAINED_BYTES || raw.byteLength !== p.rawBytes || await sha256Hex(raw) !== p.sha256) {
       throw new Error("Retained payload integrity mismatch");
     }
-    JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+    parseRetainedJSON(raw);
     tags[`__CASSINI_RETAINED_${prefix}`] = p.dataBase64;
   }
   for (const entry of [...(manifest.transcripts ?? []), ...(manifest.readableTranscripts ?? [])]) {
