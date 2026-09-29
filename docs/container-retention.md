@@ -36,11 +36,23 @@ across browsers and container restarts. Installations with any previously saved
 retention settings skip the review. Existing installations that have never saved
 retention settings also receive it.
 
-**Set up later** makes no change and offers a discard confirmation when there
-are unsaved edits. The review returns on the next page load until settings are
-saved in either location. It does not gate recording. A failed initial read
-offers a link to Storage for recovery rather than inventing settings or blocking
-the rest of Cassini. Non-admins are never asked to configure retention.
+The review is a modal over the Cassini scaffold. Its body scrolls inside the
+screen bounds while the action footer stays visible. **Save and continue**
+unlocks after the bottom is reached (or immediately if all content fits), and
+native form validation still applies. Escape and backdrop clicks do not close
+the review; a successful save is required. Reloading saved settings warns before
+discarding edits. Errors remain visible in the footer.
+
+```text
+Cassini scaffold (inert beneath modal)
+  +-- Review header
+  +-- Scrollable access + retention settings
+  +-- Fixed actions -> bottom reached -> Save -> close modal
+```
+
+The review does not gate recording. A failed initial read offers a link to
+Storage for recovery rather than inventing settings or blocking the rest of
+Cassini. Non-admins are never asked to configure retention.
 
 This setup change preserves the existing keep-forever defaults. It does not add
 an audio-only capture switch or expiry of published Nextcloud files. Those are

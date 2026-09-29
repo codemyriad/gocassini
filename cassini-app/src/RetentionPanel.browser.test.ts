@@ -113,6 +113,17 @@ describe("retention settings in the browser", () => {
     await expect.element(page.getByRole("status")).toBeVisible();
   });
 
+  it("allows confirmation without scrolling when every setting fits", async () => {
+    host.style.height = "3000px";
+    app = mount(RetentionPanel, { target: host, props: {
+      operatorClient: new OperatorClient("/operator"), initialSettings: initialSettings(), review: true,
+    } });
+    await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeEnabled();
+    await page.getByRole("button", { name: "Save and continue" }).click();
+    expect(puts).toBe(1);
+    expect(saved.revision).toBe(1);
+  });
+
   it.each([1280, 390])("has no horizontal overflow at %ipx", async (width) => {
     await page.viewport(width, 900);
     mountPanel();
