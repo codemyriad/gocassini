@@ -228,8 +228,9 @@ type Runtime struct {
 	storageUsageMu        sync.RWMutex
 	storageUsageRefreshMu sync.Mutex
 	storageUsage          storageUsageResponse
-	// detailedStorageUsage combines both published roots with format totals for
-	// current/ and runs/. It refreshes independently from the aggregate report.
+	// detailedStorageUsage combines published roots with retention categories,
+	// lifecycle dates and local directory totals. It refreshes independently
+	// from the aggregate report.
 	detailedStorageUsageMu        sync.RWMutex
 	detailedStorageUsageRefreshMu sync.Mutex
 	detailedStorageUsage          detailedStorageUsageResponse
