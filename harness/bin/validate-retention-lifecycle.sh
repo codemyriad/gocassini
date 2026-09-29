@@ -6,7 +6,10 @@ fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 if command -v g++ >/dev/null; then
   cpp_runtime="$(g++ -print-file-name=libstdc++.so.6)"
-  if [[ "$cpp_runtime" = /* ]]; then export LD_LIBRARY_PATH="$(dirname "$cpp_runtime")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi
+  if [[ "$cpp_runtime" = /* ]]; then
+    LD_LIBRARY_PATH="$(dirname "$cpp_runtime")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH
+  fi
 fi
 TRANSCRIPTION_OPUS_FIXTURE="$fixture_dir/source.opus" go -C cassini-go-recorder test ./internal/portable -run '^TestTranscriptionPreservation$' -count=1
 go -C cassini-go-recorder build -o "$fixture_dir/cassini" ./cmd/cassini
