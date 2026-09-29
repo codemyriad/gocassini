@@ -319,7 +319,14 @@ export interface DetailedStorageDirectory {
   error: string;
 }
 
+export interface StorageUsageDay { date: string; bytes: number; files: number }
+export interface StorageUsageCategory {
+  id: string; bytes: number; files: number;
+  undated_bytes: number; undated_files: number; days: StorageUsageDay[];
+}
 export interface DetailedStorageUsage {
+  categories: StorageUsageCategory[];
+  category_error: string;
   measured_at: string;
   duration_ms: number;
   published: StorageUsageSource[];

@@ -11,6 +11,7 @@
     "build:all": "npm run build && npm run build:embedded",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
+    "test:storage-browser": "node ./scripts/check-storage-charts-browser.mjs",
     "test:retention-browser": "node ./scripts/check-retention-browser.mjs"
   },
   "dependencies": {

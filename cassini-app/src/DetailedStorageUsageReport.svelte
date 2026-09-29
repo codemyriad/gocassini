@@ -3,9 +3,21 @@
   import { HardDrive, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { formatStorageBytes, storageUsageTotal } from "./operator/storageUsage";
   import type { OperatorClient } from "./operator/client";
-  import type { ArtifactStorageFileType, DetailedStorageUsage } from "./operator/types";
+  import type { DetailedStorageUsage } from "./operator/types";
 
-  const FORMAT_COLORS = ["#5e81ac", "#a3be8c", "#d08770", "#b48ead", "#ebcb8b", "#88c0d0", "#bf616a"];
+  import StorageCategoryChart from "./StorageCategoryChart.svelte";
+  import { categoryPresentation, displayStorageCategories } from "./operator/storageCharts";
+  let splitHistory = false;
+  let expanded: Record<string, boolean> = {};
+  $: categories = usage ? displayStorageCategories(usage.categories, splitHistory) : [];
+  $: localTotal = usage ? usage.categories.reduce((sum, category) => sum + category.bytes, 0) : 0;
+  $: partial = !!usage && (!!usage.category_error || usage.directories.some(directory => !!directory.error));
+  $: largest = Math.max(0, ...categories.map(category => category.bytes));
+  function presentation(id: string) { return categoryPresentation[id] ?? { label: id, description: "Retained local files.", color: "#7d8490" }; }
+  function openCategory(id: string) {
+    expanded = { ...expanded, [id]: true };
+    requestAnimationFrame(() => document.getElementById(`category-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
   export let operatorClient: OperatorClient | null = null;
 
   let usage: DetailedStorageUsage | null = null;
@@ -51,24 +63,16 @@
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? "just now" : date.toLocaleString();
   }
-  function formatLabel(extension: string): string { return extension === "none" ? "No extension" : extension; }
-  function formatColor(extension: string): string {
-    let hash = 0;
-    for (const char of extension) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
-    return FORMAT_COLORS[Math.abs(hash) % FORMAT_COLORS.length] ?? FORMAT_COLORS[0];
-  }
-  function formatShare(format: ArtifactStorageFileType, total: number): number {
-    return total > 0 ? (format.bytes / total) * 100 : 0;
-  }
 </script>
 
 <section class="report" aria-labelledby="detailed-storage-title">
   <header class="report-head">
     <div>
       <div class="op-panel-title"><HardDrive size={18} aria-hidden="true" /><h1 id="detailed-storage-title">Storage</h1></div>
-      <p>Published storage, working archive, and build history.</p>
+      <p>See what is retained, when it is from, and which policy controls it.</p>
     </div>
     <div class="report-actions">
+      <button class="op-btn" type="button" on:click={() => document.getElementById("retention-policies")?.scrollIntoView({ block: "start" })}>Retention policies</button>
       <button class="op-btn recalculate" class:refreshing={recalculating} type="button" on:click={() => void load(true)} disabled={loading}>
         <RefreshCw size={15} aria-hidden="true" />
         {recalculating ? "Calculating…" : usage?.measured_at ? "Recalculate" : "Calculate"}
@@ -91,77 +95,93 @@
       {/if}
     </div>
 
-    <section class="report-card op-tint" aria-labelledby="published-storage-title">
-      <header class="section-head">
-        <div><h3 id="published-storage-title">Published storage</h3><p>Both possible Nextcloud storage-mode roots.</p></div>
-        <strong>{publishedTotal === null ? "Partial result" : formatStorageBytes(publishedTotal)}</strong>
-      </header>
-      <div class="published-rows">
-        {#each usage.published as source (source.id)}
-          <article><div><h4>{source.label}</h4><p>{source.location}</p></div>{#if source.error}<span class="error" title={source.error}>Couldn’t measure</span>{:else}<strong>{formatStorageBytes(source.bytes)}</strong>{/if}</article>
+    <div class="totals">
+      <section class="total-card op-tint"><span>Retained locally</span><strong>{partial ? "Partial result" : usage.categories.length === 0 ? "Not available" : formatStorageBytes(localTotal)}</strong><p>Source recordings, outputs, history and logs.</p></section>
+      <section class="total-card op-tint"><span>Published in Nextcloud</span><strong>{publishedTotal === null ? "Couldn’t measure" : formatStorageBytes(publishedTotal)}</strong><p>Includes any legacy archives. Local retention does not delete these files.</p></section>
+    </div>
+    <p class="scope-note">File sizes in the recording and build folders, including each retained copy. These totals do not measure free disk space.</p>
+    {#if partial}<p class="alert alert-warning" role="status">Some local data could not be measured or classified. Values below are partial; recalculate to retry.</p>{/if}
+    {#if publishedTotal === null || partial}
+      <details class="measurement-errors"><summary>Measurement details</summary>
+        {#if usage.category_error}<p>{usage.category_error}</p>{/if}
+        {#each [...usage.published, ...usage.directories].filter(source => source.error) as source}<p>{source.label}: {source.error}</p>{/each}
+      </details>
+    {/if}
+    {#if usage.categories.length === 0}
+      <p class="report-state">Category data is not available yet. Recalculate after updating the operator.</p>
+    {:else}
+      <section class="report-card op-tint" aria-labelledby="category-comparison-title">
+        <header class="section-head"><div><h2 id="category-comparison-title">Usage by retention category</h2><p>Compare all retained bytes. Select a category to explore its dates.</p></div>
+          <label class="history-toggle"><input type="checkbox" bind:checked={splitHistory} />Split attempt history</label>
+        </header>
+        <div class="comparison">
+          {#each categories as category (category.id)}
+            {@const info = presentation(category.id)}
+            <button type="button" class="comparison-row" on:click={() => openCategory(category.id)} aria-label={`Explore ${info.label}: ${formatStorageBytes(category.bytes)}`}>
+              <span class="category-label">{info.label}</span>
+              <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? category.bytes / largest * 100 : 0}%`} style:background={info.color}></span></span>
+              <strong>{formatStorageBytes(category.bytes)}</strong>
+            </button>
+          {/each}
+        </div>
+      </section>
+      <div class="dates-heading"><h2>Explore retained storage by date</h2><p>Bytes that are still retained, grouped by the UTC lifecycle dates used for retention. This is not a history of past disk usage. Chart controls do not change retention policies.</p></div>
+      <div class="category-list">
+        {#each categories as category (category.id)}
+          {@const info = presentation(category.id)}
+          <details class="category-card op-tint" id={`category-${category.id}`} bind:open={expanded[category.id]}>
+            <summary><span class="category-dot" style:background={info.color}></span><span class="category-name">{info.label}<small>{category.files.toLocaleString()} file{category.files === 1 ? "" : "s"}</small></span><strong>{formatStorageBytes(category.bytes)}</strong></summary>
+            <p class="category-description">{info.description}</p>
+            <StorageCategoryChart {category} measuredAt={usage.measured_at} label={info.label} color={info.color} />
+          </details>
         {/each}
       </div>
-    </section>
-
-    {#each usage.directories as directory (directory.id)}
-      <section class="report-card op-tint" aria-labelledby={`storage-directory-${directory.id}`}>
-        <header class="section-head">
-          <div><h3 id={`storage-directory-${directory.id}`}>{directory.label}</h3><p class="path">{directory.location}</p></div>
-          {#if directory.error}<span class="error" title={directory.error}>Couldn’t measure</span>{:else}<strong>{formatStorageBytes(directory.bytes)}</strong>{/if}
-        </header>
-        {#if !directory.error && directory.formats.length === 0}
-          <p class="empty">No retained artifacts in this directory.</p>
-        {:else if !directory.error}
-          <div class="formats">
-            <div class="format-bar" role="img" aria-label={`${directory.label}: ${directory.formats.map((format) => `${formatLabel(format.extension)} ${formatStorageBytes(format.bytes)}`).join(", ")}`}>
-              {#each directory.formats as format (format.extension)}
-                <span style:width={`${formatShare(format, directory.bytes)}%`} style:background-color={formatColor(format.extension)} title={`${formatLabel(format.extension)} · ${formatStorageBytes(format.bytes)}`}></span>
-              {/each}
-            </div>
-            <div class="format-legend">
-              {#each directory.formats as format (format.extension)}
-                <span><i style:background-color={formatColor(format.extension)}></i><b>{formatLabel(format.extension)}</b> {formatStorageBytes(format.bytes)} · {format.files} file{format.files === 1 ? "" : "s"}</span>
-              {/each}
-            </div>
-          </div>
-        {/if}
-      </section>
-    {/each}
+    {/if}
   {/if}
 </section>
 
 <style>
-  .report { display: grid; gap: 12px; padding-top: 8px; }
-  .report-head, .section-head, .refresh-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .report-head h1, .section-head h3, .published-rows h4 { margin: 0; }
-  .report-head h1 { font-size: 16px; }
-  .report-head p, .section-head p { margin: 4px 0 0; font-size: 12px; color: color-mix(in oklch, var(--color-base-content) 62%, transparent); }
-  .report-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-  .recalculate { display: inline-flex; align-items: center; gap: 7px; }
-  .report-state { display: grid; gap: 4px; padding: 16px; border-radius: 10px; background: var(--op-inset); font-size: 12px; color: color-mix(in oklch, var(--color-base-content) 65%, transparent); }
-  .refresh-line { font-size: 11px; color: color-mix(in oklch, var(--color-base-content) 58%, transparent); }
-  .refresh-line strong { color: color-mix(in oklch, var(--color-base-content) 78%, transparent); }
-  .report-card { overflow: hidden; }
-  .section-head { padding: 15px 18px; }
-  .section-head h3 { font-size: 14px; }
-  .section-head > strong { font-size: 17px; font-variant-numeric: tabular-nums; }
-  .section-head .path, .published-rows p { font: 11px/1.4 ui-monospace, monospace; }
-  .published-rows, .formats, .empty { border-top: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200)); }
-  .published-rows article { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 18px; }
-  .published-rows article + article { border-top: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200)); }
-  .published-rows h4 { font-size: 12px; }
-  .published-rows p { margin: 3px 0 0; color: color-mix(in oklch, var(--color-base-content) 58%, transparent); }
-  .published-rows strong { font-size: 14px; font-variant-numeric: tabular-nums; }
-  .formats { padding: 14px 18px 15px; }
-  .format-bar { display: flex; width: 100%; height: 10px; overflow: hidden; border-radius: 999px; background: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-200)); }
-  .format-bar span { min-width: 2px; }
-  .format-legend { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-top: 9px; }
-  .format-legend span { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: color-mix(in oklch, var(--color-base-content) 63%, transparent); }
-  .format-legend i { width: 7px; height: 7px; border-radius: 2px; }
-  .format-legend b { color: var(--color-base-content); }
-  .empty { margin: 0; padding: 14px 18px; font-size: 12px; color: color-mix(in oklch, var(--color-base-content) 58%, transparent); }
-  .error { color: var(--color-error); font-size: 12px; font-weight: 600; }
-  .refreshing :global(svg) { animation: report-spin .8s linear infinite; }
-  @media (max-width: 600px) { .report-head, .section-head, .refresh-line { align-items: start; flex-direction: column; } }
-  @keyframes report-spin { to { transform: rotate(360deg); } }
+  .report { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:14px; padding:8px 0 28px; }
+  .report-head, .section-head, .refresh-line { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+  .report-head h1, h2 { margin:0; font-size:16px; }
+  .report-head p, .section-head p, .dates-heading p { margin:5px 0 0; font-size:12px; color:color-mix(in oklch,var(--color-base-content) 65%,transparent); }
+  .report-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .recalculate { display:inline-flex; align-items:center; gap:7px; }
+  .report-state { display:grid; gap:4px; padding:16px; border-radius:10px; background:var(--op-inset); font-size:12px; }
+  .refresh-line, .scope-note { font-size:11px; color:color-mix(in oklch,var(--color-base-content) 62%,transparent); }
+  .scope-note { margin:0; }
+  .totals { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .total-card { display:grid; gap:7px; padding:18px 20px; }
+  .total-card > span { font-size:12px; font-weight:600; }
+  .total-card strong { font-size:28px; letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
+  .total-card p { font-size:11px; margin:0; color:color-mix(in oklch,var(--color-base-content) 65%,transparent); }
+  .report-card { overflow:hidden; }
+  .section-head { padding:18px 20px 10px; }
+  .section-head h2, .dates-heading h2 { font-size:14px; }
+  .history-toggle { display:flex; align-items:center; gap:7px; font-size:12px; white-space:nowrap; }
+  .comparison { display:grid; gap:4px; padding:8px 12px 16px; }
+  .comparison-row { display:grid; grid-template-columns:minmax(140px, 1fr) minmax(80px, 2fr) 70px; align-items:center; gap:18px; width:100%; background:transparent; border:0; border-radius:6px; padding:9px 8px; text-align:left; cursor:pointer; font-size:12px; color:inherit; }
+  .comparison-row:hover { background:var(--op-inset); }
+  .comparison-row:focus-visible { outline:2px solid var(--color-primary); outline-offset:1px; }
+  .comparison-row strong { text-align:right; font-variant-numeric:tabular-nums; }
+  .comparison-track { display:block; height:18px; border-radius:3px; background:color-mix(in oklch,var(--color-base-content) 5%,transparent); overflow:hidden; }
+  .comparison-track > span { display:block; height:100%; border-radius:3px; }
+  .dates-heading { margin-top:8px; }
+  .category-list { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; }
+  .category-card { scroll-margin-top:20px; }
+  .category-card > summary { display:flex; align-items:center; gap:10px; padding:16px 20px; cursor:pointer; list-style:none; }
+  .category-card > summary::-webkit-details-marker { display:none; }
+  .category-card > summary::after { content:"+"; font-size:18px; width:14px; text-align:center; }
+  .category-card[open] > summary::after { content:"−"; }
+  .category-name { flex:1; font-size:13px; font-weight:600; }
+  .category-name small { display:block; margin-top:3px; font-size:10px; font-weight:400; color:color-mix(in oklch,var(--color-base-content) 60%,transparent); }
+  .category-card summary strong { font-size:14px; font-variant-numeric:tabular-nums; }
+  .category-dot { width:8px; height:8px; border-radius:2px; flex:none; }
+  .category-description { margin:0; padding:0 20px 12px; font-size:12px; color:color-mix(in oklch,var(--color-base-content) 65%,transparent); }
+  .measurement-errors { font-size:12px; overflow-wrap:anywhere; }
+  .measurement-errors summary { cursor:pointer; }
+  .refreshing :global(svg) { animation:report-spin .8s linear infinite; }
+  @media(max-width:600px) { .report-head { align-items:start; flex-direction:column; } .totals { grid-template-columns:1fr; } .section-head { align-items:start; flex-direction:column; } .comparison-row { grid-template-columns:minmax(90px,1fr) minmax(40px,1fr) 56px; gap:8px; font-size:11px; } .category-card > summary { padding:14px 12px; } .category-description { padding:0 12px 12px; } }
+  @media(prefers-reduced-motion:reduce) { .refreshing :global(svg) { animation:none; } }
+  @keyframes report-spin { to { transform:rotate(360deg); } }
 </style>

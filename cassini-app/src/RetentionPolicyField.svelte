@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { RetentionPolicy } from "./operator/retention";
+  import { retentionDayPresets, type RetentionPolicy } from "./operator/retention";
   export let policy: RetentionPolicy;
   export let label: string;
-  const presets = [7, 30, 60, 90];
+  const presets: readonly number[] = retentionDayPresets;
   let custom = !policy.forever && !presets.includes(policy.count ?? 0);
   function setForever(forever: boolean) {
     custom = false;

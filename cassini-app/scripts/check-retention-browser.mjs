@@ -36,7 +36,7 @@ await page.route(`${origin}operator/**`, async route => {
 });
 try {
   await page.goto(new URL("retention-fixture", origin).href);
-  await page.getByRole("heading", { name: "Storage", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Retention policies", exact: true }).waitFor();
   await page.getByText("Keep forever", { exact: true }).first().waitFor();
   assert.equal(await page.getByRole("checkbox").count(), 4);
   assert.equal(await page.getByRole("button", { name: "Save retention settings" }).isDisabled(), true);
