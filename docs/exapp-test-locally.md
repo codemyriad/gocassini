@@ -27,28 +27,27 @@ docker pull ghcr.io/codemyriad/gocassini:latest
 IMAGE_REF=ghcr.io/codemyriad/gocassini:latest ./harness/bin/ci-smoke-exapp.sh
 ```
 
-## Tier 2 — AppAPI install/proxy checks without Talk recording
+## Tier 2 — Installed Nextcloud/AppAPI and Talk checks
 
-[`harness/bin/ci-e2e-install-exapp.sh`](../harness/bin/ci-e2e-install-exapp.sh)
-installs Cassini into a real local Nextcloud through AppAPI and validates:
+[`harness/bin/ci-nextcloud-compatibility.sh`](../harness/bin/ci-nextcloud-compatibility.sh)
+installs Cassini into a locked Nextcloud stack through AppAPI and validates:
 
 - AppAPI registration;
 - AppAPI proxy route ACLs;
 - control panel and viewer routes;
 - AppAPI lifecycle callbacks;
-- persistent state survival.
+- persistent state survival;
+- Talk recording, publication, participant access, and browser playback.
 
-Run it when you need a quick installed-ExApp smoke test:
+Run it on a dedicated Docker host with no retained Cassini fixture. See the
+[compatibility guide](nextcloud-compatibility.md) for the required tools and
+fixture cleanup behavior.
 
 ```bash
 docker build -f deployment/Dockerfile.exapp -t cassini-exapp:local .
-CASSINI_EXPECT_GPU_UNAVAILABLE=1 IMAGE_REF=cassini-exapp:local \
-  ./harness/bin/ci-e2e-install-exapp.sh
+IMAGE_REF=cassini-exapp:local LOG_DIR=/tmp/cassini-nc35 \
+  ./harness/bin/ci-nextcloud-compatibility.sh nc35
 ```
-
-Important scope note: this script uses a local/manual install shape and does
-not configure Talk's record button. It is useful for AppAPI proxy/UI
-regressions, but it does not prove production Talk recording.
 
 ## Tier 3 — Production-shaped AppAPI/HaRP + Talk harness
 

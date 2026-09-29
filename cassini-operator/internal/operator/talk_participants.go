@@ -12,39 +12,32 @@ import (
 	"time"
 )
 
-// Nextcloud-native access control (D-534) freezes a recording's audience to the
-// Talk room's participants at publish time. This file enumerates those
-// participants: acting as the recording owner (who is a room participant, so
-// the lookup always succeeds and is not gated by a lobby), it reads the spreed
-// participants OCS endpoint and maps each *local* participant to an advanced-ACL
-// mapping. Guests, email invitees and federated users have no local Nextcloud
-// account to grant read on, so they are warned about and skipped.
+// A recording's share audience comes from Talk participants. The service
+// account reads the room's participant list and keeps local users, groups and
+// Teams. Guests, email invitees and federated users have no local Files share.
 
-// aclMapping is one advanced-ACL principal a recording is granted read on. Type
-// is the groupfolders mapping type ("user", "group", "circle"); ID is the
-// principal identifier (a Nextcloud user id, group id, or circle/team id).
-type aclMapping struct {
+// sharePrincipal names one recipient of a Nextcloud Files share.
+type sharePrincipal struct {
 	Type string
 	ID   string
 }
 
-// talkParticipantsFetcher resolves the grantable ACL principals for a Talk
+// talkParticipantsFetcher resolves local share principals for a Talk
 // room, acting as the given owner. Nil when the operator has no AppAPI
 // credentials.
-type talkParticipantsFetcher func(ctx context.Context, owner, roomToken string) ([]aclMapping, error)
+type talkParticipantsFetcher func(ctx context.Context, owner, roomToken string) ([]sharePrincipal, error)
 
 const talkParticipantsTimeout = 15 * time.Second
 
 // talkParticipantsFetcher returns a fetcher backed by the Talk OCS participants
-// API, or nil when the ExApp environment is absent (standalone/dev deploys skip
-// access control entirely).
+// API, or nil when the ExApp environment is absent.
 func (c ExAppConfig) talkParticipantsFetcher() talkParticipantsFetcher {
 	if !c.appAPIActive() {
 		return nil
 	}
 	base := strings.TrimRight(c.NextcloudURL, "/")
 	client := &http.Client{Timeout: talkParticipantsTimeout}
-	return func(ctx context.Context, owner, roomToken string) ([]aclMapping, error) {
+	return func(ctx context.Context, owner, roomToken string) ([]sharePrincipal, error) {
 		owner = strings.TrimSpace(owner)
 		roomToken = strings.TrimSpace(roomToken)
 		if owner == "" || roomToken == "" {
@@ -77,8 +70,7 @@ func (c ExAppConfig) talkParticipantsFetcher() talkParticipantsFetcher {
 	}
 }
 
-// participantACTORs are the spreed actor types that map to a locally grantable
-// advanced-ACL principal. Everything else (guests, emails, federated_users,
+// participantACTORs are Talk actor types that map to a local share principal. Everything else (guests, emails, federated_users,
 // phones) has no local Nextcloud account/group to grant read on.
 var participantACTORs = map[string]string{
 	"users":   "user",
@@ -92,11 +84,10 @@ type participantRow struct {
 	UserID    string `json:"userId"`
 }
 
-// participantMappings converts a spreed participants list into deduplicated ACL
-// mappings, keeping only the locally grantable actor types.
-func participantMappings(rows []participantRow) []aclMapping {
+// participantMappings deduplicates the locally shareable Talk actors.
+func participantMappings(rows []participantRow) []sharePrincipal {
 	seen := map[string]bool{}
-	out := make([]aclMapping, 0, len(rows))
+	out := make([]sharePrincipal, 0, len(rows))
 	for _, row := range rows {
 		mapType, ok := participantACTORs[row.ActorType]
 		if !ok {
@@ -114,7 +105,7 @@ func participantMappings(rows []participantRow) []aclMapping {
 			continue
 		}
 		seen[key] = true
-		out = append(out, aclMapping{Type: mapType, ID: id})
+		out = append(out, sharePrincipal{Type: mapType, ID: id})
 	}
 	return out
 }
@@ -195,7 +186,7 @@ const (
 // An empty result with a nil error is a real answer, not a failure: a room
 // whose attendees are all guests/email/federated has no local principal to
 // grant. The caller distinguishes that from "we could not find out".
-func (rt *Runtime) resolveRecordingAudience(ctx context.Context, jobID, starter, roomToken string) ([]aclMapping, string, error) {
+func (rt *Runtime) resolveRecordingAudience(ctx context.Context, jobID, starter, roomToken string) ([]sharePrincipal, string, error) {
 	if rt.fetchTalkParticipants == nil {
 		return nil, "", nil
 	}

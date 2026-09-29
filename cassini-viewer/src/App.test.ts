@@ -2,6 +2,31 @@ import { describe, expect, it } from "vitest";
 
 import appSource from "./App.svelte?raw";
 
+describe("the shell's answer to meeting-detail tag writes", () => {
+  it("reconciles the list session and refreshes the vocabulary", () => {
+    const handler = appSource.slice(
+      appSource.indexOf("function reconcileMeetingTags"),
+      appSource.indexOf("const bulkTags"),
+    );
+    expect(handler).toContain(
+      "listTagSession.updateConfirmed((vocabulary) => withMeetingResult(vocabulary, result));",
+    );
+    expect(handler).toContain("refreshTags(true);");
+    expect(appSource).toContain(
+      "on:tagsChanged={(event) => reconcileMeetingTags(event.detail)}",
+    );
+    expect(appSource).not.toContain("applied(event.detail)");
+  });
+});
+
+describe("the shell's recovery for an unknown list-tag outcome", () => {
+  it("passes retry state and action between the session and meeting list", () => {
+    expect(appSource).toContain("$: tagRetryable = $listTagSession.retryable;");
+    expect(appSource).toContain("{tagRetryable}");
+    expect(appSource).toContain("on:retryTag={() => listTagSession.retry()}");
+  });
+});
+
 // Source-level assertions, the convention this repo follows for .svelte files:
 // the suite runs in node with no DOM harness. What is asserted is the shell's
 // wiring — which surfaces can ask for a retry, and what happens to the list

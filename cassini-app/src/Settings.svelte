@@ -13,9 +13,10 @@
   import { loadConfig } from "./operator/config";
   import { OperatorClient } from "./operator/client";
   import SettingsPanel from "./SettingsPanel.svelte";
+  import StorageUsagePanel from "./StorageUsagePanel.svelte";
+  import RetentionPanel from "./RetentionPanel.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
-  import StorageUsagePanel from "./StorageUsagePanel.svelte";
   import type { OperatorPanel } from "./surfaceRouting";
 
   export let panel: OperatorPanel = "endpoints";
@@ -49,6 +50,7 @@
     />
   {:else if panel === "storage"}
     <StorageUsagePanel {operatorClient} />
+    <RetentionPanel {operatorClient} />
   {:else if panel === "templates"}
     <InsightTemplatesPanel
       {operatorClient}

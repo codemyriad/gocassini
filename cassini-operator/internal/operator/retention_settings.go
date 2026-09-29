@@ -1,0 +1,357 @@
+package operator
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+	_ "time/tzdata" // Named zones must work in minimal container images.
+)
+
+// Retention dates deliberately have no duration-in-seconds representation.
+type retentionPolicy struct {
+	Forever bool   `json:"forever"`
+	Count   int    `json:"count,omitempty"`
+	Unit    string `json:"unit,omitempty"`
+}
+type retentionGroup struct {
+	FineInitialized bool                       `json:"fine_initialized"`
+	Mode            string                     `json:"mode"`
+	Policy          retentionPolicy            `json:"policy"`
+	Fine            map[string]retentionPolicy `json:"fine"`
+}
+type retentionSettings struct {
+	Schedule   retentionSchedule `json:"schedule"`
+	Version    int               `json:"version"`
+	Revision   int               `json:"revision"`
+	Recordings retentionPolicy   `json:"recordings"`
+	History    retentionGroup    `json:"history"`
+	Current    retentionPolicy   `json:"current"`
+	Logs       retentionPolicy   `json:"logs"`
+}
+
+type retentionSchedule struct {
+	Time     string `json:"time"`
+	Timezone string `json:"timezone"`
+}
+
+func defaultRetentionSchedule() retentionSchedule {
+	return retentionSchedule{Time: "02:00", Timezone: "UTC"}
+}
+
+func (s retentionSchedule) validate() error {
+	if t, err := time.Parse("15:04", s.Time); err != nil || t.Format("15:04") != s.Time {
+		return errors.New("sweep time must be HH:MM in 24-hour format")
+	}
+	if s.Timezone == "" || s.Timezone == "Local" {
+		return errors.New("choose an explicit timezone, such as UTC or Europe/Zagreb")
+	}
+	if _, err := time.LoadLocation(s.Timezone); err != nil {
+		return errors.New("unknown sweep timezone")
+	}
+	return nil
+}
+
+var historyKinds = []string{"failed_capture", "failed_build", "superseded", "failed_publish"}
+
+func defaultRetentionSettings() retentionSettings {
+	group := func(keys []string) retentionGroup {
+		g := retentionGroup{Mode: "group", Policy: retentionPolicy{Forever: true}, Fine: map[string]retentionPolicy{}}
+		for _, k := range keys {
+			g.Fine[k] = retentionPolicy{Forever: true}
+		}
+		return g
+	}
+	return retentionSettings{Schedule: defaultRetentionSchedule(), Version: 3, Recordings: retentionPolicy{Forever: true}, History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
+}
+func (g retentionGroup) policyFor(kind string) retentionPolicy {
+	if g.Mode == "fine" {
+		return g.Fine[kind]
+	}
+	return g.Policy
+}
+func (p retentionPolicy) validate() error {
+	if p.Forever {
+		if p.Count != 0 || p.Unit != "" {
+			return errors.New("keep forever cannot include a count or unit")
+		}
+		return nil
+	}
+	if p.Count < 1 || p.Count > 9999 {
+		return errors.New("retention count must be an integer from 1 to 9999")
+	}
+	if p.Unit != "days" {
+		return errors.New("retention unit must be days")
+	}
+	return nil
+}
+func utcDate(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+func (p retentionPolicy) deadline(anchor time.Time) time.Time {
+	if p.Forever || anchor.IsZero() {
+		return time.Time{}
+	}
+	if p.validate() != nil {
+		return time.Time{}
+	}
+	return utcDate(anchor).AddDate(0, 0, p.Count)
+}
+func (p retentionPolicy) due(anchor, now time.Time) bool {
+	d := p.deadline(anchor)
+	return !d.IsZero() && !utcDate(now).Before(d)
+}
+func (s retentionSettings) validate() error {
+	if err := s.Schedule.validate(); err != nil {
+		return err
+	}
+	if s.Version != 3 || s.Revision < 0 {
+		return errors.New("unsupported retention settings version or revision")
+	}
+	if err := s.Recordings.validate(); err != nil {
+		return fmt.Errorf("recordings: %w", err)
+	}
+	g := s.History
+	keys := historyKinds
+	if g.Mode != "group" && g.Mode != "fine" {
+		return errors.New("policy mode must be group or fine")
+	}
+	if err := g.Policy.validate(); err != nil {
+		return err
+	}
+	if len(g.Fine) != len(keys) {
+		return errors.New("all fine-grained policies must be supplied")
+	}
+	for _, k := range keys {
+		p, ok := g.Fine[k]
+		if !ok {
+			return fmt.Errorf("missing %s policy", k)
+		}
+		if err := p.validate(); err != nil {
+			return fmt.Errorf("%s: %w", k, err)
+		}
+	}
+	if err := s.Current.validate(); err != nil {
+		return err
+	}
+	if err := s.Logs.validate(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// The mutex also linearizes policy activation against the worker's deletion start.
+type retentionConfig struct {
+	changed  chan struct{}
+	mu       sync.Mutex
+	path     string
+	settings retentionSettings
+	loadErr  error
+}
+
+func newRetentionConfig(path string) *retentionConfig {
+	c := &retentionConfig{path: path, settings: defaultRetentionSettings(), changed: make(chan struct{}, 1)}
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return c
+	}
+	if err != nil {
+		c.loadErr = err
+		return c
+	}
+	defer f.Close()
+	// Version 1's audio policy already controlled whole-bundle deletion.
+	// Preserve that deadline when upgrading an existing settings file.
+	var stored struct {
+		Schedule   *retentionSchedule `json:"schedule"`
+		Version    int                `json:"version"`
+		Revision   int                `json:"revision"`
+		Recordings json.RawMessage    `json:"recordings"`
+		History    retentionGroup     `json:"history"`
+		Current    retentionPolicy    `json:"current"`
+		Logs       retentionPolicy    `json:"logs"`
+	}
+	dec := json.NewDecoder(io.LimitReader(f, 65537))
+	dec.DisallowUnknownFields()
+	if err = dec.Decode(&stored); err == nil {
+		var extra any
+		if dec.Decode(&extra) != io.EOF {
+			err = errors.New("trailing retention settings data")
+		}
+	}
+	s := retentionSettings{Version: stored.Version, Revision: stored.Revision, History: stored.History, Current: stored.Current, Logs: stored.Logs}
+	s.Schedule = defaultRetentionSchedule()
+	if stored.Schedule != nil {
+		s.Schedule = *stored.Schedule
+	}
+	if err == nil {
+		recordingDecoder := json.NewDecoder(bytes.NewReader(stored.Recordings))
+		recordingDecoder.DisallowUnknownFields()
+		if stored.Version == 1 {
+			var legacy retentionGroup
+			err = recordingDecoder.Decode(&legacy)
+			if err == nil {
+				switch legacy.Mode {
+				case "group":
+					s.Recordings = legacy.Policy
+				case "fine":
+					s.Recordings = legacy.Fine["audio"]
+				default:
+					err = errors.New("unknown legacy recordings policy mode")
+				}
+				s.Version = 2
+			}
+		} else {
+			err = recordingDecoder.Decode(&s.Recordings)
+		}
+	}
+
+	if err == nil && s.Version == 2 {
+		err = s.migrateRetentionDays()
+	}
+	if err == nil {
+		err = s.validate()
+	}
+	if err != nil {
+		c.loadErr = err
+		return c
+	}
+	c.settings = s
+	return c
+}
+
+// Convert every saved policy, including inactive history values. Thirty-one
+// days per month never shortens the old calendar deadline. Oversized converted
+// values fail validation rather than being capped to an earlier deletion date.
+func (s *retentionSettings) migrateRetentionDays() error {
+	convert := func(p retentionPolicy) (retentionPolicy, error) {
+		if p.Forever {
+			return p, p.validate()
+		}
+		if p.Count < 1 || p.Count > 9999 {
+			return p, errors.New("invalid legacy retention count")
+		}
+		switch p.Unit {
+		case "days":
+		case "weeks":
+			p.Count *= 7
+		case "months":
+			p.Count *= 31
+		default:
+			return p, errors.New("unknown legacy retention unit")
+		}
+		p.Unit = "days"
+		return p, p.validate()
+	}
+	for _, p := range []*retentionPolicy{&s.Recordings, &s.History.Policy, &s.Current, &s.Logs} {
+		converted, err := convert(*p)
+		if err != nil {
+			return err
+		}
+		*p = converted
+	}
+	for key, p := range s.History.Fine {
+		converted, err := convert(p)
+		if err != nil {
+			return err
+		}
+		s.History.Fine[key] = converted
+	}
+	s.Version = 3
+	return nil
+}
+func (c *retentionConfig) save(s retentionSettings) error {
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(c.path), 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(c.path), ".retention-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(f.Name(), c.path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(c.path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+func (rt *Runtime) retentionHandler(w http.ResponseWriter, r *http.Request) {
+	c := rt.retention
+	if c == nil {
+		writeJSONError(w, 503, "retention configuration unavailable")
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.loadErr != nil {
+		writeJSONError(w, 503, "Retention is disabled: repair retention_settings.json and restart: "+c.loadErr.Error())
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+	case http.MethodPut:
+		var s retentionSettings
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&s); err != nil {
+			writeJSONError(w, 400, "invalid retention settings")
+			return
+		}
+		var extra any
+		if dec.Decode(&extra) != io.EOF {
+			writeJSONError(w, 400, "trailing retention settings data")
+			return
+		}
+		if r.Header.Get("If-Match") != fmt.Sprintf("\"%d\"", c.settings.Revision) || s.Revision != c.settings.Revision {
+			writeJSONError(w, 412, "Settings changed; reload before saving")
+			return
+		}
+		if err := s.validate(); err != nil {
+			writeJSONError(w, 400, err.Error())
+			return
+		}
+		s.Revision++
+		if err := c.save(s); err != nil {
+			writeJSONError(w, 500, "Could not persist retention settings")
+			return
+		}
+		c.settings = s
+		select {
+		case c.changed <- struct{}{}:
+		default:
+		}
+	default:
+		w.Header().Set("Allow", "GET, PUT")
+		writeJSONError(w, 405, "method not allowed")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("ETag", fmt.Sprintf("\"%d\"", c.settings.Revision))
+	_ = json.NewEncoder(w).Encode(c.settings)
+}

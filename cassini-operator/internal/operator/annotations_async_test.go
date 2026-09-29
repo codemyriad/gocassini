@@ -46,7 +46,7 @@ func asyncFixture(t *testing.T) (*annotationsNextcloud, *annotationService, http
 	store := newTestAnnotationStore(t)
 	empty := annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000}
 	data, _ := json.Marshal(empty)
-	nc.seed(annTestRecording, string(data), recordingACLRules(nil, false))
+	nc.seed(annTestRecording, string(data), nil)
 	recordMarks(t, store, "MEETING1.opus", empty)
 	s, h := tagChangeService(t, nc.url, snapshotCLI(t), store)
 	return nc, s, h, store
@@ -238,7 +238,7 @@ func TestAnnotationWorkerBlocksUnexpectedArchiveWithoutLosingDesired(t *testing.
 	last := postAsync(t, h, markRequest("one", "req1"))
 	other := annotatedFile(t, "", testTagNamespaceA, []testTag{{"other", "external"}}, meetingMark("external", "other"))
 	data, _ := json.Marshal(other)
-	nc.seed(annTestRecording, string(data), recordingACLRules(nil, false))
+	nc.seed(annTestRecording, string(data), nil)
 	err := s.syncAnnotation(context.Background(), "MEETING1.opus")
 	var blocked *annotationBlocked
 	if !errors.As(err, &blocked) {

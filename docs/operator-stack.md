@@ -368,40 +368,14 @@ See more:
 
 ## Artifact retention
 
-Per-attempt working files under `runs/` used to accumulate forever. An explicit
-policy now bounds them, selected with `--artifact-retention` /
-`CASSINI_ARTIFACT_RETENTION`:
+Configure container-local retention in Operator → Storage. All policies default
+to keep forever; recordings, attempt history, current output archives and stage
+logs can expire independently using UTC calendar dates. Job metadata and external
+published recordings remain. Successful duplicate cleanup is independent of age.
+The old artifact-retention flag/environment variable is deprecated and ignored.
 
-| Policy | Prunes |
-|--------|--------|
-| `all` | nothing — the behaviour before this policy existed, and the escape hatch |
-| `superseded` | the heavy payloads of attempts a rerun has replaced |
-| `sealed` **(default)** | `superseded`, plus a succeeded attempt's `.run`, `.meeting` and `.site` |
-
-```text
-  <work-root>/
-    current/                      NEVER pruned — canonical .run/.meeting/.opus,
-                                  which is what reruns and debugging read
-    runs/
-      <job>--attempt-NNN.run      ┐
-      <job>--attempt-NNN.meeting  ├─ prunable: duplicated in current/, or transient
-      <job>--attempt-NNN.site     ┘
-      <job>--attempt-NNN.seal     kept — the artifact that was published
-      <job>--attempt-NNN.logs     NEVER pruned — the forensic record
-  <site-root>/                    NEVER pruned — deleting published recordings is
-                                  a separate, user-facing decision
-```
-
-Every removal is guarded on the artifact that replaces it existing, so nothing
-here removes the last copy of anything: a record that failed before promotion
-keeps its attempt `.run`, and a failed job keeps everything. Removals are logged
-with the reason. The sweep runs after a successful publish and once at startup.
-An unrecognised policy name is rejected at startup with exit code 2.
-
-Attempt rows keep the paths of pruned artifacts — the row records what the
-attempt produced, the policy governs whether the bytes are still there — so under
-`sealed` a succeeded attempt's `artifact_site_path` names a directory that has
-been reclaimed. The `artifact retention removed` log line is what says why.
+See [container retention](./container-retention.md) for categories, date anchors,
+video/audio constraints, recovery, deployment and diagnostics.
 
 ## Current operational limitations
 
@@ -411,8 +385,8 @@ Important current limitations include:
 - no automatic resume after restart
 - no automatic retry
 - no full re-record rerun mode
-- retention is attempt-scoped only: the number of jobs, `current/`, and the live
-  site are still unbounded, with no byte or age cap over the work root
+- job metadata and published sites remain outside container retention; there is
+  no byte or count cap over the work root
 
 If the operator stops mid-flight:
 

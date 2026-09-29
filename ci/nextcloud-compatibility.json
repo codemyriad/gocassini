@@ -7,18 +7,6 @@
           "source": "bundled",
           "version": "33.0.0"
         },
-        "group_everyone": {
-          "sha256": "049bb5919baabe0475c94e746b6558747a96a165f194e9d876a527e31cc0051d",
-          "source": "archive",
-          "url": "https://github.com/icewind1991/group_everyone/releases/download/v0.1.21/group_everyone-v0.1.21.tar.gz",
-          "version": "0.1.21"
-        },
-        "groupfolders": {
-          "sha256": "1ecdd644a2e913de8b333560717660f0ba75836309c4463af858e886cdc3a68c",
-          "source": "archive",
-          "url": "https://github.com/nextcloud-releases/groupfolders/releases/download/v21.0.15/groupfolders-v21.0.15.tar.gz",
-          "version": "21.0.15"
-        },
         "spreed": {
           "sha256": "f490cc783e23db4fbcde71e7c3c3e38f88f824ef469fd6f22c394dad6de3d069",
           "source": "archive",
@@ -46,18 +34,6 @@
           "source": "bundled",
           "version": "34.0.0"
         },
-        "group_everyone": {
-          "sha256": "049bb5919baabe0475c94e746b6558747a96a165f194e9d876a527e31cc0051d",
-          "source": "archive",
-          "url": "https://github.com/icewind1991/group_everyone/releases/download/v0.1.21/group_everyone-v0.1.21.tar.gz",
-          "version": "0.1.21"
-        },
-        "groupfolders": {
-          "sha256": "bfff357b12bbd24257d8d127cf30e83a72256e7659f1cc3e32bd09fe647d2f9b",
-          "source": "archive",
-          "url": "https://github.com/nextcloud-releases/groupfolders/releases/download/v22.0.6/groupfolders-v22.0.6.tar.gz",
-          "version": "22.0.6"
-        },
         "spreed": {
           "sha256": "7228913aa7051b9b4fe3d2312bdc0c0bace6c96f43085556748dc2910af9a584",
           "source": "archive",
@@ -84,18 +60,6 @@
           "sha256": "1c01a94cd3865f347774033e870d80c91d6ef3c3364f42fabdce75bf13294bef",
           "source": "bundled",
           "version": "35.0.0"
-        },
-        "group_everyone": {
-          "sha256": "049bb5919baabe0475c94e746b6558747a96a165f194e9d876a527e31cc0051d",
-          "source": "archive",
-          "url": "https://github.com/icewind1991/group_everyone/releases/download/v0.1.21/group_everyone-v0.1.21.tar.gz",
-          "version": "0.1.21"
-        },
-        "groupfolders": {
-          "sha256": "3949e6a45947188090c170c6983aae11a1d66134ec317ffe7b7609062f3aecf3",
-          "source": "archive",
-          "url": "https://github.com/nextcloud-releases/groupfolders/releases/download/v23.0.1/groupfolders-v23.0.1.tar.gz",
-          "version": "23.0.1"
         },
         "spreed": {
           "sha256": "7afac005c7726b99a2195151eb04a5ca50c2993da3e7d416d76e00f094ce7b45",

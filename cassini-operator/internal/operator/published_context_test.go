@@ -32,7 +32,7 @@ const contextCatalog = `{"version":"cassini.viewer.catalog.v1","meetings":[` +
 // stubRecordingsDAV answers the three WebDAV calls this surface makes: the
 // authoritative catalog as the owner, the caller's Depth-1 scan of meetings/,
 // and a per-meeting GET as the caller. visible names what the caller may read;
-// anything else 404s, exactly as an advanced-ACL deny does.
+// anything else 404s, exactly as a revoked Files share does.
 func stubRecordingsDAV(t *testing.T, catalog string, opus []byte, visible ...string) (*httptest.Server, *[]string) {
 	t.Helper()
 	var fetched []string
@@ -42,6 +42,9 @@ func stubRecordingsDAV(t *testing.T, catalog string, opus []byte, visible ...str
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := filepath.Base(r.URL.Path)
+		if serveTestShares(w, r, visible, 0) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && base == "catalog.json":
 			if !strings.Contains(r.URL.Path, "/files/"+ncRecordingsOwner+"/") {
@@ -73,6 +76,7 @@ func stubRecordingsDAV(t *testing.T, catalog string, opus []byte, visible ...str
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	registerTestCatalog(t, srv.URL, catalog)
 	t.Cleanup(srv.Close)
 	return srv, &fetched
 }
@@ -218,13 +222,16 @@ func TestMeetingsContextAnswers404ForAnIDTheCallerMayNotRead(t *testing.T) {
 	}
 }
 
-// The second gate: the ACL can change between the caller's scan and the fetch,
+// The second gate: a share can change between the caller's list and the fetch,
 // and the fetch is made as the caller precisely so Nextcloud gets the last word.
 func TestMeetingsContextAnswers404WhenTheFetchIsDeniedAfterTheScan(t *testing.T) {
 	// The scan says alice may read MEETING1; the fetch says otherwise, which is
-	// what an ACL changed between the two looks like.
+	// what a revoked share between the two looks like.
 	var logs bytes.Buffer
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestShares(w, r, []string{"MEETING1.opus"}, 0) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "catalog.json"):
 			_, _ = w.Write([]byte(contextCatalog))
@@ -238,6 +245,7 @@ func TestMeetingsContextAnswers404WhenTheFetchIsDeniedAfterTheScan(t *testing.T)
 		}
 	}))
 	defer srv.Close()
+	registerTestCatalog(t, srv.URL, contextCatalog)
 	handler := contextTestConfig(srv.URL, writeFakeCassini(t, "exit 9\n")).meetingsContextHandler(log.New(&logs, "", 0))
 
 	w := httptest.NewRecorder()
@@ -248,6 +256,16 @@ func TestMeetingsContextAnswers404WhenTheFetchIsDeniedAfterTheScan(t *testing.T)
 	}
 	if !strings.Contains(logs.String(), "denied") {
 		t.Errorf("a denial must stay distinguishable in the log: %s", logs.String())
+	}
+}
+
+func TestMeetingsContextAnswers404WhenCallerHasNoShares(t *testing.T) {
+	srv, _ := stubRecordingsDAV(t, contextCatalog, []byte("OPUSBYTES"))
+	handler := contextTestConfig(srv.URL, writeFakeCassini(t, "exit 9\n")).meetingsContextHandler(nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, contextRequest("/published/meetings-context?id=MEETING1"))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404 for a healthy empty share list (%s)", w.Code, w.Body.String())
 	}
 }
 
@@ -314,11 +332,11 @@ func TestMeetingsContextFailsLoudly(t *testing.T) {
 	})
 
 	t.Run("the per-caller scan failed", func(t *testing.T) {
-		// serveFilteredCatalog fails CLOSED: a PROPFIND that errors is served as
-		// an empty catalog, and an empty readable set used to send every id to
-		// the 404 branch — telling somebody who has just browsed their own
-		// meetings that one of them is not theirs (D-740).
+		// A failed OCS share lookup must not look like an empty list.
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if serveTestShares(w, r, []string{"MEETING1.opus"}, http.StatusInternalServerError) {
+				return
+			}
 			switch {
 			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "catalog.json"):
 				_, _ = w.Write([]byte(contextCatalog))
@@ -337,8 +355,8 @@ func TestMeetingsContextFailsLoudly(t *testing.T) {
 		if w.Code != http.StatusBadGateway {
 			t.Fatalf("code = %d, want 502 — a scan that never ran is not a denial (%s)", w.Code, w.Body.String())
 		}
-		if !strings.Contains(logs.String(), "outage") {
-			t.Errorf("the log must say the empty set was read as an outage: %s", logs.String())
+		if !strings.Contains(logs.String(), "per-caller catalog") {
+			t.Errorf("the log must identify the failed catalog lookup: %s", logs.String())
 		}
 	})
 }

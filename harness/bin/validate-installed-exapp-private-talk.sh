@@ -97,7 +97,6 @@ PROXY_URL="$BASE_URL/index.php/apps/app_api/proxy/gocassini"
 CATALOG_URL="$PROXY_URL/published/catalog.json"
 MEETINGS_LIST_URL="$PROXY_URL/published/meetings-list"
 SEARCH_URL="$PROXY_URL/published/search"
-FILES_ROOT_URL="$BASE_URL/remote.php/dav/files/$ADMIN_USER/Cassini/Recordings"
 AUTH=(-u "$ADMIN_USER:$ADMIN_PASSWORD")
 # The standard viewer user the harness creates (harness_create_standard_viewer_user).
 # In the virtual everyone group, so the group folder mounts for her, but never
@@ -163,9 +162,26 @@ fetch_json() {
   python3 -m json.tool "$dest" >/dev/null 2>&1 || return 4
 }
 
-# join_url resolves a catalog audioPath ("./meetings/<id>.opus") against a base.
-join_url() {
-  python3 -c 'import sys; from urllib.parse import urljoin; print(urljoin(sys.argv[1], sys.argv[2]))' "$1" "$2"
+# Nextcloud chooses the recipient's mount name. Discover it from current shares
+# instead of assuming the owner's private archive path appears in their home.
+received_recording_path() {
+  local user="$1" password="$2" job_id="$3"
+  curl -fsS -u "$user:$password" -H 'OCS-APIRequest: true' \
+    "$BASE_URL/ocs/v2.php/apps/files_sharing/api/v1/shares?shared_with_me=true&format=json" \
+    | jq -r --arg name "${job_id}.opus" \
+      '[.ocs.data[]? | select(.uid_file_owner == "cassini" and .item_type == "file") | (.path // .file_target // "") | select(endswith($name))] | first // empty'
+}
+
+recipient_dav_url() {
+  local path
+  path="$(received_recording_path "$1" "$2" "$3")" || return 1
+  [[ -n "$path" ]] || return 1
+  python3 - "$BASE_URL" "$1" "$path" <<'PY'
+import sys
+from urllib.parse import quote
+base, user, path = sys.argv[1:]
+print(base.rstrip('/') + '/remote.php/dav/files/' + quote(user, safe='') + '/' + quote(path.lstrip('/'), safe='/'))
+PY
 }
 
 assert_files_source() {
@@ -183,27 +199,11 @@ assert_files_source() {
 validate_files_archive_entry() {
   local label="$1" job_id="$2"
   local catalog="$LOG_DIR/catalog-${label}.json" audio_path audio_url code
-  # The authoritative Cassini/Recordings/catalog.json is deliberately owner-only:
-  # the operator reads it as the recordings owner and serves each caller a
-  # filtered view, so nobody else -- the administrator included -- can read the
-  # unfiltered archive index out of Files. This used to fetch it directly as
-  # $ADMIN_USER, which worked only while `admin` was itself the recordings
-  # owner; D-532 moved ownership to the `cassini` service account and D-554 made
-  # the ACL unconditional, so that read is now a 404 by design.
-  #
-  # Assert what the caller is actually promised instead: the per-caller catalog
-  # they were served names the meeting, and the recording itself is really in
-  # Files, readable by this caller because they were in the room.
   audio_path="$(jq -er --arg id "$job_id" '.meetings[] | select(.id == $id) | .audioPath' "$catalog")" || return 1
-  audio_url="$(join_url "$FILES_ROOT_URL/" "$audio_path")" || return 1
+  audio_url="$(recipient_dav_url "$ADMIN_USER" "$ADMIN_PASSWORD" "$job_id")" || return 1
   code="$(curl -sS "${AUTH[@]}" -H 'Range: bytes=0-3' -o "$LOG_DIR/files-${label}.opus-prefix" -w '%{http_code}' "$audio_url")" || return 1
   [[ "$code" == 206 ]] || return 1
   [[ "$(wc -c <"$LOG_DIR/files-${label}.opus-prefix" | tr -d ' ')" == 4 ]] || return 1
-  # ...and that the authoritative index stays unreadable to a caller who is not
-  # the owner. If this ever starts returning a body, the archive index is
-  # leaking to everyone the group folder mounts for.
-  code="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$FILES_ROOT_URL/catalog.json")" || return 1
-  [[ "$code" == 404 || "$code" == 403 ]] || return 1
   assert_files_source "$CATALOG_URL" "${label}-catalog" || return 1
   grep -Eiq '^Cache-Control:.*no-store' "$LOG_DIR/${label}-catalog-source.headers" || return 1
   assert_files_source "$PROXY_URL/published/${audio_path#./}" "${label}-opus" 'bytes=0-3' || return 1
@@ -354,11 +354,8 @@ validate_non_participant_denied() {
     "$PROXY_URL/published/meetings/${job_id}.opus")" || return 1
   [[ "$code" == 404 ]] || return 1
 
-  # And the same through Nextcloud's own WebDAV, which is what actually enforces
-  # it -- the operator is not the thing saying no.
-  code="$(curl -sS "${outsider_auth[@]}" -o /dev/null -w '%{http_code}' \
-    "$BASE_URL/remote.php/dav/files/$OUTSIDER_USER/Cassini/Recordings/meetings/${job_id}.opus")" || return 1
-  [[ "$code" == 404 || "$code" == 403 ]] || return 1
+  # Nextcloud must not have a received recording share for this outsider.
+  [[ -z "$(received_recording_path "$OUTSIDER_USER" "$OUTSIDER_PASSWORD" "$job_id")" ]] || return 1
 
   # The list endpoint denies identically. It is louder than catalog.json about
   # SUBSTRATE failures, which makes it worth pinning that a genuine denial is
@@ -742,8 +739,10 @@ archive_summary="$($VALIDATOR catalog-contains "${contains_args[@]}")" \
 # catalog check above.
 for id in "${new_job_ids[@]}"; do
   [[ -n "$id" ]] || continue
+  audio_url="$(recipient_dav_url "$ADMIN_USER" "$ADMIN_PASSWORD" "$id")" \
+    || fail "Nextcloud no longer lists the share for $id"
   code="$(curl -sS "${AUTH[@]}" -H 'Range: bytes=0-3' -o /dev/null -w '%{http_code}' \
-    "$FILES_ROOT_URL/meetings/${id}.opus")" \
+    "$audio_url")" \
     || fail "Nextcloud Files archive request failed for $id"
   [[ "$code" == 206 || "$code" == 200 ]] \
     || fail "Nextcloud Files archive does not hold a readable recording for $id (HTTP $code)"

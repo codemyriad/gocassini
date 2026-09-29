@@ -62,7 +62,7 @@ describe("MeetingList rows", () => {
     // draws no meeting rows at all, so reporting the search-filtered set would
     // leave the selection bar claiming nothing was hidden while every pick was.
     expect(meetingListSource).toContain(
-      'dispatch("visible", types.meetings ? visibleMeetings : [])',
+      'dispatch("visible", types.meetings ? renderedMeetings : [])',
     );
   });
 });
@@ -266,6 +266,15 @@ describe("MeetingList tags", () => {
   it("toggles whole-meeting tags from the row, ticking the ones already on it", () => {
     expect(meetingListSource).toContain("selected={wholeTagState(meetingTags, [meeting.id]).selected}");
     expect(meetingListSource).toContain('dispatch("tagMeeting", { meeting, pick: event.detail })');
+  });
+
+  it("offers retry for an unknown tag outcome and dismissal for a definite failure", () => {
+    const retry = html({ tagNotice: "Could not confirm", tagRetryable: true });
+    expect(retry).toContain("Retry tag update");
+    expect(retry).not.toContain(">Dismiss</button>");
+    const refused = html({ tagNotice: "Could not tag", tagRetryable: false });
+    expect(refused).toContain(">Dismiss</button>");
+    expect(refused).not.toContain("Retry tag update");
   });
 
   it("says when the tag filter is what emptied the list", () => {

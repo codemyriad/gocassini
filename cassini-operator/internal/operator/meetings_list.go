@@ -28,7 +28,7 @@ import (
 //     unchanged. The format is a shipped contract with three independent
 //     clients, none upgraded in lockstep; adding a query surface is not a
 //     reason to open a v2;
-//  2. failures are LOUD (see catalogResolveOutcome). An agent that reads
+//  2. failures are LOUD (see resolveCatalogForCaller). An agent that reads
 //     "Nextcloud is unreachable" as "you have no meetings" acts on a false
 //     negative it has no way to detect, and unlike a human looking at a viewer
 //     it will not notice the archive looked fuller yesterday;
@@ -305,24 +305,9 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 		return
 	}
 
-	resolved, outcome := c.resolveCatalogForCaller(ctx, client, caller, logger)
-	switch outcome {
-	case catalogResolveOK, catalogResolveNoArchive:
-		// Both are real answers. NoArchive means nothing has ever been
-		// published, which is an empty list rather than a failure.
-	case catalogResolveUnavailable:
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive is unreachable; this is not an empty result")
-		return
-	case catalogResolveScanFailed:
+	resolved, err := c.resolveCatalogForCaller(ctx, client, caller, logger)
+	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
-		return
-	case catalogResolveNoMount:
-		writeJSONError(w, http.StatusBadGateway, "the recordings folder is not available to your account; this is not an empty result")
-		return
-	default:
-		// An outcome added later without a branch here must not fall through
-		// into a 200 that would read as "no meetings".
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
 		return
 	}
 
@@ -330,8 +315,8 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 		Version  string            `json:"version"`
 		Meetings []json.RawMessage `json:"meetings"`
 	}
-	if err := json.Unmarshal(resolved.body, &envelope); err != nil {
-		// resolved.body is what serveFilteredCatalog would have served, so a
+	if err := json.Unmarshal(resolved, &envelope); err != nil {
+		// resolved is what serveFilteredCatalog would have served, so a
 		// parse failure here is our own output being malformed, not the
 		// caller's input. Loud, for the same reason as every branch above.
 		if logger != nil {
@@ -343,15 +328,15 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 
 	response := meetingsListResponse{Version: envelope.Version, Meetings: envelope.Meetings}
 	if deps.importAnnotations != nil {
-		if entries, err := decodeCatalogEntries(resolved.body); err == nil {
+		if entries, err := decodeCatalogEntries(resolved); err == nil {
 			deps.importAnnotations(ctx, caller, entries)
 		}
 	}
 	if response.Version == "" {
-		response.Version = catalogSchemaVersion
+		response.Version = "cassini.viewer.catalog.v1"
 	}
 	if filter.tag != "" {
-		entries, err := decodeCatalogEntries(resolved.body)
+		entries, err := decodeCatalogEntries(resolved)
 		if err == nil {
 			filter.tagged, err = tags.taggedMeetings(ctx, filter.tag, visibleOpusNames(entries))
 		}

@@ -22,7 +22,7 @@ The previous investigation also checked live main at
 | CURRENT3 | [Image CI](../../../.github/workflows/publish-exapp-image.yml) exercises the exact installed ExApp through AppAPI/HaRP, CPU recording/transcription/publication, restart and ACL checks. Other jobs cover manual-install/storage, ARM64, CUDA, and container lifecycle. Its Nextcloud jobs use the default 34.0.0. |
 | CURRENT4 | [Bootstrap](../../../harness/bin/bootstrap.sh) installs Talk and ACL apps dynamically; [stack setup](../../../harness/bin/lib/stack.sh) installs AppAPI dynamically. HaRP uses a floating `release` image. Pinning Nextcloud alone does not freeze this dependency stack. |
 | CURRENT5 | [Release workflow](../../../.github/workflows/release.yml) waits for image tags, then enters the protected signing/publishing job. It does not require compatibility evidence or successful completion of the image workflow. |
-| CURRENT6 | Existing [manual-install coverage](../../../harness/bin/ci-e2e-install-exapp.sh) checks embedded UI wiring over HTTP. The standalone first-run browser check uses synthetic APIs; neither establishes that the app renders inside each supported Nextcloud version. |
+| CURRENT6 | Earlier manual-install coverage checked embedded UI wiring over HTTP. The standalone first-run browser check used synthetic APIs; neither established that the app rendered inside each supported Nextcloud version. |
 | CURRENT7 | [Release documentation](../../release.md) says one Nextcloud major per release, contradicting the manifest. Main branch protection also names existing checks explicitly; refactoring must preserve their enforcement. |
 
 The [20 September recorder run](https://github.com/codemyriad/gocassini/actions/runs/35502822395)

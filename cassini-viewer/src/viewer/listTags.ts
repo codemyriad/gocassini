@@ -1,11 +1,17 @@
 import type { MeetingCatalogEntry } from "./catalog";
+import { writable } from "svelte/store";
 import {
+  AnnotationError,
   WHOLE_MEETING,
+  describeAnnotationError,
+  findByLabel,
   groupByTag,
   markRequest,
   plural,
   retryDelay,
   untagMeetingRequest,
+  type AnnotationRequest,
+  type AnnotationResult,
   type MeetingAnnotations,
   type MeetingTag,
   type TagPick,
@@ -95,18 +101,315 @@ export function planBulkTag(entries: readonly MeetingCatalogEntry[], byMeeting: 
   return { remove, targets, request };
 }
 
-// A write answers with the meeting's document, so its row and the picker's
-// ticks need not wait for the vocabulary to reload. A tag the vocabulary does
-// not know yet appears with that reload.
+// A write answers with the meeting's document, so its row, picker ticks and
+// aggregate counts need not wait for the vocabulary reload. The vocabulary's
+// totals are adjusted by this meeting's before/after contribution; a later
+// authoritative reload still reconciles concurrent changes elsewhere.
 export function withMeetingResult(vocabulary: TagVocabulary, result: MeetingAnnotations): TagVocabulary {
-  const tags = groupByTag(result.annotations).map(({ tag, whole, stretches }) => ({
-    tagId: tag.id,
-    whole: whole !== null,
-    stretches: stretches.length,
-  }));
+  const meetings = new Map(vocabulary.meetings.map((meeting) => [meeting.meetingId, meeting]));
+  const vocabularyTags = new Map(vocabulary.tags.map((tag) => [tag.tagId, { ...tag }]));
+  const contribution = (held: { tagId: string; whole: boolean; stretches: number }[]) =>
+    new Map(
+      held
+        .filter(({ whole, stretches }) => whole || stretches > 0)
+        .map(({ tagId, whole, stretches }) => [
+          tagId,
+          { meetings: 1, marks: Number(whole) + stretches },
+        ]),
+    );
+  const before = contribution(meetings.get(result.meetingId)?.tags ?? []);
+  const tags = groupByTag(result.annotations).map(({ tag, whole, stretches }) => {
+    if (!vocabularyTags.has(tag.id)) {
+      vocabularyTags.set(tag.id, {
+        tagId: tag.id,
+        namespace: result.annotations?.tagNamespace ?? "",
+        label: tag.label,
+        meetings: 0,
+        marks: 0,
+        color: "",
+        icon: "",
+      });
+    }
+    return {
+      tagId: tag.id,
+      whole: whole !== null,
+      stretches: stretches.length,
+      color: tag.color,
+      icon: tag.icon,
+    };
+  });
+  const after = contribution(tags);
+  for (const tagId of new Set([...before.keys(), ...after.keys()])) {
+    const tag = vocabularyTags.get(tagId);
+    if (!tag) continue;
+    const oldUse = before.get(tagId) ?? { meetings: 0, marks: 0 };
+    const newUse = after.get(tagId) ?? { meetings: 0, marks: 0 };
+    tag.meetings = Math.max(0, tag.meetings + newUse.meetings - oldUse.meetings);
+    tag.marks = Math.max(0, tag.marks + newUse.marks - oldUse.marks);
+  }
+  meetings.set(result.meetingId, { meetingId: result.meetingId, tags });
   return {
     ...vocabulary,
-    meetings: [...vocabulary.meetings.filter(({ meetingId }) => meetingId !== result.meetingId), { meetingId: result.meetingId, tags }],
+    tags: [...vocabularyTags.values()],
+    meetings: [...meetings.values()],
+  };
+}
+
+function tagForPick(vocabulary: TagVocabulary, pick: TagPick) {
+  return ("tagId" in pick
+    ? vocabulary.tags.find(({ tagId }) => tagId === pick.tagId)
+    : undefined) ?? findByLabel(vocabulary.tags, pick.label);
+}
+
+function wholeTagOn(vocabulary: TagVocabulary, meetingId: string, pick: TagPick): boolean {
+  const tag = tagForPick(vocabulary, pick);
+  if (!tag) return false;
+  return vocabulary.meetings
+    .find((meeting) => meeting.meetingId === meetingId)
+    ?.tags.some((held) => held.tagId === tag.tagId && held.whole) ?? false;
+}
+
+// Apply one desired whole-meeting state without mutating the confirmed server
+// vocabulary. Pending actions are replayed in click order after every answer,
+// so an older answer can never erase a newer click from the picker.
+function withOptimisticWholeTag(
+  vocabulary: TagVocabulary,
+  meetingId: string,
+  pick: TagPick,
+  desired: boolean,
+  optimisticTagId: string,
+): TagVocabulary {
+  const tags = vocabulary.tags.map((tag) => ({ ...tag }));
+  let tag = ("tagId" in pick
+    ? tags.find(({ tagId }) => tagId === pick.tagId)
+    : undefined) ?? findByLabel(tags, pick.label);
+  if (!tag && desired) {
+    tag = {
+      tagId: optimisticTagId,
+      namespace: "",
+      label: pick.label,
+      meetings: 0,
+      marks: 0,
+      color: "color" in pick ? pick.color : "",
+      icon: "icon" in pick ? pick.icon : "",
+    };
+    tags.push(tag);
+  }
+  if (!tag) return vocabulary;
+
+  const meetings = vocabulary.meetings.map((meeting) => ({
+    ...meeting,
+    tags: meeting.tags.map((held) => ({ ...held })),
+  }));
+  let meeting = meetings.find((candidate) => candidate.meetingId === meetingId);
+  if (!meeting) {
+    meeting = { meetingId, tags: [] };
+    meetings.push(meeting);
+  }
+  const held = meeting.tags.find((candidate) => candidate.tagId === tag!.tagId);
+  const current = held?.whole ?? false;
+  if (current === desired) return vocabulary;
+
+  if (desired) {
+    if (held) held.whole = true;
+    else meeting.tags.push({ tagId: tag.tagId, whole: true, stretches: 0 });
+    tag.marks += 1;
+    if (!held) tag.meetings += 1;
+  } else if (held) {
+    held.whole = false;
+    tag.marks = Math.max(0, tag.marks - 1);
+    if (held.stretches === 0) {
+      meeting.tags = meeting.tags.filter((candidate) => candidate !== held);
+      tag.meetings = Math.max(0, tag.meetings - 1);
+    }
+  }
+  return { ...vocabulary, tags, meetings };
+}
+
+interface PendingTagAction {
+  meeting: MeetingCatalogEntry;
+  pick: TagPick;
+  desired: boolean;
+  optimisticTagId: string;
+  request?: AnnotationRequest;
+  deferred?: boolean;
+}
+
+export interface ListTagSessionState {
+  vocabulary: TagVocabulary | null;
+  notice: string;
+  retryable: boolean;
+}
+
+type TagWriteScheduler = (write: () => Promise<void>) => Promise<void>;
+
+// List tagging has two layers: a confirmed server vocabulary and an ordered log
+// of clicks not yet confirmed. The store publishes their composition immediately;
+// the existing write queue still establishes one order with selection batches.
+export function createListTagSession(
+  apply: (meeting: MeetingCatalogEntry, request: AnnotationRequest) => Promise<AnnotationResult>,
+  schedule: TagWriteScheduler,
+) {
+  const state = writable<ListTagSessionState>({ vocabulary: null, notice: "", retryable: false });
+  let confirmed: TagVocabulary | null = null;
+  let confirmedGeneration = 0;
+  let pending: PendingTagAction[] = [];
+  // A transport/server failure may arrive after the operator committed. Keep
+  // that action, its request id and everything clicked after it until replay
+  // recovers the receipt; evaluating later actions against the old confirmed
+  // layer can otherwise erase the user's final intent.
+  let blocked: PendingTagAction | null = null;
+  let notice = "";
+
+  const identifier = () => crypto.randomUUID?.() ?? Array.from(
+    crypto.getRandomValues(new Uint8Array(16)),
+    (n) => n.toString(16).padStart(2, "0"),
+  ).join("");
+
+  function visible(): TagVocabulary | null {
+    if (!confirmed) return null;
+    return pending.reduce(
+      (vocabulary, action) => withOptimisticWholeTag(
+        vocabulary,
+        action.meeting.id,
+        action.pick,
+        action.desired,
+        action.optimisticTagId,
+      ),
+      confirmed,
+    );
+  }
+
+  function publish() {
+    state.set({ vocabulary: visible(), notice, retryable: blocked !== null });
+  }
+
+  function remove(action: PendingTagAction) {
+    pending = pending.filter((candidate) => candidate !== action);
+  }
+
+  function requestFor(action: PendingTagAction): AnnotationRequest | null {
+    if (!confirmed || wholeTagOn(confirmed, action.meeting.id, action.pick) === action.desired) {
+      return null;
+    }
+    const known = tagForPick(confirmed, action.pick);
+    if (!action.desired && !known) return null;
+    const base = action.desired
+      ? markRequest(known ? { tagId: known.tagId, label: known.label } : action.pick, WHOLE_MEETING)
+      : untagMeetingRequest(known!.tagId);
+    return { ...base, requestId: identifier() };
+  }
+
+  function writeRetryDelay(error: unknown, attempt: number): number | null {
+    const requested = retryDelay(error, attempt);
+    if (requested !== null) return attempt < 5 ? requested : null;
+    // A disconnected client or a server failure can happen after the durable
+    // commit. Repeat the exact payload once: requestId makes that a receipt
+    // replay rather than a duplicate mutation when the first call landed.
+    return outcomeUnknown(error) && attempt === 0 ? 250 : null;
+  }
+
+  function outcomeUnknown(error: unknown): boolean {
+    return !(error instanceof AnnotationError) || error.status >= 500;
+  }
+
+  function resumeDeferred() {
+    // Their original queue turns returned while `blocked` was set. Put them
+    // back in click order only after the uncertain action has been settled.
+    for (const action of pending) {
+      if (!action.deferred) continue;
+      action.deferred = false;
+      void schedule(() => execute(action));
+    }
+  }
+
+  async function execute(action: PendingTagAction) {
+    if (blocked) {
+      action.deferred = true;
+      return;
+    }
+    let settled = true;
+    try {
+      action.request ??= requestFor(action) ?? undefined;
+      if (!action.request) return;
+      let result: AnnotationResult;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          result = await apply(action.meeting, action.request);
+          break;
+        } catch (error) {
+          const delay = writeRetryDelay(error, attempt);
+          if (delay === null) throw error;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+      if (confirmed) {
+        confirmed = withMeetingResult(confirmed, result);
+        confirmedGeneration += 1;
+      }
+    } catch (error) {
+      if (outcomeUnknown(error)) {
+        blocked = action;
+        settled = false;
+        notice = `Could not confirm the tag update for “${action.meeting.title}”: ${describeAnnotationError(error)}`;
+      } else {
+        notice = `Could not ${action.desired ? "tag" : "untag"} “${action.meeting.title}”: ${describeAnnotationError(error)}`;
+      }
+    } finally {
+      if (settled) {
+        remove(action);
+        resumeDeferred();
+      }
+      publish();
+    }
+  }
+
+  return {
+    subscribe: state.subscribe,
+    setConfirmed(vocabulary: TagVocabulary | null) {
+      confirmed = vocabulary;
+      confirmedGeneration += 1;
+      publish();
+    },
+    updateConfirmed(update: (vocabulary: TagVocabulary) => TagVocabulary) {
+      if (confirmed) {
+        confirmed = update(confirmed);
+        confirmedGeneration += 1;
+      }
+      publish();
+    },
+    confirmedGeneration() {
+      return confirmedGeneration;
+    },
+    toggle(meeting: MeetingCatalogEntry, pick: TagPick) {
+      const current = visible();
+      if (!current) return false;
+      const action: PendingTagAction = {
+        meeting,
+        pick,
+        desired: !wholeTagOn(current, meeting.id, pick),
+        optimisticTagId: "tagId" in pick ? pick.tagId : `optimistic-${identifier()}`,
+      };
+      pending = [...pending, action];
+      if (!blocked) notice = "";
+      publish();
+      void schedule(() => execute(action));
+      return true;
+    },
+    retry() {
+      if (!blocked) return false;
+      const action = blocked;
+      blocked = null;
+      notice = "";
+      publish();
+      void schedule(() => execute(action));
+      return true;
+    },
+    dismissNotice() {
+      if (blocked) return;
+      notice = "";
+      publish();
+    },
   };
 }
 
@@ -156,6 +459,7 @@ export function createWriteQueue(drained: () => void) {
 export function createTagLoader(
   load: () => Promise<TagVocabulary>,
   loaded: (vocabulary: TagVocabulary | null) => void,
+  confirmedGeneration: () => number = () => 0,
 ) {
   let running = false;
   let again = false;
@@ -173,16 +477,17 @@ export function createTagLoader(
     }
     clearTimeout(retry);
     running = true;
+    const startedAt = confirmedGeneration();
     try {
       const vocabulary = await load();
       attempt = 0;
-      if (!stopped && !again) {
+      if (!stopped && !again && startedAt === confirmedGeneration()) {
         loaded(vocabulary);
       }
     } catch (error) {
       const delay = retryDelay(error, attempt);
       attempt += 1;
-      if (!stopped && !again) {
+      if (!stopped && !again && startedAt === confirmedGeneration()) {
         loaded(null);
         if (delay !== null) {
           retry = setTimeout(() => void reload(), delay);

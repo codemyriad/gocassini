@@ -183,7 +183,11 @@ type ExAppConfig struct {
 	// struct is loaded before that value exists. Empty means the route is not
 	// served at all rather than served by a binary that may not be there.
 	CassiniBin string
-	onEnabled  func(bool)
+	// sharePaths remembers only recipient DAV paths between range requests.
+	// It is never an authority: DAV checks every read as the caller.
+	sharePaths      *recordingSharePathCache
+	meetingMetadata *meetingMetadataStore
+	onEnabled       func(bool)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build

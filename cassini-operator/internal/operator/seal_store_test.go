@@ -42,8 +42,8 @@ func TestMarkSealQueuedMovesTheJobAndItsAttemptToSeal(t *testing.T) {
 	if job.SealQueuedAt == nil || *job.SealQueuedAt != "2026-06-12T00:01:00Z" {
 		t.Fatalf("seal_queued_at = %v, want the queue timestamp", job.SealQueuedAt)
 	}
-	if job.ArtifactMeetingPath == nil || *job.ArtifactMeetingPath != "/work/current/job1.meeting" {
-		t.Fatalf("job artifact_meeting_path = %v, want the canonical bundle", job.ArtifactMeetingPath)
+	if job.ArtifactMeetingPath != nil {
+		t.Fatal("unpublished build replaced current meeting")
 	}
 	attempts, err := store.ListJobAttempts(context.Background(), "job1")
 	if err != nil {
@@ -107,11 +107,8 @@ func TestMarkSealSucceededQueuesPublishWithTheSealedArtifact(t *testing.T) {
 	if job.Stage != "publish" || job.State != "queued" {
 		t.Fatalf("job stage/state = %s/%s, want publish/queued", job.Stage, job.State)
 	}
-	if job.ArtifactOpusPath == nil || *job.ArtifactOpusPath != "/work/current/job1.opus" {
-		t.Fatalf("job artifact_opus_path = %v, want the canonical promotion", job.ArtifactOpusPath)
-	}
-	if job.ArtifactOpusSHA256 == nil || *job.ArtifactOpusSHA256 != "dead00beef" {
-		t.Fatalf("job artifact_opus_sha256 = %v, want the sealed digest", job.ArtifactOpusSHA256)
+	if job.ArtifactOpusPath != nil || job.ArtifactOpusSHA256 != nil {
+		t.Fatal("unpublished seal replaced current archive")
 	}
 	attempts, err := store.ListJobAttempts(context.Background(), "job1")
 	if err != nil {

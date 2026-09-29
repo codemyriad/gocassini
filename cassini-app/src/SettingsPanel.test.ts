@@ -189,7 +189,7 @@ describe("SettingsPanel recording readiness", () => {
     // Setting the audience for recordings that never happen answers the second
     // question while the first is still broken, so readiness comes first.
     const readiness = settingsPanelSource.indexOf("<RecordingSetup");
-    const access = settingsPanelSource.indexOf("<RecordingAccessPanel");
+    const access = settingsPanelSource.indexOf("<DirectShareAccessPanel");
     expect(readiness).toBeGreaterThan(-1);
     expect(access).toBeGreaterThan(-1);
     expect(readiness).toBeLessThan(access);

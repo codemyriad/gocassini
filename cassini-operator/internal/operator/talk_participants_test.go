@@ -50,7 +50,7 @@ func TestTalkParticipantsFetcherMapsGrantableActors(t *testing.T) {
 		t.Errorf("path = %q, want …/room/roomtok/participants", gotPath)
 	}
 
-	want := []aclMapping{
+	want := []sharePrincipal{
 		{Type: "user", ID: "alice"},
 		{Type: "user", ID: "bob"},
 		{Type: "group", ID: "team-eng"},
@@ -79,7 +79,7 @@ func TestParticipantMappingsSkipsAndDedups(t *testing.T) {
 		{ActorType: "unknown", ActorID: "z"},
 	}
 	got := participantMappings(rows)
-	if len(got) != 1 || got[0] != (aclMapping{Type: "user", ID: "u1"}) {
+	if len(got) != 1 || got[0] != (sharePrincipal{Type: "user", ID: "u1"}) {
 		t.Fatalf("participantMappings = %v, want [user/u1]", got)
 	}
 }

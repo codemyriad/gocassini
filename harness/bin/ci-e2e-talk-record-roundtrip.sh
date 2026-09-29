@@ -275,7 +275,7 @@ mkdir -p "$LOG_DIR/site"
 # Talk's POSTs).
 # Override the default entrypoint (exapp-start.sh) which expects HaRP env
 # vars (HP_FRP_ADDRESS etc) that we don't have outside a real AppAPI deploy.
-# Run cassini-operator directly — same pattern as ci-e2e-install-exapp.sh.
+# Run cassini-operator directly with AppAPI-shaped environment variables.
 # Detect CUDA variant from the image tag so the harness works against both
 # CPU and GPU exapp images without a separate runbook. The CUDA image tags
 # end in -cuda (per .github/workflows/publish-exapp-image.yml) and the
@@ -336,8 +336,8 @@ log "OK cassini-exapp heartbeat 200"
 # daemon does not tell Nextcloud the APP_SECRET: without this matching app row,
 # Cassini's act-as-owner Talk OCS lookup is rejected and roomName can never
 # reach the catalog even though roomId (derived locally from the token) does.
-# Keep the routes manifest-derived, as in ci-e2e-install-exapp.sh, so AppAPI
-# validates the same application identity shipped by this image.
+# Keep the routes manifest-derived so AppAPI validates the same application
+# identity shipped by this image.
 ROUTES_JSON="$(exapp_routes_json "$INFO_XML")"
 APP_JSON=$(jq -nc \
   --arg secret "$APP_SECRET" \

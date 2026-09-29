@@ -18,7 +18,7 @@ func batchFixture(t *testing.T) (*annotationService, http.Handler, *annotationSt
 	nc.frontMu.Unlock()
 	empty := annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000}
 	data, _ := json.Marshal(empty)
-	nc.seed(annTestSecret, string(data), recordingACLRules(nil, false))
+	nc.seed(annTestSecret, string(data), nil)
 	recordMarks(t, store, "SECRET.opus", empty)
 	s.wake = make(chan struct{}, 2)
 	return s, h, store, nc

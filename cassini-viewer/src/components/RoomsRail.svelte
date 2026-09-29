@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Lock, Settings, Users } from "@lucide/svelte";
+  import { Lock, Settings } from "@lucide/svelte";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
   import { matchTags, type VocabularyTag } from "../viewer/annotations";
@@ -58,20 +58,15 @@
   const TAG_MATCHES: TagMatch[] = ["any", "all"];
   $: tagRows = tags ? matchTags(tags, "") : null;
 
-  export let audience: "" | "everyone" | "participants" = "";
+  export let audience: "" | "participants" = "";
   const AUDIENCE = {
-    everyone: {
-      label: "Visible to all users",
-      detail:
-        "Anyone with an account on this Nextcloud can open every meeting here, including its recording and transcript, and see which room it came from. Guests can't.",
-    },
     participants: {
-      label: "Members only",
+      label: "Shared with participants",
       detail:
-        "A recording can be opened by the people in its room when it was saved, including anyone invited who didn't join the call. Guests, and people added to the room later, can't open it. Recordings from public rooms are open to anyone with an account.",
+        "Cassini shares each recording with the room's captured participants, including invited people who did not join. Guests without a Nextcloud account do not receive a share. Public meeting participants can share onward when Nextcloud permits it.",
     },
   } as const;
-  const AUDIENCE_FOOTNOTE = "This is an organisation-wide setting. Contact your Nextcloud admin to change it.";
+  const AUDIENCE_FOOTNOTE = "Nextcloud Files controls who can read each recording.";
   let audienceEl: HTMLElement;
   let audienceOpen = false;
 
@@ -104,11 +99,7 @@
             if (event.key === "Escape") audienceOpen = false;
           }}
         >
-          {#if audience === "everyone"}
-            <Users size={11} aria-hidden="true" />
-          {:else}
-            <Lock size={11} aria-hidden="true" />
-          {/if}
+          <Lock size={11} aria-hidden="true" />
           {AUDIENCE[audience].label}
         </button>
         <span id="audience-detail" role="tooltip" class="tag-popover audience-detail" class:open={audienceOpen}>

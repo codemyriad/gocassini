@@ -50,6 +50,8 @@ type searchBackfillTarget struct {
 
 // searchBackfillReport is what a run did, in the terms an operator acts on.
 type searchBackfillReport struct {
+	// Empty recordings are readable but have no transcript to search.
+	Empty int
 	// Indexed: rows written.
 	Indexed int
 	// Unchanged: already indexed from the same delivered artifact.
@@ -98,6 +100,9 @@ func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBack
 			report.Unchanged++
 		case searchBackfillUnavailable:
 			report.Unavailable++
+			if reason == searchBackfillReasonNoSegments {
+				report.Empty++
+			}
 			rt.logger.Printf("search backfill: %s not searchable (%s)", name, reason)
 		default:
 			report.Failed++
@@ -187,6 +192,10 @@ func (rt *Runtime) backfillOneMeeting(
 	ctx context.Context, target searchBackfillTarget, opusName string,
 	indexed map[string]searchIndexedState, delivered searchDeliveredStateReader, archive searchArchiveReader,
 ) (searchBackfillOutcome, string) {
+	if rt.store != nil {
+		rt.store.artifactGate.RLock()
+		defer rt.store.artifactGate.RUnlock()
+	}
 	// What was DELIVERED is the archive's record to give. The job database
 	// cannot answer it — its digest is written at seal time, in the same step
 	// that promotes current/, so the two move together across attempts and

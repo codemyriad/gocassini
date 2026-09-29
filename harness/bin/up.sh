@@ -5,6 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
+if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}" ]]; then
+  python3 "$SCRIPT_DIR/validate-seeds.py" --published "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" --operator "${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}"
+fi
 harness_stack_init
 harness_check_existing_resources_for_up
 harness_prepare_exapp_image
@@ -17,19 +20,12 @@ wait_for_nextcloud 420
 harness_configure_appapi_phase
 harness_install_exapp_phase
 
-# Seeding runs last, and only when asked. Everything above it is the stack we
-# have always brought up: provisioning creates the recordings tree on empty
-# disk, exactly as it does on a stack that is never seeded, and only then is a
-# pack copied in. Nothing is laid down ahead of it.
-if [[ -n "${CASSINI_HARNESS_SEED_DIR:-}" ]]; then
-  "$SCRIPT_DIR/seed-nc-files.sh" --pack "$CASSINI_HARNESS_SEED_DIR"
-fi
-
-# AppAPI creates the ExApp volume only while deploying Cassini. Seed it after
-# that deployment through a short-lived copier with a read-only source bind;
-# the live ExApp never gets a writable mount of the user's archive.
 if [[ -n "${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}" ]]; then
   "$SCRIPT_DIR/seed-operator-volume.sh" --pack "$CASSINI_HARNESS_SEED_OPERATOR_DIR"
+fi
+
+if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" ]]; then
+  "$SCRIPT_DIR/seed-published.sh" --pack "$CASSINI_HARNESS_SEED_PUBLISHED_DIR"
 fi
 
 log "Stack is up."

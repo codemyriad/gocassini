@@ -49,14 +49,15 @@ func TestExistingTagInheritsRestyledAppearance(t *testing.T) {
 			// Copy to a third meeting after the second has entered the vocabulary.
 			empty := annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000}
 			data, _ := json.Marshal(empty)
-			nc.seed("Cassini/Recordings/meetings/THIRD.opus", string(data), recordingACLRules(nil, false))
+			nc.seed("CassiniRecordings/meetings/THIRD.opus", string(data), nil)
 			recordMarks(t, store, "THIRD.opus", empty)
 			var third annotationBatchRequest
 			if err := json.Unmarshal([]byte(`{"meetingIds":["THIRD"],"requestId":"third",`+ops+`}`), &third); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.commitAnnotationBatch(context.Background(), "alice", third,
-				map[string]string{"THIRD": "Cassini/Recordings/meetings/THIRD.opus"},
+				map[string]string{"THIRD": "CassiniRecordings/meetings/THIRD.opus"},
+				map[string]string{"THIRD": "THIRD.opus"},
 				[]string{"MEETING1.opus", "SECRET.opus", "THIRD.opus"}); err != nil {
 				t.Fatal(err)
 			}
@@ -76,7 +77,7 @@ func TestExistingTagInheritsRestyledAppearance(t *testing.T) {
 					t.Fatal(err)
 				}
 				var archived annotateResult
-				if err := json.Unmarshal([]byte(nc.recording("Cassini/Recordings/meetings/"+name)), &archived); err != nil {
+				if err := json.Unmarshal([]byte(nc.recording("CassiniRecordings/meetings/"+name)), &archived); err != nil {
 					t.Fatal(err)
 				}
 				if !sameAnnotationDocument(result.Annotations, archived.Annotations) {

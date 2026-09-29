@@ -47,7 +47,6 @@
     type InsightRecord,
   } from "./viewer/insights";
   import {
-    describeAnnotationError,
     mergeVocabularyTags,
     tagsByMeeting,
     type AnnotationRequest,
@@ -56,6 +55,7 @@
     type TagVocabulary,
   } from "./viewer/annotations";
   import {
+    createListTagSession,
     createTagLoader,
     createWriteQueue,
     filterByTags,
@@ -104,7 +104,7 @@
   // fact comes from the deployment's operator, which this layer cannot reach
   // and a standalone export does not have. "" is "nobody said", and the chip
   // renders nothing.
-  export let audience: "" | "everyone" | "participants" = "";
+  export let audience: "" | "participants" = "";
 
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
@@ -130,7 +130,7 @@
   // isEmbeddedViewer — this is deliberately not ncMode, which only reports
   // whether Nextcloud Theming was detected.
   const embedded = isEmbeddedViewer();
-  const CATALOG_REFRESH_INTERVAL_MS = 15_000;
+  const CATALOG_REFRESH_INTERVAL_MS = 60_000;
   let catalogMode = false;
   let catalogRefreshRunning = false;
   let catalogRefreshTimer: number | undefined;
@@ -236,6 +236,7 @@
   let selectedTagIds: string[] = [];
   let tagMatch: TagMatch = "any";
   let tagNotice = "";
+  let tagRetryable = false;
   let tagManagerOpen = false;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
@@ -404,9 +405,10 @@
   const tagLoader = createTagLoader(
     () => dataProvider.loadTagVocabulary!(),
     (vocabulary) => {
-      tagVocabulary = vocabulary ?? tagVocabulary;
+      if (vocabulary) listTagSession.setConfirmed(vocabulary);
       tagsFailed = !vocabulary;
     },
+    () => listTagSession.confirmedGeneration(),
   );
 
   // On open, on return to the tab and after writes; not on the catalog's timer.
@@ -418,23 +420,24 @@
 
   const queueTagWrite = createWriteQueue(() => refreshTags(true));
 
-  function applied(result: MeetingAnnotations) {
-    if (tagVocabulary) {
-      tagVocabulary = withMeetingResult(tagVocabulary, result);
-    }
+  const listTagSession = createListTagSession(
+    (meeting, request) => dataProvider.applyAnnotationOps!(meeting, request),
+    queueTagWrite,
+  );
+
+  $: tagVocabulary = $listTagSession.vocabulary;
+  $: tagNotice = $listTagSession.notice;
+  $: tagRetryable = $listTagSession.retryable;
+
+  // The session applies the click to its optimistic layer before this returns;
+  // queued writes reconcile the confirmed layer underneath it.
+  function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
+    listTagSession.toggle(meeting, pick);
   }
 
-  // Both plan from what the picker showed when it was clicked.
-  function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
-    const { remove, request } = planBulkTag([meeting], meetingTags, pick);
-    tagNotice = "";
-    void queueTagWrite(async () => {
-      try {
-        applied(await dataProvider.applyAnnotationOps!(meeting, request));
-      } catch (error) {
-        tagNotice = `Could not ${remove ? "untag" : "tag"} “${meeting.title}”: ${describeAnnotationError(error)}`;
-      }
-    });
+  function reconcileMeetingTags(result: MeetingAnnotations) {
+    listTagSession.updateConfirmed((vocabulary) => withMeetingResult(vocabulary, result));
+    refreshTags(true);
   }
 
   const bulkTags = createBulkTagSession(
@@ -445,7 +448,7 @@
       });
     }),
     (result) => {
-      if (tagVocabulary) tagVocabulary = withAnnotationBatch(tagVocabulary, result);
+      listTagSession.updateConfirmed((vocabulary) => withAnnotationBatch(vocabulary, result));
       refreshTags(true);
     },
   );
@@ -788,6 +791,10 @@
   }
 
   async function hydrateCatalogMeetingMetadata(meetings: MeetingCatalogEntry[]) {
+    // The installed app's list is backed by Cassini's local metadata index.
+    // Fetching one .opus per card would turn a thousand-meeting list into a
+    // thousand serial network requests. Static exports still hydrate here.
+    if (embedded) return;
     const generation = ++catalogHydrationGeneration;
     for (const meeting of meetings) {
       if (generation !== catalogHydrationGeneration) {
@@ -1371,9 +1378,11 @@
       tagFilterIds={activeTagIds}
       on:removeTag={(event) => toggleTagFilter(event.detail)}
       {tagNotice}
+      {tagRetryable}
       on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
       on:clearTags={() => (selectedTagIds = [])}
-      on:dismissTagNotice={() => (tagNotice = "")}
+      on:dismissTagNotice={() => listTagSession.dismissNotice()}
+      on:retryTag={() => listTagSession.retry()}
     />
     </div>
 
@@ -1479,7 +1488,7 @@
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}
             applyAnnotations={annotationCalls.apply}
-            on:tagsChanged={(event) => (applied(event.detail), refreshTags(true))}
+            on:tagsChanged={(event) => reconcileMeetingTags(event.detail)}
           />
         {/if}
       </aside>
@@ -1501,6 +1510,7 @@
           totals={selectionTotals}
           gaps={selectionGaps}
           loadBundle={loadSelectedBundle}
+          loadMeeting={(entry) => dataProvider.loadMeetingForEntry(entry)}
           on:unpick={(event) => handlePick(event)}
           on:close={() => (prepareOpen = false)}
         >

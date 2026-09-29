@@ -234,7 +234,7 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
-		cfg.preflightNCStorage(ctx, rt.logger)
+		cfg.preflightDirectShares(ctx, rt.logger)
 	}
 	var checks []readinessCheck
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) {

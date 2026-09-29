@@ -220,92 +220,23 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
-| `--storage-mode default|acl-enabled|undecided|""` | `CASSINI_HARNESS_STORAGE_MODE` | `default` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). `undecided` (or an explicitly empty value) builds the access-controlled substrate and tells the ExApp nothing, so the app resolves the audience for itself on its first enable. See §2.8.1. |
+| `--storage-mode acl-enabled` | `CASSINI_HARNESS_STORAGE_MODE` | unset | Accepted for existing harness commands. Installed ExApps always use private Files shares. |
 | `--debug-skip-storage-scaffold` | `CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1` | off | Build no recordings storage at all. Debug only. See §2.8.1. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |
+| `stack up --seed-published DIR` | `CASSINI_HARNESS_SEED_PUBLISHED_DIR` | unset | Import a static meeting pack and give `admin` read access to each recording. Requires an installed ExApp. |
+| `stack up --seed-operator DIR` | `CASSINI_HARNESS_SEED_OPERATOR_DIR` | unset | Restore an AppAPI operator volume into a fresh ExApp volume. |
 | `stack down --suspend` | n/a | false | Down-only; stop containers but keep them. |
 | `stack down --volumes` | n/a | false | Down-only; remove project volumes too. |
 | `stack down --full` | n/a | false | Down-only; remove all known harness resources. |
 
-#### 2.8.1 Recording storage mode
+#### 2.8.1 Recording storage
 
-Cassini stores published recordings in one of two models, and they differ in who
-can see a recording: anyone with an account on this Nextcloud, or only the people
-who were in the call. With nothing recorded and nothing declared, the ExApp
-resolves that on its first enabled edge from what it finds — recordings in the
-`Cassini` Team folder keep meeting participants, anything else records as anyone
-with a Nextcloud account — and it never widens an archive that already exists.
-The harness declares the mode so a stack is the thing it says it is, and
-`--storage-mode undecided` (or `--storage-mode ""`) is how you deliberately do
-not, so you can watch the app resolve it.
-
-The two models keep their archives in different places, on purpose — neither can
-shadow the other:
-
-```text
-  --storage-mode default              (default)
-    bootstrap: cassini account + group, and nothing else
-    archive:   CassiniNoACL/Recordings — the cassini account's OWN directory,
-               created by the app on its first enabled edge
-    ExApp:     CASSINI_STORAGE_MODE=default
-    note:      no Team folder, because a stack should be the thing it says it
-               is. It is no longer harmful to have one — the two roots cannot
-               collide — but an unused folder is still a lie about the stack.
-
-  --storage-mode acl-enabled
-    bootstrap: cassini account + group, groupfolders + group_everyone,
-               a mapped ACL-enabled Cassini Team folder
-    archive:   Cassini/Recordings — inside that Team folder, under per-recording
-               advanced ACLs
-    ExApp:     CASSINI_STORAGE_MODE=access_controlled
-    note:      privacy-focused e2e suites select this explicitly
-
-  --storage-mode undecided
-    bootstrap: the same as acl-enabled — account, group, both apps, a mapped
-               ACL-enabled Team folder, so both audiences are actually
-               reachable from the settings section.
-    ExApp:     nothing. CASSINI_STORAGE_MODE is OMITTED from the registration,
-               not passed empty — an empty value is an unrecognised one, which
-               the app logs as an error rather than as "nobody told me".
-    note:      the app resolves the audience itself on its first enabled edge,
-               which is what every real install does. With an empty Team folder
-               it lands on anyone with a Nextcloud account, and records.
-
-  --storage-mode ""
-    alias for undecided. CASSINI_STORAGE_MODE is likewise omitted.
-
-  --debug-skip-storage-scaffold       (composes with any mode)
-    bootstrap: no account, no group, neither app, no folder
-    ExApp:     started in whichever mode was selected
-```
-
-The two together — `--storage-mode acl-enabled --debug-skip-storage-scaffold` —
-give you meeting participants selected with none of it built, which is what the
-settings section's prerequisites step exists to fix.
-
-`--storage-mode undecided --debug-skip-storage-scaffold` is the fuller version
-of that: nothing built AND nothing declared, which is exactly what an
-administrator meets on the day they install Cassini. The app resolves the
-audience, the first-run dialog offers to create the `cassini` account, and the
-settings section scaffolds whatever the other audience still needs.
-
-The mode is only the ExApp's *initial* value. It is recorded in the app's
-`storage_settings.json` on the first enable and **Operator › Settings › Who can
-see recordings** is what changes it afterwards, so re-registering with a
-different `--storage-mode` over an existing app volume changes nothing.
-
-Switching from that section COPIES the archive from one root to the other,
-verifies it arrived, records the new audience, and only then empties the old
-root. `storage_settings.json` carries a third field, `migration_clean`, which is
-false between the first of those steps and the last — so a stack killed
-mid-switch comes back with its recordings intact at whichever mode the file
-names, and the settings section offers **Resume** to clear the leftovers. To
-inspect it:
-
-```bash
-docker exec nc_app_gocassini cat /nc_app_gocassini_data/operator/storage_settings.json
-```
+The harness creates a private `CassiniRecordings/meetings` directory owned by
+the `cassini` account. The installed ExApp shares each new recording with the
+Talk room's Nextcloud participants. `--debug-skip-storage-scaffold` omits the
+service account so the app's account setup in Operator › Publish pipeline can
+be exercised.
 
 ### 2.9 Supporting environment variables without stack flags
 
@@ -459,7 +390,7 @@ shell that also contains `CASSINI_HARNESS_PUBLIC_URL` or other remote exports.
 | `./bin/cassini dev ci-e2e` or `./harness/bin/ci-e2e.sh` | `local-http` + `full` + `cassini none` + `recording legacy` | Baseline full Nextcloud + recorder + player run used by CI. Uses `--reset` and tears down with `--volumes`. |
 | `./harness/bin/ci-e2e-mute.sh` | same as baseline | Mute-aware three-player flow; validates multi-player capture via session artifacts and player mute logs. |
 | `./harness/bin/ci-e2e-rejoin.sh` | same as baseline | Leave/rejoin flow with two player phases; validates player phases and recorder subscription evidence. |
-| `IMAGE_REF=... ./harness/bin/ci-e2e-install-exapp.sh` | `local-http` + `core` + `cassini none` + `recording none` | Real Nextcloud + AppAPI install handshake against a provided ExApp image. The script manually starts/registers the image so it can test AppAPI route patterns. It checks access-controlled storage by default; set `CASSINI_E2E_STORAGE_MODE=default` for the separate private-root leg. |
+| `IMAGE_REF=... LOG_DIR=... ./harness/bin/ci-nextcloud-compatibility.sh nc35` | Locked `full` stack + installed ExApp | Real Nextcloud + AppAPI installation, Talk recording, direct Files shares, restart, and browser playback. Use a dedicated Docker host with no retained Cassini fixture; see [the compatibility guide](../docs/nextcloud-compatibility.md). |
 | `IMAGE_REF=... ./harness/bin/check-route-refresh.sh` | `local-http` + `core` + `cassini none` + `recording none` | Whether `app_api:app:update` applies a **changed** `<routes>` block to an app that is already installed. Registers with one real route withheld, proves the proxy refuses it, then reads AppAPI's own route rows in Postgres after each update form. |
 | `IMAGE_REF=... ./harness/bin/ci-e2e-talk-record-roundtrip.sh` | `local-http` + `full` + `cassini none` + `recording legacy`, then custom operator container | Full Talk record-button roundtrip: Talk recording-backend HMAC -> operator -> recorder -> transcribe -> publish -> transcript check. |
 | `./harness/bin/d263-nextcloud-lifecycle.sh` | run after a stack is up | Native Talk recording-backend lifecycle against local Nextcloud/Talk with a fake media worker. Not a full media acceptance test. |
@@ -566,20 +497,15 @@ What happens:
    `appinfo/info.xml`.
 2. Compose starts Nextcloud, Postgres, reverse proxy, AppAPI HaRP, NATS, Janus,
    standalone signaling, and Coturn.
-3. Nextcloud is bootstrapped with Talk, Team folders, Everyone Group, trusted
-   domains, signaling, TURN, and Talk recording settings.
+3. Nextcloud is bootstrapped with Talk, a private `cassini` recording owner,
+   trusted domains, signaling, TURN, and Talk recording settings.
 4. AppAPI is installed/enabled.
 5. The HaRP deploy daemon is registered.
 6. Cassini is registered as `gocassini` and route checks are performed.
 
-Who can see a recording has two answers, and this stack picks one with
-`--storage-mode` (§2.8.1): recordings are visible to anyone with an account on
-this Nextcloud, or only to the people who were in the call. `bootstrap.sh`
-installs the two prerequisites an ExApp cannot install for itself — Team folders
-and Everyone Group — either way, and builds the Team folder only for the
-participants-only mode, where the ExApp provisions its groups and ACLs inside it
-on enable. Production installers need both native apps only for that mode. See
-[`docs/exapp-nextcloud-recordings-permissions.md`](../docs/exapp-nextcloud-recordings-permissions.md).
+Cassini records into the private Files directory owned by `cassini` and shares
+each meeting with its Talk participants. Nextcloud shares control listing and
+playback. See [recording permissions](../docs/exapp-nextcloud-recordings-permissions.md).
 
 If you already have a suitable local ExApp image, omit `--build` and use the
 default `reuse-local` mode. If you want AppAPI to pull the manifest image, use
@@ -1441,99 +1367,84 @@ CALL_URL="$(./bin/cassini dev room create --name "Basic video room" | tail -n1)"
 
 ---
 
-### 9.5 Seeding the stack from a production archive
+### 9.5 Seeding published recordings
 
-A synthetic fixture is a three-minute meeting with two speakers. Some work needs
-a corpus instead: the meeting list, cross-meeting search, insights, and any
-question about how a surface behaves with hours of real transcript in it. Those
-meetings already exist on a deployed instance, and a seed pack brings them here.
+Use `cassini dev meetings pull --out harness/runtime/seed/prod` to download
+recordings visible to your Nextcloud account. The output is a confidential local
+static archive. New pulls write a `cassini.seed.pack.v2` manifest with SHA-256
+hashes, remote ETags, selection/completeness information, and the annotation
+policy. Resume skips a recording only when its strong ETag and local hash match;
+servers without ETags are downloaded again. A failed/partial v2 pull must be
+resumed before seeding. Existing v1 and catalog-only packs remain supported.
+
+By default, `--annotations embedded` exports the marks already in the delivered
+recording. Use `--annotations current` to read the authenticated annotations API
+and embed its accepted document into the local recording, including edits still
+waiting to synchronize on the server. This requires local FFmpeg/ffprobe and a
+server with the annotation API. It preserves IDs, revisions, and attribution;
+it does not copy edit history or write to the source server. The export is a
+per-meeting snapshot, not a transaction across the entire source archive.
+
+To import it into a local installed ExApp stack:
+
+```bash
+./bin/cassini dev stack up --cassini installed-exapp \
+  --seed-published harness/runtime/seed/prod
+```
+
+Before building images or changing containers, the harness validates the
+manifest, `catalog.json`, and every referenced portable `.opus` with local
+`ffprobe`. It then copies the
+recordings into the private `cassini/CassiniRecordings/meetings` directory, scans
+them into Nextcloud Files, and creates a read-only share for `admin` on each
+file. No other recipient is inferred from the source pack. Production account
+names in the original meeting are not assumed to exist locally.
 
 ```text
-   PRODUCTION NC                SEED PACK (a directory)        HARNESS
-   ─────────────                ──────────────────────        ───────
-   Cassini/Recordings/  ──pull──▶  catalog.json      ──bind ro──▶ /cassini-seed
-     catalog.json                  meetings/*.opus                    │ copy
-     meetings/*.opus               seed-manifest.json                 ▼
-                                                            Cassini/Recordings/
-        GET only, as you           gitignored, confidential    then occ …:scan
+pack files -> Nextcloud Files -> destination file IDs + admin read shares
+                                      |
+catalog metadata --------------------> meetings.sqlite3
+recording transcripts ---------------> search.sqlite3 (rebuild)
+recording annotations --------------> annotations.sqlite3 (import)
 ```
 
-**Pull an archive.** Reads as your own Nextcloud account, over the same route
-`cassini meetings list` uses, so you get exactly the recordings that account may
-read. Set `CASSINI_NC_URL`, `CASSINI_NC_USER` and `CASSINI_NC_APP_PASSWORD`
-first — create the app password under Settings, Security, Devices & sessions.
-
-```bash
-./bin/cassini dev meetings pull --out harness/runtime/seed/prod --dry-run
-./bin/cassini dev meetings pull --out harness/runtime/seed/prod --limit 20
-```
-
-`--dry-run` reports the total size before you commit to the transfer; a full
-archive is easily gigabytes. `--limit` keeps the newest N, and `--room`,
-`--from` and `--to` narrow the same way `meetings list` does. Re-running skips
-what is already on disk, so an interrupted pull is resumed by repeating the
-command.
-
-**Seed a stack with it**, either as part of bringing one up:
-
-```bash
-./bin/cassini dev stack up --seed-published harness/runtime/seed/prod
-```
-
-or against a stack that is already running:
-
-```bash
-./harness/bin/seed-nc-files.sh --pack harness/runtime/seed/prod
-```
-
-Both copy the pack into the Cassini Team folder, run `occ groupfolders:scan`,
-and then grant read on each seeded recording. Nothing is uploaded over WebDAV:
-the Team folder is ordinary files under `__groupfolders/<id>/files`, so seeding
-is a copy and a rescan. A 2 GB, 128-meeting archive takes about three seconds to
-copy and one to scan; the permissions pass is the slow part, at roughly half a
-second per meeting.
-
-That pass is not optional. The app treats a recording carrying no permission
-rule of its own as an interrupted delivery and denies it on every enabled edge,
-so a seeded meeting has to state its visibility rather than inherit it. Without
-it the meetings are readable until the next `dev stack up` and invisible after.
-
-Seeding is additive and idempotent. The catalog is merged rather than replaced,
-so meetings a stack recorded itself survive, and re-seeding the same pack is a
-no-op. `--replace` clears the tree first when you want the stack to hold the
-pack and nothing else.
-
-**Two things a seeded stack is not.** Seeded meetings are readable by *every*
-account on it: production's per-meeting permissions name production accounts and
-do not come with the data, so an access-control change must not be tested
-against them. And they carry no operator job history, so the admin jobs list
-shows nothing for them while every published surface — the viewer, insights,
-`meetings context` — works normally.
-
-**A pack is confidential.** It holds real audio, transcripts and summaries.
-`harness/runtime/` is gitignored, which is why the examples above write there;
-treat a pack the way you would treat the recordings themselves.
+Reusing the same pack skips files with identical bytes and existing `admin`
+shares. A filename collision with different bytes stops the import. The
+operator imports catalog metadata using destination file IDs, preserving room
+names and other catalog-only fields. Search and annotation backfills must finish
+without read/index errors; recordings with no transcript are reported explicitly
+as outside search coverage. Startup verifies the complete admin listing
+against the catalog, including metadata. Keep the pack out of version control.
 
 ### 9.6 Seeding the installed operator volume
 
-`--seed-operator` is for a copy of Cassini's AppAPI persistent-volume root,
-not a published-files pack. It must contain `operator/jobs/`. The harness checks
-that shape before it starts, then after AppAPI deploys Cassini bind-mounts the
-source read-only into a short-lived copier and copies its contents into the
-new ExApp volume. The source is never changed.
+`--seed-operator` copies an AppAPI persistent-volume root containing
+`operator/jobs/` and `operator/jobs.sqlite3` into a fresh installed ExApp volume. The harness checks the
+source before startup and bind-mounts it read-only for the copy. It refuses
+`--resume`, since a seed belongs to a fresh volume.
 
 ```bash
 ./bin/cassini dev stack up --cassini installed-exapp \
   --seed-operator /absolute/path/to/nc_app_gocassini_data
 ```
 
-This seed is intentionally refused with `--resume`: it belongs to a fresh
-operator volume. Use the normal default fresh start or `--reset` when a prior
-harness volume exists. A 120 GB seed requires at least that much free Docker
-storage, plus room for images and new recordings. On Docker Desktop, raise the
-Disk usage limit to at least 160 GB (200 GB is the sensible working setting);
-the host's free space alone is not sufficient if Docker Desktop's VM disk limit
-is smaller.
+Keep enough free Docker storage for the copied volume and new recordings.
+
+Capture the source volume while its operator is stopped, or use a consistent
+snapshot/SQLite backup process. Include SQLite WAL files when present; copying
+only the main database can omit committed data. Preflight checks integrity and
+annotation schema compatibility on temporary copies, leaving the seed untouched.
+These checks cannot establish that an arbitrary live filesystem copy was atomic.
+
+When both seed flags are supplied, the meeting pack supplies recordings,
+metadata, and annotations; the operator snapshot supplies processing history.
+Source search and meeting-metadata indexes are discarded in the destination.
+The destination annotation store is also rebuilt from the pack in this combined
+mode. Preflight rejects a source snapshot with pending annotation edits: first
+export those using `--annotations current` and capture a synchronized snapshot.
+An operator-only restore retains its durable annotation database. Source
+Nextcloud file IDs and shares are never portable, and importing an operator
+volume alone does not populate Nextcloud Files.
 
 ## 10. Repository structure and operational reference
 

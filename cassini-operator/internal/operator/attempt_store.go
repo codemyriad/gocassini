@@ -12,14 +12,15 @@ import (
 var ErrJobNotEligibleForRerun = errors.New("job is not eligible for rerun")
 
 type JobAttempt struct {
-	JobID               string  `json:"job_id"`
-	AttemptNumber       int     `json:"attempt_number"`
-	TriggerKind         string  `json:"trigger_kind"`
-	RequestJSON         string  `json:"request_json"`
-	Stage               string  `json:"stage"`
-	State               string  `json:"state"`
-	ArtifactRunPath     *string `json:"artifact_run_path"`
-	ArtifactMeetingPath *string `json:"artifact_meeting_path"`
+	FilesPresent        map[string]bool `json:"files_present,omitempty"`
+	JobID               string          `json:"job_id"`
+	AttemptNumber       int             `json:"attempt_number"`
+	TriggerKind         string          `json:"trigger_kind"`
+	RequestJSON         string          `json:"request_json"`
+	Stage               string          `json:"stage"`
+	State               string          `json:"state"`
+	ArtifactRunPath     *string         `json:"artifact_run_path"`
+	ArtifactMeetingPath *string         `json:"artifact_meeting_path"`
 	// ArtifactOpusPath is this attempt's sealed portable meeting,
 	// runs/<job>--attempt-NNN.opus. It is immutable: no other attempt of the
 	// same job can write it, which is what lets the publish worker deliver the
@@ -117,6 +118,17 @@ WHERE job_id = ? AND attempt_number = ?`, column), path, nowUTCString(), jobID, 
 }
 
 func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string) (Job, error) {
+	unlock := s.lockArtifacts(job.ID)
+	defer unlock()
+	var pending int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artifact_operations WHERE job_id=?`, job.ID).Scan(&pending); err != nil || pending != 0 {
+		return Job{}, ErrJobNotEligibleForRerun
+	}
+	var source string
+	_ = s.db.QueryRowContext(ctx, `SELECT source FROM artifact_availability WHERE job_id=?`, job.ID).Scan(&source)
+	if source == "expired" {
+		return Job{}, ErrJobNotEligibleForRerun
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, fmt.Errorf("begin rerun attempt: %w", err)
@@ -146,6 +158,9 @@ WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifa
 	}
 	manifest, err := readRunManifest(filepath.Join(readyRunPath, "cassini.json"))
 	if err != nil || manifest.State != bundleStateReady || manifest.Stage != "ready" {
+		return Job{}, ErrJobNotEligibleForRerun
+	}
+	if _, err := requireReadyRunBundle(readyRunPath); err != nil {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
 

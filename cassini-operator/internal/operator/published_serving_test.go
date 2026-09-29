@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -137,6 +138,7 @@ func TestNCProxyServesADeniedReadAsNotFound(t *testing.T) {
 
 		var logs bytes.Buffer
 		cfg := testExAppConfig(srv.URL)
+		cfg.sharePaths.put("alice", map[string]string{"secret.opus": "Cassini/Recordings/meetings/secret.opus"})
 		proxy := cfg.ncFilesProxy(log.New(&logs, "", 0), searchDeps{})
 		if proxy == nil {
 			t.Fatalf("expected a proxy for an AppAPI-active config")
@@ -217,4 +219,4 @@ func TestPublishRemovesTheStagingSiteOnlyAfterASuccessfulDelivery(t *testing.T) 
 	}
 }
 
-const errTestDeliver = testAccessErr("destination unreachable")
+var errTestDeliver = errors.New("destination unreachable")

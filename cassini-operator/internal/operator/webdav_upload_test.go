@@ -8,13 +8,19 @@ import (
 )
 
 func testExAppConfig(ncURL string) ExAppConfig {
-	return ExAppConfig{
+	cfg := ExAppConfig{
 		NextcloudURL: ncURL,
+		PublishSink:  publishSinkNextcloudFiles,
+		sharePaths:   &recordingSharePathCache{},
 		AppSecret:    "sekret",
 		AppID:        "gocassini",
 		AppVersion:   "1.2.3",
 		AAVersion:    "34.0.0",
 	}
+	if value, ok := testCatalogRegistry.Load(ncURL); ok {
+		cfg.meetingMetadata = value.(*meetingMetadataStore)
+	}
+	return cfg
 }
 
 type davRequest struct {
@@ -50,7 +56,9 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
+	cfg := testExAppConfig(srv.URL)
+	cfg.sharePaths.put("alice", map[string]string{"demo.opus": "Cassini/Recordings/meetings/demo.opus"})
+	proxy := cfg.ncFilesProxy(nil, searchDeps{})
 	if proxy == nil {
 		t.Fatal("proxy nil with full ExApp config")
 	}
@@ -92,7 +100,9 @@ func TestNCFilesProxyMakesFilesMissAuthoritative(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
+	cfg := testExAppConfig(srv.URL)
+	cfg.sharePaths.put("alice", map[string]string{"nope.opus": "Cassini/Recordings/meetings/nope.opus"})
+	proxy := cfg.ncFilesProxy(nil, searchDeps{})
 	rec := httptest.NewRecorder()
 	req := callerReq(http.MethodGet, "/published/meetings/nope.opus", "alice")
 	if !proxy(rec, req, "meetings/nope.opus") {
@@ -118,6 +128,24 @@ func TestNCFilesProxyReturnsBadGatewayWhenFilesUnavailable(t *testing.T) {
 	}
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("unavailable proxy code = %d, want 502", rec.Code)
+	}
+}
+
+func TestNCFilesProxyDeclinesLocalSinkAndRejectsMissingIdentity(t *testing.T) {
+	cfg := testExAppConfig("https://nextcloud.invalid")
+	cfg.PublishSink = publishSinkLocal
+	proxy := cfg.ncFilesProxy(nil, searchDeps{})
+	for _, rel := range []string{"catalog.json", meetingsListPath, "meetings/a.opus"} {
+		rec := httptest.NewRecorder()
+		if proxy(rec, httptest.NewRequest(http.MethodGet, "/published/"+rel, nil), rel) {
+			t.Errorf("local sink claimed %s", rel)
+		}
+	}
+	cfg.PublishSink = publishSinkNextcloudFiles
+	proxy = cfg.ncFilesProxy(nil, searchDeps{})
+	rec := httptest.NewRecorder()
+	if !proxy(rec, httptest.NewRequest(http.MethodGet, "/published/catalog.json", nil), "catalog.json") || rec.Code != http.StatusBadGateway {
+		t.Fatalf("catalog without caller = %d %s", rec.Code, rec.Body.String())
 	}
 }
 

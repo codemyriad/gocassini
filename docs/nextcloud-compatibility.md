@@ -44,7 +44,7 @@ Ordinary relevant PRs run the reference and the exact minimum. Inventory,
 workflow, harness and integration-boundary changes run all baselines. Main and
 tag pushes run all baselines. The existing required CPU check aggregates the
 expected rows and refuses missing, failed or mismatched evidence. Other required
-architecture, CUDA, lifecycle and manual-install checks retain their roles.
+architecture, CUDA and lifecycle checks retain their roles.
 
 Tag runs produce a release-evidence index only after all required image/product
 checks pass. `release.yml` verifies the exact trusted tag run, attempt, commit,

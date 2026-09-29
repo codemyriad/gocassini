@@ -198,24 +198,12 @@ and the live site itself is:
 > directory is staging either way, and is removed once the sink accepts the
 > meeting. See `docs/reference/configuration.md` for `--sink`.
 
-Which path in Nextcloud Files depends on the storage mode, and the two roots are
-deliberately distinct so that neither can shadow the other:
-
-```text
-  default mode            CassiniNoACL/Recordings/   the service account's own
-                                                     private directory
-  access-controlled mode  Cassini/Recordings/        inside the `Cassini` Team
-                                                     folder, under advanced ACLs
-
-  either root:  meetings/<job-id>.opus
-                catalog.json
-```
-
-The shape inside is identical, so nothing downstream of the root string changes
-with the mode. Only one root holds the archive at a time; switching modes copies
-it across and then empties the other. `/status` reports the active one as
+Nextcloud Files holds installed ExApp recordings at
+`cassini/CassiniRecordings/meetings/<job-id>.opus`. This private owner directory
+has no remote `catalog.json`. The app shares each file through Nextcloud's core
+sharing API and reads it as the caller. `/status` reports the owner root as
 `recordings_access.root`. See
-[Installing Cassini as a Nextcloud ExApp](../exapp-install.md#where-recordings-live).
+[Recording access and cutover](../direct-shares-cutover.md).
 
 ## Why both `current/` and `runs/` exist
 
@@ -258,32 +246,14 @@ a specific attempt's artifact rather than whatever is currently canonical:
 
 ## Retention
 
-Attempt-local payloads under `runs/` are pruned by an explicit policy,
-`--artifact-retention` / `CASSINI_ARTIFACT_RETENTION`:
+Configure container-local retention in Operator → Storage. All policies default
+to keep forever; recordings, attempt history, current output archives and stage
+logs can expire independently using UTC calendar dates. Job metadata and external
+published recordings remain. Successful duplicate cleanup is independent of age.
+The old artifact-retention flag/environment variable is deprecated and ignored.
 
-| Policy | Prunes |
-|--------|--------|
-| `all` | nothing |
-| `superseded` | the `.run`, `.meeting`, `.site` and `.seal` of attempts a rerun has replaced |
-| `sealed` **(default)** | `superseded`, plus a succeeded attempt's `.run`, `.meeting` and `.site` |
-
-One removal happens outside this policy and `all` does not disable it: a
-successfully delivered attempt's `.site` is removed as soon as the sink accepts
-it (D-550). That is an access boundary rather than housekeeping — the attempt
-site is a full copy of the recording on the app's own volume, outside the
-Nextcloud access model — so retention is not a way to keep one.
-
-Never pruned, under any policy: everything in `current/`, every attempt `.logs`
-directory, the retained `.seal` of a succeeded attempt, and the live site. Every
-removal is additionally guarded on the artifact that replaces it existing, so a
-record that failed before promotion keeps its attempt `.run` and a failed job
-keeps everything — nothing here removes the last copy of anything.
-
-Attempt rows keep the paths of artifacts that were pruned. The row is the record
-of what that attempt produced; the retention policy governs whether the bytes are
-still there. So an `artifact_site_path` on a succeeded attempt under the `sealed`
-policy names a directory that no longer exists, by design — the operator log line
-`artifact retention removed id=… policy=… <path> (…)` is what says why.
+See [container retention](../container-retention.md) for categories, date anchors,
+exact deletion paths, whole-recording expiry, recovery, deployment and diagnostics.
 
 ## Live site lineage
 

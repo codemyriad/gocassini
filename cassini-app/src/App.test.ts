@@ -138,51 +138,6 @@ describe("the shell after the Setup tab", () => {
     expect(appSource).toContain("busy={setupRetryBusy}");
   });
 
-  it("shows the first-run dialog only to an administrator the operator answered for", () => {
-    // operatorAvailable is the same probe that gates the operator surface, and
-    // firstRunPlan returns null for everything else — a non-admin, an
-    // unreadable /storage, an install already acknowledged.
-    expect(appSource).toContain("isAdmin: operatorAvailable,");
-    expect(appSource).toContain("setupAvailable: isSetupAvailable(),");
-    expect(appSource).toContain("{#if firstRun && operatorClient}");
-  });
-
-  // "Change who can see first" names the audience control, which is a section
-  // of a settings panel. The operator's default panel is the run console, so
-  // selecting the surface alone lands an administrator a click short of the
-  // thing the button they pressed named.
-  it("sends the dialog's other button to the panel that holds the control", () => {
-    expect(appSource).toContain('const RECORDING_ACCESS_PANEL: OperatorPanel = "pipeline";');
-    expect(appSource).toContain("on:settings={openRecordingAccess}");
-    const open = appSource.slice(
-      appSource.indexOf("function openRecordingAccess()"),
-      appSource.indexOf("// readInstanceState asks the operator"),
-    );
-    expect(open).toContain(
-      'applyPanel(applySurface(window.location.hash, "operator"), RECORDING_ACCESS_PANEL)',
-    );
-    // Pushed, then announced once — the same mechanism handleOpenPanel uses, so
-    // the surface, the operator's nav and the viewer read one address.
-    expect(open.indexOf("window.history.pushState")).toBeLessThan(
-      open.indexOf('new PopStateEvent("popstate")'),
-    );
-    expect(open).toContain("firstRunClosed = true;");
-    // Closed for this page, and nothing said to the operator: the flag is
-    // answered where the `cassini` account is actually made, so an install that
-    // still cannot record is asked again rather than never again (D-756
-    // review).
-    expect(open).not.toContain("acknowledgeFirstRun");
-    expect(appSource).not.toContain("acknowledgeFirstRun");
-  });
-
-  it("never lets a failed storage read take the operator surface away", () => {
-    // Everything else the shell shows is independent of that answer. No answer
-    // means no dialog, not a shell that decided it is not an administrator.
-    expect(appSource).toMatch(
-      /async function readStorageStatus\([\s\S]{0,400}catch \(error\) \{[\s\S]{0,200}return null;/,
-    );
-  });
-
   it("gives every browse surface the audience the chip renders", () => {
     // Three call sites — with the operator tab, under an advisory setup strip,
     // and bare — and the chip is for every user, so a reader must not get a

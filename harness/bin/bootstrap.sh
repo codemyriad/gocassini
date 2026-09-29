@@ -17,55 +17,12 @@ harness_bootstrap_core_nextcloud() {
   log "Ensuring Talk app is installed/enabled"
   harness_install_app spreed
 
-  # Per-participant recording access needs two native Nextcloud apps that an
-  # ExApp cannot install for itself: Team folders supplies the shared tree and
-  # advanced ACLs; Everyone Group supplies the virtual `everyone` group so every
-  # account has the read-only mount from creation without membership sweeps.
-  # Installing them here mirrors the one-click app-store install a production
-  # admin does. Since D-616 they are the prerequisites of the ACCESS-CONTROLLED
-  # storage mode rather than of Cassini as such: without them Cassini runs in
-  # its default mode instead. The harness installs them because that is the mode
-  # the e2e suites assert.
-  if harness_skip_storage_scaffold; then
-    log "Skipping Group Folders / Everyone Group (--debug-skip-storage-scaffold)"
-  else
-    log "Ensuring Group Folders app is installed/enabled"
-    harness_install_app groupfolders
-
-    log "Ensuring Everyone Group app is installed/enabled"
-    harness_install_app group_everyone
+  # Talk is the only optional app the test stack must install. Recording
+  # permissions use core Nextcloud Files shares.
+  if ! occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q '  - spreed:'; then
+    log "FATAL: spreed is required and is not enabled"
+    return 1
   fi
-
-  # The installs above tolerate failure on purpose: all three are app-store apps
-  # and a hard install would abort the harness on any box without app-store
-  # reachability. But a failed install must not then be INVISIBLE — without
-  # these apps the ExApp provisions nothing, and a missing group_everyone in
-  # particular makes the provisioner return before the Team folder is ever
-  # created, which looks identical to a successful run.
-  #
-  # spreed is checked here for the same reason, learned the hard way: on a slow
-  # link the ~6 MB app-store index times out, `app:install spreed` fails with
-  # both streams discarded, and the harness reports a healthy bootstrap. The
-  # first visible symptom is /operator/status answering 503 much later, with
-  # nothing anywhere naming the cause. There is no Talk to record without it, so
-  # a bootstrap that reaches this point without spreed has already failed.
-  #
-  # Only spreed is unconditional. The other two are the access-controlled
-  # mode's prerequisites, so a stack deliberately brought up without them —
-  # `--storage-mode default`, or `--debug-skip-storage-scaffold` — must not be
-  # failed for their absence. That is the state a production Nextcloud is in
-  # before anybody installs anything, and being able to stand it up is the point.
-  local -a required_apps=(spreed)
-  if ! harness_skip_storage_scaffold && harness_storage_mode_is_acl; then
-    required_apps+=(groupfolders group_everyone)
-  fi
-  local required_app
-  for required_app in "${required_apps[@]}"; do
-    if ! occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${required_app}:"; then
-      log "FATAL: ${required_app} is required and is not enabled"
-      return 1
-    fi
-  done
 
   if occ user:info "$BOT_USER" >/dev/null 2>&1; then
     log "Bot user already exists: $BOT_USER"
@@ -123,100 +80,23 @@ harness_bootstrap_core_nextcloud() {
   fi
 }
 
-# The recordings substrate, which Cassini no longer builds for itself (D-616).
-#
-# It used to: the ExApp created the `cassini` service account, its narrow owner
-# group and the Team folder on its enabled edge, so a harness that installed the
-# two apps was enough. Now the app only CHECKS and reports what is missing, so
-# the environment has to supply the same things a production administrator does
-# — and the harness IS that administrator here.
-#
-# What it builds depends on the mode the stack was asked for, and the difference
-# matters more than it looks:
-#
-#	acl-enabled   the account, its group, and a mapped, ACL-enabled Team folder.
-#	              Its archive is `Cassini/Recordings`, inside that folder.
-#	default       the account and its group, and NOTHING ELSE. Its archive is
-#	              `CassiniNoACL/Recordings` — the account's own directory, which
-#	              the app creates on its first enabled edge, so there is nothing
-#	              for the harness to build.
-#
-# Every step is idempotent and none of them is fatal on its own. A box where
-# these fail leaves Cassini reporting what is missing on /operator/status rather
-# than breaking silently, and the e2e suites that require access control assert
-# `recordings_access.ok` and will fail loudly there.
+# The test harness creates the same dedicated owner account a production
+# administrator creates. Cassini creates its private archive under that account.
 harness_bootstrap_recordings_substrate() {
-  local owner="cassini" mount="Cassini" everyone="everyone" folder_id=""
-
+  local owner="cassini"
   if harness_skip_storage_scaffold; then
-    log "Skipping the recordings substrate (--debug-skip-storage-scaffold): no ${owner} account, no ${mount} Team folder"
+    log "Skipping recordings owner account (--debug-skip-storage-scaffold)"
     return 0
   fi
-
-  log "Ensuring the ${owner} recordings service account"
-  occ_ignore_failure group:add "$owner" >/dev/null 2>&1
   if occ user:info "$owner" >/dev/null 2>&1; then
-    log "Recordings service account already exists: $owner"
-  else
-    log "Creating recordings service account: $owner"
-    # The password only satisfies `occ user:add`. Nothing authenticates with it:
-    # every Cassini call acts as this account through AppAPI's act-as-user
-    # header, which is signed with the app secret.
-    OC_PASS="cassini-service-account-$(date +%s)"
-    export OC_PASS
-    occ_ignore_failure user:add --password-from-env --display-name="Cassini recordings" \
-      --group="$owner" "$owner" >/dev/null 2>&1
-    unset OC_PASS
-  fi
-  occ_ignore_failure group:adduser "$owner" "$owner" >/dev/null 2>&1
-
-  if ! harness_storage_mode_is_acl; then
-    # The default model wants the account and nothing else. Its archive lives in
-    # `CassiniNoACL/Recordings` — the account's OWN directory, which the app
-    # creates on its first enabled edge — so there is nothing here to build.
-    #
-    # It is also nothing to avoid. Building the Team folder here used to be
-    # actively harmful, because both models addressed `Cassini/Recordings` and a
-    # mapped folder wins that path; since the roots were split it would merely be
-    # an unused folder. It is still not built, because a stack should be the
-    # thing it says it is.
-    log "Recordings substrate ready for the default storage mode: owner=${owner}, archive root CassiniNoACL/Recordings, no Team folder"
+    log "Recordings owner already exists: $owner"
     return 0
   fi
-
-  log "Ensuring the ${mount} Team folder"
-  folder_id="$(harness_groupfolder_id "$mount")"
-  if [[ -z "$folder_id" ]]; then
-    occ_ignore_failure groupfolders:create "$mount" >/dev/null 2>&1
-    folder_id="$(harness_groupfolder_id "$mount")"
-  fi
-  if [[ -z "$folder_id" ]]; then
-    log "WARNING: no ${mount} Team folder; Cassini will run in its default storage mode"
-    return 0
-  fi
-
-  # The owner group gets a write-capable mount; the virtual all-users group gets
-  # read, which is what lets every account traverse to the recordings it is
-  # granted. Advanced ACL supplies the default-deny floor, and the service
-  # account is delegated as its manager so it can write each recording's
-  # audience. This is exactly the recipe Cassini's Setup tab prints.
-  occ_ignore_failure groupfolders:group "$folder_id" "$owner" read write share delete >/dev/null 2>&1
-  occ_ignore_failure groupfolders:group "$folder_id" "$everyone" read >/dev/null 2>&1
-  occ_ignore_failure groupfolders:permissions "$folder_id" --enable >/dev/null 2>&1
-  occ_ignore_failure groupfolders:permissions "$folder_id" -m --user "$owner" >/dev/null 2>&1
-  log "Recordings substrate ready: folder=${folder_id} mount=${mount} owner=${owner}"
-}
-
-# harness_groupfolder_id prints the id of the Team folder at a mount point, or
-# nothing. `occ groupfolders:list` keys the mount as `mountPoint`; the HTTP API
-# calls the same value `mount_point`. Both are accepted so this does not become
-# a version trap.
-harness_groupfolder_id() {
-  local mount="$1"
-  occ groupfolders:list --output=json_pretty 2>/dev/null \
-    | jq -r --arg mp "$mount" \
-        '[.[] | select((.mountPoint // .mount_point) == $mp) | .id] | sort | .[0] // empty' \
-        2>/dev/null || true
+  OC_PASS="cassini-service-account-$(date +%s)"
+  export OC_PASS
+  occ user:add --password-from-env --display-name="Cassini recordings" "$owner"
+  unset OC_PASS
+  log "Recordings owner ready: $owner"
 }
 
 harness_configure_talk_media() {

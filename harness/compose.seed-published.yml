@@ -1,0 +1,6 @@
+# Mount the static pack read-only for a stack requested with --seed-published.
+services:
+  nextcloud:
+    volumes:
+      - ${CASSINI_HARNESS_SEED_PUBLISHED_DIR:?published seed directory required}:/cassini-published-seed:ro
+      - ./bin/seed-published-shares.php:/usr/local/bin/cassini-seed-published-shares.php:ro

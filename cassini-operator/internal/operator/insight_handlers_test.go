@@ -278,12 +278,7 @@ func TestCreateInsightAnswers404ForAMeetingTheCallerMayNotRead(t *testing.T) {
 	}
 }
 
-// A per-caller scan that FAILED is served closed, as an EMPTY catalog, so it
-// reaches this handler looking exactly like "you may read nothing". Answering
-// 404 would tell somebody who has just browsed their own meetings that one of
-// them is not theirs, which is a claim about a permission change that a
-// transient PROPFIND failure has no business making.
-func TestCreateInsightAnswers502WhenNothingIsReadableAtAll(t *testing.T) {
+func TestCreateInsightAnswers404WhenCallerHasNoShares(t *testing.T) {
 	dav := newInsightDAV(t, insightTestCatalog)
 	store := newFakeInsightStore()
 	service, _ := insightTestService(t, dav.server.URL, insightRegistryCassini(t), store)
@@ -291,17 +286,28 @@ func TestCreateInsightAnswers502WhenNothingIsReadableAtAll(t *testing.T) {
 	service.launchFn = func(id string, _ int) { harness.launched = append(harness.launched, id) }
 
 	w := harness.do(t, http.MethodPost, "/insights", "alice", `{"meetingIds":["MEETING1"]}`)
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("code = %d, want 502 (%s)", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "meeting list") {
-		t.Errorf("body = %s, want it to name the read that failed", w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404 for a healthy empty share list (%s)", w.Code, w.Body.String())
 	}
 	if len(harness.store.created) != 0 {
-		t.Error("a run was created out of a meeting list nobody could read")
+		t.Error("a run was created for a meeting the caller cannot read")
 	}
 	if len(harness.launched) != 0 {
-		t.Error("an attempt was started out of a meeting list nobody could read")
+		t.Error("an attempt was started for a meeting the caller cannot read")
+	}
+}
+
+func TestCreateInsightAnswers502WhenShareLookupFails(t *testing.T) {
+	srv := newFailingSharesServer(t)
+	store := newFakeInsightStore()
+	service, _ := insightTestService(t, srv.URL, insightRegistryCassini(t), store)
+	harness := &insightHandlerHarness{service: service, store: store}
+	w := harness.do(t, http.MethodPost, "/insights", "alice", `{"meetingIds":["MEETING1"]}`)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502 for a failed share lookup (%s)", w.Code, w.Body.String())
+	}
+	if len(store.created) != 0 {
+		t.Error("a run was created during a share lookup failure")
 	}
 }
 

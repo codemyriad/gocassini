@@ -100,6 +100,7 @@
   // The tags the list is narrowed by, in the order they were picked.
   export let tagFilterIds: readonly string[] = [];
   export let tagNotice = "";
+  export let tagRetryable = false;
   let tagging: { meeting: MeetingCatalogEntry; anchor: HTMLElement } | null = null;
 
   // The filter is list-local state — no other surface reads it.
@@ -148,6 +149,7 @@
     clearTags: void;
     removeTag: string;
     dismissTagNotice: void;
+    retryTag: void;
     // What was typed. The shell debounces it and asks the operator.
     query: string;
     // Open a meeting AT a matched moment, carrying the query so the meeting
@@ -225,7 +227,12 @@
     insights: visibleInsights,
     types,
   });
-  $: feedGroups = groupBrowseFeedByMonth(feedItems);
+  let displayLimit = 100;
+  $: displayedFeedItems = feedItems.slice(0, displayLimit);
+  $: feedGroups = groupBrowseFeedByMonth(displayedFeedItems);
+  $: renderedMeetings = displayedFeedItems.flatMap((item) =>
+    item.kind === "meeting" ? [item.meeting] : [],
+  );
   $: trimmedFilter = filter.trim();
   $: filterTags = tagFilterIds
     .map((id) => tags?.find((tag) => tag.tagId === id))
@@ -269,7 +276,7 @@
   // selection bar saying "3 meetings selected" over a list showing none of them
   // and omitting "3 not shown here" — the exact claim
   // selectionModel.countHiddenByView exists to prevent.
-  $: dispatch("visible", types.meetings ? visibleMeetings : []);
+  $: dispatch("visible", types.meetings ? renderedMeetings : []);
   $: if (tagging && !visibleMeetings.some((meeting) => meeting.id === tagging?.meeting.id)) {
     tagging = null;
   }
@@ -422,7 +429,11 @@
         <TriangleAlert size={14} aria-hidden="true" />
         <span>
           {tagNotice}
-          <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+          {#if tagRetryable}
+            <button type="button" class="link" on:click={() => dispatch("retryTag")}>Retry tag update</button>
+          {:else}
+            <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+          {/if}
         </span>
       </p>
     {/if}
@@ -638,6 +649,11 @@
           {/if}
         {/each}
       {/each}
+      {#if feedItems.length > displayedFeedItems.length}
+        <button type="button" class="list-empty-action" on:click={() => (displayLimit += 100)}>
+          Show more ({feedItems.length - displayedFeedItems.length} remaining)
+        </button>
+      {/if}
     {/if}
   </div>
 

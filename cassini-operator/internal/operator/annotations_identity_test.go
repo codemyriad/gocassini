@@ -15,7 +15,7 @@ func TestAnnotationD773KeepsMultipleTagsAcrossNamespaces(t *testing.T) {
 			nc, service, handler, store := asyncFixture(t)
 			first := annotatedFile(t, "", testTagNamespaceA, []testTag{{"tag_Test", "Test"}}, meetingMark("original", "tag_Test"))
 			raw, _ := json.Marshal(first)
-			nc.seed(annTestRecording, string(raw), recordingACLRules(nil, false))
+			nc.seed(annTestRecording, string(raw), nil)
 			recordMarks(t, store, "MEETING1.opus", first)
 			recordMarks(t, store, "SECRET.opus", annotatedFile(t, "", testTagNamespaceB, []testTag{{"tag_test", "test"}}, meetingMark("other", "tag_test")))
 			nc.frontMu.Lock()

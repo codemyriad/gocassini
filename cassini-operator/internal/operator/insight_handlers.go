@@ -208,16 +208,12 @@ func (s *insightService) create(w http.ResponseWriter, r *http.Request, caller s
 	// intersect the viewer's catalog goes through, so a second reader never means
 	// a second access-control path.
 	readable, catalog, ok := s.exapp.readableMeetingsForCaller(r.Context(), s.client, caller, s.logger)
-	if !ok || len(readable) == 0 {
-		// Empty is an outage here, not an answer. serveFilteredCatalog fails
-		// CLOSED — a per-caller PROPFIND that errors, or a missing recordings
-		// mount, is served as an empty catalog — so `ok` is true for a scan that
-		// never ran, and the loop below would then report a substrate failure as
-		// "one of these meetings is not available to you". Nobody reaches this
-		// handler without having just read a list of their own meetings, so a
-		// readable set of nothing is the failure and not the fact.
-		s.logf("insights: caller=%s has no readable meetings (ok=%t) — refusing as an outage rather than a denial", caller, ok)
+	if !ok {
 		writeJSONError(w, http.StatusBadGateway, "your meeting list could not be read from Nextcloud")
+		return
+	}
+	if len(readable) == 0 {
+		http.NotFound(w, r)
 		return
 	}
 	for _, id := range request.MeetingIDs {

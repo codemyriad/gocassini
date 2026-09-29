@@ -178,7 +178,7 @@ func TestGroupMeetingsByRoomKeepsSameNamedRoomsApart(t *testing.T) {
 	// backfill. They must NOT merge: two conversations can genuinely share a
 	// name, and a room can be renamed between recordings, so merging on the name
 	// would assert an identity nothing in the data supports. Merging them is a
-	// human judgement, made with scripts/reattribute-catalog-room.sh.
+	// human judgement.
 	listing := meetingsListing{Items: []meetingsCatalogItem{
 		{entry: meetingsCatalogEntry{ID: "A", RoomID: "rm_fromtoken", RoomName: "Weekly Sync"}},
 		{entry: meetingsCatalogEntry{ID: "B", RoomID: "rm_fromname", RoomName: "Weekly Sync"}},

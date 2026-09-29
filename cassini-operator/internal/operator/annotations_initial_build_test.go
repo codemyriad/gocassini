@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -54,6 +55,18 @@ func TestInitialAnnotationBuildReturnsFailureForRetryableImports(t *testing.T) {
 	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
 	store := openTestAnnotationStore(t)
 	rt := &Runtime{ctx: context.Background()}
+	rt.cfg.DBPath = filepath.Join(t.TempDir(), "jobs.sqlite3")
+	metadata, err := openMeetingMetadataStore(meetingMetadataPath(rt.cfg.DBPath), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct{ name, id string }{{"MEETING1.opus", "MEETING1"}, {"SECRET.opus", "SECRET"}} {
+		entry := json.RawMessage(`{"id":"` + row.id + `","audioPath":"./meetings/` + row.name + `"}`)
+		if err := metadata.Put(context.Background(), testMeetingFileID(row.name), row.name, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = metadata.Close()
 	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "not-installed-yet")
 	logger := log.New(io.Discard, "", 0)
 	if err := rt.buildAnnotationIndexOnce(meetingsListConfig(nc.url), store, logger); err == nil {

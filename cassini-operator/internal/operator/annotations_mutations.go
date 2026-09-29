@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"time"
 )
 
@@ -22,7 +21,7 @@ type annotationSyncStatus struct {
 
 var annotationMutationLocks keyedLocks
 
-func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
+func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusName, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
 	store := s.rt.annotationReads()
 	if store == nil {
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: errors.New("no store")}
@@ -31,17 +30,15 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 		return annotateResult{}, badAnnotateRequest("invalid requestId")
 	}
 	// Authorize against the current file permission before accepting a mutation.
-	if !request.Accepted {
-		if _, err := s.readDocument(ctx, caller, meetingID, relPath); err != nil {
-			return annotateResult{}, err
-		}
+	if _, err := s.readDocument(ctx, caller, meetingID, opusName, relPath); err != nil {
+		return annotateResult{}, err
 	}
 	if request.RetrySync {
-		if _, err := store.db.ExecContext(ctx, `UPDATE annotation_head SET blocked=0,retry_at=0,attempts=0,last_error='' WHERE opus_name=?`, path.Base(relPath)); err != nil {
+		if _, err := store.db.ExecContext(ctx, `UPDATE annotation_head SET blocked=0,retry_at=0,attempts=0,last_error='' WHERE opus_name=?`, opusName); err != nil {
 			return annotateResult{}, err
 		}
 		s.wakeAnnotations()
-		return store.document(ctx, path.Base(relPath))
+		return store.document(ctx, opusName)
 	}
 	// Independent of the media lock: an upload never blocks a short DB commit.
 	release, err := annotationMutationLocks.acquire(ctx, store.path)
@@ -111,7 +108,7 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 	}
 	var result annotateResult
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
-		name := path.Base(relPath)
+		name := opusName
 		if request.RequestID != "" {
 			var previousHash string
 			var receipt []byte

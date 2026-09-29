@@ -41,13 +41,8 @@ const (
 	// but not deliberate offline enumeration by someone who wants the token
 	// back. Deployments that care should set it.
 	//
-	// Changing it changes every id, while catalog entries keep the ids they
-	// were written with, so rooms split. The remedy depends on whether the
-	// installation still has the job that produced a recording:
-	// scripts/backfill-catalog-rooms.sh re-derives from the recorded Talk token
-	// and repairs every meeting with a surviving job row, which is most of an
-	// archive; scripts/reattribute-catalog-room.sh merges the rest by hand, and
-	// deliberately REFUSES the ones the backfill can fix.
+	// Changing it changes future ids. Existing recordings retain the ids
+	// published in their metadata, so choose a stable deployment-wide value.
 	RoomIDPepperEnv = "CASSINI_ROOM_ID_PEPPER"
 
 	// roomIDPrefix marks a value as a derived room id. It makes an id
@@ -87,9 +82,7 @@ func RoomIDFromToken(pepper, token string) string {
 // The name is trimmed and otherwise hashed exactly as stored, so the id is
 // verifiable from the catalog entry it sits beside. Deliberately NOT case-folded
 // or unicode-normalised: either would silently merge rooms someone named
-// differently on purpose, and a silent merge cannot be reviewed. Merging two
-// rooms is a human judgement, and reattribute-catalog-room.sh is where it is
-// made.
+// differently on purpose, and a silent merge cannot be reviewed.
 func RoomIDFromName(pepper, name string) string {
 	return deriveRoomID(pepper, roomIDNameDomain, name)
 }

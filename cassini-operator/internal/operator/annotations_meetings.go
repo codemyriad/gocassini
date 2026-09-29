@@ -19,9 +19,8 @@ import (
 // and search do. An id outside that set is a 404 identical to one that does not
 // exist, for a write as for a read, so marking is not a way to probe the archive.
 //
-// A read is made AS THE CALLER, so Nextcloud re-checks the ACL on the bytes. A
-// write cannot be: the recordings mount gives ordinary accounts a READ ceiling,
-// so the service account rewrites the file with If-Match.
+// A read is made as the caller, so Nextcloud checks the file permission. The
+// owner performs the conditional archive rewrite after that caller check.
 //
 // Status discipline is search's: failure is loud (502), denial is empty (404).
 
@@ -83,11 +82,11 @@ func (s *annotationService) readMeeting(w http.ResponseWriter, r *http.Request, 
 	ctx, cancel := context.WithTimeout(r.Context(), annotateRequestTimeout)
 	defer cancel()
 
-	relPath, _, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
+	relPath, opusName, _, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
 	if !ok {
 		return
 	}
-	result, err := s.readDocument(ctx, caller, meetingID, relPath)
+	result, err := s.readDocument(ctx, caller, meetingID, opusName, relPath)
 	if err != nil {
 		s.answerFailure(w, r, "read meeting="+meetingID, err)
 		return
@@ -111,10 +110,10 @@ func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID, 
 	defer os.RemoveAll(staging)
 
 	local := filepath.Join(staging, "meeting.opus")
-	_, status, err := s.exapp.stageRecording(ctx, s.client, annotationReadIdentity(caller, relPath), relPath, local, maxAnnotateRecordingBytes)
+	_, status, err := s.exapp.stageRecording(ctx, s.client, caller, relPath, local, maxAnnotateRecordingBytes)
 	if err != nil {
 		if deniedOrAbsent(status) {
-			// The ACL changed, or the recording went, since the catalog was read.
+			// Access changed, or the recording went, since the share list was read.
 			return annotateResult{}, annotateNotFound(fmt.Errorf("caller=%s denied meeting=%s at fetch -> %d (served as 404)", caller, meetingID, status))
 		}
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("fetch meeting=%s as caller=%s: %w", meetingID, caller, err))
@@ -139,11 +138,11 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithTimeout(r.Context(), annotateRequestTimeout)
 	defer cancel()
 
-	relPath, visible, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
+	relPath, opusName, visible, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
 	if !ok {
 		return
 	}
-	result, err := s.commitAndRecord(ctx, meetingID, relPath, visible, caller, request)
+	result, err := s.commitAndRecord(ctx, meetingID, opusName, relPath, visible, caller, request)
 	if err != nil {
 		s.answerFailure(w, r, "write meeting="+meetingID, err)
 		return
@@ -163,24 +162,28 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 
 // commitAndRecord is the one write path, for a batch of marks and a tag job
 // alike: commit the batch and index the resulting archive document.
-func (s *annotationService) commitAndRecord(ctx context.Context, meetingID, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
-	return s.commitDocument(ctx, meetingID, relPath, visible, caller, request)
+func (s *annotationService) commitAndRecord(ctx context.Context, meetingID, opusName, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
+	return s.commitDocument(ctx, meetingID, opusName, relPath, visible, caller, request)
 }
 
-func (s *annotationService) visibleRecording(ctx context.Context, w http.ResponseWriter, r *http.Request, caller, meetingID string) (string, []string, bool) {
+func (s *annotationService) visibleRecording(ctx context.Context, w http.ResponseWriter, r *http.Request, caller, meetingID string) (string, string, []string, bool) {
 	entries, ok := s.exapp.resolveVisibleMeetings(ctx, w, s.client, caller, s.logger, "annotations meetings")
 	if !ok {
-		return "", nil, false
+		return "", "", nil, false
 	}
-	_, root := ncArchiveReadIdentity(caller)
 	for _, entry := range entries {
 		if entry.id == meetingID && strings.HasSuffix(entry.opusName, ".opus") {
-			return root + "/meetings/" + entry.opusName, visibleOpusNames(entries), true
+			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
+			if err != nil {
+				s.answerFailure(w, r, "meeting="+meetingID, annotateUnavailable(err))
+				return "", "", nil, false
+			}
+			return rel, entry.opusName, visibleOpusNames(entries), true
 		}
 	}
 	s.answerFailure(w, r, "meeting="+meetingID, annotateNotFound(
 		fmt.Errorf("caller=%s asked for meeting=%s, which is not in their readable set (served as 404)", caller, meetingID)))
-	return "", nil, false
+	return "", "", nil, false
 }
 
 // recordCommitted brings the projection up to date with a committed write. A

@@ -2,7 +2,6 @@
   import { onDestroy, onMount } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
   import { AppDataProvider } from "./appDataProvider";
-  import FirstRunDialog from "./FirstRunDialog.svelte";
   import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
@@ -11,8 +10,6 @@
   import { loadConfig } from "./operator/config";
   import { guardLeave } from "./operator/unsaved";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
-  import { firstRunPlan } from "./operator/firstRun";
-  import { isSetupAvailable } from "./operator/ncSetup";
   import {
     buildFeatureNotice,
     buildSetupNotice,
@@ -25,7 +22,6 @@
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
   import { onSetupChanged } from "./operator/setupSignal";
-  import type { StorageStatus } from "./operator/types";
   import {
     applyPanel,
     applySurface,
@@ -135,33 +131,9 @@
   // catalog's hasSummary follows.
   $: insightsReady = setupFeatures?.insights === true;
 
-  // The storage record, read once per mount and only for an administrator: the
-  // route is ADMIN at the proxy, and the one thing the shell needs from it is
-  // `first_run` (D-756). Null is "nobody said" — not an administrator, or a
-  // read that failed — and no dialog is drawn from silence.
-  let storageStatus: StorageStatus | null = null;
-
-  // Closing the dialog for the rest of this page's life. The operator's
-  // acknowledgement is what makes it once per INSTALL; this is what makes it
-  // disappear on the click rather than on the round trip that follows — and it
-  // is the whole of what "Change who can see first" does, which is why it is
-  // separate from the flag (D-756 review).
-  let firstRunClosed = false;
-
   // Where "Who can see recordings" lives: a section at the top of the settings
   // panel the operator's nav calls "Publish pipeline" (SettingsPanel.svelte).
   const RECORDING_ACCESS_PANEL: OperatorPanel = "pipeline";
-
-  // What the first-run dialog says and does, or null for "say nothing". Every
-  // decision in it is taken in operator/firstRun.ts, where it is tested.
-  $: firstRun = firstRunClosed
-    ? null
-    : firstRunPlan(storageStatus, {
-        // The same probe that decides whether there is an operator surface at
-        // all. There is no second notion of admin here to drift from the first.
-        isAdmin: operatorAvailable,
-        setupAvailable: isSetupAvailable(),
-      });
 
   // Who can see recordings, for the audience chip in the meeting list (D-756).
   //
@@ -363,28 +335,15 @@
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
-  // "Change who can see first", and the blocked dialog's "Open Operator ›
-  // Settings" (D-756). The audience control is a SECTION of a settings panel,
-  // not the operator's front page, and the operator's default panel is the run
-  // console — so selecting the surface alone lands an administrator on a list of
-  // jobs, one click short of the thing the button they pressed named.
-  //
-  // Nothing here acknowledges the first run: the dialog is closed for this page
-  // and the operator's flag is left alone, so an install whose `cassini` account
-  // does not exist yet is asked again next time. The flag is answered where the
-  // account is made — the dialog's own primary action, and the settings
-  // section's "Create the account" row.
+  // The setup notice's "Open Operator › Publish pipeline" button. The audience
+  // control is a SECTION of a settings panel, not the operator's front page, and
+  // the operator's default panel is the run console — so selecting the surface
+  // alone would land an administrator on a list of jobs, one click short of the
+  // thing the button they pressed named.
   //
   // Same mechanism as handleOpenPanel: push the fragment, then announce it once,
   // so the surface, the operator's panel nav and the viewer all read the same
   // address instead of three updates that can disagree about where we are.
-  function openRecordingAccess(): void {
-    firstRunClosed = true;
-    openPublishPipeline();
-  }
-
-  // The setup notice's "Open Operator › Publish pipeline" steps: the same
-  // destination as the first-run dialog's button, without closing that dialog.
   function openPublishPipeline(): void {
     if (!operatorAvailable) {
       return;
@@ -418,10 +377,6 @@
       operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;
       setupHealth = health;
       setupFeatures = health?.features ?? null;
-      // Only an administrator, because /storage is ADMIN at the proxy and a
-      // non-admin's request for it would 403. Sequenced after the probe rather
-      // than sent with it for the same reason.
-      storageStatus = operatorClient ? await readStorageStatus(operatorClient) : null;
       recordingNeedsAction = health?.recordingState === "needs_action";
       // Which setup message you get is decided by the SAME probe that decides
       // whether the operator surface exists — being able to read the ADMIN-gated
@@ -453,29 +408,11 @@
       setupNotice = null;
       setupHealth = null;
       setupFeatures = null;
-      storageStatus = null;
       console.error("Cassini: operator availability check failed.", error);
     }
     // Reconcile the active surface with the probe result (e.g. an optimistic
     // hint the probe denied, or a stale #surface=operator we can't honour).
     applySurfaceFromLocation();
-  }
-
-  // readStorageStatus asks the ADMIN-gated record the one question the shell has
-  // of it: has any administrator been shown the first-run dialog yet.
-  //
-  // It swallows its own failure on purpose. Every other surface — browse, the
-  // operator tab, the setup notice — is independent of this answer, and letting
-  // a /storage failure reach readInstanceState's catch would take the operator
-  // surface away from the one person who could fix it. No answer means no
-  // dialog, which is the same degrade the setup health check makes.
-  async function readStorageStatus(client: OperatorClient): Promise<StorageStatus | null> {
-    try {
-      return await client.getStorage();
-    } catch (error) {
-      console.warn("Cassini: the storage record could not be read.", error);
-      return null;
-    }
   }
 
   // stopListeningForSetupChanges is assigned in onMount and called in onDestroy.
@@ -614,22 +551,6 @@
             {/if}
           </svelte:fragment>
         </ViewerApp>
-      </div>
-    {/if}
-    {#if firstRun && operatorClient}
-      <!-- Once per install, over everything: it is the first thing an
-           administrator sees on a fresh install and the only thing there is to
-           do on it. The themed .cassini-root wrapper is the same one the
-           surfaces above get, for the same reason — the daisyUI tokens are on
-           [data-theme], not on :host. -->
-      <div class="cassini-root" data-theme={themeMode}>
-        <FirstRunDialog
-          {operatorClient}
-          plan={firstRun}
-          mode={storageStatus?.mode ?? ""}
-          on:done={() => (firstRunClosed = true)}
-          on:settings={openRecordingAccess}
-        />
       </div>
     {/if}
     {#if surface === "operator"}

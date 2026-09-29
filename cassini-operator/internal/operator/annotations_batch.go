@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"strings"
 	"sync"
 )
@@ -90,11 +89,16 @@ func (s *annotationService) writeAnnotationBatch(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	_, root := ncArchiveReadIdentity(caller)
 	paths := make(map[string]string, len(entries))
+	names := make(map[string]string, len(entries))
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.opusName, ".opus") {
-			paths[entry.id] = root + "/meetings/" + entry.opusName
+			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
+			if err != nil {
+				continue
+			}
+			paths[entry.id] = rel
+			names[entry.id] = entry.opusName
 		}
 	}
 	for _, id := range request.MeetingIDs {
@@ -114,7 +118,7 @@ func (s *annotationService) writeAnnotationBatch(w http.ResponseWriter, r *http.
 			defer wg.Done()
 			for index := range jobs {
 				id := request.MeetingIDs[index]
-				_, errs[index] = s.readDocument(ctx, caller, id, paths[id])
+				_, errs[index] = s.readDocument(ctx, caller, id, names[id], paths[id])
 			}
 		}()
 	}
@@ -129,7 +133,7 @@ func (s *annotationService) writeAnnotationBatch(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	response, err := s.commitAnnotationBatch(ctx, caller, request, paths, visibleOpusNames(entries))
+	response, err := s.commitAnnotationBatch(ctx, caller, request, paths, names, visibleOpusNames(entries))
 	if err != nil {
 		s.answerFailure(w, r, "batch", err)
 		return
@@ -137,7 +141,7 @@ func (s *annotationService) writeAnnotationBatch(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller string, request annotationBatchRequest, paths map[string]string, visible []string) (annotationBatchResponse, error) {
+func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller string, request annotationBatchRequest, paths, names map[string]string, visible []string) (annotationBatchResponse, error) {
 	store := s.rt.annotationReads()
 	var response annotationBatchResponse
 	release, err := annotationMutationLocks.acquire(ctx, store.path)
@@ -214,7 +218,7 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
 		tags := map[string]bool{}
 		for i, id := range request.MeetingIDs {
-			if err := mutateAnnotationDocument(ctx, tx, path.Base(paths[id]), paths[id], caller, namespace, request.annotateWriteRequest, batch, &results[i]); err != nil {
+			if err := mutateAnnotationDocument(ctx, tx, names[id], paths[id], caller, namespace, request.annotateWriteRequest, batch, &results[i]); err != nil {
 				return err
 			}
 			result := results[i]
@@ -254,7 +258,7 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 			return err
 		}
 		for i, id := range request.MeetingIDs {
-			if _, err = tx.ExecContext(ctx, `INSERT INTO annotation_batch_target(caller,request_id,opus_name,snapshot) VALUES(?,?,?,?)`, caller, request.RequestID, path.Base(paths[id]), results[i].Sync.Desired); err != nil {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO annotation_batch_target(caller,request_id,opus_name,snapshot) VALUES(?,?,?,?)`, caller, request.RequestID, names[id], results[i].Sync.Desired); err != nil {
 				return err
 			}
 		}

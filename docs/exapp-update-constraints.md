@@ -279,12 +279,12 @@ Rule 5 is measured for deploy options: they are creation-time, and
 `<routes>` has never been tested either way.
 
 It matters because D-616 added `^operator/storage/?$`. There is no Setup tab any
-more (D-756) — the choice lives in **Operator › Settings › Who can see
-recordings**, and a fresh install shows one first-run dialog — but both are
-built on that route, as is the dialog's "Create the account" step. If routes do
-not refresh on update, every installation upgraded in place gets a settings
-section that cannot read the storage record and a first run that cannot create
-the `cassini` account — and the symptom says nothing about the cause.
+more (D-756), and the first-run dialog is gone too: the recordings account is
+created from **Operator › Publish pipeline › Who can see recordings**, which is
+built on that route. If routes do not refresh on update, every installation
+upgraded in place gets a settings section that cannot read the storage record
+and cannot create the `cassini` account — and the symptom says nothing about
+the cause.
 
 The paragraph above ("an update re-runs the deploy against the same daemon with
 a newer manifest") reads as though they DO refresh, but that sentence is about

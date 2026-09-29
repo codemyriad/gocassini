@@ -21,39 +21,23 @@ Give an agent what it needs to reason about your meetings:
 
 ## How it works
 
-The Cassini app serves a read surface, and these commands are a client for it.
-What it returns depends on who can see recordings on that Nextcloud, which is one
-setting in the app: where recordings are visible to **anyone with a Nextcloud
-account**, every account gets every recording, and the app fetches them as the
-`cassini` service account; where they are visible to **meeting participants**,
-the app fetches from Nextcloud Files **as the calling user**, so Nextcloud
-decides per recording. Either way Cassini keeps no separate list of who may see
-what, and never returns more than the account is entitled to.
+The Cassini app serves a read surface. A command authenticates to Nextcloud
+with the account's app password. Cassini asks Nextcloud for that caller's
+current Files shares and uses its local SQLite index for meeting metadata.
+Every recording read is made as the caller through Nextcloud WebDAV.
 
 ```text
-  cassini meetings list --from 2026-08-01
-        │
-        │  GET https://<nextcloud>/index.php/apps/app_api/proxy/gocassini/published/meetings-list?from=...
-        │      Authorization: Basic <user>:<app password>
-        ▼
-  Nextcloud  ── authenticates the app password
-        │     ── mints the app-API identity for the session
-        ▼
-  Cassini app ── GET catalog.json as the recordings owner   (what exists)
-        │     ── PROPFIND meetings/ AS THE CALLING USER     (what they may read;
-        │                                                    as the owner where
-        │                                                    every account may
-        │                                                    read everything)
-        │     ── intersect, then narrow by the query
-        │
-        ├── the meeting list, filtered to what the caller may read
-        ├── meetings/<id>.opus   ... or 404
-        └── meetings-context?ids=…,…     the same document `meetings context` prints
+cassini meetings list -> Nextcloud authenticates caller
+                      -> Cassini gets caller's current shares
+                      -> local metadata provides titles and dates
+                      -> filters narrow the visible meetings
+
+cassini meetings fetch <id> -> Cassini resolves the current share
+                            -> Nextcloud WebDAV reads as caller
 ```
 
-An app older than the list route answers `404` there, and the CLI falls back to
-`published/catalog.json` and filters client-side. That fallback is why a CLI on
-your laptop keeps working against a server it was not upgraded alongside.
+The installed app does not store a `catalog.json` in Nextcloud Files. The
+standalone static exporter still creates one for portable archives.
 
 `search` answers with references — meeting, speaker, and where in the recording
 — and never with transcript text. That is deliberate rather than an omission:
@@ -243,33 +227,11 @@ every signed-in account may read would turn "may read a past recording" into
 identity — deterministic, so a room always derives the same id, and not
 reversible into the token.
 
-Set `CASSINI_ROOM_ID_PEPPER` on the app to a stable deployment-wide secret. A
-Talk token is short, so an unpeppered derivation can be reversed by enumerating
-the token space offline; with a pepper it cannot. Choose it once — changing it
-changes every id, and already-published meetings keep the ids they were written
-with. Re-running `scripts/backfill-catalog-rooms.sh --apply` re-derives every
-meeting whose operator job row survives, so a rotation is a re-run rather than a
-manual merge for most of an archive.
-
-**Two rows can share a display name.** A recording this installation has *no job
-row* for — one imported from elsewhere, or older than the operator's job store —
-has no token anywhere, so `scripts/backfill-catalog-rooms.sh` derives its id
-from the room *name* instead. That derivation cannot agree with a token-derived
-one, and only a person knows the two are the same conversation;
-`scripts/reattribute-catalog-room.sh` is how that person says so, once, and
-merges them.
-
-It is a much smaller set than it used to be. The catalog entry's id is the
-operator's job id, and the operator's job database still holds the Talk room
-token for every job it ran — so for anything this installation produced, the
-backfill recovers the *real* id rather than a name-derived stand-in. That is
-also why the reattribution tool now **refuses** a meeting with a recorded room
-binding: for those the truth is recoverable, and asserting an id instead would
-leave a recording whose lineage and published room permanently disagree.
-
-A trailing note may report meetings that carry **no room at all** — a non-Talk
-job, or an old recording whose file holds no usable room name either. They are
-real, `list` shows them, and no `--room` value reaches them.
+Set `CASSINI_ROOM_ID_PEPPER` on the app to a stable deployment-wide secret.
+A Talk token is short, so an unpeppered derivation can be reversed by offline
+enumeration. Choose the pepper once: changing it gives future meetings new
+room ids, while existing recordings retain their published ids. Two rooms can
+share a display name, so the CLI keeps distinct ids separate.
 
 ## 3. Read meetings as context
 
@@ -538,12 +500,8 @@ provisioning problem: the account can read N meetings and your filter matched
 none of them. Widen it, or run `cassini meetings rooms` for a `room=` value that
 exists. `--room` matches exactly and takes the printed value verbatim.
 
-**A meeting shows `room=-` and no `--room` value finds it** — it records no room
-at all, which is what every recording published before Cassini kept the room
-looks like. List it without `--room`, and ask an administrator to run
-`scripts/backfill-catalog-rooms.sh` on the installation: it recovers the real
-room from the operator's own job history where that survives, and from the
-published file's name where it does not.
+**A meeting shows `room=-`** — its published metadata contains no room id.
+It remains readable without a room filter.
 
 **`no recording you can read at that id`** — the id is absent from *this
 account's* catalog. It may not exist, or it may exist and belong to someone else;

@@ -29,8 +29,8 @@
       items: [
         { id: "endpoints", label: "AI providers" },
         { id: "pipeline", label: "Publish pipeline" },
-        { id: "storage", label: "Storage" },
         { id: "templates", label: "Insight templates" },
+        { id: "storage", label: "Storage" },
       ],
     },
   ];
@@ -787,7 +787,7 @@
     };
   }
 
-  function stageProgress(job: Job | JobAttempt): Array<{ label: string; status: StageStatus }> {
+  function stageProgress(job: Job | JobAttempt, recordingDeleted = false): Array<{ label: string; status: StageStatus }> {
     const buildBlocked = isBuildBlocked(job);
     const halted = buildBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
     let lastTouched = -1;
@@ -799,6 +799,7 @@
       return t;
     });
     return STAGES.map((stage, index) => {
+      if (stage.key === "record" && recordingDeleted) return { label: "Record (deleted)", status: "pending" };
       const t = times[index];
       let status: StageStatus = "pending";
       if (t.finished) {
@@ -906,12 +907,13 @@
   $: jobFinished = selectedJob?.job.stage === "done";
   $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
+  $: recordingDeleted = selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired === true;
   $: rerunBlockedReason =
-    rerunVisible && !selectedJob?.job.artifact_run_path
+    recordingDeleted ? "The source recording was deleted by the retention policy. This job can no longer be rerun." : selectedJob?.availability?.rerun_blocked_reason || (rerunVisible && !selectedJob?.job.artifact_run_path
       ? "This run produced no recording to rerun from."
-      : "";
+      : "");
   $: canStopSelectedJob = !submittingStop && stopApplies;
-  $: canRerunSelectedJob = !submittingRerun && rerunApplies;
+  $: canRerunSelectedJob = !submittingRerun && rerunApplies && !rerunBlockedReason;
 </script>
 
 <svelte:head>
@@ -1159,6 +1161,9 @@
                             {job.build_deferral_count === 1 ? "deferral" : "deferrals"}
                           </p>
                         {/if}
+                        {#if job.source_expired}
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title="The source recording was deleted by retention. This job can no longer be rerun.">Recording deleted</span>
+                        {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
                             {job.error}
@@ -1270,7 +1275,7 @@
 
                   <div>
                     <div class="flex gap-1">
-                      {#each stageProgress(selectedJob.job) as stage}
+                      {#each stageProgress(selectedJob.job, recordingDeleted) as stage}
                         <span
                           class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}"
                           aria-hidden="true"
@@ -1278,7 +1283,7 @@
                       {/each}
                     </div>
                     <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                      {#each stageProgress(selectedJob.job) as stage}
+                      {#each stageProgress(selectedJob.job, recordingDeleted) as stage}
                         <span
                           class="flex-1"
                           class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
@@ -1288,6 +1293,12 @@
                       {/each}
                     </div>
                   </div>
+                  {#if rerunBlockedReason && rerunVisible}
+                    <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
+                      <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+                      <p>{rerunBlockedReason}</p>
+                    </div>
+                  {/if}
                   {#if hasResourceNotice(selectedJob.job)}
                     <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3">
                       <div class="flex items-center gap-2 text-warning">
@@ -1597,25 +1608,25 @@
                               {#if attempt.record_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}{attempt.files_present?.record_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.build_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Build log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}{attempt.files_present?.build_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.seal_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Seal log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}{attempt.files_present?.seal_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                               {#if attempt.publish_log_path}
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Publish log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}</dd>
+                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}{attempt.files_present?.publish_log === false ? " (unavailable)" : ""}</dd>
                                 </div>
                               {/if}
                             </dl>

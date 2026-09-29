@@ -149,8 +149,6 @@ func backfillOneAnnotation(
 	ctx context.Context, store *annotationStore, opusName string, recorded map[string]string,
 	delivered searchDeliveredStateReader, archive annotationArchiveReader,
 ) (annotationBackfillOutcome, string) {
-	provisionMu.RLock()
-	defer provisionMu.RUnlock()
 	release, err := annotationWriteLocks.acquire(ctx, opusName)
 	if err != nil {
 		return annotationBackfillFailed, err.Error()

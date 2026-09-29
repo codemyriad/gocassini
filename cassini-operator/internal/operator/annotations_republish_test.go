@@ -23,7 +23,7 @@ func TestAnnotationRepublishReconcilesRepairedAndChangedAudio(t *testing.T) {
 				}
 				latest := postAsync(t, h, markRequest("pending", "second"))
 				if damaged {
-					nc.seed(annTestRecording, "truncated", recordingACLRules(nil, false))
+					nc.seed(annTestRecording, "truncated", nil)
 				}
 				sealed := annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000}
 				if changed {
@@ -39,7 +39,7 @@ func TestAnnotationRepublishReconcilesRepairedAndChangedAudio(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err = sink.putOverDeliveredCopy(ctx, upload{local: local, remote: annTestRecording, size: int64(len(data))}, state, true); err != nil {
+				if _, err = sink.putOverDeliveredCopy(ctx, upload{local: local, remote: annTestRecording, size: int64(len(data))}, state); err != nil {
 					t.Fatal(err)
 				}
 				got, err := store.document(ctx, "MEETING1.opus")
@@ -78,7 +78,7 @@ func TestAnnotationCleanRepublishRecoversLostUploadResponse(t *testing.T) {
 	if err := s.syncAnnotation(ctx, "MEETING1.opus"); err != nil {
 		t.Fatal(err)
 	}
-	nc.seed(annTestRecording, "truncated", recordingACLRules(nil, false))
+	nc.seed(annTestRecording, "truncated", nil)
 	data, _ := json.Marshal(annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000})
 	local := filepath.Join(t.TempDir(), "sealed.opus")
 	if err := os.WriteFile(local, data, 0600); err != nil {
@@ -94,7 +94,7 @@ func TestAnnotationCleanRepublishRecoversLostUploadResponse(t *testing.T) {
 		return resp, err
 	})
 	sink := &nextcloudFilesPublishSink{cfg: s.exapp, client: s.client, cassiniBin: s.bin, rt: s.rt}
-	if err := sink.putAssetBytes(ctx, upload{local: local, remote: annTestRecording, size: int64(len(data))}, true, ""); err == nil {
+	if err := sink.putAssetBytes(ctx, upload{local: local, remote: annTestRecording, size: int64(len(data))}, ""); err == nil {
 		t.Fatal("expected lost response")
 	}
 	s.client.Transport = transport

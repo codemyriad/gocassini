@@ -349,7 +349,6 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 		ops = batch.Ops
 	}
 	request := annotateWriteRequest{Ops: ops, ActorKind: "person", OperationID: job.ID, Accepted: true}
-	_, root := ncArchiveReadIdentity(job.Actor)
 	state := tagJobFinished
 	for _, name := range targets[job.Done:] {
 		if base.Err() != nil {
@@ -359,7 +358,10 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 		ctx, cancel := context.WithTimeout(base, annotateRequestTimeout)
 		sum := sha256.Sum256([]byte(job.ID + "/" + name))
 		request.RequestID = hex.EncodeToString(sum[:])
-		_, err := s.commitAndRecord(ctx, name, root+"/meetings/"+name, nil, job.Actor, request)
+		rel, err := s.exapp.recipientRecordingPath(ctx, s.client, job.Actor, name, s.exapp.meetingMetadata)
+		if err == nil {
+			_, err = s.commitAndRecord(ctx, name, name, rel, nil, job.Actor, request)
+		}
 		cancel()
 		if err != nil && base.Err() != nil {
 			// Shutdown is not a completed target failure. Keep its cursor so

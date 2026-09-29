@@ -1,11 +1,11 @@
-import type { StorageSetupStep } from "./types";
+import type { StorageSetupStep, StorageStatus } from "./types";
 
 // Performing Cassini's setup from the administrator's browser (D-671).
 //
 // The operator cannot do this. On every currently-shipping Nextcloud, an
 // ExApp's act-as-user request has a PHP session but no login token, so
 // Nextcloud's password-confirmation middleware refuses every write it guards —
-// `POST /cloud/groups`, `POST /cloud/users`, and all the Team-folder writes
+// `POST /cloud/groups`, `POST /cloud/users`,
 // (measured, D-661). The same requests from the administrator's own browser
 // session succeed, because that session HAS a token and Nextcloud's own dialog
 // can confirm it.
@@ -19,7 +19,7 @@ import type { StorageSetupStep } from "./types";
 // straight to `POST /login/confirm`, and what comes back to us is a session
 // that Nextcloud considers confirmed for the next 30 minutes.
 //
-// The one thing this cannot do is install an app. Those routes are annotated
+// This flow only creates the recordings account. Those routes are annotated
 // `PasswordConfirmationRequired(strict: true)`, and strict means the password
 // must be ON THE REQUEST — no session, however recently confirmed, satisfies
 // it. Nextcloud's own Apps page meets that by attaching the password as HTTP
@@ -63,10 +63,9 @@ export class NcSetupError extends Error {
   // outcome carries whatever the run produced BEFORE it failed.
   //
   // Without it the service account's password is lost on any failure after the
-  // step that created it — a Team folder that 404s, a confirmation dialog
-  // dismissed three steps later — and there is no second chance at it: the
+  // step that created it — and there is no second chance at it: the
   // account exists, its password was set, and nothing anywhere has the value.
-  // The caller shows it alongside the error.
+  // The caller can show it alongside the error.
   outcome?: SetupOutcome;
 
   constructor(reason: NcSetupFailure, message: string, step = "") {
@@ -248,14 +247,6 @@ export function randomPassword(): string {
   return `Cw1!${base64}`;
 }
 
-// FolderCache is the one Team-folder lookup a run performs, shared between the
-// idempotency check and the steps that map onto the folder.
-interface FolderCache {
-  id: number | null;
-  resolve: (mount: string) => Promise<number | null>;
-  invalidate: () => void;
-}
-
 export interface SetupProgress {
   step: StorageSetupStep;
   index: number;
@@ -281,40 +272,10 @@ interface RunOptions {
   fetchImpl?: typeof fetch;
 }
 
-// findFolderId resolves the Team folder by mount point.
-//
-// Every mapping step addresses the folder this way rather than by an id baked
-// into the plan, because on a run that also CREATES the folder there is no id
-// until it exists — and a stale one would map Cassini's groups onto whatever
-// folder happens to hold it now.
-async function findFolderId(
-  mount: string,
-  fetchImpl: typeof fetch,
-): Promise<number | null> {
-  const response = await fetchImpl(
-    nextcloudUrl("/index.php/apps/groupfolders/folders?format=json"),
-    {
-      credentials: "same-origin",
-      headers: { Accept: "application/json", "OCS-APIRequest": "true" },
-    },
-  );
-  if (!response.ok) {
-    return null;
-  }
-  const payload = (await response.json()) as OcsEnvelope;
-  const data = payload.ocs?.data;
-  const rows: unknown[] = Array.isArray(data) ? data : Object.values(data ?? {});
-  const ids: number[] = [];
-  for (const row of rows) {
-    if (row == null || typeof row !== "object") continue;
-    const folder = row as Record<string, unknown>;
-    if (folder.mount_point !== mount && folder.mountPoint !== mount) continue;
-    const id = Number(folder.id);
-    if (Number.isFinite(id)) ids.push(id);
-  }
-  // Lowest id wins, the same rule the operator uses, so a duplicated mount
-  // point resolves to the same folder on both sides rather than flapping.
-  return ids.length > 0 ? Math.min(...ids) : null;
+// accountSteps picks the one setup action the browser still performs: creating
+// the `cassini` owner account. Anything else the operator lists is for occ.
+export function accountSteps(status: StorageStatus | null): StorageSetupStep[] {
+  return status?.setup.filter((step) => step.browser && step.action === "create_user") ?? [];
 }
 
 // runSetupPlan executes the steps the operator said the browser can do.
@@ -353,36 +314,11 @@ export async function runSetupPlan(
   // set. Invisible while nothing read the value; a lie the moment it is shown.
   const accountPassword = randomPassword();
 
-  // One resolution of the Team folder id, shared by every step that needs it —
-  // the existence check that makes creating it idempotent, and the mappings
-  // afterwards. Creating invalidates it, because the id it should now return is
-  // the one that did not exist a moment ago.
-  const folders: FolderCache = {
-    id: null,
-    async resolve(mount: string) {
-      if (this.id === null) {
-        this.id = await findFolderId(mount, fetchImpl);
-      }
-      return this.id;
-    },
-    invalidate() {
-      this.id = null;
-    },
-  };
-  const requireFolder = async (step: StorageSetupStep): Promise<number> => {
-    const mount = step.args?.mount ?? "";
-    const id = await folders.resolve(mount);
-    if (id === null) {
-      throw new NcSetupError("failed", `Couldn't find the ${mount} Team folder.`, step.id);
-    }
-    return id;
-  };
-
   for (let index = 0; index < browserSteps.length; index += 1) {
     const step = browserSteps[index];
     options.onProgress?.({ step, index, total: browserSteps.length });
     try {
-      const existed = await runStep(step, requireFolder, folders, accountPassword, fetchImpl);
+      const existed = await runStep(step, accountPassword, fetchImpl);
       // Only a real creation yields a credential to show. An account that was
       // already there kept whatever password it had, and offering this run's
       // generated one would hand an administrator a string that does not sign
@@ -400,7 +336,7 @@ export async function runSetupPlan(
       if (error instanceof NcSetupError && error.reason === "denied") {
         await confirmPassword();
         try {
-          const existed = await runStep(step, requireFolder, folders, accountPassword, fetchImpl);
+          const existed = await runStep(step, accountPassword, fetchImpl);
           if (step.action === "create_user" && !existed) {
             outcome.createdAccount = step.args?.user ?? "";
             outcome.password = accountPassword;
@@ -476,87 +412,17 @@ export async function resetServiceAccountPassword(
 
 async function runStep(
   step: StorageSetupStep,
-  requireFolder: (step: StorageSetupStep) => Promise<number>,
-  folders: FolderCache,
   accountPassword: string,
   fetchImpl: typeof fetch,
 ): Promise<boolean> {
-  const args = step.args ?? {};
-  switch (step.action) {
-    case "create_group":
-      await ncPost("/ocs/v2.php/cloud/groups?format=json", { groupid: args.group ?? "" }, fetchImpl);
-      return false;
-    case "create_user": {
-      const answer = await ncPost(
-        "/ocs/v2.php/cloud/users?format=json",
-        {
-          userid: args.user ?? "",
-          // The run's password, not a fresh one: a retried step must set the
-          // credential the caller is about to show, not a second one.
-          password: accountPassword,
-          displayname: args.display_name ?? "",
-          // "groups[]", not "groups". OCS decodes this field as a PHP array and
-          // answers a bare 400 for a scalar — the same trap the operator's own
-          // account creation documents.
-          "groups[]": args.group ?? "",
-        },
-        fetchImpl,
-      );
-      return answer.alreadyThere === true;
-    }
-    case "create_team_folder": {
-      // Look before creating. `POST /folders` has no idempotency of its own —
-      // it makes a NEW folder every time, mount point and all — so a re-run
-      // after a partial failure would leave two folders called `Cassini`, and
-      // Nextcloud would mount whichever it liked. Everything else here tolerates
-      // being done twice; this is the one call that cannot.
-      const mount = args.mount ?? "";
-      if ((await folders.resolve(mount)) !== null) {
-        return true;
-      }
-      await ncPost(
-        "/index.php/apps/groupfolders/folders?format=json",
-        { mountpoint: mount },
-        fetchImpl,
-      );
-      // The id the cache should now hand out is the one that did not exist a
-      // moment ago.
-      folders.invalidate();
-      return false;
-    }
-    case "map_group": {
-      const id = await requireFolder(step);
-      await ncPost(
-        `/index.php/apps/groupfolders/folders/${id}/groups?format=json`,
-        { group: args.group ?? "" },
-        fetchImpl,
-      );
-      // Assigning the group and setting its level are two calls; the second is
-      // the authoritative one, and re-running it is how a wrong level is fixed.
-      await ncPost(
-        `/index.php/apps/groupfolders/folders/${id}/groups/${encodeURIComponent(args.group ?? "")}?format=json`,
-        { permissions: args.permissions ?? "" },
-        fetchImpl,
-      );
-      return false;
-    }
-    case "enable_folder_acl": {
-      const id = await requireFolder(step);
-      await ncPost(`/index.php/apps/groupfolders/folders/${id}/acl?format=json`, { acl: "1" }, fetchImpl);
-      return false;
-    }
-    case "delegate_manager": {
-      const id = await requireFolder(step);
-      await ncPost(
-        `/index.php/apps/groupfolders/folders/${id}/manageACL?format=json`,
-        { mappingType: "user", mappingId: args.user ?? "", manageAcl: "1" },
-        fetchImpl,
-      );
-      return false;
-    }
-    default:
-      // An action this build does not know. Skipping would silently produce a
-      // half-built substrate that later reads as healthy.
-      throw new NcSetupError("failed", `This version of Cassini can't run the "${step.action}" step.`, step.id);
+  if (step.action !== "create_user") {
+    throw new NcSetupError("failed", `This version of Cassini can't run the "${step.action}" step.`, step.id);
   }
+  const args = step.args ?? {};
+  const answer = await ncPost(
+    "/ocs/v2.php/cloud/users?format=json",
+    { userid: args.user ?? "", password: accountPassword, displayname: args.display_name ?? "" },
+    fetchImpl,
+  );
+  return answer.alreadyThere === true;
 }
