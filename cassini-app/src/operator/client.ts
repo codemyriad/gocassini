@@ -72,8 +72,17 @@ export class OperatorClient {
     return this.#request<RecordingReadiness>("/health");
   }
 
-  async checkReadiness(): Promise<RecordingReadiness> {
-    return this.#request<RecordingReadiness>("/health/check", { method: "POST" });
+  // `only` names rows to re-check, and runs just the probes behind them. Omitted,
+  // every probe runs — what "Run all checks" asks for.
+  async checkReadiness(only?: string[]): Promise<RecordingReadiness> {
+    if (!only || only.length === 0) {
+      return this.#request<RecordingReadiness>("/health/check", { method: "POST" });
+    }
+    return this.#request<RecordingReadiness>("/health/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ only }),
+    });
   }
 
   // Starts a repair the operator performs itself and returns the checklist as it

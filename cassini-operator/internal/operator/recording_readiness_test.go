@@ -608,10 +608,12 @@ func TestHealthGETUsesCachedMediaHostAndExplicitCheckRefreshesIt(t *testing.T) {
 		}
 	}
 
-	// The next explicit check refreshes the finding. The short coalescing
-	// window applies to rapid duplicate clicks, so age it for this test.
+	// The next explicit check refreshes the finding. The short coalescing window
+	// applies to rapid duplicate clicks, and is held per scope so one row's
+	// retry cannot skip another's — so clear it for this test.
 	rt.recordingSetup.mu.Lock()
 	rt.recordingSetup.checkedAt = time.Time{}
+	rt.recordingSetup.probedAt = nil
 	rt.recordingSetup.mu.Unlock()
 	rt.checkRecordingReadiness(context.Background())
 	for _, check := range rt.readiness(context.Background()).Checks {

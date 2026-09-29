@@ -28,20 +28,26 @@
   // checked. Distinct from `busy`, which is also set by a plain read and by
   // saving an edit — neither of which re-probes anything.
   let checking = false;
+  // The row a scoped check is running for, or "" while every probe runs. Only
+  // that row shows a spinner: marking them all would claim work that is not
+  // happening.
+  let checkingOnly = "";
   let reportVersion = 0;
 
-  async function load(check = false) {
+  async function load(check = false, only = "") {
     if (busy || polling) return;
-    busy = true; checking = check; error = "";
+    busy = true; checking = check; checkingOnly = only; error = "";
     try {
-      const next = check ? await operatorClient.checkReadiness() : await operatorClient.getReadiness();
+      const next = check
+        ? await operatorClient.checkReadiness(only ? [only] : undefined)
+        : await operatorClient.getReadiness();
       if (!alive) return;
       const changed = readinessHealthKey(report) !== readinessHealthKey(next);
       report = next; stale = false; error = "";
       if (changed) notifySetupChanged();
       if (!room) room = next.test_room_url;
     } catch (e) { if (alive) { stale = true; error = e instanceof Error ? e.message : String(e); } }
-    finally { busy = false; checking = false; }
+    finally { busy = false; checking = false; checkingOnly = ""; }
   }
   async function save(payload: RecordingSetupUpdate) {
     if (busy) return;
@@ -66,7 +72,7 @@
     finally { busy = false; }
   }
   async function action(name: string, owner: string) {
-    if (name === "recheck") { await load(true); return; }
+    if (name === "recheck") { await load(true, isReprobedOnCheck(owner) ? owner : ""); return; }
     if (name === "setup_storage") { dispatch("openStorage"); return; }
     const closing = panel === name && panelOwner === owner;
     panelOwner = owner;
@@ -122,7 +128,7 @@
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && isReprobedOnCheck(check.id)}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/60"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
+              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && isReprobedOnCheck(check.id) && (checkingOnly === "" || checkingOnly === check.id)}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/60"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
               {#if (check.steps ?? []).length > 0}
                 <!-- Behind a disclosure, as SetupNotice does it: an
@@ -144,6 +150,10 @@
               {#if check.repair}
                 <button class="btn btn-sm btn-primary" disabled={busy || polling}
                   on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair] ?? "Fix this"}</button>
+              {/if}
+              {#if isReprobedOnCheck(check.id) && rowActions(check).every((item) => item.action !== "recheck")}
+                <button class="btn btn-sm btn-outline" disabled={busy || polling}
+                  on:click={() => load(true, check.id)}>Check</button>
               {/if}
               {#each rowActions(check) as item}
                 <button class="btn btn-sm btn-outline" disabled={busy || polling} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id)}>{item.label}</button>

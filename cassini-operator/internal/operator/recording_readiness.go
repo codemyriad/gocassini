@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -69,8 +70,10 @@ type recordingSetup struct {
 	checks     []readinessCheck
 	checkedAt  time.Time
 	hostChecks []readinessCheck
-	inboundAt  time.Time
-	probe      func(context.Context, string) ([]readinessCheck, error)
+	// probedAt is when each scope last ran, for coalescing duplicate clicks.
+	probedAt  map[string]time.Time
+	inboundAt time.Time
+	probe     func(context.Context, string) ([]readinessCheck, error)
 }
 
 type readinessTest struct {
@@ -376,15 +379,27 @@ func worseOf(a, b readinessCheck) (readinessCheck, bool) {
 // reports cached host and connection findings; only startup and explicit
 // checks launch these probes. Aged findings keep their verdict and timestamp.
 func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
+	rt.checkRecordingReadinessScoped(ctx, allReadinessScopes())
+}
+
+// checkRecordingReadinessScoped runs the probes the scope names, and only those.
+//
+// Coalesce concurrent checks and put a ceiling on network/process work. GET
+// reports cached findings; only an explicit check launches these probes. Aged
+// findings keep their verdict and timestamp.
+//
+// Each probe is coalesced under its own name rather than one window over the
+// whole run, so retrying the host does not silently skip a storage check
+// somebody asked for a second later.
+func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope readinessScope) {
+	if scope.empty() {
+		return
+	}
 	s := &rt.recordingSetup
 	s.checkMu.Lock()
 	defer s.checkMu.Unlock()
 	s.mu.Lock()
 	rt.loadRecordingSetupLocked()
-	if time.Since(s.checkedAt) < 2*time.Second {
-		s.mu.Unlock()
-		return
-	}
 	room, probe := s.state.TestRoomURL, s.probe
 	s.mu.Unlock()
 	if probe == nil {
@@ -392,54 +407,66 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
-		cfg.preflightDirectShares(ctx, rt.logger)
-	}
-	// The panel polls GET every five seconds. Probe the media host once per
-	// explicit check and retain its verdict with the time it was checked.
-	hostCtx, hostCancel := context.WithTimeout(ctx, 3*time.Second)
-	host, hostErr := rt.runDoctorProbe(hostCtx)
-	hostCancel()
-	hostAt := time.Now().UTC().Format(time.RFC3339)
-	if hostErr != nil {
-		host = []readinessCheck{{
-			ID: "host", State: "warn", Code: "host_checks_unavailable",
-			Message: "Cassini could not check disk space and ffmpeg on the recording volume.",
-			Action:  "recheck",
-			Steps:   []readinessStep{{Label: "Check the recorder's media tools and its recording volume, then run the checks again"}},
-		}}
-	}
-	for i := range host {
-		host[i].CheckedAt = hostAt
-	}
-	var checks []readinessCheck
-	if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) {
-		var err error
-		checks, err = probe(ctx, room)
-		if err != nil {
-			checks = []readinessCheck{{ID: "talk.discovery", State: "not_verified", Code: "probe_failed", Message: "The connection check did not finish. Check the recorder installation and connectivity, then retry.", Action: "recheck"}}
+	started := time.Now()
+
+	if scope.storage && s.beginProbe("storage", started) {
+		if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
+			cfg.preflightDirectShares(ctx, rt.logger)
 		}
 	}
-	now := time.Now().UTC()
-	for i := range checks {
-		checks[i].CheckedAt = now.Format(time.RFC3339)
-	}
-	// Part of the same explicit check: listing the archive is a PROPFIND and
-	// reading the index is O(archive + index), so it belongs here with the other
-	// probes rather than on a route the panel polls every five seconds.
-	rt.recordArchiveCoverage(ctx)
-	s.mu.Lock()
-	s.hostChecks = host
-	// A configuration edit while the probe was running invalidates its answer.
-	if s.state.TestRoomURL == room {
-		s.checks = checks
-		s.checkedAt = now
-	}
-	s.mu.Unlock()
-}
 
-// transcriptionUnavailable says why enabled transcription cannot run on device:
-// the device itself, or the selected model. Empty means it can run.
+	if scope.host && s.beginProbe("host", started) {
+		// The panel polls GET every five seconds. Probe the media host once per
+		// explicit check and retain its verdict with the time it was checked.
+		hostCtx, hostCancel := context.WithTimeout(ctx, 3*time.Second)
+		host, hostErr := rt.runDoctorProbe(hostCtx)
+		hostCancel()
+		hostAt := time.Now().UTC().Format(time.RFC3339)
+		if hostErr != nil {
+			host = []readinessCheck{{
+				ID: "host", State: "warn", Code: "host_checks_unavailable",
+				Message: "Cassini could not check disk space and ffmpeg on the recording volume.",
+				Action:  "recheck",
+				Steps:   []readinessStep{{Label: "Check the recorder's media tools and its recording volume, then run the checks again"}},
+			}}
+		}
+		for i := range host {
+			host[i].CheckedAt = hostAt
+		}
+		s.mu.Lock()
+		s.hostChecks = host
+		s.mu.Unlock()
+	}
+
+	if scope.talk && s.beginProbe("talk", started) {
+		var checks []readinessCheck
+		if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) {
+			var err error
+			checks, err = probe(ctx, room)
+			if err != nil {
+				checks = []readinessCheck{{ID: "talk.discovery", State: "not_verified", Code: "probe_failed", Message: "The connection check did not finish. Check the recorder installation and connectivity, then retry.", Action: "recheck"}}
+			}
+		}
+		now := time.Now().UTC()
+		for i := range checks {
+			checks[i].CheckedAt = now.Format(time.RFC3339)
+		}
+		s.mu.Lock()
+		// A configuration edit while the probe was running invalidates its answer.
+		if s.state.TestRoomURL == room {
+			s.checks = checks
+			s.checkedAt = now
+		}
+		s.mu.Unlock()
+	}
+
+	if scope.archive && s.beginProbe("archive", started) {
+		// Listing the archive is a PROPFIND and reading the index is
+		// O(archive + index), so it belongs behind an explicit check rather than
+		// on a route the panel polls every five seconds.
+		rt.recordArchiveCoverage(ctx)
+	}
+}
 func (rt *Runtime) transcriptionUnavailable(settings STTSettings, device string) string {
 	if ok, detail := rt.effectiveComputeStatus(settings, device); !ok {
 		return detail
@@ -625,7 +652,35 @@ func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/health" && r.Method == http.MethodGet:
 	case r.URL.Path == "/health/check" && r.Method == http.MethodPost:
-		rt.checkRecordingReadiness(r.Context())
+		// No body, or no `only`, runs every probe — what "Run all checks" sends.
+		// A body naming rows runs just the probes behind them, so retrying one
+		// row costs one probe instead of a whole-archive PROPFIND and a Talk
+		// round trip.
+		raw, readErr := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+		if readErr != nil {
+			writeJSONError(w, http.StatusBadRequest, "unreadable check request")
+			return
+		}
+		scope := allReadinessScopes()
+		if len(bytes.TrimSpace(raw)) > 0 {
+			var body struct {
+				Only []string `json:"only"`
+			}
+			if err := json.Unmarshal(raw, &body); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "unreadable check request")
+				return
+			}
+			if len(body.Only) > 0 {
+				scope = readinessScopeFor(body.Only)
+				if scope.empty() {
+					// Refused rather than widened: a button that quietly does
+					// far more than it says is worse than one that does not work.
+					writeJSONError(w, http.StatusBadRequest, "no requested check is established by a probe")
+					return
+				}
+			}
+		}
+		rt.checkRecordingReadinessScoped(r.Context(), scope)
 	case r.URL.Path == "/health/repair" && r.Method == http.MethodPost:
 		// Starts work and reports the checklist as it stands. The run outlives
 		// the request — a backfill crosses the whole archive — so the row says
