@@ -19,10 +19,12 @@ import (
 const storageUsageRebuildInterval = 5 * time.Minute
 
 type detailedStorageUsageResponse struct {
-	MeasuredAt  string                     `json:"measured_at"`
-	DurationMS  float64                    `json:"duration_ms"`
-	Published   []storageUsageSource       `json:"published"`
-	Directories []artifactStorageUsageRoot `json:"directories"`
+	Categories    []storageUsageCategory     `json:"categories"`
+	CategoryError string                     `json:"category_error,omitempty"`
+	MeasuredAt    string                     `json:"measured_at"`
+	DurationMS    float64                    `json:"duration_ms"`
+	Published     []storageUsageSource       `json:"published"`
+	Directories   []artifactStorageUsageRoot `json:"directories"`
 }
 
 type artifactStorageUsageRoot struct {
@@ -69,6 +71,9 @@ func (rt *Runtime) cachedDetailedStorageUsage() detailedStorageUsageResponse {
 	if result.Published == nil {
 		result.Published = []storageUsageSource{}
 	}
+	if result.Categories == nil {
+		result.Categories = []storageUsageCategory{}
+	}
 	if result.Directories == nil {
 		result.Directories = []artifactStorageUsageRoot{}
 	}
@@ -78,7 +83,12 @@ func (rt *Runtime) cachedDetailedStorageUsage() detailedStorageUsageResponse {
 func (rt *Runtime) refreshDetailedStorageUsage(ctx context.Context, c ExAppConfig) detailedStorageUsageResponse {
 	rt.detailedStorageUsageRefreshMu.Lock()
 	defer rt.detailedStorageUsageRefreshMu.Unlock()
-	result := c.scanDetailedStorageUsage(ctx, rt.cfg.WorkRoot)
+	index, err := rt.storageCategoryIndex(ctx)
+	result := c.scanDetailedStorageUsage(ctx, rt.cfg.WorkRoot, index.add)
+	result.Categories = index.result()
+	if err != nil {
+		result.CategoryError = "Could not read retention lifecycle records: " + err.Error()
+	}
 	rt.detailedStorageUsageMu.Lock()
 	rt.detailedStorageUsage = result
 	rt.detailedStorageUsageMu.Unlock()
@@ -113,12 +123,13 @@ func nextStorageUsageRebuild(now time.Time) time.Time {
 	return now.UTC().Truncate(storageUsageRebuildInterval).Add(storageUsageRebuildInterval)
 }
 
-func (c ExAppConfig) scanDetailedStorageUsage(ctx context.Context, workRoot string) detailedStorageUsageResponse {
+func (c ExAppConfig) scanDetailedStorageUsage(ctx context.Context, workRoot string, visit ...func(string, int64)) detailedStorageUsageResponse {
 	started := time.Now()
 	result := detailedStorageUsageResponse{}
 	for _, root := range []struct{ id, label, path string }{
-		{"default", "Default storage mode", recordingsRootFor(false)},
-		{"access-controlled", "Access-controlled storage mode", recordingsRootFor(true)},
+		{"published", "Published recordings", ncRecordingsRoot},
+		{"default", "Legacy recordings archive", "CassiniNoACL/Recordings"},
+		{"access-controlled", "Legacy shared archive", "Cassini/Recordings"},
 	} {
 		source := storageUsageSource{ID: root.id, Label: root.label, Location: root.path}
 		if strings.TrimSpace(c.NextcloudURL) == "" {
@@ -132,17 +143,17 @@ func (c ExAppConfig) scanDetailedStorageUsage(ctx context.Context, workRoot stri
 		{"current", "Working archive", currentRoot(workRoot)},
 		{"runs", "Build history", runsRoot(workRoot)},
 	} {
-		result.Directories = append(result.Directories, scanArtifactStorageRoot(ctx, root.id, root.label, root.path))
+		result.Directories = append(result.Directories, scanArtifactStorageRoot(ctx, root.id, root.label, root.path, visit...))
 	}
 	result.DurationMS = float64(time.Since(started).Microseconds()) / 1000
 	result.MeasuredAt = nowUTCString()
 	return result
 }
 
-func scanArtifactStorageRoot(ctx context.Context, id, label, rootPath string) artifactStorageUsageRoot {
+func scanArtifactStorageRoot(ctx context.Context, id, label, rootPath string, visit ...func(string, int64)) artifactStorageUsageRoot {
 	root := artifactStorageUsageRoot{ID: id, Label: label, Location: rootPath, Formats: []artifactStorageFileType{}}
 	formats := make(map[string]*artifactStorageFileType)
-	err := filepath.WalkDir(rootPath, func(_ string, entry os.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(rootPath, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -182,6 +193,9 @@ func scanArtifactStorageRoot(ctx context.Context, id, label, rootPath string) ar
 		format.Files++
 		root.Bytes += info.Size()
 		root.Files++
+		for _, callback := range visit {
+			callback(path, info.Size())
+		}
 		return nil
 	})
 	if errors.Is(err, os.ErrNotExist) {

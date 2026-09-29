@@ -14,8 +14,6 @@ import (
 func TestStorageUsageReportsRecordingAndBuildLocations(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	resetStorageMode(t)
-	setStorageMode(t, false)
 
 	writeUsageFile(t, filepath.Join(currentRoot(rt.cfg.WorkRoot), "one.run", "recording.mkv"), 11)
 	writeUsageFile(t, filepath.Join(runsRoot(rt.cfg.WorkRoot), "one--attempt-001.site", "meeting.opus"), 17)
@@ -29,16 +27,16 @@ func TestStorageUsageReportsRecordingAndBuildLocations(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/xml")
 		switch r.URL.Path {
-		case "/remote.php/dav/files/cassini/CassiniNoACL/Recordings":
+		case "/remote.php/dav/files/cassini/CassiniRecordings":
 			_, _ = w.Write([]byte(davSizesXML(
-				"CassiniNoACL/Recordings", true, 0,
-				"CassiniNoACL/Recordings/catalog.json", false, 5,
-				"CassiniNoACL/Recordings/meetings", true, 0,
+				"CassiniRecordings", true, 0,
+				"CassiniRecordings/catalog.json", false, 5,
+				"CassiniRecordings/meetings", true, 0,
 			)))
-		case "/remote.php/dav/files/cassini/CassiniNoACL/Recordings/meetings":
+		case "/remote.php/dav/files/cassini/CassiniRecordings/meetings":
 			_, _ = w.Write([]byte(davSizesXML(
-				"CassiniNoACL/Recordings/meetings", true, 0,
-				"CassiniNoACL/Recordings/meetings/one.opus", false, 7,
+				"CassiniRecordings/meetings", true, 0,
+				"CassiniRecordings/meetings/one.opus", false, 7,
 			)))
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)

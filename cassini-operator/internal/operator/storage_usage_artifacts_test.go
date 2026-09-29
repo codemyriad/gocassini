@@ -49,6 +49,8 @@ func TestDetailedStorageUsageCombinesPublishedAndDirectoryFormats(t *testing.T) 
 		w.Header().Set("Content-Type", "application/xml")
 		root := strings.TrimPrefix(r.URL.Path, "/remote.php/dav/files/cassini/")
 		switch root {
+		case "CassiniRecordings":
+			_, _ = w.Write([]byte(davSizesXML(root, true, 0, root+"/published.opus", false, 31)))
 		case "CassiniNoACL/Recordings":
 			_, _ = w.Write([]byte(davSizesXML(root, true, 0, root+"/default.opus", false, 23)))
 		case "Cassini/Recordings":
@@ -60,6 +62,7 @@ func TestDetailedStorageUsageCombinesPublishedAndDirectoryFormats(t *testing.T) 
 	defer nc.Close()
 
 	response := testExAppConfig(nc.URL).scanDetailedStorageUsage(t.Context(), workRoot)
+	assertPublishedRoot(t, response, "published", 31)
 	assertPublishedRoot(t, response, "default", 23)
 	assertPublishedRoot(t, response, "access-controlled", 29)
 	current := assertArtifactRoot(t, response, "current", 34, 4)
