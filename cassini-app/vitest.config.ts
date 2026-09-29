@@ -3,6 +3,7 @@ import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
 import viteConfig from "./vite.config";
 
 export default defineConfig((env) => mergeConfig(viteConfig(env), defineConfig({
+  optimizeDeps: { include: ["@lucide/svelte", "@melt-ui/svelte"] },
   test: {
     attachmentsDir: "./node_modules/.cache/vitest-attachments",
     projects: [
