@@ -142,6 +142,47 @@ try {
   assert.equal(saved.recordings.forever, true);
   failAccount = false;
 
+  // Browser-side account creation may use Nextcloud's own password dialog.
+  // A health refresh after account creation must leave the retention draft intact.
+  saved = defaults();
+  access.ok = false;
+  access.service_account = { exists: false, user: "cassini" };
+  access.setup = [{ id: "account", action: "create_user", browser: true, args: { user: "cassini" } }];
+  await page.route("**/ocs/v2.php/cloud/users?format=json", route => {
+    access.ok = true;
+    access.service_account.exists = true;
+    access.setup = [];
+    return route.fulfill({ json: { ocs: { meta: { statuscode: 100 }, data: {} } } });
+  });
+  await open();
+  await page.evaluate(() => {
+    window.OC.PasswordConfirmation = {
+      requiresPasswordConfirmation: () => true,
+      requirePasswordConfirmation: callback => {
+        const host = document.createElement("div");
+        host.id = "nc-password-fixture";
+        host.innerHTML = '<input aria-label="Nextcloud password"><button>Confirm Nextcloud password</button>';
+        document.body.append(host);
+        host.querySelector("input").focus();
+        host.querySelector("button").onclick = () => { host.remove(); callback(); };
+      },
+    };
+  });
+  await page.getByRole("button", { name: "Check this Nextcloud again" }).click();
+  await source.getByRole("button", { name: "90 days", exact: true }).click();
+  const beforeAccountGets = gets;
+  await page.getByRole("button", { name: "Create recordings account", exact: true }).click();
+  assert.equal(await page.getByRole("button", { name: "Save and continue" }).isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "Set up later" }).isDisabled(), true);
+  await page.keyboard.press("Tab");
+  assert.equal(await page.getByRole("button", { name: "Confirm Nextcloud password" }).evaluate(el => el === document.activeElement), true);
+  await page.getByRole("button", { name: "Confirm Nextcloud password" }).click();
+  await page.getByText("Nextcloud sharing is ready.", { exact: true }).waitFor();
+  assert.equal(await source.getByRole("button", { name: "90 days", exact: true }).getAttribute("aria-pressed"), "true");
+  assert.equal(gets, beforeAccountGets, "account health refresh does not reload retention");
+  await page.getByRole("button", { name: "Save and continue" }).click();
+  await dialog.waitFor({ state: "detached" });
+
   // Read failure offers recovery, never invents defaults or blocks browsing.
   failGet = true;
   await page.goto(`${origin}setup-fixture`);
