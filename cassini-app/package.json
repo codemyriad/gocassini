@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
     "test:storage-browser": "node ./scripts/check-storage-charts-browser.mjs",
-    "test:retention-browser": "node ./scripts/check-retention-browser.mjs"
+    "test:retention-browser": "node ./scripts/check-retention-browser.mjs",
+    "test:retention-setup-browser": "node ./scripts/check-retention-setup-browser.mjs"
   },
   "dependencies": {
     "@melt-ui/svelte": "^0.86.6",
