@@ -5,6 +5,9 @@ deletion performed when that rule becomes due. These policies apply to the
 operator's local working artifacts, under its configured **work root**.
 They do not delete recordings published to Nextcloud Files or the live site.
 
+Nextcloud audio and transcription expiry have [separate policies](nextcloud-retention.md)
+on the same page. They do not change these local categories or their clocks.
+
 The same page shows [storage usage by retention category and date](storage-usage.md).
 
 Administrators configure retention under **Operator → Storage**. Every category

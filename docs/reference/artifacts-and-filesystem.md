@@ -269,3 +269,14 @@ That makes it possible to answer: which attempt produced the currently served si
 
 - [Core pipeline](../core-pipeline.md)
 - [Operator stack](../operator-stack.md)
+
+### Retained Nextcloud documents
+
+Nextcloud audio and text expiry use [separate retention policies](../nextcloud-retention.md).
+After audio expiry the active leaf is `<job>.cassini.transcription.json`, a
+[portable meeting document](../portable-transcription.md) with no playable media.
+Its legacy `<job>.opus` logical key, original age and Nextcloud file ID remain
+stable. Durable locator, operation and retirement records belong to the main
+operator database; metadata/search sidecars can be rebuilt without resetting
+retention. Same-audio reruns refresh JSON and keep prior publication metadata;
+retired meetings cannot be published again from remaining local artifacts.

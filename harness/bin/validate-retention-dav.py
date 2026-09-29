@@ -100,6 +100,17 @@ def check_read(user, share_id, body):
     return row
 
 
+def public_read(token, password, expected, status_only=False):
+    headers = {'Authorization': 'Basic ' + base64.b64encode((token + ':' + password).encode()).decode(), 'X-Requested-With':'XMLHttpRequest'}
+    req = urllib.request.Request(BASE + '/public.php/dav/files/' + token, headers=headers)
+    try: response = OPENER.open(req, timeout=30)
+    except urllib.error.HTTPError as error: response = error
+    with response:
+        body = response.read()
+        assert response.code in expected, f'public DAV returned {response.code}'
+        return response.code if status_only else body
+
+
 def main():
     global GROUP_CREATED, TEAM_ID
     for user in (OWNER, READER, GROUP_READER, DOWNSTREAM):
@@ -121,6 +132,13 @@ def main():
     group = share(OWNER, old, 1, GROUP)
     team_share = share(OWNER, old, 7, TEAM_ID)
     public = share(OWNER, old, 3, password=PASSWORD, expireDate='2099-01-01')
+    assert public_read(public['token'], PASSWORD, (200,)) == audio
+    public_read(public['token'], 'wrong', (401,403))
+    restricted = share(OWNER, old, 3)
+    ocs('PUT', 'apps/files_sharing/api/v1/shares/' + str(restricted['id']), OWNER, {'hideDownload':'true', 'attributes':json.dumps([{'scope':'permissions','key':'download','enabled':False}])})
+    restricted = ocs('GET', 'apps/files_sharing/api/v1/shares/' + str(restricted['id']), OWNER)
+    if isinstance(restricted,list): restricted=restricted[0]
+    restriction_status = public_read(restricted['token'], '', (200,403,404), status_only=True)
     recipient_path = check_read(READER, direct['id'], audio)['file_target'].lstrip('/')
     reshare = share(READER, recipient_path, 0, DOWNSTREAM)
     public_reshare = share(READER, recipient_path, 3)
@@ -149,12 +167,32 @@ def main():
     after = ocs('GET', 'apps/files_sharing/api/v1/shares/' + str(public['id']), OWNER)
     if isinstance(after, list):
         after = after[0]
+    assert public_read(public['token'], PASSWORD, (200,)) == text
+    public_read(public['token'], 'wrong', (401,403))
+    restricted_after = ocs('GET', 'apps/files_sharing/api/v1/shares/' + str(restricted['id']), OWNER)
+    if isinstance(restricted_after,list): restricted_after=restricted_after[0]
+    assert restricted_after.get('hide_download') == restricted.get('hide_download')
+    assert restricted_after.get('attributes') == restricted.get('attributes')
+    assert public_read(restricted['token'], '', (200,403,404), status_only=True) == restriction_status
     for key in ('id', 'token', 'password', 'expiration', 'permissions'):
         assert after.get(key) == public.get(key), f'public share {key} changed'
     reshared = ocs('GET', 'apps/files_sharing/api/v1/shares/' + str(public_reshare['id']), READER)
     if isinstance(reshared, list):
         reshared = reshared[0]
     assert reshared['token'] == public_reshare['token'], 'recipient public token changed'
+    versions = '/remote.php/dav/versions/' + OWNER + '/versions/' + identity
+    _, version_body = request('PROPFIND', versions, OWNER, '<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>', {'Depth':'1','Content-Type':'application/xml'}, (207,))
+    version_hrefs = [node.text for node in ET.fromstring(version_body).findall('.//{DAV:}href')]
+    original = None
+    for href in version_hrefs:
+        if href.rstrip('/') == versions: continue
+        if request('GET', href, OWNER)[1] == audio: original = href; break
+    assert original, 'original version was not preserved by Nextcloud'
+    request('MOVE', original, OWNER, headers={'Destination':BASE+'/remote.php/dav/versions/'+OWNER+'/restore/'+identity})
+    assert state(OWNER,new)[0] == identity
+    assert request('GET',dav(OWNER,new),OWNER)[1] == audio
+    request('PUT',dav(OWNER,new),OWNER,text,{'If-Match':state(OWNER,new)[1],'Content-Type':'application/json'})
+    assert public_read(public['token'], PASSWORD, (200,)) == text
     # Revoke access while retaining the file and prove the revoked user cannot read.
     revoked_path = received(READER, direct['id'])['file_target']
     ocs('DELETE', 'apps/files_sharing/api/v1/shares/' + str(direct['id']), OWNER)
@@ -163,7 +201,7 @@ def main():
     request('GET', dav(OWNER, new), OWNER, expected=(404,))
     print(json.dumps({'file_id': identity, 'conditional_mutations': 'passed',
                       'direct_group_team_reshare_identity': 'passed', 'public_attributes': 'passed',
-                      'recipient_rename_and_revoke': 'passed', 'history_purge': 'not performed'}))
+                      'recipient_rename_and_revoke': 'passed', 'public_password_and_restriction_equivalence':'passed', 'version_restore':'passed', 'history_purge': 'not performed'}))
 
 
 try:

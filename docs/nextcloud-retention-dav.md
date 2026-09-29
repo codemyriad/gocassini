@@ -28,17 +28,22 @@ harness/bin/validate-retention-dav.py
 
 The probe creates disposable users, group and files, uses the installed ExApp's
 act-as-user credentials, checks stale mutations, collisions, file identity,
-direct/group/downstream shares, public-link attributes, recipient rename and
+direct/group/Team/downstream shares, public-link attributes, recipient rename and
 revocation, then deletes its own users and group. It never uses seed recordings.
 `RETENTION_PROBE_URL` and `CASSINI_EXAPP_CONTAINER` select another disposable
 installed harness. Credentials are read in memory and are not printed.
 
-This is a mechanics test, not full feature certification. Teams, download
-restrictions, public-link downloads, file-access-control plugins, alternative
-storage backends, recovery history, fault injection and the supported-version
-matrix require additional acceptance coverage before destructive retention can
-be enabled. File-ID equality does not establish effective permission equivalence
-for a rule depending on MIME type or filename.
+The isolated matrix in `harness/bin/validate-retention-matrix.py` repeats these
+checks against the pinned Nextcloud 33.0.9, 34.0.0 and 35.0.0 baselines. It also
+checks public-password access, unchanged download-restriction behavior, a version
+restore, AppAPI route upgrade, concurrent annotation recovery, the actual sweep
+and the installed headless viewer. `validate-retention-lifecycle.sh` uses the
+production Go lifecycle and freshly built CLI against the installed AppAPI DAV.
+
+File-ID equality alone does not establish effective permission equivalence for a
+rule depending on MIME type or filename. The runtime capability check rejects
+unverified storage/access-control configurations; see
+[Nextcloud retention](nextcloud-retention.md#supported-storage-and-access).
 
 Cassini does not purge Nextcloud history/trash or change instance retention
 configuration. Active-file removal is not a measurement of physical reclaimed

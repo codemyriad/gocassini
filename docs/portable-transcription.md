@@ -18,7 +18,7 @@ unknown fields; each referenced transcript body is stored as standard base64 wit
 its exact decoded-byte SHA-256, MIME type and length. Duplicate extra comments
 remain separate array entries. Readers verify all payloads, including languages
 that are not currently selected. Documents and total decoded payloads are bounded
-to 64 MiB; the Go decoder also rejects duplicate keys and excessive nesting.
+to 64 MiB; both Go and TypeScript decoders reject duplicate keys and excessive nesting.
 
 The original audio digest continues to bind time-range annotations. JSON hashes
 and ETags describe storage revisions; they are not new audio identities. A
@@ -26,6 +26,10 @@ checkpoint records the exact saved annotation token/revision. It cannot recover
 edits acknowledged by an installation but not yet persisted to Nextcloud. A
 foreign installation must not interpret its numeric snapshot IDs as local IDs.
 Annotation rewrites preserve unknown envelope/manifest members and payload bytes.
+`current.sourceManifest` additionally retains the exact original manifest bytes
+and digest. Same-audio refresh keeps identity, media/retention dates and the saved
+checkpoint, and records the previous current object in `publicationHistory`.
+A changed-audio rerun is refused for a retained meeting.
 
 Explicit local extraction, without mutating the input:
 
