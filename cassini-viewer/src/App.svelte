@@ -65,6 +65,7 @@
     type MeetingTags,
     type TagMatch,
   } from "./viewer/listTags";
+  import { createMeetingMarksSessions } from "./components/marking/sessions";
   import { createBulkTagSession, withAnnotationBatch } from "./viewer/bulkTags";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
@@ -420,14 +421,21 @@
 
   const queueTagWrite = createWriteQueue(() => refreshTags(true));
 
+  const meetingMarks = createMeetingMarksSessions(queueTagWrite, reconcileMeetingTags);
+
   const listTagSession = createListTagSession(
-    (meeting, request) => dataProvider.applyAnnotationOps!(meeting, request),
+    async (meeting, request) => {
+      const result = await dataProvider.applyAnnotationOps!(meeting, request);
+      meetingMarks.receive(result);
+      return result;
+    },
     queueTagWrite,
   );
 
   $: tagVocabulary = $listTagSession.vocabulary;
-  $: tagNotice = $listTagSession.notice;
-  $: tagRetryable = $listTagSession.retryable;
+  $: annotationNotice = $meetingMarks[0];
+  $: tagNotice = annotationNotice ? `“${annotationNotice.title}”: ${annotationNotice.message}` : $listTagSession.notice;
+  $: tagRetryable = annotationNotice ? annotationNotice.retryable : $listTagSession.retryable;
 
   // The session applies the click to its optimistic layer before this returns;
   // queued writes reconcile the confirmed layer underneath it.
@@ -436,14 +444,19 @@
   }
 
   function reconcileMeetingTags(result: MeetingAnnotations) {
+    if (destroyed) return;
     listTagSession.updateConfirmed((vocabulary) => withMeetingResult(vocabulary, result));
-    refreshTags(true);
+    // The shared queue refreshes the vocabulary once this burst drains.
   }
 
   const bulkTags = createBulkTagSession(
     (request) => new Promise((resolve, reject) => {
       void queueTagWrite(async () => {
-        try { resolve(await dataProvider.applyAnnotationBatch!(request)); }
+        try {
+          const result = await dataProvider.applyAnnotationBatch!(request);
+          result.results.forEach((meeting) => meetingMarks.receive(meeting));
+          resolve(result);
+        }
         catch (error) { reject(error); }
       });
     }),
@@ -474,7 +487,8 @@
   // control that would change a mark is absent.
   function bindAnnotations(provider: DataProvider, meetingId: string) {
     if (!meetingId || !provider.loadMeetingAnnotations) {
-      return { load: null, apply: null };
+      meetingMarks.activate("", "", null, null);
+      return { load: null, apply: null, session: null };
     }
     const entry = async () => {
       const found = catalogMeetings.find((meeting) => meeting.id === meetingId);
@@ -484,10 +498,10 @@
       return found;
     };
     const apply = provider.applyAnnotationOps;
-    return {
-      load: async () => provider.loadMeetingAnnotations!(await entry()),
-      apply: apply ? async (request: AnnotationRequest) => apply.call(provider, await entry(), request) : null,
-    };
+    const load = async () => provider.loadMeetingAnnotations!(await entry());
+    const write = apply ? async (request: AnnotationRequest) => apply.call(provider, await entry(), request) : null;
+    const title = catalogMeetings.find((meeting) => meeting.id === meetingId)?.title ?? meetingId;
+    return { load, apply: write, session: meetingMarks.activate(meetingId, title, load, write) };
   }
 
   // syncSelectionToCatalog is called from a reactive statement rather than
@@ -1259,6 +1273,7 @@
     window.removeEventListener("focus", refreshOnReturn);
     document.removeEventListener("visibilitychange", refreshOnReturn);
     tagLoader.stop();
+    meetingMarks.stop();
     if (catalogRefreshTimer !== undefined) {
       window.clearInterval(catalogRefreshTimer);
     }
@@ -1381,8 +1396,8 @@
       {tagRetryable}
       on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
       on:clearTags={() => (selectedTagIds = [])}
-      on:dismissTagNotice={() => listTagSession.dismissNotice()}
-      on:retryTag={() => listTagSession.retry()}
+      on:dismissTagNotice={() => annotationNotice ? meetingMarks.dismiss(annotationNotice.meetingId) : listTagSession.dismissNotice()}
+      on:retryTag={() => annotationNotice ? meetingMarks.retry(annotationNotice.meetingId) : listTagSession.retry()}
     />
     </div>
 
@@ -1488,6 +1503,7 @@
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}
             applyAnnotations={annotationCalls.apply}
+            marksSession={annotationCalls.session}
             on:tagsChanged={(event) => reconcileMeetingTags(event.detail)}
           />
         {/if}

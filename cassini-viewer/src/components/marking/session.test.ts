@@ -65,6 +65,8 @@ const vocab = (tagId: string, label: string, color: VocabularyTag["color"]): Voc
   changedAtUtc: "",
 });
 
+const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+
 describe("a meeting's marks session", () => {
   afterEach(() => vi.useRealTimers());
 
@@ -83,7 +85,8 @@ describe("a meeting's marks session", () => {
     await session.open(async () => meeting(), async (request) => (sent.push(request), answer));
     expect(get(session).status).toBe("ready");
 
-    expect(await session.write(removeRequest(["i1"]))).toBe(true);
+    expect(session.write(removeRequest(["i1"]))).toBe(true);
+    await session.whenIdle();
     expect(sent).toEqual([expect.objectContaining({ ...removeRequest(["i1"]), requestId: expect.any(String) })]);
     expect(changed).toEqual([answer]);
     expect(get(session).annotations).toBe(answer);
@@ -96,7 +99,8 @@ describe("a meeting's marks session", () => {
     await session.open(async () => meeting(), async () => {
       throw new AnnotationError(409, "unresolved");
     });
-    expect(await session.write(removeRequest(["i1"]))).toBe(false);
+    expect(session.write(removeRequest(["i1"]))).toBe(true);
+    await session.whenIdle();
     expect(get(session)).toMatchObject({ error: "Remove the marks that can't be placed first.", busy: false });
     expect(get(session).annotations?.annotations).toBe(doc);
     expect(changed).not.toHaveBeenCalled();
@@ -107,27 +111,33 @@ describe("a meeting's marks session", () => {
     await session.open(async () => meeting(), async () => {
       throw new AnnotationError(409, "busy");
     });
-    await session.write(removeRequest(["i1"]), "stretch");
+    session.write(removeRequest(["i1"]), "stretch");
+    await session.whenIdle();
     expect(get(session)).toMatchObject({
       error: "Tags are being changed elsewhere. Try again in a moment.",
       errorFrom: "stretch",
     });
   });
 
-  it("refuses a second write while one is in flight, so an older answer never lands last", async () => {
-    let finish: (value: AnnotationResult) => void = () => {};
+  it("renders queued removals immediately and never lets an older answer erase the later click", async () => {
+    const answers: ((value: AnnotationResult) => void)[] = [];
     const sent: AnnotationRequest[] = [];
     const session = createMarksSession(() => {});
-    await session.open(
-      async () => meeting(),
-      (request) => (sent.push(request), new Promise((resolve) => (finish = resolve))),
-    );
-    const first = session.write(removeRequest(["i1"]));
-    expect(await session.write(removeRequest(["i2"]))).toBe(false);
-    finish(result());
-    expect(await first).toBe(true);
-    expect(sent).toEqual([expect.objectContaining({ ...removeRequest(["i1"]), requestId: expect.any(String) })]);
-    expect(get(session).busy).toBe(false);
+    await session.open(async () => ({ ...meeting(), stateToken: "epoch:3" }),
+      (request) => (sent.push(request), new Promise((resolve) => answers.push(resolve))));
+    expect(session.write(removeRequest(["i1"]))).toBe(true);
+    expect(session.write(removeRequest(["i2"]))).toBe(true);
+    expect(get(session).annotations?.annotations?.items.map(({ id }) => id)).toEqual(["i3"]);
+    expect(get(session)).toMatchObject({ busy: false, saving: true });
+    await Promise.resolve();
+    expect(sent).toHaveLength(1);
+    answers.shift()!({ ...result({ ...doc, items: doc.items.slice(1) }), stateToken: "epoch:4" });
+    await settle();
+    expect(get(session).annotations?.annotations?.items.map(({ id }) => id)).toEqual(["i3"]);
+    expect(sent[1].stateToken).toBe("epoch:4");
+    answers.shift()!(result({ ...doc, items: doc.items.slice(2) }));
+    await session.whenIdle();
+    expect(get(session).saving).toBe(false);
   });
 
   it("says tags are being prepared on a 503, and tries again", async () => {
@@ -165,7 +175,8 @@ describe("a meeting's marks session", () => {
     await session.close();
   });
 
-  it("reuses the request key and token after a lost response", async () => {
+  it("automatically reuses the exact request after a lost response", async () => {
+    vi.useFakeTimers();
     const sent: AnnotationRequest[] = [];
     const session = createMarksSession(() => {});
     await session.open(async () => ({ ...meeting(), stateToken: "epoch:3" }), async (request) => {
@@ -173,9 +184,10 @@ describe("a meeting's marks session", () => {
       if (sent.length === 1) throw new TypeError("network failed");
       return result();
     });
-    const request = removeRequest(["i1"]);
-    expect(await session.write(request)).toBe(false);
-    expect(await session.write(request)).toBe(true);
+    expect(session.write(removeRequest(["i1"]))).toBe(true);
+    await vi.runAllTimersAsync();
+    await session.whenIdle();
+    expect(sent).toHaveLength(2);
     expect(sent[1]).toEqual(sent[0]);
     expect(sent[0].stateToken).toBe("epoch:3");
   });
@@ -189,7 +201,8 @@ describe("a meeting's marks session", () => {
     const session = createMarksSession(() => {});
     await session.open(load, async () => newer);
     await vi.advanceTimersByTimeAsync(1000);
-    await session.write(removeRequest(["i1"]));
+    session.write(removeRequest(["i1"]));
+    await session.whenIdle();
     complete(pending);
     await Promise.resolve();
     expect(get(session).annotations).toBe(newer);
@@ -208,7 +221,8 @@ describe("a meeting's marks session", () => {
     const session = createMarksSession(() => {});
     await session.open(load, async () => newer);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(await session.write(removeRequest(["i1"]))).toBe(true);
+    expect(session.write(removeRequest(["i1"]))).toBe(true);
+    await session.whenIdle();
     reject(new AnnotationError(status, ""));
     await Promise.resolve();
     expect(get(session)).toMatchObject({ status: "ready", error: "", annotations: newer });
@@ -240,9 +254,11 @@ describe("a meeting's marks session", () => {
       if (sent.length === 1) throw new AnnotationError(409, "annotations changed");
       return result();
     });
-    await session.write(removeRequest(["i1"]));
+    session.write(removeRequest(["i1"]));
+    await session.whenIdle();
     await Promise.resolve();
-    await session.write(removeRequest(["i1"]));
+    session.write(removeRequest(["i1"]));
+    await session.whenIdle();
     expect(sent[1].stateToken).toBe("epoch:4");
     expect(sent[1].requestId).not.toBe(sent[0].requestId);
   });
@@ -256,6 +272,9 @@ describe("what the view draws", () => {
     error: "",
     errorFrom: "meeting",
     busy: false,
+    saving: false,
+    retryable: false,
+    editable: true,
     newColors,
   });
 

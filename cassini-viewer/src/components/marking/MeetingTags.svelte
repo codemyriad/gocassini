@@ -60,7 +60,9 @@
           {/if}
         </span>
       {/if}
-      {#if $session.annotations?.sync && $session.annotations.sync.state !== "saved"}
+      {#if $session.saving}
+        <span class="text-base-content/60" role="status">{$session.retryable ? "Annotation updates waiting to retry" : "Saving annotations…"}</span>
+      {:else if $session.annotations?.sync && $session.annotations.sync.state !== "saved"}
         <span class="text-base-content/60" role="status">
           {#if $session.annotations.sync.state === "pending"}
             Tags saved · updating recording…
@@ -75,8 +77,13 @@
           <button type="button" class="link" disabled={$session.busy} on:click={() => session.retrySync()}>Retry recording update</button>
         {/if}
       {/if}
-      {#if $session.error && $session.errorFrom === "meeting"}
+      {#if $session.error}
         <span class="text-error" role="alert">{$session.error}</span>
+        {#if $session.retryable}
+          <button type="button" class="link" on:click={() => session.retryWrite()}>Retry saving annotations</button>
+        {:else}
+          <button type="button" class="link" on:click={() => session.dismissError()}>Dismiss</button>
+        {/if}
       {/if}
     {:else if $session.status === "preparing"}
       <span class="text-base-content/60">Tags are being prepared…</span>

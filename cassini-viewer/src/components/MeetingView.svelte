@@ -25,7 +25,7 @@
   import TranscriptWords from "./TranscriptWords.svelte";
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
-  import { createMarksSession, type ApplyAnnotations, type LoadAnnotations } from "./marking/session";
+  import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
   import type { AnnotationResult, VocabularyTag } from "../viewer/annotations";
@@ -116,6 +116,7 @@
   export let tagVocabulary: VocabularyTag[] = [];
   export let loadAnnotations: LoadAnnotations | null = null;
   export let applyAnnotations: ApplyAnnotations | null = null;
+  export let marksSession: MarksSession | null = null;
 
   const dispatch = createEventDispatcher<{
     back: void;
@@ -126,7 +127,8 @@
     // way to tell the page around it; src/public.ts re-dispatches it (D-838).
     playbackerror: string;
   }>();
-  const marks = createMarksSession((result) => dispatch("tagsChanged", result));
+  const localMarks = createMarksSession((result) => dispatch("tagsChanged", result));
+  $: marks = marksSession ?? localMarks;
   let openedMarksFor: string | null = null;
   let headerHeight = 0;
   let scrollHeight = 0;
@@ -889,7 +891,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
     stopPlaybackClock();
-    void marks.close();
+    void localMarks.close();
   });
 
   // Reactive `bundled`: the shell can flip this at any time — an embedded
@@ -928,7 +930,7 @@
   }
 
   $: marksFor = loadAnnotations ? (meeting?.id ?? "") : null;
-  $: if (marksFor !== openedMarksFor) {
+  $: if (!marksSession && marksFor !== openedMarksFor) {
     openedMarksFor = marksFor;
     void marks.open(loadAnnotations, applyAnnotations);
   }
