@@ -36,6 +36,10 @@ type OpusAudioIntegrity struct {
 // and therefore does not depend on FFmpeg's decoder implementation or sample
 // rounding behavior.
 func ComputeOpusAudioIntegrity(reader io.Reader) (OpusAudioIntegrity, error) {
+	return computeOpusAudioIntegrity(reader, nil)
+}
+
+func computeOpusAudioIntegrity(reader io.Reader, readTags func([]byte) error) (OpusAudioIntegrity, error) {
 	digest := sha256.New()
 	_, _ = digest.Write([]byte(opusIntegrityDomain))
 
@@ -142,6 +146,11 @@ func ComputeOpusAudioIntegrity(reader io.Reader) (OpusAudioIntegrity, error) {
 			case 1:
 				if len(partial) < 8 || string(partial[:8]) != "OpusTags" {
 					return OpusAudioIntegrity{}, fmt.Errorf("second Ogg packet is not OpusTags")
+				}
+				if readTags != nil {
+					if err := readTags(partial); err != nil {
+						return OpusAudioIntegrity{}, err
+					}
 				}
 				// Excluded: this packet contains the manifest that carries the
 				// digest, so hashing it would make the format self-referential.

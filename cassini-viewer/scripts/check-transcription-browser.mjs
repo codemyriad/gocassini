@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright';
+import { createServer } from 'vite';
+process.chdir(fileURLToPath(new URL('..', import.meta.url)));
+const fixture = readFileSync(new URL('../../spec/fixtures/retained-meeting.json', import.meta.url));
+const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
+await server.listen();
+const origin = server.resolvedUrls.local[0];
+const browser = await chromium.launch({headless:true});
+const page = await browser.newPage();
+const errors = [];
+const mediaRequests = [];
+page.on('pageerror', e => errors.push(e.message));
+page.on('request', r => { if(r.resourceType() === 'media') mediaRequests.push(r.url()); });
+await page.route('**/retained.opus', route => route.fulfill({contentType:'audio/ogg',body:fixture}));
+await page.route('**/transcription-fixture', route => route.fulfill({contentType:'text/html',body:`<!doctype html><html><body><div id="app" style="height:100vh"></div><script type="module">
+import { mount } from '/node_modules/.vite/deps/svelte.js';
+import View from '/src/components/MeetingView.svelte';
+import { StaticCatalogProvider } from '/src/viewer/dataProvider.ts';
+import '/src/app.css';
+mount(View,{target:document.getElementById('app'),props:{dataProvider:new StaticCatalogProvider(),meeting:{id:'fixture',title:'Retained meeting',dateLabel:'',audioPath:'/retained.opus'}}});
+</script></body></html>`}));
+try {
+ await page.goto(new URL('transcription-fixture',origin).href);
+ await page.getByText('Audio was removed by the retention policy.',{exact:false}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'Play unavailable: audio removed'}).isDisabled(),true);
+ assert.equal(await page.locator('audio').count(),0);
+ await page.keyboard.press('Space');
+ assert.deepEqual(mediaRequests,[]);
+ assert.equal(await page.getByText('Hello',{exact:true}).count()>0,true);
+ assert.deepEqual(errors,[]);
+ console.log('Retained viewer: disabled Play, eviction reason, transcript and no media requests passed.');
+} finally { await browser.close();await server.close(); }
