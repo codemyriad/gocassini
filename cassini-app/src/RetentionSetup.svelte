@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
   import type { RetentionSettings } from "./operator/retention";
-  import { guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
+  import { leavePrompt, unsavedChanges } from "./operator/unsaved";
   import DirectShareAccessPanel from "./DirectShareAccessPanel.svelte";
   import RetentionPanel from "./RetentionPanel.svelte";
 
@@ -13,17 +13,13 @@
   let accountBusy = false;
   let dialog: HTMLDivElement;
 
-  function later() {
-    if (!saving && !accountBusy) guardLeave(() => dispatch("done"));
-  }
   function keydown(event: KeyboardEvent) {
     // Account creation can open Nextcloud's own password-confirmation dialog.
     // Its controls live outside Cassini's shadow root and must keep focus.
     if (accountBusy) return;
     if (event.key === "Escape") {
       event.preventDefault();
-      // Keep an existing discard confirmation in place until it is answered.
-      if (!$leavePrompt) later();
+      event.stopImmediatePropagation();
     }
     if (event.key !== "Tab") return;
     const region = $leavePrompt ? dialog.querySelector('[role="alertdialog"]') ?? dialog : dialog;
@@ -47,7 +43,7 @@
   onMount(() => dialog.focus());
 </script>
 
-<svelte:window on:beforeunload={beforeUnload} on:keydown={keydown} />
+<svelte:window on:beforeunload={beforeUnload} on:keydown|capture={keydown} />
 
 <div class="setup-backdrop">
   <div class="setup-dialog" role="dialog" aria-modal="true" aria-labelledby="retention-setup-title" tabindex="-1" bind:this={dialog}>
@@ -56,38 +52,44 @@
       <h1 id="retention-setup-title" class="text-2xl font-semibold">Choose what Cassini keeps</h1>
       <p>Review recording access and retention in one place. You can change retention later in Operator → Storage.</p>
     </header>
-    <DirectShareAccessPanel {operatorClient} bind:busy={accountBusy} disabled={saving} />
-    <RetentionPanel {operatorClient} {initialSettings} review bind:busy={saving} disabled={accountBusy} on:saved={() => dispatch("done")} />
-    <footer>
-      <button class="btn btn-ghost" type="button" disabled={saving || accountBusy} on:click={later}>Set up later</button>
-      <p class="text-sm text-base-content/70">Later keeps the saved policies and asks again next time you open Cassini.</p>
-    </footer>
+    <RetentionPanel {operatorClient} {initialSettings} formId="retention-setup-form" review bind:busy={saving} disabled={accountBusy} on:saved={() => dispatch("done")}>
+      <DirectShareAccessPanel slot="before" {operatorClient} bind:busy={accountBusy} disabled={saving} />
+    </RetentionPanel>
   </div>
 </div>
 
 <style>
   .setup-backdrop {
-    height: 100%;
-    overflow-y: auto;
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
     padding: clamp(12px, 3vw, 32px);
-    background: var(--color-base-200);
+    background: color-mix(in srgb, var(--color-base-content) 35%, transparent);
+    backdrop-filter: blur(3px);
   }
   .setup-dialog {
-    display: grid;
-    gap: 24px;
+    display: flex;
+    flex-direction: column;
     width: 100%;
     max-width: 860px;
+    height: 100%;
+    max-height: 960px;
+    min-height: 0;
     min-width: 0;
-    margin: 0 auto;
-    padding: clamp(16px, 3vw, 32px);
+    overflow: hidden;
     color: var(--color-base-content);
     background: var(--color-base-100);
     border: 1px solid var(--color-base-300);
     border-radius: var(--radius-box, 12px);
+    box-shadow: 0 24px 80px #0004;
   }
-  header, footer { display: grid; gap: 8px; }
-  footer { border-top: 1px solid var(--color-base-300); padding-top: 16px; }
-  footer button { justify-self: start; }
+  header { display: grid; gap: 8px; flex: none; padding: 24px; border-bottom: 1px solid var(--color-base-300); }
+  @media (max-width: 600px) {
+    header { padding: 16px; gap: 4px; }
+    header h1 { font-size: 1.25rem; }
+    header p { font-size: 0.875rem; }
+  }
   :global(.setup-dialog .op-tint) {
     background: var(--color-base-200);
     border: 1px solid var(--color-base-300);

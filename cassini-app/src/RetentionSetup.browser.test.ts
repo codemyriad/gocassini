@@ -95,6 +95,7 @@ beforeEach(() => {
     return Response.json({ jobs: [], attempts: [] });
   }));
   host = document.createElement("div");
+  host.style.height = "100%";
   document.body.append(host);
 });
 
@@ -128,37 +129,48 @@ describe("first-run retention review in the browser", () => {
     await expect.element(page.getByRole("heading", { name: "Who can see recordings" })).toBeVisible();
     expect(page.getByRole("checkbox").all()).toHaveLength(4);
     expect(puts).toBe(0);
-    page.getByRole("button", { name: "Set up later" }).element().focus();
+    await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeDisabled();
+    expect(host.querySelector(".cassini-shell")).not.toBeNull();
+    expect(host.querySelector(".cassini-app-content")!.hasAttribute("inert")).toBe(true);
+    expect(page.getByRole("button", { name: "Set up later" }).all()).toHaveLength(0);
+    page.getByRole("button", { name: "Reload saved settings" }).element().focus();
     await userEvent.keyboard("{Tab}");
-    expect(document.activeElement).toBe(page.getByRole("button", { name: "Check this Nextcloud again" }).element());
+    expect(document.activeElement).toBe(page.getByRole("region", { name: "Setup settings" }).element());
     await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(document.activeElement).toBe(page.getByRole("button", { name: "Set up later" }).element());
-    await source().getByRole("button", { name: "30 days", exact: true }).click();
-    await page.getByRole("button", { name: "Set up later" }).click();
+    expect(document.activeElement).toBe(page.getByRole("button", { name: "Reload saved settings" }).element());
+    await userEvent.keyboard("{Escape}");
+    await expect.element(dialog()).toBeVisible();
+    // Implicit form submission must not bypass the review gate.
+    await source().getByRole("button", { name: "Custom days", exact: true }).click();
+    await source().getByLabelText("Source recordings days").fill("30");
+    await userEvent.keyboard("{Enter}");
+    expect(puts).toBe(0);
+    await page.getByRole("button", { name: "Reload saved settings" }).click();
     await expect.element(page.getByRole("alertdialog")).toBeVisible();
     await page.getByRole("button", { name: "Stay", exact: true }).click();
-    expect(source().getByRole("button", { name: "30 days", exact: true }).element().getAttribute("aria-pressed")).toBe("true");
-    await userEvent.keyboard("{Escape}");
+    await expect.element(source().getByLabelText("Source recordings days")).toHaveValue(30);
+    await page.getByRole("button", { name: "Reload saved settings" }).click();
     await page.getByRole("button", { name: "Leave", exact: true }).click();
-    await expect.element(dialog()).not.toBeInTheDocument();
+    await expect.element(dialog()).toBeVisible();
     expect(puts).toBe(0);
-    await open();
     await expect.element(source().getByRole("checkbox")).toBeChecked();
 
     failPut = true;
+    await reviewAllSettings();
     await page.getByRole("button", { name: "Save and continue" }).click();
     await expect.element(page.getByRole("alert")).toHaveTextContent("Could not persist");
     await expect.element(dialog()).toBeVisible();
     failPut = false;
     saved.revision += 1;
     await source().getByRole("button", { name: "60 days", exact: true }).click();
+    await reviewAllSettings();
     await page.getByRole("button", { name: "Save and continue" }).click();
     await expect.element(page.getByRole("alert")).toHaveTextContent("Settings changed");
     failGet = true;
     await page.getByRole("button", { name: "Reload saved settings" }).click();
     await page.getByRole("button", { name: "Leave", exact: true }).click();
     await expect.element(page.getByRole("alert")).toHaveTextContent("Synthetic retention read failure");
-    await page.getByRole("button", { name: "Set up later" }).click();
+    await page.getByRole("button", { name: "Reload saved settings" }).click();
     await expect.element(page.getByRole("alertdialog")).toBeVisible();
     await page.getByRole("button", { name: "Stay", exact: true }).click();
     failGet = false;
@@ -169,6 +181,7 @@ describe("first-run retention review in the browser", () => {
     await source().getByRole("button", { name: "Custom days", exact: true }).click();
     await source().getByLabelText("Source recordings days").fill("0");
     const beforeInvalid = puts;
+    await reviewAllSettings();
     await page.getByRole("button", { name: "Save and continue" }).click();
     expect(puts).toBe(beforeInvalid);
     await source().getByLabelText("Source recordings days").fill("45");
@@ -178,8 +191,9 @@ describe("first-run retention review in the browser", () => {
     await page.getByLabelText("Sweep time", { exact: true }).fill("15:45");
     await page.getByLabelText("Timezone", { exact: true }).fill("Europe/Zagreb");
     holdSave = true;
+    await reviewAllSettings();
     await page.getByRole("button", { name: "Save and continue" }).click();
-    await expect.element(page.getByRole("button", { name: "Set up later" })).toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Reload saved settings" })).toBeDisabled();
     await expect.element(page.getByRole("button", { name: "Check this Nextcloud again" })).toBeDisabled();
     await expect.poll(() => releaseSave !== null).toBe(true);
     releaseSave!();
@@ -201,6 +215,7 @@ describe("first-run retention review in the browser", () => {
     await open("#surface=operator&panel=storage");
     expect(page.getByRole("heading", { name: "Retention policies", exact: true }).all()).toHaveLength(1);
     await expect.element(page.getByRole("alert")).toHaveTextContent("Synthetic account check failure");
+    await reviewAllSettings();
     await page.getByRole("button", { name: "Save and continue" }).click();
     await expect.element(dialog()).not.toBeInTheDocument();
     expect(saved.revision).toBe(1);
@@ -228,13 +243,14 @@ describe("first-run retention review in the browser", () => {
     const beforeAccountGets = gets;
     await page.getByRole("button", { name: "Create recordings account", exact: true }).click();
     await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeDisabled();
-    await expect.element(page.getByRole("button", { name: "Set up later" })).toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Reload saved settings" })).toBeDisabled();
     await userEvent.keyboard("{Tab}");
     expect(document.activeElement).toBe(page.getByRole("button", { name: "Confirm Nextcloud password" }).element());
     await page.getByRole("button", { name: "Confirm Nextcloud password" }).click();
     await expect.element(page.getByText("Nextcloud sharing is ready.", { exact: true })).toBeVisible();
     expect(source().getByRole("button", { name: "90 days", exact: true }).element().getAttribute("aria-pressed")).toBe("true");
     expect(gets).toBe(beforeAccountGets);
+    await reviewAllSettings();
     await page.getByRole("button", { name: "Save and continue" }).click();
     await expect.element(dialog()).not.toBeInTheDocument();
 
@@ -258,19 +274,38 @@ describe("first-run retention review in the browser", () => {
     admin = true;
     saved = defaults();
     await open();
-    for (const [name, width, theme] of [
-      ["desktop", 1280, "light"], ["mobile", 390, "light"], ["dark-mobile", 390, "dark"],
+    for (const [name, width, height, theme] of [
+      ["desktop", 1280, 900, "saturn-light"], ["mobile", 390, 900, "saturn-light"], ["dark-mobile", 390, 900, "saturn-dark"], ["landscape", 900, 450, "saturn-light"],
     ] as const) {
-      await page.viewport(width, 900);
+      await page.viewport(width, height);
       document.querySelector(".cassini-retention-setup")!.setAttribute("data-theme", theme);
-      document.querySelector(".setup-backdrop")!.scrollTo(0, 0);
+      page.getByRole("region", { name: "Setup settings" }).element().scrollTo(0, 0);
       await page.screenshot({ path: `../node_modules/.cache/vitest-screenshots/retention-setup-${name}.png` });
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(innerWidth);
       const dialogElement = dialog().element();
       expect(dialogElement.scrollWidth).toBeLessThanOrEqual(dialogElement.clientWidth);
+      const box = dialogElement.getBoundingClientRect();
+      expect(box.top).toBeGreaterThanOrEqual(12);
+      expect(box.bottom).toBeLessThanOrEqual(innerHeight - 12);
+      expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(innerHeight);
+      const button = page.getByRole("button", { name: "Save and continue" }).element();
+      const topButtonBox = button.getBoundingClientRect();
+      expect(topButtonBox.bottom).toBeLessThanOrEqual(box.bottom);
+      const scroller = page.getByRole("region", { name: "Setup settings" }).element();
+      expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight);
+      await reviewAllSettings();
+      expect(button.getBoundingClientRect().top).toBe(topButtonBox.top);
+      scroller.scrollTo(0, 0);
+      await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeEnabled();
     }
   });
 });
+
+async function reviewAllSettings() {
+  const scroller = page.getByRole("region", { name: "Setup settings" }).element();
+  scroller.scrollTo(0, scroller.scrollHeight);
+  await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeEnabled();
+}
 
 async function remount(hash = "") {
   if (app) await unmount(app);

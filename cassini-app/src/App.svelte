@@ -480,11 +480,8 @@
   });
 </script>
 
-{#if retentionReview && operatorClient}
-  <div class="cassini-retention-setup cassini-root" data-theme={themeMode}>
-    <RetentionSetup {operatorClient} initialSettings={retentionReview} on:done={() => { retentionReview = null; }} />
-  </div>
-{:else}
+<div class="cassini-app-frame">
+<div class="cassini-app-content" inert={!!retentionReview} aria-hidden={retentionReview ? "true" : undefined}>
 {#if retentionReviewError && operatorAvailable}
   <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
     Could not load retention settings.
@@ -565,7 +562,7 @@
            substrate stops them starting a recording or reading job history. -->
       <div
         class="cassini-shell-surface cassini-shell-scroll scroll-stable"
-        class:cassini-shell-hidden={surface !== "browse"}
+        class:cassini-shell-hidden={surface !== "browse" && !retentionReview}
         data-theme={themeMode}
       >
         <div class="cassini-root" data-theme={themeMode}>
@@ -582,7 +579,7 @@
       <!-- Browse stays mounted (preserves list/meeting/playback state) and is
            hidden while an admin surface is active; those mount only when active
            so the operator's SSE stream + polling don't run in the background. -->
-      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
+      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse" && !retentionReview}>
         <ViewerApp {ncMode} {dataProvider} {audience} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
           <!-- Its opposite, driven by the same bit (D-700): the readiness card
@@ -603,7 +600,7 @@
         </ViewerApp>
       </div>
     {/if}
-    {#if surface === "operator" && retentionReviewChecked}
+    {#if surface === "operator" && retentionReviewChecked && !retentionReview}
       <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
            .cassini-root: putting .cassini-root's height:100% on the flex/scroll
            element fought the flex sizing. Here the outer div is a clean bounded
@@ -683,10 +680,18 @@
   </ViewerApp>
 {/if}
 
+</div>
+{#if retentionReview && operatorClient}
+  <div class="cassini-retention-setup cassini-root" data-theme={themeMode}>
+    <RetentionSetup {operatorClient} initialSettings={retentionReview} on:done={() => { retentionReview = null; }} />
+  </div>
 {/if}
+</div>
 
 <style>
-  .cassini-retention-setup { height: 100%; min-height: 0; }
+  .cassini-app-frame { position: relative; height: 100%; min-height: 0; overflow: hidden; }
+  .cassini-app-content { height: 100%; min-height: 0; }
+  .cassini-retention-setup { position: absolute; inset: 0; z-index: 100; min-height: 0; background: transparent; }
   /* Plain CSS (not Tailwind utilities) so the nav renders regardless of content
      scanning; theme tokens come from app.css (:root / :host). */
   .cassini-shell {
