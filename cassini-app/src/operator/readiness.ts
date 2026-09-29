@@ -25,6 +25,10 @@ export interface ReadinessCheck {
   // `action`: plenty of remedies are not a place to navigate to, but a command
   // to run on a host this app cannot reach.
   steps?: ReadinessStep[];
+  // Something the operator can do about this check itself, rendered as a
+  // button. Replaces printing a command for an administrator to go and run:
+  // this panel is ADMIN-only and the operator can already do the work.
+  repair?: string;
   checked_at?: string;
 }
 
@@ -40,7 +44,8 @@ export function isReprobedOnCheck(id: string): boolean {
     || id === "host"
     || id.startsWith("host.")
     || id === "talk.discovery"
-    || id === "talk.hpb";
+    || id === "talk.hpb"
+    || id.startsWith("archive.");
 }
 
 
@@ -68,9 +73,16 @@ export interface RecordingSetupUpdate {
   action?: "arm_test" | "confirm_playback";
   job_id?: string;
 }
+// What a repair button says. Offered only for actions the operator can itself
+// perform.
+export const repairLabels: Record<string, string> = {
+  backfill_search: "Re-index now",
+};
+
 export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
+  "archive.search": "Archive search",
   "talk.authentication": "Internal credential",
   "talk.discovery": "Talk connection",
   "talk.hpb": "High-performance backend",

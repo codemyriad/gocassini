@@ -100,7 +100,9 @@ type Runtime struct {
 	store    *Store
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
-	searchStore *searchStore
+	searchStore     *searchStore
+	searchRepair    searchRepairState
+	archiveCoverage archiveCoverageState
 	// meetingMetadata is a disposable description index. Visibility always
 	// comes from the caller's current Nextcloud shares, never from these rows.
 	meetingMetadata *meetingMetadataStore
@@ -929,6 +931,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// it. Renamed while it was days old and had one caller (D-798).
 		{"/health", http.HandlerFunc(rt.readinessHandler)},
 		{"/health/check", http.HandlerFunc(rt.readinessHandler)},
+		{"/health/repair", http.HandlerFunc(rt.readinessHandler)},
 		{"/talk/setup", http.HandlerFunc(rt.recordingSetupHandler)},
 	}
 }
