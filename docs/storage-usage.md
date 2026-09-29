@@ -106,6 +106,7 @@ npm test --workspace=cassini-app
 npm run build:all --workspace=cassini-app
 npm run test:storage-browser --workspace=cassini-app
 npm run test:retention-browser --workspace=cassini-app
+npm run test:retention-setup-browser --workspace=cassini-app
 cd cassini-operator
 go test ./...
 ```
@@ -113,3 +114,6 @@ go test ./...
 Browser checks start an isolated Vite server and supply synthetic API responses;
 they do not contact a running operator or real recordings. Storage screenshots
 are written to gitignored `scratch/storage-charts/`.
+The setup checks cover the real shell, shared retention editor, revision-based
+completion, account setup, failed/stale saves, dismissal, admin gating, focus and
+responsive layouts. Their screenshots are in `scratch/retention-setup/`.

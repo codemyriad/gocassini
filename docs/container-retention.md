@@ -7,6 +7,48 @@ They do not delete recordings published to Nextcloud Files or the live site.
 
 The same page shows [storage usage by retention category and date](storage-usage.md).
 
+## Initial setup
+
+When an administrator opens Cassini before retention has ever been saved,
+**Choose what Cassini keeps** presents the current Nextcloud recording-access
+panel and the complete retention editor on one scrolling screen. A missing
+recordings account can be created there using the administrator's Nextcloud
+session. Account setup and retention saving are independent: an account problem
+does not discard retention choices, and account setup remains available in
+**Operator → Publish pipeline**.
+
+The editor is the same component used by **Operator → Storage**, including
+categories, grouped/fine-grained history, day presets, custom days, schedule,
+validation, reload and conflict handling. Future retention fields belong in that
+shared panel so both places receive them together.
+
+```text
+Initial setup --------+--> shared retention panel --> existing GET/PUT API
+Operator -> Storage -+                                    |
+                                               saved policies + revision
+Initial setup --> shared recording-access panel          |
+                                                  future opens skip setup
+```
+
+**Save and continue** persists the displayed policies, even if unchanged, and
+closes the review. The existing settings revision records completion; it works
+across browsers and container restarts. Installations with any previously saved
+retention settings skip the review. Existing installations that have never saved
+retention settings also receive it.
+
+**Set up later** makes no change and offers a discard confirmation when there
+are unsaved edits. The review returns on the next page load until settings are
+saved in either location. It does not gate recording. A failed initial read
+offers a link to Storage for recovery rather than inventing settings or blocking
+the rest of Cassini. Non-admins are never asked to configure retention.
+
+This setup change preserves the existing keep-forever defaults. It does not add
+an audio-only capture switch or expiry of published Nextcloud files. Those are
+separate policies; a container-local retention choice is not a promise to erase
+every copy of a recording.
+
+## Configuring policies
+
 Administrators configure retention under **Operator → Storage**. Every category
 starts at **Keep forever**. Choose **7, 30, 60, 90, or Custom days**. Custom
 retention accepts a whole number from 1 to 9999 days. Saving changes does not delete files immediately: existing
