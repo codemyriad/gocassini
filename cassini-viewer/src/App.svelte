@@ -801,7 +801,7 @@
         return;
       }
       if (
-        !meeting.audioPath ||
+        !(meeting.documentPath ?? meeting.audioPath) ||
         (typeof meeting.speakerCount === "number" &&
           typeof meeting.segmentCount === "number" &&
           typeof meeting.digestDurationMs === "number")

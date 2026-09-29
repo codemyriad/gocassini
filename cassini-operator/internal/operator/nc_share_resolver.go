@@ -133,6 +133,7 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 			fallback, marshalErr := json.Marshal(map[string]any{
 				"id":        strings.TrimSuffix(name, ".opus"),
 				"title":     strings.TrimSuffix(name, ".opus"),
+				"dateLabel": "Unknown date",
 				"audioPath": "./meetings/" + name,
 			})
 			if marshalErr != nil {
@@ -149,6 +150,12 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 			var fields map[string]any
 			if json.Unmarshal(entry, &fields) != nil {
 				continue
+			}
+			if known[share.FileSource] == nil {
+				if anchor, err := time.Parse(time.RFC3339Nano, lifecycle.Anchor); err == nil {
+					dateLabel = anchor.UTC().Format("2006-01-02")
+					fields["dateLabel"] = dateLabel
+				}
 			}
 			fields["documentPath"] = "./meetings/" + path.Base(lifecycle.Path)
 			fields["representation"] = lifecycle.Representation

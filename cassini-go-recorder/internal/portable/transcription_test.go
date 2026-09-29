@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func retentionOpusFixture(t *testing.T) []byte {
+func retentionOpusFixture(t *testing.T, empty ...bool) []byte {
 	t.Helper()
 	makeFile := func(tags []byte) []byte {
 		segments := []byte{}
@@ -41,10 +41,14 @@ func retentionOpusFixture(t *testing.T) []byte {
 	manifest := basePublishedManifest()
 	manifest.Integrity.OpusSHA256 = integrity.SHA256
 	manifest.Attachments = []map[string]any{{"name": "summary.md", "mime": "text/markdown", "contentBase64": "IyBTdW1tYXJ5"}}
-	encoded, err := EncodePublishedManifest(manifest, []TranscriptInput{
+	inputs := []TranscriptInput{
 		{ID: "english", Default: true, Format: "cassini.words.v1", Language: "en", WordCount: 2, Body: sampleBody("spk_0", "Hello", "world")},
 		{ID: "spanish", Format: "cassini.words.v1", Language: "es", WordCount: 2, Body: sampleBody("spk_0", "Hola", "mundo")},
-	}, 4096)
+	}
+	if len(empty) > 0 && empty[0] {
+		inputs = []TranscriptInput{{ID: "skipped", Default: true, Format: "cassini.words.v1", WordCount: 0, Body: sampleBody("spk_0")}}
+	}
+	encoded, err := EncodePublishedManifest(manifest, inputs, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +102,19 @@ func TestTranscriptionPreservation(t *testing.T) {
 	if !bytes.Contains(raw, []byte(`COMMENT=first`)) || !bytes.Contains(raw, []byte(`COMMENT=second`)) || !bytes.Contains(doc.ManifestRaw, []byte(`preserve me`)) {
 		t.Fatal("lost metadata")
 	}
+	var current struct {
+		SourceManifest TranscriptionPayload `json:"sourceManifest"`
+	}
+	if err := json.Unmarshal(doc.Raw["current"], &current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := current.SourceManifest.Bytes(); err != nil {
+		t.Fatal("source manifest lost", err)
+	}
 	for _, entry := range report.Preserved {
+		if entry.Name == "manifest" && (entry.SHA256 != current.SourceManifest.SHA256 || entry.Bytes != current.SourceManifest.RawBytes) {
+			t.Fatal("manifest inventory mismatch")
+		}
 		if entry.SHA256 == "" || entry.Bytes == 0 {
 			t.Fatal("missing inventory evidence")
 		}
@@ -182,5 +198,28 @@ func TestRefreshRetainedPreservesBoundaryAndHistory(t *testing.T) {
 	changed, _ := json.Marshal(fresh)
 	if _, err = RefreshTranscription(raw, changed); err == nil {
 		t.Fatal("accepted changed audio")
+	}
+}
+
+func TestTranscriptionWithoutWordsPreservesMetadata(t *testing.T) {
+	now := time.Now().UTC()
+	raw, report, err := ExportTranscription(bytes.NewReader(retentionOpusFixture(t, true)), TranscriptionOptions{AgeAnchor: now, AnchorSource: "recording-completed", EvictedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ReadTranscription(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Manifest.Transcripts) != 1 || doc.Manifest.Transcripts[0].WordCount != 0 || len(report.Preserved) != 2 {
+		t.Fatal("invented words or dropped metadata")
+	}
+	if !bytes.Contains(doc.ManifestRaw, []byte("summary.md")) {
+		t.Fatal("summary lost")
+	}
+	if os.Getenv("UPDATE_TRANSCRIPTION_FIXTURE") == "1" {
+		if err := os.WriteFile("../../../spec/fixtures/retained-no-transcript.json", append(raw, '\n'), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

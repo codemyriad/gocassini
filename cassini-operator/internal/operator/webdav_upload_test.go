@@ -39,6 +39,9 @@ type davRequest struct {
 // relaying and Range forwarding actually happen.
 func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestShares(w, r, []string{"demo.opus", "nope.opus"}, 0) {
+			return
+		}
 		if !strings.HasSuffix(r.URL.Path, "/meetings/demo.opus") {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -56,6 +59,7 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	registerTestCatalog(t, srv.URL, `{"meetings":[{"id":"demo","audioPath":"meetings/demo.opus"},{"id":"nope","audioPath":"meetings/nope.opus"}]}`)
 	cfg := testExAppConfig(srv.URL)
 	cfg.sharePaths.put("alice", map[string]string{"demo.opus": "Cassini/Recordings/meetings/demo.opus"})
 	proxy := cfg.ncFilesProxy(nil, searchDeps{})
@@ -96,10 +100,14 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 
 func TestNCFilesProxyMakesFilesMissAuthoritative(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestShares(w, r, []string{"demo.opus", "nope.opus"}, 0) {
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
+	registerTestCatalog(t, srv.URL, `{"meetings":[{"id":"demo","audioPath":"meetings/demo.opus"},{"id":"nope","audioPath":"meetings/nope.opus"}]}`)
 	cfg := testExAppConfig(srv.URL)
 	cfg.sharePaths.put("alice", map[string]string{"nope.opus": "Cassini/Recordings/meetings/nope.opus"})
 	proxy := cfg.ncFilesProxy(nil, searchDeps{})

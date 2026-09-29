@@ -288,7 +288,7 @@ func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetin
 	if err := unix.Statfs(s.rt.cfg.WorkRoot, &disk); err != nil {
 		return err
 	}
-	if uint64(disk.Bavail)*uint64(disk.Bsize) < uint64(state.Size)+2*(64<<20) {
+	if uint64(disk.Bavail)*uint64(disk.Bsize) < 2*uint64(state.Size)+2*(64<<20) {
 		return fmt.Errorf("insufficient retention staging space")
 	}
 	dir, err := os.MkdirTemp(s.rt.cfg.WorkRoot, "remote-retention-")

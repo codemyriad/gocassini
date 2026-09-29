@@ -234,6 +234,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			}
 			return true
 		}
+		w.Header().Set("Cache-Control", "no-store")
 		readAs := caller
 
 		if relPath == "catalog.json" {
@@ -252,7 +253,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			http.NotFound(w, r)
 			return true
 		}
-		davRelPath, resolveErr := c.recipientRecordingPath(r.Context(), client, caller, path.Base(relPath), c.meetingMetadata)
+		davRelPath, resolveErr := c.currentRecordingPath(r.Context(), client, caller, logicalMeetingName(path.Base(relPath)), c.meetingMetadata)
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errRecordingNotShared) {
 				http.NotFound(w, r)
