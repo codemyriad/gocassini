@@ -100,7 +100,7 @@ func (c ExAppConfig) scanStorageUsage(ctx context.Context, rt *Runtime) storageU
 	} else {
 		sourceStarted := time.Now()
 		source := storageUsageSource{ID: "published", Label: "Published meetings", Location: "Nextcloud Files"}
-		source.Bytes, source.Files, source.Collections, source.Requests, source.Error = c.ncArchiveLogicalBytesDetailed(ctx, recordingsRootFor(ncStorage.accessControlled()))
+		source.Bytes, source.Files, source.Collections, source.Requests, source.Error = c.ncArchiveLogicalBytesDetailed(ctx, ncRecordingsRoot)
 		source.DurationMS = elapsedMilliseconds(sourceStarted)
 		result.Sources = append(result.Sources, source)
 	}
