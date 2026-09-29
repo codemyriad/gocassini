@@ -19,6 +19,7 @@ func runExtractTranscription(args []string, stdout, stderr io.Writer) int {
 	}
 	fs := flag.NewFlagSet("extract transcription", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	refreshFrom := fs.String("refresh-from", "", "existing retained document for a same-audio publication")
 	annotationsFile := fs.String("annotations-file", "", "captured desired annotations JSON")
 	out := fs.String("out", "", "new retained document path")
 	anchor := fs.String("age-anchor", "", "immutable original recording timestamp (RFC3339)")
@@ -62,6 +63,19 @@ func runExtractTranscription(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	if *refreshFrom != "" {
+		existing, readErr := os.ReadFile(*refreshFrom)
+		if readErr != nil {
+			fmt.Fprintln(stderr, readErr)
+			return 1
+		}
+		raw, err = portable.RefreshTranscription(existing, raw)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+
 	file, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		fmt.Fprintln(stderr, err)

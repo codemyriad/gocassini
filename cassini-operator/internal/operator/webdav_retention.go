@@ -169,3 +169,37 @@ func (c ExAppConfig) davRetentionPut(ctx context.Context, client *http.Client, r
 	_, _, err := c.davPutFileIfMatch(ctx, retentionDAVClient(client), ncRecordingsOwner, rel, local, "application/json", etag)
 	return err
 }
+
+// Restores may place Opus bytes at a JSON filename. Read the live signature with
+// the same ETag used for evaluation; filenames never establish media state.
+func (c ExAppConfig) davMeetingRepresentation(ctx context.Context, client *http.Client, rel, etag string) (string, error) {
+	if err := retentionLeafPath(rel); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", c.davFileURL(ncRecordingsOwner, rel), nil)
+	if err != nil {
+		return "", err
+	}
+	c.setAppAPIDAVHeadersForUser(req, ncRecordingsOwner)
+	req.Header.Set("Range", "bytes=0-63")
+	req.Header.Set("If-Match", etag)
+	resp, err := retentionDAVClient(client).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 206 {
+		return "", fmt.Errorf("representation probe: HTTP %d", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(string(raw), "OggS") {
+		return "opus", nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+		return "transcription", nil
+	}
+	return "", fmt.Errorf("unrecognized meeting representation")
+}

@@ -136,3 +136,41 @@ func TestTranscriptionRejectsInvalidJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshRetainedPreservesBoundaryAndHistory(t *testing.T) {
+	raw, err := os.ReadFile("../../../spec/fixtures/retained-meeting.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := RefreshTranscription(raw, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := ReadTranscription(raw)
+	after, _ := ReadTranscription(refreshed)
+	for _, key := range []string{"identity", "retention", "media", "extraTags", "vendor"} {
+		if !bytes.Equal(before.Raw[key], after.Raw[key]) {
+			t.Fatalf("changed %s", key)
+		}
+	}
+	if before.Checkpoint != after.Checkpoint {
+		t.Fatal("checkpoint changed")
+	}
+	var history []json.RawMessage
+	if err = json.Unmarshal(after.Raw["publicationHistory"], &history); err != nil || len(history) != 1 {
+		t.Fatal("missing original publication", err)
+	}
+	if !bytes.Equal(history[0], before.Raw["current"]) {
+		t.Fatal("lost publication content")
+	}
+	var fresh map[string]json.RawMessage
+	json.Unmarshal(raw, &fresh)
+	var identity map[string]any
+	json.Unmarshal(fresh["identity"], &identity)
+	identity["originalAudioSha256"] = strings.Repeat("0", 64)
+	fresh["identity"], _ = json.Marshal(identity)
+	changed, _ := json.Marshal(fresh)
+	if _, err = RefreshTranscription(raw, changed); err == nil {
+		t.Fatal("accepted changed audio")
+	}
+}

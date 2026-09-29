@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,28 +63,35 @@ func (s *Store) pendingRemoteOperations(ctx context.Context) ([]remoteRetentionO
 
 // Reconcile only identities already tied to successful Cassini publication.
 // Unknown Files entries are not adopted based on a filename alone.
-func (s *annotationService) reconcileRetentionInventory(ctx context.Context) error {
+func (s *annotationService) retentionInventory(ctx context.Context) ([]meetingLifecycle, []remoteRetentionEffect, error) {
+	existing, err := s.rt.store.retainedMeetings(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	byName := map[string]meetingLifecycle{}
+	for _, m := range existing {
+		byName[m.Name] = m
+	}
 	jobs, err := s.rt.store.ListJobs(ctx)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	names, err := s.exapp.ownerRecordingNames(ctx, s.client)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	ids := map[string]int64{}
 	for id, name := range names {
 		logical := logicalMeetingName(name)
 		if previous, ok := ids[logical]; ok && previous != id {
-			return fmt.Errorf("ambiguous managed file identity")
+			return nil, nil, fmt.Errorf("ambiguous managed file identity")
 		}
 		ids[logical] = id
 	}
+	skipped := []remoteRetentionEffect{}
 	for _, job := range jobs {
 		name := job.ID + ".opus"
-		if _, ok, err := s.rt.store.meetingLifecycle(ctx, name); err != nil {
-			return err
-		} else if ok {
+		if _, ok := byName[name]; ok {
 			continue
 		}
 		id := ids[name]
@@ -92,17 +100,15 @@ func (s *annotationService) reconcileRetentionInventory(ctx context.Context) err
 		}
 		published, err := s.rt.store.HasSuccessfulPublish(ctx, job.ID)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if !published {
 			continue
 		}
 		anchor := retentionAnchor(job.RecordFinishedAt)
-		source := "recording-completed"
-		// A rerun must not reset age. The earliest valid capture completion is used.
 		attempts, err := s.rt.store.ListJobAttempts(ctx, job.ID)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		for _, attempt := range attempts {
 			date := retentionAnchor(attempt.RecordFinishedAt)
@@ -113,7 +119,33 @@ func (s *annotationService) reconcileRetentionInventory(ctx context.Context) err
 		if anchor.IsZero() {
 			continue
 		}
-		if err := s.rt.store.adoptMeetingLifecycle(ctx, meetingLifecycle{Name: name, FileID: id, Path: ncRecordingsRoot + "/meetings/" + names[id], Representation: "opus", State: "active", Anchor: anchor.UTC().Format(time.RFC3339Nano), AnchorSource: source}); err != nil {
+		byName[name] = meetingLifecycle{Name: name, FileID: id, Path: ncRecordingsRoot + "/meetings/" + names[id], Representation: "opus", State: "active", Anchor: anchor.UTC().Format(time.RFC3339Nano), AnchorSource: "recording-completed"}
+	}
+	meetings := []meetingLifecycle{}
+	for name, m := range byName {
+		meetings = append(meetings, m)
+		delete(ids, name)
+	}
+	for name := range ids {
+		skipped = append(skipped, remoteRetentionEffect{Name: name, Action: "skip", Reason: "Managed provenance or original recording date could not be established; file left unchanged."})
+	}
+	sort.Slice(meetings, func(i, j int) bool { return meetings[i].Name < meetings[j].Name })
+	sort.Slice(skipped, func(i, j int) bool { return skipped[i].Name < skipped[j].Name })
+	return meetings, skipped, nil
+}
+
+func (s *annotationService) reconcileRetentionInventory(ctx context.Context) error {
+	meetings, _, err := s.retentionInventory(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range meetings {
+		if _, ok, err := s.rt.store.meetingLifecycle(ctx, m.Name); err != nil {
+			return err
+		} else if ok {
+			continue
+		}
+		if err := s.rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
 			return err
 		}
 	}
@@ -141,6 +173,21 @@ func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Tim
 	for _, m := range meetings {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(failures, err)
+		}
+		if m.State == "active" && m.Representation == "transcription" {
+			state, e := s.exapp.davRetentionLeaf(ctx, s.client, m.Path)
+			if e != nil {
+				failures = errors.Join(failures, e)
+				continue
+			}
+			if state.Exists && state.FileID == m.FileID {
+				representation, e := s.exapp.davMeetingRepresentation(ctx, s.client, m.Path, state.ETag)
+				if e != nil {
+					failures = errors.Join(failures, e)
+					continue
+				}
+				m.Representation = representation
+			}
 		}
 		effect := evaluateRemoteRetention(m, settings.Nextcloud, now)
 		if effect.Action == "retired" {
@@ -183,8 +230,10 @@ func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Tim
 
 func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetingLifecycle, action string, revision int) error {
 	// Finish any old write-behind attempt before taking the upload reservation.
-	if err := s.syncAnnotation(ctx, m.Name); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
+	if action == "convert" {
+		if err := s.syncAnnotation(ctx, m.Name); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 	}
 	release, err := annotationWriteLocks.acquire(ctx, m.Name)
 	if err != nil {
@@ -286,7 +335,9 @@ func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetin
 			args = append(args, "--annotations-file", a)
 		}
 		args = append(args, in)
-		if output, err := exec.CommandContext(ctx, s.bin, args...).CombinedOutput(); err != nil {
+		cmd := exec.CommandContext(ctx, s.bin, args...)
+		cmd.Env = contextChildEnv(os.Environ())
+		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("extract retained meeting: %w: %.1024s", err, output)
 		}
 		if err := os.Remove(filepath.Join(dir, "annotations.json")); err != nil && !os.IsNotExist(err) {
@@ -341,15 +392,29 @@ func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetin
 		}
 	}
 	if err == nil {
-		err = s.rt.store.saveRemoteOperation(ctx, op, "prepared")
-	}
-	if err == nil {
-		owned = true
-		state := "converting"
-		if action == "retire" {
-			state = "retiring"
+		var tx *sql.Tx
+		tx, err = s.rt.store.db.BeginTx(ctx, nil)
+		if err == nil {
+			defer tx.Rollback()
+			raw, e := json.Marshal(op)
+			err = e
+			if err == nil {
+				_, err = tx.ExecContext(ctx, `INSERT INTO remote_retention_operation(name,operation_json,status,updated_at) VALUES(?,?,'prepared',?) ON CONFLICT(name) DO UPDATE SET operation_json=excluded.operation_json,status='prepared',last_error='',updated_at=excluded.updated_at`, op.Name, raw, nowUTCString())
+			}
+			state := "converting"
+			if action == "retire" {
+				state = "retiring"
+			}
+			if err == nil {
+				_, err = tx.ExecContext(ctx, `UPDATE meeting_lifecycle SET state=? WHERE name=?`, state, m.Name)
+			}
+			if err == nil {
+				err = tx.Commit()
+			}
+			if err == nil {
+				owned = true
+			}
 		}
-		_, err = s.rt.store.db.ExecContext(ctx, `UPDATE meeting_lifecycle SET state=? WHERE name=?`, state, m.Name)
 	}
 	s.rt.retention.mu.Unlock()
 	mutation()

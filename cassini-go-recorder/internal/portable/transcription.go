@@ -517,3 +517,71 @@ func RewriteTranscriptionAnnotations(raw, annotations json.RawMessage, checkpoin
 	}
 	return output, nil
 }
+
+// RefreshTranscription replaces generated meeting data for the same audio while
+// preserving the retirement boundary and acknowledged annotations. The previous
+// current object remains embedded verbatim as history, including unknown fields.
+// A changed-audio publication is not a representation conversion.
+func RefreshTranscription(existing, replacement []byte) ([]byte, error) {
+	old, err := ReadTranscription(existing)
+	if err != nil {
+		return nil, err
+	}
+	fresh, err := ReadTranscription(replacement)
+	if err != nil {
+		return nil, err
+	}
+	if old.Manifest.Integrity.OpusSHA256 != fresh.Manifest.Integrity.OpusSHA256 || old.Manifest.Meeting.ID != fresh.Manifest.Meeting.ID {
+		return nil, fmt.Errorf("retained publication requires the same meeting and audio identity")
+	}
+	var manifest, previous map[string]json.RawMessage
+	json.Unmarshal(fresh.ManifestRaw, &manifest)
+	json.Unmarshal(old.ManifestRaw, &previous)
+	for key, value := range previous {
+		if _, ok := manifest[key]; !ok {
+			manifest[key] = value
+		}
+	}
+	if annotations, ok := previous["annotations"]; ok {
+		manifest["annotations"] = annotations
+	} else {
+		delete(manifest, "annotations")
+	}
+	var current map[string]json.RawMessage
+	json.Unmarshal(fresh.Raw["current"], &current)
+	var prior map[string]json.RawMessage
+	json.Unmarshal(old.Raw["current"], &prior)
+	for key, value := range prior {
+		if _, ok := current[key]; !ok {
+			current[key] = value
+		}
+	}
+	current["annotationCheckpoint"] = prior["annotationCheckpoint"]
+	current["manifest"], err = json.Marshal(manifest)
+	if err != nil {
+		return nil, err
+	}
+	var history []json.RawMessage
+	if raw, ok := old.Raw["publicationHistory"]; ok {
+		if err := json.Unmarshal(raw, &history); err != nil {
+			return nil, fmt.Errorf("unsupported publication history: %w", err)
+		}
+	}
+	history = append(history, old.Raw["current"])
+	old.Raw["publicationHistory"], err = json.Marshal(history)
+	if err != nil {
+		return nil, err
+	}
+	old.Raw["current"], err = json.Marshal(current)
+	if err != nil {
+		return nil, err
+	}
+	output, err := json.Marshal(old.Raw)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = ReadTranscription(output); err != nil {
+		return nil, err
+	}
+	return output, nil
+}

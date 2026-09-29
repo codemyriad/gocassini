@@ -33,6 +33,7 @@ OWNER, READER, GROUP_READER, DOWNSTREAM = [PREFIX + suffix for suffix in ('_o', 
 GROUP = PREFIX + '_group'
 CREATED = []
 GROUP_CREATED = False
+TEAM_ID = None
 
 
 def request(method, path, user=None, data=None, headers=None, expected=(200, 201, 204), admin=False):
@@ -100,13 +101,17 @@ def check_read(user, share_id, body):
 
 
 def main():
-    global GROUP_CREATED
+    global GROUP_CREATED, TEAM_ID
     for user in (OWNER, READER, GROUP_READER, DOWNSTREAM):
         ocs('POST', 'cloud/users', data={'userid': user, 'password': PASSWORD}, admin=True)
         CREATED.append(user)
     ocs('POST', 'cloud/groups', data={'groupid': GROUP}, admin=True)
     GROUP_CREATED = True
     ocs('POST', 'cloud/users/' + GROUP_READER + '/groups', data={'groupid': GROUP}, admin=True)
+    team = ocs('POST', 'apps/circles/circles', OWNER, {'name': PREFIX, 'createTeamFolder': 'false'})
+    TEAM_ID = team.get('id') or team.get('singleId')
+    assert TEAM_ID, 'Team creation did not return identity'
+    ocs('POST', 'apps/circles/circles/' + TEAM_ID + '/members', OWNER, {'userId': DOWNSTREAM, 'type': 1})
     old, new = 'probe.opus', 'probe.cassini.transcription.json'
     audio = b'synthetic original bytes'
     text = b'{"format":"cassini.transcription.v1","synthetic":true}'
@@ -114,9 +119,11 @@ def main():
     identity, etag = state(OWNER, old)
     direct = share(OWNER, old, 0, READER)
     group = share(OWNER, old, 1, GROUP)
+    team_share = share(OWNER, old, 7, TEAM_ID)
     public = share(OWNER, old, 3, password=PASSWORD, expireDate='2099-01-01')
     recipient_path = check_read(READER, direct['id'], audio)['file_target'].lstrip('/')
     reshare = share(READER, recipient_path, 0, DOWNSTREAM)
+    public_reshare = share(READER, recipient_path, 3)
     request('MOVE', dav(READER, recipient_path), READER, headers={
         'Destination': BASE + dav(READER, 'renamed-by-recipient.opus'), 'Overwrite': 'F'})
     # All stale methods must refuse mutation, including source MOVE preconditions.
@@ -137,13 +144,17 @@ def main():
     request('MOVE', dav(OWNER, old), OWNER, headers={'If-Match': state(OWNER, old)[1],
             'Destination': BASE + dav(OWNER, new), 'Overwrite': 'F'})
     assert state(OWNER, new)[0] == identity
-    for user, sid in ((READER, direct['id']), (GROUP_READER, group['id']), (DOWNSTREAM, reshare['id'])):
+    for user, sid in ((READER, direct['id']), (GROUP_READER, group['id']), (DOWNSTREAM, reshare['id']), (DOWNSTREAM, team_share['id'])):
         check_read(user, sid, text)
     after = ocs('GET', 'apps/files_sharing/api/v1/shares/' + str(public['id']), OWNER)
     if isinstance(after, list):
         after = after[0]
     for key in ('id', 'token', 'password', 'expiration', 'permissions'):
         assert after.get(key) == public.get(key), f'public share {key} changed'
+    reshared = ocs('GET', 'apps/files_sharing/api/v1/shares/' + str(public_reshare['id']), READER)
+    if isinstance(reshared, list):
+        reshared = reshared[0]
+    assert reshared['token'] == public_reshare['token'], 'recipient public token changed'
     # Revoke access while retaining the file and prove the revoked user cannot read.
     revoked_path = received(READER, direct['id'])['file_target']
     ocs('DELETE', 'apps/files_sharing/api/v1/shares/' + str(direct['id']), OWNER)
@@ -151,13 +162,15 @@ def main():
     request('DELETE', dav(OWNER, new), OWNER, headers={'If-Match': state(OWNER, new)[1]})
     request('GET', dav(OWNER, new), OWNER, expected=(404,))
     print(json.dumps({'file_id': identity, 'conditional_mutations': 'passed',
-                      'direct_group_reshare_identity': 'passed', 'public_attributes': 'passed',
+                      'direct_group_team_reshare_identity': 'passed', 'public_attributes': 'passed',
                       'recipient_rename_and_revoke': 'passed', 'history_purge': 'not performed'}))
 
 
 try:
     main()
 finally:
+    if TEAM_ID:
+        ocs('DELETE', 'apps/circles/circles/' + TEAM_ID, OWNER)
     for user in reversed(CREATED):
         ocs('DELETE', 'cloud/users/' + user, admin=True)
     if GROUP_CREATED:

@@ -73,8 +73,13 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 	}
 	if lifecycle, ok, err := s.cfg.lifecycle.meetingLifecycle(ctx, path.Base(remote)); err != nil {
 		return "", err
-	} else if ok && (lifecycle.Representation != "opus" || lifecycle.State != "active") {
-		return "", fmt.Errorf("audio has expired; publication cannot restore it")
+	} else if ok {
+		if lifecycle.State != "active" {
+			return "", fmt.Errorf("meeting lifecycle operation is in progress")
+		}
+		if lifecycle.Representation == "transcription" {
+			return s.refreshRetained(ctx, lifecycle, local, entry, d.RoomName)
+		}
 	}
 
 	before, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, remote)

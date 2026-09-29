@@ -23,7 +23,11 @@ func TestInstalledRetentionLifecycle(t *testing.T) {
 	if fixture == "" || bin == "" {
 		t.Fatal("fixture and freshly built CLI required")
 	}
-	raw, err := exec.Command("docker", "inspect", "--format", "{{json .Config.Env}}", "nc_app_gocassini").Output()
+	container := os.Getenv("CASSINI_EXAPP_CONTAINER")
+	if container == "" {
+		container = "nc_app_gocassini"
+	}
+	raw, err := exec.Command("docker", "inspect", "--format", "{{json .Config.Env}}", container).Output()
 	if err != nil {
 		t.Fatal("installed ExApp unavailable")
 	}
@@ -104,6 +108,18 @@ func TestInstalledRetentionLifecycle(t *testing.T) {
 	}
 	if _, err := exec.Command(bin, "inspect", "--transcript", local).Output(); err != nil {
 		t.Fatal("retained transcript unreadable", err)
+	}
+	sink := &directSharesPublishSink{&nextcloudFilesPublishSink{cfg: cfg, client: service.client, cassiniBin: bin, rt: rt}}
+	if _, err := sink.refreshRetained(ctx, converted, fixture, json.RawMessage(`{}`), ""); err != nil {
+		t.Fatal("same-audio refresh", err)
+	}
+	refreshed, err := cfg.davRetentionLeaf(ctx, service.client, dest)
+	if err != nil || refreshed.FileID != state.FileID {
+		t.Fatal("refresh changed identity", err)
+	}
+	unchanged, _, _ := rt.store.meetingLifecycle(ctx, name)
+	if unchanged.Anchor != m.Anchor || unchanged.DocumentID != converted.DocumentID {
+		t.Fatal("refresh changed lifecycle boundary")
 	}
 	if err := service.prepareRemoteRetention(ctx, converted, "retire", 0); err != nil {
 		t.Fatal(err)
