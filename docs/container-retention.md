@@ -5,6 +5,8 @@ deletion performed when that rule becomes due. These policies apply to the
 operator's local working artifacts, under its configured **work root**.
 They do not delete recordings published to Nextcloud Files or the live site.
 
+The same page shows [storage usage by retention category and date](storage-usage.md).
+
 Administrators configure retention under **Operator → Storage**. Every category
 starts at **Keep forever**. Choose **7, 30, 60, 90, or Custom days**. Custom
 retention accepts a whole number from 1 to 9999 days. Saving changes does not delete files immediately: existing

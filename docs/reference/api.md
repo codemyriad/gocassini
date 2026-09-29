@@ -185,8 +185,14 @@ POST /storage/usage/details
 
 `GET` returns the most recently built storage index without scanning the
 filesystem or Nextcloud. `POST` rebuilds that index and returns the refreshed
-state in the same response. The response includes both published-storage roots,
-the working archive, build history, and the per-file-format breakdown.
+state in the same response. The response includes current and legacy published
+Nextcloud roots, local directory totals, and retention `categories`. Each category
+has `id`, `bytes`, `files`, `undated_bytes`, `undated_files`, and `days` containing
+UTC `{date, bytes, files}` aggregates. Dates follow retention lifecycle records;
+they describe files still retained, not historical disk usage. `category_error`
+indicates incomplete lifecycle classification. Directory `formats` remain for
+API compatibility. See [storage usage](../storage-usage.md) for category mappings,
+accounting scope and chart controls.
 
 The operator also rebuilds this index on fixed five-minute UTC boundaries. A
 `POST` does not move or reset that schedule.
