@@ -25,7 +25,12 @@
   async function load() {
     busy = true; error = ""; notice = "";
     try { if (!operatorClient) throw new Error("Operator unavailable"); accept(await operatorClient.getRetention());
-    } catch (e) { error = e instanceof Error ? e.message : String(e); } finally { busy = false; }
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      // guardLeave cleared the flag before attempting a reload. If it failed,
+      // the draft is still here and must still be protected on the next exit.
+      unsavedChanges.set(!!settings && JSON.stringify(settings) !== saved);
+    } finally { busy = false; }
   }
   function mode(value: string) {
     if (!settings) return;
