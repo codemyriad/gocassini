@@ -12,6 +12,8 @@ import (
 
 const transcriptionSuffix = ".cassini.transcription.json"
 
+var meetingProjectionLocks keyedLocks
+
 var errMeetingRetired = errors.New("meeting has expired")
 
 type meetingLifecycle struct {

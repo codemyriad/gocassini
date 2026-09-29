@@ -57,16 +57,23 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 	if _, err = s.rt.store.db.ExecContext(ctx, `UPDATE meeting_lifecycle SET state='retired' WHERE name=?`, op.Name); err != nil {
 		return err
 	}
+	projectionRelease, err := meetingProjectionLocks.acquire(ctx, op.Name)
+	if err != nil {
+		return err
+	}
 	if s.rt.meetingMetadata != nil {
 		if err = s.rt.meetingMetadata.Forget(ctx, op.FileID); err != nil {
+			projectionRelease()
 			return err
 		}
 	}
 	if s.rt.searchStore != nil {
 		if err = s.rt.searchStore.ForgetMeeting(ctx, op.Name); err != nil {
+			projectionRelease()
 			return err
 		}
 	}
+	projectionRelease()
 	release, err = annotationMutationLocks.acquire(ctx, store.path)
 	if err != nil {
 		return err

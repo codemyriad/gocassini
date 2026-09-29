@@ -785,11 +785,13 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	if searchIndex, err := openSearchStore(searchStorePath(cfg.DBPath), logger); err != nil {
 		logger.Printf("search index unavailable (%v); meetings will publish but not be indexed", err)
 	} else {
+		searchIndex.lifecycle = store
 		rt.searchStore = searchIndex
 	}
 	if metadata, err := openMeetingMetadataStore(meetingMetadataPath(cfg.DBPath), logger); err != nil {
 		logger.Printf("meeting metadata index unavailable (%v); list metadata will need archive recovery", err)
 	} else {
+		metadata.lifecycle = store
 		rt.meetingMetadata = metadata
 	}
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
