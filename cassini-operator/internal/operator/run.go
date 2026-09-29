@@ -328,6 +328,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	exappCfg.meetingMetadata = runtime.meetingMetadata
+	exappCfg.lifecycle = store
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
@@ -1376,6 +1377,10 @@ func OpenStore(path string) (*Store, error) {
 
 	store := &Store{db: db}
 	if err := store.ensureSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.ensureMeetingLifecycleSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

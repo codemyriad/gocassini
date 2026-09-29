@@ -365,6 +365,9 @@ func catalogEntryOpusName(audioPath, artifactPath string) string {
 	if ref == "" {
 		return ""
 	}
+	if name := logicalMeetingName(path.Base(ref)); name != "" {
+		return name
+	}
 	return path.Base(ref)
 }
 
@@ -389,6 +392,7 @@ func decodeCatalogEntries(raw []byte) ([]catalogHydration, error) {
 			RoomID       string `json:"roomId"`
 			RoomName     string `json:"roomName"`
 			AudioPath    string `json:"audioPath"`
+			DocumentPath string `json:"documentPath"`
 			ArtifactPath string `json:"artifactPath"`
 		} `json:"meetings"`
 	}

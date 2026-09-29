@@ -94,8 +94,9 @@ func mapSeedMetadata(catalog siteCatalog, inventory map[int64]string) ([]seedMet
 	rows := make([]seedMetadataRow, 0, len(catalog.Meetings))
 	for _, entry := range catalog.Meetings {
 		var probe struct {
-			ID        string `json:"id"`
-			AudioPath string `json:"audioPath"`
+			ID           string `json:"id"`
+			AudioPath    string `json:"audioPath"`
+			DocumentPath string `json:"documentPath"`
 		}
 		if err := json.Unmarshal(entry, &probe); err != nil {
 			return nil, err

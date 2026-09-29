@@ -68,6 +68,14 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 		return "", err
 	}
 	defer release()
+	if err := s.cfg.meetingNotRetired(ctx, path.Base(remote)); err != nil {
+		return "", err
+	}
+	if lifecycle, ok, err := s.cfg.lifecycle.meetingLifecycle(ctx, path.Base(remote)); err != nil {
+		return "", err
+	} else if ok && lifecycle.Representation != "opus" {
+		return "", fmt.Errorf("audio has expired; publication cannot restore it")
+	}
 
 	before, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, remote)
 	if err != nil {

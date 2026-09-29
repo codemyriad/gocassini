@@ -452,7 +452,7 @@
   async function handleTranscriptSwitch(targetId: string) {
     if (
       transcriptSwitchPending ||
-      !meeting?.audioPath ||
+      !(meeting?.documentPath ?? meeting?.audioPath) ||
       targetId === currentTranscriptId ||
       !availableTranscripts.some((entry) => entry.id === targetId)
     ) {
@@ -503,7 +503,7 @@
 
   async function maybeApplyUrlTranscript(entry: MeetingCatalogEntry) {
     const requested = currentViewerHash().tx;
-    if (!requested || !entry.audioPath) {
+    if (!requested || !(entry.documentPath ?? entry.audioPath)) {
       return;
     }
     if (!availableTranscripts.some((descriptor) => descriptor.id === requested)) {

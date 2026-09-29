@@ -215,8 +215,8 @@ export class StaticCatalogProvider implements DataProvider {
     // audioPath. Directory loading (artifactPath) is a dev-only affordance used
     // only when an entry has no audioPath — so audioPath is checked first even
     // if both happen to be present.
-    if (entry.audioPath) {
-      return loadPortableArtifactFromAudioPath(entry.audioPath, this.portableStore);
+    if ((entry.documentPath ?? entry.audioPath)) {
+      return loadPortableArtifactFromAudioPath((entry.documentPath ?? entry.audioPath), this.portableStore);
     }
     if (entry.artifactPath) {
       return loadArtifactFromDirectory(entry.artifactPath);
@@ -225,10 +225,10 @@ export class StaticCatalogProvider implements DataProvider {
   }
 
   loadMeetingSummary(entry: MeetingCatalogEntry): Promise<PortableMeetingSummary | null> {
-    if (!entry.audioPath) {
+    if (!(entry.documentPath ?? entry.audioPath)) {
       return Promise.resolve(null);
     }
-    return loadPortableMeetingSummary(entry.audioPath, this.portableStore);
+    return loadPortableMeetingSummary((entry.documentPath ?? entry.audioPath), this.portableStore);
   }
 
   // The file's own tags, in the shape the operator's route returns, so the
@@ -245,10 +245,10 @@ export class StaticCatalogProvider implements DataProvider {
       annotations: null,
       resolved: null,
     };
-    if (!entry.audioPath) {
+    if (!(entry.documentPath ?? entry.audioPath)) {
       return none;
     }
-    const portable = await loadPortableMeetingAnnotations(entry.audioPath, this.portableStore);
+    const portable = await loadPortableMeetingAnnotations((entry.documentPath ?? entry.audioPath), this.portableStore);
     if (!portable) {
       return none;
     }
@@ -268,12 +268,12 @@ export class StaticCatalogProvider implements DataProvider {
   }
 
   switchTranscript(entry: MeetingCatalogEntry, transcriptId: string): Promise<LoadedArtifact> {
-    if (!entry.audioPath) {
+    if (!(entry.documentPath ?? entry.audioPath)) {
       return Promise.reject(
         new Error(`Meeting ${entry.id} has no audioPath; cannot switch transcript`),
       );
     }
-    return switchPortableTranscript(entry.audioPath, transcriptId, this.portableStore);
+    return switchPortableTranscript((entry.documentPath ?? entry.audioPath), transcriptId, this.portableStore);
   }
 
   loadBundledArtifact(): Promise<LoadedArtifact> {

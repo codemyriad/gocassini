@@ -360,6 +360,7 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 		Meetings []struct {
 			ID           string `json:"id"`
 			AudioPath    string `json:"audioPath"`
+			DocumentPath string `json:"documentPath"`
 			ArtifactPath string `json:"artifactPath"`
 		} `json:"meetings"`
 	}
@@ -384,7 +385,7 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 		// format has only an artifactPath directory and no recording to read, so
 		// it is absent here and answers 404 for the same reason
 		// meetings/<id>.opus does: there is no file.
-		base := path.Base(strings.TrimSpace(entry.AudioPath))
+		base := logicalMeetingName(path.Base(strings.TrimSpace(meetingDocumentPath(entry.DocumentPath, entry.AudioPath))))
 		if !strings.HasSuffix(base, ".opus") {
 			continue
 		}

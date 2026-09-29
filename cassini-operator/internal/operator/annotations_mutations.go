@@ -109,6 +109,9 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusN
 	var result annotateResult
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
 		name := opusName
+		if err := s.exapp.meetingNotRetired(ctx, name); err != nil {
+			return annotateNotFound(err)
+		}
 		if request.RequestID != "" {
 			var previousHash string
 			var receipt []byte

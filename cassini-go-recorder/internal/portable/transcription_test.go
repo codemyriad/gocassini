@@ -105,7 +105,7 @@ func TestTranscriptionPreservation(t *testing.T) {
 	json.Unmarshal(raw, &envelope)
 	envelope["futureEnvelope"] = map[string]any{"keep": true}
 	withUnknown, _ := json.Marshal(envelope)
-	annotations := json.RawMessage(`{"format":"cassini.annotations.v1","revision":1,"tagNamespace":"fixture","tags":[],"items":[]}`)
+	annotations := json.RawMessage(`{"format":"cassini.annotations.v1","revision":1,"tagNamespace":"urn:uuid:12345678-1234-4234-8234-123456789abc","tags":[],"items":[]}`)
 	rewritten, err := RewriteTranscriptionAnnotations(withUnknown, annotations, AnnotationCheckpoint{StateToken: "fixture:13", Revision: 1})
 	if err != nil {
 		t.Fatal(err)
