@@ -1,7 +1,7 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
 
-import { AnnotationError, type AnnotationItem, type MeetingAnnotations } from "../../viewer/annotations";
+import { AnnotationError, removeRequest, type AnnotationItem, type AnnotationResult, type MeetingAnnotations } from "../../viewer/annotations";
 import MeetingTags from "./MeetingTags.svelte";
 import StretchToolbar from "./StretchToolbar.svelte";
 import TranscriptFrame from "./TranscriptFrame.svelte";
@@ -74,6 +74,26 @@ describe("a meeting view with no annotation loader", () => {
 });
 
 describe("a meeting view with its marks loaded", () => {
+  it("keeps header controls enabled while saving and shows a stretch failure after its toolbar closes", async () => {
+    let reject!: (error: unknown) => void;
+    const session = createMarksSession(() => {});
+    await session.open(async () => meeting(true), () => new Promise<AnnotationResult>((_, fail) => { reject = fail; }));
+    session.write(removeRequest(["i1"]), "stretch");
+    const saving = render(MeetingTags, { props: { session } }).body;
+    expect(saving).toContain("Saving annotations");
+    expect(saving).not.toContain("Tags saved");
+    expect(saving).toContain('aria-label="Remove budget"');
+    expect(saving).not.toContain("disabled");
+    await Promise.resolve();
+    reject(new AnnotationError(400, "Section could not be removed"));
+    await session.whenIdle();
+    const failed = render(MeetingTags, { props: { session } }).body;
+    expect(failed).toContain("Section could not be removed");
+    expect(failed).toContain('role="alert"');
+    expect(failed).toContain("Dismiss");
+    await session.close();
+  });
+
   it("adds the rail and the tagged-sections count to the transcript, and no tagging mode to set first", async () => {
     const html = frame(await opened(async () => meeting(true)));
     // Rendered with no width, the frame is laid out for a narrow screen, where

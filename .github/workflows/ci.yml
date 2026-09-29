@@ -165,6 +165,9 @@ jobs:
       # dependency tree than the lockfile pins.
       - name: Install workspace
         run: npm ci
+      - name: Install Chromium for viewer browser tests
+        if: matrix.package == 'cassini-viewer'
+        run: npm exec -w cassini-viewer -- playwright install --with-deps chromium
       - name: Run tests
         run: npm test -w ${{ matrix.package }}
 
