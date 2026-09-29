@@ -35,8 +35,9 @@ npm run build:all
 ```
 
 The test command runs unit tests and Vitest browser checks for retention,
-eviction, and storage charts. Those browser checks mount the real Svelte components with
-synthetic operator responses, so no operator or Nextcloud server is required.
+its first-run review, eviction, and storage charts. Those browser checks mount
+the real Svelte components with synthetic operator responses, so no operator
+or Nextcloud server is required.
 The installed ExApp browser validation remains part of the harness workflow.
 
 `build` produces the standalone app. `build:embedded` produces the single JS/CSS
