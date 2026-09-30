@@ -7,8 +7,10 @@ general: {
 }
 
 nat: {
-  # Local harness default. For remote access set this to your reachable host IP.
+  # Host address for published RTP ports; use a reachable IP for remote peers.
   nat_1_1_mapping = "127.0.0.1"
+  # Also advertise the container address for peers on the Compose network.
+  keep_private_host = true
 }
 
 media: {
