@@ -198,6 +198,7 @@ stop_background_processes() {
   cd "$ROOT_DIR"
   go run ./cmd/gocassini \
     --mode talk \
+    --retain-video="${RETAIN_VIDEO:-true}" \
     --call-url "$CALL_URL" \
     --name "$NAME" \
     --duration "$REC_DURATION" \

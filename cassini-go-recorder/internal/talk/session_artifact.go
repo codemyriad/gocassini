@@ -23,8 +23,14 @@ import (
 // readers racing shutdown hit this benignly, so callers must not treat it
 // as a capture failure (and must stop retrying stream opens).
 var errSessionArtifactClosed = errors.New("session artifact is closed")
+var errCaptureKindDenied = errors.New("media kind denied by capture policy")
+
+func allowsCaptureKind(retainVideo bool, kind string) bool {
+	return kind == "audio" || (retainVideo && kind == "video")
+}
 
 type sessionCaptureArtifact struct {
+	retainVideo bool
 	sessionDir  string
 	streamsDir  string
 	sessionPath string
@@ -59,6 +65,8 @@ type sessionCaptureArtifact struct {
 }
 
 type sessionCaptureStream struct {
+	kind        string
+	rtpCount    int
 	stream      session.PacketStream
 	writer      *store.Writer
 	logPath     string
@@ -91,7 +99,7 @@ type sessionCaptureSummary struct {
 	FirstCaptureError string `json:"first_capture_error,omitempty"`
 }
 
-func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName string) (*sessionCaptureArtifact, error) {
+func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName string, retainVideo bool) (*sessionCaptureArtifact, error) {
 	sessionID := makeSessionID()
 	base := strings.TrimSuffix(filepath.Base(finalOutputPath), filepath.Ext(finalOutputPath))
 	if base == "" {
@@ -122,6 +130,7 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 	monoBaseNS := uint64(now.UnixNano())
 	meta := session.Session{
 		Version:        session.SchemaVersion,
+		CaptureMode:    captureMode(retainVideo),
 		SessionID:      fmt.Sprintf("%s_%s", base, sessionID),
 		StartedWallUTC: now.UTC().Format(time.RFC3339Nano),
 		StartedMonoNS:  monoBaseNS,
@@ -138,6 +147,7 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 		EventsSourcePath: filepath.Base(eventsPath),
 	}
 	artifact := &sessionCaptureArtifact{
+		retainVideo:  retainVideo,
 		sessionDir:   sessionDir,
 		streamsDir:   streamsDir,
 		sessionPath:  sessionPath,
@@ -159,6 +169,7 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 	}
 	if err := artifact.emitEvent(map[string]any{
 		"type":          "session_started",
+		"capture_mode":  captureMode(retainVideo),
 		"call_url":      callURL,
 		"final_output":  finalOutputPath,
 		"room_token":    roomToken,
@@ -177,6 +188,9 @@ func (a *sessionCaptureArtifact) openStream(
 	payloadType uint8,
 	arrival time.Time,
 ) (string, error) {
+	if !allowsCaptureKind(a.retainVideo, desc.kind) {
+		return "", errCaptureKindDenied
+	}
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
@@ -213,6 +227,7 @@ func (a *sessionCaptureArtifact) openStream(
 	}
 
 	state := &sessionCaptureStream{
+		kind: desc.kind,
 		stream: session.PacketStream{
 			StreamID:     streamID,
 			LTID:         ltid,
@@ -331,6 +346,9 @@ func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, parti
 }
 
 func (a *sessionCaptureArtifact) writeRTP(streamID string, pkt *rtp.Packet, recv time.Time) error {
+	if err := a.authorizeWrite(streamID); err != nil {
+		return err
+	}
 	wire, err := pkt.Marshal()
 	if err != nil {
 		return fmt.Errorf("marshal RTP packet: %w", err)
@@ -363,11 +381,15 @@ func (a *sessionCaptureArtifact) writeRTP(streamID string, pkt *rtp.Packet, recv
 
 	a.mu.Lock()
 	stream.packetCount++
+	stream.rtpCount++
 	a.mu.Unlock()
 	return nil
 }
 
 func (a *sessionCaptureArtifact) writeRTCP(streamID string, packets []rtcp.Packet, recv time.Time) error {
+	if err := a.authorizeWrite(streamID); err != nil {
+		return err
+	}
 	wirePackets := make([][]byte, 0, len(packets))
 	for _, packet := range packets {
 		wire, err := packet.Marshal()
@@ -808,4 +830,36 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// authorizeWrite runs before serialization, including for callers bypassing OnTrack.
+func (a *sessionCaptureArtifact) authorizeWrite(streamID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	stream := a.streams[streamID]
+	if stream == nil {
+		return fmt.Errorf("stream not writable: %s", streamID)
+	}
+	if !allowsCaptureKind(a.retainVideo, stream.kind) {
+		return errCaptureKindDenied
+	}
+	return nil
+}
+
+func (a *sessionCaptureArtifact) hasAudio() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, stream := range a.streams {
+		if stream.kind == "audio" && stream.rtpCount > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func captureMode(retainVideo bool) string {
+	if retainVideo {
+		return "audio-video"
+	}
+	return "audio-only"
 }

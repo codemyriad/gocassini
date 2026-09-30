@@ -23,7 +23,7 @@ import (
 
 func TestCleanupConcurrentWithJoinEventHasNoRaces(t *testing.T) {
 	finalOutput := filepath.Join(t.TempDir(), "recording.mkv")
-	artifact, err := newSessionCaptureArtifact(finalOutput, "https://cloud.example/call/tok", "tok", "Recorder Bot")
+	artifact, err := newSessionCaptureArtifact(finalOutput, "https://cloud.example/call/tok", "tok", "Recorder Bot", true)
 	if err != nil {
 		t.Fatalf("newSessionCaptureArtifact() error = %v", err)
 	}

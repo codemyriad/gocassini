@@ -6,6 +6,7 @@ const SchemaVersion = 1
 // Session is the index-level session description for an in-progress or completed
 // recording. It intentionally does not include derived metrics.
 type Session struct {
+	CaptureMode      string         `json:"capture_mode,omitempty"`
 	Version          int            `json:"version"`
 	SessionID        string         `json:"session_id"`
 	StartedWallUTC   string         `json:"started_wall_utc"`

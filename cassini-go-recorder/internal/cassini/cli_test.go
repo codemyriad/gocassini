@@ -1144,3 +1144,12 @@ func TestMeetingWorkspaceChangedTranscriptionRequestIsNotReused(t *testing.T) {
 		t.Fatal("stale workspace retained")
 	}
 }
+
+func TestRecordConfigCapturePolicy(t *testing.T) {
+	for _, video := range []bool{false, true} {
+		cfg := recordConfig(recordOptions{retainVideo: video}, "recording.mkv")
+		if cfg.RetainVideo != video {
+			t.Fatalf("video policy lost: %v", cfg.RetainVideo)
+		}
+	}
+}
