@@ -4,6 +4,7 @@ Retention is the saved rule for how long to keep an artifact. Eviction is the
 deletion performed when that rule becomes due. These policies apply to the
 operator's local working artifacts, under its configured **work root**.
 They do not delete recordings published to Nextcloud Files or the live site.
+[Whole-meeting Nextcloud retention](nextcloud-retention.md) is configured separately.
 
 The same page shows [storage usage by retention category and date](storage-usage.md).
 

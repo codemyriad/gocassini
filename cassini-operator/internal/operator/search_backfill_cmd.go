@@ -104,6 +104,14 @@ Flags:
 		return backfillSearchExitNotStarted
 	}
 
+	jobs, err := OpenStore(cfg.DBPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "open durable meeting lifecycle: %v\n", err)
+		return backfillSearchExitNotStarted
+	}
+	defer jobs.Close()
+	exapp.lifecycle = jobs
+
 	runCtx, cancel := context.WithTimeout(ctx, backfillSearchTimeout)
 	defer cancel()
 
@@ -140,7 +148,8 @@ Flags:
 	}
 	defer index.Close()
 
-	rt := &Runtime{cfg: cfg, logger: logger, searchStore: index}
+	index.lifecycle = jobs
+	rt := &Runtime{cfg: cfg, store: jobs, logger: logger, searchStore: index}
 	// What was delivered is the archive's record to give — one PROPFIND per
 	// meeting — and the archive reader is the fallback for meetings this
 	// operator has no local copy of, which after a volume rebuild can be most

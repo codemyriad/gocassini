@@ -46,6 +46,9 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusN
 		return annotateResult{}, err
 	}
 	defer release()
+	if err := s.exapp.meetingNotRetired(ctx, opusName); err != nil {
+		return annotateResult{}, annotateNotFound(err)
+	}
 	original, _ := json.Marshal(struct {
 		Meeting string
 		Request annotateWriteRequest
@@ -109,6 +112,9 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusN
 	var result annotateResult
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
 		name := opusName
+		if err := s.exapp.meetingNotRetired(ctx, name); err != nil {
+			return annotateNotFound(err)
+		}
 		if request.RequestID != "" {
 			var previousHash string
 			var receipt []byte

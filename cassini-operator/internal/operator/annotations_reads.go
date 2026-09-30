@@ -10,6 +10,9 @@ import (
 )
 
 func (s *annotationService) readDocument(ctx context.Context, caller, meetingID, opusName, relPath string) (annotateResult, error) {
+	if err := s.exapp.meetingNotRetired(ctx, opusName); err != nil {
+		return annotateResult{}, annotateNotFound(err)
+	}
 	store := s.rt.annotationReads()
 	if store == nil {
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: fmt.Errorf("annotations store unavailable")}
@@ -131,6 +134,9 @@ func (s *annotationService) importDocument(caller, meetingID, opusName, relPath 
 			return
 		}
 		defer unlock()
+		if err := s.exapp.meetingNotRetired(ctx, opusName); err != nil {
+			return
+		}
 		result, err := s.showMeeting(ctx, caller, meetingID, relPath)
 		if err == nil {
 			err = store.Record(ctx, opusName, result)
