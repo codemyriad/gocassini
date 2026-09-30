@@ -140,7 +140,7 @@ export interface SettingsUpdate {
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;
-  quality: SettingsQuality;
+  quality?: SettingsQuality;
   device_override?: string;
   transcription_terms?: string[];
   search_aliases?: string[][];

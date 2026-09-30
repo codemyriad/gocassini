@@ -8,11 +8,12 @@ import "./app.css";
 let component: ReturnType<typeof mount> | undefined;
 let host: HTMLDivElement;
 let retainVideo: boolean;
+let quality: string;
 let failSave: boolean;
 let writes: Record<string, unknown>[];
 
 beforeEach(() => {
-  retainVideo = true; failSave = false; writes = [];
+  retainVideo = true; quality = "balanced"; failSave = false; writes = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
     if (path === "/operator/settings") {
@@ -20,8 +21,9 @@ beforeEach(() => {
         const body = JSON.parse(init.body as string); writes.push(body);
         if (failSave) return Response.json({ error: "Settings save failed" }, { status: 500 });
         retainVideo = body.retain_video;
+        quality = body.quality ?? quality;
       }
-      return Response.json({ quality: "balanced", retain_video: retainVideo, transcription_enabled: false });
+      return Response.json({ quality, retain_video: retainVideo, transcription_enabled: false });
     }
     if (path === "/operator/settings/workflows") return Response.json([]);
     if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
@@ -55,8 +57,21 @@ describe("later video settings", () => {
     await save.click();
     await expect.element(save).not.toBeInTheDocument();
     expect(retainVideo).toBe(false);
-    expect(writes.at(-1)).toMatchObject({ retain_video: false, transcription_enabled: false, quality: "balanced" });
+    expect(writes.at(-1)).toMatchObject({ retain_video: false, transcription_enabled: false });
+    expect(writes.at(-1)).not.toHaveProperty("quality");
     await unmount(component); component = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
     await expect.element(video).not.toBeChecked();
   });
+  it("includes quality when the administrator changes the tier", async () => {
+    component = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+    const fast = page.getByRole("radio", { name: "Fast Fastest transcription, lower accuracy.", exact: true });
+    await expect.element(fast).toBeVisible();
+    await fast.click();
+    const save = page.getByRole("button", { name: "Save", exact: true });
+    await save.click();
+    await expect.element(save).not.toBeInTheDocument();
+    expect(writes.at(-1)).toMatchObject({ quality: "fast", retain_video: true });
+    await expect.element(fast).toBeChecked();
+  });
+
 });
