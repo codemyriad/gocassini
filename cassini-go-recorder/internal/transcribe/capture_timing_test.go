@@ -135,8 +135,8 @@ func checkCaptureWindows(got, want []captureBurst, origin float64) error {
 	return checkCaptureWindowsTolerance(got, want, origin, 0.04)
 }
 
-// RTP Ogg reconstruction has a 65ms Opus pre-skip; bound fixture placement
-// to 100ms, then compare the two decoded modes with a stricter 40ms limit.
+// Reconstructed Opus pre-skip varies with the media-tool version; bound
+// fixture placement to 100ms, then compare decoded modes within 40ms.
 func checkCaptureWindowsTolerance(got, want []captureBurst, origin, tolerance float64) error {
 	if len(got) != len(want) {
 		return fmt.Errorf("tone windows=%v want=%v shared origin=%.3f", got, want, origin)
