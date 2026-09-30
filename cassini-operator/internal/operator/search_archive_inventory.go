@@ -48,7 +48,10 @@ func (rt *Runtime) searchInventory(ctx context.Context) (searchArchiveInventory,
 		}
 		inventory := searchArchiveInventory{
 			OpusNames: make([]string, 0, len(names)),
-			CheckedAt: nowUTCString(),
+			// RFC3339, as every other checked_at in this response is.
+			// nowUTCString carries nanoseconds, which is right for a sortable
+			// internal stamp and wrong for a field the panel renders as an age.
+			CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 		// Keyed by Nextcloud file id, which is what makes it a recovery lookup
 		// elsewhere. Coverage joins on the name, as the index does.
