@@ -125,6 +125,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDev(ctx, args[1:], stdout, stderr)
 	case "insight":
 		return runInsight(ctx, args[1:], stdout, stderr)
+	case "extract":
+		return runExtractTranscription(args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
 	case "models":

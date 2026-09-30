@@ -175,7 +175,7 @@ export interface SelectionTotals {
 // rows with it rather than re-deciding, one line under a sentence counting
 // them, what "predates the single-file format" means.
 export function lacksPortableAudio(entry: MeetingCatalogEntry): boolean {
-  return !entry.audioPath;
+  return !(entry.documentPath ?? entry.audioPath);
 }
 
 export function summarizeSelection(entries: readonly MeetingCatalogEntry[]): SelectionTotals {

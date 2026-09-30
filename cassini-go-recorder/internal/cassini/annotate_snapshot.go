@@ -15,6 +15,7 @@ import (
 func runAnnotateSnapshot(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("annotate snapshot", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	token := fs.String("state-token", "", "exact captured annotation checkpoint")
 	out := fs.String("out", "", "output recording")
 	_ = fs.Bool("json", false, "JSON result")
 	if err := fs.Parse(args); err != nil {
@@ -29,6 +30,7 @@ func runAnnotateSnapshot(ctx context.Context, args []string, stdin io.Reader, st
 		fmt.Fprintln(stderr, err)
 		return annotateExitRuntime
 	}
+	source.checkpointToken = *token
 	if source.unsupported != nil {
 		fmt.Fprintln(stderr, source.unsupported)
 		return annotateExitInvalid

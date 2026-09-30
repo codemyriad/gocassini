@@ -150,6 +150,7 @@
   let readableTranscript: ReadableTranscriptV1 | null = null;
   let summaryMarkdown: string | null = null;
   let audioSrc = "";
+  let mediaEvicted = false;
   let captionsSrc: string | null = null;
   let chaptersSrc: string | null = null;
   let timingPrecision: ArtifactTimingPrecision | null = null;
@@ -281,6 +282,7 @@
     readableTranscript = artifact.readableTranscript;
     summaryMarkdown = artifact.summary;
     audioSrc = artifact.audioSrc;
+    mediaEvicted = artifact.mediaState === "evicted";
     captionsSrc = artifact.captionsSrc;
     chaptersSrc = artifact.chaptersSrc;
     timingPrecision = artifact.timingPrecision;
@@ -333,6 +335,7 @@
     readableTranscript = null;
     summaryMarkdown = null;
     audioSrc = "";
+    mediaEvicted = false;
     captionsSrc = null;
     chaptersSrc = null;
     timingPrecision = null;
@@ -451,7 +454,7 @@
   async function handleTranscriptSwitch(targetId: string) {
     if (
       transcriptSwitchPending ||
-      !meeting?.audioPath ||
+      !(meeting?.documentPath ?? meeting?.audioPath) ||
       targetId === currentTranscriptId ||
       !availableTranscripts.some((entry) => entry.id === targetId)
     ) {
@@ -502,7 +505,7 @@
 
   async function maybeApplyUrlTranscript(entry: MeetingCatalogEntry) {
     const requested = currentViewerHash().tx;
-    if (!requested || !entry.audioPath) {
+    if (!requested || !(entry.documentPath ?? entry.audioPath)) {
       return;
     }
     if (!availableTranscripts.some((descriptor) => descriptor.id === requested)) {
@@ -588,7 +591,7 @@
   }
 
   function togglePlayback() {
-    if (!audioEl) {
+    if (mediaEvicted || !audioEl) {
       return;
     }
     if (audioEl.paused) {
@@ -603,6 +606,10 @@
   function seekTo(ms: number) {
     const nextTimeMs = Math.min(Math.max(0, ms), clampedDurationMs || ms);
     currentTimeMs = nextTimeMs;
+    if (mediaEvicted) {
+      pendingSeekMs = null;
+      return;
+    }
     if (!audioEl) {
       pendingSeekMs = nextTimeMs;
       return;
@@ -849,7 +856,7 @@
     if (!transcriptIndex) {
       return "Load a meeting artifact to inspect its transcript and timing.";
     }
-    return "Select a word to seek to it.";
+    return mediaEvicted ? "Select a word to navigate the transcript." : "Select a word to seek to it.";
   }
 
   function formatMetadataLabel(label: string): string {
@@ -1497,7 +1504,7 @@
     </div>
   {/if}
 
-  {#if transcriptIndex && audioSrc}
+  {#if transcriptIndex && (audioSrc || mediaEvicted)}
   <!-- Its right edge stops at the scrollbar gutter of the sibling scroll
        container, at every width, so the player lines up with the transcript
        and with the tagged-sections dock over it. -->
@@ -1508,6 +1515,14 @@
     transition:fade={playerFadeConfig()}
   >
     <div class="card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
+      {#if mediaEvicted}
+        <div class="flex items-center gap-3" role="status">
+          <button class="mv-play btn btn-sm btn-square" type="button" disabled aria-label="Play unavailable: audio removed">
+            <Play size={20} aria-hidden="true" />
+          </button>
+          <p>Audio was removed by the retention policy. {transcriptIndex.segments.some((segment) => segment.words.length > 0) ? "The transcription and meeting notes remain available." : "No transcription was available."}</p>
+        </div>
+      {/if}
       {#if audioSrc}
         {#key audioSrc}
           <audio

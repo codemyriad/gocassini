@@ -31,6 +31,7 @@ import {
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 
 export interface LoadedArtifact {
+  mediaState?: "available" | "evicted";
   transcriptionStatus?: { status: "completed" | "skipped" | "failed"; reason?: string };
   transcript: TranscriptWordsV1;
   displayTranscript: DisplayTranscriptV1 | null;
@@ -212,13 +213,14 @@ export async function loadPortableArtifactFromAudioPath(
   store: PortableMeetingStore = defaultPortableStore,
 ): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const { manifest } = await store.loadManifest(resolvedAudioPath);
+  const { manifest, mediaState } = await store.loadManifest(resolvedAudioPath);
   const availableTranscripts = listAvailableTranscripts(manifest);
   const currentTranscriptId = getDefaultTranscriptId(manifest);
   store.primeBodies(resolvedAudioPath, manifest, currentTranscriptId);
   return buildPortableLoadedArtifact({
     manifest,
-    audioSrc: resolvedAudioPath,
+    audioSrc: mediaState === "evicted" ? "" : resolvedAudioPath,
+    mediaState,
     availableTranscripts,
     currentTranscriptId,
   });
@@ -270,7 +272,7 @@ export async function switchPortableTranscript(
       "switchPortableTranscript called before the portable meeting was loaded; load the meeting first.",
     );
   }
-  const { manifest, tags } = await cached;
+  const { manifest, tags, mediaState } = await cached;
   const transcripts = Array.isArray(manifest.transcripts) ? manifest.transcripts : [];
   const entry = transcripts.find((candidate) => candidate.id === transcriptId);
   if (!entry) {
@@ -301,19 +303,22 @@ export async function switchPortableTranscript(
   const availableTranscripts = listAvailableTranscripts(manifest);
   return buildPortableLoadedArtifact({
     manifest: swappedManifest,
-    audioSrc: resolvedAudioPath,
+    audioSrc: mediaState === "evicted" ? "" : resolvedAudioPath,
+    mediaState,
     availableTranscripts,
     currentTranscriptId: transcriptId,
   });
 }
 
 function buildPortableLoadedArtifact({
+  mediaState,
   manifest,
   audioSrc,
   availableTranscripts,
   currentTranscriptId,
 }: {
   manifest: PortableMeetingManifest;
+  mediaState?: "evicted";
   audioSrc: string;
   availableTranscripts: PortableTranscriptDescriptor[];
   currentTranscriptId: string;
@@ -334,13 +339,14 @@ function buildPortableLoadedArtifact({
     displayTranscript,
     readableTranscript,
     summary: readPortableSummaryMarkdown(manifest),
+    mediaState: mediaState ?? "available",
     index: buildTranscriptIndex(transcript),
     audioSrc,
     captionsSrc: null,
     chaptersSrc: null,
     timingPrecision: classifyArtifactTimingPrecision(transcript, displayTranscript),
     metadata: buildArtifactMetadata(
-      "portable-opus",
+      mediaState === "evicted" ? "portable-transcription" : "portable-opus",
       buildPortableMetadataRaw(
         manifest,
         transcript,

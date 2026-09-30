@@ -1,8 +1,12 @@
 package inspect
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"gocassini/internal/portable"
@@ -47,6 +51,31 @@ type ExtractedMeeting struct {
 // deliberately does NOT verify audio integrity; callers that need that gate
 // use `cassini inspect` explicitly.
 func ExtractMeeting(path string) (ExtractedMeeting, error) {
+	if doc, ok, err := ReadTranscriptionFile(path); ok || err != nil {
+		if err != nil {
+			return ExtractedMeeting{}, err
+		}
+		result := ExtractedMeeting{Manifest: doc.Manifest, FormatTag: portable.TranscriptionFormat, SummaryMarkdown: summaryMarkdownFromAttachments(doc.Manifest.Attachments)}
+		for _, entry := range doc.Manifest.Transcripts {
+			if entry.Default || len(doc.Manifest.Transcripts) == 1 {
+				raw, err := doc.Payloads[entry.PayloadRef.Prefix].Bytes()
+				if err != nil {
+					return result, err
+				}
+				var body portable.TranscriptBody
+				if err = json.Unmarshal(raw, &body); err != nil {
+					return result, err
+				}
+				if err = portable.ValidateTranscriptBody(body); err != nil {
+					return result, err
+				}
+				result.Transcript = extractedFromTranscriptBody(entry.ID, body.Format, body.Language, body.WordCount, body.Items)
+				return result, nil
+			}
+		}
+		return result, nil
+	}
+
 	meta, err := probePortableAudio(path)
 	if err != nil {
 		return ExtractedMeeting{}, err
@@ -169,4 +198,36 @@ func (m ExtractedMeeting) SpeakerLabels() map[string]string {
 		labels[id] = label
 	}
 	return labels
+}
+
+// ReadTranscriptionFile detects content independently of the transitional filename.
+func ReadTranscriptionFile(path string) (portable.TranscriptionDocument, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return portable.TranscriptionDocument{}, false, err
+	}
+	defer f.Close()
+	prefix := make([]byte, 64)
+	n, err := f.Read(prefix)
+	if err != nil && err != io.EOF {
+		return portable.TranscriptionDocument{}, false, err
+	}
+	if !bytes.HasPrefix(bytes.TrimSpace(prefix[:n]), []byte("{")) {
+		return portable.TranscriptionDocument{}, false, nil
+	}
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		return portable.TranscriptionDocument{}, true, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, portable.MaxTranscriptionBytes+1))
+	if err != nil {
+		return portable.TranscriptionDocument{}, true, err
+	}
+	var header struct {
+		Format string `json:"format"`
+	}
+	if json.Unmarshal(raw, &header) == nil && !strings.HasPrefix(header.Format, "cassini.transcription.") && !strings.HasSuffix(path, ".cassini.transcription.json") {
+		return portable.TranscriptionDocument{}, false, nil
+	}
+	doc, err := portable.ReadTranscription(raw)
+	return doc, true, err
 }

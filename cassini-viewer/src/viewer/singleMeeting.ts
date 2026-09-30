@@ -30,7 +30,7 @@ export function meetingIdFromUrl(src: string): string {
   } catch {
     // A malformed escape is not a reason to refuse to show the meeting.
   }
-  return name.replace(/\.opus$/i, "") || "meeting";
+  return name.replace(/(?:\.opus|\.cassini\.transcription\.json)$/i, "") || "meeting";
 }
 
 // describeMeeting reads a title and a date out of the id the way the static
