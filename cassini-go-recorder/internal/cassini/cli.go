@@ -223,7 +223,10 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if opts.simulate {
 		cfg.Mode = "simulate"
 	}
-	_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
+	if err := StartRunBundleCapture(bundle, cfg.Mode, cfg.CaptureMode()); err != nil {
+		fmt.Fprintf(stderr, "persist capture policy: %v\n", err)
+		return 1
+	}
 
 	fmt.Fprintln(stdout, "[2/3] Recording")
 	recordErr := runRecorderApp(ctx, cfg)
@@ -294,7 +297,10 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 	cfg := recordConfig(opts, bundle.RecordingPath)
 
 	if !reusedRun {
-		_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
+		if err := StartRunBundleCapture(bundle, cfg.Mode, cfg.CaptureMode()); err != nil {
+			fmt.Fprintf(stderr, "persist capture policy: %v\n", err)
+			return 1
+		}
 
 		fmt.Fprintln(stdout, "[3/5] Recording meeting")
 		recordErr := runRecorderApp(ctx, cfg)
