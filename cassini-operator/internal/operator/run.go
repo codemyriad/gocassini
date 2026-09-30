@@ -219,6 +219,19 @@ type Runtime struct {
 	llmMu           sync.RWMutex
 	llm             LLMSettings
 	llmSettingsPath string
+	// storageUsage is an explicitly refreshed, process-local index. GET reads it
+	// in constant time; only POST /storage/usage performs filesystem and WebDAV
+	// traversal. storageUsageRefreshMu keeps two administrator-triggered scans
+	// from running over the same archive at once.
+	storageUsageMu        sync.RWMutex
+	storageUsageRefreshMu sync.Mutex
+	storageUsage          storageUsageResponse
+	// detailedStorageUsage combines published roots with retention categories,
+	// lifecycle dates and local directory totals. It refreshes independently
+	// from the aggregate report.
+	detailedStorageUsageMu        sync.RWMutex
+	detailedStorageUsageRefreshMu sync.Mutex
+	detailedStorageUsage          detailedStorageUsageResponse
 }
 
 type TriggerRequest struct {
@@ -378,6 +391,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// silently does not serve published/meetings-context, and one configured
 	// with a relative CASSINI_BIN serves it via a path nothing validated.
 	exappCfg.CassiniBin = cfg.CassiniBin
+	// Keep the full storage index warm on fixed five-minute boundaries. This is
+	// started after the ExApp configuration is complete because the index may
+	// read Nextcloud Files as well as local artifacts.
+	runtime.startDetailedStorageUsageRebuilder(exappCfg)
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{
@@ -923,6 +940,8 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// (D-718).
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
+		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
+		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
 		{"/storage/retention/sweep", http.HandlerFunc(rt.retentionSweepHandler)},

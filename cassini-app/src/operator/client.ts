@@ -20,6 +20,12 @@ import type {
   StorageServiceAccount,
   StorageSetupStep,
   StorageStatus,
+  StorageUsageCategory,
+  StorageUsage,
+  StorageUsageSource,
+  DetailedStorageUsage,
+  DetailedStorageDirectory,
+  ArtifactStorageFileType,
 } from "./types";
 
 const SETTINGS_QUALITIES: readonly SettingsQuality[] = ["fast", "balanced", "best"];
@@ -180,6 +186,26 @@ export class OperatorClient {
 
   async getStorage(): Promise<StorageStatus> {
     return normalizeStorage(await this.#request<unknown>("/storage"));
+  }
+
+  async getStorageUsage(): Promise<StorageUsage> {
+    return normalizeStorageUsage(await this.#request<unknown>("/storage/usage"));
+  }
+
+  async recalculateStorageUsage(): Promise<StorageUsage> {
+    return normalizeStorageUsage(
+      await this.#request<unknown>("/storage/usage", { method: "POST" }),
+    );
+  }
+
+  async getDetailedStorageUsage(): Promise<DetailedStorageUsage> {
+    return normalizeDetailedStorageUsage(await this.#request<unknown>("/storage/usage/details"));
+  }
+
+  async recalculateDetailedStorageUsage(): Promise<DetailedStorageUsage> {
+    return normalizeDetailedStorageUsage(
+      await this.#request<unknown>("/storage/usage/details", { method: "POST" }),
+    );
   }
 
   getRetention(): Promise<RetentionSettings> {
@@ -417,6 +443,87 @@ function normalizeSetupSteps(value: unknown): StorageSetupStep[] {
     return [{ id, action, title: asString(row.title), args,
       browser: row.browser === true, occ: asString(row.occ) }];
   });
+}
+
+function asCount(value: unknown): number { return Math.max(0, Math.floor(asNumber(value))); }
+
+function normalizeStorageUsage(raw: unknown): StorageUsage {
+  const value = raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const sources: StorageUsageSource[] = [];
+  if (Array.isArray(value.sources)) {
+    for (const item of value.sources) {
+      if (item == null || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const id = asString(row.id);
+      if (id === "") continue;
+      sources.push({
+        id,
+        label: asString(row.label) || id,
+        location: asString(row.location),
+        bytes: Math.max(0, asNumber(row.bytes)),
+        duration_ms: Math.max(0, asNumber(row.duration_ms)),
+        files: asCount(row.files),
+        collections: asCount(row.collections),
+        requests: asCount(row.requests),
+        error: asString(row.error),
+      });
+    }
+  }
+  return {
+    measured_at: asString(value.measured_at),
+    duration_ms: Math.max(0, asNumber(value.duration_ms)),
+    sources,
+  };
+}
+
+function normalizeDetailedStorageUsage(raw: unknown): DetailedStorageUsage {
+  const value = raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const published = normalizeStorageUsage({ sources: value.published }).sources;
+  const directories: DetailedStorageDirectory[] = [];
+  if (Array.isArray(value.directories)) {
+    for (const rawRoot of value.directories) {
+      if (rawRoot == null || typeof rawRoot !== "object") continue;
+      const row = rawRoot as Record<string, unknown>;
+      const id = asString(row.id);
+      if (id === "") continue;
+      const formats: ArtifactStorageFileType[] = [];
+      if (Array.isArray(row.formats)) {
+        for (const rawFormat of row.formats) {
+          if (rawFormat == null || typeof rawFormat !== "object") continue;
+          const format = rawFormat as Record<string, unknown>;
+          const extension = asString(format.extension);
+          if (extension === "") continue;
+          formats.push({
+            extension,
+            bytes: Math.max(0, asNumber(format.bytes)),
+            files: asCount(format.files),
+          });
+        }
+      }
+      directories.push({
+        id,
+        label: asString(row.label) || id,
+        location: asString(row.location),
+        bytes: Math.max(0, asNumber(row.bytes)),
+        files: asCount(row.files),
+        collections: asCount(row.collections),
+        formats,
+        error: asString(row.error),
+      });
+    }
+  }
+  return {
+    measured_at: asString(value.measured_at),
+    duration_ms: Math.max(0, asNumber(value.duration_ms)),
+    published,
+    directories,
+    category_error: asString(value.category_error),
+    categories: Array.isArray(value.categories) ? value.categories.filter((row): row is Record<string, unknown> => row != null && typeof row === "object" && typeof row.id === "string").map((row): StorageUsageCategory => ({
+      id: asString(row.id), bytes: Math.max(0, asNumber(row.bytes)), files: asCount(row.files),
+      undated_bytes: Math.max(0, asNumber(row.undated_bytes)), undated_files: asCount(row.undated_files),
+      days: Array.isArray(row.days) ? row.days.filter((day): day is Record<string, unknown> => day != null && typeof day === "object" && typeof day.date === "string").map(day => ({ date: asString(day.date), bytes: Math.max(0, asNumber(day.bytes)), files: asCount(day.files) })) : [],
+    })) : [],
+  };
 }
 
 function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {
