@@ -300,6 +300,7 @@ jobs:
           path: |
             /tmp/gocassini-ci*-janus.json
             /tmp/gocassini-ci*-timing.json
+            /tmp/gocassini-ci*-resume.json
           retention-days: 7
           if-no-files-found: ignore
 
