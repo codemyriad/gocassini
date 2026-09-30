@@ -401,8 +401,11 @@ func TestCoverageRetainsDistinctEmptyTranscriptOutcomes(t *testing.T) {
 	if coverage != want {
 		t.Errorf("coverage = %+v, want %+v", coverage, want)
 	}
-	if coverage.NeedsAttention() != 7 {
-		t.Errorf("NeedsAttention = %d, want 7", coverage.NeedsAttention())
+	// 9 unavailable, less the three whose outcome is settled and unactionable:
+	// silent, intentionally off, and empty-of-unknown-cause. No re-index can add
+	// words to any of them, so counting one would be a permanently amber row.
+	if coverage.NeedsAttention() != 6 {
+		t.Errorf("NeedsAttention = %d, want 6", coverage.NeedsAttention())
 	}
 }
 

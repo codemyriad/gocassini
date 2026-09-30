@@ -140,15 +140,13 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
         : "Enter the internal secret from your Talk signaling server.",
     });
   }
-  if (!rows.some(c => c.id === "test")) rows.push({ id: "test", state: report.test.playback_verified_at ? "passed" : "not_verified",
-    code: "test_playback", checked_at: report.test.playback_verified_at, message: report.test.playback_verified_at ? "Playback was previously confirmed for this published test recording. This is historical evidence, not a current connection test." : "Record a short test through Talk, then confirm playback." });
   return rows;
 }
 
 export function rowActions(check: ReadinessCheck): { action: string; label: string }[] {
   const labels: Record<string, string> = { configure_talk:"Talk authentication", test_room:"Test room", connect_talk:"Connect Talk", test_recording:"Test a recording", recheck:"Check again", setup_storage:"Set up storage" };
   const actions = check.action ? [check.action] : [];
-  const persistent: Record<string,string> = { "talk.authentication":"configure_talk", "talk.discovery":"test_room", "talk.handoff":"connect_talk", test:"test_recording" };
+  const persistent: Record<string,string> = { "talk.authentication":"configure_talk", "talk.discovery":"test_room", "talk.handoff":"connect_talk" };
   if (persistent[check.id] && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
   return actions.map(action => ({ action, label:labels[action] ?? "Configure" }));
 }

@@ -85,16 +85,15 @@
   }
   onMount(() => {
     alive = true;
-    // Read before re-probing. A POST /health/check runs the media doctor, the
-    // Talk probe and the storage preflight before it answers, and the list was
-    // hidden behind `{#if report}` for the whole of it — so the panel sat empty
-    // for seconds and then every row appeared at once. The GET is a read of
-    // findings the operator already holds (startup establishes them), so the
-    // checklist is on screen immediately and the re-probe updates it in place.
-    void (async () => {
-      await load(false);
-      if (alive) await load(true);
-    })();
+    // READ ONLY. Opening the panel must not run the checks: they are probes —
+    // a media doctor subprocess, a Talk round trip, a whole-archive PROPFIND —
+    // and they run when an administrator asks for them, not because a page was
+    // loaded (review 2026-09-25).
+    //
+    // So this is a GET of findings the operator already holds. Rows nobody has
+    // checked yet say so, and "Run all checks" or a row's own button takes a
+    // reading.
+    void load(false);
     const unsubscribe = onSetupChanged(() => void load(true));
     const timer = window.setInterval(async () => {
       if (busy || polling || !report || document.hidden) return;

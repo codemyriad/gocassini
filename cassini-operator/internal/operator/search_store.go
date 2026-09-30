@@ -487,8 +487,17 @@ type searchCoverage struct {
 // transcription. A shortfall nobody can act on must never reach this number:
 // counting one turns it into a permanently amber row, and a colour a healthy
 // install cannot clear is one people learn to ignore.
+//
+// UnknownEmpty is `transcript-has-no-segments` — a transcript that parsed and
+// holds no words, from before the reason for that was recorded. It reads as the
+// weakest of the empty outcomes because the CAUSE is unknown, but the outcome is
+// not: there are no words, so there is nothing to index and nothing a re-index
+// can add. searchCoverageSteps already refuses to offer it a remedy, which is
+// precisely why it must not reach this number — it made one silent meeting in an
+// otherwise fully indexed archive enough to keep the row amber for good, with no
+// button that could ever clear it.
 func (c searchCoverage) NeedsAttention() int {
-	return c.Unavailable - c.Silent - c.Disabled + c.Untracked
+	return c.Unavailable - c.Silent - c.Disabled - c.UnknownEmpty + c.Untracked
 }
 
 func (c searchCoverage) TotalKnown() int { return c.Indexed + c.Unavailable }

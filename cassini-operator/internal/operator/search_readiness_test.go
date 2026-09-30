@@ -48,6 +48,9 @@ func TestSearchCoverageIgnoresShortfallsNobodyCanClear(t *testing.T) {
 		coverage searchCoverage
 	}{
 		{"silent after completed transcription", searchCoverage{Indexed: 137, Unavailable: 1, Silent: 1}},
+		// An empty transcript whose cause was never recorded. The cause is
+		// unknown; the outcome is not, and no re-index can add words to it.
+		{"empty transcript of unknown cause", searchCoverage{Indexed: 137, Unavailable: 1, UnknownEmpty: 1}},
 		{"transcription intentionally off", searchCoverage{Indexed: 137, Unavailable: 1, Disabled: 1}},
 	} {
 		if got := settled.coverage.NeedsAttention(); got != 0 {

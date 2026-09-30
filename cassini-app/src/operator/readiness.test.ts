@@ -65,13 +65,14 @@ it("notifies health changes while ignoring timestamps and job progress", () => {
  expect(readinessHealthKey(report)).not.toBe(before);
 });
 
-it("distinguishes saved credentials and historical playback from current verification", () => {
+it("says a saved credential is configured, not verified", () => {
  const report = {secret_configured:true, secret_source:"setup", checks:[{id:"talk.hpb",state:"needs_action",code:"signaling_auth_failed",message:"Authentication rejected"}], test:{playback_verified_at:"2026-09-11T00:00:00Z"}} as RecordingReadiness;
  const rows = readinessRows(report);
  expect(checkStateLabel(rows.find(c=>c.id==="talk.authentication")!)).toBe("Configured");
- const test = rows.find(c=>c.id==="test")!;
- expect(checkStateLabel(test)).toBe("Previously confirmed");
- expect(test.checked_at).toBe(report.test.playback_verified_at);
+ // No test row. It was removed in the 2026-09-25 review, and synthesising one
+ // here put it back on screen — where its only action sent the reader to the
+ // Talk connection row, which is not a test recording.
+ expect(rows.some(c=>c.id==="test")).toBe(false);
  report.checks.push({id:"configuration",state:"needs_action",code:"setup_store_unreadable",message:"Unreadable"});
  expect(readinessRows(report).some(c=>c.id==="talk.authentication")).toBe(false);
 });
@@ -125,11 +126,11 @@ describe("the instance's worst news", () => {
     expect(reportTone(report([]))).toBe("success");
   });
 
-  // The header reads the rows the list renders, including the ones
-  // readinessRows synthesises — otherwise it can disagree with what is under it.
-  it("counts a synthesised row that has not been verified", () => {
-    const noPlayback = { ...report([]), test: { state: "idle", published: false } };
-    expect(reportTone(noPlayback)).toBe("neutral");
+  // The header reads the rows the list renders, including the one readinessRows
+  // still synthesises — otherwise it can disagree with what is under it.
+  it("counts the synthesised credential row", () => {
+    const noSecret = { ...report([]), secret_configured: false, secret_source: "unset" as const };
+    expect(reportTone(noSecret)).toBe("error");
   });
 });
 
