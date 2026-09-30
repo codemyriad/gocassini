@@ -7,15 +7,17 @@
   const selected = doctorScenarios.find(item => item.id === scenario);
   const operatorClient = selected ? createPreviewClient(selected.id) : null;
   let notice = "";
-  let theme = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "saturn-dark" : "saturn-light";
+  const fallbackTheme = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "saturn-dark" : "saturn-light";
+  let theme = "page";
   let root: HTMLDivElement;
   let themeHost: HTMLElement | null = null;
+  let pageTheme: string | undefined;
   onMount(() => {
     const tree = root.getRootNode();
     if (!(tree instanceof ShadowRoot) || !(tree.host instanceof HTMLElement)) return;
     themeHost = tree.host;
     const previous = themeHost.dataset.ncTheme;
-    if (previous) theme = previous.startsWith("dark") ? "saturn-dark" : "saturn-light";
+    pageTheme = previous;
     return () => {
       if (themeHost) {
         if (previous === undefined) delete themeHost.dataset.ncTheme;
@@ -25,12 +27,17 @@
   });
   function changeTheme(event: Event) {
     const selected = (event.currentTarget as HTMLSelectElement).value;
-    if (themeHost?.dataset.ncTheme) themeHost.dataset.ncTheme = selected === "saturn-dark" ? "dark" : "light";
+    if (!themeHost) return;
+    // Native Nextcloud colours are inherited from the surrounding page. Merely
+    // changing its mode attribute cannot switch those inherited colours. For
+    // explicit Cassini themes, opt out of that bridge within this shadow host.
+    if (selected === "page" && pageTheme !== undefined) themeHost.dataset.ncTheme = pageTheme;
+    else delete themeHost.dataset.ncTheme;
   }
 
 </script>
 
-<div bind:this={root} class="cassini-root h-full overflow-auto bg-base-200 text-base-content" data-theme={theme}>
+<div bind:this={root} class="cassini-root h-full overflow-auto bg-base-200 text-base-content" data-theme={theme === "page" ? fallbackTheme : theme}>
   <main class="mx-auto max-w-5xl space-y-5 p-4 md:p-8">
     <header class="rounded-box border border-info bg-base-100 p-4">
       <h1 class="text-xl font-semibold">Doctor usability previews</h1>
@@ -39,7 +46,7 @@
         <a class="link" href="#doctor-preview=">All scenarios</a>
         <label class="text-sm">Theme
           <select class="select select-sm ml-2" aria-label="Preview theme" bind:value={theme} on:change={changeTheme}>
-            <option value="saturn-light">Light</option><option value="saturn-dark">Dark</option>
+            <option value="page">Page theme</option><option value="saturn-light">Cassini light</option><option value="saturn-dark">Cassini dark</option>
           </select>
         </label>
       </div>
