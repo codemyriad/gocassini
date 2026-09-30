@@ -552,6 +552,8 @@ type botConfig struct {
 	AudioPath            string
 	JoinDelay            time.Duration
 	AudioReady           time.Duration
+	AudioTrackAfter      time.Duration
+	VideoTrackAfter      time.Duration
 	SyncShift            time.Duration
 	Duration             time.Duration
 	Insecure             bool
@@ -870,7 +872,8 @@ func (b *bot) getSignalingSessionID() string {
 }
 
 func (b *bot) isAudioReady() bool {
-	if b.cfg.AudioReady <= 0 {
+	readyAfter := max(b.cfg.AudioReady, b.cfg.AudioTrackAfter)
+	if readyAfter <= 0 {
 		return true
 	}
 	startNanos := b.streamStartedAt.Load()
@@ -878,7 +881,7 @@ func (b *bot) isAudioReady() bool {
 		return false
 	}
 	started := time.Unix(0, startNanos)
-	return time.Since(started) >= b.cfg.AudioReady
+	return time.Since(started) >= readyAfter
 }
 
 func (b *bot) joinConversation(ctx context.Context) error {
@@ -1114,19 +1117,27 @@ func (b *bot) startWebRTC(ctx context.Context) error {
 	}
 	b.audioTrack = audioTrack
 
-	videoSender, err := pc.AddTrack(videoTrack)
-	if err != nil {
-		return fmt.Errorf("add video track: %w", err)
+	if b.cfg.VideoTrackAfter == 0 {
+		sender, err := pc.AddTrack(videoTrack)
+		if err != nil {
+			return err
+		}
+		b.videoSender = sender
+		go drainRTCP(sender)
 	}
-	b.videoSender = videoSender
-	go drainRTCP(videoSender)
+	if b.cfg.AudioTrackAfter == 0 {
+		sender, err := pc.AddTrack(audioTrack)
+		if err != nil {
+			return err
+		}
+		b.audioSender = sender
+		go drainRTCP(sender)
+	}
+	return b.publishOffer(ctx)
+}
 
-	audioSender, err := pc.AddTrack(audioTrack)
-	if err != nil {
-		return fmt.Errorf("add audio track: %w", err)
-	}
-	b.audioSender = audioSender
-	go drainRTCP(audioSender)
+func (b *bot) publishOffer(ctx context.Context) error {
+	pc := b.pc
 
 	offer, err := pc.CreateOffer(nil)
 	if err != nil {
@@ -1160,16 +1171,38 @@ func (b *bot) startWebRTC(ctx context.Context) error {
 	}
 	b.logf("offer sent")
 
-	answerTimeout := time.NewTimer(25 * time.Second)
-	defer answerTimeout.Stop()
-	select {
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	case <-answerTimeout.C:
-		return errors.New("timeout waiting for answer")
-	case <-b.answerCh:
+	deadline := time.NewTimer(25 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if pc.SignalingState() == webrtc.SignalingStateStable {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-deadline.C:
+			return errors.New("timeout waiting for answer")
+		case <-ticker.C:
+		}
+	}
+}
+
+func (b *bot) addDelayedTrack(ctx context.Context, kind string, after time.Duration, track *webrtc.TrackLocalStaticSample) error {
+	if after <= 0 {
 		return nil
 	}
+	if !sleepContext(ctx, after) {
+		return context.Cause(ctx)
+	}
+	sender, err := b.pc.AddTrack(track)
+	if err != nil {
+		return err
+	}
+	go drainRTCP(sender)
+	b.logf("adding delayed %s track after %s", kind, after)
+	return b.publishOffer(ctx)
 }
 
 func (b *bot) sendCallMessage(data map[string]any) error {
@@ -1589,6 +1622,9 @@ func (r *opusOggPacketReader) NextPacket() ([]byte, time.Duration, error) {
 }
 
 func (b *bot) streamVideo(ctx context.Context) error {
+	if err := b.addDelayedTrack(ctx, "video", b.cfg.VideoTrackAfter, b.videoTrack); err != nil {
+		return err
+	}
 	if b.cfg.SyncShift < 0 {
 		if !sleepContext(ctx, -b.cfg.SyncShift) {
 			return nil
@@ -1648,6 +1684,9 @@ func (b *bot) streamVideo(ctx context.Context) error {
 }
 
 func (b *bot) streamAudio(ctx context.Context) error {
+	if err := b.addDelayedTrack(ctx, "audio", b.cfg.AudioTrackAfter, b.audioTrack); err != nil {
+		return err
+	}
 	if b.cfg.SyncShift < 0 {
 		if !sleepContext(ctx, -b.cfg.SyncShift) {
 			return nil
@@ -1944,7 +1983,7 @@ func rotateAudio(ctx context.Context, bots []*bot, every time.Duration, gate mut
 			}
 		}
 		mediaSec := bots[chosen].cfg.JoinDelay.Seconds() + float64(bots[chosen].videoSamples.Load())/30.0
-		log.Printf("[manager] audible=%s active=%d media_t=%.3f", bots[chosen].cfg.GuestName, len(active), mediaSec)
+		log.Printf("[manager] audible=%s active=%d media_t=%.3f wall_ns=%d", bots[chosen].cfg.GuestName, len(active), mediaSec, time.Now().UnixNano())
 
 		if !sleepContext(ctx, every) {
 			return
@@ -2336,6 +2375,8 @@ func run() error {
 		names                        stringList
 		joinDelaySecs                floatList
 		audioReadySec                floatList
+		audioTrackAfterSec           floatList
+		videoTrackAfterSec           floatList
 		syncShiftSec                 floatList
 		botDurationSec               floatList
 		authUsers                    stringList
@@ -2359,6 +2400,8 @@ func run() error {
 	flag.Var(&audioFiles, "audio", "Path to OGG Opus audio file (repeat once per participant)")
 	flag.Var(&names, "name", "Bot name (repeat up to video count)")
 	flag.Var(&joinDelaySecs, "join-delay", "Join delay in seconds (repeat up to video count)")
+	flag.Var(&audioTrackAfterSec, "audio-track-after", "Add audio to a video-only publisher after N seconds (repeat per bot)")
+	flag.Var(&videoTrackAfterSec, "video-track-after", "Add camera to an audio-only publisher after N seconds (repeat per bot)")
 	flag.Var(&audioReadySec, "audio-ready-after", "Audio can become audible after N seconds from stream start (repeat up to video count)")
 	flag.Var(&syncShiftSec, "sync-shift", "Per-bot media time shift in seconds (positive=forward, negative=backward, repeat up to video count)")
 	flag.Var(&botDurationSec, "bot-duration", "Per-bot duration in seconds (0 means until EOF, repeat up to video count)")
@@ -2472,6 +2515,30 @@ func run() error {
 		resolvedJoinDelays[i] = joinDelaySecs[i]
 	}
 
+	resolvedAudioTrackAfter := make([]float64, participantCount)
+	resolvedVideoTrackAfter := make([]float64, participantCount)
+	for _, entry := range []struct {
+		name   string
+		values floatList
+		out    []float64
+	}{
+		{"audio-track-after", audioTrackAfterSec, resolvedAudioTrackAfter}, {"video-track-after", videoTrackAfterSec, resolvedVideoTrackAfter},
+	} {
+		if len(entry.values) > participantCount {
+			return fmt.Errorf("--%s exceeds participant count", entry.name)
+		}
+		for i, value := range entry.values {
+			if value < 0 {
+				return fmt.Errorf("--%s must be >=0", entry.name)
+			}
+			entry.out[i] = value
+		}
+	}
+	for i := range resolvedAudioTrackAfter {
+		if resolvedAudioTrackAfter[i] > 0 && resolvedVideoTrackAfter[i] > 0 {
+			return errors.New("delay only one track kind per bot")
+		}
+	}
 	resolvedAudioReady := make([]float64, participantCount)
 	for i := 0; i < len(audioReadySec) && i < participantCount; i++ {
 		if audioReadySec[i] < 0 {
@@ -2525,6 +2592,8 @@ func run() error {
 			AudioPath:            audioFiles[i],
 			JoinDelay:            time.Duration(resolvedJoinDelays[i] * float64(time.Second)),
 			AudioReady:           time.Duration(resolvedAudioReady[i] * float64(time.Second)),
+			AudioTrackAfter:      time.Duration(resolvedAudioTrackAfter[i] * float64(time.Second)),
+			VideoTrackAfter:      time.Duration(resolvedVideoTrackAfter[i] * float64(time.Second)),
 			SyncShift:            time.Duration(resolvedSyncShift[i] * float64(time.Second)),
 			Duration:             resolvedDurations[i],
 			Insecure:             insecure,

@@ -78,6 +78,7 @@ cleanup() {
     kill "$JANUS_MONITOR_PID"
     wait "$JANUS_MONITOR_PID" || true
   fi
+  if [[ -n "${TONE_MEDIA_DIR:-}" ]]; then rm -rf "$TONE_MEDIA_DIR"; fi
   log "Cleaning up local test stack"
   "$REPO_ROOT/bin/cassini" dev stack down --volumes "${STACK_TOPOLOGY[@]}" || true
 }
@@ -106,7 +107,7 @@ export CALL_URL
 log "Running recorder + publisher end-to-end"
 (
   cd "$REPO_ROOT/cassini-go-recorder"
-  ./e2e_with_publisher.sh
+  RETAIN_VIDEO=true ./e2e_with_publisher.sh
 )
 
 # Tolerance budget: video decodes only from the first fixture keyframe after
@@ -122,6 +123,18 @@ log "Running recorder + publisher end-to-end"
 # The default recorder policy needs its own gate: no A/V pairs is expected,
 # so inspect positive audio, zero video, and the SFU's outbound counters.
 log "Checking default audio-only capture with camera publishers"
+# Distinct frequencies identify each speaker through the mute rotations. Keep
+# their cameras live and run long enough to compare early and late turns.
+TONE_MEDIA_DIR="$(mktemp -d /tmp/cassini-capture-tones-XXXXXX)"
+TONE_MEDIA_PREFIXES=""
+for frequency in 440 880; do
+  prefix="$TONE_MEDIA_DIR/$frequency"
+  ffmpeg -y -v error -f lavfi -i "color=size=64x64:rate=30:duration=145" \
+    -c:v libvpx -g 15 -deadline realtime -cpu-used 5 -f ivf "$prefix.ivf"
+  ffmpeg -y -v error -f lavfi -i "sine=frequency=$frequency:sample_rate=48000:duration=145" \
+    -c:a libopus -b:a 32k -application voip -frame_duration 20 -ac 1 "$prefix.ogg"
+  TONE_MEDIA_PREFIXES="${TONE_MEDIA_PREFIXES:+$TONE_MEDIA_PREFIXES,}$prefix"
+done
 AUDIO_OUTPUT="${FINAL_OUTPUT%.mkv}-audio-only.mkv"
 JANUS_EVIDENCE="${AUDIO_OUTPUT%.mkv}-janus.json"
 JANUS_READY="${JANUS_EVIDENCE}.ready"
@@ -137,8 +150,12 @@ done
   cd "$REPO_ROOT/cassini-go-recorder"
   RETAIN_VIDEO=false OUTPUT="$AUDIO_OUTPUT" FINAL_OUTPUT="$AUDIO_OUTPUT" \
     REC_LOG="${REC_LOG%.log}-audio-only.log" PUB_LOG="${PUB_LOG%.log}-audio-only.log" \
-    PUB_USERS=2 ./e2e_with_publisher.sh
+    REC_DURATION=160 PUB_DURATION=145 PUB_USERS=2 JOIN_DELAYS=0,6 \
+    AUDIO_TRACK_AFTERS=20,0 VIDEO_TRACK_AFTERS=0,20 \
+    MEDIA_PREFIX="" MEDIA_PREFIXES="$TONE_MEDIA_PREFIXES" ./e2e_with_publisher.sh
 )
+rg -q 'adding delayed audio track' "${PUB_LOG%.log}-audio-only.log"
+rg -q 'adding delayed video track' "${PUB_LOG%.log}-audio-only.log"
 kill "$JANUS_MONITOR_PID"
 wait "$JANUS_MONITOR_PID"
 JANUS_MONITOR_PID=""
@@ -154,6 +171,17 @@ source = json.loads(sessions[0].read_text())
 assert source["capture_mode"] == "audio-only"
 assert source["logical_tracks"] and all(t["kind"] == "audio" for t in source["logical_tracks"])
 assert len(source["packet_streams"]) >= 2
+assert all(s["codec"].startswith("audio/") for s in source["packet_streams"])
+assert len(list(sessions[0].parent.rglob("*.rtplog"))) == len(source["packet_streams"])
+assert not any(p.suffix in {".ivf", ".h264", ".h265"} for p in sessions[0].parent.rglob("*"))
 print("PASS: audio-only source and final MKV retain separate audio tracks, zero video")
 PY_AUDIO
+# Exercise the real portable build with transcription disabled and no models.
+CASSINI_CACHE_ROOT="$TONE_MEDIA_DIR/empty-cache" CASSINI_DISALLOW_MODEL_DOWNLOAD=1 \
+  "$REPO_ROOT/bin/cassini" build "$AUDIO_OUTPUT" --transcription off \
+  --out "${AUDIO_OUTPUT%.mkv}.opus"
+python3 "$SCRIPT_DIR/verify-capture-tone-timing.py" --source "$AUDIO_OUTPUT" \
+  --published "${AUDIO_OUTPUT%.mkv}.opus" --publisher-log "${PUB_LOG%.log}-audio-only.log" \
+  | tee "${AUDIO_OUTPUT%.mkv}-timing.json"
+rm -rf "$TONE_MEDIA_DIR"
 log "CI integration run complete"

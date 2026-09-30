@@ -59,9 +59,11 @@ while running:
             plugin = info.get("plugin_specific", {})
             if plugin.get("type") != "subscriber" or not plugin.get("answered"):
                 continue
-            observed = samples.setdefault(str(handle), {"samples": 0, "audio_packets": 0, "video_packets": 0, "video_forwarding": False})
+            observed = samples.setdefault(str(handle), {"samples": 0, "audio_packets": 0, "video_packets": 0, "video_forwarding": False, "audio_offered": False})
             observed["samples"] += 1
             for stream in plugin.get("streams", []):
+                if stream.get("type") == "audio":
+                    observed["audio_offered"] = True
                 if stream.get("type") == "video" and stream.get("send") and stream.get("ready"):
                     observed["video_forwarding"] = True
             for media in info.get("webrtc", {}).get("media", {}).values():
@@ -74,6 +76,6 @@ while running:
         errors += 1
     time.sleep(0.25)
 Path(args.output).write_text(json.dumps({"subscribers": samples, "sampling_errors": errors}, indent=2) + "\n")
-if not samples or not all(s["audio_packets"] > 0 and s["video_packets"] == 0 and not s["video_forwarding"] for s in samples.values()):
-    raise SystemExit("FAIL: SFU must forward positive audio and zero video for every new subscriber")
-print(f"PASS: {len(samples)} subscribers forwarded audio and zero video")
+if not any(s["audio_packets"] > 0 for s in samples.values()) or not all((not s["audio_offered"] or s["audio_packets"] > 0) and s["video_packets"] == 0 and not s["video_forwarding"] for s in samples.values()):
+    raise SystemExit("FAIL: SFU must forward audio where offered, and zero video for every subscription")
+print(f"PASS: {sum(s['audio_packets'] > 0 for s in samples.values())} audio subscribers, {sum(not s['audio_offered'] for s in samples.values())} waiting subscriptions, zero video")

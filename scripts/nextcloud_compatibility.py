@@ -365,7 +365,7 @@ def main():
             reference = next(s for s in policy['baselines'] if s['id'] == policy['reference'])
             oldest = next(s for s in policy['baselines'] if s['nextcloud_version'] == policy['minimum'])
             rows = [{"script": script, "nextcloud_image": reference['images']['nextcloud']} for script in
-                    ('ci-e2e.sh', 'ci-e2e-private.sh', 'ci-e2e-rejoin.sh')]
+                    ('ci-e2e.sh', 'ci-e2e-private.sh', 'ci-e2e-rejoin.sh', 'ci-e2e-audio-only-rejoin.sh')]
             if oldest['id'] != reference['id']:
                 rows.append({"script": "ci-e2e.sh", "nextcloud_image": oldest['images']['nextcloud']})
         else:
