@@ -66,7 +66,7 @@ use the administrator's persisted **Capture video** choice, presented unchecked
 alongside retention during setup. Each admitted recording freezes that choice.
 Published portable `.opus` files contain audio only in either mode.
 
-A silent participant can have a connected transport without sending audio;
+When audio is offered, a silent participant can have a connected transport without sending audio;
 audio-only capture waits without repeatedly rebuilding that connection. An
 entire call with no usable audio fails clearly and produces no empty recording.
 Valid silent Opus packets remain usable audio.
