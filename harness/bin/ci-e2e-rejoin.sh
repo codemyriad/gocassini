@@ -75,6 +75,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   cd "$RECORDER_DIR"
   go run ./cmd/gocassini \
     --mode talk \
+    --retain-video="${RETAIN_VIDEO:-true}" \
     --call-url "$CALL_URL" \
     --name "$NAME_PREFIX" \
     --duration "$REC_DURATION" \

@@ -314,6 +314,17 @@ jobs:
           BOT_PASSWORD: "ci-bot-password"
           NEXTCLOUD_IMAGE: ${{ matrix.nextcloud_image }}
         run: ./harness/bin/${{ matrix.script }}
+      - name: Upload capture policy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-evidence-${{ strategy.job-index }}
+          path: |
+            /tmp/gocassini-ci*-janus.json
+            /tmp/gocassini-ci*-timing.json
+          retention-days: 7
+          if-no-files-found: ignore
+
 
   # ci-e2e-mute.sh exercises a heavier 3-publisher mute scenario. It now gates
   # audio rotation on recorder-side stream_opened evidence, so it runs once
