@@ -11,8 +11,8 @@ const group = (keys: string[]) => ({
   fine: Object.fromEntries(keys.map((key) => [key, forever()])),
 });
 const initialSettings = () => ({
-  version: 3, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
-  recordings: forever(),
+  version: 4, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
+  recordings: forever(), nextcloud: { meetings: forever() },
   history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]),
   current: forever(), logs: forever(),
 });
@@ -28,7 +28,13 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    expect(new URL(String(input), location.href).pathname).toBe("/operator/storage/retention");
+    const path = new URL(String(input), location.href).pathname;
+    if (path.endsWith("/preview")) return Response.json({
+      retire: 1, now: "2026-09-30", capability: true, historyNotice: "Versions and trash are separate.",
+      usage: { count: 2, bytes: 123 }, meetings: [{ name: "old.opus", action: "retire", deadline: "2026-09-29" }, { name: "unknown.opus", action: "skip", reason: "Missing history" }],
+    });
+    if (path.endsWith("/operations")) return Response.json({ operations: [{ name: "old.opus", status: "delete-intent", updatedAt: "2026-09-30", error: "Recovery will retry" }], nextOffset: 1 });
+    expect(path).toBe("/operator/storage/retention");
     if (init?.method === "PUT") {
       puts += 1;
       if ((init.headers as Record<string, string>)["If-Match"] !== `"${saved.revision}"`) {
@@ -57,7 +63,7 @@ describe("retention settings in the browser", () => {
     mountPanel();
     await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).toBeVisible();
     await expect.element(page.getByText("Keep forever", { exact: true }).first()).toBeVisible();
-    expect(page.getByRole("checkbox").all().length).toBe(4);
+    expect(page.getByRole("checkbox").all().length).toBe(5);
     await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeDisabled();
     await expect.element(page.getByLabelText("Sweep time", { exact: true })).toHaveValue("02:00");
     await expect.element(page.getByLabelText("Timezone", { exact: true })).toHaveValue("UTC");
@@ -111,6 +117,25 @@ describe("retention settings in the browser", () => {
     await page.getByLabelText("Source recordings days").fill("1");
     await page.getByRole("button", { name: "Save retention settings" }).click();
     await expect.element(page.getByRole("status")).toBeVisible();
+  });
+
+  it("previews one whole-meeting policy and displays recovery status", async () => {
+    mountPanel();
+    const meetings = page.getByRole("group", { name: "Whole meetings", exact: true });
+    await expect.element(meetings).toBeVisible();
+    await meetings.getByRole("checkbox").click();
+    await meetings.getByRole("button", { name: "7 days", exact: true }).click();
+    expect(puts).toBe(0);
+    await page.getByRole("button", { name: "Preview Nextcloud retention" }).click();
+    await expect.element(page.getByText("old.opus: retire; expires 2026-09-29")).toBeVisible();
+    await expect.element(page.getByText("unknown.opus: skip; Missing history")).toBeVisible();
+    await meetings.getByRole("button", { name: "30 days", exact: true }).click();
+    expect(page.getByText("old.opus: retire; expires 2026-09-29").all()).toHaveLength(0);
+    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await expect.element(page.getByText("Retention settings saved.")).toBeVisible();
+    expect(saved.nextcloud).toEqual({ meetings: { forever: false, count: 30, unit: "days" } });
+    await page.getByRole("button", { name: "Refresh Nextcloud operation status" }).click();
+    await expect.element(page.getByText("old.opus: delete-intent (2026-09-30); Recovery will retry")).toBeVisible();
   });
 
   it.each([1280, 390])("has no horizontal overflow at %ipx", async (width) => {

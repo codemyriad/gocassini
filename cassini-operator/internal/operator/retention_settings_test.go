@@ -91,7 +91,7 @@ func TestRetentionMigrateDays(t *testing.T) {
 	if c.loadErr != nil {
 		t.Fatal(c.loadErr)
 	}
-	if c.settings.Version != 3 || c.settings.Recordings.Count != 62 || c.settings.History.Policy.Count != 21 || c.settings.History.Fine["superseded"].Count != 31 || c.settings.Current.Count != 90 || !c.settings.Logs.Forever {
+	if c.settings.Version != 4 || c.settings.Recordings.Count != 62 || c.settings.History.Policy.Count != 21 || c.settings.History.Fine["superseded"].Count != 31 || c.settings.Current.Count != 90 || !c.settings.Logs.Forever {
 		t.Fatalf("unexpected converted settings: %+v", c.settings)
 	}
 	if err := c.save(c.settings); err != nil {
@@ -161,7 +161,7 @@ func TestRetentionRouteIsAdminAndRequiresStandaloneToken(t *testing.T) {
 	}
 	found := false
 	for _, route := range manifest.External.Routes {
-		if strings.Contains(route.URL, `storage\/retention`) && !strings.Contains(route.URL, "sweep") {
+		if strings.Contains(route.URL, `storage\/retention`) && !strings.Contains(route.URL, "sweep") && !strings.Contains(route.URL, "preview") && !strings.Contains(route.URL, "operations") {
 			found = true
 			if route.Access != "ADMIN" || route.Verb != "GET,PUT" {
 				t.Fatal(route)
@@ -251,7 +251,7 @@ func TestRetentionMigrateRecordingPolicy(t *testing.T) {
 				}
 				return
 			}
-			if c.loadErr != nil || c.settings.Version != 3 || c.settings.Revision != 7 || c.settings.Recordings != tc.want {
+			if c.loadErr != nil || c.settings.Version != 4 || c.settings.Revision != 7 || c.settings.Recordings != tc.want {
 				t.Fatalf("migration: %+v, error %v", c.settings, c.loadErr)
 			}
 			if err = c.save(c.settings); err != nil {
@@ -262,5 +262,31 @@ func TestRetentionMigrateRecordingPolicy(t *testing.T) {
 				t.Fatalf("reload: %+v, error %v", reloaded.settings, reloaded.loadErr)
 			}
 		})
+	}
+}
+
+func TestWholeMeetingSettingsRejectUnsupportedSchema(t *testing.T) {
+	for _, nextcloud := range []string{`{"recordings":{"forever":true},"transcriptions":{"forever":true}}`, `{}`, `{"meetings":{"count":0,"unit":"days"}}`} {
+		settings := defaultRetentionSettings()
+		raw, err := json.Marshal(settings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &object); err != nil {
+			t.Fatal(err)
+		}
+		object["nextcloud"] = json.RawMessage(nextcloud)
+		raw, err = json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(t.TempDir(), "retention.json")
+		if err := os.WriteFile(file, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if c := newRetentionConfig(file); c.loadErr == nil {
+			t.Fatalf("accepted %s", nextcloud)
+		}
 	}
 }

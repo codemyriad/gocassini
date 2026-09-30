@@ -26,14 +26,24 @@ type retentionGroup struct {
 	Policy          retentionPolicy            `json:"policy"`
 	Fine            map[string]retentionPolicy `json:"fine"`
 }
+type nextcloudRetentionSettings struct {
+	Meetings retentionPolicy `json:"meetings"`
+}
+
+func defaultNextcloudRetention() nextcloudRetentionSettings {
+	return nextcloudRetentionSettings{Meetings: retentionPolicy{Forever: true}}
+}
+func (s nextcloudRetentionSettings) validate() error { return s.Meetings.validate() }
+
 type retentionSettings struct {
-	Schedule   retentionSchedule `json:"schedule"`
-	Version    int               `json:"version"`
-	Revision   int               `json:"revision"`
-	Recordings retentionPolicy   `json:"recordings"`
-	History    retentionGroup    `json:"history"`
-	Current    retentionPolicy   `json:"current"`
-	Logs       retentionPolicy   `json:"logs"`
+	Nextcloud  nextcloudRetentionSettings `json:"nextcloud"`
+	Schedule   retentionSchedule          `json:"schedule"`
+	Version    int                        `json:"version"`
+	Revision   int                        `json:"revision"`
+	Recordings retentionPolicy            `json:"recordings"`
+	History    retentionGroup             `json:"history"`
+	Current    retentionPolicy            `json:"current"`
+	Logs       retentionPolicy            `json:"logs"`
 }
 
 type retentionSchedule struct {
@@ -68,7 +78,7 @@ func defaultRetentionSettings() retentionSettings {
 		}
 		return g
 	}
-	return retentionSettings{Schedule: defaultRetentionSchedule(), Version: 3, Recordings: retentionPolicy{Forever: true}, History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
+	return retentionSettings{Schedule: defaultRetentionSchedule(), Version: 4, Nextcloud: defaultNextcloudRetention(), Recordings: retentionPolicy{Forever: true}, History: group(historyKinds), Current: retentionPolicy{Forever: true}, Logs: retentionPolicy{Forever: true}}
 }
 func (g retentionGroup) policyFor(kind string) retentionPolicy {
 	if g.Mode == "fine" {
@@ -112,8 +122,11 @@ func (s retentionSettings) validate() error {
 	if err := s.Schedule.validate(); err != nil {
 		return err
 	}
-	if s.Version != 3 || s.Revision < 0 {
+	if s.Version != 4 || s.Revision < 0 {
 		return errors.New("unsupported retention settings version or revision")
+	}
+	if err := s.Nextcloud.validate(); err != nil {
+		return err
 	}
 	if err := s.Recordings.validate(); err != nil {
 		return fmt.Errorf("recordings: %w", err)
@@ -171,13 +184,14 @@ func newRetentionConfig(path string) *retentionConfig {
 	// Version 1's audio policy already controlled whole-bundle deletion.
 	// Preserve that deadline when upgrading an existing settings file.
 	var stored struct {
-		Schedule   *retentionSchedule `json:"schedule"`
-		Version    int                `json:"version"`
-		Revision   int                `json:"revision"`
-		Recordings json.RawMessage    `json:"recordings"`
-		History    retentionGroup     `json:"history"`
-		Current    retentionPolicy    `json:"current"`
-		Logs       retentionPolicy    `json:"logs"`
+		Nextcloud  *nextcloudRetentionSettings `json:"nextcloud"`
+		Schedule   *retentionSchedule          `json:"schedule"`
+		Version    int                         `json:"version"`
+		Revision   int                         `json:"revision"`
+		Recordings json.RawMessage             `json:"recordings"`
+		History    retentionGroup              `json:"history"`
+		Current    retentionPolicy             `json:"current"`
+		Logs       retentionPolicy             `json:"logs"`
 	}
 	dec := json.NewDecoder(io.LimitReader(f, 65537))
 	dec.DisallowUnknownFields()
@@ -216,6 +230,12 @@ func newRetentionConfig(path string) *retentionConfig {
 
 	if err == nil && s.Version == 2 {
 		err = s.migrateRetentionDays()
+	}
+	if err == nil && s.Version == 3 {
+		s.Version = 4
+		s.Nextcloud = defaultNextcloudRetention()
+	} else if stored.Nextcloud != nil {
+		s.Nextcloud = *stored.Nextcloud
 	}
 	if err == nil {
 		err = s.validate()
@@ -335,6 +355,19 @@ func (rt *Runtime) retentionHandler(w http.ResponseWriter, r *http.Request) {
 		if err := s.validate(); err != nil {
 			writeJSONError(w, 400, err.Error())
 			return
+		}
+		if !s.Nextcloud.Meetings.Forever {
+			rt.remoteRetentionMu.RLock()
+			remote := rt.remoteRetention
+			rt.remoteRetentionMu.RUnlock()
+			if !remoteRetentionImplemented || remote == nil {
+				writeJSONError(w, 409, "Remote retention is unavailable until the installed lifecycle is certified")
+				return
+			}
+			if err := remote.remoteRetentionCapability(r.Context()); err != nil {
+				writeJSONError(w, 409, err.Error())
+				return
+			}
 		}
 		s.Revision++
 		if err := c.save(s); err != nil {

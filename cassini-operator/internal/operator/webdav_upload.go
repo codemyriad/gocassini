@@ -234,6 +234,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			return true
 		}
 		readAs := caller
+		w.Header().Set("Cache-Control", "no-store")
 
 		if relPath == "catalog.json" {
 			c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
