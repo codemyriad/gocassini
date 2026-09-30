@@ -589,8 +589,8 @@
     revealWord(selection[edge], "nearest");
   }
 
-  async function write(request: AnnotationRequest) {
-    const written = await session.write(request, "stretch");
+  function write(request: AnnotationRequest) {
+    const written = session.write(request, "stretch");
     if (written) void clearSelection();
     return written;
   }
@@ -603,8 +603,8 @@
     const active = (root.getRootNode() as Document | ShadowRoot).activeElement;
     if (!active || active === document.body) rail?.focus();
   }
-  async function tagStretch(event: CustomEvent<TagPick>) {
-    if (range && (await write(markRequest(event.detail, timeRange(range.startMs, range.endMs))))) recent = event.detail;
+  function tagStretch(event: CustomEvent<TagPick>) {
+    if (range && write(markRequest(event.detail, timeRange(range.startMs, range.endMs)))) recent = event.detail;
   }
   const saveMove = () =>
     selectedMark && range && write({ ops: moveStretchOps(selectedMark.item.id, selectedMark.tag, range.startMs, range.endMs) });
