@@ -102,6 +102,7 @@ jobs:
           ./harness/bin/test-installed-backend-url.sh
           ./harness/bin/test-stack-resume.sh
           ./harness/bin/test-post-boundary-stream.sh
+          python3 ./harness/bin/test-audio-only-rejoin.py
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-negative-manifest.sh
           ./harness/bin/test-harness-prerequisites.sh

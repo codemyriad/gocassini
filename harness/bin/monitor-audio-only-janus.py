@@ -70,7 +70,12 @@ while running:
                 kind = media.get("type")
                 if kind in ("audio", "video"):
                     key = kind + "_packets"
-                    observed[key] = max(observed[key], media.get("stats", {}).get("out", {}).get("packets", 0))
+                    packets = media.get("stats", {}).get("out", {}).get("packets", 0)
+                    if kind == "audio" and packets > observed[key]:
+                        now = time.time_ns()
+                        observed.setdefault("first_audio_wall_ns", now)
+                        observed["last_audio_wall_ns"] = now
+                    observed[key] = max(observed[key], packets)
     except (urllib.error.URLError, RuntimeError, KeyError):
         # A handle can disappear between list_handles and handle_info.
         errors += 1
