@@ -242,7 +242,14 @@ could not use.
 - **Insight documents are ordinary Nextcloud files** in the account that asked
   for them. Deleting one deletes the answer; the run row on the app volume
   remains — with the question text on it — until the volume is deleted.
-- **Published recordings persist in Nextcloud Files** independently of Cassini.
+- **Nextcloud retention is opt-in and defaults to forever.** Separate audio and
+  transcription policies can replace active audio with portable JSON, then remove
+  the active meeting and Cassini serving projections. Receipt content and annotation
+  snapshots for expired meetings are scrubbed; minimal identity/retirement records
+  remain to prevent resurrection. Nextcloud manages previous versions and Deleted
+  files under its own policies. These operations do not erase backups, independently
+  downloaded copies or saved insights. See [Nextcloud retention](nextcloud-retention.md).
+- **Published meetings remain in Nextcloud Files unless removed under these policies**.
   Removing or disabling the Cassini app does not delete them; they are managed as
   ordinary Nextcloud files.
 - **Uninstalling the app keeps its data by default.**

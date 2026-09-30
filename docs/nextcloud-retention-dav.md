@@ -1,34 +1,67 @@
-# Whole-meeting eviction validation
+# Nextcloud retention storage contract
 
-Run operator tests with `cd cassini-operator && go test ./...`, retention UI tests
-with `npm test --workspace=cassini-app -- src/RetentionPanel.browser.test.ts
-src/operator/retention.test.ts`, and both app builds with
-`npm run build:all --workspace=cassini-app`.
+This harness is preserved for the experimental audio-only branch. Its runtime
+fixture is not an end-to-end test of the deployed settings/preview/sweep routes.
+No installed matrix was available during this split. Before PR 2, run both the
+deployed route acceptance flow and recipient-name/ACL validation on NC 33-35.
 
-The deletion tests cover original job/attempt dates, immutable ages, conditional
-DELETE, identity/path/ETag conflicts, lost responses, missing files before intent,
-restored identities, busy jobs, rerun admission, independent conflict recovery,
-unreadable journals and blocked projection rebuilds.
+Remote retention requires a conditional overwrite of the existing file, followed
+by a same-directory MOVE with `Overwrite: F`. DELETE must name the exact current
+leaf and carry its current strong ETag. A failed precondition is a conflict, not
+permission to retry unconditionally or recreate a file and its shares.
 
-For installed acceptance, use a fresh disposable local-home NC 33.0.9, 34 and 35
-matrix with AppAPI and serverinfo. Publish a synthetic meeting through the
-operator, retain its structured successful job history and use an old recording
-completion date. Do not use an existing user's seed corpus. For each installation:
+```
+original leaf -> conditional PUT -> verify ID and bytes -> conditional MOVE
+                                                         |
+                                 verify ID and bytes <---+
+```
 
-1. Confirm participant playback, transcript and notes before expiry.
-2. Read the deployed ADMIN settings route; keep all container policies forever.
-3. Set only `nextcloud.meetings` to one day using the returned revision/ETag.
-4. Preview through the deployed route. Verify the original-date deadline,
-   retire action, file count/bytes and unchanged active Files content.
-5. Run the deployed sweep route and inspect its operation status. Confirm owner
-   and recipient Files no longer expose the meeting, Cassini reads fail, and
-   lists/search/annotations no longer return its content.
-6. Restart the operator and verify the tombstone remains. Restore the original
-   managed file identity in the disposable installation, sweep again and verify
-   it is removed. Replacements with a different identity must remain untouched.
+Transport success alone does not prove preservation. The operation journal must
+record intent before mutation and settle lost responses by independently reading
+the old/new paths, file identity and bytes. Only caller-authorized Nextcloud reads
+may serve content. Remote hrefs are validated against the exact requested leaf;
+mutation targets are constructed locally. Credential-bearing requests do not
+follow redirects.
 
-A harness that instantiates its own runtime does not prove these deployed routes.
-An old audio-only/preconverted fixture is not a deletion-only baseline. Record
-versions, build commit, settings, preview, sweep, access checks and restart
-results without credentials. No installed matrix was available in the split
-execution environment; that validation remains outstanding.
+Run the synthetic installed probe against the development harness:
+
+```sh
+./bin/cassini dev stack up --resume --services appapi \
+  --cassini installed-exapp --recording-backend none --build
+harness/bin/validate-retention-dav.py
+```
+
+The probe creates disposable users, group and files, uses the installed ExApp's
+act-as-user credentials, checks stale mutations, collisions, file identity,
+direct/group/Team/downstream shares, public-link attributes, recipient rename and
+revocation, then deletes its own users and group. It never uses seed recordings.
+`RETENTION_PROBE_URL` and `CASSINI_EXAPP_CONTAINER` select another disposable
+installed harness. Credentials are read in memory and are not printed.
+
+The isolated matrix in `harness/bin/validate-retention-matrix.py` repeats these
+checks against the pinned Nextcloud 33.0.9, 34.0.0 and 35.0.0 baselines. It also
+checks public-password access, unchanged download-restriction behavior, a version
+restore, AppAPI route upgrade, concurrent annotation recovery, a harness-created runtime sweep
+and the installed headless viewer using a preconverted fixture. `validate-retention-lifecycle.sh` uses the
+production Go lifecycle and freshly built CLI against the installed AppAPI DAV.
+
+File-ID equality alone does not establish effective permission equivalence for a
+rule depending on MIME type or filename. The runtime capability check rejects
+unverified storage/access-control configurations; see
+[Nextcloud retention](nextcloud-retention.md#supported-storage-and-access).
+
+Cassini does not purge Nextcloud history/trash or change instance retention
+configuration. Active-file removal is not a measurement of physical reclaimed
+storage.
+
+## Deployed-route acceptance still required
+
+On each fresh disposable installation, publish a synthetic meeting with durable
+successful job/attempt history and an old recording-completion date. Keep all
+container policies forever. Read the deployed settings and revision; preview
+finite Nextcloud policies; save with If-Match; invoke the deployed sweep; inspect
+operation status; verify owner and recipient Files plus Cassini serving,
+transcript, notes and search. Restart and verify recovery/tombstones. Check both
+audio-only conversion and equal-deadline full deletion. Do not use the user's
+existing corpus, and do not substitute a preconverted browser fixture for this
+flow. Record the build commit and results without credentials.

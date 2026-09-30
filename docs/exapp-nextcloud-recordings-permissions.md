@@ -46,3 +46,16 @@ be checked against current Nextcloud access before it affects the returned list.
 This branch removes the previous mode choice and automatic migration. See
 [cutover instructions](./direct-shares-cutover.md) for moving an older archive
 into the private root and assigning shares.
+
+## Retained transcription documents
+
+[Nextcloud retention](nextcloud-retention.md) preserves the file identity when it
+replaces active audio with JSON. Direct, group, Team, downstream and public shares
+continue to target that same file. Cassini resolves current recipient paths and
+checks current shares for reads, search, context and annotations. Per-user archive
+responses are `no-store`. Final expiry installs a durable serving/publication
+tombstone before deleting the active leaf; index rebuilds cannot recreate it.
+
+Name/MIME-dependent access-control rules and unsupported storage configurations
+block finite remote retention. The ADMIN preview/operations routes ship with the
+versioned manifest; ordinary users cannot configure retention or view its inventory.

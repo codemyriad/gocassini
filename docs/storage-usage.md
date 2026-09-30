@@ -111,3 +111,11 @@ go test ./...
 Vitest browser checks mount the real Svelte UI with synthetic operator responses;
 they do not contact a running operator or real recordings. Storage screenshots
 are written to gitignored `cassini-app/node_modules/.cache/vitest-screenshots/`.
+
+## Nextcloud retention accounting
+
+The [Nextcloud retention preview](nextcloud-retention.md) separately reports active
+audio and retained JSON file counts and logical bytes from live DAV metadata.
+These values are not decoded transcript sizes or estimates of physical savings.
+Previous versions and Deleted files are Nextcloud-managed and their capacity is
+unknown. The container category/date charts retain their existing scope.
