@@ -598,13 +598,13 @@ type settingsResponse struct {
 }
 
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
-// "field set to empty"; quality is required.
+// "field set to empty". Omitted quality preserves the automatic/user policy source.
 type settingsUpdate struct {
 	RetainVideo          *bool     `json:"retain_video"`
 	TranscriptionEnabled *bool     `json:"transcription_enabled"`
 	ActiveModel          *string   `json:"active_model"`
 	ActiveRevision       *string   `json:"active_revision"`
-	Quality              string    `json:"quality"`
+	Quality              *string   `json:"quality,omitempty"`
 	DeviceOverride       *string   `json:"device_override"`
 	TranscriptionTerms   *[]string `json:"transcription_terms"`
 	// SearchAliases is a pointer for the same reason as the fields above: nil
@@ -696,20 +696,21 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	quality := strings.ToLower(strings.TrimSpace(in.Quality))
-	switch quality {
-	case sttQualityFast, sttQualityBalanced, sttQualityBest:
-	default:
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("quality must be one of fast, balanced, best (got %q)", in.Quality))
-		return
-	}
-
 	// Start from the current settings so unspecified override fields are
 	// preserved; the host display fields are refreshed below.
 	current := rt.currentSettings()
 	updated := current
-	updated.Quality = quality
-	updated.Source = sttSourceUser
+	if in.Quality != nil {
+		quality := strings.ToLower(strings.TrimSpace(*in.Quality))
+		switch quality {
+		case sttQualityFast, sttQualityBalanced, sttQualityBest:
+		default:
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("quality must be one of fast, balanced, best (got %q)", *in.Quality))
+			return
+		}
+		updated.Quality = quality
+		updated.Source = sttSourceUser
+	}
 	if in.RetainVideo != nil {
 		updated.RetainVideo = *in.RetainVideo
 	}

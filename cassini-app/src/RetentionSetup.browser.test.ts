@@ -23,6 +23,7 @@ let failCapturePut: boolean;
 let failCaptureGet: boolean;
 let capturePolicy: { quality: string; retain_video?: boolean };
 let capturePuts: number;
+let captureWrites: Record<string, unknown>[];
 let failAccount: boolean;
 let holdSave: boolean;
 let releaseSave: (() => void) | null;
@@ -48,6 +49,7 @@ beforeEach(() => {
   failCaptureGet = false;
   capturePolicy = { quality: "balanced" };
   capturePuts = 0;
+  captureWrites = [];
   failAccount = false;
   holdSave = false;
   releaseSave = null;
@@ -73,6 +75,7 @@ beforeEach(() => {
     if (path === "/operator/settings") {
       if (method === "GET") return Response.json(failCaptureGet ? { error: "Capture policy unavailable" } : capturePolicy, { status: failCaptureGet ? 503 : 200 });
       capturePuts += 1;
+      captureWrites.push(JSON.parse(init!.body as string));
       if (failCapturePut) return Response.json({ error: "Could not save capture policy" }, { status: 500 });
       capturePolicy = { ...capturePolicy, ...JSON.parse(init!.body as string) };
       return Response.json(capturePolicy);
@@ -346,6 +349,7 @@ async function openStorage() {
     await expect.element(dialog()).not.toBeInTheDocument();
     expect(capturePolicy.retain_video).toBe(false);
     expect(capturePuts).toBe(1);
+    expect(captureWrites).toEqual([{ retain_video: false }]);
     expect(saved.revision).toBe(1);
   });
   it("requires explicit opt-in and keeps failed saves open and retryable", async () => {

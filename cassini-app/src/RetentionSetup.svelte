@@ -28,8 +28,7 @@
   }
   async function saveCapturePolicy() {
     // Retention revision is setup completion. Persist capture consent first.
-    const current = await operatorClient.getSettings();
-    captureSettings = await operatorClient.putSettings({ quality: current.quality, retain_video: retainVideo });
+    captureSettings = await operatorClient.putSettings({ retain_video: retainVideo });
     savedRetainVideo = captureSettings.retain_video === true;
     if (savedRetainVideo !== retainVideo) throw new Error("Capture video choice was not saved. Please retry.");
   }

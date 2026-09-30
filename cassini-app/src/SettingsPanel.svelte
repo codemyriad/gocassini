@@ -261,7 +261,7 @@
             retain_video: retainVideo,
             active_model: activeModel,
             active_revision: activeRevision,
-            quality,
+            ...(quality !== savedQuality ? { quality } : {}),
             device_override: deviceOverride,
             transcription_terms: transcriptionTermsText.split(/\r?\n/),
             search_aliases: parseSearchAliases(searchAliasesText),

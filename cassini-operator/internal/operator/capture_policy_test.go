@@ -212,3 +212,71 @@ func TestCapturePolicySettingsUseExistingAdminAuthorization(t *testing.T) {
 		}
 	}
 }
+
+func TestCaptureOnlyUpdatePreservesQualityPolicy(t *testing.T) {
+	for _, source := range []string{sttSourceAuto, sttSourceUser} {
+		for _, body := range []string{`{"retain_video":false}`, `{"retain_video":true}`, `{}`} {
+			t.Run(source+body, func(t *testing.T) {
+				rt := newSettingsTestRuntime(t)
+				rt.settings.Source = source
+				rt.settings.Quality = sttQualityBest
+				rec := httptest.NewRecorder()
+				rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+				}
+				loaded, err := LoadOrInitSettings(rt.settingsPath)
+				if err != nil || loaded.Source != source || loaded.Quality != sttQualityBest {
+					t.Fatalf("capture-only save changed quality policy: %+v, %v", loaded, err)
+				}
+			})
+		}
+	}
+}
+
+func TestCaptureOnlySaveStillAllowsAutomaticHardwareMigration(t *testing.T) {
+	rt := newSettingsTestRuntime(t)
+	rec := httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"retain_video":true}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	stored, err := LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := detectSettings()
+	stored.HardwareFingerprint = "previous-host"
+	stored.Quality = sttQualityFast
+	if want.Quality == stored.Quality {
+		stored.Quality = sttQualityBest
+	}
+	if err := Save(rt.settingsPath, stored); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadOrInitSettings(rt.settingsPath)
+	if err != nil || loaded.Source != sttSourceAuto || loaded.Quality != want.Quality || !loaded.RetainVideo {
+		t.Fatalf("automatic policy did not adapt after consent save: %+v, %v", loaded, err)
+	}
+}
+
+func TestExplicitQualityUpdateStillPinsPolicy(t *testing.T) {
+	for _, quality := range []string{"balanced", "fast", "best", "", "ultra"} {
+		t.Run(quality, func(t *testing.T) {
+			rt := newSettingsTestRuntime(t)
+			rec := httptest.NewRecorder()
+			body, _ := json.Marshal(map[string]any{"quality": quality, "retain_video": true})
+			rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(string(body))))
+			if quality == "" || quality == "ultra" {
+				if rec.Code != http.StatusBadRequest || rt.currentSettings().Source != sttSourceAuto || rt.currentSettings().RetainVideo {
+					t.Fatalf("invalid quality changed settings: %d %+v", rec.Code, rt.currentSettings())
+				}
+				return
+			}
+			loaded, err := LoadOrInitSettings(rt.settingsPath)
+			if rec.Code != http.StatusOK || err != nil || loaded.Source != sttSourceUser || loaded.Quality != quality || !loaded.RetainVideo {
+				t.Fatalf("explicit quality was not pinned: %d %+v %v", rec.Code, loaded, err)
+			}
+		})
+	}
+}
