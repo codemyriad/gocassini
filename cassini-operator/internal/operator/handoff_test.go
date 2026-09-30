@@ -161,8 +161,11 @@ func TestRerunHandlerDoesNotBlockWhenBuildQueueFull(t *testing.T) {
 }
 
 func TestRequeueDispatcherDeliversQueuedRowsAfterRestartSweep(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
+	// Startup sweeps the store before starting workers. Use a bare runtime so
+	// the dispatcher cannot claim a seeded row while the sweep is running.
+	rt, cleanup := newBareSealRuntime(t)
 	defer cleanup()
+	rt.buildQueue = make(chan buildTask, 4)
 
 	// Rows that exist only in the DB — as after an operator restart — must
 	// survive the startup sweep as queued and be delivered by the dispatcher
@@ -180,9 +183,28 @@ func TestRequeueDispatcherDeliversQueuedRowsAfterRestartSweep(t *testing.T) {
 		t.Fatalf("interrupted = %d, want 0 (queued build/publish rows must stay queued)", interrupted)
 	}
 
-	rt.kickRequeueScan()
-	waitForJobState(t, rt.store, "stranded-build", "succeeded")
-	waitForJobState(t, rt.store, "stranded-publish", "succeeded")
+	if backlog := rt.dispatchQueuedBuildTasks(map[string]struct{}{}); backlog {
+		t.Fatal("expected the build task to be delivered, not backlogged")
+	}
+	select {
+	case task := <-rt.buildQueue:
+		if task.JobID != "stranded-build" || task.AttemptNumber != 1 || task.ArtifactRunPath != runPath {
+			t.Fatalf("unexpected redelivered build task = %#v", task)
+		}
+	default:
+		t.Fatal("stranded build/queued row was not re-delivered after a restart sweep")
+	}
+	if backlog := rt.dispatchQueuedPublishTasks(map[string]struct{}{}); backlog {
+		t.Fatal("expected the publish task to be delivered, not backlogged")
+	}
+	select {
+	case task := <-rt.publishQueue:
+		if task.JobID != "stranded-publish" || task.AttemptNumber != 1 {
+			t.Fatalf("unexpected redelivered publish task = %#v", task)
+		}
+	default:
+		t.Fatal("stranded publish/queued row was not re-delivered after a restart sweep")
+	}
 }
 
 func TestRecordSlotFreedBeforeTalkDeliveryCompletes(t *testing.T) {
