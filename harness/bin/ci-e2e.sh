@@ -74,6 +74,10 @@ STACK_TOPOLOGY=(
 )
 
 cleanup() {
+  if [[ -n "${JANUS_MONITOR_PID:-}" ]] && kill -0 "$JANUS_MONITOR_PID" 2>/dev/null; then
+    kill "$JANUS_MONITOR_PID"
+    wait "$JANUS_MONITOR_PID" || true
+  fi
   log "Cleaning up local test stack"
   "$REPO_ROOT/bin/cassini" dev stack down --volumes "${STACK_TOPOLOGY[@]}" || true
 }
@@ -115,4 +119,41 @@ log "Running recorder + publisher end-to-end"
   --tolerance 1.5 \
   --min-elapsed 15
 
+# The default recorder policy needs its own gate: no A/V pairs is expected,
+# so inspect positive audio, zero video, and the SFU's outbound counters.
+log "Checking default audio-only capture with camera publishers"
+AUDIO_OUTPUT="${FINAL_OUTPUT%.mkv}-audio-only.mkv"
+JANUS_EVIDENCE="${AUDIO_OUTPUT%.mkv}-janus.json"
+JANUS_READY="${JANUS_EVIDENCE}.ready"
+python3 "$SCRIPT_DIR/monitor-audio-only-janus.py" --output "$JANUS_EVIDENCE" --ready-file "$JANUS_READY" &
+JANUS_MONITOR_PID=$!
+for ((i=0; i<40; i++)); do
+  [[ -f "$JANUS_READY" ]] && break
+  kill -0 "$JANUS_MONITOR_PID" 2>/dev/null || { echo "Janus monitor failed to start" >&2; exit 1; }
+  sleep 0.25
+done
+[[ -f "$JANUS_READY" ]] || { echo "Janus monitor not ready" >&2; exit 1; }
+(
+  cd "$REPO_ROOT/cassini-go-recorder"
+  RETAIN_VIDEO=false OUTPUT="$AUDIO_OUTPUT" FINAL_OUTPUT="$AUDIO_OUTPUT" \
+    REC_LOG="${REC_LOG%.log}-audio-only.log" PUB_LOG="${PUB_LOG%.log}-audio-only.log" \
+    PUB_USERS=2 ./e2e_with_publisher.sh
+)
+kill "$JANUS_MONITOR_PID"
+wait "$JANUS_MONITOR_PID"
+JANUS_MONITOR_PID=""
+python3 - "$AUDIO_OUTPUT" <<'PY_AUDIO'
+import json, pathlib, subprocess, sys
+output = pathlib.Path(sys.argv[1])
+streams = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(output)]))["streams"]
+assert sum(s["codec_type"] == "audio" for s in streams) >= 2, "missing participant audio"
+assert not any(s["codec_type"] == "video" for s in streams), "persisted video"
+sessions = list((output.parent / "sessions").glob(output.stem + "_*/session.json"))
+assert len(sessions) == 1, "missing/ambiguous capture artifact"
+source = json.loads(sessions[0].read_text())
+assert source["capture_mode"] == "audio-only"
+assert source["logical_tracks"] and all(t["kind"] == "audio" for t in source["logical_tracks"])
+assert len(source["packet_streams"]) >= 2
+print("PASS: audio-only source and final MKV retain separate audio tracks, zero video")
+PY_AUDIO
 log "CI integration run complete"

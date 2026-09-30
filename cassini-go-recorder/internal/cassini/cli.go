@@ -49,6 +49,7 @@ func salvageableRecording(err error, bundle RunBundle) bool {
 }
 
 type recordOptions struct {
+	retainVideo       bool
 	callURL           string
 	talkBaseURL       string
 	talkRoomToken     string
@@ -86,6 +87,7 @@ func recordConfig(opts recordOptions, recordingPath string) config.Config {
 		Mode:                    "talk",
 		OutputPath:              recordingPath,
 		CleanupIntermediate:     !opts.keepIntermediate,
+		RetainVideo:             opts.retainVideo,
 		Duration:                time.Duration(opts.durationSeconds) * time.Second,
 		StopWhenRoomEmpty:       opts.stopWhenRoomEmpty,
 		RoomEmptyGrace:          time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
@@ -177,6 +179,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs.Float64Var(&opts.roomEmptyGraceSec, "room-empty-grace", 30, "seconds to wait before stopping after room becomes empty")
 	fs.BoolVar(&opts.insecure, "insecure", false, "disable TLS certificate verification (testing only)")
 	fs.StringVar(&opts.turnMode, "turn-mode", "all", "TURN usage mode: off, udp-only, all")
+	fs.BoolVar(&opts.retainVideo, "retain-video", false, "also capture camera video (default: audio only)")
 	fs.BoolVar(&opts.keepIntermediate, "keep-intermediate", false, "keep recorder intermediate work files inside the run bundle")
 	fs.BoolVar(&opts.simulate, "simulate", false, "write a local synthetic capture bundle for testing")
 	fs.IntVar(&opts.simTracks, "sim-tracks", 3, "number of synthetic tracks in simulate mode")
@@ -233,6 +236,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 	manifest := RunManifest{
 		SourceMode:   cfg.Mode,
+		CaptureMode:  cfg.CaptureMode(),
 		RecorderName: opts.name,
 	}
 	if recordErr != nil {
@@ -302,6 +306,7 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 		}
 		manifest := RunManifest{
 			SourceMode:   cfg.Mode,
+			CaptureMode:  cfg.CaptureMode(),
 			RecorderName: opts.name,
 		}
 		if recordErr != nil {

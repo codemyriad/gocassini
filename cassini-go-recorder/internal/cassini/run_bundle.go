@@ -20,6 +20,7 @@ type RunBundle struct {
 }
 
 type RunManifest struct {
+	CaptureMode  string           `json:"capture_mode,omitempty"`
 	Kind         string           `json:"kind"`
 	Version      string           `json:"version"`
 	CreatedAtUTC string           `json:"created_at_utc"`
