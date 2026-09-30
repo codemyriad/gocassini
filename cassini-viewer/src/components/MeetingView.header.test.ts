@@ -70,7 +70,7 @@ describe("MeetingView tagging", () => {
 
   it("says the tags changed after every write that succeeded", () => {
     expect(meetingViewSource).toContain(
-      'const marks = createMarksSession((result) => dispatch("tagsChanged", result));',
+      'const localMarks = createMarksSession((result) => dispatch("tagsChanged", result));',
     );
   });
 
