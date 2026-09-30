@@ -121,7 +121,9 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 	unlock := s.lockArtifacts(job.ID)
 	defer unlock()
 	var pending int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artifact_operations WHERE job_id=?`, job.ID).Scan(&pending); err != nil || pending != 0 {
+	if err := s.db.QueryRowContext(ctx, `SELECT
+ (SELECT count(*) FROM artifact_operations WHERE job_id=?) +
+ (SELECT count(*) FROM remote_retention_operation WHERE name=? AND status!='completed')`, job.ID, job.ID+".opus").Scan(&pending); err != nil || pending != 0 {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
 	var source string

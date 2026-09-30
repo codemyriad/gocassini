@@ -47,6 +47,24 @@ func runImportMeetingMetadata(ctx context.Context, args []string, stdout, stderr
 	if !exapp.appAPIActive() {
 		return fail(fmt.Errorf("import requires the AppAPI environment"))
 	}
+	cfg, code, err := loadConfig(nil, stderr)
+	if err != nil {
+		return fail(err)
+	}
+	if code != 0 {
+		return code
+	}
+	unlock, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		return fail(err)
+	}
+	defer unlock()
+	jobs, err := OpenStore(cfg.DBPath)
+	if err != nil {
+		return fail(err)
+	}
+	defer jobs.Close()
+	exapp.lifecycle = jobs
 	names, err := exapp.ownerRecordingNames(ctx, &http.Client{Timeout: ncProvisionTimeout})
 	if err != nil {
 		return fail(err)
@@ -55,18 +73,12 @@ func runImportMeetingMetadata(ctx context.Context, args []string, stdout, stderr
 	if err != nil {
 		return fail(err)
 	}
-	cfg, code, err := loadConfig(nil, stderr)
-	if err != nil {
-		return fail(err)
-	}
-	if code != 0 {
-		return code
-	}
 	store, err := openMeetingMetadataStore(meetingMetadataPath(cfg.DBPath), log.New(stderr, "metadata: ", 0))
 	if err != nil {
 		return fail(err)
 	}
 	defer store.Close()
+	store.lifecycle = jobs
 	for _, row := range rows {
 		if err := store.Put(ctx, row.id, row.name, row.entry); err != nil {
 			return fail(err)
