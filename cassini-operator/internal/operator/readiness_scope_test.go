@@ -151,3 +151,44 @@ func TestConnectionProbeAcceptsWarnFromTheRecorder(t *testing.T) {
 		t.Fatal("an unknown probe state was accepted")
 	}
 }
+
+// A Talk backend URL pointing at Cassini's own AppAPI proxy must say so.
+//
+// It produced "Could not read Talk settings. Check Nextcloud connectivity and
+// TLS" — true, and a dead end: the request was sent to the wrong service, and
+// connectivity was never the problem. Diagnosed on the demo from the outside.
+func TestMisconfiguredTalkBackendURLNamesItselfRatherThanBlamingTheNetwork(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	row := func() readinessCheck {
+		t.Helper()
+		for _, c := range rt.readiness(context.Background()).Checks {
+			if c.ID == "talk.discovery" {
+				return c
+			}
+		}
+		t.Fatal("talk.discovery missing")
+		return readinessCheck{}
+	}
+
+	rt.cfg.TalkBackendURL = "https://nc.test/index.php/apps/app_api/proxy/gocassini"
+	c := row()
+	if c.State != "needs_action" || c.Code != "talk_backend_url_invalid" {
+		t.Fatalf("proxy-shaped backend URL = %+v; want an actionable configuration fault", c)
+	}
+	if !strings.Contains(c.Message, "CASSINI_TALK_BACKEND_URL") {
+		t.Fatalf("the message does not name the setting to change: %q", c.Message)
+	}
+
+	// It must not fire on a legitimate subdirectory install.
+	rt.cfg.TalkBackendURL = "https://nc.test/nextcloud"
+	if c := row(); c.Code == "talk_backend_url_invalid" {
+		t.Fatalf("a subdirectory install was rejected: %+v", c)
+	}
+
+	// Nor on the documented default, which is to leave it unset.
+	rt.cfg.TalkBackendURL = ""
+	if c := row(); c.Code == "talk_backend_url_invalid" {
+		t.Fatalf("an unset override was reported as a fault: %+v", c)
+	}
+}

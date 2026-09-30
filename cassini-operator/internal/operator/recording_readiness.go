@@ -203,6 +203,41 @@ func testRoomToken(raw string) string {
 	return token
 }
 
+// appAPIProxyPath is how AppAPI addresses an ExApp through Nextcloud. A URL
+// containing it points at Cassini, never at Talk.
+const appAPIProxyPath = "/apps/app_api/proxy/"
+
+// talkBackendMisconfigured reports why the configured Talk backend URL cannot
+// be one, or "" when it is fine.
+//
+// CASSINI_TALK_BACKEND_URL is the base the operator calls Talk on. Talk's OWN
+// recording configuration needs the opposite direction — the AppAPI proxy URL
+// where Talk reaches Cassini — and the two are easy to swap, because both are
+// "the Talk backend URL" in conversation.
+//
+// Swapped, every Talk request goes through the proxy to Cassini itself,
+// Nextcloud answers with an HTML 404, nothing parses as OCS, and the probe
+// reports "Could not read Talk settings. Check Nextcloud connectivity and TLS"
+// — a true sentence whose remedy is a dead end, because connectivity and TLS
+// are fine and the request was simply sent to the wrong service. Diagnosed once
+// on the demo, from the outside, at the cost of an afternoon.
+//
+// A path alone is not the tell: Nextcloud legitimately lives under a
+// subdirectory. Addressing an ExApp through AppAPI is.
+func (rt *Runtime) talkBackendMisconfigured() string {
+	raw := strings.TrimSpace(rt.cfg.TalkBackendURL)
+	if raw == "" {
+		return ""
+	}
+	if u, err := url.Parse(raw); err == nil && strings.Contains(u.Path, appAPIProxyPath) {
+		return "Cassini's configured Talk backend URL addresses Cassini's own AppAPI proxy, so requests for Talk's settings never reach Talk. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override; Talk sends the correct backend URL with each recording request."
+	}
+	if rt.readinessBackendURL() == "" {
+		return "Cassini's configured Talk backend URL is not a usable base URL. It must be a plain http(s) URL with no query or fragment. Clear CASSINI_TALK_BACKEND_URL unless a deployment genuinely needs an override."
+	}
+	return ""
+}
+
 func (rt *Runtime) validTestRoom(raw string) bool {
 	return rt.readinessBackendURL() != "" && testRoomToken(raw) != ""
 }
@@ -450,7 +485,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 
 	if scope.talk && s.beginProbe("talk", started) {
 		var checks []readinessCheck
-		if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) {
+		if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) && rt.talkBackendMisconfigured() == "" {
 			var err error
 			checks, err = probe(ctx, room)
 			if err != nil {
@@ -553,7 +588,11 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		add("talk.handoff", "needs_action", "recording_secret_missing", "Cassini could not provision its recording credential. Check its persistent storage.", "connect_talk")
 	}
-	if !rt.validTestRoom(state.TestRoomURL) {
+	if refusal := rt.talkBackendMisconfigured(); refusal != "" {
+		// Ahead of the room check: no room can make this work, and "choose a
+		// test room" would send a reader to fix the one thing that is fine.
+		add("talk.discovery", "needs_action", "talk_backend_url_invalid", refusal, "")
+	} else if !rt.validTestRoom(state.TestRoomURL) {
 		add("talk.discovery", "not_verified", "test_room_required", "Choose a dedicated Talk room to verify the connection without recording it.", "test_room")
 	} else if len(probes) == 0 {
 		// The message this replaces named both cases — "Previous results have
