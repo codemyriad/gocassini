@@ -45,6 +45,22 @@ Behavior:
 - returns `503` when recording capacity is full
 - creates **no** job row on recording-capacity rejection
 
+## Capture policy
+
+`GET /settings` returns `retain_video` as a boolean, false by default. The
+administrator-only `PUT /settings` accepts an optional `retain_video` boolean
+alongside the required `quality` field. Omitting it preserves the saved choice;
+explicit false disables future video capture. The app offers this choice during
+installation alongside retention and later in Settings. Hardware detection and
+unrelated settings updates preserve explicit consent.
+
+Recording admission resolves the trusted saved policy and stores `retain_video`
+and `capture_mode` (`audio-only` or `audio-video`) in the job's request JSON.
+Caller-supplied recording parameters cannot override it. The admitted child is
+launched with that immutable snapshot, including an explicit `--retain-video`
+boolean. A later Save changes subsequent captures. Older jobs without a capture
+mode remain unknown; build/publish reruns reuse their existing media.
+
 ## List jobs
 
 ```http
