@@ -93,6 +93,10 @@ export const checkLabels: Record<string, string> = {
   host: "Recording host",
   "host.workdir": "Recording volume",
   "host.tmpdir.writable": "Temporary space",
+  "host.workdir.space": "Recording volume free space",
+  "host.tmpdir.space": "Temporary free space",
+  "host.ffmpeg": "FFmpeg",
+  "host.ffprobe": "FFprobe",
 };
 export const stateLabels: Record<CheckState, string> = {
   passed: "Passed", warn: "Needs attention", needs_action: "Needs action", not_verified: "Not verified",

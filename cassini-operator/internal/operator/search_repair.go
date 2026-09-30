@@ -39,6 +39,16 @@ func (s *searchRepairState) snapshot() (running bool, ran bool, report searchBac
 	return s.running, s.ran, s.report, s.err, s.finished
 }
 
+// The in-process repair reads the Nextcloud owner archive. A local catalog can
+// be checked for gaps, but that does not give this repair a local archive reader.
+func (rt *Runtime) canBackfillSearch() bool {
+	if rt.searchStore == nil || rt.resolvedPublishSinkName() != publishSinkNextcloudFiles {
+		return false
+	}
+	cfg, err := LoadExAppConfig()
+	return err == nil && cfg.Active
+}
+
 // startSearchBackfill runs the backfill in this process, against the index the
 // operator already has open.
 //
