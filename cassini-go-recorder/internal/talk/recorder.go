@@ -2244,6 +2244,9 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 		peer.sendLocalICESignal("candidate", map[string]any{"candidate": candidatePayload})
 	})
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		if !allowsCaptureKind(r.cfg.RetainVideo, track.Kind().String()) {
+			return
+		}
 		if !r.addTrackReader() {
 			return
 		}

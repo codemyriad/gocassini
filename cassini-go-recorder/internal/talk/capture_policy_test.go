@@ -2,8 +2,11 @@ package talk
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,5 +144,97 @@ func TestOfferedAudioAvailability(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Fatalf("%q: got=%v err=%v", tc.media, got, err)
 		}
+	}
+}
+
+func TestCapturePolicyRecoveryMatrix(t *testing.T) {
+	now := time.Now()
+	for _, audioOnly := range []bool{false, true} {
+		for _, offered := range []bool{false, true} {
+			for _, connected := range []bool{false, true} {
+				for _, pending := range []bool{false, true} {
+					for _, packets := range []int{0, 1} {
+						name := fmt.Sprintf("audioOnly=%t/offered=%t/connected=%t/pending=%t/packets=%d", audioOnly, offered, connected, pending, packets)
+						t.Run(name, func(t *testing.T) {
+							state := peerReconcileState{audioOnly: audioOnly, noEligibleAudio: !offered, createdAt: now.Add(-time.Hour), offerReceived: true, answeredAt: now.Add(-time.Hour), iceConnected: connected, hasPendingAnswer: pending, pendingAnswerSince: now.Add(-time.Second)}
+							want := actionRebuild
+							switch {
+							case pending:
+								want = actionRetryAnswer
+							case audioOnly && !offered:
+								want = actionRequestOffer
+							case packets > 0 || audioOnly && connected:
+								want = actionNone
+							}
+							if got := reconcileActionFor(now, state, packets); got != want {
+								t.Fatalf("got %s want %s", got, want)
+							}
+							state.rebuildCount = maxCaptureRebuilds
+							state.answerRetransmits = maxAnswerRetransmits
+							if got := reconcileActionFor(now, state, packets); got == actionRebuild || got == actionRetryAnswer {
+								t.Fatalf("exceeded recovery budget: %s", got)
+							}
+						})
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestNoAudioFailsBeforePublishing(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "empty.mkv")
+	artifact, err := newSessionCaptureArtifact(output, "", "room", "recorder", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer artifact.close()
+	r := &Recorder{sessionArtifact: artifact, sessionPath: artifact.sessionPath, finalOutputPath: output}
+	err = r.composeFinalOutputFromSessionArtifact()
+	if err == nil || !strings.Contains(err.Error(), "no captured audio") {
+		t.Fatalf("unclear no-audio result: %v", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("empty recording published: %v", err)
+	}
+}
+
+func TestAudioOnlyGapsDoNotClaimSilenceIsFailure(t *testing.T) {
+	r := &Recorder{inCallEver: map[string]struct{}{"quiet": {}}, identityByRemote: map[string]participantIdentity{}}
+	gaps := r.detectCaptureGaps(nil)
+	if len(gaps) != 1 || gaps[0].Reason != "no-audio-observed" || !strings.Contains(gaps[0].warning(), "may be silent") {
+		t.Fatalf("misleading silence diagnostic: %+v", gaps)
+	}
+}
+
+func TestValidSilentOpusComposesAudioOnlyRecording(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg required")
+	}
+	output := filepath.Join(t.TempDir(), "silence.mkv")
+	a, err := newSessionCaptureArtifact(output, "", "room", "recorder", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.close()
+	start := time.Now()
+	id, err := a.openStream("sid", "pid", "Silent participant", trackDescriptor{kind: "audio", codec: "audio/opus", clockRate: 48000}, 1, 111, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		if err := a.writeRTP(id, &rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 111, SSRC: 1, SequenceNumber: uint16(i), Timestamp: uint32(i * 960)}, Payload: []byte{0xf8, 0xff, 0xfe}}, start.Add(time.Duration(i)*20*time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.close(); err != nil {
+		t.Fatal(err)
+	}
+	r := &Recorder{sessionArtifact: a, sessionPath: a.sessionPath, finalOutputPath: output, segmentsDir: t.TempDir()}
+	if err := r.composeFinalOutputFromSessionArtifact(); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(output); err != nil || info.Size() == 0 {
+		t.Fatalf("silent audio failed: %v", err)
 	}
 }
