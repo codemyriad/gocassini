@@ -778,36 +778,42 @@ func TestHostChecklistShowsOnlyTheRowsWorthActingOn(t *testing.T) {
 	}
 }
 
-func TestHostChecklistPreservesToolAndSpaceProblems(t *testing.T) {
-	for _, id := range []string{"ffmpeg", "ffprobe", "workdir.space", "tmpdir.space"} {
-		for status, want := range map[string]string{"warn": "warn", "fail": "needs_action"} {
-			t.Run(id+"/"+status, func(t *testing.T) {
-				rt, cleanup := readinessRuntime(t)
-				defer cleanup()
-				rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
-					{"id":"workdir","status":"ok","summary":"working directory"},
-					{"id":"workdir.writable","status":"ok","summary":"writable"},
-					{"id":"tmpdir.writable","status":"ok","summary":"writable"},
-					{"id":"`+id+`","status":"`+status+`","summary":"a problem","advice":"fix it"}
-				]`)
-				checks, err := rt.runDoctorProbe(context.Background())
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(checks) != 3 || checks[2].ID != "host."+id || checks[2].State != want {
-					t.Fatalf("doctor %s %s lost its finding: %+v", id, status, checks)
-				}
-				if worstReadinessState(checks) != want || len(checks[2].Steps) != 1 {
-					t.Fatalf("doctor problem lost its verdict or remedy: %+v", checks)
-				}
-			})
+// The panel shows two host rows and no others, whatever doctor reports and
+// whatever state it reports it in.
+//
+// Surfacing ffmpeg, ffprobe or free space "only when they fail" was tried and
+// reverted: it puts a row in front of a Nextcloud administrator exactly when
+// there is nothing useful they can do with it, which is the version of this the
+// 2026-09-25 review removed rather than a milder one. doctor still reports all
+// of it on a terminal, where the audience knows what ffprobe is.
+func TestHostChecklistShowsTwoRowsWhateverDoctorReports(t *testing.T) {
+	for _, status := range []string{"ok", "warn", "fail"} {
+		rt, cleanup := readinessRuntime(t)
+		rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
+			{"id":"workdir","status":"ok","summary":"working directory"},
+			{"id":"workdir.writable","status":"ok","summary":"writable"},
+			{"id":"tmpdir.writable","status":"ok","summary":"writable"},
+			{"id":"workdir.space","status":"`+status+`","summary":"space"},
+			{"id":"tmpdir.space","status":"`+status+`","summary":"space"},
+			{"id":"ffmpeg","status":"`+status+`","summary":"ffmpeg"},
+			{"id":"ffprobe","status":"`+status+`","summary":"ffprobe"}
+		]`)
+		checks, err := rt.runDoctorProbe(context.Background())
+		if err != nil {
+			cleanup()
+			t.Fatalf("probe(%s): %v", status, err)
 		}
+		var ids []string
+		for _, c := range checks {
+			ids = append(ids, c.ID)
+		}
+		if len(ids) != 2 || ids[0] != "host.workdir" || ids[1] != "host.tmpdir.writable" {
+			cleanup()
+			t.Fatalf("doctor %q produced rows %v; want exactly host.workdir and host.tmpdir.writable", status, ids)
+		}
+		cleanup()
 	}
 }
-
-// workdir and workdir.writable are one fact to a reader. Collapsed, the row must
-// never read better than its worse half — a writable directory on a volume that
-// is not there is not a working recording volume.
 func TestCollapsedWorkdirRowKeepsTheWorseVerdict(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()

@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -336,9 +335,17 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 // hostChecklistRows is the small set the checklist shows, out of everything
 // doctor reports.
 //
-// Healthy tool and free-space checks stay out of the compact panel. Warnings
-// and failures must still appear: a missing tool or a filling disk needs action
-// even when both directories are writable.
+// doctor keeps all of it: it is a standalone host diagnostic and its text is a
+// shipped format, and ffmpeg or a filling disk is exactly what someone wants
+// from a terminal. The panel is a different audience with a different question
+// — "is there something here I can act on" — and free space, ffprobe and the
+// rest answered it with rows nobody ever acted on.
+//
+// Surfacing them only when they warn or fail was tried and reverted: a row that
+// appears exactly when an administrator can do nothing useful about it is the
+// version of this the review removed, not a milder one. If a filling disk should
+// raise something, it should raise a row that says what to do about it — not
+// ffprobe's presence, reported to somebody who has never heard of ffprobe.
 //
 // workdir and workdir.writable are one fact to a reader: whether Cassini can
 // use its recording volume. They are reported separately because they fail for
@@ -352,16 +359,6 @@ func hostChecklistRows(byID map[string]readinessCheck) []readinessCheck {
 	}
 	if row, ok := byID["tmpdir.writable"]; ok {
 		rows = append(rows, row)
-	}
-	var additional []string
-	for id, row := range byID {
-		if id != "workdir" && id != "workdir.writable" && id != "tmpdir.writable" && row.State != "passed" {
-			additional = append(additional, id)
-		}
-	}
-	sort.Strings(additional)
-	for _, id := range additional {
-		rows = append(rows, byID[id])
 	}
 	return rows
 }

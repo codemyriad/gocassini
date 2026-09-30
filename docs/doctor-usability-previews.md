@@ -10,7 +10,7 @@ to include the gallery. Ordinary builds omit it. This flag belongs on review
 deployments; it does not add an operator endpoint or change server diagnostics.
 
 Append `#doctor-preview=` to the app URL to open the scenario index, or
-`#doctor-preview=host-tools` to open a specific case. The index contains links
+`#doctor-preview=storage-blocked` to open a specific case. The index contains links
 to every case. It works with the standalone app and the Nextcloud embedded page.
 
 Checks, credential edits, test preparation and re-indexing run only in tab-local

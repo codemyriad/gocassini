@@ -4,12 +4,22 @@ import { createPreviewClient, doctorScenarios, scenarioReport } from "./doctorSc
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it("keeps optional search problems separate from recording failures", () => {
-  for (const id of ["search-partial", "search-running", "search-failed", "transcription-warning"]) {
+  for (const id of ["search-partial", "search-running", "search-failed"]) {
     expect(scenarioReport(id).recording_state).toBe("passed");
     expect(scenarioReport(id).state).toBe("warn");
   }
-  expect(scenarioReport("host-tools").recording_state).toBe("needs_action");
-  expect(scenarioReport("low-disk").recording_state).toBe("warn");
+});
+
+// The gallery must not model rows the panel does not show, or a reviewer signs
+// off on a checklist that does not exist. ffmpeg, ffprobe, free space and
+// optional transcription were removed in the 2026-09-25 review.
+it("models no row the checklist no longer has", () => {
+  const removed = ["processing", "test", "host.ffmpeg", "host.ffprobe", "host.workdir.space", "host.tmpdir.space"];
+  for (const scenario of doctorScenarios) {
+    for (const check of scenarioReport(scenario.id).checks) {
+      expect(removed).not.toContain(check.id);
+    }
+  }
 });
 
 it("simulates a repair without network calls, duplicate actions or shared state", async () => {

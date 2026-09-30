@@ -11,12 +11,9 @@ export const doctorScenarios = [
   { id: "recording-handoff", title: "Recording backend needs connecting", description: "Review the handoff drawer, deployment choices and advanced instructions." },
   { id: "storage-blocked", title: "Recording storage is blocked", description: "Recording cannot start. The storage action explains its destination." },
   { id: "setup-unreadable", title: "Saved configuration is unreadable", description: "Persistent setup needs repair; credentials cannot be confirmed." },
-  { id: "host-tools", title: "FFmpeg and FFprobe are missing", description: "Host failures and their remedies remain visible in the checklist." },
-  { id: "low-disk", title: "Recording disk space is low", description: "A host warning calls for attention while recording remains possible." },
   { id: "search-partial", title: "Archive search is incomplete", description: "Audio is ready. Re-index now simulates progress and completion in this tab." },
   { id: "search-running", title: "Re-indexing is running", description: "Repair progress appears without a duplicate repair button." },
   { id: "search-failed", title: "The last re-index failed", description: "The failed repair stays visible, with a simulated retry available." },
-  { id: "transcription-warning", title: "Transcription model unavailable", description: "Optional transcription warns without calling audio recording broken." },
   { id: "old-findings", title: "Passing checks are two days old", description: "Age is shown separately from the verdict; simulated checks refresh timestamps." },
   { id: "refresh-error", title: "Refreshing diagnostics fails", description: "Previously loaded rows become unverified and show the connection error." },
 ] as const;
@@ -90,16 +87,10 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
         { label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing" },
         { label: "Disable and re-enable Cassini in Nextcloud, which re-runs its setup" },
       ] }); break;
-    case "host-tools":
-      for (const tool of ["ffmpeg", "ffprobe"]) set({ id: `host.${tool}`, state: "needs_action", code: tool, message: `${tool} not found in PATH`, steps: [{ label: `install ${tool} and ensure it is available on PATH` }], checked_at }); break;
-    case "low-disk":
-      set({ id: "host.workdir.space", state: "warn", code: "workdir.space", message: "working directory free space: 768.0 MiB available at /recordings", steps: [{ label: "consider freeing space in /recordings to avoid mid-run failures" }], checked_at }); break;
     case "search-partial": case "search-running": case "search-failed":
       set({ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "The search index records 9 indexed meeting(s); 3 archive Opus recordings without index rows. The checked archive has recordings outside search coverage." +
         (id === "search-running" ? " Re-indexing is running now." : id === "search-failed" ? " The last re-index did not finish: the archive could not be read." : ""),
         action: "recheck", repair: id === "search-running" ? undefined : "backfill_search", steps: [{ label: "Re-index the 3 recording(s) with no index row or an unverified bundle" }], checked_at }); break;
-    case "transcription-warning":
-      set({ id: "processing", state: "warn", code: "transcription_unavailable", message: "Optional transcription is unavailable because the configured model is not installed. Audio recording remains available.", action: "settings" }); break;
   }
   updateVerdict(report);
   return report;
