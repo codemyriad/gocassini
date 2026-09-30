@@ -142,6 +142,7 @@ describe("first-run retention review in the browser", () => {
     await page.viewport(1280, 1000);
     await open();
     await expect.element(page.getByRole("heading", { name: "Who can see recordings" })).toBeVisible();
+    await expect.element(page.getByRole("checkbox", { name: "Capture video", exact: true })).toBeVisible();
     expect(page.getByRole("checkbox").all()).toHaveLength(5);
     expect(puts).toBe(0);
     await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeDisabled();
