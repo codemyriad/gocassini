@@ -87,17 +87,20 @@
         {#if settings.nextcloud}
         <section class="op-tint p-4 grid gap-3">
           <h3 class="font-semibold">Nextcloud Files</h3>
-          <RetentionPolicyField bind:policy={settings.nextcloud.meetings} label="Whole meetings" />
-          <p class="text-sm">Deletes the published meeting, including its audio, transcription and meeting notes. The meeting disappears from shared Files and Cassini.</p>
+          <p class="text-sm">Experimental audio-only retention: recipient share names may still end in .opus after audio removal. Recipient-name reconciliation is not implemented yet.</p>
+          <RetentionPolicyField bind:policy={settings.nextcloud.recordings} label="Recordings (audio)" />
+          <RetentionPolicyField bind:policy={settings.nextcloud.transcriptions} label="Transcriptions and meeting data" />
+          <p class="text-sm">Transcriptions must be kept at least as long as audio. Audio expiry leaves the transcription and meeting notes. Transcription expiry removes the whole active meeting. Equal deadlines remove the meeting directly.</p>
           <p class="text-sm">Ages use the original recording date, including existing managed meetings. Nextcloud manages previous versions and Deleted files; their storage usage is unknown.</p>
           <button class="btn btn-secondary justify-self-start" type="button" on:click={previewNextcloud}>Preview Nextcloud retention</button>
           {#if preview && previewSettings === JSON.stringify(settings)}
             <div role="status">
-              <p>{preview.retire} meeting removals due as of {preview.now}.</p>
+              <p>{preview.convert} audio conversions; {preview.retire} meeting removals due as of {preview.now}.</p>
               {#if !preview.capability}<p>{preview.reason}</p>{/if}
               <p>{preview.historyNotice}</p>
-              <p>Active Nextcloud meetings: {preview.usage.count} files, {preview.usage.bytes.toLocaleString()} logical bytes.</p>
-              <ul>{#each preview.meetings as effect}<li>{effect.name}: {effect.action}{effect.deadline ? `; expires ${effect.deadline}` : ""}{effect.reason ? `; ${effect.reason}` : ""}</li>{/each}</ul>
+              {#if preview.audio}<p>Active Nextcloud audio: {preview.audio.count} files, {preview.audio.bytes.toLocaleString()} logical bytes.</p>{/if}
+              {#if preview.transcription}<p>Active Nextcloud transcription documents: {preview.transcription.count} files, {preview.transcription.bytes.toLocaleString()} logical bytes.</p>{/if}
+              <ul>{#each preview.meetings as effect}<li>{effect.name}: {effect.action}{effect.audioDeadline ? `; audio ${effect.audioDeadline}` : ""}{effect.transcriptionDeadline ? `; transcription ${effect.transcriptionDeadline}` : ""}{effect.reason ? `; ${effect.reason}` : ""}</li>{/each}</ul>
             </div>
           {/if}
           <button class="btn btn-secondary justify-self-start" type="button" on:click={() => loadOperations()}>Refresh Nextcloud operation status</button>

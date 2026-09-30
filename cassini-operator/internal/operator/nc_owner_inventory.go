@@ -84,7 +84,7 @@ func (c ExAppConfig) ownerRecordingNames(ctx context.Context, client *http.Clien
 			continue
 		}
 		name := path.Base(href.Path)
-		if !strings.HasSuffix(name, ".opus") || path.Base(name) != name {
+		if logicalMeetingName(name) == "" || path.Base(name) != name {
 			continue
 		}
 		for _, stat := range item.Propstat {
@@ -93,6 +93,15 @@ func (c ExAppConfig) ownerRecordingNames(ctx context.Context, client *http.Clien
 			}
 			fileID, parseErr := strconv.ParseInt(strings.TrimSpace(stat.FileID), 10, 64)
 			if parseErr == nil && fileID > 0 {
+				if strings.HasSuffix(name, transcriptionSuffix) {
+					m, ok, e := c.lifecycle.meetingLifecycle(ctx, name)
+					if e != nil {
+						return nil, e
+					}
+					if !ok || m.FileID != fileID || path.Base(m.Path) != name || m.State == "retired" || m.State == "retiring" {
+						continue
+					}
+				}
 				names[fileID] = name
 			}
 		}

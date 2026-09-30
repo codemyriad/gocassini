@@ -113,25 +113,27 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 		dateLabel := ""
 		if entry != nil {
 			var probe struct {
-				AudioPath string `json:"audioPath"`
-				DateLabel string `json:"dateLabel"`
+				AudioPath    string `json:"audioPath"`
+				DocumentPath string `json:"documentPath"`
+				DateLabel    string `json:"dateLabel"`
 			}
 			if json.Unmarshal(entry, &probe) != nil {
 				continue
 			}
-			name = catalogEntryOpusName(probe.AudioPath, "")
+			name = catalogEntryOpusName(meetingDocumentPath(probe.DocumentPath, probe.AudioPath), "")
 			dateLabel = probe.DateLabel
 		} else {
 			// The owner's current archive inventory gives the original name
 			// even if the recipient renamed their share mount. It also keeps
 			// unrelated files owned by the service account out of Cassini.
-			name = ownerNames[share.FileSource]
+			name = logicalMeetingName(ownerNames[share.FileSource])
 			if name == "" {
 				continue
 			}
 			fallback, marshalErr := json.Marshal(map[string]any{
 				"id":        strings.TrimSuffix(name, ".opus"),
 				"title":     strings.TrimSuffix(name, ".opus"),
+				"dateLabel": "Unknown date",
 				"audioPath": "./meetings/" + name,
 			})
 			if marshalErr != nil {
@@ -139,14 +141,37 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 			}
 			entry = fallback
 		}
-		if !strings.HasSuffix(name, ".opus") || path.Base(name) != name {
-			continue
-		}
-		if err := c.meetingNotRetired(ctx, name); err != nil {
-			if errors.Is(err, errMeetingRetired) {
+		if lifecycle, ok, err := c.lifecycle.meetingLifecycle(ctx, name); err != nil {
+			return directShareSnapshot{}, err
+		} else if ok {
+			if lifecycle.FileID != share.FileSource || lifecycle.State == "retiring" || lifecycle.State == "retired" {
 				continue
 			}
-			return directShareSnapshot{}, err
+			var fields map[string]any
+			if json.Unmarshal(entry, &fields) != nil {
+				continue
+			}
+			if known[share.FileSource] == nil {
+				if anchor, err := time.Parse(time.RFC3339Nano, lifecycle.Anchor); err == nil {
+					dateLabel = anchor.UTC().Format("2006-01-02")
+					fields["dateLabel"] = dateLabel
+				}
+			}
+			fields["documentPath"] = "./meetings/" + path.Base(lifecycle.Path)
+			fields["representation"] = lifecycle.Representation
+			if lifecycle.Representation == "transcription" {
+				delete(fields, "audioPath")
+				fields["mediaState"] = "evicted"
+			} else {
+				fields["mediaState"] = "available"
+			}
+			entry, err = json.Marshal(fields)
+			if err != nil {
+				return directShareSnapshot{}, err
+			}
+		}
+		if !strings.HasSuffix(name, ".opus") || path.Base(name) != name {
+			continue
 		}
 		if _, duplicate := result.paths[name]; duplicate {
 			continue
@@ -169,11 +194,12 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 }
 
 func (c ExAppConfig) recipientRecordingPath(ctx context.Context, client *http.Client, caller, opusName string, metadata *meetingMetadataStore) (string, error) {
+	opusName = logicalMeetingName(opusName)
+	if opusName == "" {
+		return "", fmt.Errorf("invalid recording name")
+	}
 	if err := c.meetingNotRetired(ctx, opusName); err != nil {
 		return "", errRecordingNotShared
-	}
-	if path.Base(opusName) != opusName || !strings.HasSuffix(opusName, ".opus") {
-		return "", fmt.Errorf("invalid recording name")
 	}
 	if cached, ok := c.sharePaths.get(caller, opusName); ok {
 		return cached, nil

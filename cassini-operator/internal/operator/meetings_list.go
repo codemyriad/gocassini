@@ -225,6 +225,7 @@ func applyMeetingsListFilter(entries []json.RawMessage, filter meetingsListFilte
 			DateLabel    string `json:"dateLabel"`
 			RoomID       string `json:"roomId"`
 			AudioPath    string `json:"audioPath"`
+			DocumentPath string `json:"documentPath"`
 			ArtifactPath string `json:"artifactPath"`
 		}
 		// A malformed entry is not this endpoint's to adjudicate — the exporter
@@ -242,7 +243,7 @@ func applyMeetingsListFilter(entries []json.RawMessage, filter meetingsListFilte
 		}
 		// Tag before date, for the same reason room is: the undated count must
 		// mean meetings that would otherwise have been listed.
-		if filter.tag != "" && !filter.tagged[catalogEntryOpusName(probe.AudioPath, probe.ArtifactPath)] {
+		if filter.tag != "" && !filter.tagged[catalogEntryOpusName(meetingDocumentPath(probe.DocumentPath, probe.AudioPath), probe.ArtifactPath)] {
 			excluded.Total++
 			continue
 		}

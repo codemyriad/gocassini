@@ -14,7 +14,7 @@ func TestMeetingLifecycleSurvivesReopenAndConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	m := meetingLifecycle{Name: "meeting.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/meeting.opus", State: "active", Anchor: "2026-01-01T00:00:00Z", AnchorSource: "recording-completed"}
+	m := meetingLifecycle{Name: "meeting.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/meeting.opus", Representation: "opus", State: "active", Anchor: "2026-01-01T00:00:00Z", AnchorSource: "recording-completed"}
 	if err = s.adoptMeetingLifecycle(ctx, m); err != nil {
 		t.Fatal(err)
 	}
@@ -30,6 +30,9 @@ func TestMeetingLifecycleSurvivesReopenAndConflicts(t *testing.T) {
 	if err = s.adoptMeetingLifecycle(ctx, m); err == nil {
 		t.Fatal("identity replacement accepted")
 	}
+	if _, err = s.db.Exec(`UPDATE meeting_lifecycle SET representation='transcription',document_path=? WHERE name=?`, ncRecordingsRoot+"/meetings/meeting"+transcriptionSuffix, m.Name); err != nil {
+		t.Fatal(err)
+	}
 	s.Close()
 	s, err = OpenStore(file)
 	if err != nil {
@@ -38,7 +41,7 @@ func TestMeetingLifecycleSurvivesReopenAndConflicts(t *testing.T) {
 	defer s.Close()
 	cfg := ExAppConfig{lifecycle: s}
 	rel, err := cfg.currentOwnerMeetingPath(ctx, m.Name)
-	if err != nil || rel != m.Path {
+	if err != nil || rel != ncRecordingsRoot+"/meetings/meeting"+transcriptionSuffix {
 		t.Fatalf("locator: %q %v", rel, err)
 	}
 	if _, err = s.db.Exec(`UPDATE meeting_lifecycle SET state='retiring' WHERE name=?`, m.Name); err != nil {
@@ -53,7 +56,7 @@ func TestRetiredProjectionCannotBeRebuilt(t *testing.T) {
 	rt, close := newBareSealRuntime(t)
 	defer close()
 	ctx := context.Background()
-	m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", State: "active", Anchor: "2026-01-01T00:00:00Z", AnchorSource: "recording-completed"}
+	m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", Representation: "opus", State: "active", Anchor: "2026-01-01T00:00:00Z", AnchorSource: "recording-completed"}
 	if err := rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
 		t.Fatal(err)
 	}
@@ -81,5 +84,32 @@ func TestRetiredProjectionCannotBeRebuilt(t *testing.T) {
 	var count int
 	if err = search.db.QueryRow(`SELECT COUNT(*) FROM segment_ref`).Scan(&count); err != nil || count != 0 {
 		t.Fatal("expired text returned to index", err)
+	}
+}
+
+func TestDeletionLifecycleUpgradesWithoutLosingTombstones(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "jobs.db")
+	store, err := OpenStore(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`ALTER TABLE meeting_lifecycle DROP COLUMN representation`,
+		`ALTER TABLE meeting_lifecycle DROP COLUMN document_id`,
+		`INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source) VALUES('m.opus',42,'Cassini/meetings/m.opus','retired','2020-01-01T00:00:00Z','recording-completed')`,
+	} {
+		if _, err := store.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.Close()
+	store, err = OpenStore(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m, ok, err := store.meetingLifecycle(context.Background(), "m.opus")
+	if err != nil || !ok || m.State != "retired" || m.Representation != "opus" || m.Anchor != "2020-01-01T00:00:00Z" {
+		t.Fatalf("lost deletion history: %+v %v", m, err)
 	}
 }

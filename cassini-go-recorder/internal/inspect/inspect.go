@@ -60,6 +60,14 @@ type streamSummary struct {
 }
 
 func InspectPath(out io.Writer, path string) error {
+	if doc, ok, err := ReadTranscriptionFile(path); ok {
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "transcription=%s meeting_id=%s media=evicted duration_ms=%d payloads=%d\n", Token(path), Token(doc.Manifest.Meeting.ID), doc.Manifest.Meeting.DurationMS, len(doc.Payloads))
+		return nil
+	}
+
 	if artifactPath, ok := detectSessionArtifactPath(path); ok {
 		return inspectSessionArtifact(out, artifactPath)
 	}

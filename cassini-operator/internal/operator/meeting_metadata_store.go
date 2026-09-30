@@ -59,13 +59,14 @@ func (s *meetingMetadataStore) Put(ctx context.Context, fileID int64, opusName s
 		return fmt.Errorf("invalid meeting metadata key")
 	}
 	var probe struct {
-		DateLabel string `json:"dateLabel"`
-		AudioPath string `json:"audioPath"`
+		DateLabel    string `json:"dateLabel"`
+		AudioPath    string `json:"audioPath"`
+		DocumentPath string `json:"documentPath"`
 	}
 	if err := json.Unmarshal(entry, &probe); err != nil {
 		return fmt.Errorf("decode meeting metadata: %w", err)
 	}
-	if catalogEntryOpusName(probe.AudioPath, "") != opusName {
+	if catalogEntryOpusName(meetingDocumentPath(probe.DocumentPath, probe.AudioPath), "") != opusName {
 		return fmt.Errorf("meeting metadata does not describe %s", opusName)
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO meeting_metadata

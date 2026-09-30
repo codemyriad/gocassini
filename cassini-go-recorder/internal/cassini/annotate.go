@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	inspectpkg "gocassini/internal/inspect"
 	"gocassini/internal/portable"
 )
 
@@ -648,9 +649,11 @@ func annotationBoundDuration(doc *portable.Annotations, files ...annotateSource)
 // ---------------------------------------------------------------- reading
 
 type annotateSource struct {
-	path     string
-	tags     map[string]string
-	manifest portable.Manifest
+	retained        []byte
+	checkpointToken string
+	path            string
+	tags            map[string]string
+	manifest        portable.Manifest
 	// doc is nil when the file carries no annotations, or carries them in a
 	// format this build does not know, which unsupported then says.
 	doc         *portable.Annotations
@@ -660,11 +663,23 @@ type annotateSource struct {
 func (s annotateSource) audioDigest() string { return s.manifest.Integrity.OpusSHA256 }
 
 func readAnnotateSource(path string) (annotateSource, error) {
-	manifest, tags, err := readPortableMeetingManifest(path)
+	var retained []byte
+	var manifest portable.Manifest
+	var tags map[string]string
+	var err error
+	if document, ok, e := inspectpkg.ReadTranscriptionFile(path); ok {
+		if e != nil {
+			return annotateSource{}, e
+		}
+		manifest = document.Manifest
+		retained, err = os.ReadFile(path)
+	} else {
+		manifest, tags, err = readPortableMeetingManifest(path)
+	}
 	if err != nil {
 		return annotateSource{}, err
 	}
-	source := annotateSource{path: path, tags: tags, manifest: manifest}
+	source := annotateSource{path: path, tags: tags, manifest: manifest, retained: retained}
 	doc, err := portable.ParseAnnotations(manifest.Annotations)
 	switch {
 	case errors.Is(err, portable.ErrAnnotationsFormatUnsupported):
@@ -703,6 +718,33 @@ func writeAnnotateDocument(ctx context.Context, source annotateSource, resolvedO
 	intendedJSON, err := json.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("encode annotations: %w", err)
+	}
+	if source.retained != nil {
+		retained, err := portable.ReadTranscription(source.retained)
+		if err != nil {
+			return nil, err
+		}
+		checkpoint := retained.Checkpoint
+		if source.checkpointToken != "" {
+			checkpoint.StateToken = source.checkpointToken
+		}
+		checkpoint.Revision = int64(doc.Revision)
+		output, err := portable.RewriteTranscriptionAnnotations(source.retained, intendedJSON, checkpoint)
+		if err != nil {
+			return nil, err
+		}
+		stage, err := createPortableStagePath(resolvedOut)
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(stage)
+		if err = os.WriteFile(stage, output, 0600); err != nil {
+			return nil, err
+		}
+		if err = commitPortableMeetingOutput(stage, resolvedOut); err != nil {
+			return nil, err
+		}
+		return intendedJSON, nil
 	}
 	intended, err := decodePortableMeetingDocument(intendedJSON)
 	if err != nil {

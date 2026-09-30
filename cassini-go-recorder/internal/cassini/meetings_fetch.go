@@ -17,12 +17,12 @@ func runMeetingsFetch(ctx context.Context, args []string, stdout, stderr io.Writ
 	fs := flag.NewFlagSet("cassini meetings fetch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	registerMeetingsConnectionFlags(fs, &cfg)
-	outPath := fs.String("out", "", "required path to write the portable .opus to")
+	outPath := fs.String("out", "", "required path to write the portable meeting document to")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini meetings fetch <meeting-id> --out "./Meeting.opus"
 
-Download one meeting's portable .opus — audio plus embedded transcript and
+Download one meeting's portable document — Opus or retained transcription JSON with
 summary in a single file. Use `+"`cassini meetings list`"+` to find the id.
 
 `+"\n")
@@ -205,11 +205,11 @@ func redactMeetingsArgs(args []string) []string {
 // error about a temp path.
 func checkMeetingOutPath(outPath string) error {
 	if strings.HasSuffix(outPath, string(os.PathSeparator)) {
-		return fmt.Errorf("--out %s names a directory; give the path of the .opus file to write", outPath)
+		return fmt.Errorf("--out %s names a directory; give the path of the meeting file to write", outPath)
 	}
 	info, err := os.Stat(outPath)
 	if err == nil && info.IsDir() {
-		return fmt.Errorf("--out %s is an existing directory; give the path of the .opus file to write", outPath)
+		return fmt.Errorf("--out %s is an existing directory; give the path of the meeting file to write", outPath)
 	}
 	return nil
 }

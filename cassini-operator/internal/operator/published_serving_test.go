@@ -131,12 +131,16 @@ func TestNCProxyServesADeniedReadAsNotFound(t *testing.T) {
 	// reveals that it exists. A 403 would leak exactly that; a 502 would blame
 	// an outage that is not happening.
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if serveTestShares(w, r, []string{"secret.opus"}, 0) {
+				return
+			}
 			w.WriteHeader(status)
 		}))
 		defer srv.Close()
 
 		var logs bytes.Buffer
+		registerTestCatalog(t, srv.URL, `{"meetings":[{"id":"secret","audioPath":"meetings/secret.opus"}]}`)
 		cfg := testExAppConfig(srv.URL)
 		cfg.sharePaths.put("alice", map[string]string{"secret.opus": "Cassini/Recordings/meetings/secret.opus"})
 		proxy := cfg.ncFilesProxy(log.New(&logs, "", 0), searchDeps{})

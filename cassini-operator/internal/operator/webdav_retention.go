@@ -117,18 +117,31 @@ func (c ExAppConfig) davRetentionLeaf(ctx context.Context, client *http.Client, 
 	return state, nil
 }
 
-// The caller journals intent before deletion and verifies absence afterwards.
-// Recovery checks the recorded intent after transport errors.
-func (c ExAppConfig) davRetentionDelete(ctx context.Context, client *http.Client, rel, etag string) error {
+// The caller journals intent before invoking these methods and independently
+// reads identity and bytes afterwards, including after transport errors.
+func (c ExAppConfig) davRetentionMutation(ctx context.Context, client *http.Client, method, rel, destination, etag string) error {
 	if err := retentionLeafPath(rel); err != nil {
 		return err
 	}
 	if !strongDAVETag(etag) {
-		return fmt.Errorf("retention deletion requires a strong ETag")
+		return fmt.Errorf("retention mutation requires a strong ETag")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.davFileURL(ncRecordingsOwner, rel), nil)
+	if method != "MOVE" && method != http.MethodDelete {
+		return fmt.Errorf("unsupported retention method")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.davFileURL(ncRecordingsOwner, rel), nil)
 	if err != nil {
 		return err
+	}
+	if method == "MOVE" {
+		if err := retentionLeafPath(destination); err != nil {
+			return err
+		}
+		if rel == destination {
+			return fmt.Errorf("retention destination equals source")
+		}
+		req.Header.Set("Destination", c.davFileURL(ncRecordingsOwner, destination))
+		req.Header.Set("Overwrite", "F")
 	}
 	req.Header.Set("If-Match", etag)
 	c.setAppAPIDAVHeadersForUser(req, ncRecordingsOwner)
@@ -138,10 +151,59 @@ func (c ExAppConfig) davRetentionDelete(ctx context.Context, client *http.Client
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusPreconditionFailed {
-		return fmt.Errorf("retention DELETE: %w", errDAVPreconditionFailed)
+		return fmt.Errorf("retention %s: %w", method, errDAVPreconditionFailed)
 	}
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("retention DELETE: HTTP %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNoContent && !(method == "MOVE" && resp.StatusCode == http.StatusCreated) {
+		return fmt.Errorf("retention %s: HTTP %d", method, resp.StatusCode)
 	}
 	return nil
+}
+
+func (c ExAppConfig) davRetentionPut(ctx context.Context, client *http.Client, rel, local, etag string) error {
+	if err := retentionLeafPath(rel); err != nil {
+		return err
+	}
+	if !strongDAVETag(etag) {
+		return fmt.Errorf("retention PUT requires a strong ETag")
+	}
+	_, _, err := c.davPutFileIfMatch(ctx, retentionDAVClient(client), ncRecordingsOwner, rel, local, "application/json", etag)
+	return err
+}
+
+// Restores may place Opus bytes at a JSON filename. Read the live signature with
+// the same ETag used for evaluation; filenames never establish media state.
+func (c ExAppConfig) davMeetingRepresentation(ctx context.Context, client *http.Client, rel, etag string) (string, error) {
+	if err := retentionLeafPath(rel); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", c.davFileURL(ncRecordingsOwner, rel), nil)
+	if err != nil {
+		return "", err
+	}
+	c.setAppAPIDAVHeadersForUser(req, ncRecordingsOwner)
+	req.Header.Set("Range", "bytes=0-63")
+	req.Header.Set("If-Match", etag)
+	resp, err := retentionDAVClient(client).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 206 {
+		return "", fmt.Errorf("representation probe: HTTP %d", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(string(raw), "OggS") {
+		return "opus", nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+		return "transcription", nil
+	}
+	return "", fmt.Errorf("unrecognized meeting representation")
+}
+
+func (c ExAppConfig) davRetentionDelete(ctx context.Context, client *http.Client, rel, etag string) error {
+	return c.davRetentionMutation(ctx, client, http.MethodDelete, rel, "", etag)
 }

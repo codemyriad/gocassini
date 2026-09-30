@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -273,7 +274,11 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	if err != nil {
 		return err
 	}
-	rendered, err := runAnnotate(ctx, s.bin, target.Annotations, "snapshot", "--out", out, "--json", in)
+	var generation string
+	if err := store.db.QueryRowContext(ctx, `SELECT value FROM annotations_meta WHERE key='generation'`).Scan(&generation); err != nil {
+		return err
+	}
+	rendered, err := runAnnotate(ctx, s.bin, target.Annotations, "snapshot", "--state-token", fmt.Sprintf("%s:%d", generation, desired), "--out", out, "--json", in)
 	if err != nil {
 		switch annotateExitCode(err) {
 		case annotateExitUsage, annotateExitInvalid, annotateExitUnresolved:
@@ -299,7 +304,11 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	if _, err = store.db.ExecContext(ctx, `UPDATE annotation_head SET in_flight=?,input_etag=?,output_sha256=?,output_size=? WHERE opus_name=?`, desired, state.ETag, digest, info.Size(), name); err != nil {
 		return err
 	}
-	if _, _, err = s.exapp.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, rel, out, ncRecordingsContentType, state.ETag); err != nil {
+	contentType := ncRecordingsContentType
+	if strings.HasSuffix(rel, transcriptionSuffix) {
+		contentType = "application/json"
+	}
+	if _, _, err = s.exapp.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, rel, out, contentType, state.ETag); err != nil {
 		return err
 	}
 	if err = s.exapp.verifyUploadedLeaf(ctx, s.client, rel, info.Size()); err != nil {

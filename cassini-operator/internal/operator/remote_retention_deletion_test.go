@@ -27,7 +27,7 @@ func TestWholeMeetingDeletionIdentityAndRecovery(t *testing.T) {
 			if _, err := rt.store.db.Exec(`UPDATE jobs SET stage='done',state='succeeded' WHERE id='m'`); err != nil {
 				t.Fatal(err)
 			}
-			m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", State: "active", Anchor: "2020-01-01T00:00:00Z", AnchorSource: "recording-completed"}
+			m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", Representation: "opus", State: "active", Anchor: "2020-01-01T00:00:00Z", AnchorSource: "recording-completed"}
 			if err := rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
 				t.Fatal(err)
 			}

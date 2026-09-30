@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,12 +32,13 @@ func TestRemoteRetentionIsolatesRecoveryConflicts(t *testing.T) {
 			rt.annotations = annotations
 			rt.retention = newRetentionConfig(filepath.Join(t.TempDir(), "retention.json"))
 			rt.retention.settings.Nextcloud = nextcloudRetentionSettings{
-				Meetings: retentionPolicy{Count: 30, Unit: "days"},
+				Recordings:     retentionPolicy{Count: 30, Unit: "days"},
+				Transcriptions: retentionPolicy{Count: 30, Unit: "days"},
 			}
 			now := time.Now().UTC()
 			root := ncRecordingsRoot + "/meetings"
-			a := meetingLifecycle{Name: "a.opus", FileID: 42, Path: root + "/a.opus", State: "active", Anchor: now.AddDate(0, 0, -2).Format(time.RFC3339), AnchorSource: "recording-completed"}
-			b := meetingLifecycle{Name: "b.opus", FileID: 43, Path: root + "/b.opus", State: "active", Anchor: now.AddDate(0, 0, -120).Format(time.RFC3339), AnchorSource: "recording-completed"}
+			a := meetingLifecycle{Name: "a.opus", FileID: 42, Path: root + "/a.opus", Representation: "opus", State: "active", Anchor: now.AddDate(0, 0, -2).Format(time.RFC3339), AnchorSource: "recording-completed"}
+			b := meetingLifecycle{Name: "b.opus", FileID: 43, Path: root + "/b.opus", Representation: "opus", State: "active", Anchor: now.AddDate(0, 0, -120).Format(time.RFC3339), AnchorSource: "recording-completed"}
 			for _, m := range []meetingLifecycle{a, b} {
 				insertJob(t, rt.store.db, strings.TrimSuffix(m.Name, ".opus"), m.Anchor)
 				if _, err := rt.store.db.Exec(`UPDATE jobs SET stage='done',state='succeeded' WHERE id=?`, strings.TrimSuffix(m.Name, ".opus")); err != nil {
@@ -104,6 +106,30 @@ func TestRemoteRetentionIsolatesRecoveryConflicts(t *testing.T) {
 				case "DELETE":
 					delete(files, rel)
 					w.WriteHeader(204)
+				case "PUT":
+					raw, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Error(err)
+						w.WriteHeader(500)
+						return
+					}
+					files[rel], etags[rel] = string(raw), `"2"`
+					w.WriteHeader(204)
+				case "MOVE":
+					u, err := url.Parse(r.Header.Get("Destination"))
+					if err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return
+					}
+					to := strings.TrimPrefix(u.Path, "/remote.php/dav/files/cassini/")
+					if _, exists := files[to]; exists {
+						w.WriteHeader(412)
+						return
+					}
+					files[to], ids[to], etags[to] = body, ids[rel], etags[rel]
+					delete(files, rel)
+					w.WriteHeader(201)
 				default:
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(405)
@@ -113,7 +139,26 @@ func TestRemoteRetentionIsolatesRecoveryConflicts(t *testing.T) {
 			cfg := testExAppConfig(server.URL)
 			cfg.lifecycle = rt.store
 			service := &annotationService{rt: rt, exapp: cfg, client: server.Client()}
-			op := remoteRetentionOperation{Name: a.Name, Action: "retire", Source: a.Path, FileID: a.FileID, InputETag: `"1"`}
+			dir, err := os.MkdirTemp(rt.cfg.WorkRoot, "remote-retention-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := `{"format":"cassini.transcription.v1"}`
+			if err := os.WriteFile(filepath.Join(dir, "source.opus"), []byte("audio"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "output.json"), []byte(output), 0600); err != nil {
+				t.Fatal(err)
+			}
+			inputSHA, err := fileSHA256(filepath.Join(dir, "source.opus"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			outputSHA, err := fileSHA256(filepath.Join(dir, "output.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			op := remoteRetentionOperation{Name: a.Name, Action: "convert", Source: a.Path, Destination: root + "/a" + transcriptionSuffix, FileID: a.FileID, InputETag: `"1"`, InputSHA: inputSHA, OutputSHA: outputSHA, Directory: dir}
 			if err := rt.store.saveRemoteOperation(ctx, op, "prepared"); err != nil {
 				t.Fatal(err)
 			}
@@ -137,6 +182,9 @@ func TestRemoteRetentionIsolatesRecoveryConflicts(t *testing.T) {
 			if err != nil || len(pending) != 1 || pending[0] != op {
 				t.Fatalf("original intent changed: %+v, %v", pending, err)
 			}
+			if _, err := os.Stat(filepath.Join(dir, "output.json")); err != nil {
+				t.Fatal("recovery staging lost", err)
+			}
 			_, bExists := files[b.Path]
 			if scenario != "continue" {
 				if !bExists {
@@ -152,7 +200,7 @@ func TestRemoteRetentionIsolatesRecoveryConflicts(t *testing.T) {
 				t.Fatalf("B was not retired: %+v, %v", retired, err)
 			}
 			// Even an active lifecycle row cannot permit a fresh operation to
-			// replace the unfinished retirement intent.
+			// replace the unfinished conversion intent.
 			if err := service.prepareRemoteRetention(ctx, a, "retire", rt.retention.settings.Revision); err != nil {
 				t.Fatal(err)
 			}
@@ -160,19 +208,24 @@ func TestRemoteRetentionIsolatesRecoveryConflicts(t *testing.T) {
 			if err := rt.store.db.QueryRow(`SELECT operation_json FROM remote_retention_operation WHERE name=?`, a.Name).Scan(&after); err != nil || after != journal {
 				t.Fatalf("preparation replaced pending intent: %v", err)
 			}
-			// Resolve the external edit: retry must finish the original retirement.
+			// Resolve the external edit: retry must finish the original conversion.
 			files[a.Path], etags[a.Path] = "audio", `"1"`
 			if err := service.runRemoteRetention(ctx, now); err != nil {
 				t.Fatal("resolved conflict did not recover", err)
 			}
+			if files[op.Destination] != output || ids[op.Destination] != a.FileID {
+				t.Fatal("recovery did not deliver the original staged output")
+			}
 			if _, exists := files[a.Path]; exists {
-				t.Fatal("old source remains after retirement")
+				t.Fatal("old source remains after conversion")
 			}
 			pending, err = rt.store.pendingRemoteOperations(ctx)
 			if err != nil || len(pending) != 0 {
 				t.Fatalf("resolved intent remains pending: %+v, %v", pending, err)
 			}
-
+			if _, err := os.Stat(dir); !os.IsNotExist(err) {
+				t.Fatal("completed recovery staging remains", err)
+			}
 		})
 	}
 }

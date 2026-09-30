@@ -37,18 +37,19 @@ func (rt *Runtime) retentionSweepHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (rt *Runtime) remoteSweepCounts(ctx context.Context, since time.Time) map[string]any {
-	result := map[string]any{"retirements": 0, "incomplete": 0, "historyNotice": nextcloudHistoryNotice}
+	result := map[string]any{"conversions": 0, "retirements": 0, "incomplete": 0, "historyNotice": nextcloudHistoryNotice}
 	if rt.store == nil {
 		return result
 	}
-	var retirements, incomplete int
+	var conversions, retirements, incomplete int
 	err := rt.store.db.QueryRowContext(ctx, `SELECT
+ COALESCE(SUM(CASE WHEN status='completed' AND json_extract(operation_json,'$.action')='convert' AND julianday(updated_at)>=julianday(?) THEN 1 ELSE 0 END),0),
  COALESCE(SUM(CASE WHEN status='completed' AND json_extract(operation_json,'$.action')='retire' AND julianday(updated_at)>=julianday(?) THEN 1 ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN status!='completed' THEN 1 ELSE 0 END),0) FROM remote_retention_operation`, since.Format(time.RFC3339Nano)).Scan(&retirements, &incomplete)
+ COALESCE(SUM(CASE WHEN status!='completed' THEN 1 ELSE 0 END),0) FROM remote_retention_operation`, since.Format(time.RFC3339Nano), since.Format(time.RFC3339Nano)).Scan(&conversions, &retirements, &incomplete)
 	if err != nil {
 		result["status"] = "unavailable"
 		return result
 	}
-	result["retirements"], result["incomplete"] = retirements, incomplete
+	result["conversions"], result["retirements"], result["incomplete"] = conversions, retirements, incomplete
 	return result
 }

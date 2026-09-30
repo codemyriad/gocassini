@@ -107,6 +107,7 @@ export interface PortableTranscriptDescriptor {
 }
 
 export interface ExtractedPortableManifest {
+  mediaState?: "evicted";
   manifest: PortableMeetingManifest;
   tags: Record<string, string>;
 }
@@ -115,6 +116,9 @@ export async function extractPortableManifestFromArrayBuffer(
   value: ArrayBuffer | Uint8Array,
 ): Promise<ExtractedPortableManifest> {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+  if (new TextDecoder().decode(bytes.subarray(0, 64)).trimStart().startsWith("{")) {
+    return extractRetainedTranscription(bytes);
+  }
   const tags = parseOpusCommentTags(bytes);
   const format = String(tags.CASSINI_FORMAT ?? "").trim();
   if (!format) {
@@ -628,6 +632,14 @@ export async function loadPortableTranscriptBody(
 ): Promise<unknown> {
   if (!payloadRef || typeof payloadRef.prefix !== "string" || payloadRef.prefix === "") {
     throw new Error("portable transcript payloadRef is missing a prefix");
+  }
+  const retained = tags[`__CASSINI_RETAINED_${payloadRef.prefix}`];
+  if (retained !== undefined) {
+    const raw = Uint8Array.from(atob(retained), (c) => c.charCodeAt(0));
+    if (raw.byteLength !== payloadRef.rawBytes || await sha256Hex(raw) !== payloadRef.sha256) {
+      throw new Error("Retained transcript integrity mismatch");
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
   }
   const chunkCount = typeof payloadRef.chunkCount === "number" ? payloadRef.chunkCount : 0;
   if (chunkCount <= 0) {
@@ -2036,4 +2048,106 @@ function safeToString(value: unknown): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+}
+
+
+const MAX_RETAINED_BYTES = 64 * 1024 * 1024;
+
+// Validate before JSON.parse so duplicate members and deeply nested extension
+// data cannot disagree with the recorder's bounded parser.
+function parseRetainedJSON(bytes: Uint8Array): any {
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  let at = 0;
+  const whitespace = () => { while (/\s/.test(text[at] ?? "") && at < text.length) at++; };
+  const string = (): string => {
+    const match = /^"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/.exec(text.slice(at));
+    if (!match) throw new Error("Invalid retained JSON string");
+    at += match[0].length;
+    return JSON.parse(match[0]);
+  };
+  const value = (depth: number): void => {
+    if (depth > 64) throw new Error("Retained JSON nesting exceeds limit");
+    whitespace();
+    const token = text[at];
+    if (token === "{") {
+      at++; whitespace(); const keys = new Set<string>();
+      if (text[at] === "}") { at++; return; }
+      for (;;) {
+        whitespace(); const key = string();
+        if (keys.has(key)) throw new Error("Duplicate retained JSON member");
+        keys.add(key); whitespace();
+        if (text[at++] !== ":") throw new Error("Invalid retained JSON object");
+        value(depth + 1); whitespace();
+        const next = text[at++]; if (next === "}") return;
+        if (next !== ",") throw new Error("Invalid retained JSON object");
+      }
+    }
+    if (token === "[") {
+      at++; whitespace(); if (text[at] === "]") { at++; return; }
+      for (;;) {
+        value(depth + 1); whitespace();
+        const next = text[at++]; if (next === "]") return;
+        if (next !== ",") throw new Error("Invalid retained JSON array");
+      }
+    }
+    if (token === '"') { string(); return; }
+    const scalar = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(text.slice(at));
+    if (!scalar) throw new Error("Invalid retained JSON value");
+    at += scalar[0].length;
+  };
+  value(0); whitespace();
+  if (at !== text.length) throw new Error("Trailing retained JSON data");
+  return JSON.parse(text);
+}
+
+async function extractRetainedTranscription(bytes: Uint8Array): Promise<ExtractedPortableManifest> {
+  if (bytes.byteLength > MAX_RETAINED_BYTES) throw new Error("Retained meeting exceeds size limit");
+  const document = parseRetainedJSON(bytes);
+  if (document?.format !== "cassini.transcription.v1" || document.media?.state !== "evicted" ||
+      document.media.reason !== "retention" || !Number.isFinite(Date.parse(document.media.evictedAt))) {
+    throw new Error("Invalid retained meeting format or media state");
+  }
+  const manifest = document.current?.manifest as PortableMeetingManifest;
+  validatePortableIndexManifest(manifest);
+  if (!document.identity?.documentId || document.identity.meetingId !== manifest.meeting.id ||
+      document.identity.originalAudioSha256 !== manifest.integrity?.opusAudioSha256 ||
+      !document.retention?.anchorSource || !Number.isFinite(Date.parse(document.retention.ageAnchor))) {
+    throw new Error("Retained meeting identity or age anchor mismatch");
+  }
+  if (!Array.isArray(document.current.extraTags) || !document.current.extraTags.every((v: unknown) => typeof v === "string") ||
+      typeof document.current.vendor !== "string" || typeof document.current.annotationCheckpoint?.stateToken !== "string" ||
+      !Number.isSafeInteger(document.current.annotationCheckpoint?.revision) || document.current.annotationCheckpoint.revision < 0) {
+    throw new Error("Invalid retained comments or annotation checkpoint");
+  }
+  if (document.current.sourceManifest) {
+    const p = document.current.sourceManifest;
+    if (p.encoding !== "base64" || typeof p.dataBase64 !== "string") throw new Error("Invalid source manifest");
+    const source = Uint8Array.from(atob(p.dataBase64), c => c.charCodeAt(0));
+    if (source.byteLength !== p.rawBytes || await sha256Hex(source) !== p.sha256) throw new Error("Source manifest integrity mismatch");
+    parseRetainedJSON(source);
+  }
+  const tags: Record<string, string> = Object.create(null);
+  let total = 0;
+  const payloads = document.current.payloads;
+  if (!payloads || typeof payloads !== "object" || Array.isArray(payloads)) throw new Error("Missing retained payloads");
+  for (const [prefix, value] of Object.entries(payloads)) {
+    const p = value as { encoding: string; dataBase64: string; rawBytes: number; sha256: string };
+    if (p.encoding !== "base64" || typeof p.dataBase64 !== "string" || p.dataBase64.length > MAX_RETAINED_BYTES * 4 / 3 + 4) {
+      throw new Error("Invalid retained payload encoding/size");
+    }
+    const raw = Uint8Array.from(atob(p.dataBase64), (c) => c.charCodeAt(0));
+    total += raw.byteLength;
+    if (total > MAX_RETAINED_BYTES || raw.byteLength !== p.rawBytes || await sha256Hex(raw) !== p.sha256) {
+      throw new Error("Retained payload integrity mismatch");
+    }
+    parseRetainedJSON(raw);
+    tags[`__CASSINI_RETAINED_${prefix}`] = p.dataBase64;
+  }
+  for (const entry of [...(manifest.transcripts ?? []), ...(manifest.readableTranscripts ?? [])]) {
+    const p = payloads[entry.payloadRef.prefix];
+    if (!p || p.sha256 !== entry.payloadRef.sha256 || p.rawBytes !== entry.payloadRef.rawBytes || p.mime !== entry.payloadRef.mime) {
+      throw new Error("Retained payload descriptor mismatch");
+    }
+  }
+  return { manifest: await resolvePortableDefaultBodies(manifest, tags), tags, mediaState: "evicted" };
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -233,8 +234,8 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			}
 			return true
 		}
-		readAs := caller
 		w.Header().Set("Cache-Control", "no-store")
+		readAs := caller
 
 		if relPath == "catalog.json" {
 			c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
@@ -248,11 +249,11 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			c.serveSearch(r.Context(), w, r, client, caller, search, logger)
 			return true
 		}
-		if !strings.HasPrefix(relPath, "meetings/") || !strings.HasSuffix(relPath, ".opus") {
+		if !strings.HasPrefix(relPath, "meetings/") || logicalMeetingName(path.Base(relPath)) == "" {
 			http.NotFound(w, r)
 			return true
 		}
-		davRelPath, resolveErr := c.recipientRecordingPath(r.Context(), client, caller, path.Base(relPath), c.meetingMetadata)
+		davRelPath, resolveErr := c.currentRecordingPath(r.Context(), client, caller, logicalMeetingName(path.Base(relPath)), c.meetingMetadata)
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errRecordingNotShared) {
 				http.NotFound(w, r)
@@ -290,6 +291,10 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 				if v := resp.Header.Get(h); v != "" {
 					w.Header().Set(h, v)
 				}
+			}
+			if m, ok, err := c.lifecycle.meetingLifecycle(r.Context(), path.Base(relPath)); err == nil && ok && m.Representation == "transcription" {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": path.Base(m.Path)}))
 			}
 			w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
 			w.WriteHeader(resp.StatusCode)

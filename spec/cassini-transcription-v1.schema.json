@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://format.gocassini.com/schema/cassini-transcription-v1.schema.json",
+  "title": "Cassini retained transcription",
+  "type": "object",
+  "required": [
+    "format",
+    "identity",
+    "media",
+    "retention",
+    "current"
+  ],
+  "properties": {
+    "format": {
+      "const": "cassini.transcription.v1"
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "meetingId",
+        "documentId",
+        "originalAudioSha256"
+      ],
+      "properties": {
+        "meetingId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "documentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "originalAudioSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "media": {
+      "type": "object",
+      "required": [
+        "state",
+        "reason",
+        "evictedAt",
+        "durationMs"
+      ],
+      "properties": {
+        "state": {
+          "const": "evicted"
+        },
+        "reason": {
+          "const": "retention"
+        },
+        "evictedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "required": [
+        "ageAnchor",
+        "anchorSource",
+        "policyRevision"
+      ],
+      "properties": {
+        "ageAnchor": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "anchorSource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policyRevision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "current": {
+      "type": "object",
+      "required": [
+        "manifest",
+        "payloads",
+        "extraTags",
+        "vendor",
+        "annotationCheckpoint"
+      ],
+      "properties": {
+        "manifest": {
+          "type": "object"
+        },
+        "payloads": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "encoding",
+              "dataBase64",
+              "sha256",
+              "rawBytes",
+              "mime"
+            ],
+            "properties": {
+              "encoding": {
+                "const": "base64"
+              },
+              "dataBase64": {
+                "type": "string",
+                "contentEncoding": "base64"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "rawBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 67108864
+              },
+              "mime": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "extraTags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "vendor": {
+          "type": "string"
+        },
+        "annotationCheckpoint": {
+          "type": "object",
+          "required": [
+            "stateToken",
+            "revision"
+          ],
+          "properties": {
+            "stateToken": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "sourceManifest": {
+          "description": "Exact source manifest bytes at extraction; preserved as provenance when current annotations change.",
+          "type": "object",
+          "required": [
+            "encoding",
+            "dataBase64",
+            "sha256",
+            "rawBytes",
+            "mime"
+          ],
+          "properties": {
+            "encoding": {
+              "const": "base64"
+            },
+            "dataBase64": {
+              "type": "string",
+              "contentEncoding": "base64"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "rawBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 67108864
+            },
+            "mime": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
