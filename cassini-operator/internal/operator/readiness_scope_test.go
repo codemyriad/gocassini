@@ -124,3 +124,30 @@ func TestScopedCheckRefusesARequestWithNoProbeBehindIt(t *testing.T) {
 		t.Fatalf("bodyless check -> %d; want the full run", rec.Code)
 	}
 }
+
+// The operator must accept `warn` from the connection probe. Rejecting it is
+// what forced "tried and could not reach it" to report itself as an absence:
+// the recorder could not say warn without the whole probe being thrown away as
+// an invalid state (D-798).
+func TestConnectionProbeAcceptsWarnFromTheRecorder(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t,
+		`[{"id":"talk.discovery","state":"warn","code":"nextcloud_unreachable","message":"Could not read Talk settings."}]`)
+
+	checks, err := rt.runConnectionProbe(context.Background(), "https://nc.test/call/room")
+	if err != nil {
+		t.Fatalf("a warning finding was rejected: %v", err)
+	}
+	if len(checks) != 1 || checks[0].State != "warn" {
+		t.Fatalf("checks = %+v; want the warn finding preserved", checks)
+	}
+
+	// A state the ladder does not know is still refused: an operator that does
+	// not understand the answer must not treat it as healthy.
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t,
+		`[{"id":"talk.discovery","state":"probably-fine","code":"x","message":"y"}]`)
+	if _, err := rt.runConnectionProbe(context.Background(), "https://nc.test/call/room"); err == nil {
+		t.Fatal("an unknown probe state was accepted")
+	}
+}

@@ -50,7 +50,11 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 		} else if errors.As(err, &ocsErr) && ocsErr.HTTPStatus == 404 {
 			add("talk.discovery", "needs_action", "talk_or_room_unavailable", "Talk's recording settings are unavailable. Check that Talk is enabled and the test room exists.", "test_room")
 		} else {
-			add("talk.discovery", "not_verified", "nextcloud_unreachable", "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.", "recheck")
+			// warn, not not_verified: the probe ran and could not reach
+			// Nextcloud. That is a finding about the deployment, and reporting
+			// it as an absence left a real fault rendering as a neutral "not
+			// verified" row that flagged nothing (D-798).
+			add("talk.discovery", "warn", "nextcloud_unreachable", "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.", "recheck")
 		}
 		return checks
 	}
@@ -66,7 +70,8 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 	}
 	r.signaling = signaling.NewClient(toWSURL(settings.PrimarySignalingServer()), cfg.Insecure)
 	if err := r.signaling.Connect(ctx); err != nil {
-		add("talk.hpb", "not_verified", "signaling_unreachable", "The configured signaling server could not be reached. Check its network route and TLS.", "recheck")
+		// Reached for, and not reached. Same reasoning as nextcloud_unreachable.
+		add("talk.hpb", "warn", "signaling_unreachable", "The configured signaling server could not be reached. Check its network route and TLS.", "recheck")
 		return checks
 	}
 	defer r.signaling.Close()

@@ -237,7 +237,11 @@ func (rt *Runtime) runConnectionProbe(ctx context.Context, room string) ([]readi
 		return nil, errors.New("empty probe")
 	}
 	for _, c := range checks {
-		if c.State != "passed" && c.State != "needs_action" && c.State != "not_verified" {
+		if readinessStateRank[c.State] == 0 && c.State != "passed" {
+			// Every state the ladder knows, including warn — a probe that TRIED
+			// and could not reach something has a finding, not an absence, and
+			// rejecting warn here is what forced those outcomes to report
+			// themselves as "not verified" (D-798).
 			return nil, errors.New("invalid probe state")
 		}
 	}
