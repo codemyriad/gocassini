@@ -834,6 +834,10 @@ func TestStatusHandlerMissingOptionalModelDoesNotBlockAudio(t *testing.T) {
 func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	// This handler-only test replaces runtime configuration between requests.
+	// Drain background readers before changing the binary and probe fixtures.
+	rt.cancel()
+	rt.workerWG.Wait()
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
