@@ -416,6 +416,8 @@ Harness-specific variants:
 ```bash
 ./harness/bin/ci-e2e-mute.sh
 ./harness/bin/ci-e2e-rejoin.sh
+./harness/bin/ci-e2e-audio-only-rejoin.sh
+./harness/bin/ci-e2e-signaling-resume.sh
 ```
 
 Both CI entrypoints use bounded retry when creating the temporary Talk room to
@@ -428,6 +430,28 @@ E2E also verifies that `gocassini-remux` can rebuild an artifact-based MKV from
 ### 4.2 Artifact-centric scenario assertions
 
 Scenario assertions avoid brittle assumptions about final remux layout:
+
+- `ci-e2e.sh` keeps its explicit video-opt-in control with at least one measured
+  A/V pair, then runs a separate default audio-only capture with two distinct
+  speaker tones, mute rotations, a microphone added to a video-only publisher,
+  and a camera added to an audio-only publisher. Janus admin counters must show
+  zero video on every observed subscription and positive audio wherever audio
+  is offered; an initial subscription with no audio is a waiting state. Source
+  indexes/logs and the MKV must contain no video. The real portable build runs
+  with transcription off and no models, and decoded early/late tone landmarks
+  must stay within 200ms of the publisher schedule after one shared origin
+  shift. Source/published sound placement must agree within 40ms.
+- `ci-e2e-audio-only-rejoin.sh` runs the rejoin gate with video disabled. The
+  original rejoin leg opts into video explicitly.
+- `ci-e2e-signaling-resume.sh` routes the local harness through a TCP proxy,
+  interrupts the second recorder's WebSocket once, and requires successful
+  signaling-session resume plus the same media/timing gates. The proxy uses a pinned Python container and publishes
+  port 28482 by default; `SIGNALING_PROXY_PORT` and `SIGNALING_PROXY_HOST` select
+  another free port or Docker-reachable host address. Its evidence records
+  event times, never authentication or resume payloads.
+- The recorder PR matrix derives the reference and oldest supported baseline
+  from `ci/nextcloud-compatibility.json`. CI uploads Janus, timing and resume
+  evidence JSON under the `capture-evidence-*` artifacts.
 
 - `ci-e2e-mute.sh` requires at least one final video/audio track, then validates
   multi-player capture via session artifact stream counts and publisher mute
