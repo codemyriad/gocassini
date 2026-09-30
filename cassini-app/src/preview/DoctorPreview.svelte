@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
   import RecordingSetup from "../RecordingSetup.svelte";
   import { createPreviewClient, doctorScenarios } from "./doctorScenarios";
 
@@ -9,11 +8,6 @@
   let notice = "";
   let theme = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "saturn-dark" : "saturn-light";
 
-  // The advanced handoff instructions must not generate a live provisioning
-  // URL. The gallery never mounts App, probes admin access or reads real data.
-  const liveConfig = window.__CASSINI_CONFIG__;
-  window.__CASSINI_CONFIG__ = { operatorBasePath: "https://preview.invalid/operator" };
-  onDestroy(() => { window.__CASSINI_CONFIG__ = liveConfig; });
 </script>
 
 <div class="cassini-root h-full overflow-auto bg-base-200 text-base-content" data-theme={theme}>
@@ -35,7 +29,7 @@
         <h2 class="text-lg font-semibold">{selected.title}</h2>
         <p class="mt-1 text-sm text-base-content/70">{selected.description}</p>
       </div>
-      <RecordingSetup {operatorClient} on:openStorage={() => { notice = "This would open Publish pipeline in the live app. Server configuration is unavailable in this preview."; }} />
+      <RecordingSetup {operatorClient} provisioningBase="https://preview.invalid/operator" on:openStorage={() => { notice = "This would open Publish pipeline in the live app. Server configuration is unavailable in this preview."; }} />
       {#if notice}<p class="rounded-box bg-base-100 p-4 text-sm" role="status">{notice}</p>{/if}
     {:else}
       {#if scenario}<p role="alert">Unknown preview scenario. Choose one below.</p>{/if}

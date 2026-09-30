@@ -6,6 +6,8 @@
   import { checkLabels, checkStateLabel, checkTone, formatAge, isReprobedOnCheck, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
+  // Review fixtures use an inert origin for generated host instructions.
+  export let provisioningBase: string | undefined = undefined;
   // Storage is configured in Publish pipeline, and the checks now live in their
   // own Doctor panel — so this action has to move the reader there. It used to
   // scrollIntoView an id that was on the same page; from here that id is not
@@ -79,7 +81,7 @@
     panel = closing ? "" : name;
     if (name === "connect_talk") {
       // Derive from the current operator URL, preserving installations under a subdirectory.
-      const base = new URL((await import("./operator/config")).loadConfig().operatorBasePath, window.location.href);
+      const base = new URL(provisioningBase ?? (await import("./operator/config")).loadConfig().operatorBasePath, window.location.href);
       provisioningURL = base.href.replace(/\/$/, "") + "/talk/provisioning";
     }
   }
