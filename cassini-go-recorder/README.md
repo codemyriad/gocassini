@@ -19,7 +19,7 @@ This README is for recorder-module internals, compatibility tooling, and the
 lower-level Go commands that still exist behind the product CLI.
 
 ## Current scope (v1)
-- Capture audio/video RTP streams from Nextcloud Talk meetings
+- Capture audio RTP streams from Nextcloud Talk meetings, with explicit video opt-in
 - Persist a per-session artifact directory with `session.json`, `streams/*.rtplog`, and `events.ndjson`
 - Compose a multi-track MKV (`.mkv`) as the recorder's internal primary deliverable
 - Feed the higher-level Cassini product flow that now ends in a portable `.opus` meeting file
@@ -58,6 +58,18 @@ go run ./cmd/gocassini \
   --name GocassiniObserver \
   --output /tmp/meeting.mkv
 ```
+
+Talk capture defaults to audio only in both `cassini record` and `gocassini`.
+Add `--retain-video` (or `--retain-video=true`) to retain camera video in the
+source capture. `--retain-video=false` selects audio only. Installed recordings
+use the administrator's persisted **Capture video** choice, presented unchecked
+alongside retention during setup. Each admitted recording freezes that choice.
+Published portable `.opus` files contain audio only in either mode.
+
+A silent participant can have a connected transport without sending audio;
+audio-only capture waits without repeatedly rebuilding that connection. An
+entire call with no usable audio fails clearly and produces no empty recording.
+Valid silent Opus packets remain usable audio.
 
 In talk mode, `--output` can point directly at the final `.mkv`. Keep `--final-output` only if you need a separate compatibility path.
 

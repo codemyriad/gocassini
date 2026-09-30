@@ -50,6 +50,20 @@ Conceptually:
 
 Use `.run` when you need to rerun or inspect the build stage.
 
+New live `.run` manifests and source `session.json` indexes include
+`capture_mode`: `audio-only` (default) or `audio-video` (explicit opt-in).
+Operator recording jobs also store this admission snapshot and `retain_video` in
+their request JSON. Missing provenance on an older recording means **unknown**,
+not proof that video was excluded.
+
+Audio-only sessions contain audio RTP logs and audio logical tracks; opted-in
+sessions may also contain video logs and source MKV tracks. Audio RTCP and normal
+transport/signaling are retained in both modes. Capture mode does not change the
+portable `.opus` publication contract. Changing the policy affects new captures;
+existing-source build and publish operations preserve their source. Source
+retention determines when the whole source artifact, including opted-in video,
+is deleted.
+
 ## `.meeting` bundle
 
 Typical contents:
