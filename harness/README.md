@@ -445,8 +445,25 @@ Scenario assertions avoid brittle assumptions about final remux layout:
   with transcription off and no models, and decoded early/late tone landmarks
   must stay within 200ms of the publisher schedule after one shared origin
   shift. Source/published sound placement must agree within 40ms.
-- `ci-e2e-audio-only-rejoin.sh` runs the rejoin gate with video disabled. The
-  original rejoin leg opts into video explicitly.
+- `ci-e2e-audio-only-rejoin.sh` requires accepted audio from the returning
+  participant after the phase boundary, with positive RTP checked by the session
+  artifact verifier. Both source metadata and final MKV must contain audio and
+  zero video. A continuous Janus monitor requires observed audio before and after
+  rejoin and rejects video packets or forwarding on every observed subscription.
+  Its `*-janus.json` evidence is uploaded by CI. The original rejoin leg opts
+  into video explicitly.
+
+  ```text
+  Monitor starts -> Publisher phase 1 -> Leave -> Publisher phase 2 -> Stop
+       |                                                             |
+       +------------ observe audio; reject video throughout ----------+
+  ```
+
+  Fast regression controls run with `./harness/bin/test-post-boundary-stream.sh`
+  and `python3 ./harness/bin/test-audio-only-rejoin.py`. They reject phase-two-only
+  video in output, source tracks, packet streams, and SFU observations; a local
+  fake Janus API also exercises the actual monitor across disappearing/rejoining
+  subscriptions. These controls need no Docker stack.
 - `ci-e2e-signaling-resume.sh` routes the local harness through a TCP proxy,
   interrupts the second recorder's WebSocket once, and requires successful
   signaling-session resume plus the same media/timing gates. The proxy uses a pinned Python container and publishes
