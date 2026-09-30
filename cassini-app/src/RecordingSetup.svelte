@@ -5,7 +5,7 @@
   import type { OperatorClient } from "./operator/client";
   import { checkLabels, checkStateLabel, checkTone, formatAge, isReprobedOnCheck, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
-  export let operatorClient: OperatorClient;
+  export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Storage is configured in Publish pipeline, and the checks now live in their
   // own Doctor panel — so this action has to move the reader there. It used to
   // scrollIntoView an id that was on the same page; from here that id is not
