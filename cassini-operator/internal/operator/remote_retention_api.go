@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Remote execution also requires the runtime capability checks.
+// Enabled only after the installed compatibility and complete lifecycle gates.
 const remoteRetentionImplemented = true
 const nextcloudHistoryNotice = "Nextcloud manages previous versions and Deleted files. Logical active-file bytes do not measure physical disk reclamation."
 
@@ -21,21 +21,24 @@ type retentionLogicalUsage struct {
 }
 
 type remoteRetentionPreview struct {
-	Usage         retentionLogicalUsage   `json:"usage"`
+	Audio         retentionLogicalUsage   `json:"audio"`
+	Transcription retentionLogicalUsage   `json:"transcription"`
 	Now           string                  `json:"now"`
 	Revision      int                     `json:"revision"`
 	Capability    bool                    `json:"capability"`
 	Reason        string                  `json:"reason,omitempty"`
 	HistoryNotice string                  `json:"historyNotice"`
+	Convert       int                     `json:"convert"`
 	Retire        int                     `json:"retire"`
 	Meetings      []remoteRetentionEffect `json:"meetings"`
 }
 type remoteRetentionEffect struct {
-	Bytes    *int64 `json:"bytes,omitempty"`
-	Name     string `json:"name"`
-	Action   string `json:"action"`
-	Deadline string `json:"deadline,omitempty"`
-	Reason   string `json:"reason,omitempty"`
+	Bytes                 *int64 `json:"bytes,omitempty"`
+	Name                  string `json:"name"`
+	Action                string `json:"action"`
+	AudioDeadline         string `json:"audioDeadline,omitempty"`
+	TranscriptionDeadline string `json:"transcriptionDeadline,omitempty"`
+	Reason                string `json:"reason,omitempty"`
 }
 
 func evaluateRemoteRetention(m meetingLifecycle, p nextcloudRetentionSettings, now time.Time) remoteRetentionEffect {
@@ -50,16 +53,21 @@ func evaluateRemoteRetention(m meetingLifecycle, p nextcloudRetentionSettings, n
 		effect.Action = m.State
 		return effect
 	}
-	if d := p.Meetings.deadline(anchor); !d.IsZero() {
-		effect.Deadline = d.Format("2006-01-02")
+	if d := p.Recordings.deadline(anchor); !d.IsZero() {
+		effect.AudioDeadline = d.Format("2006-01-02")
 	}
-	if p.Meetings.due(anchor, now) {
+	if d := p.Transcriptions.deadline(anchor); !d.IsZero() {
+		effect.TranscriptionDeadline = d.Format("2006-01-02")
+	}
+	if p.Transcriptions.due(anchor, now) {
 		effect.Action = "retire"
+	} else if m.Representation == "opus" && p.Recordings.due(anchor, now) {
+		effect.Action = "convert"
 	}
 	return effect
 }
 func (s *Store) retainedMeetings(ctx context.Context) ([]meetingLifecycle, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source FROM meeting_lifecycle ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name,file_id,document_path,representation,state,age_anchor,anchor_source,document_id FROM meeting_lifecycle ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +75,7 @@ func (s *Store) retainedMeetings(ctx context.Context) ([]meetingLifecycle, error
 	result := []meetingLifecycle{}
 	for rows.Next() {
 		var m meetingLifecycle
-		if err := rows.Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource); err != nil {
+		if err := rows.Scan(&m.Name, &m.FileID, &m.Path, &m.Representation, &m.State, &m.Anchor, &m.AnchorSource, &m.DocumentID); err != nil {
 			return nil, err
 		}
 		result = append(result, m)
@@ -141,7 +149,10 @@ func (rt *Runtime) remoteRetentionPreviewHandler(w http.ResponseWriter, r *http.
 				effect.Reason = "Current file identity or location could not be verified."
 			} else {
 				effect.Bytes = &state.Size
-				usage := &result.Usage
+				usage := &result.Audio
+				if m.Representation == "transcription" {
+					usage = &result.Transcription
+				}
 				usage.Count++
 				usage.Bytes += state.Size
 			}
@@ -151,6 +162,9 @@ func (rt *Runtime) remoteRetentionPreviewHandler(w http.ResponseWriter, r *http.
 			}
 		}
 		result.Meetings = append(result.Meetings, effect)
+		if effect.Action == "convert" {
+			result.Convert++
+		}
 		if effect.Action == "retire" {
 			result.Retire++
 		}

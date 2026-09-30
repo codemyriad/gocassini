@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestRetentionDAVMutation(t *testing.T) {
-	for _, method := range []string{"DELETE"} {
+	for _, method := range []string{"MOVE", "DELETE"} {
 		t.Run(method, func(t *testing.T) {
 			status := http.StatusNoContent
 			calls := 0
@@ -19,25 +20,29 @@ func TestRetentionDAVMutation(t *testing.T) {
 				if r.Method != method || r.Header.Get("If-Match") != `"current"` || r.Header.Get("AUTHORIZATION-APP-API") == "" {
 					t.Errorf("missing method/precondition/auth")
 				}
+				if method == "MOVE" && (r.Header.Get("Overwrite") != "F" || !strings.HasSuffix(r.Header.Get("Destination"), "/new.cassini.transcription.json")) {
+					t.Errorf("unsafe MOVE headers")
+				}
 				w.WriteHeader(status)
 			}))
 			defer srv.Close()
 			cfg := testExAppConfig(srv.URL)
 			rel := ncRecordingsRoot + "/meetings/old.opus"
-			if err := cfg.davRetentionDelete(context.Background(), srv.Client(), rel, `"current"`); err != nil {
+			dest := ncRecordingsRoot + "/meetings/new.cassini.transcription.json"
+			if err := cfg.davRetentionMutation(context.Background(), srv.Client(), method, rel, dest, `"current"`); err != nil {
 				t.Fatal(err)
 			}
 			status = http.StatusPreconditionFailed
-			if err := cfg.davRetentionDelete(context.Background(), srv.Client(), rel, `"current"`); !errors.Is(err, errDAVPreconditionFailed) {
+			if err := cfg.davRetentionMutation(context.Background(), srv.Client(), method, rel, dest, `"current"`); !errors.Is(err, errDAVPreconditionFailed) {
 				t.Fatal(err)
 			}
 			for _, etag := range []string{"", "*", `W/"weak"`, "\"a\r\nb\""} {
-				if err := cfg.davRetentionDelete(context.Background(), srv.Client(), rel, etag); err == nil {
+				if err := cfg.davRetentionMutation(context.Background(), srv.Client(), method, rel, dest, etag); err == nil {
 					t.Fatal("accepted unsafe etag")
 				}
 			}
 			for _, bad := range []string{"other/file", ncRecordingsRoot + "/meetings/../other", ncRecordingsRoot + "/meetings/a/b", ncRecordingsRoot + "/meetings/a\\b"} {
-				if err := cfg.davRetentionDelete(context.Background(), srv.Client(), bad, `"current"`); err == nil {
+				if err := cfg.davRetentionMutation(context.Background(), srv.Client(), method, bad, dest, `"current"`); err == nil {
 					t.Fatal("accepted unsafe path")
 				}
 			}
@@ -57,13 +62,15 @@ func TestRetentionDAVRefusesRedirects(t *testing.T) {
 	defer srv.Close()
 	cfg := testExAppConfig(srv.URL)
 	rel := ncRecordingsRoot + "/meetings/test.opus"
-	if err := cfg.davRetentionDelete(context.Background(), srv.Client(), rel, `"a"`); err == nil {
+	if err := cfg.davRetentionMutation(context.Background(), srv.Client(), "DELETE", rel, "", `"a"`); err == nil {
 		t.Fatal("accepted redirect")
 	}
 	if _, err := cfg.davRetentionLeaf(context.Background(), srv.Client(), rel); err == nil {
 		t.Fatal("accepted redirect")
 	}
-
+	if err := cfg.davRetentionPut(context.Background(), srv.Client(), rel, writeLocal(t, "{}"), `"a"`); err == nil {
+		t.Fatal("accepted redirect")
+	}
 }
 
 func TestRetentionDAVLeaf(t *testing.T) {

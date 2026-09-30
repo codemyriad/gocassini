@@ -91,3 +91,33 @@ func TestDirectShareSnapshotRecoversOriginalNameAfterIndexLoss(t *testing.T) {
 		t.Fatalf("owner inventory calls = %d, want one cold recovery call", inventoryCalls)
 	}
 }
+
+func TestRetainedCatalogAfterIndexLossUsesOriginalDate(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	ctx := context.Background()
+	m := meetingLifecycle{Name: "A.opus", FileID: 11, Path: ncRecordingsRoot + "/meetings/A" + transcriptionSuffix, Representation: "transcription", State: "active", Anchor: "2026-01-01T00:00:00Z", AnchorSource: "recording-completed"}
+	if err := rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "files_sharing") {
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[{"id":"9","uid_file_owner":"cassini","file_source":11,"permissions":1,"path":"/Shared/Renamed.opus","item_type":"file"}]}}`)
+			return
+		}
+		w.WriteHeader(207)
+		io.WriteString(w, `<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>/remote.php/dav/files/cassini/CassiniRecordings/meetings/A.cassini.transcription.json</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop><oc:fileid>11</oc:fileid><d:resourcetype/></d:prop></d:propstat></d:response></d:multistatus>`)
+	}))
+	defer server.Close()
+	cfg := testExAppConfig(server.URL)
+	cfg.lifecycle = rt.store
+	snapshot, err := cfg.directShareSnapshot(ctx, server.Client(), "alice", nil)
+	if err != nil || len(snapshot.entries) != 1 {
+		t.Fatalf("snapshot %+v: %v", snapshot, err)
+	}
+	var entry map[string]any
+	json.Unmarshal(snapshot.entries[0], &entry)
+	if entry["dateLabel"] != "2026-01-01" || entry["documentPath"] != "./meetings/A.cassini.transcription.json" || entry["audioPath"] != nil {
+		t.Fatalf("unreadable retained fallback: %s", snapshot.entries[0])
+	}
+}

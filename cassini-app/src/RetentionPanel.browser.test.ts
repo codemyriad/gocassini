@@ -11,8 +11,8 @@ const group = (keys: string[]) => ({
   fine: Object.fromEntries(keys.map((key) => [key, forever()])),
 });
 const initialSettings = () => ({
-  version: 4, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
-  recordings: forever(), nextcloud: { meetings: forever() },
+  version: 5, nextcloud: { recordings: forever(), transcriptions: forever() }, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
+  recordings: forever(),
   history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]),
   current: forever(), logs: forever(),
 });
@@ -28,13 +28,25 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = new URL(String(input), location.href).pathname;
-    if (path.endsWith("/preview")) return Response.json({
-      retire: 1, now: "2026-09-30", capability: true, historyNotice: "Versions and trash are separate.",
-      usage: { count: 2, bytes: 123 }, meetings: [{ name: "old.opus", action: "retire", deadline: "2026-09-29" }, { name: "unknown.opus", action: "skip", reason: "Missing history" }],
-    });
-    if (path.endsWith("/operations")) return Response.json({ operations: [{ name: "old.opus", status: "delete-intent", updatedAt: "2026-09-30", error: "Recovery will retry" }], nextOffset: 1 });
-    expect(path).toBe("/operator/storage/retention");
+    const pathname = new URL(String(input), location.href).pathname;
+    if (pathname.endsWith("/preview")) {
+      expect(init?.method).toBe("POST");
+      return Response.json({
+        now: "2026-09-29T12:00:00Z", revision: saved.revision,
+        capability: false, reason: "Storage capability is unavailable.",
+        historyNotice: "Nextcloud manages previous versions and Deleted files.",
+        convert: 1, retire: 0, audio: { count: 1, bytes: 2048 },
+        transcription: { count: 0, bytes: 0 },
+        meetings: [{ name: "fixture.opus", action: "convert", audioDeadline: "2026-09-01" }],
+      });
+    }
+    if (pathname.endsWith("/operations")) {
+      return Response.json({
+        operations: [{ name: "fixture.opus", status: "completed", error: "", updatedAt: "2026-09-29T12:00:00Z" }],
+        offset: 0, nextOffset: 1, historyNotice: "Nextcloud manages history.",
+      });
+    }
+    expect(pathname).toBe("/operator/storage/retention");
     if (init?.method === "PUT") {
       puts += 1;
       if ((init.headers as Record<string, string>)["If-Match"] !== `"${saved.revision}"`) {
@@ -63,14 +75,14 @@ describe("retention settings in the browser", () => {
     mountPanel();
     await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).toBeVisible();
     await expect.element(page.getByText("Keep forever", { exact: true }).first()).toBeVisible();
-    expect(page.getByRole("checkbox").all().length).toBe(5);
+    expect(page.getByRole("checkbox").all().length).toBe(6);
     await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeDisabled();
     await expect.element(page.getByLabelText("Sweep time", { exact: true })).toHaveValue("02:00");
     await expect.element(page.getByLabelText("Timezone", { exact: true })).toHaveValue("UTC");
     await page.getByLabelText("Sweep time", { exact: true }).fill("15:45");
     await page.getByLabelText("Timezone", { exact: true }).fill("Europe/Zagreb");
 
-    await page.getByRole("checkbox").all()[0].click();
+    await page.getByRole("checkbox").all()[2].click();
     for (const days of [7, 30, 60, 90]) {
       const button = page.getByRole("button", { name: `${days} days`, exact: true }).first();
       await button.click();
@@ -81,7 +93,7 @@ describe("retention settings in the browser", () => {
     expect(page.getByText("Captured audio", { exact: true }).all()).toHaveLength(0);
     expect(page.getByText("Captured video", { exact: true }).all()).toHaveLength(0);
 
-    await page.getByRole("checkbox").all()[1].click();
+    await page.getByRole("checkbox").all()[3].click();
     await page.getByRole("button", { name: "60 days", exact: true }).all()[1].click();
     await page.getByRole("combobox", { name: "Policy control" }).selectOptions("fine");
     const failed = page.getByRole("group", { name: "Failed recordings", exact: true });
@@ -119,23 +131,18 @@ describe("retention settings in the browser", () => {
     await expect.element(page.getByRole("status")).toBeVisible();
   });
 
-  it("previews one whole-meeting policy and displays recovery status", async () => {
+  it("previews Nextcloud effects and refreshes operation status without saving", async () => {
     mountPanel();
-    const meetings = page.getByRole("group", { name: "Whole meetings", exact: true });
-    await expect.element(meetings).toBeVisible();
-    await meetings.getByRole("checkbox").click();
-    await meetings.getByRole("button", { name: "7 days", exact: true }).click();
+    await expect.element(page.getByText("Keep forever", { exact: true }).first()).toBeVisible();
+    const before = structuredClone(saved);
+    await page.getByRole("button", { name: "Preview Nextcloud retention", exact: true }).click();
+    await expect.element(page.getByText("Storage capability is unavailable.", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Active Nextcloud audio: 1 files, 2,048 logical bytes.", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Refresh Nextcloud operation status", exact: true }).click();
+    await expect.element(page.getByText("fixture.opus: completed", { exact: false })).toBeVisible();
     expect(puts).toBe(0);
-    await page.getByRole("button", { name: "Preview Nextcloud retention" }).click();
-    await expect.element(page.getByText("old.opus: retire; expires 2026-09-29")).toBeVisible();
-    await expect.element(page.getByText("unknown.opus: skip; Missing history")).toBeVisible();
-    await meetings.getByRole("button", { name: "30 days", exact: true }).click();
-    expect(page.getByText("old.opus: retire; expires 2026-09-29").all()).toHaveLength(0);
-    await page.getByRole("button", { name: "Save retention settings" }).click();
-    await expect.element(page.getByText("Retention settings saved.")).toBeVisible();
-    expect(saved.nextcloud).toEqual({ meetings: { forever: false, count: 30, unit: "days" } });
-    await page.getByRole("button", { name: "Refresh Nextcloud operation status" }).click();
-    await expect.element(page.getByText("old.opus: delete-intent (2026-09-30); Recovery will retry")).toBeVisible();
+    expect(saved).toEqual(before);
+    await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeDisabled();
   });
 
   it.each([1280, 390])("has no horizontal overflow at %ipx", async (width) => {

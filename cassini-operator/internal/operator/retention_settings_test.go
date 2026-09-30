@@ -91,7 +91,7 @@ func TestRetentionMigrateDays(t *testing.T) {
 	if c.loadErr != nil {
 		t.Fatal(c.loadErr)
 	}
-	if c.settings.Version != 4 || c.settings.Recordings.Count != 62 || c.settings.History.Policy.Count != 21 || c.settings.History.Fine["superseded"].Count != 31 || c.settings.Current.Count != 90 || !c.settings.Logs.Forever {
+	if c.settings.Version != 5 || c.settings.Recordings.Count != 62 || c.settings.History.Policy.Count != 21 || c.settings.History.Fine["superseded"].Count != 31 || c.settings.Current.Count != 90 || !c.settings.Logs.Forever {
 		t.Fatalf("unexpected converted settings: %+v", c.settings)
 	}
 	if err := c.save(c.settings); err != nil {
@@ -251,7 +251,7 @@ func TestRetentionMigrateRecordingPolicy(t *testing.T) {
 				}
 				return
 			}
-			if c.loadErr != nil || c.settings.Version != 4 || c.settings.Revision != 7 || c.settings.Recordings != tc.want {
+			if c.loadErr != nil || c.settings.Version != 5 || c.settings.Revision != 7 || c.settings.Recordings != tc.want {
 				t.Fatalf("migration: %+v, error %v", c.settings, c.loadErr)
 			}
 			if err = c.save(c.settings); err != nil {
@@ -265,9 +265,10 @@ func TestRetentionMigrateRecordingPolicy(t *testing.T) {
 	}
 }
 
-func TestWholeMeetingSettingsRejectUnsupportedSchema(t *testing.T) {
+func TestVersionFourSettingsRejectUnsupportedSchema(t *testing.T) {
 	for _, nextcloud := range []string{`{"recordings":{"forever":true},"transcriptions":{"forever":true}}`, `{}`, `{"meetings":{"count":0,"unit":"days"}}`} {
 		settings := defaultRetentionSettings()
+		settings.Version = 4
 		raw, err := json.Marshal(settings)
 		if err != nil {
 			t.Fatal(err)
@@ -287,6 +288,30 @@ func TestWholeMeetingSettingsRejectUnsupportedSchema(t *testing.T) {
 		}
 		if c := newRetentionConfig(file); c.loadErr == nil {
 			t.Fatalf("accepted %s", nextcloud)
+		}
+	}
+}
+
+func TestUpgradeWholeMeetingPolicyToSplitDeadlines(t *testing.T) {
+	for _, policy := range []retentionPolicy{{Forever: true}, {Count: 7, Unit: "days"}} {
+		settings := defaultRetentionSettings()
+		settings.Version = 4
+		settings.Revision = 9
+		settings.Recordings = retentionPolicy{Count: 60, Unit: "days"}
+		raw, _ := json.Marshal(settings)
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &object); err != nil {
+			t.Fatal(err)
+		}
+		object["nextcloud"], _ = json.Marshal(map[string]retentionPolicy{"meetings": policy})
+		raw, _ = json.Marshal(object)
+		file := filepath.Join(t.TempDir(), "retention.json")
+		if err := os.WriteFile(file, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		got := newRetentionConfig(file)
+		if got.loadErr != nil || got.settings.Version != 5 || got.settings.Revision != 9 || got.settings.Nextcloud.Recordings != policy || got.settings.Nextcloud.Transcriptions != policy || got.settings.Recordings != settings.Recordings {
+			t.Fatalf("upgrade: %+v error=%v", got.settings, got.loadErr)
 		}
 	}
 }

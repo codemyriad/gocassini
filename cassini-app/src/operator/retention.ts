@@ -1,7 +1,7 @@
 export const retentionDayPresets = [7, 30, 60, 90] as const;
 export interface RetentionPolicy { forever: boolean; count?: number; unit?: "days" }
 export interface RetentionGroup { mode: "group" | "fine"; fine_initialized?: boolean; policy: RetentionPolicy; fine: Record<string, RetentionPolicy> }
-export interface RetentionSettings { nextcloud?: {meetings:RetentionPolicy}; version: number; revision: number; schedule: { time: string; timezone: string }; recordings: RetentionPolicy; history: RetentionGroup; current: RetentionPolicy; logs: RetentionPolicy }
+export interface RetentionSettings { nextcloud?: {recordings:RetentionPolicy; transcriptions:RetentionPolicy}; version: number; revision: number; schedule: { time: string; timezone: string }; recordings: RetentionPolicy; history: RetentionGroup; current: RetentionPolicy; logs: RetentionPolicy }
 export const retentionLabels: Record<string, string> = {
   failed_capture: "Failed recordings",
   failed_build: "Failed build / seal output", superseded: "Superseded successful output", failed_publish: "Failed publish staging",
@@ -12,4 +12,4 @@ export function changeRetentionMode(group: RetentionGroup, mode: "group" | "fine
 }
 
 export interface RetentionOperations { operations: {name:string;status:string;error:string;updatedAt:string}[]; offset:number; nextOffset:number; historyNotice:string }
-export interface RetentionPreview {usage:{count:number;bytes:number};now:string; revision:number; capability:boolean; reason?:string; historyNotice:string; retire:number; meetings:{name:string;action:string;deadline?:string;reason?:string}[]}
+export interface RetentionPreview {audio?:{count:number;bytes:number};transcription?:{count:number;bytes:number};now:string; revision:number; capability:boolean; reason?:string; historyNotice:string; convert:number; retire:number; meetings:{name:string;action:string;audioDeadline?:string;transcriptionDeadline?:string;reason?:string}[]}
