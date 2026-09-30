@@ -84,6 +84,27 @@ func TestProbeCoalescingIsHeldPerScope(t *testing.T) {
 	}
 }
 
+func TestSetupEditsInvalidateTalkProbeCoalescing(t *testing.T) {
+	for _, edit := range []string{`{"internal_secret":"changed"}`, `{"test_room_url":"https://cloud.test/call/anotherroom"}`} {
+		t.Run(edit, func(t *testing.T) {
+			rt, cleanup := readinessRuntime(t)
+			defer cleanup()
+			putRecordingSetup(t, rt, `{"internal_secret":"old","test_room_url":"https://cloud.test/call/testroom"}`, http.StatusOK)
+			probes := 0
+			rt.recordingSetup.probe = func(context.Context, string) ([]readinessCheck, error) {
+				probes++
+				return []readinessCheck{{ID: "talk.hpb", State: "passed"}}, nil
+			}
+			rt.checkRecordingReadinessScoped(context.Background(), readinessScope{talk: true})
+			putRecordingSetup(t, rt, edit, http.StatusOK)
+			rt.checkRecordingReadinessScoped(context.Background(), readinessScope{talk: true})
+			if probes != 2 || len(rt.recordingSetup.checks) != 1 {
+				t.Fatalf("changed setup was not probed: calls=%d, cached checks=%+v", probes, rt.recordingSetup.checks)
+			}
+		})
+	}
+}
+
 // A request naming only rows nothing probes is refused, not widened.
 func TestScopedCheckRefusesARequestWithNoProbeBehindIt(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)

@@ -746,17 +746,16 @@ func TestNonOkChecksCarryARemedy(t *testing.T) {
 }
 
 // The checklist shows a deliberately small set of what doctor reports. doctor
-// itself keeps everything — it is a host diagnostic for a terminal — but free
-// space, ffmpeg and ffprobe produced rows in the panel that nobody acted on.
+// itself keeps everything, but healthy tool and free-space rows need no action.
 func TestHostChecklistShowsOnlyTheRowsWorthActingOn(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
 		{"id":"workdir","status":"ok","summary":"working directory /work"},
 		{"id":"workdir.writable","status":"ok","summary":"working directory writable: /work"},
-		{"id":"workdir.space","status":"warn","summary":"low on space"},
+		{"id":"workdir.space","status":"ok","summary":"enough space"},
 		{"id":"tmpdir.writable","status":"ok","summary":"temporary directory writable: /tmp"},
-		{"id":"tmpdir.space","status":"warn","summary":"low on space"},
+		{"id":"tmpdir.space","status":"ok","summary":"enough space"},
 		{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
 		{"id":"ffprobe","status":"ok","summary":"ffprobe available"}
 	]`)
@@ -775,6 +774,33 @@ func TestHostChecklistShowsOnlyTheRowsWorthActingOn(t *testing.T) {
 	for i := range want {
 		if ids[i] != want[i] {
 			t.Fatalf("checklist rows = %v; want %v", ids, want)
+		}
+	}
+}
+
+func TestHostChecklistPreservesToolAndSpaceProblems(t *testing.T) {
+	for _, id := range []string{"ffmpeg", "ffprobe", "workdir.space", "tmpdir.space"} {
+		for status, want := range map[string]string{"warn": "warn", "fail": "needs_action"} {
+			t.Run(id+"/"+status, func(t *testing.T) {
+				rt, cleanup := readinessRuntime(t)
+				defer cleanup()
+				rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
+					{"id":"workdir","status":"ok","summary":"working directory"},
+					{"id":"workdir.writable","status":"ok","summary":"writable"},
+					{"id":"tmpdir.writable","status":"ok","summary":"writable"},
+					{"id":"`+id+`","status":"`+status+`","summary":"a problem","advice":"fix it"}
+				]`)
+				checks, err := rt.runDoctorProbe(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(checks) != 3 || checks[2].ID != "host."+id || checks[2].State != want {
+					t.Fatalf("doctor %s %s lost its finding: %+v", id, status, checks)
+				}
+				if worstReadinessState(checks) != want || len(checks[2].Steps) != 1 {
+					t.Fatalf("doctor problem lost its verdict or remedy: %+v", checks)
+				}
+			})
 		}
 	}
 }

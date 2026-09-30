@@ -1,10 +1,13 @@
 package operator
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A repair is something the operator does; an unknown one must be refused
@@ -58,12 +61,58 @@ func TestCoverageRowReportsARunningBackfill(t *testing.T) {
 		rt.searchRepair.running = false
 		rt.searchRepair.mu.Unlock()
 	}()
-	check := readinessCheck{Message: "Some meetings are outside coverage."}
-	rt.describeSearchBackfill(&check, searchCoverage{Untracked: 3})
-	if !strings.Contains(check.Message, "Re-indexing is running now.") {
-		t.Fatalf("a running repair went unreported: %q", check.Message)
+	rt.archiveCoverage.check = readinessCheck{ID: "archive.search", State: "warn", Message: "Some meetings are outside coverage.", Repair: repairBackfillSearch}
+	rt.archiveCoverage.taken = true
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		rt.readinessHandler(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+		var report readinessResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, check := range report.Checks {
+			if check.ID != "archive.search" {
+				continue
+			}
+			found = true
+			if strings.Count(check.Message, "Re-indexing is running now.") != 1 || check.Repair != "" {
+				t.Fatalf("health poll did not report the running repair: %+v", check)
+			}
+		}
+		if !found {
+			t.Fatal("archive check missing")
+		}
 	}
-	if check.Repair != "" {
-		t.Fatalf("offered a second run while one was in flight: %q", check.Repair)
+	if rt.archiveCoverage.check.Repair != repairBackfillSearch || strings.Contains(rt.archiveCoverage.check.Message, "running") {
+		t.Fatalf("reading repair progress changed the cached observation: %+v", rt.archiveCoverage.check)
+	}
+}
+
+func TestCachedCoverageReportsRepairCompletionAndFailure(t *testing.T) {
+	for _, outcome := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"completed", nil, "Last re-index: 2 indexed, 0 unchanged, 0 not searchable, 0 failed."},
+		{"failed", errors.New("archive unavailable"), "The last re-index did not finish: archive unavailable"},
+	} {
+		t.Run(outcome.name, func(t *testing.T) {
+			rt, cleanup := readinessRuntime(t)
+			defer cleanup()
+			rt.archiveCoverage.check = readinessCheck{ID: "archive.search", State: "warn", Message: "An observed gap.", Repair: repairBackfillSearch}
+			rt.archiveCoverage.taken = true
+			rt.searchRepair.ran = true
+			rt.searchRepair.finished = time.Now()
+			rt.searchRepair.report.Indexed = 2
+			rt.searchRepair.err = outcome.err
+			for i := 0; i < 2; i++ {
+				check := rt.lastArchiveCoverage()
+				if strings.Count(check.Message, outcome.want) != 1 || check.Repair != repairBackfillSearch {
+					t.Fatalf("cached coverage did not reflect the repair outcome: %+v", check)
+				}
+			}
+		})
 	}
 }

@@ -55,7 +55,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 			check.State, check.Code = "warn", "search_coverage_partial"
 		}
 		check.Action = "recheck"
-		check.Steps = append([]readinessStep{{Label: "Check storage again to list the archive before judging search coverage"}}, searchCoverageSteps(coverage)...)
+		check.Steps = append([]readinessStep{{Label: "Check storage again to list the archive before judging search coverage"}}, searchCoverageSteps(coverage, rt.canBackfillSearch())...)
 		rt.describeSearchBackfill(&check, coverage)
 		return check
 	}
@@ -70,7 +70,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 		check.State, check.Code = "warn", "search_coverage_partial"
 		check.Message += " The checked archive has recordings outside search coverage."
 		check.Action = "recheck"
-		check.Steps = searchCoverageSteps(coverage)
+		check.Steps = searchCoverageSteps(coverage, rt.canBackfillSearch())
 	} else if coverage.TotalKnown() == 0 {
 		check.State, check.Code = "passed", "search_archive_empty"
 		check.Message = "The checked recordings archive is empty. Search has no meetings to index."
@@ -85,16 +85,29 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 	return check
 }
 
-// describeSearchBackfill offers the repair, or reports the one already running.
+// describeSearchBackfill offers a supported repair for the observed gap.
 //
 // Backfill only helps meetings with no index row or an unverified bundle. It
 // cannot produce words transcription never created, so a row whose whole
 // shortfall is missing or failed transcription gets no button — offering one
 // there would be a button that changes nothing.
 func (rt *Runtime) describeSearchBackfill(check *readinessCheck, coverage searchCoverage) {
+	if coverage.Untracked+coverage.BackfillCandidates == 0 {
+		return
+	}
+	if rt.canBackfillSearch() {
+		check.Repair = repairBackfillSearch
+		return
+	}
+}
+
+// Repair progress is live process state, separate from the cached coverage
+// observation. Add it to a copy on each read without listing the archive again.
+func (rt *Runtime) describeSearchRepair(check *readinessCheck) {
 	running, ran, report, err, finished := rt.searchRepair.snapshot()
 	switch {
 	case running:
+		check.Repair = ""
 		check.Message += " Re-indexing is running now."
 		return
 	case err != nil:
@@ -103,21 +116,20 @@ func (rt *Runtime) describeSearchBackfill(check *readinessCheck, coverage search
 		check.Message += fmt.Sprintf(" Last re-index: %d indexed, %d unchanged, %d not searchable, %d failed.",
 			report.Indexed, report.Unchanged, report.Unavailable, report.Failed)
 	}
-	if coverage.Untracked+coverage.BackfillCandidates > 0 {
-		check.Repair = repairBackfillSearch
-	}
 }
 
 // Backfill helps only when an archive meeting has no index row or its bundle
 // could not be verified. It cannot produce words transcription never created.
-func searchCoverageSteps(c searchCoverage) []readinessStep {
+func searchCoverageSteps(c searchCoverage, canBackfill bool) []readinessStep {
 	var steps []readinessStep
 	if candidates := c.Untracked + c.BackfillCandidates; candidates > 0 {
 		// No command here on purpose. The row carries Repair instead, and the
 		// panel offers a button that runs it in this process.
-		steps = append(steps, readinessStep{
-			Label: fmt.Sprintf("Re-index the %d recording(s) with no index row or an unverified bundle", candidates),
-		})
+		label := "Inspect the affected recording bundles and their search index entries"
+		if canBackfill {
+			label = fmt.Sprintf("Re-index the %d recording(s) with no index row or an unverified bundle", candidates)
+		}
+		steps = append(steps, readinessStep{Label: label})
 	}
 	if c.ModelUnavailable+c.TranscriptionFailed > 0 {
 		steps = append(steps, readinessStep{Label: "Check transcription settings and model readiness. Rebuilding the search index cannot add words to already published audio"})
@@ -179,12 +191,14 @@ func (rt *Runtime) recordArchiveCoverage(ctx context.Context) {
 // lastArchiveCoverage reports the finding, or that no check has taken one.
 func (rt *Runtime) lastArchiveCoverage() readinessCheck {
 	rt.archiveCoverage.mu.Lock()
-	defer rt.archiveCoverage.mu.Unlock()
+	check := rt.archiveCoverage.check
 	if !rt.archiveCoverage.taken {
-		return readinessCheck{
+		check = readinessCheck{
 			ID: "archive.search", State: "not_verified", Code: "search_coverage_not_checked",
 			Message: "Archive search coverage has not been checked yet.", Action: "recheck",
 		}
 	}
-	return rt.archiveCoverage.check
+	rt.archiveCoverage.mu.Unlock()
+	rt.describeSearchRepair(&check)
+	return check
 }
