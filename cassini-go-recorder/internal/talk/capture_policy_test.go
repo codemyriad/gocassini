@@ -238,3 +238,47 @@ func TestValidSilentOpusComposesAudioOnlyRecording(t *testing.T) {
 		t.Fatalf("silent audio failed: %v", err)
 	}
 }
+
+func TestAbsentAudioSubscriptionRefreshIsSlowAndDoesNotSpendFailureBudget(t *testing.T) {
+	now := time.Now()
+	state := peerReconcileState{audioOnly: true, noEligibleAudio: true, offerReceived: true, iceConnected: true, createdAt: now.Add(-time.Hour), lastAudioRefresh: now.Add(-slowRequestOfferInterval + time.Second)}
+	if got := reconcileActionFor(now, state, 0); got != actionRequestOffer {
+		t.Fatalf("premature replacement: %s", got)
+	}
+	state.lastAudioRefresh = now.Add(-slowRequestOfferInterval)
+	if got := reconcileActionFor(now, state, 0); got != actionRefreshAudio {
+		t.Fatalf("stale stream selection: %s", got)
+	}
+	state.noEligibleAudio = false
+	if got := reconcileActionFor(now, state, 0); got != actionNone {
+		t.Fatalf("offered but silent audio replaced: %s", got)
+	}
+	r, messages := newPeerMessageCapture(t)
+	old, err := r.newSubscriberPeer("waiting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.offerReceived = true
+	old.noEligibleAudio = true
+	old.lastAudioRefresh = now.Add(-slowRequestOfferInterval)
+	old.rebuildCount = maxCaptureRebuilds
+	r.subscribers = map[string]*subscriberPeer{"waiting": old}
+	t.Cleanup(func() {
+		if p := r.subscribers["waiting"]; p != nil {
+			_ = p.close()
+		}
+	})
+	r.reconcileSubscribers(now)
+	next := r.subscribers["waiting"]
+	if next == old || next.rebuildCount != maxCaptureRebuilds || !next.lastAudioRefresh.Equal(now) {
+		t.Fatalf("audio discovery consumed failure budget or did not replace: %+v", next)
+	}
+	select {
+	case msg := <-messages:
+		if msg["type"] != "requestoffer" || asString(msg["sid"]) != "" || asMap(msg["payload"])["video"] != false {
+			t.Fatalf("fresh subscription bypassed policy: %v", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing fresh subscription")
+	}
+}

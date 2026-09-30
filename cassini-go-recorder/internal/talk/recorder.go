@@ -1070,7 +1070,7 @@ func (r *Recorder) requestOfferLoop(ctx context.Context) error {
 // failed) is a deterministic offer failure that a retry cannot fix, and
 // rebuilding it would trade working audio for a speculative recovery; a peer
 // still parked after maxCaptureRebuilds (D-500 edge 2); and a peer that is
-// ICE-connected but silent, which stays with the unchanged 45s floor.
+// ICE-connected with offered-but-silent audio, which is retained in audio-only mode.
 //
 // now is passed in so every decision is deterministically testable.
 func (r *Recorder) reconcileSubscribers(now time.Time) {
@@ -1097,6 +1097,8 @@ func (r *Recorder) reconcileSubscribers(now time.Time) {
 			p.retryPendingAnswer()
 		case actionRebuild:
 			r.rebuildSubscriber(p, now, rebuildReasonFor(now, state))
+		case actionRefreshAudio:
+			r.replaceSubscriber(p, now, "waiting for eligible audio after subscription update", false)
 		case actionRequestOffer:
 			if err := p.requestOffer(); err != nil {
 				log.Printf("requestoffer failed for %s: %v", p.remoteSessionID, err)
@@ -1121,6 +1123,7 @@ const (
 	actionRequestOffer
 	actionRetryAnswer
 	actionRebuild
+	actionRefreshAudio
 )
 
 func (a reconcileAction) String() string {
@@ -1131,6 +1134,8 @@ func (a reconcileAction) String() string {
 		return "retryAnswer"
 	case actionRebuild:
 		return "rebuild"
+	case actionRefreshAudio:
+		return "refresh-audio-subscription"
 	default:
 		return "none"
 	}
@@ -1149,6 +1154,7 @@ type peerReconcileState struct {
 	iceConnected       bool
 	audioOnly          bool
 	noEligibleAudio    bool
+	lastAudioRefresh   time.Time
 }
 
 // reconcileState snapshots the peer for a reconcile tick.
@@ -1180,6 +1186,7 @@ func (p *subscriberPeer) reconcileState() peerReconcileState {
 		iceConnected:       iceConnected,
 		audioOnly:          p.owner != nil && !p.owner.cfg.RetainVideo,
 		noEligibleAudio:    p.noEligibleAudio,
+		lastAudioRefresh:   p.lastAudioRefresh,
 	}
 }
 
@@ -1192,6 +1199,14 @@ func reconcileActionFor(now time.Time, s peerReconcileState, captured int) recon
 	}
 	if s.audioOnly && !s.hasPendingAnswer && s.offerReceived {
 		if s.noEligibleAudio {
+			// Janus multistream configure(update=true) can keep the original
+			// video-only stream set. Try the SID-safe update first, then obtain a
+			// fresh subscription at the slow cadence if audio is still absent.
+			// This is discovery, not a transport failure, and consumes no failure
+			// rebuild budget. Offered audio that is merely silent never takes it.
+			if !s.lastAudioRefresh.IsZero() && now.Sub(s.lastAudioRefresh) >= slowRequestOfferInterval {
+				return actionRefreshAudio
+			}
 			return actionRequestOffer
 		}
 		if s.iceConnected {
@@ -1302,6 +1317,10 @@ func (r *Recorder) capturedPacketTotals() map[string]int {
 // peer outside the lock, then swap only if we are not stopping and the old peer
 // is still the registered one.
 func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time, reason string) {
+	r.replaceSubscriber(old, now, reason, true)
+}
+
+func (r *Recorder) replaceSubscriber(old *subscriberPeer, now time.Time, reason string, transportFailure bool) {
 	sid := old.remoteSessionID
 	newPeer, err := r.newSubscriberPeer(sid)
 	if err != nil {
@@ -1309,7 +1328,12 @@ func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time, reason 
 		return
 	}
 	newPeer.createdAt = now
-	newPeer.rebuildCount = old.rebuildCount + 1
+	newPeer.rebuildCount = old.rebuildCount
+	if transportFailure {
+		newPeer.rebuildCount++
+	} else {
+		newPeer.lastAudioRefresh = now
+	}
 
 	r.mu.Lock()
 	if r.stopping {
@@ -1328,7 +1352,11 @@ func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time, reason 
 	r.mu.Unlock()
 
 	_ = old.close()
-	log.Printf("talk recorder: rebuilding subscriber sid=%s (%s, rebuild %d/%d)", sid, reason, newPeer.rebuildCount, maxCaptureRebuilds)
+	if transportFailure {
+		log.Printf("talk recorder: rebuilding subscriber sid=%s (%s, rebuild %d/%d)", sid, reason, newPeer.rebuildCount, maxCaptureRebuilds)
+	} else {
+		log.Printf("talk recorder: refreshing audio subscription sid=%s (%s, transport rebuilds %d/%d)", sid, reason, newPeer.rebuildCount, maxCaptureRebuilds)
+	}
 	if err := newPeer.requestOffer(); err != nil {
 		log.Printf("rebuild requestoffer failed for %s: %v", sid, err)
 	}
