@@ -237,6 +237,8 @@ type Runtime struct {
 }
 
 type TriggerRequest struct {
+	RetainVideo           bool    `json:"retain_video"`
+	CaptureMode           string  `json:"capture_mode,omitempty"`
 	Platform              string  `json:"platform"`
 	BaseURL               string  `json:"baseURL,omitempty"`
 	TalkConnectURL        string  `json:"talkConnectURL,omitempty"`
@@ -1286,6 +1288,18 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 		return createJobResponse{}, nil, errRecordBusy
 	}
 
+	// Freeze trusted capture policy at admission; caller JSON is never consent.
+	req.RetainVideo = rt.currentSettings().RetainVideo
+	req.CaptureMode = "audio-only"
+	if req.RetainVideo {
+		req.CaptureMode = "audio-video"
+	}
+	var err error
+	requestBody, err = encodeTriggerRequest(req)
+	if err != nil {
+		rt.releaseRecordSlot()
+		return createJobResponse{}, nil, err
+	}
 	jobID := ulid.Make().String()
 	now := nowUTCString()
 	job := Job{

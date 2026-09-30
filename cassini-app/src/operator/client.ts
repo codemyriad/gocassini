@@ -315,6 +315,7 @@ function normalizeSettings(raw: unknown): Settings {
   };
   return {
     transcription_enabled: value.transcription_enabled === true,
+    retain_video: value.retain_video === true,
     active_model: asString(value.active_model),
     active_revision: asString(value.active_revision),
     quality: normalizeQuality(value.quality),

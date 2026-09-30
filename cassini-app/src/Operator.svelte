@@ -61,6 +61,7 @@
     roomToken?: string;
     guestName?: string;
     platform?: string;
+    capture_mode?: "audio-only" | "audio-video";
   }
 
   export function parseRequestJSON(requestJSON: string): RequestMetadata {
@@ -71,6 +72,7 @@
       const payload = JSON.parse(requestJSON);
       if (payload && typeof payload === "object") {
         return {
+          capture_mode: payload.capture_mode === "audio-only" || payload.capture_mode === "audio-video" ? payload.capture_mode : undefined,
           url: typeof payload.url === "string" && payload.url.trim() !== "" ? payload.url.trim() : undefined,
           baseURL: typeof payload.baseURL === "string" && payload.baseURL.trim() !== "" ? payload.baseURL.trim() : undefined,
           roomToken: typeof payload.roomToken === "string" && payload.roomToken.trim() !== "" ? payload.roomToken.trim() : undefined,
@@ -1378,6 +1380,10 @@
                     <div>
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Provider</dt>
                       <dd class="text-sm">{selectedJob.job.provider}</dd>
+                    </div>
+                    <div>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Capture mode</dt>
+                      <dd class="text-sm">{parseRequestJSON(selectedJob.job.request_json).capture_mode === "audio-only" ? "Audio only" : parseRequestJSON(selectedJob.job.request_json).capture_mode === "audio-video" ? "Audio and video" : "Unknown (older recording)"}</dd>
                     </div>
                     <div class="min-w-0">
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting URL</dt>
