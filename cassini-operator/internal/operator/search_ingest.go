@@ -188,6 +188,7 @@ func deliveredOpusName(attemptSiteDir, jobID string) (string, error) {
 		Meetings []struct {
 			ID           string `json:"id"`
 			AudioPath    string `json:"audioPath"`
+			DocumentPath string `json:"documentPath"`
 			ArtifactPath string `json:"artifactPath"`
 		} `json:"meetings"`
 	}

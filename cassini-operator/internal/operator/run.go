@@ -82,11 +82,13 @@ type Config struct {
 }
 
 type Runtime struct {
-	retention        *retentionConfig
-	retentionSweepMu sync.Mutex
-	modelMu          sync.Mutex
-	modelCancel      context.CancelFunc
-	modelJobID       string
+	remoteRetentionMu sync.RWMutex
+	remoteRetention   *annotationService
+	retention         *retentionConfig
+	retentionSweepMu  sync.Mutex
+	modelMu           sync.Mutex
+	modelCancel       context.CancelFunc
+	modelJobID        string
 	// modelInventoryCache holds `cassini models list` results per device;
 	// see cachedModelInventory.
 	modelInventoryMu    sync.Mutex
@@ -332,6 +334,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	exappCfg.meetingMetadata = runtime.meetingMetadata
+	exappCfg.lifecycle = store
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
@@ -800,11 +803,13 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	if searchIndex, err := openSearchStore(searchStorePath(cfg.DBPath), logger); err != nil {
 		logger.Printf("search index unavailable (%v); meetings will publish but not be indexed", err)
 	} else {
+		searchIndex.lifecycle = store
 		rt.searchStore = searchIndex
 	}
 	if metadata, err := openMeetingMetadataStore(meetingMetadataPath(cfg.DBPath), logger); err != nil {
 		logger.Printf("meeting metadata index unavailable (%v); list metadata will need archive recovery", err)
 	} else {
+		metadata.lifecycle = store
 		rt.meetingMetadata = metadata
 	}
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
@@ -963,6 +968,8 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
 		{"/storage/retention/sweep", http.HandlerFunc(rt.retentionSweepHandler)},
+		{"/storage/retention/preview", http.HandlerFunc(rt.remoteRetentionPreviewHandler)},
+		{"/storage/retention/operations", http.HandlerFunc(rt.remoteRetentionOperationsHandler)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the
 		// old hand-rolled list because main moved route registration into this
@@ -1000,7 +1007,16 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	exappCfg.lifecycle = rt.store
 	annotations := newAnnotationService(rt, exappCfg, logger)
+	rt.remoteRetentionMu.Lock()
+	rt.remoteRetention = annotations
+	rt.remoteRetentionMu.Unlock()
+	if annotations != nil {
+		if err := annotations.recoverRemoteRetentionAtStartup(rt.ctx); err != nil {
+			logger.Printf("remote retention recovery: %v", err)
+		}
+	}
 	search := rt.searchDeps()
 	if annotations != nil {
 		search.importAnnotations = annotations.importListedDocuments
@@ -1022,6 +1038,17 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	if annotations != nil {
 		rt.startInitialAnnotationBuild(exappCfg, logger)
 		annotations.register(root)
+		if rt.ctx != nil && rt.retention != nil {
+			rt.workerWG.Add(1)
+			go func() {
+				defer rt.workerWG.Done()
+				rt.retentionSweepMu.Lock()
+				defer rt.retentionSweepMu.Unlock()
+				if err := annotations.runRemoteRetention(rt.ctx, time.Now()); err != nil {
+					logger.Printf("startup remote retention: %v", err)
+				}
+			}()
+		}
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)
@@ -1410,6 +1437,10 @@ func OpenStore(path string) (*Store, error) {
 
 	store := &Store{db: db}
 	if err := store.ensureSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.ensureMeetingLifecycleSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

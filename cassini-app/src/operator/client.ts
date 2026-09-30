@@ -228,6 +228,12 @@ export class OperatorClient {
     );
   }
 
+  retentionOperations(offset = 0): Promise<import("./retention").RetentionOperations> {
+    return this.#request(`/storage/retention/operations?offset=${offset}`);
+  }
+  previewRetention(settings: RetentionSettings): Promise<import("./retention").RetentionPreview> {
+ return this.#request("/storage/retention/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(settings)});
+ }
   getRetention(): Promise<RetentionSettings> {
     return this.#request<RetentionSettings>("/storage/retention", { cache: "no-store" });
   }

@@ -142,6 +142,12 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 		if !strings.HasSuffix(name, ".opus") || path.Base(name) != name {
 			continue
 		}
+		if err := c.meetingNotRetired(ctx, name); err != nil {
+			if errors.Is(err, errMeetingRetired) {
+				continue
+			}
+			return directShareSnapshot{}, err
+		}
 		if _, duplicate := result.paths[name]; duplicate {
 			continue
 		}
@@ -163,6 +169,9 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 }
 
 func (c ExAppConfig) recipientRecordingPath(ctx context.Context, client *http.Client, caller, opusName string, metadata *meetingMetadataStore) (string, error) {
+	if err := c.meetingNotRetired(ctx, opusName); err != nil {
+		return "", errRecordingNotShared
+	}
 	if path.Base(opusName) != opusName || !strings.HasSuffix(opusName, ".opus") {
 		return "", fmt.Errorf("invalid recording name")
 	}

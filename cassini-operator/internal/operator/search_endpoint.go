@@ -365,6 +365,9 @@ func catalogEntryOpusName(audioPath, artifactPath string) string {
 	if ref == "" {
 		return ""
 	}
+	if name := logicalMeetingName(path.Base(ref)); name != "" {
+		return name
+	}
 	return path.Base(ref)
 }
 

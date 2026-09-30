@@ -24,6 +24,20 @@
     split = value.history.mode === "fine" || !!value.history.fine_initialized;
     notifyRetentionChanged(value);
   }
+  let preview: import("./operator/retention").RetentionPreview | null = null;
+  let previewSettings = "";
+  let operations: import("./operator/retention").RetentionOperations | null = null;
+  async function loadOperations(offset = 0) {
+    if (!operatorClient) return;
+    try { operations = await operatorClient.retentionOperations(offset); }
+    catch(e) { error=e instanceof Error?e.message:String(e); }
+  }
+  async function previewNextcloud() {
+   if (!settings || !operatorClient) return;
+   busy=true; error="";
+   try { preview=await operatorClient.previewRetention(settings);previewSettings=JSON.stringify(settings); }
+   catch(e) {error=e instanceof Error?e.message:String(e);} finally {busy=false;}
+  }
   let split = false;
   const supportedZones = (Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
   const timezones = [...new Set(["UTC", Intl.DateTimeFormat().resolvedOptions().timeZone, ...supportedZones])];
@@ -76,14 +90,13 @@
 <section class="retention-panel" id="retention-policies">
   <div class="retention-content">
   <h2 class="text-xl font-semibold" tabindex="-1">Retention policies</h2>
-  <p>Choose how long Cassini keeps files in its container. Keep forever uses more space as recordings accumulate; shorter windows free space after cleanup. All categories currently default to keep forever.</p>
-  <p class="text-sm">Published recordings in Nextcloud and job metadata are not deleted by these policies. These settings do not choose whether cameras are captured.</p>
+  <p>Container storage and Nextcloud Files have separate policies. All categories default to keep forever. Job metadata is retained.</p>
   <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Retention ages use UTC dates. Cleanup runs at startup and on the daily schedule below. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
   {#if settings}
     <form id={formId} class="grid gap-4" on:submit|preventDefault={save}>
       <fieldset disabled={busy || disabled || $retentionMutationBusy} class="grid gap-4">
         <section class="op-tint p-4">
-          <h3 class="font-semibold">Recordings</h3>
+          <h3 class="font-semibold">Container recordings</h3>
           <RetentionPolicyField bind:policy={settings.recordings} label="Source recordings" />
           <p class="text-sm">Original captured audio, any captured video and supporting files can take substantial space. Cleanup deletes the entire source recording. Once deleted, the job cannot be rerun.</p>
         </section>
@@ -114,6 +127,32 @@
           </label>
           <p class="text-sm">Default: 02:00 UTC. Saving updates the next scheduled cleanup without restarting. If daylight saving skips the chosen time, cleanup runs at the first available time afterward; if the time repeats, it runs at the first occurrence only.</p>
         </section>
+        {#if settings.nextcloud}
+        <section class="op-tint p-4 grid gap-3">
+          <h3 class="font-semibold">Nextcloud Files</h3>
+          <RetentionPolicyField bind:policy={settings.nextcloud.meetings} label="Whole meetings" />
+          <p class="text-sm">Deletes the published meeting, including its audio, transcription and meeting notes. The meeting disappears from shared Files and Cassini.</p>
+          <p class="text-sm">Ages use the original recording date, including existing managed meetings. Nextcloud manages previous versions and Deleted files; their storage usage is unknown.</p>
+          <button class="btn btn-secondary justify-self-start" type="button" on:click={previewNextcloud}>Preview Nextcloud retention</button>
+          {#if preview && previewSettings === JSON.stringify(settings)}
+            <div role="status">
+              <p>{preview.retire} meeting removals due as of {preview.now}.</p>
+              {#if !preview.capability}<p>{preview.reason}</p>{/if}
+              <p>{preview.historyNotice}</p>
+              <p>Active Nextcloud meetings: {preview.usage.count} files, {preview.usage.bytes.toLocaleString()} logical bytes.</p>
+              <ul>{#each preview.meetings as effect}<li>{effect.name}: {effect.action}{effect.deadline ? `; expires ${effect.deadline}` : ""}{effect.reason ? `; ${effect.reason}` : ""}</li>{/each}</ul>
+            </div>
+          {/if}
+          <button class="btn btn-secondary justify-self-start" type="button" on:click={() => loadOperations()}>Refresh Nextcloud operation status</button>
+          {#if operations}
+            <div aria-label="Nextcloud retention operations">
+              {#if operations.operations.length === 0}<p>No operations on this page.</p>{/if}
+              <ul>{#each operations.operations as operation}<li>{operation.name}: {operation.status} ({operation.updatedAt}){operation.error ? `; ${operation.error}` : ""}</li>{/each}</ul>
+              {#if operations.operations.length === 100}<button class="btn btn-ghost" type="button" on:click={() => loadOperations(operations?.nextOffset)}>Next operations</button>{/if}
+            </div>
+          {/if}
+        </section>
+        {/if}
         <p class="text-sm">Saving applies to existing artefacts at the next daily/startup cleanup, using their original lifecycle dates. Saving does not delete files immediately.</p>
       </fieldset>
     </form>

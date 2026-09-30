@@ -68,6 +68,9 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 		return "", err
 	}
 	defer release()
+	if err := s.cfg.meetingNotRetired(ctx, path.Base(remote)); err != nil {
+		return "", err
+	}
 
 	before, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, remote)
 	if err != nil {
