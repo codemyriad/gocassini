@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import RecordingSetup from "../RecordingSetup.svelte";
   import { createPreviewClient, doctorScenarios } from "./doctorScenarios";
 
@@ -7,10 +8,29 @@
   const operatorClient = selected ? createPreviewClient(selected.id) : null;
   let notice = "";
   let theme = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "saturn-dark" : "saturn-light";
+  let root: HTMLDivElement;
+  let themeHost: HTMLElement | null = null;
+  onMount(() => {
+    const tree = root.getRootNode();
+    if (!(tree instanceof ShadowRoot) || !(tree.host instanceof HTMLElement)) return;
+    themeHost = tree.host;
+    const previous = themeHost.dataset.ncTheme;
+    if (previous) theme = previous.startsWith("dark") ? "saturn-dark" : "saturn-light";
+    return () => {
+      if (themeHost) {
+        if (previous === undefined) delete themeHost.dataset.ncTheme;
+        else themeHost.dataset.ncTheme = previous;
+      }
+    };
+  });
+  function changeTheme(event: Event) {
+    const selected = (event.currentTarget as HTMLSelectElement).value;
+    if (themeHost?.dataset.ncTheme) themeHost.dataset.ncTheme = selected === "saturn-dark" ? "dark" : "light";
+  }
 
 </script>
 
-<div class="cassini-root h-full overflow-auto bg-base-200 text-base-content" data-theme={theme}>
+<div bind:this={root} class="cassini-root h-full overflow-auto bg-base-200 text-base-content" data-theme={theme}>
   <main class="mx-auto max-w-5xl space-y-5 p-4 md:p-8">
     <header class="rounded-box border border-info bg-base-100 p-4">
       <h1 class="text-xl font-semibold">Doctor usability previews</h1>
@@ -18,7 +38,7 @@
       <div class="mt-3 flex flex-wrap items-center gap-3">
         <a class="link" href="#doctor-preview=">All scenarios</a>
         <label class="text-sm">Theme
-          <select class="select select-sm ml-2" bind:value={theme}>
+          <select class="select select-sm ml-2" aria-label="Preview theme" bind:value={theme} on:change={changeTheme}>
             <option value="saturn-light">Light</option><option value="saturn-dark">Dark</option>
           </select>
         </label>

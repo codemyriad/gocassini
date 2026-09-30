@@ -50,7 +50,11 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   };
   const set = (check: ReadinessCheck) => {
     const at = report.checks.findIndex(row => row.id === check.id);
-    if (at < 0) report.checks.push(check); else report.checks[at] = check;
+    if (at >= 0) report.checks[at] = check;
+    else if (check.id.startsWith("host.") || check.id === "configuration") {
+      const firstOther = report.checks.findIndex(row => !row.id.startsWith("host."));
+      report.checks.splice(firstOther < 0 ? report.checks.length : firstOther, 0, check);
+    } else report.checks.push(check);
   };
   switch (id) {
     case "first-run":
