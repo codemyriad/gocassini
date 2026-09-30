@@ -13,6 +13,7 @@
   import { loadConfig } from "./operator/config";
   import { OperatorClient } from "./operator/client";
   import SettingsPanel from "./SettingsPanel.svelte";
+  import RetentionPanel from "./RetentionPanel.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
   import type { OperatorPanel } from "./surfaceRouting";
@@ -46,6 +47,8 @@
       on:openProviders={() => dispatch("panel", "endpoints")}
       on:openTemplates={() => dispatch("panel", "templates")}
     />
+  {:else if panel === "storage"}
+    <RetentionPanel {operatorClient} />
   {:else if panel === "templates"}
     <InsightTemplatesPanel
       {operatorClient}

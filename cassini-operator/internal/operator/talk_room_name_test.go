@@ -304,14 +304,9 @@ func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
 	if manifest.Title != "Daily Meeting" {
 		t.Errorf("promoted bundle title = %q, want %q", manifest.Title, "Daily Meeting")
 	}
-	// The attempt bundle keeps the stamp too — it is what the seal packs.
-	attemptManifest, ok, err := LoadMeetingBundleManifest(attemptMeetingPath(rt.cfg.WorkRoot, jobID, 1))
-	if err != nil || !ok {
-		t.Fatalf("LoadMeetingBundleManifest(attempt) = ok=%t err=%v", ok, err)
-	}
-	if attemptManifest.Title != "Daily Meeting" {
-		t.Errorf("attempt bundle title = %q, want %q", attemptManifest.Title, "Daily Meeting")
-	}
+	// After publication the canonical copy keeps the stamp; duplicate inputs
+	// are housekeeping, independent of keep-forever retention.
+	assertGone(t, attemptMeetingPath(rt.cfg.WorkRoot, jobID, 1), "published duplicate")
 }
 
 func TestTalkBindingRoundTripsRoomName(t *testing.T) {

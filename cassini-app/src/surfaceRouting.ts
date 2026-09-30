@@ -32,13 +32,14 @@ export type Surface = "browse" | "operator";
 // The ids are the design prototype's own `OP_PANELS`, kept verbatim so a deep
 // link written against the design and one written against the code are the
 // same URL.
-export type OperatorPanel = "recordings" | "endpoints" | "pipeline" | "templates";
+export type OperatorPanel = "recordings" | "endpoints" | "pipeline" | "templates" | "storage";
 
 export const OPERATOR_PANELS: readonly OperatorPanel[] = [
   "recordings",
   "endpoints",
   "pipeline",
   "templates",
+  "storage",
 ];
 
 // The run console is the operator's default panel, and like browse it writes NO
