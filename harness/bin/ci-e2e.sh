@@ -135,6 +135,13 @@ for frequency in 440 880; do
     -c:a libopus -b:a 32k -application voip -frame_duration 20 -ac 1 "$prefix.ogg"
   TONE_MEDIA_PREFIXES="${TONE_MEDIA_PREFIXES:+$TONE_MEDIA_PREFIXES,}$prefix"
 done
+# A private one-to-one room needs both invited accounts authenticated.
+AUDIO_AUTH_USERS="${AUTH_USERS:-}"
+AUDIO_AUTH_PASSWORDS="${AUTH_PASSWORDS:-}"
+if [[ "${ROOM_TYPE:-}" == "1" ]]; then
+  AUDIO_AUTH_USERS="$BOT_USER,$ADMIN_USER"
+  AUDIO_AUTH_PASSWORDS="$BOT_PASSWORD,$ADMIN_PASSWORD"
+fi
 AUDIO_OUTPUT="${FINAL_OUTPUT%.mkv}-audio-only.mkv"
 JANUS_EVIDENCE="${AUDIO_OUTPUT%.mkv}-janus.json"
 JANUS_READY="${JANUS_EVIDENCE}.ready"
@@ -151,6 +158,7 @@ done
   RETAIN_VIDEO=false OUTPUT="$AUDIO_OUTPUT" FINAL_OUTPUT="$AUDIO_OUTPUT" \
     REC_LOG="${REC_LOG%.log}-audio-only.log" PUB_LOG="${PUB_LOG%.log}-audio-only.log" \
     REC_DURATION=160 PUB_DURATION=145 PUB_USERS=2 JOIN_DELAYS=0,6 \
+    AUTH_USERS="$AUDIO_AUTH_USERS" AUTH_PASSWORDS="$AUDIO_AUTH_PASSWORDS" \
     AUDIO_TRACK_AFTERS=20,0 VIDEO_TRACK_AFTERS=0,20 \
     MEDIA_PREFIX="" MEDIA_PREFIXES="$TONE_MEDIA_PREFIXES" ./e2e_with_publisher.sh
 )

@@ -196,12 +196,23 @@ func buildCaptureTimingSource(t *testing.T, dir string, tones []captureTone, vid
 	sess := session.Session{Version: session.SchemaVersion, SessionID: "timing", StartedMonoNS: base, CaptureMode: "audio-only"}
 	write := func(kind, pid, codec string, clock uint32, bursts []captureBurst, payloads [][]byte) {
 		id := fmt.Sprintf("s_%06d", len(sess.PacketStreams)+1)
-		ltid := id + ":" + kind
+		ltid := pid + ":" + kind
 		stream := session.PacketStream{StreamID: id, LTID: ltid, Codec: codec, ClockRate: clock, PT: 111, PrimarySSRC: uint32(len(sess.PacketStreams) + 1), StartMonoNS: base + uint64(bursts[0].start*1e9)}
+		rotated := false
+		for _, previous := range sess.PacketStreams {
+			if previous.LTID == ltid {
+				rotated = true
+			}
+		}
+		if rotated {
+			stream.PT = 112
+		}
 		sess.PacketStreams = append(sess.PacketStreams, stream)
-		sess.LogicalTracks = append(sess.LogicalTracks, session.LogicalTrack{LTID: ltid, Kind: kind, ParticipantID: pid})
-		sess.Participants = append(sess.Participants, session.Participant{PID: pid, Display: pid})
-		w, err := store.NewWriter(filepath.Join(streamsDir, id+".rtplog"), store.StreamHeader{StreamID: id, Codec: codec, ClockRate: clock, StartMonoNS: stream.StartMonoNS, PT: 111})
+		if !rotated {
+			sess.LogicalTracks = append(sess.LogicalTracks, session.LogicalTrack{LTID: ltid, Kind: kind, ParticipantID: pid})
+			sess.Participants = append(sess.Participants, session.Participant{PID: pid, Display: pid})
+		}
+		w, err := store.NewWriter(filepath.Join(streamsDir, id+".rtplog"), store.StreamHeader{StreamID: id, Codec: codec, ClockRate: clock, StartMonoNS: stream.StartMonoNS, PT: stream.PT})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +224,7 @@ func buildCaptureTimingSource(t *testing.T, dir string, tones []captureTone, vid
 				step = 0.1
 			}
 			for i := 0; i < int(math.Round((b.end-b.start)/step)); i++ {
-				raw, err := (&rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 111, SequenceNumber: seq, Timestamp: ts, SSRC: stream.PrimarySSRC, Marker: true}, Payload: payloads[i%len(payloads)]}).Marshal()
+				raw, err := (&rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: stream.PT, SequenceNumber: seq, Timestamp: ts, SSRC: stream.PrimarySSRC, Marker: true}, Payload: payloads[i%len(payloads)]}).Marshal()
 				if err != nil {
 					t.Fatal(err)
 				}
