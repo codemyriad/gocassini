@@ -42,7 +42,13 @@ type readinessCheck struct {
 	// Repair names something the operator can do about this check ITSELF, which
 	// the panel renders as a button, instead of printing a shell line for an
 	// administrator to go and run.
-	Repair    string `json:"repair,omitempty"`
+	Repair string `json:"repair,omitempty"`
+	// Checkable says a probe establishes THIS row, so it can be re-checked on
+	// its own. Sent rather than worked out again in the panel: the mapping from
+	// row to probe is readinessScopeFor's, and a second copy in TypeScript
+	// drifts into a spinner for a probe that never runs, or a button the server
+	// refuses.
+	Checkable bool   `json:"checkable,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
 }
 
@@ -512,15 +518,6 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 		rt.recordArchiveCoverage(ctx)
 	}
 }
-func (rt *Runtime) transcriptionUnavailable(settings STTSettings, device string) string {
-	if ok, detail := rt.effectiveComputeStatus(settings, device); !ok {
-		return detail
-	}
-	if _, err := rt.admitModelForDevice(settings, device); err != nil {
-		return err.Error()
-	}
-	return ""
-}
 
 func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	return rt.readinessWithOptional(ctx, true)
@@ -621,6 +618,9 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	}
 	resp.Checks = append(host, resp.Checks...)
 	resp.Test = rt.readinessTest(ctx, state)
+	for i := range resp.Checks {
+		resp.Checks[i].Checkable = !readinessScopeFor([]string{resp.Checks[i].ID}).empty()
+	}
 	resp.State = worstReadinessState(resp.Checks)
 	resp.RecordingState = recordingCapabilityState(resp.Checks)
 	return resp

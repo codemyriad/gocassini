@@ -192,3 +192,34 @@ func TestMisconfiguredTalkBackendURLNamesItselfRatherThanBlamingTheNetwork(t *te
 		t.Fatalf("an unset override was reported as a fault: %+v", c)
 	}
 }
+
+// Every row says whether it can be re-checked on its own, so the panel does not
+// keep a second copy of the row-to-probe mapping. A copy in TypeScript drifted
+// into a spinner for a probe that never ran.
+func TestRowsSayWhetherAProbeCanReCheckThem(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	byID := map[string]readinessCheck{}
+	for _, c := range rt.readiness(context.Background()).Checks {
+		byID[c.ID] = c
+	}
+
+	// Established by a probe.
+	for _, id := range []string{"storage", "host", "archive.search"} {
+		c, ok := byID[id]
+		if !ok {
+			t.Fatalf("%s row missing from the report", id)
+		}
+		if !c.Checkable {
+			t.Errorf("%s is established by a probe but says it cannot be re-checked", id)
+		}
+	}
+
+	// Read from saved configuration. Offering a re-check would wait for nothing.
+	for _, id := range []string{"configuration", "talk.authentication", "talk.handoff"} {
+		if c, ok := byID[id]; ok && c.Checkable {
+			t.Errorf("%s is read from configuration but claims a probe re-checks it", id)
+		}
+	}
+}

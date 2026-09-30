@@ -29,23 +29,11 @@ export interface ReadinessCheck {
   // button. Replaces printing a command for an administrator to go and run:
   // this panel is ADMIN-only and the operator can already do the work.
   repair?: string;
+  // Whether a probe establishes THIS row, so it can be re-checked on its own.
+  // The operator says so — the row-to-probe mapping is readinessScopeFor's, and
+  // a second copy here drifted into a spinner for a probe that never ran.
+  checkable?: boolean;
   checked_at?: string;
-}
-
-// Which rows a full check actually re-probes. The rest are read from saved
-// configuration and are already true the moment the panel renders, so marking
-// them "checking" would be theatre — and a progress indicator that lies about
-// what it is waiting for is worse than none.
-//
-// Keep in step with checkRecordingReadiness: it runs the media doctor, the Talk
-// connection probe and the storage preflight, and invalidates archive coverage.
-export function isReprobedOnCheck(id: string): boolean {
-  return id === "storage"
-    || id === "host"
-    || id.startsWith("host.")
-    || id === "talk.discovery"
-    || id === "talk.hpb"
-    || id.startsWith("archive.");
 }
 
 
