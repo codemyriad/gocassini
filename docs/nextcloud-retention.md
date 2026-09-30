@@ -19,6 +19,27 @@ original recording's UTC date, not the last annotation, publication or rename.
 A restored file does not acquire a new age. Extending a policy does not restore
 content already removed.
 
+The age source is the operator's durable job history (the job log):
+`record_finished_at`, taking the earliest valid recording completion from the
+job and its attempts. A successful publication in that history is also required
+when first adopting a file. Rerunning processing or republishing does not reset
+the saved age. This uses structured job timestamps, not the disposable text log
+files.
+
+```text
+Job history + successful publication + recording completion
+                         |
+                         v
+                 Save fixed UTC age ---> apply retention
+
+No matching history or usable recording completion ---> skip file
+```
+
+**Known limitation:** historical/imported meetings without matching job history
+or a usable recording completion timestamp are left unchanged and reported as
+skipped in the preview. Nextcloud file dates, Opus tags and filenames are not
+used as fallback age sources. Supporting those imports is deferred.
+
 ## Preview and execution
 
 Choose policies and select **Preview Nextcloud retention** before saving. The
@@ -33,6 +54,15 @@ Saving does not delete files. The existing daily schedule, startup pass and
 manual synchronous sweep execute the saved policies. Active/busy jobs are
 protected. Operation status remains available after a proxy timeout; rerun the
 sweep to recover incomplete operations rather than deleting files by hand.
+
+A conflicted operation keeps its original intent and staging; unrelated meetings
+can still expire. The sweep reports the conflict even when other operations
+completed. Capability, inventory and journal failures stop new expiry.
+
+```text
+Recovery conflict ---> keep that meeting's operation pending
+                  +--> continue unrelated due meetings ---> report partial failure
+```
 
 The ADMIN routes are:
 

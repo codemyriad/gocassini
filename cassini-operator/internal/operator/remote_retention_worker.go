@@ -170,23 +170,27 @@ func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Tim
 	if err := s.remoteRetentionCapability(ctx); err != nil {
 		return err
 	}
-	if err := s.recoverRemoteRetention(ctx); err != nil {
-		return err
+	recovery, err := s.recoverRemoteRetentionPass(ctx)
+	if err != nil {
+		return errors.Join(recovery.failures, err)
 	}
 	if err := s.reconcileRetentionInventory(ctx); err != nil {
-		return err
+		return errors.Join(recovery.failures, err)
 	}
 	s.rt.retention.mu.Lock()
 	settings := s.rt.retention.settings
 	s.rt.retention.mu.Unlock()
 	meetings, err := s.rt.store.retainedMeetings(ctx)
 	if err != nil {
-		return err
+		return errors.Join(recovery.failures, err)
 	}
-	var failures error
+	failures := recovery.failures
 	for _, m := range meetings {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(failures, err)
+		}
+		if recovery.pending[m.Name] {
+			continue
 		}
 		if m.State == "active" && m.Representation == "transcription" {
 			state, e := s.exapp.davRetentionLeaf(ctx, s.client, m.Path)
@@ -235,6 +239,15 @@ func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetin
 		return nil
 	}
 	defer unlock()
+	// Recovery owns unfinished intents, even when their lifecycle row became
+	// active before final journal cleanup. Never replace them with new work.
+	var pending bool
+	if err := s.rt.store.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM remote_retention_operation WHERE name=? AND status!='completed')`, m.Name).Scan(&pending); err != nil {
+		return err
+	}
+	if pending {
+		return nil
+	}
 	// Rerun admission uses this same lock. Read eligibility only after acquiring
 	// it, and keep it through journaling and the remote mutation.
 	job, err := s.rt.store.GetJob(ctx, jobID)
@@ -452,13 +465,31 @@ func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetin
 	return s.resumeRemoteRetention(ctx, op)
 }
 
+type remoteRetentionRecoveryResult struct {
+	pending  map[string]bool
+	failures error
+}
+
+// Startup reports all recovery errors. Sweeps can continue unrelated meetings
+// after per-operation failures, but must stop on journal or cancellation errors.
 func (s *annotationService) recoverRemoteRetention(ctx context.Context) error {
+	result, err := s.recoverRemoteRetentionPass(ctx)
+	return errors.Join(result.failures, err)
+}
+
+func (s *annotationService) recoverRemoteRetentionPass(ctx context.Context) (remoteRetentionRecoveryResult, error) {
+	result := remoteRetentionRecoveryResult{pending: map[string]bool{}}
 	operations, err := s.rt.store.pendingRemoteOperations(ctx)
 	if err != nil {
-		return err
+		return result, err
 	}
-	var failures error
 	for _, op := range operations {
+		result.pending[op.Name] = true
+	}
+	for _, op := range operations {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		unlock, ok := s.rt.store.tryLockArtifacts(strings.TrimSuffix(op.Name, ".opus"))
 		if !ok {
 			continue
@@ -466,17 +497,21 @@ func (s *annotationService) recoverRemoteRetention(ctx context.Context) error {
 		release, err := annotationWriteLocks.acquire(ctx, op.Name)
 		if err != nil {
 			unlock()
-			return err
+			return result, err
 		}
 		err = s.resumeRemoteRetention(ctx, op)
 		release()
 		unlock()
 		if err != nil {
-			_, _ = s.rt.store.db.ExecContext(ctx, `UPDATE remote_retention_operation SET last_error=?,updated_at=? WHERE name=?`, "Remote identity or delivery could not be verified; recovery will retry.", nowUTCString(), op.Name)
-			failures = errors.Join(failures, fmt.Errorf("recover %s: %w", op.Name, err))
+			result.failures = errors.Join(result.failures, fmt.Errorf("recover %s: %w", op.Name, err))
+			if _, journalErr := s.rt.store.db.ExecContext(ctx, `UPDATE remote_retention_operation SET last_error=?,updated_at=? WHERE name=?`, "Remote identity or delivery could not be verified; recovery will retry.", nowUTCString(), op.Name); journalErr != nil {
+				return result, fmt.Errorf("persist recovery failure for %s: %w", op.Name, journalErr)
+			}
+		} else {
+			delete(result.pending, op.Name)
 		}
 	}
-	return failures
+	return result, nil
 }
 
 func (s *annotationService) observeRetention(ctx context.Context, op remoteRetentionOperation, rel string) (ncLeafState, string, error) {
