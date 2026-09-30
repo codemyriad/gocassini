@@ -21,6 +21,7 @@ import (
 // CASSINI_STT_MODEL=int8, which would otherwise shadow the chosen tier) so the
 // recorder's auto-detect + tier resolution (D-434) actually runs (D-435).
 type STTSettings struct {
+	RetainVideo          bool     `json:"retain_video"`
 	TranscriptionEnabled bool     `json:"transcription_enabled"`
 	ActiveModel          string   `json:"active_model,omitempty"`
 	ActiveRevision       string   `json:"active_revision,omitempty"`
@@ -330,6 +331,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s = detectSettings()
 			s.TranscriptionEnabled, s.ActiveModel, s.ActiveRevision = previous.TranscriptionEnabled, previous.ActiveModel, previous.ActiveRevision
 			s.SearchAliases = previous.SearchAliases
+			s.RetainVideo = previous.RetainVideo
 			// Vocabulary is independent of the hardware-derived quality tier.
 			// Preserve it when re-fingerprinting an auto policy.
 			s.TranscriptionTerms = terms
@@ -598,6 +600,7 @@ type settingsResponse struct {
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
 // "field set to empty"; quality is required.
 type settingsUpdate struct {
+	RetainVideo          *bool     `json:"retain_video"`
 	TranscriptionEnabled *bool     `json:"transcription_enabled"`
 	ActiveModel          *string   `json:"active_model"`
 	ActiveRevision       *string   `json:"active_revision"`
@@ -707,6 +710,9 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	updated := current
 	updated.Quality = quality
 	updated.Source = sttSourceUser
+	if in.RetainVideo != nil {
+		updated.RetainVideo = *in.RetainVideo
+	}
 	if in.TranscriptionEnabled != nil {
 		updated.TranscriptionEnabled = *in.TranscriptionEnabled
 	}

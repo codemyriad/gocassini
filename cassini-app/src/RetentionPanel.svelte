@@ -13,6 +13,9 @@
   export let busy = false;
   export let disabled = false;
   export let formId = "retention-settings-form";
+  export let beforeSave: (() => Promise<void>) | null = null;
+  export let extraDirty = false;
+  export let beforeReload: (() => Promise<void>) | null = null;
   let scroller: HTMLDivElement;
   // Latch after reaching the end: scrolling back to edit must not relock Save.
   let reviewed = false;
@@ -41,12 +44,12 @@
   const timezones = [...new Set(["UTC", Intl.DateTimeFormat().resolvedOptions().timeZone, ...supportedZones])];
   async function load() {
     busy = true; error = ""; notice = "";
-    try { if (!operatorClient) throw new Error("Operator unavailable"); accept(await operatorClient.getRetention());
+    try { if (!operatorClient) throw new Error("Operator unavailable"); if (beforeReload) await beforeReload(); accept(await operatorClient.getRetention());
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       // guardLeave cleared the flag before attempting a reload. If it failed,
       // the draft is still here and must still be protected on the next exit.
-      unsavedChanges.set(!!settings && JSON.stringify(settings) !== saved);
+      unsavedChanges.set(extraDirty || (!!settings && JSON.stringify(settings) !== saved));
     } finally { busy = false; }
   }
   function mode(value: string) {
@@ -56,11 +59,11 @@
   }
   async function save() {
     if (!settings || !operatorClient || busy || disabled || (review && !reviewed)) return; busy = true; error = ""; notice = "";
-    try { const result = await operatorClient.putRetention(settings); accept(result); notice = "Retention settings saved."; dispatch("saved", result); }
+    try { if (beforeSave) await beforeSave(); const result = await operatorClient.putRetention(settings); accept(result); notice = "Retention settings saved."; dispatch("saved", result); }
     catch (e) { error = e instanceof Error ? e.message : String(e); } finally { busy = false; }
   }
   onMount(() => { if (initialSettings) accept(initialSettings); else void load(); });
-  $: unsavedChanges.set(!!settings && JSON.stringify(settings) !== saved);
+  $: unsavedChanges.set(extraDirty || (!!settings && JSON.stringify(settings) !== saved));
   onDestroy(() => { unsavedChanges.set(false); leavePrompt.set(null); });
 </script>
 <section class="retention-panel" class:review id="retention-policies">

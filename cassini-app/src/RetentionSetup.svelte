@@ -5,11 +5,34 @@
   import { leavePrompt, unsavedChanges } from "./operator/unsaved";
   import DirectShareAccessPanel from "./DirectShareAccessPanel.svelte";
   import RetentionPanel from "./RetentionPanel.svelte";
+  import CaptureVideoField from "./CaptureVideoField.svelte";
+  import type { Settings } from "./operator/types";
 
   export let operatorClient: OperatorClient;
   export let initialSettings: RetentionSettings;
   const dispatch = createEventDispatcher<{ done: void }>();
   let saving = false;
+  let captureSettings: Settings | null = null;
+  let retainVideo = false;
+  let savedRetainVideo = false;
+  let captureLoading = false;
+  let captureError = "";
+  async function loadCapturePolicy() {
+    captureLoading = true; captureError = "";
+    try {
+      captureSettings = await operatorClient.getSettings();
+      retainVideo = captureSettings.retain_video === true;
+      savedRetainVideo = retainVideo;
+    } catch (e) { captureError = e instanceof Error ? e.message : String(e); }
+    finally { captureLoading = false; }
+  }
+  async function saveCapturePolicy() {
+    // Retention revision is setup completion. Persist capture consent first.
+    const current = await operatorClient.getSettings();
+    captureSettings = await operatorClient.putSettings({ quality: current.quality, retain_video: retainVideo });
+    savedRetainVideo = captureSettings.retain_video === true;
+    if (savedRetainVideo !== retainVideo) throw new Error("Capture video choice was not saved. Please retry.");
+  }
   let accountBusy = false;
   let dialog: HTMLDivElement;
 
@@ -40,7 +63,7 @@
       event.returnValue = "";
     }
   }
-  onMount(() => dialog.focus());
+  onMount(() => { dialog.focus(); void loadCapturePolicy(); });
 </script>
 
 <svelte:window on:beforeunload={beforeUnload} on:keydown|capture={keydown} />
@@ -50,10 +73,15 @@
     <header>
       <p class="text-sm text-base-content/70">Cassini setup</p>
       <h1 id="retention-setup-title" class="text-2xl font-semibold">Choose what Cassini keeps</h1>
-      <p>Review recording access and retention in one place. You can change retention later in Operator → Storage.</p>
+      <p>Review recording access, video capture and storage retention in one place. You can change video capture later in Settings and retention in Operator → Storage.</p>
     </header>
-    <RetentionPanel {operatorClient} {initialSettings} formId="retention-setup-form" review bind:busy={saving} disabled={accountBusy} on:saved={() => dispatch("done")}>
-      <DirectShareAccessPanel slot="before" {operatorClient} bind:busy={accountBusy} disabled={saving} />
+    <RetentionPanel {operatorClient} {initialSettings} formId="retention-setup-form" review bind:busy={saving} disabled={accountBusy || captureLoading || captureSettings === null || !!captureError} beforeSave={saveCapturePolicy} beforeReload={loadCapturePolicy} extraDirty={retainVideo !== savedRetainVideo} on:saved={() => dispatch("done")}>
+      <div slot="before" class="grid gap-4">
+        <DirectShareAccessPanel {operatorClient} bind:busy={accountBusy} disabled={saving} />
+        {#if captureLoading}<p role="status">Loading capture policy…</p>
+        {:else if captureError}<p role="alert">{captureError}</p><button class="btn btn-sm" type="button" on:click={loadCapturePolicy}>Retry capture policy</button>
+        {:else if captureSettings}<CaptureVideoField bind:retainVideo disabled={saving || accountBusy} />{/if}
+      </div>
     </RetentionPanel>
   </div>
 </div>

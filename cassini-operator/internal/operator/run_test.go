@@ -1038,7 +1038,7 @@ func TestCreateJobAcceptsExplicitTalkTargetWithoutURL(t *testing.T) {
 
 	logText := readFileString(t, logPath)
 	for _, want := range []string{
-		"record --out",
+		"record --retain-video=false --out",
 		"--call https://example.test/call/room-42",
 		"--talk-base-url https://example.test",
 		"--talk-room-token room-42",

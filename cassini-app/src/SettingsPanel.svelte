@@ -38,6 +38,7 @@
   // that applies to the pipeline below it, and it is admin-only, which this
   // panel already is.
   import RecordingSetup from "./RecordingSetup.svelte";
+  import CaptureVideoField from "./CaptureVideoField.svelte";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
@@ -80,6 +81,8 @@
 
   let settings: Settings | null = null;
   let transcriptionEnabled = false;
+  let retainVideo = false;
+  let savedRetainVideo = false;
   let activeModel = "";
   let activeRevision = "";
   let savedTranscription = "";
@@ -192,6 +195,8 @@
   function applySettings(next: Settings) {
     settings = next;
     transcriptionEnabled = next.transcription_enabled === true;
+    retainVideo = next.retain_video === true;
+    savedRetainVideo = retainVideo;
     activeModel = next.active_model ?? "";
     activeRevision = next.active_revision ?? "";
     savedTranscription = JSON.stringify([transcriptionEnabled,activeModel,activeRevision]);
@@ -253,6 +258,7 @@
         applySettings(
           await operatorClient.putSettings({
             transcription_enabled: transcriptionEnabled,
+            retain_video: retainVideo,
             active_model: activeModel,
             active_revision: activeRevision,
             quality,
@@ -405,7 +411,7 @@
   // the LLM one.
   $: sttDirty =
     settings !== null &&
-    (JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
+    (retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
       transcriptionTermsText !== savedTranscriptionTermsText ||
@@ -497,6 +503,7 @@
 
 {#if operatorClient}
   <RecordingSetup {operatorClient} />
+  {#if settings}<CaptureVideoField bind:retainVideo disabled={loading || saving} />{/if}
 {/if}
 
 <!-- The readiness checks offer a "Set up storage" action that scrolls here,

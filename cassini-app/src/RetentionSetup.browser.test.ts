@@ -19,6 +19,10 @@ let saved: ReturnType<typeof defaults>;
 let admin: boolean;
 let failGet: boolean;
 let failPut: boolean;
+let failCapturePut: boolean;
+let failCaptureGet: boolean;
+let capturePolicy: { quality: string; retain_video?: boolean };
+let capturePuts: number;
 let failAccount: boolean;
 let holdSave: boolean;
 let releaseSave: (() => void) | null;
@@ -40,6 +44,10 @@ beforeEach(() => {
   admin = true;
   failGet = false;
   failPut = false;
+  failCapturePut = false;
+  failCaptureGet = false;
+  capturePolicy = { quality: "balanced" };
+  capturePuts = 0;
   failAccount = false;
   holdSave = false;
   releaseSave = null;
@@ -62,6 +70,13 @@ beforeEach(() => {
     }
     if (path === "/operator/setup") return Response.json({ ok: true, state: "ready", mode: "direct_shares",
       features: { summaries: false, insights: false } });
+    if (path === "/operator/settings") {
+      if (method === "GET") return Response.json(failCaptureGet ? { error: "Capture policy unavailable" } : capturePolicy, { status: failCaptureGet ? 503 : 200 });
+      capturePuts += 1;
+      if (failCapturePut) return Response.json({ error: "Could not save capture policy" }, { status: 500 });
+      capturePolicy = { ...capturePolicy, ...JSON.parse(init!.body as string) };
+      return Response.json(capturePolicy);
+    }
     if (path === "/operator/storage/retention") {
       if (method === "GET") {
         gets += 1;
@@ -127,7 +142,7 @@ describe("first-run retention review in the browser", () => {
     await page.viewport(1280, 1000);
     await open();
     await expect.element(page.getByRole("heading", { name: "Who can see recordings" })).toBeVisible();
-    expect(page.getByRole("checkbox").all()).toHaveLength(4);
+    expect(page.getByRole("checkbox").all()).toHaveLength(5);
     expect(puts).toBe(0);
     await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeDisabled();
     expect(host.querySelector(".cassini-shell")).not.toBeNull();
@@ -317,3 +332,51 @@ async function remount(hash = "") {
 async function openStorage() {
   await remount("#surface=operator&panel=storage");
 }
+
+ describe("install-time video consent", () => {
+  it("shows video off alongside retention and saves untouched defaults", async () => {
+    await open();
+    const video = page.getByRole("checkbox", { name: "Capture video", exact: true });
+    await expect.element(video).toBeVisible();
+    await expect.element(video).not.toBeChecked();
+    await expect.element(page.getByRole("heading", { name: "Retention policies" })).toBeVisible();
+    await reviewAllSettings();
+    await page.getByRole("button", { name: "Save and continue" }).click();
+    await expect.element(dialog()).not.toBeInTheDocument();
+    expect(capturePolicy.retain_video).toBe(false);
+    expect(capturePuts).toBe(1);
+    expect(saved.revision).toBe(1);
+  });
+  it("requires explicit opt-in and keeps failed saves open and retryable", async () => {
+    await open();
+    await page.getByRole("checkbox", { name: "Capture video", exact: true }).click();
+    failCapturePut = true;
+    await reviewAllSettings();
+    await page.getByRole("button", { name: "Save and continue" }).click();
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not save capture policy");
+    expect(puts).toBe(0);
+    expect(saved.revision).toBe(0);
+    await expect.element(dialog()).toBeVisible();
+    failCapturePut = false;
+    failPut = true;
+    await page.getByRole("button", { name: "Save and continue" }).click();
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not persist retention settings");
+    expect(capturePolicy.retain_video).toBe(true);
+    expect(saved.revision).toBe(0);
+    failPut = false;
+    await page.getByRole("button", { name: "Save and continue" }).click();
+    await expect.element(dialog()).not.toBeInTheDocument();
+    expect(capturePolicy.retain_video).toBe(true);
+    expect(saved.revision).toBe(1);
+  });
+  it("blocks completion when capture policy cannot be loaded, then recovers", async () => {
+    failCaptureGet = true;
+    await open();
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Capture policy unavailable");
+    page.getByRole("region", { name: "Setup settings" }).element().scrollTo(0, 10000);
+    await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeDisabled();
+    failCaptureGet = false;
+    await page.getByRole("button", { name: "Retry capture policy" }).click();
+    await expect.element(page.getByRole("checkbox", { name: "Capture video", exact: true })).not.toBeChecked();
+  });
+ });
