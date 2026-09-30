@@ -6,6 +6,8 @@
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
   import SetupNotice from "./SetupNotice.svelte";
+  import RetentionSetup from "./RetentionSetup.svelte";
+  import type { RetentionSettings } from "./operator/retention";
   import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
   import { guardLeave } from "./operator/unsaved";
@@ -102,6 +104,16 @@
   // route that carries it is the one the shell already calls at mount.
   let setupFeatures: SetupFeatures | null = null;
   let recordingNeedsAction = false;
+  let retentionReview: RetentionSettings | null = null;
+  let retentionReviewChecked = false;
+  let retentionReviewError = false;
+
+  function openStorage(): void {
+    const hash = applyPanel(applySurface(window.location.hash, "operator"), "storage");
+    window.history.pushState({}, "", locationWithHash(hash));
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    retentionReviewError = false;
+  }
 
   // The same answer, whole, for the one field that is not a capability: the
   // storage mode behind the audience chip. Kept rather than re-derived so the
@@ -439,6 +451,20 @@
     });
 
     await readInstanceState();
+    // Only the authoritative admin probe permits this read. Revision zero is
+    // an unconfirmed policy; any successful Save (in either host) confirms it.
+    // Check once per page so account setup health refreshes preserve the draft
+    // and Set up later remains a session-only dismissal.
+    try {
+      if (operatorClient) {
+        const settings = await operatorClient.getRetention();
+        if (settings.revision === 0) retentionReview = settings;
+      }
+    } catch {
+      retentionReviewError = true;
+    } finally {
+      retentionReviewChecked = true;
+    }
   });
 
   onDestroy(() => {
@@ -450,6 +476,14 @@
   });
 </script>
 
+<div class="cassini-app-frame">
+<div class="cassini-app-content" inert={!!retentionReview} aria-hidden={retentionReview ? "true" : undefined}>
+{#if retentionReviewError && operatorAvailable}
+  <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
+    Could not load retention settings.
+    <button class="btn btn-sm ml-2" on:click={openStorage}>Review retention in Storage</button>
+  </div>
+{/if}
 <!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab is
      gone (D-751) and `setup` is no longer a surface (D-756), so the checks now
      live in Operator › Publish pipeline, above the recording-access section.
@@ -515,7 +549,7 @@
            substrate stops them starting a recording or reading job history. -->
       <div
         class="cassini-shell-surface cassini-shell-scroll scroll-stable"
-        class:cassini-shell-hidden={surface !== "browse"}
+        class:cassini-shell-hidden={surface !== "browse" && !retentionReview}
         data-theme={themeMode}
       >
         <div class="cassini-root" data-theme={themeMode}>
@@ -532,7 +566,7 @@
       <!-- Browse stays mounted (preserves list/meeting/playback state) and is
            hidden while an admin surface is active; those mount only when active
            so the operator's SSE stream + polling don't run in the background. -->
-      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
+      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse" && !retentionReview}>
         <ViewerApp {ncMode} {dataProvider} {audience} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
           <!-- Its opposite, driven by the same bit (D-700): the readiness card
@@ -553,7 +587,7 @@
         </ViewerApp>
       </div>
     {/if}
-    {#if surface === "operator"}
+    {#if surface === "operator" && retentionReviewChecked && !retentionReview}
       <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
            .cassini-root: putting .cassini-root's height:100% on the flex/scroll
            element fought the flex sizing. Here the outer div is a clean bounded
@@ -633,13 +667,24 @@
   </ViewerApp>
 {/if}
 
+</div>
+{#if retentionReview && operatorClient}
+  <div class="cassini-retention-setup cassini-root" data-theme={themeMode}>
+    <RetentionSetup {operatorClient} initialSettings={retentionReview} on:done={() => { retentionReview = null; }} />
+  </div>
+{/if}
+</div>
+
 <style>
+  .cassini-app-frame { position: relative; height: 100%; min-height: 0; overflow: hidden; }
+  .cassini-app-content { height: 100%; min-height: 0; }
+  .cassini-retention-setup { position: absolute; inset: 0; z-index: 100; min-height: 0; background: transparent; }
   /* Plain CSS (not Tailwind utilities) so the nav renders regardless of content
      scanning; theme tokens come from app.css (:root / :host). */
   .cassini-shell {
     display: flex;
     flex-direction: column;
-    /* The first-run dialog's scrim is absolute against THIS, not the viewport:
+    /* Shell overlays are positioned against this surface, not the viewport:
        a fixed one would dim Nextcloud's own header and sidebar too. */
     position: relative;
     /* A DEFINITE height (not just min-height) so the viewer's height:100% chain

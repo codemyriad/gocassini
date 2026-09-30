@@ -111,3 +111,7 @@ go test ./...
 Vitest browser checks mount the real Svelte UI with synthetic operator responses;
 they do not contact a running operator or real recordings. Storage screenshots
 are written to gitignored `cassini-app/node_modules/.cache/vitest-screenshots/`.
+The setup checks cover the real shell, shared retention editor, revision-based
+completion, account setup, failed/stale saves, dismissal, admin gating, focus and
+responsive layouts. Their screenshots are in
+`cassini-app/node_modules/.cache/vitest-screenshots/`.

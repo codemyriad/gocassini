@@ -112,7 +112,7 @@ describe("the shell after the Setup tab", () => {
     expect(appSource).toContain(">\n        Operator\n      </button>");
     expect(appSource).not.toContain('selectSurface("setup")');
     expect(appSource).not.toContain('surface === "setup"');
-    expect(appSource).not.toContain("Setup.svelte");
+    expect(appSource).not.toContain('"./Setup.svelte"');
   });
 
   it("sends the setup notice's own button somewhere that exists", () => {

@@ -24,4 +24,12 @@ describe("retention control", () => {
       expect(fetch.mock.calls[0][1].headers["If-Match"]).toBe('"7"');
     } finally { vi.unstubAllGlobals(); }
   });
+  it("reads the current revision without a cached first-run decision", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response('{"revision":1}', { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    try {
+      expect((await new OperatorClient("/operator").getRetention()).revision).toBe(1);
+      expect(fetch.mock.calls[0][1].cache).toBe("no-store");
+    } finally { vi.unstubAllGlobals(); }
+  });
 });

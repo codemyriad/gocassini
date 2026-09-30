@@ -7,6 +7,60 @@ They do not delete recordings published to Nextcloud Files or the live site.
 
 The same page shows [storage usage by retention category and date](storage-usage.md).
 
+## Initial setup
+
+When an administrator opens Cassini before retention has ever been saved,
+**Choose what Cassini keeps** presents the current Nextcloud recording-access
+panel and the complete retention editor on one scrolling screen. A missing
+recordings account can be created there using the administrator's Nextcloud
+session. Account setup and retention saving are independent: an account problem
+does not discard retention choices, and account setup remains available in
+**Operator → Publish pipeline**.
+
+The editor is the same component used by **Operator → Storage**, including
+categories, grouped/fine-grained history, day presets, custom days, schedule,
+validation, reload and conflict handling. Future retention fields belong in that
+shared panel so both places receive them together.
+
+```text
+Initial setup --------+--> shared retention panel --> existing GET/PUT API
+Operator -> Storage -+                                    |
+                                               saved policies + revision
+Initial setup --> shared recording-access panel          |
+                                                  future opens skip setup
+```
+
+**Save and continue** persists the displayed policies, even if unchanged, and
+closes the review. The existing settings revision records completion; it works
+across browsers and container restarts. Installations with any previously saved
+retention settings skip the review. Existing installations that have never saved
+retention settings also receive it.
+
+The review is a modal over the Cassini scaffold. Its body scrolls inside the
+screen bounds while the action footer stays visible. **Save and continue**
+unlocks after the bottom is reached (or immediately if all content fits), and
+native form validation still applies. Escape and backdrop clicks do not close
+the review; a successful save is required. Reloading saved settings warns before
+discarding edits. Errors remain visible in the footer.
+
+```text
+Cassini scaffold (inert beneath modal)
+  +-- Review header
+  +-- Scrollable access + retention settings
+  +-- Fixed actions -> bottom reached -> Save -> close modal
+```
+
+The review does not gate recording. A failed initial read offers a link to
+Storage for recovery rather than inventing settings or blocking the rest of
+Cassini. Non-admins are never asked to configure retention.
+
+This setup change preserves the existing keep-forever defaults. It does not add
+an audio-only capture switch or expiry of published Nextcloud files. Those are
+separate policies; a container-local retention choice is not a promise to erase
+every copy of a recording.
+
+## Configuring policies
+
 Administrators configure retention under **Operator → Storage**. Every category
 starts at **Keep forever**. Choose **7, 30, 60, 90, or Custom days**. Custom
 retention accepts a whole number from 1 to 9999 days. Saving changes does not delete files immediately: existing

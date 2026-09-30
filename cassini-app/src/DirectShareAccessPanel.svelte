@@ -10,7 +10,8 @@
 
   let status: StorageStatus | null = null;
   let loading = true;
-  let busy = false;
+  export let busy = false;
+  export let disabled = false;
   let error = "";
 
   async function load(recheck = false): Promise<void> {
@@ -27,7 +28,7 @@
   }
 
   async function createAccount(): Promise<void> {
-    if (!operatorClient || !status || busy) return;
+    if (!operatorClient || !status || busy || disabled) return;
     busy = true;
     error = "";
     try {
@@ -50,7 +51,7 @@
       <h2 class="set-row-name op-card-title">Who can see recordings</h2>
       <p class="set-row-sub">Cassini uses Nextcloud file shares for every meeting.</p>
     </div>
-    <button class="icon-btn" type="button" on:click={() => load(true)} disabled={loading || busy || !operatorClient} aria-label="Check this Nextcloud again">
+    <button class="icon-btn" type="button" on:click={() => load(true)} disabled={loading || busy || disabled || !operatorClient} aria-label="Check this Nextcloud again">
       <RefreshCw size={15} aria-hidden="true" />
     </button>
   </header>
@@ -64,7 +65,7 @@
     {:else if status && !status.service_account.exists}
       <p role="status">Cassini needs its recordings account before it can publish.</p>
       {#if operatorClient && isSetupAvailable() && accountSteps(status).length > 0}
-        <button class="btn btn-sm btn-primary" type="button" on:click={createAccount} disabled={busy}>
+        <button class="btn btn-sm btn-primary" type="button" on:click={createAccount} disabled={busy || disabled}>
           {busy ? "Creating…" : "Create recordings account"}
         </button>
       {/if}

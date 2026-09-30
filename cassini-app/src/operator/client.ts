@@ -209,7 +209,7 @@ export class OperatorClient {
   }
 
   getRetention(): Promise<RetentionSettings> {
-    return this.#request<RetentionSettings>("/storage/retention");
+    return this.#request<RetentionSettings>("/storage/retention", { cache: "no-store" });
   }
   putRetention(settings: RetentionSettings): Promise<RetentionSettings> {
     return this.#request<RetentionSettings>("/storage/retention", {
