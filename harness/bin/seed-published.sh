@@ -106,27 +106,20 @@ docker exec -i "$container_id" sh -c 'cat > "$1"' seed "$container_manifest" < "
 docker exec "$container_id" chmod 644 "$container_manifest"
 compose exec -T -u www-data nextcloud php /usr/local/bin/cassini-seed-published-shares.php "$container_manifest"
 
-# The operator can have populated its owner-inventory cache while the AppAPI
-# deployment was still starting on an empty archive. Restart after the import
-# so its first inventory sees the files that have just been scanned and shared.
-# This makes the seed visible immediately instead of waiting for the cache TTL.
-exapp_container=""
-for candidate in nc_app_gocassini cassini-exapp; do
-  if docker inspect "$candidate" >/dev/null 2>&1; then
-    exapp_container="$candidate"
-    break
-  fi
-done
+# Maintenance commands require the same work-root lock as the server. Run
+# them with the ExApp stopped; restarting also clears its owner-inventory cache.
+exapp_container="${CASSINI_HARNESS_EXAPP_CONTAINER:-}"
+if [[ -z "$exapp_container" ]]; then
+  for candidate in nc_app_gocassini cassini-exapp; do
+    if docker inspect "$candidate" >/dev/null 2>&1; then
+      exapp_container="$candidate"
+      break
+    fi
+  done
+fi
 [[ -n "$exapp_container" ]] || die "installed ExApp container is not running after published seeding"
-# Import descriptions through the operator, mapping names to this Nextcloud's
-# file IDs. Neither a source database nor source shares can supply those IDs.
-docker cp "$PACK_DIR/catalog.json" "$exapp_container:/tmp/cassini-seed-catalog.json"
-docker exec "$exapp_container" /usr/local/bin/cassini-operator import-meeting-metadata --catalog /tmp/cassini-seed-catalog.json
-docker exec "$exapp_container" rm -f /tmp/cassini-seed-catalog.json
-docker exec "$exapp_container" /usr/local/bin/cassini-operator backfill-search --strict
-docker exec "$exapp_container" /usr/local/bin/cassini-operator backfill-annotations --strict
-log "Restarting $exapp_container so its recording inventory includes the imported archive"
-docker restart "$exapp_container" >/dev/null
+python3 "$SCRIPT_DIR/seed-published-maintenance.py" \
+  --container "$exapp_container" --catalog "$PACK_DIR/catalog.json"
 
 expected_count="$(wc -l < "$names_file" | tr -d ' ')"
 proxy_url="http://127.0.0.1:${NEXTCLOUD_HOST_PORT:-28080}/index.php/apps/app_api/proxy/gocassini"
