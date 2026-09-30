@@ -198,6 +198,7 @@ stop_background_processes() {
   cd "$ROOT_DIR"
   go run ./cmd/gocassini \
     --mode talk \
+    --retain-video="${RETAIN_VIDEO:-true}" \
     --call-url "$CALL_URL" \
     --name "$NAME" \
     --duration "$REC_DURATION" \
@@ -249,7 +250,9 @@ sleep "$START_DELAY"
   if [[ -n "$MUTE_ROTATION_START_FILE" ]]; then
     STREAM_ARGS+=(--mute-start-file "$MUTE_ROTATION_START_FILE")
   fi
-  ./bin/stream-video.sh "${STREAM_ARGS[@]}"
+  # Media prefixes were expanded into flags above; do not append inherited
+  # CSV prefixes a second time in stream-video.sh.
+  MEDIA_PREFIXES="" ./bin/stream-video.sh "${STREAM_ARGS[@]}"
 ) >"$PUB_LOG" 2>&1 &
 PUB_PID=$!
 

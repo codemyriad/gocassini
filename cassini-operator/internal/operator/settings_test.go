@@ -782,7 +782,8 @@ func TestPutSettingsRejectsUnboundedAliases(t *testing.T) {
 	for i := 0; i < maxSearchAliasVariants+2; i++ {
 		huge = append(huge, fmt.Sprintf("variant-%d", i))
 	}
-	body, _ := json.Marshal(settingsUpdate{Quality: sttQualityBalanced, SearchAliases: &[][]string{huge}})
+	quality := sttQualityBalanced
+	body, _ := json.Marshal(settingsUpdate{Quality: &quality, SearchAliases: &[][]string{huge}})
 
 	rec := httptest.NewRecorder()
 	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(string(body))))

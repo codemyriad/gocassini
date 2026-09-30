@@ -7,9 +7,11 @@ EVENTS=""
 BOUNDARY_NS=""
 PARTICIPANT=""
 REMOTE_SESSION_ID=""
+KIND="any"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --kind) KIND="$2"; shift 2 ;;
     --events) EVENTS="$2"; shift 2 ;;
     --boundary-ns) BOUNDARY_NS="$2"; shift 2 ;;
     --participant) PARTICIPANT="$2"; shift 2 ;;
@@ -29,11 +31,13 @@ if [[ -z "$PARTICIPANT" && -z "$REMOTE_SESSION_ID" ]]; then
   exit 2
 fi
 
-python3 - "$EVENTS" "$BOUNDARY_NS" "$PARTICIPANT" "$REMOTE_SESSION_ID" <<'PY'
+[[ "$KIND" == "any" || "$KIND" == "audio" || "$KIND" == "video" ]] || { echo "invalid --kind: $KIND" >&2; exit 2; }
+
+python3 - "$EVENTS" "$BOUNDARY_NS" "$PARTICIPANT" "$REMOTE_SESSION_ID" "$KIND" <<'PY'
 import json
 import sys
 
-path, raw_boundary, expected, expected_remote = sys.argv[1:]
+path, raw_boundary, expected, expected_remote, required_kind = sys.argv[1:]
 boundary = int(raw_boundary)
 matched = []
 stream_events = 0
@@ -64,7 +68,7 @@ with open(path, encoding="utf-8") as source:
         remote = str(event.get("remote_session_id") or "").strip()
         identity_matches = bool(expected and expected in identities)
         remote_matches = bool(expected_remote and expected_remote == remote)
-        if mono_ns >= boundary and kind in {"audio", "video"} and (identity_matches or remote_matches):
+        if mono_ns >= boundary and kind in ({"audio", "video"} if required_kind == "any" else {required_kind}) and (identity_matches or remote_matches):
             matched.append(
                 {
                     "line": line_number,
@@ -79,7 +83,7 @@ with open(path, encoding="utf-8") as source:
 
 if not matched:
     raise SystemExit(
-        f"no audio/video stream_opened for participant {expected!r} / remote session "
+        f"no {required_kind} media stream_opened for participant {expected!r} / remote session "
         f"{expected_remote!r} at/after boundary {boundary} "
         f"(stream_opened events inspected: {stream_events})"
     )

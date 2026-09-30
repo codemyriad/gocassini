@@ -21,6 +21,7 @@ import (
 // CASSINI_STT_MODEL=int8, which would otherwise shadow the chosen tier) so the
 // recorder's auto-detect + tier resolution (D-434) actually runs (D-435).
 type STTSettings struct {
+	RetainVideo          bool     `json:"retain_video"`
 	TranscriptionEnabled bool     `json:"transcription_enabled"`
 	ActiveModel          string   `json:"active_model,omitempty"`
 	ActiveRevision       string   `json:"active_revision,omitempty"`
@@ -330,6 +331,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s = detectSettings()
 			s.TranscriptionEnabled, s.ActiveModel, s.ActiveRevision = previous.TranscriptionEnabled, previous.ActiveModel, previous.ActiveRevision
 			s.SearchAliases = previous.SearchAliases
+			s.RetainVideo = previous.RetainVideo
 			// Vocabulary is independent of the hardware-derived quality tier.
 			// Preserve it when re-fingerprinting an auto policy.
 			s.TranscriptionTerms = terms
@@ -596,12 +598,13 @@ type settingsResponse struct {
 }
 
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
-// "field set to empty"; quality is required.
+// "field set to empty". Omitted quality preserves the automatic/user policy source.
 type settingsUpdate struct {
+	RetainVideo          *bool     `json:"retain_video"`
 	TranscriptionEnabled *bool     `json:"transcription_enabled"`
 	ActiveModel          *string   `json:"active_model"`
 	ActiveRevision       *string   `json:"active_revision"`
-	Quality              string    `json:"quality"`
+	Quality              *string   `json:"quality,omitempty"`
 	DeviceOverride       *string   `json:"device_override"`
 	TranscriptionTerms   *[]string `json:"transcription_terms"`
 	// SearchAliases is a pointer for the same reason as the fields above: nil
@@ -693,20 +696,24 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	quality := strings.ToLower(strings.TrimSpace(in.Quality))
-	switch quality {
-	case sttQualityFast, sttQualityBalanced, sttQualityBest:
-	default:
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("quality must be one of fast, balanced, best (got %q)", in.Quality))
-		return
-	}
-
 	// Start from the current settings so unspecified override fields are
 	// preserved; the host display fields are refreshed below.
 	current := rt.currentSettings()
 	updated := current
-	updated.Quality = quality
-	updated.Source = sttSourceUser
+	if in.Quality != nil {
+		quality := strings.ToLower(strings.TrimSpace(*in.Quality))
+		switch quality {
+		case sttQualityFast, sttQualityBalanced, sttQualityBest:
+		default:
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("quality must be one of fast, balanced, best (got %q)", *in.Quality))
+			return
+		}
+		updated.Quality = quality
+		updated.Source = sttSourceUser
+	}
+	if in.RetainVideo != nil {
+		updated.RetainVideo = *in.RetainVideo
+	}
 	if in.TranscriptionEnabled != nil {
 		updated.TranscriptionEnabled = *in.TranscriptionEnabled
 	}

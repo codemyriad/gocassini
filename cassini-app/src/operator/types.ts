@@ -115,6 +115,7 @@ export interface SettingsEffective {
 }
 
 export interface Settings {
+  retain_video?: boolean;
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;
@@ -135,13 +136,14 @@ export interface Settings {
 }
 
 export interface SettingsUpdate {
+  retain_video?: boolean;
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;
-  quality: SettingsQuality;
-  device_override: string;
-  transcription_terms: string[];
-  search_aliases: string[][];
+  quality?: SettingsQuality;
+  device_override?: string;
+  transcription_terms?: string[];
+  search_aliases?: string[][];
 }
 
 // --- LLM settings (D-696): mirror GET/PUT <basePath>/settings/llm. Keys are

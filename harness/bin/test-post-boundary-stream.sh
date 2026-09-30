@@ -66,4 +66,18 @@ expect_fail "missing events log" \
 expect_fail "invalid boundary" \
   --events "$TMP_DIR/post.ndjson" --boundary-ns nope --participant RejoinBot1
 
-echo "PASS: post-boundary recorder evidence rejects stale, wrong, and malformed events"
+
+cat >"$TMP_DIR/video-rejoin.ndjson" <<'JSON'
+{"type":"stream_opened","mono_ns":199,"kind":"audio","participant_id":"bot","stream_id":"before"}
+{"type":"stream_opened","mono_ns":201,"kind":"video","participant_id":"bot","stream_id":"after"}
+JSON
+expect_pass "legacy A/V rejoin accepts video" \
+  --events "$TMP_DIR/video-rejoin.ndjson" --boundary-ns 200 --participant bot
+expect_fail "audio-only rejoin rejects post-boundary video" \
+  --events "$TMP_DIR/video-rejoin.ndjson" --boundary-ns 200 --participant bot --kind audio
+expect_pass "audio-only rejoin requires post-boundary audio" \
+  --events "$TMP_DIR/post.ndjson" --boundary-ns 200 --participant bot --kind audio
+expect_fail "unknown media kind" \
+  --events "$TMP_DIR/post.ndjson" --boundary-ns 200 --participant bot --kind invalid
+
+echo "PASS: post-boundary recorder evidence rejects stale, wrong, malformed, and wrong-kind events"

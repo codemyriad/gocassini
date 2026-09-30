@@ -17,7 +17,7 @@ import (
 func TestSessionArtifactBootAndClose(t *testing.T) {
 	tmp := t.TempDir()
 	finalOutput := filepath.Join(tmp, "meeting.mkv")
-	artifact, err := newSessionCaptureArtifact(finalOutput, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(finalOutput, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestSessionArtifactBootAndClose(t *testing.T) {
 func TestSessionArtifactUsesAnchoredMonotonicTimelineAcrossStreams(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "anchored-timeline.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestSessionArtifactHelpers(t *testing.T) {
 func TestSessionArtifactStreamCloseBuildsIndex(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "recording.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -206,6 +206,7 @@ func TestSessionArtifactStreamCloseBuildsIndex(t *testing.T) {
 		t.Fatalf("create writer: %v", err)
 	}
 	artifact.streams[streamID] = &sessionCaptureStream{
+		kind: "audio",
 		stream: session.PacketStream{
 			StreamID: streamID,
 		},
@@ -269,7 +270,7 @@ func TestSessionArtifactStreamCloseBuildsIndex(t *testing.T) {
 func TestSessionArtifactWriteRTCP(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "rtcp.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -288,6 +289,7 @@ func TestSessionArtifactWriteRTCP(t *testing.T) {
 		t.Fatalf("create writer: %v", err)
 	}
 	artifact.streams[streamID] = &sessionCaptureStream{
+		kind: "audio",
 		stream: session.PacketStream{
 			StreamID: streamID,
 		},
@@ -332,7 +334,7 @@ func TestSessionArtifactWriteRTCP(t *testing.T) {
 func TestSessionArtifactWriteRTPAndRTCPClampMonotonicRecvNS(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "monotonic.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -351,6 +353,7 @@ func TestSessionArtifactWriteRTPAndRTCPClampMonotonicRecvNS(t *testing.T) {
 		t.Fatalf("create writer: %v", err)
 	}
 	artifact.streams[streamID] = &sessionCaptureStream{
+		kind: "audio",
 		stream: session.PacketStream{
 			StreamID: streamID,
 		},
@@ -410,7 +413,7 @@ func TestSessionArtifactWriteRTPAndRTCPClampMonotonicRecvNS(t *testing.T) {
 func TestSessionArtifactOpenStreamTracksPacketIdentity(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "identity.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -459,7 +462,7 @@ func TestSessionArtifactOpenStreamTracksPacketIdentity(t *testing.T) {
 func TestSessionArtifactOpenStreamReusesLogicalTrackAcrossSegments(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "segments.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -521,7 +524,7 @@ func TestSessionArtifactOpenStreamReusesLogicalTrackAcrossSegments(t *testing.T)
 func TestSessionArtifactOpenStreamUsesMappedParticipantID(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "participants.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -568,7 +571,7 @@ func TestSessionArtifactOpenStreamUsesMappedParticipantID(t *testing.T) {
 func TestSessionArtifactUpdateParticipantDisplayReplacesPlaceholder(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "participant-upgrade.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -686,7 +689,7 @@ func TestIsPlaceholderParticipantName(t *testing.T) {
 func TestSessionArtifactUpdateParticipantDisplayReplacesSyntheticShortIDPlaceholder(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "synthetic-placeholder-upgrade.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}

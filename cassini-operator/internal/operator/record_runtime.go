@@ -211,8 +211,10 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		return recordResult{}, err
 	}
 
+	rt.logger.Printf("record capture policy id=%s mode=%s retain_video=%t", job.ID, req.CaptureMode, req.RetainVideo)
 	args := []string{
 		"record",
+		fmt.Sprintf("--retain-video=%t", req.RetainVideo),
 		"--out", runPath,
 		"--name", req.GuestName,
 		"--talk-auth-mode", req.TalkAuthMode,
