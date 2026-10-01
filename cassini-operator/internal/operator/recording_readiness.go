@@ -688,7 +688,11 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	suppressBlockedRows(resp.Checks)
 	resp.Test = rt.readinessTest(ctx, state)
 	for i := range resp.Checks {
-		resp.Checks[i].Checkable = !readinessScopeFor([]string{resp.Checks[i].ID}).empty()
+		// A blocked row is not checkable. A probe behind it exists, but running
+		// it cannot succeed while its prerequisite is unmet, so offering a
+		// Check button invites a reader to press something that will fail.
+		resp.Checks[i].Checkable = resp.Checks[i].Code != "check_blocked" &&
+			!readinessScopeFor([]string{resp.Checks[i].ID}).empty()
 	}
 	resp.State = worstReadinessState(resp.Checks)
 	resp.RecordingState = recordingCapabilityState(resp.Checks)

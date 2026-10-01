@@ -82,7 +82,11 @@ func hpbCheckForMode(mode string) *readinessCheck {
 	case "internal":
 		return &readinessCheck{
 			ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled",
-			Message: "Talk is signalling by itself, with no High Performance Backend. Cassini cannot record without one: recording joins a call as a participant, which Talk only supports through standalone signaling. Calls between people keep working.",
+			// Scoped, not contrasted. "Cassini cannot record" followed by "calls
+			// keep working" read as a contradiction; the second clause was meant
+			// to bound the damage and instead undercut the first. So: what does
+			// not work, why, and what the fault does NOT extend to.
+			Message: "Recording cannot work until Talk has a High Performance Backend. Cassini records by joining the call as a hidden participant, and Talk only allows that through standalone signaling — here it is signalling by itself. Nothing else about Talk is affected.",
 			Docs:    hpbDocsURL,
 		}
 	case "":

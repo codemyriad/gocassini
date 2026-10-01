@@ -477,3 +477,33 @@ func TestAnUncheckedPrerequisiteSuppressesNothing(t *testing.T) {
 		}
 	}
 }
+
+// A blocked row must not be checkable either. The probe behind it exists, but
+// running it cannot succeed while the prerequisite is unmet, so a Check button
+// only invites a reader to press something that fails.
+func TestABlockedRowIsNotCheckable(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.checks = []readinessCheck{
+		{ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled"},
+		{ID: "talk.discovery", State: "needs_action", Code: "recording_auth_rejected", Action: "recheck"},
+	}
+	rt.recordingSetup.checkedAt = time.Now()
+	rt.recordingSetup.mu.Unlock()
+
+	for _, c := range rt.readiness(context.Background()).Checks {
+		if c.ID != "talk.discovery" {
+			continue
+		}
+		if c.Code != "check_blocked" {
+			t.Fatalf("talk.discovery = %+v; want it blocked", c)
+		}
+		if c.Checkable {
+			t.Error("a blocked row says it can be re-checked on its own")
+		}
+		return
+	}
+	t.Fatal("talk.discovery missing")
+}

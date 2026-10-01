@@ -252,3 +252,21 @@ describe("offering a form only where it can change something", () => {
     expect(rowActions(sent).map(a => a.action)).toContain("configure_talk");
   });
 });
+
+describe("a blocked row offers nothing", () => {
+  // The operator strips the row's own action, but the panel's standing actions
+  // were added regardless — so a Talk connection waiting on a missing backend
+  // still showed Check and Test room, both of which could only fail.
+  it("adds no standing action to a check that is waiting", () => {
+    const blocked = {
+      id: "talk.discovery", state: "not_verified", code: "check_blocked",
+      message: "Not checked: this depends on High Performance Backend, which needs attention first.",
+    } as ReadinessCheck;
+    expect(rowActions(blocked)).toEqual([]);
+  });
+
+  it("still offers them on a row that is not blocked", () => {
+    const live = { id: "talk.discovery", state: "passed", code: "talk_reachable", message: "" } as ReadinessCheck;
+    expect(rowActions(live).map(a => a.action)).toContain("test_room");
+  });
+});

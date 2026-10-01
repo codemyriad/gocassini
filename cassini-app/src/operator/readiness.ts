@@ -149,6 +149,11 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
 }
 
 export function rowActions(check: ReadinessCheck): { action: string; label: string }[] {
+  // A row waiting on another check offers nothing. Its remedy belongs to the
+  // prerequisite, and the operator already strips its action — but the standing
+  // actions below are the panel's own and were added regardless, so a blocked
+  // Talk connection still showed Check and Test room.
+  if (check.code === "check_blocked") return [];
   const labels: Record<string, string> = { configure_talk:"Talk authentication", test_room:"Test room", connect_talk:"Connect Talk", test_recording:"Test a recording", recheck:"Check again", setup_storage:"Set up storage" };
   const actions = check.action ? [check.action] : [];
   // talk.authentication is NOT here. The operator withholds its action when the
