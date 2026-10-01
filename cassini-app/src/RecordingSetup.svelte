@@ -1,9 +1,7 @@
 <script lang="ts">
-  import DeploymentGuidance from './DeploymentGuidance.svelte';
-  import { initialEnvironment } from './operator/deploymentGuidance';
   import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkSettingsURL as buildTalkSettingsURL, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -22,8 +20,8 @@
   let panel = "";
   let panelOwner = "";
   $: rows = report ? readinessRows(report).map(check => stale ? { ...check, state: "not_verified" as const, message: "Could not refresh this check. Check again for its current status." } : check) : [];
-  let environment = initialEnvironment();
   let provisioningURL = "";
+  let talkSettingsURL = "";
   let alive = true;
   let polling = false;
   // True only while a re-probe is in flight, so a row can say it is being
@@ -83,6 +81,7 @@
       // Derive from the current operator URL, preserving installations under a subdirectory.
       const base = new URL(provisioningBase ?? (await import("./operator/config")).loadConfig().operatorBasePath, window.location.href);
       provisioningURL = base.href.replace(/\/$/, "") + "/talk/provisioning";
+      talkSettingsURL = buildTalkSettingsURL(base.href);
     }
   }
   onMount(() => {
@@ -178,21 +177,26 @@
               <button class="btn btn-primary btn-sm mt-3" disabled={busy || !secret.trim()}>Save secret</button>
             </form>
           {/if}
-          <DeploymentGuidance purpose="secret" {report} bind:environment />
-          <button class="btn btn-sm mt-3" disabled={busy} on:click={() => load(true)}>Test connection</button>
+          <p class="mt-3 text-sm text-base-content/70">This is the internal secret your Talk signaling server is configured with. Cassini cannot read it from Talk, which is why it is asked for here.</p>
+          {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
+          <button class="btn btn-sm mt-3" disabled={busy} on:click={() => load(true, "talk.discovery")}>Test connection</button>
         {:else if panel === "test_room"}
           <h3 class="font-semibold">Choose a test room</h3>
-          <p class="my-2 text-sm">Paste the browser link for a dedicated room on this Nextcloud instance. Cassini checks its configured Nextcloud backend using the room token, without joining or recording the call. Cassini saves this URL for future checks.</p>
+          <p class="my-2 text-sm">A dedicated room on this Nextcloud. Cassini checks the connection using its token, and never joins or records the call.</p>
           <form on:submit|preventDefault={() => save({ test_room_url: room.trim() })}>
             <label class="block">Talk room URL<input class="input input-bordered mt-1 block w-full" type="url" bind:value={room} placeholder="https://cloud.example.com/call/roomtoken" /></label>
             <button class="btn btn-primary btn-sm mt-3" disabled={busy || !room.trim()}>Save test room</button>
           </form>
         {:else if panel === "setup_hpb"}
-          <h3 class="font-semibold">Enable Talk’s high-performance backend</h3>
-          <DeploymentGuidance purpose="hpb" {report} bind:environment />
+          <h3 class="font-semibold">Talk’s High Performance Backend</h3>
+          <p class="my-2 text-sm">Recording joins a call as a participant, which Talk supports only through standalone signaling. Without that backend Cassini cannot record, although calls between people keep working.</p>
+          <p class="text-sm"><a class="link" href="https://nextcloud-talk.readthedocs.io/en/stable/quick-install/" target="_blank" rel="noreferrer">Read Nextcloud's Talk documentation</a></p>
+          {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
         {:else if panel === "connect_talk"}
           <h3 class="font-semibold">Use Cassini as Talk’s recording backend</h3>
-          <DeploymentGuidance purpose="handoff" {report} {provisioningURL} bind:environment />
+          <p class="my-2 text-sm">Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk.</p>
+          {#if provisioningURL}<p class="text-sm"><a class="link" href={provisioningURL} target="_blank" rel="noreferrer">Show both values</a></p>{/if}
+          {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
         {:else if panel === "test_recording"}
           <h3 class="font-semibold">Verify a recording through Talk</h3>
           <ol class="my-3 list-inside list-decimal space-y-2 text-sm">

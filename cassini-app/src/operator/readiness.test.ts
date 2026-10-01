@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, talkSettingsURL, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -204,5 +204,23 @@ describe("what to do about a check", () => {
   it("survives a check from an operator that sends no steps", () => {
     expect(check().steps).toBeUndefined();
     expect(check({ steps: undefined }).steps).toBeUndefined();
+  });
+});
+
+describe("where to send an administrator", () => {
+  it("finds Nextcloud's Talk settings under a subdirectory install", () => {
+    // The deployments most likely to be misdirected are the ones least able to
+    // work out why the link 404s.
+    expect(talkSettingsURL("https://host/index.php/apps/app_api/proxy/gocassini/operator/"))
+      .toBe("https://host/settings/admin/talk");
+    expect(talkSettingsURL("https://host/nextcloud/index.php/apps/app_api/proxy/gocassini/operator/"))
+      .toBe("https://host/nextcloud/settings/admin/talk");
+    expect(talkSettingsURL("https://host/apps/app_api/proxy/gocassini/operator/"))
+      .toBe("https://host/settings/admin/talk");
+  });
+
+  it("offers no link rather than a wrong one", () => {
+    expect(talkSettingsURL("https://host/operator/")).toBe("");
+    expect(talkSettingsURL("")).toBe("");
   });
 });

@@ -233,3 +233,16 @@ export function checkStateLabel(check: ReadinessCheck): string {
   if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
   return stateLabels[check.state];
 }
+
+// talkSettingsURL is Nextcloud's own Talk administration page, derived from the
+// operator's base URL rather than assumed to sit at the origin root.
+//
+// A subdirectory install serves Nextcloud under a prefix, so a link built on
+// that assumption 404s on exactly the deployments least equipped to debug it.
+// Returns "" when the base does not look like an app URL, because no link beats
+// a wrong one.
+export function talkSettingsURL(operatorBaseHref: string): string {
+  const cut = operatorBaseHref.search(/\/(index\.php\/)?apps\//);
+  if (cut <= 0) return "";
+  return operatorBaseHref.slice(0, cut) + "/settings/admin/talk";
+}
