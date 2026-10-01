@@ -206,7 +206,7 @@ func TestRowsSayWhetherAProbeCanReCheckThem(t *testing.T) {
 	}
 
 	// Established by a probe.
-	for _, id := range []string{"storage", "host", "archive.search"} {
+	for _, id := range []string{"storage", "host.workdir", "archive.search"} {
 		c, ok := byID[id]
 		if !ok {
 			t.Fatalf("%s row missing from the report", id)
@@ -320,6 +320,47 @@ func TestCredentialRowSaysWhereTheSecretLivesAndDefersToTheBackend(t *testing.T)
 	for _, want := range []string{"INTERNAL_SECRET", "internalsecret"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("steps never name %q, which is what an administrator searches for: %q", want, joined)
+		}
+	}
+}
+
+// An unchecked row and its checked self must be the SAME row.
+//
+// The placeholder used to be a single "host" row, which the first check replaced
+// with host.workdir and host.tmpdir.writable — so "Recording host" appeared to
+// rename itself to "Recording volume" and "Temporary space". A row keeps its
+// identity and changes its verdict; anything else reads as the panel rearranging
+// itself under the reader.
+func TestUncheckedHostRowsAreTheRowsACheckProduces(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	hostIDs := func() []string {
+		t.Helper()
+		var ids []string
+		for _, c := range rt.readiness(context.Background()).Checks {
+			if c.ID == "host" || strings.HasPrefix(c.ID, "host.") {
+				ids = append(ids, c.ID)
+			}
+		}
+		return ids
+	}
+
+	before := hostIDs()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
+		{"id":"workdir","status":"ok","summary":"working directory /work"},
+		{"id":"workdir.writable","status":"ok","summary":"writable"},
+		{"id":"tmpdir.writable","status":"ok","summary":"writable"}
+	]`)
+	rt.checkRecordingReadinessScoped(context.Background(), readinessScope{host: true})
+	after := hostIDs()
+
+	if len(before) != len(after) {
+		t.Fatalf("host rows changed shape on check: before=%v after=%v", before, after)
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Fatalf("row %d changed identity on check: %q -> %q", i, before[i], after[i])
 		}
 	}
 }

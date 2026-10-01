@@ -399,6 +399,11 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 // use its recording volume. They are reported separately because they fail for
 // different reasons, which matters to doctor and not to this list, so they
 // collapse into one row carrying the worse of the two.
+// hostChecklistRowIDs is the host rows the panel shows, in order. Declared once
+// so the unchecked placeholder and the probed result cannot disagree about which
+// rows exist.
+var hostChecklistRowIDs = []string{"host.workdir", "host.tmpdir.writable"}
+
 func hostChecklistRows(byID map[string]readinessCheck) []readinessCheck {
 	var rows []readinessCheck
 	if row, ok := worseOf(byID["workdir"], byID["workdir.writable"]); ok {
@@ -663,7 +668,19 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	// Host findings lead so a full disk can explain a storage failure. GET
 	// never launches the media doctor subprocess.
 	if len(host) == 0 {
-		host = []readinessCheck{{ID: "host", State: "not_verified", Code: "host_not_checked", Message: "The recording host has not been checked yet.", Action: "recheck"}}
+		// The SAME rows a check produces, unchecked — not one row standing in
+		// for them. A placeholder with its own id renamed itself on the first
+		// check: "Recording host" became "Recording volume" and "Temporary
+		// space", which reads as a row changing identity rather than a verdict
+		// arriving. A row keeps its name and changes its state; that is the
+		// whole point of the ladder.
+		host = make([]readinessCheck, 0, len(hostChecklistRowIDs))
+		for _, id := range hostChecklistRowIDs {
+			host = append(host, readinessCheck{
+				ID: id, State: "not_verified", Code: "host_not_checked",
+				Message: "Not checked yet.", Action: "recheck",
+			})
+		}
 	}
 	resp.Checks = append(host, resp.Checks...)
 	resp.Test = rt.readinessTest(ctx, state)
