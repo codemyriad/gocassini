@@ -397,3 +397,83 @@ func TestBackendRowComesBeforeTheCredentialThatAuthenticatesToIt(t *testing.T) {
 		t.Fatalf("an unknown row did not survive sorting: %v", got)
 	}
 }
+
+// One missing backend should produce ONE row asking for attention.
+//
+// Marco: "why should i give attention to the 'Talk connection' in the first
+// place in this scenario?" Reported independently, a missing High Performance
+// Backend produced three rows wanting something — the backend, the credential,
+// and the connection — of which only the first could be acted on.
+func TestOneMissingPrerequisiteProducesOneActionableRow(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled", Docs: "https://example.invalid/"},
+		{ID: "talk.authentication", State: "needs_action", Code: "internal_secret_missing", Action: "configure_talk",
+			Steps: []readinessStep{{Label: "read it from somewhere"}}},
+		{ID: "talk.discovery", State: "needs_action", Code: "recording_auth_rejected", Action: "recheck"},
+		{ID: "storage", State: "passed", Code: "storage_ready"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+
+	actionable := 0
+	for _, c := range checks {
+		if c.State == "needs_action" {
+			actionable++
+			if c.ID != "talk.hpb" {
+				t.Errorf("%s still demands attention; only the backend can be acted on", c.ID)
+			}
+		}
+	}
+	if actionable != 1 {
+		t.Fatalf("%d rows want attention; exactly one thing is wrong", actionable)
+	}
+
+	for _, c := range checks {
+		if c.ID != "talk.discovery" {
+			continue
+		}
+		if c.Code != "check_blocked" {
+			t.Fatalf("talk.discovery = %+v; want it to say what it waits for", c)
+		}
+		if !strings.Contains(c.Message, "High Performance Backend") {
+			t.Errorf("the blocked row does not name its blocker: %q", c.Message)
+		}
+		// A remedy on a blocked row splits one fix across rows.
+		if c.Action != "" || len(c.Steps) != 0 || c.Repair != "" {
+			t.Errorf("a blocked row kept a remedy of its own: %+v", c)
+		}
+	}
+}
+
+// A fault a row owns regardless of its prerequisites must survive. Nobody else
+// reports a Talk backend URL pointing at Cassini's own proxy, and it is wrong
+// whether or not a backend exists.
+func TestAnIndependentFaultIsNotSuppressed(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled"},
+		{ID: "talk.discovery", State: "needs_action", Code: "talk_backend_url_invalid"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+	for _, c := range checks {
+		if c.ID == "talk.discovery" && c.Code != "talk_backend_url_invalid" {
+			t.Fatalf("an independent misconfiguration was suppressed: %+v", c)
+		}
+	}
+}
+
+// A prerequisite nobody has CHECKED suppresses nothing: no conclusion follows
+// from a check that has not run, and hiding a finding on that basis loses it.
+func TestAnUncheckedPrerequisiteSuppressesNothing(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "talk.hpb", State: "not_verified", Code: "host_not_checked"},
+		{ID: "talk.discovery", State: "warn", Code: "nextcloud_unreachable"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+	for _, c := range checks {
+		if c.ID == "talk.discovery" && c.Code != "nextcloud_unreachable" {
+			t.Fatalf("a finding was hidden behind an unchecked prerequisite: %+v", c)
+		}
+	}
+}

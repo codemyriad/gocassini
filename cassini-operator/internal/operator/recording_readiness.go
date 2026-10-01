@@ -685,6 +685,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	}
 	resp.Checks = append(host, resp.Checks...)
 	sortReadinessRows(resp.Checks)
+	suppressBlockedRows(resp.Checks)
 	resp.Test = rt.readinessTest(ctx, state)
 	for i := range resp.Checks {
 		resp.Checks[i].Checkable = !readinessScopeFor([]string{resp.Checks[i].ID}).empty()
