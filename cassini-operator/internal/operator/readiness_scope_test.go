@@ -259,3 +259,60 @@ func TestNoHPBIsAFailureAndNamesWhereToReadAboutIt(t *testing.T) {
 		}
 	}
 }
+
+// A row that asks for a secret must say where the secret lives, and must not
+// ask at all when there is nothing for it to authenticate to.
+//
+// Both halves were reported from the local harness: "I can't understand where
+// should i recover the talk signaling server internal secret" — on a stack with
+// no signaling server at all. The guidance existed, in the startup log and
+// /status, and never reached the row that asks the question.
+func TestCredentialRowSaysWhereTheSecretLivesAndDefersToTheBackend(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	row := func() readinessCheck {
+		t.Helper()
+		for _, c := range rt.readiness(context.Background()).Checks {
+			if c.ID == "talk.authentication" {
+				return c
+			}
+		}
+		t.Fatal("talk.authentication missing")
+		return readinessCheck{}
+	}
+
+	// No High Performance Backend: there is nothing to authenticate to, and the
+	// backend row is the one to act on.
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.checks = []readinessCheck{{ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled"}}
+	rt.recordingSetup.checkedAt = time.Now()
+	rt.recordingSetup.mu.Unlock()
+	if c := row(); c.State == "needs_action" {
+		t.Fatalf("asked for the secret with no backend to use it: %+v", c)
+	} else if c.Code != "internal_secret_not_needed_yet" {
+		t.Fatalf("row with no backend = %+v", c)
+	}
+
+	// A backend exists: now the secret is genuinely required, and the row has to
+	// say where to read it.
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.checks = []readinessCheck{{ID: "talk.hpb", State: "passed", Code: "hpb_authenticated"}}
+	rt.recordingSetup.mu.Unlock()
+	c := row()
+	if c.State != "needs_action" || c.Code != "internal_secret_missing" {
+		t.Fatalf("row with a backend = %+v; the secret is required", c)
+	}
+	if len(c.Steps) < 2 {
+		t.Fatalf("the row does not say where the secret lives: %+v", c.Steps)
+	}
+	var joined string
+	for _, s := range c.Steps {
+		joined += s.Label + " "
+	}
+	for _, want := range []string{"INTERNAL_SECRET", "internalsecret"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("steps never name %q, which is what an administrator searches for: %q", want, joined)
+		}
+	}
+}

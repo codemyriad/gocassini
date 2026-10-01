@@ -599,8 +599,34 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	} else {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "The Nextcloud storage preflight did not pass. Review the storage details below.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
+	hpbDisabled := false
+	for _, p := range probes {
+		if p.Code == "hpb_disabled" {
+			hpbDisabled = true
+		}
+	}
 	if secret == "" && !failed {
-		add("talk.authentication", "needs_action", "internal_secret_missing", "Enter the internal secret from your Talk signaling server.", "configure_talk")
+		// Where to READ it, named. The same two locations the startup log has
+		// always given — a row that asks for a secret and does not say where it
+		// lives sends an administrator hunting, which is what happened.
+		//
+		// Two named places, not a procedure branched on a declared install type:
+		// these are where the value IS, whoever deployed it.
+		if hpbDisabled {
+			// The secret authenticates Cassini to the High Performance Backend.
+			// With no backend there is nothing to authenticate to, and nothing
+			// an administrator can usefully do about this row yet — the backend
+			// row above is the one to act on. Demanding it here reported one
+			// fault twice and sent the reader to the wrong one.
+			add("talk.authentication", "not_verified", "internal_secret_not_needed_yet",
+				"Not needed yet. This secret authenticates Cassini to Talk's High Performance Backend, and there is no backend configured.", "")
+		} else {
+			addWithSteps("talk.authentication", "needs_action", "internal_secret_missing",
+				"Cassini needs the internal secret that Talk's signaling server is configured with. It cannot be generated here: the signaling server chooses it.",
+				"configure_talk",
+				readinessStep{Label: "On Nextcloud All-in-One, read it from the Talk container's INTERNAL_SECRET"},
+				readinessStep{Label: "On a standalone High Performance Backend, it is `internalsecret` in the `[clients]` section of the signaling server's configuration"})
+		}
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		add("talk.handoff", "needs_action", "recording_secret_missing", "Cassini could not provision its recording credential. Check its persistent storage.", "connect_talk")
