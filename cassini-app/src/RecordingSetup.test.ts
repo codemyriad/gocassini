@@ -2,32 +2,30 @@ import { describe, expect, it } from "vitest";
 
 import panelSource from "./RecordingSetup.svelte?raw";
 
-// The panel re-reads findings every five seconds. That is a READ, and it used
-// to disable every button for its duration — so the whole row of controls
-// flickered on a 5s cycle — and to early-return out of every user action, so a
-// click landing during a refresh was silently dropped.
-describe("a background refresh does not interrupt the reader", () => {
-  it("never disables a control because a poll is in flight", () => {
-    expect(panelSource).not.toContain("disabled={busy || polling}");
+// The panel does not check, and does not refresh itself.
+//
+// The operator establishes a baseline when its container boots; after that the
+// findings change only when somebody asks for a check. So there is nothing for
+// a background refresh to discover, and a page that triggers work on load or on
+// a timer is how this panel twice ended up probing without being asked.
+describe("the panel never checks on its own", () => {
+  it("has no timer", () => {
+    expect(panelSource).not.toContain("setInterval");
+    expect(panelSource).not.toContain("polling");
+  });
+
+  it("reads on mount rather than checking", () => {
+    // load(false) is GET /health; load(true) posts a check.
+    expect(panelSource).toContain("void load(false)");
+    expect(panelSource).not.toContain("void load(true)");
+  });
+
+  it("reacts to a setup change by re-reading, not re-probing", () => {
+    expect(panelSource).toContain("onSetupChanged(() => void load(false))");
+  });
+
+  it("never disables a control for a background refresh", () => {
+    expect(panelSource).not.toContain("busy || polling");
     expect(panelSource).toContain("disabled={busy}");
-  });
-
-  it("does not drop a user action that lands during a poll", () => {
-    // `polling` may still guard the poll from overlapping itself; it must not
-    // guard the handlers a reader triggers.
-    for (const handler of ["async function load(", "async function repair("]) {
-      const at = panelSource.indexOf(handler);
-      expect(at).toBeGreaterThan(-1);
-      const body = panelSource.slice(at, at + 400);
-      expect(body).not.toContain("busy || polling");
-    }
-  });
-
-  it("claims the response so a stale poll cannot overwrite it", () => {
-    // The poll captures reportVersion before its request and discards its
-    // result if it moved. User actions bump it, which is what makes the
-    // previous test safe rather than merely racy.
-    expect(panelSource).toContain("++reportVersion");
-    expect(panelSource).toContain("version === reportVersion");
   });
 });

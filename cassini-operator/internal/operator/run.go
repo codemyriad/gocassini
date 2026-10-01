@@ -385,17 +385,24 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer listener.Close()
-	// No health probe at startup, and none on a timer: the checks run when an
-	// administrator asks for them, from the Doctor panel.
+	// One baseline check when the container boots. NOT a timer, and not the
+	// panel triggering work on load — both of those are still refused.
 	//
-	// What used to be here ran the media doctor, the Talk probe and the storage
-	// preflight on every boot so the panel would open warm. It bought a verdict
-	// nobody was reading yet, at the cost of work on every restart, and the
-	// panel now renders its rows unchecked and offers a button instead.
+	// Removed earlier on the reading that checks should only run when asked, and
+	// restored because a cold operator cannot answer the question the panel
+	// exists for. Measured on the local harness after a restart: talk.hpb was
+	// absent entirely, so the one fault that stops recording outright was
+	// invisible, and talk.authentication reported the signaling secret as
+	// REQUIRED — because "not needed, there is no backend" is derived from the
+	// probe result, and there was none. A first look was not merely uninformative
+	// but wrong.
 	//
-	// Provisioning is NOT what was removed: preflightOnRestart above owns the
-	// restart-convergence path (D-541/D-669) and still runs. This only stops the
-	// diagnostics.
+	// Provisioning is separate and always ran: preflightOnRestart above owns the
+	// restart-convergence path (D-541/D-669).
+	if exappCfg.Active {
+		runtime.workerWG.Add(1)
+		go func() { defer runtime.workerWG.Done(); runtime.checkRecordingReadiness(runtime.ctx) }()
+	}
 
 	fmt.Fprintf(stdout, "listening -> http://%s\n", listener.Addr().String())
 	logger.Printf("base_path -> %s", cfg.BasePath)

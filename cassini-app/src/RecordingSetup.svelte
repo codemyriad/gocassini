@@ -23,7 +23,6 @@
   let provisioningURL = "";
   let talkSettingsURL = "";
   let alive = true;
-  let polling = false;
   // True only while a re-probe is in flight, so a row can say it is being
   // checked. Distinct from `busy`, which is also set by a plain read and by
   // saving an edit — neither of which re-probes anything.
@@ -32,16 +31,12 @@
   // that row shows a spinner: marking them all would claim work that is not
   // happening.
   let checkingOnly = "";
-  let reportVersion = 0;
 
   async function load(check = false, only = "") {
-    // Not gated on `polling`. The 5-second refresh is a read, and gating on it
-    // dropped any click that happened to land during one — roughly one chance
-    // in ten, silently.
+    // One guard, and only for work this reader started. There was a second one
+    // for the five-second refresh, which dropped any click landing during a
+    // read; the refresh is gone and so is the guard.
     if (busy) return;
-    // Claim the response: an in-flight poll must not overwrite what the reader
-    // just asked for with the answer from a moment earlier.
-    ++reportVersion;
     busy = true; checking = check; checkingOnly = only; error = "";
     try {
       const next = check
@@ -58,7 +53,6 @@
   async function save(payload: RecordingSetupUpdate) {
     if (busy) return;
     // A background GET must neither swallow an edit nor overwrite its response.
-    ++reportVersion;
     busy = true; error = "";
     try {
       const next = await operatorClient.updateRecordingSetup(payload);
@@ -70,7 +64,6 @@
   // checklist it answers with.
   async function repair(action: string) {
     if (!action || busy) return;
-    ++reportVersion;
     busy = true; error = "";
     try {
       const next = await operatorClient.repairReadiness(action);
@@ -102,23 +95,20 @@
     // checked yet say so, and "Run all checks" or a row's own button takes a
     // reading.
     void load(false);
-    const unsubscribe = onSetupChanged(() => void load(true));
-    const timer = window.setInterval(async () => {
-      if (busy || polling || !report || document.hidden) return;
-      polling = true;
-      const version = reportVersion;
-      try {
-        const next = await operatorClient.getReadiness();
-        if (alive && version === reportVersion) {
-          const changed = readinessHealthKey(report) !== readinessHealthKey(next);
-          report = next; stale = false; error = "";
-          if (changed) notifySetupChanged();
-        }
-      }
-      catch { if (alive && version === reportVersion) { stale = true; error = "Could not refresh recording checks. Check the connection and try again."; } }
-      finally { polling = false; }
-    }, 5000);
-    return () => { alive = false; secret = ""; unsubscribe(); window.clearInterval(timer); };
+    // A setup change elsewhere means what is on screen is out of date, so
+    // re-READ it. Deliberately not a re-probe: nobody asked for one, and a page
+    // reacting to its own events is how a panel starts checking on its own.
+    const unsubscribe = onSetupChanged(() => void load(false));
+    // NO POLL. The operator establishes a baseline once when its container
+    // boots, and after that the findings change only when somebody asks for a
+    // check — so there is nothing for a five-second refresh to discover. It
+    // re-read unchanged findings twelve times a minute, disabled every button
+    // while it did, and dropped clicks that landed on it.
+    //
+    // What this gives up, knowingly: a check run in another tab is not picked
+    // up here, and a running re-index does not advance on its own. Run all
+    // checks shows both.
+    return () => { alive = false; secret = ""; unsubscribe(); };
   });
 </script>
 
