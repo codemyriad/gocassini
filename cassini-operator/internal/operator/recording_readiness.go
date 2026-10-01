@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -626,7 +627,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 			addWithSteps("talk.authentication", "not_verified", "internal_secret_not_needed_yet",
 				"Not needed yet. Cassini joins a call as an invisible signaling client, and this secret is how it authenticates to Talk's High Performance Backend — it belongs to that server, not to Nextcloud. There is no backend configured, so there is nothing to authenticate to and setting it now would change nothing.",
 				"",
-				readinessStep{Label: "Configure Talk's High Performance Backend first — see the row above. This credential becomes required, and checkable, once one exists"})
+				readinessStep{Label: "Declare a standalone signaling server under Talk → Administration settings → Signaling server. This credential becomes required, and checkable, once Talk names one"})
 		} else {
 			addWithSteps("talk.authentication", "needs_action", "internal_secret_missing",
 				"This is not a Nextcloud setting. It belongs to Talk's signaling server, and Cassini needs the same value in order to join calls invisibly. Nextcloud does not hold it anywhere, which is why Cassini cannot read it for you.",
@@ -683,6 +684,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		}
 	}
 	resp.Checks = append(host, resp.Checks...)
+	sortReadinessRows(resp.Checks)
 	resp.Test = rt.readinessTest(ctx, state)
 	for i := range resp.Checks {
 		resp.Checks[i].Checkable = !readinessScopeFor([]string{resp.Checks[i].ID}).empty()
@@ -712,6 +714,42 @@ func recordingCapabilityState(checks []readinessCheck) string {
 // thing still works, so it must neither be swallowed into "passed" nor promoted
 // into a blocking failure. `not_verified` ranks below warn — nothing has been
 // established, which is not the same as having found a problem.
+// readinessRowOrder is the order the checklist reads in, declared rather than
+// left to whichever order the assembling code happened to append in — which put
+// the signaling credential ABOVE the backend it authenticates to, so a reader
+// met the credential first and the reason it was not needed second.
+//
+// The talk rows are a dependency chain: a backend has to exist, then it needs
+// its credential, then the connection can be verified. Host findings still lead,
+// because a full disk explains a storage failure below it.
+var readinessRowOrder = []string{
+	"configuration",
+	"host", "host.workdir", "host.tmpdir.writable",
+	"storage",
+	"talk.hpb",
+	"talk.authentication",
+	"talk.discovery",
+	"talk.handoff",
+	"archive.search",
+}
+
+// sortReadinessRows orders in place, stably, leaving any id the list does not
+// know at the end in the order it arrived — a new check appears rather than
+// disappearing because nobody added it here.
+func sortReadinessRows(checks []readinessCheck) {
+	rank := func(id string) int {
+		for i, known := range readinessRowOrder {
+			if known == id {
+				return i
+			}
+		}
+		return len(readinessRowOrder)
+	}
+	sort.SliceStable(checks, func(i, j int) bool {
+		return rank(checks[i].ID) < rank(checks[j].ID)
+	})
+}
+
 // readinessStateRank orders the states by how much it costs to ignore them.
 // One table, because two copies would eventually disagree about whether warn
 // outranks not_verified.

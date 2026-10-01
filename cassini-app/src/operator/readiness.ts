@@ -125,7 +125,10 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
   const rows = [...report.checks];
   const unreadable = rows.some(c => c.code === "setup_store_unreadable");
   if (!unreadable && !rows.some(c => c.id === "talk.authentication")) {
-    const at = rows.findIndex(c => c.id.startsWith("talk."));
+    // After talk.hpb, never before it. The backend has to exist before its
+    // credential means anything, and a reader who meets the credential first
+    // reads the requirement before the reason it does not apply.
+    const at = rows.findIndex(c => c.id.startsWith("talk.") && c.id !== "talk.hpb");
     const noBackend = rows.some(c => c.code === "hpb_disabled");
     rows.splice(at < 0 ? rows.length : at, 0, {
       id: "talk.authentication", state: report.secret_configured ? "passed" : "needs_action",

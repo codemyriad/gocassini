@@ -364,3 +364,36 @@ func TestUncheckedHostRowsAreTheRowsACheckProduces(t *testing.T) {
 		}
 	}
 }
+
+// The backend comes before the credential that authenticates to it.
+//
+// Assembled order put talk.authentication first, so a reader met "this
+// credential is required" above the row explaining there is no backend for it to
+// authenticate to. The talk rows are a dependency chain and should read as one.
+func TestBackendRowComesBeforeTheCredentialThatAuthenticatesToIt(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "archive.search"},
+		{ID: "talk.discovery"},
+		{ID: "talk.authentication"},
+		{ID: "storage"},
+		{ID: "talk.hpb"},
+		{ID: "host.workdir"},
+		{ID: "something.new"},
+	}
+	sortReadinessRows(checks)
+	var got []string
+	for _, c := range checks {
+		got = append(got, c.ID)
+	}
+	want := []string{"host.workdir", "storage", "talk.hpb", "talk.authentication", "talk.discovery", "archive.search", "something.new"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+	// An id the order does not know lands at the end rather than vanishing: a
+	// new check should appear unannounced, not disappear.
+	if got[len(got)-1] != "something.new" {
+		t.Fatalf("an unknown row did not survive sorting: %v", got)
+	}
+}
