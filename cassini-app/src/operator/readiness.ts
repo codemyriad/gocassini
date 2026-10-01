@@ -123,8 +123,12 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
   const unreadable = rows.some(c => c.code === "setup_store_unreadable");
   if (!unreadable && !rows.some(c => c.id === "talk.authentication")) {
     const at = rows.findIndex(c => c.id.startsWith("talk."));
+    const noBackend = rows.some(c => c.code === "hpb_disabled");
     rows.splice(at < 0 ? rows.length : at, 0, {
       id: "talk.authentication", state: report.secret_configured ? "passed" : "needs_action",
+      // Changing a saved secret is worth offering — unless there is no backend
+      // for it to authenticate to, in which case editing it achieves nothing.
+      ...(noBackend ? {} : { action: "configure_talk" }),
       // No "HPB authentication is checked separately" trailer. It pointed at a
       // check that only happens once a backend exists and the probe gets that
       // far, so on an install with no High Performance Backend it told a reader
@@ -141,7 +145,12 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
 export function rowActions(check: ReadinessCheck): { action: string; label: string }[] {
   const labels: Record<string, string> = { configure_talk:"Talk authentication", test_room:"Test room", connect_talk:"Connect Talk", test_recording:"Test a recording", recheck:"Check again", setup_storage:"Set up storage" };
   const actions = check.action ? [check.action] : [];
-  const persistent: Record<string,string> = { "talk.authentication":"configure_talk", "talk.discovery":"test_room", "talk.handoff":"connect_talk" };
+  // talk.authentication is NOT here. The operator withholds its action when the
+  // secret cannot be useful — no High Performance Backend to authenticate to —
+  // and a panel that adds the form back offers a reader a way to configure
+  // something that will change nothing. Where the secret IS useful, the row
+  // carries the action itself.
+  const persistent: Record<string,string> = { "talk.discovery":"test_room", "talk.handoff":"connect_talk" };
   if (persistent[check.id] && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
   return actions.map(action => ({ action, label:labels[action] ?? "Configure" }));
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, talkSettingsURL, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, rowActions, talkSettingsURL, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -222,5 +222,33 @@ describe("where to send an administrator", () => {
   it("offers no link rather than a wrong one", () => {
     expect(talkSettingsURL("https://host/operator/")).toBe("");
     expect(talkSettingsURL("")).toBe("");
+  });
+});
+
+describe("offering a form only where it can change something", () => {
+  const report = (checks: ReadinessCheck[], configured: boolean): RecordingReadiness => ({
+    state: "needs_action", checks, secret_configured: configured, secret_source: "setup",
+    test_room_url: "", test: { state: "idle", published: false },
+  });
+  const noBackend = { id: "talk.hpb", state: "needs_action", code: "hpb_disabled", message: "" } as ReadinessCheck;
+  const backend = { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "" } as ReadinessCheck;
+
+  // The operator withholds the action when the secret cannot be useful. The
+  // panel used to add it back, offering a form that would change nothing.
+  it("withholds the credential form when there is no backend to authenticate to", () => {
+    const row = readinessRows(report([noBackend], true)).find(c => c.id === "talk.authentication")!;
+    expect(rowActions(row).map(a => a.action)).not.toContain("configure_talk");
+  });
+
+  it("offers it when a backend exists", () => {
+    const row = readinessRows(report([backend], true)).find(c => c.id === "talk.authentication")!;
+    expect(rowActions(row).map(a => a.action)).toContain("configure_talk");
+  });
+
+  // An operator-sent action is always honoured: that is the case where the
+  // secret is missing AND a backend exists.
+  it("honours an action the operator did send", () => {
+    const sent = { id: "talk.authentication", state: "needs_action", code: "internal_secret_missing", message: "", action: "configure_talk" } as ReadinessCheck;
+    expect(rowActions(sent).map(a => a.action)).toContain("configure_talk");
   });
 });

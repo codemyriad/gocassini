@@ -618,14 +618,17 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 			// an administrator can usefully do about this row yet — the backend
 			// row above is the one to act on. Demanding it here reported one
 			// fault twice and sent the reader to the wrong one.
-			add("talk.authentication", "not_verified", "internal_secret_not_needed_yet",
-				"Not needed yet. This secret authenticates Cassini to Talk's High Performance Backend, and there is no backend configured.", "")
+			addWithSteps("talk.authentication", "not_verified", "internal_secret_not_needed_yet",
+				"Not needed yet. Cassini joins a call as an invisible signaling client, and this secret is how it authenticates to Talk's High Performance Backend. There is no backend configured, so there is nothing for it to authenticate to and setting it now would change nothing.",
+				"",
+				readinessStep{Label: "Configure Talk's High Performance Backend first — see the row above. This credential becomes required, and checkable, once one exists"})
 		} else {
 			addWithSteps("talk.authentication", "needs_action", "internal_secret_missing",
 				"Cassini needs the internal secret that Talk's signaling server is configured with. It cannot be generated here: the signaling server chooses it.",
 				"configure_talk",
 				readinessStep{Label: "On Nextcloud All-in-One, read it from the Talk container's INTERNAL_SECRET"},
-				readinessStep{Label: "On a standalone High Performance Backend, it is `internalsecret` in the `[clients]` section of the signaling server's configuration"})
+				readinessStep{Label: "On a standalone High Performance Backend, it is `internalsecret` in the `[clients]` section of the signaling server's configuration"},
+				readinessStep{Label: "Paste it unchanged. Cassini does not choose this value and cannot verify it against the server until the connection is checked — a secret that differs by one character fails as though the credential were wrong"})
 		}
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
