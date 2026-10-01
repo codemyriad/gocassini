@@ -35,7 +35,13 @@
   let reportVersion = 0;
 
   async function load(check = false, only = "") {
-    if (busy || polling) return;
+    // Not gated on `polling`. The 5-second refresh is a read, and gating on it
+    // dropped any click that happened to land during one — roughly one chance
+    // in ten, silently.
+    if (busy) return;
+    // Claim the response: an in-flight poll must not overwrite what the reader
+    // just asked for with the answer from a moment earlier.
+    ++reportVersion;
     busy = true; checking = check; checkingOnly = only; error = "";
     try {
       const next = check
@@ -63,7 +69,8 @@
   // The operator performs the repair; this asks it to start and takes the
   // checklist it answers with.
   async function repair(action: string) {
-    if (!action || busy || polling) return;
+    if (!action || busy) return;
+    ++reportVersion;
     busy = true; error = "";
     try {
       const next = await operatorClient.repairReadiness(action);
@@ -118,7 +125,7 @@
 <section class="rounded-box border border-base-300 bg-base-100 p-5 shadow-sm" aria-labelledby="recording-readiness-title" aria-busy={busy}>
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 id="recording-readiness-title" class="text-lg font-semibold {report && !stale ? toneClasses[reportTone(report)] : ''}">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
-    <button class="btn btn-sm" disabled={busy || polling} on:click={() => load(true)}>{busy ? "Checking…" : "Run all checks"}</button>
+    <button class="btn btn-sm" disabled={busy} on:click={() => load(true)}>{busy ? "Checking…" : "Run all checks"}</button>
   </div>
   <p class="mt-2 text-sm text-base-content/70">Check the connection and recording storage, then verify a short recording through Talk.</p>
   {#if error}<p role="alert" class="mt-3 text-error">{error}</p>{/if}
@@ -151,15 +158,15 @@
             </div>
             <div class="flex flex-wrap gap-2">
               {#if check.repair}
-                <button class="btn btn-sm btn-primary" disabled={busy || polling}
+                <button class="btn btn-sm btn-primary" disabled={busy}
                   on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair] ?? "Fix this"}</button>
               {/if}
               {#if check.checkable && rowActions(check).every((item) => item.action !== "recheck")}
-                <button class="btn btn-sm btn-outline" disabled={busy || polling}
+                <button class="btn btn-sm btn-outline" disabled={busy}
                   on:click={() => load(true, check.id)}>Check</button>
               {/if}
               {#each rowActions(check) as item}
-                <button class="btn btn-sm btn-outline" disabled={busy || polling} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
+                <button class="btn btn-sm btn-outline" disabled={busy} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
               {/each}
             </div>
           </div>
