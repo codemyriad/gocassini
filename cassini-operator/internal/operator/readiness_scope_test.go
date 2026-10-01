@@ -310,6 +310,13 @@ func TestCredentialRowSaysWhereTheSecretLivesAndDefersToTheBackend(t *testing.T)
 	for _, s := range c.Steps {
 		joined += s.Label + " "
 	}
+	// The misconception this copy exists to kill: an administrator reading
+	// "internal credential" went looking in Nextcloud's configuration, where
+	// D-447 verified the value appears in zero appconfig keys and zero entries
+	// of occ config:list. It belongs to the signaling server.
+	if !strings.Contains(c.Message, "not a Nextcloud setting") {
+		t.Errorf("the message does not say whose credential this is: %q", c.Message)
+	}
 	for _, want := range []string{"INTERNAL_SECRET", "internalsecret"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("steps never name %q, which is what an administrator searches for: %q", want, joined)

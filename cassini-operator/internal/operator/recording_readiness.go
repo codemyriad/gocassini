@@ -619,16 +619,16 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 			// row above is the one to act on. Demanding it here reported one
 			// fault twice and sent the reader to the wrong one.
 			addWithSteps("talk.authentication", "not_verified", "internal_secret_not_needed_yet",
-				"Not needed yet. Cassini joins a call as an invisible signaling client, and this secret is how it authenticates to Talk's High Performance Backend. There is no backend configured, so there is nothing for it to authenticate to and setting it now would change nothing.",
+				"Not needed yet. Cassini joins a call as an invisible signaling client, and this secret is how it authenticates to Talk's High Performance Backend — it belongs to that server, not to Nextcloud. There is no backend configured, so there is nothing to authenticate to and setting it now would change nothing.",
 				"",
 				readinessStep{Label: "Configure Talk's High Performance Backend first — see the row above. This credential becomes required, and checkable, once one exists"})
 		} else {
 			addWithSteps("talk.authentication", "needs_action", "internal_secret_missing",
-				"Cassini needs the internal secret that Talk's signaling server is configured with. It cannot be generated here: the signaling server chooses it.",
+				"This is not a Nextcloud setting. It belongs to Talk's signaling server, and Cassini needs the same value in order to join calls invisibly. Nextcloud does not hold it anywhere, which is why Cassini cannot read it for you.",
 				"configure_talk",
-				readinessStep{Label: "On Nextcloud All-in-One, read it from the Talk container's INTERNAL_SECRET"},
-				readinessStep{Label: "On a standalone High Performance Backend, it is `internalsecret` in the `[clients]` section of the signaling server's configuration"},
-				readinessStep{Label: "Paste it unchanged. Cassini does not choose this value and cannot verify it against the server until the connection is checked — a secret that differs by one character fails as though the credential were wrong"})
+				readinessStep{Label: "Nextcloud All-in-One: docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"},
+				readinessStep{Label: "Standalone signaling server: the `internalsecret` under `[clients]` in its configuration file"},
+				readinessStep{Label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until the connection is checked"})
 		}
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {

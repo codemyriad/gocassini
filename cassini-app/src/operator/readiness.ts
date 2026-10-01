@@ -74,7 +74,10 @@ export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
   "archive.search": "Archive search",
-  "talk.authentication": "Internal credential",
+  // Named for whose credential it is. "Internal credential" read as something
+  // of Cassini's or Nextcloud's, and an administrator went looking for it in
+  // Nextcloud's configuration, where it has never been.
+  "talk.authentication": "Signaling server credential",
   "talk.discovery": "Talk connection",
   "talk.hpb": "High-performance backend",
   // Only appears when the credential could not be provisioned. The row used to
