@@ -28,7 +28,13 @@ const hpbDocsURL = "https://nextcloud-talk.readthedocs.io/en/stable/quick-instal
 // finds out it has no HPB, which is the one fault that stops recording outright.
 // Capabilities needs neither, and answers for the app's own identity.
 func (c ExAppConfig) talkSignalingMode(ctx context.Context, client *http.Client) (string, error) {
-	status, body, err := c.apiGet(ctx, client, strings.TrimRight(c.NextcloudURL, "/")+"/ocs/v2.php/cloud/capabilities")
+	// As a USER, not as the app. Talk's capability provider needs a user
+	// context to report its config, so the app identity gets a capabilities
+	// document with no `spreed` block at all — which reads identically to "Talk
+	// is not installed" and is why this check silently reported nothing on the
+	// local harness.
+	status, body, err := c.apiGetAs(ctx, client, c.provisioningUser(),
+		strings.TrimRight(c.NextcloudURL, "/")+"/ocs/v2.php/cloud/capabilities")
 	if err != nil {
 		return "", err
 	}
@@ -92,16 +98,25 @@ func hpbCheckForMode(mode string) *readinessCheck {
 func (rt *Runtime) hpbFinding(ctx context.Context) *readinessCheck {
 	cfg, err := LoadExAppConfig()
 	if err != nil || !cfg.Active {
+		// Outside AppAPI there is no Nextcloud to ask. Not a fault.
 		return nil
 	}
 	client := &http.Client{Timeout: ncProvisionTimeout}
 	mode, err := cfg.talkSignalingMode(ctx, client)
 	if err != nil {
+		rt.logger.Printf("ERROR: could not read Talk's signaling mode: %v", err)
 		return &readinessCheck{
 			ID: "talk.hpb", State: "warn", Code: "signaling_mode_unknown",
 			Message: "Cassini could not read Talk's signaling configuration, so it cannot tell whether a High Performance Backend is available.",
 			Action:  "recheck",
 		}
+	}
+	if mode == "" {
+		// Said out loud rather than returning nothing. A missing `spreed` block
+		// means Talk is absent OR that this request could not see Talk's config,
+		// and the two are indistinguishable here — but a checklist that reports
+		// neither is how this went unnoticed in the first place.
+		rt.logger.Printf("WARNING: Nextcloud capabilities carried no Talk signaling mode; the recording backend cannot be reported")
 	}
 	return hpbCheckForMode(mode)
 }
