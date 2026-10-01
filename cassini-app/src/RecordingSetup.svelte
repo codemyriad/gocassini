@@ -131,6 +131,9 @@
             <div class="min-w-0 flex-1">
               <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id)}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/60"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
+              {#if check.docs}
+                <p class="mt-1 text-sm"><a class="link" href={check.docs} target="_blank" rel="noreferrer">Read Nextcloud's documentation</a></p>
+              {/if}
               {#if (check.steps ?? []).length > 0}
                 <!-- Behind a disclosure, as SetupNotice does it: an
                      administrator who wants to press a button never has to read

@@ -48,7 +48,10 @@ type readinessCheck struct {
 	// row to probe is readinessScopeFor's, and a second copy in TypeScript
 	// drifts into a spinner for a probe that never runs, or a button the server
 	// refuses.
-	Checkable bool   `json:"checkable,omitempty"`
+	Checkable bool `json:"checkable,omitempty"`
+	// Docs is where to read about this check, for a fault the operator cannot
+	// repair and should not pretend to instruct. A stable URL, not a procedure.
+	Docs      string `json:"docs,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
 }
 
@@ -496,6 +499,23 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 			checks, err = probe(ctx, room)
 			if err != nil {
 				checks = []readinessCheck{{ID: "talk.discovery", State: "not_verified", Code: "probe_failed", Message: "The connection check did not finish. Check the recorder installation and connectivity, then retry.", Action: "recheck"}}
+			}
+		}
+		// Talk's own signaling mode, read from capabilities. The probe learns the
+		// same fact from Talk's recording settings, which needs the recording
+		// credential AND a test room — so without this, a deployment failing
+		// either never discovers it has no HPB, the one fault that stops
+		// recording outright. Appended only when the probe did not get far
+		// enough to report it itself.
+		if hpb := rt.hpbFinding(ctx); hpb != nil {
+			found := false
+			for _, c := range checks {
+				if c.ID == "talk.hpb" {
+					found = true
+				}
+			}
+			if !found {
+				checks = append(checks, *hpb)
 			}
 		}
 		now := time.Now().UTC()

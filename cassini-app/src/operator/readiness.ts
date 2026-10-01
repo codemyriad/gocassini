@@ -33,6 +33,9 @@ export interface ReadinessCheck {
   // The operator says so — the row-to-probe mapping is readinessScopeFor's, and
   // a second copy here drifted into a spinner for a probe that never ran.
   checkable?: boolean;
+  // Where to read about a fault the operator cannot repair. A link, not a
+  // procedure: an instruction we cannot verify is worse than a reference.
+  docs?: string;
   checked_at?: string;
 }
 
@@ -122,9 +125,13 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
     const at = rows.findIndex(c => c.id.startsWith("talk."));
     rows.splice(at < 0 ? rows.length : at, 0, {
       id: "talk.authentication", state: report.secret_configured ? "passed" : "needs_action",
+      // No "HPB authentication is checked separately" trailer. It pointed at a
+      // check that only happens once a backend exists and the probe gets that
+      // far, so on an install with no High Performance Backend it told a reader
+      // nothing at all. The Talk connection and backend rows report that.
       code: "internal_secret_configuration", message: report.secret_source === "env"
-        ? "The internal secret is managed by deployment configuration. HPB authentication is checked separately."
-        : report.secret_configured ? "An internal secret is saved. HPB authentication is checked separately."
+        ? "The internal secret comes from Cassini's deployment configuration."
+        : report.secret_configured ? "An internal secret is saved."
         : "Enter the internal secret from your Talk signaling server.",
     });
   }

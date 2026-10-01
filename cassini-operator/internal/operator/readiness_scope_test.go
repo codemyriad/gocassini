@@ -223,3 +223,39 @@ func TestRowsSayWhetherAProbeCanReCheckThem(t *testing.T) {
 		}
 	}
 }
+
+// No High Performance Backend stops recording outright, so it is needs_action
+// rather than a warning — and it must be discoverable without the things the
+// connection probe needs.
+//
+// The probe learns the same fact from Talk's recording settings, which require
+// the recording credential AND a test room. On the local harness neither held,
+// the probe returned early at talk.discovery, and an install that could not
+// record at all reported no backend problem whatsoever.
+func TestNoHPBIsAFailureAndNamesWhereToReadAboutIt(t *testing.T) {
+	for mode, want := range map[string]string{
+		"internal": "needs_action",
+		"external": "",
+		"":         "",
+	} {
+		check := hpbCheckForMode(mode)
+		if want == "" {
+			if check != nil {
+				t.Fatalf("signaling mode %q produced %+v; the probe owns that case", mode, check)
+			}
+			continue
+		}
+		if check == nil {
+			t.Fatalf("signaling mode %q produced no finding", mode)
+		}
+		if check.State != want {
+			t.Errorf("mode %q = %q, want %q: without a backend nothing records", mode, check.State, want)
+		}
+		if check.Docs == "" {
+			t.Error("a fault the operator cannot repair must say where to read about it")
+		}
+		if strings.Contains(check.Message, "checked separately") {
+			t.Error("the message points at a check that does not happen")
+		}
+	}
+}
