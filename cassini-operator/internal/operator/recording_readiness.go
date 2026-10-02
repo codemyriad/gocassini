@@ -645,9 +645,22 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// above and not bounded by this TTL.
 		add("storage", "not_verified", "storage_not_checked", "Nextcloud storage has not been checked yet. Check again to run it.", "recheck")
 	} else if access.OK {
-		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "The Nextcloud storage preflight passed. A test recording verifies publication and playback.", CheckedAt: access.CheckedAt})
+		// Says what was established, in the reader's terms. "The Nextcloud
+		// storage preflight passed" named an internal routine and no fact: the
+		// row is green, and a reader still cannot tell what is now known to
+		// work. What this check actually proves is the publish destination —
+		// the account exists, its recordings folder was created over WebDAV, and
+		// the sharing API answers for it — so say that.
+		//
+		// It no longer ends with "a test recording verifies publication and
+		// playback" either. That sentence was this row apologising for what it
+		// could not establish, back when no test recording could be run at all.
+		// The Test recording row says it now, where a reader can act on it.
+		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "Cassini can store and share recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers.", CheckedAt: access.CheckedAt})
 	} else {
-		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "The Nextcloud storage preflight did not pass. Review the storage details below.", Action: "setup_storage", CheckedAt: access.CheckedAt})
+		// Not "below": the button leaves this panel for the Storage section, so
+		// a reader told to look down the page looks in the wrong place.
+		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "Cassini cannot store or share recordings in Nextcloud yet. The storage details name the step that failed.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
 	hpbDisabled := false
 	for _, p := range probes {
