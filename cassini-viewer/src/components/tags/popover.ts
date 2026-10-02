@@ -34,13 +34,20 @@ export function popover(node: HTMLElement, options: PopoverOptions) {
     if (!anchor) {
       return;
     }
+    node.style.position = "fixed";
     const box = anchor.getBoundingClientRect();
     const gap = 4;
     const height = node.offsetHeight;
     const fitsBelow = box.bottom + gap + height <= window.innerHeight || box.top - gap - height < 0;
-    node.style.position = "fixed";
-    node.style.top = `${fitsBelow ? box.bottom + gap : box.top - gap - height}px`;
-    node.style.left = `${Math.max(gap, Math.min(box.left, window.innerWidth - node.offsetWidth - gap))}px`;
+    const top = fitsBelow ? box.bottom + gap : box.top - gap - height;
+    const width = node.offsetWidth;
+    const start = box.left + width <= window.innerWidth - gap ? box.left : box.right - width;
+    const left = Math.max(gap, Math.min(start, window.innerWidth - width - gap));
+    node.style.top = `${top}px`;
+    node.style.left = `${left}px`;
+    const placed = node.getBoundingClientRect();
+    node.style.top = `${2 * top - placed.top}px`;
+    node.style.left = `${2 * left - placed.left}px`;
   };
   const onPointerdown = (event: PointerEvent) => isOutside(event, node, anchor) && close();
   // Stopped here, so a popover inside another closes alone.
