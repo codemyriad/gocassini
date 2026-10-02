@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { fade } from "svelte/transition";
   import { Lock, Settings } from "@lucide/svelte";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
@@ -43,6 +44,9 @@
   // Null until the vocabulary loads; the operator answers 503 while it first indexes.
   export let tags: readonly VocabularyTag[] | null = null;
   export let tagsFailed = false;
+  export let roomsLoading = false;
+  export let tagsLoading = false;
+  export let insightsLoading = false;
   export let selectedTagIds: readonly string[] = [];
   export let tagMatch: TagMatch = "any";
 
@@ -57,6 +61,44 @@
 
   const TAG_MATCHES: TagMatch[] = ["any", "all"];
   $: tagRows = tags ? matchTags(tags, "") : null;
+
+  const SWAP_MS = 200;
+  const ROOMS_KEY = "cassini:rail:rooms";
+  const TAGS_KEY = "cassini:rail:tags";
+  const SKELETON_WIDTHS = [62, 48, 70, 54, 40, 66, 58, 44];
+
+  function swapOut(node: HTMLElement) {
+    const { offsetTop, offsetLeft } = node;
+    const width = node.getBoundingClientRect().width;
+    node.style.position = "absolute";
+    node.style.top = `${offsetTop}px`;
+    node.style.left = `${offsetLeft}px`;
+    node.style.width = `${width}px`;
+    node.style.pointerEvents = "none";
+    return { duration: SWAP_MS, css: (t: number) => `opacity: ${t}` };
+  }
+
+  function rememberedCount(key: string, fallback: number): number {
+    try {
+      const value = Number(localStorage.getItem(key));
+      return Number.isInteger(value) && value >= 0 && value <= 50 ? value : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function remember(key: string, count: number) {
+    try {
+      localStorage.setItem(key, String(count));
+    } catch {
+      return;
+    }
+  }
+
+  const roomPlaceholders = rememberedCount(ROOMS_KEY, 4);
+  const tagPlaceholders = rememberedCount(TAGS_KEY, 3);
+  $: if (!roomsLoading) remember(ROOMS_KEY, rooms.length);
+  $: if (tagRows) remember(TAGS_KEY, tagRows.length);
 
   export let audience: "" | "participants" = "";
   const AUDIENCE = {
@@ -118,11 +160,21 @@
       class="room-button"
     >
       <span class="room-name">All meetings</span>
-      <span class="room-count">{totalCount}</span>
+      <span class="room-count">{roomsLoading ? "" : totalCount}</span>
     </button>
 
+    {#if roomsLoading}
+      <div class="rail-skeleton-group" aria-hidden="true" out:swapOut>
+        {#each SKELETON_WIDTHS.slice(0, roomPlaceholders) as width, index (index)}
+          <div class="room-button rail-skeleton">
+            <span class="room-name"><span class="skeleton-bar" style:width="{width}%">&nbsp;</span></span>
+          </div>
+        {/each}
+      </div>
+    {/if}
     {#each rooms as room (room.key)}
       <button
+        in:fade={{ duration: SWAP_MS }}
         type="button"
         on:click={() => select(room.key)}
         aria-pressed={selectedRoomKey === room.key}
@@ -151,7 +203,7 @@
     {#if tagRows}
       <div class="rail-list" role="group" aria-label="Filter by tag">
         {#each tagRows as tag (tag.tagId)}
-          <label class="type-row" data-tag-color={colorFor(tag)}>
+          <label class="type-row" data-tag-color={colorFor(tag)} in:fade={{ duration: SWAP_MS }}>
             <input
               type="checkbox"
               class="cassini-check tag-box"
@@ -185,6 +237,15 @@
       {/if}
     {:else if tagsFailed}
       <p class="rail-note">Tags are unavailable right now.</p>
+    {:else if tagsLoading}
+      <div class="rail-list" aria-hidden="true" out:swapOut>
+        {#each SKELETON_WIDTHS.slice(0, tagPlaceholders) as width, index (index)}
+          <div class="type-row rail-skeleton">
+            <span class="skeleton-box"></span>
+            <span class="room-name"><span class="skeleton-bar" style:width="{width}%">&nbsp;</span></span>
+          </div>
+        {/each}
+      </div>
     {/if}
   {/if}
 
@@ -204,7 +265,7 @@
           on:change={() => dispatch("toggleType", "meetings")}
         />
         <span class="room-name">Meetings</span>
-        <span class="room-count">{meetingCount}</span>
+        <span class="room-count">{roomsLoading ? "" : meetingCount}</span>
       </label>
       <label class="type-row">
         <input
@@ -216,7 +277,7 @@
           on:change={() => dispatch("toggleType", "insights")}
         />
         <span class="room-name">Insights</span>
-        <span class="room-count">{insightCount}</span>
+        <span class="room-count">{insightsLoading ? "" : insightCount}</span>
       </label>
     </div>
   {/if}
@@ -228,6 +289,7 @@
      better as one rule than as a stack of aria-[pressed=true]: variants, and
      the narrow-viewport drawer needs a media query either way. */
   .rooms-rail {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -256,6 +318,7 @@
   }
 
   .rail-list {
+    position: relative;
     display: flex;
     flex-direction: column;
   }
@@ -464,6 +527,26 @@
 
   /* "No room" is the absence of a room, not a room — italic so it does not read
      as a conversation someone could open. */
+  .rail-skeleton {
+    cursor: default;
+    pointer-events: none;
+  }
+  .skeleton-bar {
+    display: inline-block;
+    max-width: 100%;
+    border-radius: 4px;
+    background-color: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+    line-height: 12px;
+    vertical-align: middle;
+  }
+  .skeleton-box {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background-color: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  }
+
   .room-none .room-name {
     font-style: italic;
     opacity: 0.75;

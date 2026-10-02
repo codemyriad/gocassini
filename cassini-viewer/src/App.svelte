@@ -234,6 +234,7 @@
   // Tags (D-746). A failed reload keeps the last vocabulary that loaded.
   let tagVocabulary: TagVocabulary | null = null;
   let tagsFailed = false;
+  let catalogPending = true;
   let selectedTagIds: string[] = [];
   let tagMatch: TagMatch = "any";
   let tagNotice = "";
@@ -878,6 +879,7 @@
       catalogMode = true;
       bundledMode = false;
       catalogMeetings = catalog.meetings;
+      catalogPending = false;
       listError = "";
       void hydrateCatalogMeetingMetadata(catalog.meetings);
       // A deep link that could not be satisfied at mount is satisfied here, the
@@ -1275,6 +1277,8 @@
         return;
       }
       listError = error instanceof Error ? error.message : String(error);
+    } finally {
+      catalogPending = false;
     }
   });
 
@@ -1352,6 +1356,9 @@
       tagsOffered={canTag}
       tags={vocabularyTags}
       {tagsFailed}
+      roomsLoading={catalogPending}
+      insightsLoading={!insightsLoaded && !insightsError}
+      tagsLoading={canTag && !vocabularyTags && !tagsFailed}
       selectedTagIds={activeTagIds}
       {tagMatch}
       {audience}
@@ -1385,6 +1392,7 @@
       {ncMode}
       {themeMode}
       errorMessage={listError}
+      loading={catalogPending || (insightsOffered && !insightsLoaded && !insightsError)}
       {searchOffered}
       {searchState}
       {searchMessage}
