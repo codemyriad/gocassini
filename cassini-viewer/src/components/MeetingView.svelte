@@ -1558,7 +1558,7 @@
     transition:fade={playerFadeConfig()}
   >
     <div class="mv-fade-blur mv-fade-blur-bottom" aria-hidden="true">{#each [1, 2, 4, 8, 16] as radius, layer (radius)}<div style:--blur="{radius}px" style:--layer={layer}></div>{/each}</div>
-    <div class="card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
+    <div class="mv-player-bar card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
       {#if audioSrc}
         {#key audioSrc}
           <audio
@@ -1903,6 +1903,10 @@
     background-color: color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-200));
     color: var(--color-base-content);
     box-shadow: none;
+  }
+
+  .mv-player-bar {
+    border-radius: calc(var(--radius-field) + 0.5rem + 1px);
   }
 
   .mv-toggle {
