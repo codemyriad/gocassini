@@ -535,6 +535,20 @@
   // MeetingView's
   // shortcuts <dialog> is open — a native modal already answers Escape, and
   // closing the meeting out from under it would be a second, unasked-for action.
+  export function closeOverlay() {
+    if (tagManagerOpen) {
+      tagManagerOpen = false;
+      return;
+    }
+    if (prepareOpen) {
+      prepareOpen = false;
+      return;
+    }
+    if (selectedInsightId || selectedMeetingId) {
+      closeSheet();
+    }
+  }
+
   function handleShellKeydown(event: KeyboardEvent) {
     if (event.key !== "Escape" || event.defaultPrevented) {
       return;
@@ -1671,10 +1685,10 @@
       right: 0;
       bottom: 0;
       width: 100%;
-      height: 92%;
+      height: 100%;
       border-left: 0;
-      border-top: 1px solid var(--color-base-300);
-      border-radius: var(--radius-box, 1rem) var(--radius-box, 1rem) 0 0;
+      border-top: 0;
+      border-radius: 0;
       box-shadow: 0 -8px 30px oklch(0% 0 0 / 0.22);
     }
     /* A side drawer on a phone leaves the content it covers unreachable and
@@ -1687,10 +1701,10 @@
       right: 0;
       bottom: 0;
       width: 100%;
-      height: 92%;
+      height: 100%;
       border-left: 0;
-      border-top: 1px solid var(--color-base-300);
-      border-radius: var(--radius-box, 1rem) var(--radius-box, 1rem) 0 0;
+      border-top: 0;
+      border-radius: 0;
       box-shadow: 0 -8px 30px oklch(0% 0 0 / 0.22);
     }
   }
