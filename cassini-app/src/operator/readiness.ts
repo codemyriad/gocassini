@@ -149,7 +149,20 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // "Talk authentication" named the row this button sits on, back when the row
   // was called that. The row is "Signaling server credential" now, so the button
   // said one thing and the heading above it another.
-  const labels: Record<string, string> = { configure_talk:"Set credential", connect_talk:"Connect Talk", test_recording:"Record a test", recheck:"Check again", setup_storage:"Set up storage" };
+  // Every action the operator and the recorder can emit. An action missing from
+  // here used to render as "Configure" and open whichever drawer the panel fell
+  // through to — which for setup_hpb, the row a backend-less install leads
+  // with, meant a button labelled nothing in particular. repair_configuration
+  // was the same.
+  const labels: Record<string, string> = {
+    configure_talk: "Set credential",
+    connect_talk: "Connect Talk",
+    test_recording: "Record a test",
+    recheck: "Check again",
+    setup_storage: "Set up storage",
+    setup_hpb: "How to set this up",
+    repair_configuration: "How to repair this",
+  };
   const actions = check.action ? [check.action] : [];
   // talk.authentication is NOT here. The operator withholds its action when the
   // secret cannot be useful — no High Performance Backend to authenticate to —
@@ -160,7 +173,11 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // to create, so there is no longer anything for a reader to choose.
   const persistent: Record<string,string> = { "talk.handoff":"connect_talk" };
   if (persistent[check.id] && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
-  return actions.map(action => ({ action, label:labels[action] ?? "Configure" }));
+  // An action this build cannot name gets no button, rather than a "Configure"
+  // whose effect the panel cannot describe and whose drawer it does not have.
+  // Same rule as the repair buttons: offering a control the panel cannot
+  // explain is how a reader ends up reading an instruction for another fault.
+  return actions.filter(action => labels[action]).map(action => ({ action, label: labels[action] }));
 }
 
 // How loudly a check should read. Colour is redundant with the label text

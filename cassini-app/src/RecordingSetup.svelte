@@ -241,8 +241,14 @@
           {/if}
         {:else if panel === "settings"}
           <p class="text-sm">Review optional transcription below in Publish pipeline. Recording and playback can work without a transcript. CPU transcription is supported; a GPU is optional.</p>
-        {:else}
-          <p class="text-sm">Ask your server administrator to check Cassini’s persistent volume and restore recording-setup.json from backup, then restart Cassini and check again.</p>
+        {:else if panel === "repair_configuration"}
+          <!-- Named, not a fall-through. This was the {:else}, so ANY action the
+               panel had no branch for showed this — telling a reader to restore
+               recording-setup.json from backup for a fault that had nothing to
+               do with the file. rowActions now drops an action this build
+               cannot name, so there is no longer an unnamed branch to land in. -->
+          <h3 class="font-semibold">Cassini’s saved configuration cannot be read</h3>
+          <p class="my-2 text-sm">Ask your server administrator to check Cassini’s persistent volume and restore recording-setup.json from backup, then restart Cassini and check again.</p>
         {/if}
         <button class="btn btn-ghost btn-sm mt-4" on:click={() => { panel = ""; secret = ""; }}>Close</button>
       </div>

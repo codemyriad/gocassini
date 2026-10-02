@@ -42,8 +42,8 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       { id: "host.workdir", state: "passed", code: "workdir", message: "working directory is writable", checked_at },
       { id: "host.tmpdir.writable", state: "passed", code: "tmpdir.writable", message: "temporary directory is writable", checked_at },
       { id: "storage", state: "passed", code: "storage_ready", message: "Cassini can store and share recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers.", checked_at },
-      { id: "talk.discovery", state: "passed", code: "recording_auth_verified", message: "Talk accepted Cassini's recording credential.", checked_at },
       { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", checked_at },
+      { id: "talk.discovery", state: "passed", code: "recording_auth_verified", message: "Talk accepted Cassini's recording credential.", checked_at },
       { id: "archive.search", state: "passed", code: "search_archive_files_accounted_for", message: "The search index records 12 indexed meeting(s). Every Opus file in the checked archive listing has an index outcome.", checked_at },
     ],
   };

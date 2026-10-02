@@ -235,6 +235,34 @@ describe("where to send an administrator", () => {
 });
 
 
+// The producers are cassini-operator/internal/operator/recording_readiness.go
+// and cassini-go-recorder/internal/talk/readiness.go. Keep this list in step
+// with them: an action missing a label renders no button at all, which is
+// better than a wrong one but still means a row with no way forward.
+describe("every action the backend can send has a button", () => {
+  const emitted = ["recheck", "configure_talk", "connect_talk", "setup_storage",
+    "setup_hpb", "test_recording", "repair_configuration"];
+
+  it("names each one", () => {
+    for (const action of emitted) {
+      const row = { id: "talk.hpb", state: "needs_action", code: "x", message: "", action } as ReadinessCheck;
+      const names = rowActions(row).map(item => item.label);
+      expect(names.length, `${action} produced no button`).toBeGreaterThan(0);
+      // "Configure" was the fallback for an unnamed action, and it told a
+      // reader nothing about what the button would do.
+      expect(names, `${action} is unnamed`).not.toContain("Configure");
+    }
+  });
+
+  // Rather than a "Configure" that opens whichever drawer the panel falls
+  // through to. That fall-through showed the "restore recording-setup.json"
+  // text for faults with nothing to do with that file.
+  it("offers nothing for an action it cannot name", () => {
+    const row = { id: "storage", state: "needs_action", code: "x", message: "", action: "invent_a_backend" } as unknown as ReadinessCheck;
+    expect(rowActions(row)).toEqual([]);
+  });
+});
+
 describe("a blocked row offers nothing", () => {
   // The operator strips the row's own action, but the panel's standing actions
   // were added regardless — so a Talk connection waiting on a missing backend
