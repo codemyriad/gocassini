@@ -126,7 +126,10 @@
     <h2 id="recording-readiness-title" class="text-lg font-semibold {report && !stale ? toneClasses[reportTone(report)] : ''}">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
     <button class="btn btn-sm" disabled={busy} on:click={() => load(true)}>{busy ? "Checking…" : "Run all checks"}</button>
   </div>
-  <p class="mt-2 text-sm text-base-content/70">Check the connection and recording storage, then verify a short recording through Talk.</p>
+  <!-- Describes what is actually here. The previous line named two of the
+       seven things this reports and ended by telling a reader to verify a short
+       recording through Talk, whose entry point no longer exists. -->
+  <p class="mt-2 text-sm text-base-content/70">What Cassini needs in order to record, and what to do about anything that is missing: the recording host, Nextcloud storage, Talk's signaling backend, and how much of the archive search can read.</p>
   {#if error}<p role="alert" class="mt-3 text-error">{error}</p>{/if}
   {#if report}
     <ul class="mt-4 divide-y divide-base-300">

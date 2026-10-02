@@ -143,7 +143,10 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // actions below are the panel's own and were added regardless, so a blocked
   // Talk connection still showed Check and Test room.
   if (check.code === "check_blocked") return [];
-  const labels: Record<string, string> = { configure_talk:"Talk authentication", test_room:"Test room", connect_talk:"Connect Talk", test_recording:"Test a recording", recheck:"Check again", setup_storage:"Set up storage" };
+  // "Talk authentication" named the row this button sits on, back when the row
+  // was called that. The row is "Signaling server credential" now, so the button
+  // said one thing and the heading above it another.
+  const labels: Record<string, string> = { configure_talk:"Set credential", test_room:"Test room", connect_talk:"Connect Talk", test_recording:"Test a recording", recheck:"Check again", setup_storage:"Set up storage" };
   const actions = check.action ? [check.action] : [];
   // talk.authentication is NOT here. The operator withholds its action when the
   // secret cannot be useful — no High Performance Backend to authenticate to —

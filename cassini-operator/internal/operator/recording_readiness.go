@@ -994,10 +994,10 @@ func (rt *Runtime) recordingConfigurationRefusal(req TriggerRequest) string {
 		return "Cassini could not read its saved recording setup. Ask an administrator to restore recording-setup.json and restart Cassini."
 	}
 	if secret == "" {
-		return "Talk recording needs its signaling internal secret. Open Cassini → Operator → Publish pipeline to configure it."
+		return "Talk recording needs its signaling internal secret. Open Cassini → Operator → Doctor to configure it."
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
-		return "Talk recording credentials are unavailable. Open Cassini → Operator → Publish pipeline."
+		return "Talk recording credentials are unavailable. Open Cassini → Operator → Doctor."
 	}
 	// Diagnostic results are advisory: the administrator may have repaired
 	// Nextcloud or HPB since the probe. The recorder validates the live path.

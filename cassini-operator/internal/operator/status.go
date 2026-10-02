@@ -43,7 +43,7 @@ const (
 	signalingInternalSecretHint = "Talk recording needs CASSINI_TALK_SIGNALING_INTERNAL_SECRET " +
 		"(the Talk signaling server's [clients] internalsecret). On Nextcloud AIO, read it with " +
 		"`docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the " +
-		"[clients] internalsecret in the signaling server config. Save it in Cassini → Operator → Doctor → Internal credential, or set it in the External Apps deploy " +
+		"[clients] internalsecret in the signaling server config. Save it in Cassini → Operator → Doctor → Signaling server credential, or set it in the External Apps deploy " +
 		"options, or with `occ app_api:app:register <app> <daemon> --env " +
 		"CASSINI_TALK_SIGNALING_INTERNAL_SECRET=<value>`. See docs/exapp-install.md."
 
