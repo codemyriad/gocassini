@@ -7,8 +7,10 @@
     plural,
     removeRequest,
     untagMeetingRequest,
+    type MeetingTag,
     type VocabularyTag,
   } from "../../viewer/annotations";
+  import { colorFor } from "../../viewer/tagPalette";
   import TagChip from "../tags/TagChip.svelte";
   import TagPicker from "../tags/TagPicker.svelte";
   import { viewMarks, type MarksSession } from "./session";
@@ -16,6 +18,7 @@
   // The meeting header's tags: on the whole meeting, and what went wrong with any.
   export let session: MarksSession;
   export let vocabulary: readonly VocabularyTag[] = [];
+  export let preview: readonly MeetingTag[] = [];
 
   let adding = false;
   let addButton: HTMLButtonElement;
@@ -24,15 +27,25 @@
   $: lost = view.lost.length;
 </script>
 
-{#if $session.status !== "off" && $session.status !== "loading"}
-  <div class="flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Tags on the whole meeting">
-    {#if $session.status === "ready"}
+{#if $session.status !== "off"}
+  <div class="flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Tags on the whole meeting" aria-busy={$session.status === "loading"}>
+    {#if $session.status === "loading"}
+      {#each preview.filter((entry) => entry.whole) as { tag } (tag.tagId)}
+        <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} removable={$session.editable} disabled />
+      {/each}
+      {#if $session.editable}
+        <button type="button" class="add-tag" disabled>
+          Add tag<Plus size={11} aria-hidden="true" />
+        </button>
+      {/if}
+    {:else if $session.status === "ready"}
       {#each view.whole as look (look.tag.id)}
         <TagChip
           label={look.tag.label}
           color={look.color}
           icon={look.icon}
-          removable={$session.editable && !$session.busy}
+          removable={$session.editable}
+          disabled={$session.busy}
           on:remove={() => session.write(untagMeetingRequest(look.tag.id))}
         />
       {/each}
@@ -46,7 +59,7 @@
           disabled={$session.busy}
           on:click={() => (adding = !adding)}
         >
-          <Plus size={11} aria-hidden="true" />Add tag
+          Add tag<Plus size={11} aria-hidden="true" />
         </button>
       {/if}
       {#if lost > 0}

@@ -227,6 +227,9 @@
     white-space: nowrap;
     color: color-mix(in oklch, var(--color-base-content) 75%, var(--color-base-200));
     cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
   }
   .mf-chip:hover,
   .mf-chip[aria-expanded="true"] {

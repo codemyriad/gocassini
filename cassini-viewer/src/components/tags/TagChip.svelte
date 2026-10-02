@@ -9,6 +9,7 @@
   export let color: TagColorId;
   export let icon: TagIconId | "" = "";
   export let removable = false;
+  export let disabled = false;
 
   const dispatch = createEventDispatcher<{ remove: void }>();
 </script>
@@ -27,6 +28,7 @@
     <button
       type="button"
       class="tag-chip-remove"
+      {disabled}
       aria-label={`Remove ${label}`}
       on:click|stopPropagation={() => dispatch("remove")}
     >
@@ -78,7 +80,11 @@
     cursor: pointer;
     opacity: 0.7;
   }
-  .tag-chip-remove:hover {
+  .tag-chip-remove:hover:not(:disabled) {
     opacity: 1;
+  }
+  .tag-chip-remove:disabled {
+    cursor: default;
+    opacity: 0.4;
   }
 </style>

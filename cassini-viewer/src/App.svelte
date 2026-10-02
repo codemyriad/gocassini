@@ -1310,6 +1310,7 @@
       initialQuery={transcriptQueryForMeeting}
       {dataProvider}
       meeting={selectedMeeting}
+      previewTags={meetingTags.get(selectedMeeting?.id ?? "") ?? []}
       bundled={true}
       {isDesktop}
       {prefersReducedMotion}
@@ -1489,6 +1490,7 @@
             initialQuery={transcriptQueryForMeeting}
             {dataProvider}
             meeting={selectedMeeting}
+            previewTags={meetingTags.get(selectedMeeting?.id ?? "") ?? []}
             bundled={false}
             inSheet={true}
             {isDesktop}

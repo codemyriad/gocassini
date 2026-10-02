@@ -17,7 +17,7 @@ describe("MeetingView header", () => {
       meetingViewSource.indexOf("</header>"),
     );
     expect(header).toContain('{meeting ? meeting.title : "Meeting transcript viewer"}');
-    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
+    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />");
     // When it happened, where, how long and who was in it sit behind one chip
     // in the header that opens them in a popover, instead of a block of facts
     // taking the top of the page.
@@ -76,7 +76,7 @@ describe("MeetingView tagging", () => {
       meetingViewSource.indexOf('<header class="mv-header'),
       meetingViewSource.indexOf("</header>"),
     );
-    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
+    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />");
     const frameAt = meetingViewSource.indexOf("<TranscriptFrame");
     expect(frameAt).toBeGreaterThan(-1);
     expect(meetingViewSource.indexOf("{#each transcriptRows as row (row.key)}")).toBeGreaterThan(frameAt);

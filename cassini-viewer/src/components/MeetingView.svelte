@@ -29,7 +29,7 @@
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
-  import type { AnnotationResult, VocabularyTag } from "../viewer/annotations";
+  import type { AnnotationResult, MeetingTag, VocabularyTag } from "../viewer/annotations";
   import { createWordHighlighter } from "../core/wordHighlight";
   import {
     keyboardEventTargetsControl,
@@ -114,6 +114,7 @@
   // Tags and marks (D-746), bound by the shell to the current meeting. Without a
   // loader, as in the standalone export, there is no tagging here at all.
   export let tagVocabulary: VocabularyTag[] = [];
+  export let previewTags: readonly MeetingTag[] = [];
   export let loadAnnotations: LoadAnnotations | null = null;
   export let applyAnnotations: ApplyAnnotations | null = null;
   export let marksSession: MarksSession | null = null;
@@ -1213,7 +1214,7 @@
             timing={timingPrecision}
           />
         </span>
-        <MeetingTags session={marks} vocabulary={tagVocabulary} />
+        <MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />
       </div>
     {/if}
   </header>
