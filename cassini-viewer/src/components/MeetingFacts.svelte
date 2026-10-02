@@ -153,9 +153,11 @@
   }
 
   .mf-panel {
+    display: flex;
+    flex-direction: column;
     width: min(300px, calc(100vw - 16px));
     max-height: min(420px, calc(100vh - 16px));
-    overflow-y: auto;
+    overflow: hidden;
     font-size: 13px;
     color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
   }
@@ -164,6 +166,7 @@
   }
 
   .mf-facts {
+    flex: none;
     display: grid;
     gap: 6px;
     margin: 0;
@@ -186,13 +189,18 @@
   }
 
   .mf-people {
-    padding: 8px 12px 10px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding-top: 8px;
   }
   .mf-facts + .mf-people {
     border-top: 1px solid var(--color-base-300);
   }
   .mf-heading {
+    flex: none;
     margin-bottom: 6px;
+    padding-inline: 12px;
     font-size: 12px;
     font-weight: 600;
     color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
@@ -200,6 +208,11 @@
   .mf-people ul {
     display: grid;
     gap: 6px;
+    min-height: 0;
+    max-height: 220px;
+    padding: 0 12px 10px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .mf-people li {
     display: flex;
