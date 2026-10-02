@@ -1291,14 +1291,14 @@
                 {#each linkedInsights as record (record.id)}
                   <button
                     type="button"
-                    class="mv-insight flex w-full items-baseline gap-2 px-3 py-2 text-left cursor-pointer"
+                    class="mv-insight flex w-full items-baseline gap-2 px-3 py-2 text-left cursor-pointer max-[720px]:flex-wrap max-[720px]:gap-y-0.5"
                     on:click={() => dispatch("openInsight", record)}
                   >
-                    <FileText size={14} class="shrink-0 self-center" aria-hidden="true" />
+                    <FileText size={14} class="shrink-0 self-center max-[720px]:self-start max-[720px]:mt-[3px]" aria-hidden="true" />
                     <span class="min-w-0 flex-1 truncate text-sm font-medium">
                       {insightHeadline(record)}
                     </span>
-                    <span class="shrink-0 text-xs tabular-nums text-base-content/60">
+                    <span class="shrink-0 text-xs tabular-nums text-base-content/60 max-[720px]:basis-full max-[720px]:pl-[22px]">
                       {formatInsightCreated(record)}
                       {#if (insightSourceCounts.get(record.id) ?? 0) > 0}
                         &middot; Context from {insightSourceCounts.get(record.id)}
