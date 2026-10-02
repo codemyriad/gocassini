@@ -235,13 +235,20 @@ func TestRowsSayWhetherAProbeCanReCheckThem(t *testing.T) {
 func TestNoHPBIsAFailureAndNamesWhereToReadAboutIt(t *testing.T) {
 	for mode, want := range map[string]string{
 		"internal": "needs_action",
-		"external": "",
+		// A declared backend is a FACT worth reporting, even though the
+		// connection probe is what verifies it. Returning nothing here meant
+		// the row vanished whenever the probe stopped earlier in the chain.
+		"external": "not_verified",
+		// Talk absent or too old to say, and a mode this build cannot
+		// interpret: nothing to conclude, and the report supplies its own
+		// unchecked row rather than this one guessing.
 		"":         "",
+		"sideways": "",
 	} {
 		check := hpbCheckForMode(mode)
 		if want == "" {
 			if check != nil {
-				t.Fatalf("signaling mode %q produced %+v; the probe owns that case", mode, check)
+				t.Fatalf("signaling mode %q produced %+v; nothing can be concluded from it", mode, check)
 			}
 			continue
 		}
@@ -249,14 +256,58 @@ func TestNoHPBIsAFailureAndNamesWhereToReadAboutIt(t *testing.T) {
 			t.Fatalf("signaling mode %q produced no finding", mode)
 		}
 		if check.State != want {
-			t.Errorf("mode %q = %q, want %q: without a backend nothing records", mode, check.State, want)
+			t.Errorf("mode %q = %q, want %q", mode, check.State, want)
 		}
-		if check.Docs == "" {
+		if check.State == "needs_action" && check.Docs == "" {
 			t.Error("a fault the operator cannot repair must say where to read about it")
 		}
 		if strings.Contains(check.Message, "checked separately") {
 			t.Error("the message points at a check that does not happen")
 		}
+	}
+}
+
+// The row that decides whether recording can work at all must be ON the
+// checklist, always. It was the only row with no way to say "nobody has
+// established this", so it was simply absent — after a restart, after a check
+// that could not reach Nextcloud, and whenever the probe stopped earlier in the
+// chain. The rows depending on it then stopped waiting for it, because there
+// was nothing there to wait for.
+func TestTheBackendRowIsAlwaysOnTheChecklist(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	// No probe has run: exactly the state a freshly booted operator is in.
+	report := rt.readiness(context.Background())
+	var row readinessCheck
+	for _, c := range report.Checks {
+		if c.ID == "talk.hpb" {
+			row = c
+		}
+	}
+	if row.ID == "" {
+		t.Fatal("no talk.hpb row at all; the most important check cannot be the one that disappears")
+	}
+	if row.State != "not_verified" || row.Code != "hpb_not_checked" {
+		t.Fatalf("talk.hpb = %+v; want an unchecked row, not a verdict", row)
+	}
+	if row.Action != "recheck" {
+		t.Errorf("an unchecked row offers no way to check it: %+v", row)
+	}
+	// And it must not be invented twice when a probe already reported one.
+	rt.recordingSetup.checks = []readinessCheck{{ID: "talk.hpb", State: "passed", Code: "hpb_authenticated"}}
+	rt.recordingSetup.checkedAt = time.Now()
+	seen := 0
+	for _, c := range rt.readiness(context.Background()).Checks {
+		if c.ID == "talk.hpb" {
+			seen++
+			if c.Code != "hpb_authenticated" {
+				t.Errorf("a real finding was replaced by the placeholder: %+v", c)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("%d talk.hpb rows; the placeholder must stand in, not pile on", seen)
 	}
 }
 

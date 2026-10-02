@@ -736,6 +736,25 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 			resp.Checks = append(resp.Checks, probe)
 		}
 	}
+	// The backend row ALWAYS appears. It is the one check that decides whether
+	// recording can work at all, and it was the only row with no way to say
+	// "nobody has established this": every other row has one — host_not_checked,
+	// storage_not_checked, connection_not_checked — while this one simply was
+	// not rendered.
+	//
+	// So it disappeared, and did so at the worst times. Probe findings live in
+	// memory only, so a restart leaves none until a check runs; each check
+	// replaces the whole set, so one run that cannot establish the backend
+	// erases what the last run knew; and the probe reports no backend row at all
+	// when it stops earlier in the chain. A reader watching the most important
+	// check come and go cannot tell which of those happened — and the rows that
+	// depend on it quietly stopped waiting for it, because there was nothing
+	// there to wait for.
+	if !hasReadinessRow(resp.Checks, "talk.hpb") {
+		add("talk.hpb", "not_verified", "hpb_not_checked",
+			"Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one. Check again to run it.",
+			"recheck")
+	}
 	if includeOptional {
 		resp.Checks = append(resp.Checks, rt.lastArchiveCoverage())
 	}
@@ -792,6 +811,15 @@ func recordingCapabilityState(checks []readinessCheck) string {
 		core = append(core, check)
 	}
 	return worstReadinessState(core)
+}
+
+func hasReadinessRow(checks []readinessCheck, id string) bool {
+	for _, check := range checks {
+		if check.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // verdictRows are the rows that may lower the instance's verdict.

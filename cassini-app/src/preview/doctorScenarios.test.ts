@@ -55,6 +55,16 @@ it("renders every scenario in the order the operator sends rows", () => {
   }
 });
 
+// The row that decides whether recording can work at all is on every report the
+// operator sends, including ones where nothing has been established. Two
+// fixtures used to delete it, which is the bug it was deleted around.
+it("shows the backend row in every scenario", () => {
+  for (const scenario of doctorScenarios) {
+    const rows = scenarioReport(scenario.id).checks.filter(check => check.id === "talk.hpb");
+    expect(rows.length, `${scenario.id} has ${rows.length} backend rows`).toBe(1);
+  }
+});
+
 it("simulates a repair without network calls, duplicate actions or shared state", async () => {
   vi.useFakeTimers();
   const fetch = vi.fn(() => { throw new Error("A preview must never access the network"); });

@@ -67,6 +67,14 @@ function sortRows(checks: ReadinessCheck[]): ReadinessCheck[] {
     .map(item => item.check);
 }
 
+// The backend row the operator supplies when no probe has established one. It
+// is on EVERY report — it decides whether recording can work at all — so a
+// fixture that drops it shows a checklist the product never sends.
+function uncheckedBackend(): ReadinessCheck {
+  return { id: "talk.hpb", state: "not_verified", code: "hpb_not_checked", action: "recheck",
+    message: "Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one. Check again to run it." };
+}
+
 // A row waiting on another check, exactly as the operator rewrites one: no
 // action, no steps, and a sentence naming what it waits for. Written as data
 // because these fixtures do not run the operator's suppression — they show its
@@ -116,6 +124,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
         { id: "host.workdir", state: "not_verified", code: "host_not_checked", message: "Not checked yet.", action: "recheck" },
         { id: "host.tmpdir.writable", state: "not_verified", code: "host_not_checked", message: "Not checked yet.", action: "recheck" },
         { id: "storage", state: "not_verified", code: "storage_not_checked", message: "Nextcloud storage has not been checked yet. Check again to run it.", action: "recheck" },
+        uncheckedBackend(),
         { id: "talk.discovery", state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet. Check again to run it.", action: "recheck" },
         { id: "archive.search", state: "not_verified", code: "search_coverage_not_checked", message: "Archive search coverage has not been checked yet.", action: "recheck" },
       ];
@@ -151,12 +160,18 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     case "missing-hpb":
       set({ id: "talk.hpb", state: "needs_action", code: "hpb_missing", message: "Talk has no standalone signaling server configured. Enable its high-performance backend.", action: "setup_hpb", checked_at }); break;
     case "connection-unreachable":
-      set({ id: "talk.discovery", state: "not_verified", code: "nextcloud_unreachable", message: "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.", action: "recheck", checked_at });
-      report.checks = report.checks.filter(check => check.id !== "talk.hpb"); break;
+      set({ id: "talk.discovery", state: "warn", code: "nextcloud_unreachable", message: "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.", action: "recheck", checked_at });
+      // The probe stopped before it could report a backend, which is exactly
+      // when this row used to vanish. It stands in rather than disappearing.
+      set({ id: "talk.hpb", state: "warn", code: "signaling_mode_unknown", message: "Cassini could not read Talk's signaling configuration, so it cannot tell whether a High Performance Backend is available.", action: "recheck", checked_at });
+      break;
     case "recording-handoff":
       set({ id: "talk.handoff", state: "needs_action", code: "recording_secret_missing", message: "Cassini could not provision its recording credential. Check its persistent storage.", action: "connect_talk" });
       set({ id: "talk.discovery", state: "needs_action", code: "recording_secret_missing", message: "Configure Cassini's recording credential and connect Talk first.", action: "connect_talk", checked_at });
-      report.checks = report.checks.filter(check => check.id !== "talk.hpb"); break;
+      // A backend IS declared; with no recording credential the probe never
+      // gets far enough to verify it. Reported, rather than left out.
+      set({ id: "talk.hpb", state: "not_verified", code: "hpb_declared_unverified", message: "Talk names a High Performance Backend. Whether Cassini can authenticate to it is what the Talk connection check below establishes.", action: "recheck", checked_at });
+      break;
     case "storage-blocked":
       set({ id: "storage", state: "needs_action", code: "storage_admission_blocked", message: "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", action: "setup_storage", checked_at }); break;
     case "setup-unreadable":

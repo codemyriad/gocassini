@@ -92,9 +92,23 @@ func hpbCheckForMode(mode string) *readinessCheck {
 	case "":
 		// Talk absent, or too old to say. Not this check's business.
 		return nil
+	case "external":
+		// A backend IS declared. This used to return nothing, on the grounds
+		// that the connection probe owns the case — true when the probe gets
+		// that far, and the probe routinely does not: it stops at
+		// talk.discovery for a missing credential, a rejected one, or an
+		// unreachable Nextcloud, and reports no talk.hpb row at all. The single
+		// most important row then vanished from the checklist precisely when
+		// something else was wrong. Saying what IS known beats saying nothing.
+		return &readinessCheck{
+			ID: "talk.hpb", State: "not_verified", Code: "hpb_declared_unverified",
+			Message: "Talk names a High Performance Backend. Whether Cassini can authenticate to it is what the Talk connection check below establishes.",
+			Action:  "recheck",
+		}
 	default:
-		// external, or a mode this build does not know. A backend exists; the
-		// connection probe verifies Cassini can authenticate to it.
+		// A mode this build does not know. Nothing can be concluded from a word
+		// we cannot interpret, and guessing either way would be worse than the
+		// unchecked row the report falls back to.
 		return nil
 	}
 }
