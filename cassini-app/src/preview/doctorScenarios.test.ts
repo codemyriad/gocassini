@@ -12,12 +12,30 @@ it("keeps optional search problems separate from recording failures", () => {
 
 // The gallery must not model rows the panel does not show, or a reviewer signs
 // off on a checklist that does not exist. ffmpeg, ffprobe, free space and
-// optional transcription were removed in the 2026-09-25 review.
+// optional transcription were removed in the 2026-09-25 review. `test` is NOT
+// among them: the row is back, now that the tool behind it can be reached
+// without configuring a room.
 it("models no row the checklist no longer has", () => {
-  const removed = ["processing", "test", "host.ffmpeg", "host.ffprobe", "host.workdir.space", "host.tmpdir.space"];
+  const removed = ["processing", "host.ffmpeg", "host.ffprobe", "host.workdir.space", "host.tmpdir.space"];
   for (const scenario of doctorScenarios) {
     for (const check of scenarioReport(scenario.id).checks) {
       expect(removed).not.toContain(check.id);
+    }
+  }
+});
+
+// Every preview must offer the test where a test could work, and nowhere else:
+// the gallery is where the gating is reviewed without a Talk install.
+it("offers the test recording only where its prerequisites hold", () => {
+  for (const scenario of doctorScenarios) {
+    const report = scenarioReport(scenario.id);
+    const row = report.checks.find(check => check.id === "test");
+    if (!row) continue;
+    const blockers = report.checks.filter(check =>
+      ["storage", "talk.hpb", "talk.authentication", "talk.discovery", "talk.handoff"].includes(check.id) &&
+      check.state === "needs_action");
+    if (blockers.length > 0 && row.action) {
+      throw new Error(`${scenario.id} invites a test recording while ${blockers[0].id} needs attention`);
     }
   }
 });

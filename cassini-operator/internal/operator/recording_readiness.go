@@ -476,8 +476,8 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 	}
 
 	if scope.host && s.beginProbe("host", started) {
-		// The panel polls GET every five seconds. Probe the media host once per
-		// explicit check and retain its verdict with the time it was checked.
+		// Probe the media host once per explicit check and retain its verdict
+		// with the time it was checked.
 		hostCtx, hostCancel := context.WithTimeout(ctx, 3*time.Second)
 		host, hostErr := rt.runDoctorProbe(hostCtx)
 		hostCancel()
@@ -500,7 +500,33 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 
 	if scope.talk && s.beginProbe("talk", started) {
 		var checks []readinessCheck
-		if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) && rt.talkBackendMisconfigured() == "" {
+		var roomErr error
+		if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.talkBackendMisconfigured() == "" && !rt.validTestRoom(room) {
+			// The connection check needs a room token. It used to refuse until
+			// somebody pasted a room URL into a form, which is the one piece of
+			// configuration Cassini can do for itself. Created once and kept,
+			// so the test recording below reuses the same conversation.
+			if created, err := rt.ensureTestRoom(ctx, room); err == nil {
+				s.mu.Lock()
+				next := s.state
+				next.TestRoomURL = created
+				if err := rt.saveRecordingSetupLocked(next); err != nil {
+					rt.logger.Printf("ERROR: could not persist the created test room: %v", err)
+				}
+				s.mu.Unlock()
+				room = created
+			} else {
+				roomErr = err
+				rt.logger.Printf("ERROR: could not create a test room for the connection check: %v", err)
+			}
+		}
+		if roomErr != nil {
+			checks = append(checks, readinessCheck{
+				ID: "talk.discovery", State: "needs_action", Code: "test_room_unavailable",
+				Message: "Cassini could not create the conversation it checks the connection with. Check that Talk is installed and that Cassini's account may create conversations.",
+				Steps:   []readinessStep{{Label: "Confirm the Talk app is enabled, then run this check again"}},
+			})
+		} else if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) && rt.talkBackendMisconfigured() == "" {
 			var err error
 			checks, err = probe(ctx, room)
 			if err != nil {
@@ -524,12 +550,30 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 				checks = append(checks, *hpb)
 			}
 		}
+		// A room Cassini made can be deleted — by an administrator tidying up,
+		// or with the whole Talk database. Nothing about the stored URL changes
+		// when that happens: it still parses, so validTestRoom still accepts
+		// it, and every future check fails against a conversation that is gone
+		// with no way back. Forgetting it is what lets the next check make a
+		// new one.
+		if roomIsGone(checks) {
+			s.mu.Lock()
+			next := s.state
+			next.TestRoomURL = ""
+			if err := rt.saveRecordingSetupLocked(next); err != nil {
+				rt.logger.Printf("ERROR: could not forget the missing test room: %v", err)
+			}
+			s.mu.Unlock()
+			room = ""
+		}
 		now := time.Now().UTC()
 		for i := range checks {
 			checks[i].CheckedAt = now.Format(time.RFC3339)
 		}
 		s.mu.Lock()
-		// A configuration edit while the probe was running invalidates its answer.
+		// A configuration edit while the probe was running invalidates its
+		// answer. `room` is re-read above when this probe created one, so a
+		// self-created room does not look like somebody else's edit.
 		if s.state.TestRoomURL == room {
 			s.checks = checks
 			s.checkedAt = now
@@ -539,8 +583,8 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 
 	if scope.archive && s.beginProbe("archive", started) {
 		// Listing the archive is a PROPFIND and reading the index is
-		// O(archive + index), so it belongs behind an explicit check rather than
-		// on a route the panel polls every five seconds.
+		// O(archive + index), so it belongs behind an explicit check rather
+		// than on the route the panel loads to render.
 		rt.recordArchiveCoverage(ctx)
 	}
 }
@@ -663,8 +707,6 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// Ahead of the room check: no room can make this work, and "choose a
 		// test room" would send a reader to fix the one thing that is fine.
 		add("talk.discovery", "needs_action", "talk_backend_url_invalid", refusal, "")
-	} else if !rt.validTestRoom(state.TestRoomURL) {
-		add("talk.discovery", "not_verified", "test_room_required", "Choose a dedicated Talk room to verify the connection without recording it.", "test_room")
 	} else if len(probes) == 0 {
 		// The message this replaces named both cases — "Previous results have
 		// expired OR this process restarted" — while treating them as one. They
@@ -703,9 +745,11 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		}
 	}
 	resp.Checks = append(host, resp.Checks...)
+	resp.Test = rt.readinessTest(ctx, state)
+	// Before suppression, so the test row waits on its chain like any other.
+	resp.Checks = append(resp.Checks, rt.testRecordingRow(resp.Test))
 	sortReadinessRows(resp.Checks)
 	suppressBlockedRows(resp.Checks)
-	resp.Test = rt.readinessTest(ctx, state)
 	for i := range resp.Checks {
 		// A blocked row is not checkable. A probe behind it exists, but running
 		// it cannot succeed while its prerequisite is unmet, so offering a
@@ -713,7 +757,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		resp.Checks[i].Checkable = resp.Checks[i].Code != "check_blocked" &&
 			!readinessScopeFor([]string{resp.Checks[i].ID}).empty()
 	}
-	resp.State = worstReadinessState(resp.Checks)
+	resp.State = worstReadinessState(verdictRows(resp.Checks))
 	resp.RecordingState = recordingCapabilityState(resp.Checks)
 	return resp
 }
@@ -726,9 +770,33 @@ func recordingCapabilityState(checks []readinessCheck) string {
 		if check.ID == "processing" || strings.HasPrefix(check.ID, "archive.") {
 			continue
 		}
+		// The test is evidence, not a dependency. An install whose every check
+		// passes can record; that nobody has yet chosen to prove it by hand
+		// must not report the instance as unverified.
+		if check.ID == "test" {
+			continue
+		}
 		core = append(core, check)
 	}
 	return worstReadinessState(core)
+}
+
+// verdictRows are the rows that may lower the instance's verdict.
+//
+// The test recording is evidence somebody chose to gather, so its ABSENCE says
+// nothing about the instance: counting it would leave a fully passing install
+// permanently reading "needs verification", with nothing an administrator could
+// do about it short of recording something by hand. A test that actually FAILED
+// is different — that is a finding, and it counts.
+func verdictRows(checks []readinessCheck) []readinessCheck {
+	rows := make([]readinessCheck, 0, len(checks))
+	for _, check := range checks {
+		if check.ID == "test" && check.State != "needs_action" {
+			continue
+		}
+		rows = append(rows, check)
+	}
+	return rows
 }
 
 // worstReadinessState is the instance's worst news, ordered by how much it
@@ -754,6 +822,7 @@ var readinessRowOrder = []string{
 	"talk.authentication",
 	"talk.discovery",
 	"talk.handoff",
+	"test",
 	"archive.search",
 }
 
@@ -940,9 +1009,16 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 	}
 	if body.Action == "arm_test" {
 		if !rt.validTestRoom(next.TestRoomURL) {
-			s.mu.Unlock()
-			writeJSONError(w, 400, "Choose a test room first.")
-			return
+			// Make one rather than demanding one. The room is the only thing
+			// this test ever needed configured, and Cassini can create it.
+			created, err := rt.ensureTestRoom(r.Context(), next.TestRoomURL)
+			if err != nil {
+				s.mu.Unlock()
+				rt.logger.Printf("ERROR: could not prepare a test room: %v", err)
+				writeJSONError(w, 502, "Cassini could not create a test room in Talk. Check that Talk is installed and reachable, then try again.")
+				return
+			}
+			next.TestRoomURL = created
 		}
 		next.TestStartedAt = nowUTCString()
 		next.PlaybackJobID = ""

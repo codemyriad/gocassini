@@ -3,7 +3,7 @@ import type { CheckState, ReadinessCheck, RecordingReadiness } from "../operator
 
 export const doctorScenarios = [
   { id: "healthy", title: "Healthy recording setup", description: "Passing checks, configured credentials and previously confirmed playback." },
-  { id: "first-run", title: "Checks have not run yet", description: "Unknown findings and an unset test room, without claiming a failure." },
+  { id: "first-run", title: "Checks have not run yet", description: "Unknown findings, without claiming a failure." },
   { id: "missing-secret", title: "Missing Talk internal secret", description: "Open Talk authentication to review the form and installation-specific guidance." },
   { id: "rejected-secret", title: "HPB rejects a saved secret", description: "A saved credential is configured, but authentication still fails." },
   { id: "missing-hpb", title: "No high-performance backend", description: "Review backend requirements and guidance for an administrator or provider." },
@@ -25,7 +25,9 @@ function verdict(checks: ReadinessCheck[]): CheckState {
   return checks.reduce<CheckState>((state, check) => rank[check.state] > rank[state] ? check.state : state, "passed");
 }
 function updateVerdict(report: RecordingReadiness): void {
-  report.state = verdict(report.checks);
+  // Mirrors the operator: the test row is evidence offered on request, so its
+  // absence must not leave a passing preview reading as unverified.
+  report.state = verdict(report.checks.filter(check => check.id !== "test" || check.state === "needs_action"));
   report.recording_state = verdict(report.checks.filter(check => check.id !== "processing" && !check.id.startsWith("archive.")));
 }
 
@@ -41,7 +43,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       { id: "host.tmpdir.writable", state: "passed", code: "tmpdir.writable", message: "temporary directory is writable", checked_at },
       { id: "storage", state: "passed", code: "storage_ready", message: "The Nextcloud storage preflight passed. A test recording verifies publication and playback.", checked_at },
       { id: "talk.discovery", state: "passed", code: "recording_auth_verified", message: "Talk accepted Cassini's recording credential.", checked_at },
-      { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "HPB authenticated Cassini using the test-room URL's backend identity and advertised media support. A Talk recording verifies the actual call path.", checked_at },
+      { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", checked_at },
       { id: "archive.search", state: "passed", code: "search_archive_files_accounted_for", message: "The search index records 12 indexed meeting(s). Every Opus file in the checked archive listing has an index outcome.", checked_at },
     ],
   };
@@ -53,16 +55,24 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       report.checks.splice(firstOther < 0 ? report.checks.length : firstOther, 0, check);
     } else report.checks.push(check);
   };
+  // Only where the chain it exercises is intact. The operator suppresses this
+  // row behind an unmet prerequisite, and these fixtures do not model
+  // suppression — so a row left in the shared base would preview as a green
+  // "test passed" beside a backend that needs attention.
+  if (id === "healthy" || id === "old-findings") {
+    report.checks.push({ id: "test", state: "passed", code: "test_playback", message: "A recording started in Talk was published, and its audio was confirmed by playing it.", checked_at });
+  }
   switch (id) {
     case "first-run":
       report.checks = [
         { id: "host", state: "not_verified", code: "host_not_checked", message: "The recording host has not been checked yet.", action: "recheck" },
         { id: "storage", state: "not_verified", code: "storage_not_checked", message: "Nextcloud storage has not been checked yet. Check again to run it.", action: "recheck" },
-        { id: "talk.discovery", state: "not_verified", code: "test_room_required", message: "Choose a dedicated Talk room to verify the connection without recording it.", action: "test_room" },
+        { id: "talk.discovery", state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet. Check again to run it.", action: "recheck" },
         { id: "archive.search", state: "not_verified", code: "search_coverage_not_checked", message: "Archive search coverage has not been checked yet.", action: "recheck" },
       ];
       report.test_room_url = "";
       report.test = { state: "idle", published: false };
+      report.checks.push({ id: "test", state: "not_verified", code: "test_not_run", message: "Nothing has been recorded through Talk yet. A short test recording is what proves the whole path, from a call to audio you can play.", action: "test_recording" });
       break;
     case "missing-secret":
       report.secret_configured = false; report.secret_source = "unset";

@@ -84,6 +84,9 @@ export const checkLabels: Record<string, string> = {
   // double as "has Talk called us lately", which was inherently historical and
   // could never legitimately read green, so that half is gone.
   "talk.handoff": "Recording credential",
+  // Evidence rather than a check: it reports what a person confirmed by
+  // playing a recording back, which is the one thing no probe can establish.
+  test: "Test recording",
   host: "Recording host",
   "host.workdir": "Recording volume",
   "host.tmpdir.writable": "Temporary space",
@@ -146,14 +149,16 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // "Talk authentication" named the row this button sits on, back when the row
   // was called that. The row is "Signaling server credential" now, so the button
   // said one thing and the heading above it another.
-  const labels: Record<string, string> = { configure_talk:"Set credential", test_room:"Test room", connect_talk:"Connect Talk", test_recording:"Test a recording", recheck:"Check again", setup_storage:"Set up storage" };
+  const labels: Record<string, string> = { configure_talk:"Set credential", connect_talk:"Connect Talk", test_recording:"Record a test", recheck:"Check again", setup_storage:"Set up storage" };
   const actions = check.action ? [check.action] : [];
   // talk.authentication is NOT here. The operator withholds its action when the
   // secret cannot be useful — no High Performance Backend to authenticate to —
   // and a panel that adds the form back offers a reader a way to configure
   // something that will change nothing. Where the secret IS useful, the row
   // carries the action itself.
-  const persistent: Record<string,string> = { "talk.discovery":"test_room", "talk.handoff":"connect_talk" };
+  // talk.discovery no longer keeps a "Test room" button: the room is Cassini's
+  // to create, so there is no longer anything for a reader to choose.
+  const persistent: Record<string,string> = { "talk.handoff":"connect_talk" };
   if (persistent[check.id] && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
   return actions.map(action => ({ action, label:labels[action] ?? "Configure" }));
 }
@@ -194,17 +199,16 @@ export const toneClasses: Record<CheckTone, string> = {
   neutral: "text-base-content/60",
 };
 
-// The instance's worst news, for the header. Ordered by how much it costs to
-// ignore: something broken outranks something nobody has checked. Read from the
-// SAME rows the list renders, so a synthesised row cannot make the header
-// disagree with what is under it.
+// The instance's worst news, for the header.
+//
+// The operator's own verdict, coloured — not a second aggregation. This used to
+// re-derive the worst state from the rendered rows, which was defensible while
+// the panel synthesised rows the operator had not sent. It no longer does, and
+// re-deriving had become a way for the heading to disagree with the verdict
+// beside it: the operator excludes a test nobody ran from its verdict, and a
+// panel counting that row would paint a fully passing install grey.
 export function reportTone(report: RecordingReadiness): CheckTone {
-  const tones = readinessRows(report).map(checkTone);
-  // Ordered by how much it costs to ignore.
-  if (tones.includes("error")) return "error";
-  if (tones.includes("warning")) return "warning";
-  if (tones.includes("neutral")) return "neutral";
-  return "success";
+  return checkTone({ id: "", state: report.state, code: "", message: "" });
 }
 
 // How long ago a check established what it established.
@@ -257,4 +261,19 @@ export function talkSettingsURL(operatorBaseHref: string): string {
   const cut = operatorBaseHref.search(/\/(index\.php\/)?apps\//);
   if (cut <= 0) return "";
   return operatorBaseHref.slice(0, cut) + "/settings/admin/talk";
+}
+
+// talkRoomURL is the test conversation, as a link this browser can follow.
+//
+// The operator's test_room_url is built from the base URL the operator itself
+// reaches Nextcloud on, which behind AppAPI is routinely an internal host like
+// http://reverse-proxy — correct for the connection probe, useless as a link.
+// The origin a reader can actually open is the one serving this page, and only
+// the browser knows it. The token is the operator's; the origin is ours.
+export function talkRoomURL(operatorBaseHref: string, roomURL: string): string {
+  const token = roomURL.split("/").pop()?.trim() ?? "";
+  if (!token) return "";
+  const cut = operatorBaseHref.search(/\/(index\.php\/)?apps\//);
+  if (cut <= 0) return "";
+  return operatorBaseHref.slice(0, cut) + "/call/" + encodeURIComponent(token);
 }

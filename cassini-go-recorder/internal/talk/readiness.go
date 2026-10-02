@@ -30,7 +30,10 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 		checks = append(checks, ConnectionCheck{id, state, code, message, action})
 	}
 	if err := r.resolveTalkTarget(); err != nil {
-		add("talk.discovery", "needs_action", "test_room_invalid", "Enter a valid Talk test-room URL.", "test_room")
+		// The room is Cassini's own, created by the operator, so a reader is
+		// not the one who got it wrong — and "enter a valid URL" named a form
+		// that no longer exists. Re-checking recreates the room.
+		add("talk.discovery", "needs_action", "test_room_invalid", "Cassini's check conversation could not be resolved. Run this check again and Cassini will make a new one.", "recheck")
 		return checks
 	}
 	if strings.TrimSpace(r.cfg.TalkRecordingSecret) == "" {
@@ -48,7 +51,7 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 		if errors.As(err, &ocsErr) && (ocsErr.HTTPStatus == 401 || ocsErr.HTTPStatus == 403) {
 			add("talk.discovery", "needs_action", "recording_auth_rejected", "The Talk settings request was denied. Check the recording credential, access rules and recording-backend configuration.", "connect_talk")
 		} else if errors.As(err, &ocsErr) && ocsErr.HTTPStatus == 404 {
-			add("talk.discovery", "needs_action", "talk_or_room_unavailable", "Talk's recording settings are unavailable. Check that Talk is enabled and the test room exists.", "test_room")
+			add("talk.discovery", "needs_action", "talk_or_room_unavailable", "Talk's recording settings are unavailable: either the Talk app is not enabled, or the conversation Cassini checks with is gone. Check the Talk app, then run this check again — Cassini will make a new conversation if it needs one.", "recheck")
 		} else {
 			// warn, not not_verified: the probe ran and could not reach
 			// Nextcloud. That is a finding about the deployment, and reporting
@@ -79,7 +82,10 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 		state, code, message, action := "not_verified", "signaling_handshake_failed", "The signaling handshake did not finish. Check the server connection and try again.", "recheck"
 		switch {
 		case errors.Is(err, errInternalBackendRejected):
-			state, code, message, action = "needs_action", "signaling_backend_rejected", "HPB did not recognize the Nextcloud backend identity supplied by the test-room URL. Check the public room URL and HPB backend configuration.", "test_room"
+			// Nothing here is the reader's room to fix: the identity comes from
+			// the Nextcloud URL Cassini was deployed with, so this is the
+			// signaling server's backend list that has to allow it.
+			state, code, message, action = "needs_action", "signaling_backend_rejected", "The signaling server does not recognise this Nextcloud as one of its backends. Check its backend configuration and the URL Cassini reaches Nextcloud on.", "setup_hpb"
 		case errors.Is(err, errHPBUnsupported):
 			state, code, message, action = "needs_action", "hpb_unsupported", "The signaling server does not advertise HPB media support.", "setup_hpb"
 		case errors.Is(err, errInternalAuthFailed):
@@ -91,7 +97,7 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 		return checks
 	}
 
-	add("talk.hpb", "passed", "hpb_authenticated", "HPB authenticated Cassini using the test-room URL's backend identity and advertised media support. A Talk recording verifies the actual call path.", "")
+	add("talk.hpb", "passed", "hpb_authenticated", "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", "")
 	return checks
 }
 

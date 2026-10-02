@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, rowActions, talkSettingsURL, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, rowActions, talkRoomURL, talkSettingsURL, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -96,28 +96,32 @@ describe("check severity", () => {
 });
 
 describe("the instance's worst news", () => {
-  const report = (checks: ReadinessCheck[]): RecordingReadiness => ({
-    state: "passed", checks, secret_configured: true, secret_source: "env",
+  const report = (state: ReadinessCheck["state"], checks: ReadinessCheck[] = []): RecordingReadiness => ({
+    state, checks, secret_configured: true, secret_source: "env",
     test_room_url: "", test: { state: "idle", published: false, playback_verified_at: "2026-09-01T00:00:00Z" },
   });
-  const broken = { id: "storage", state: "needs_action", code: "storage_incomplete", message: "" } as ReadinessCheck;
-  const unchecked = { id: "talk.discovery", state: "not_verified", code: "connection_not_verified", message: "" } as ReadinessCheck;
 
-  it("reports broken over unchecked", () => {
-    expect(reportTone(report([broken, unchecked]))).toBe("error");
-    expect(reportTone(report([unchecked]))).toBe("neutral");
+  // The operator's verdict, coloured. It used to be a SECOND aggregation over
+  // the rendered rows, which was defensible while the panel synthesised rows
+  // the operator had not sent; it no longer does.
+  it("colours the verdict the operator reached", () => {
+    expect(reportTone(report("needs_action"))).toBe("error");
+    expect(reportTone(report("warn"))).toBe("warning");
+    expect(reportTone(report("not_verified"))).toBe("neutral");
   });
 
   // A healthy install MUST be able to reach green, or the colour says nothing.
   it("reaches green when everything the list shows has passed", () => {
-    expect(reportTone(report([]))).toBe("success");
+    expect(reportTone(report("passed"))).toBe("success");
   });
 
-  // The header reads the rows the list renders, including the one readinessRows
-  // still synthesises — otherwise it can disagree with what is under it.
-  it("reads the rows it is given, including ones the operator added", () => {
-    const credential = { id: "talk.authentication", state: "needs_action", code: "internal_secret_missing", message: "" } as ReadinessCheck;
-    expect(reportTone(report([credential]))).toBe("error");
+  // The case that forced this: the operator leaves a test nobody ran out of its
+  // verdict, because a tool offering evidence on request is not a fault. A panel
+  // re-counting the rows painted that same install grey, so the heading
+  // contradicted the verdict beside it.
+  it("does not re-count a row the operator excluded from its verdict", () => {
+    const untested = { id: "test", state: "not_verified", code: "test_not_run", message: "" } as ReadinessCheck;
+    expect(reportTone(report("passed", [untested]))).toBe("success");
   });
 });
 
@@ -170,17 +174,8 @@ describe("the warning tone, now that something can produce it", () => {
     expect(checkTone(check({ state: "not_verified" }))).toBe("neutral");
   });
 
-  it("orders the heading by what it costs to ignore", () => {
-    const report = (states: ReadinessCheck["state"][]): RecordingReadiness => ({
-      state: "passed",
-      checks: states.map((s, i) => ({ id: `c${i}`, state: s, code: "x", message: "" })),
-      secret_configured: true, secret_source: "env", test_room_url: "",
-      test: { state: "idle", published: false, playback_verified_at: "2026-09-01T00:00:00Z" },
-    });
-    expect(reportTone(report(["passed", "warn"]))).toBe("warning");
-    expect(reportTone(report(["warn", "needs_action"]))).toBe("error");
-    // A warning is louder than something nobody has run.
-    expect(reportTone(report(["not_verified", "warn"]))).toBe("warning");
+  it("renders amber for a row that is impaired but working", () => {
+    expect(toneClasses[checkTone(check())]).toBe("text-warning");
   });
 });
 
@@ -221,6 +216,22 @@ describe("where to send an administrator", () => {
     expect(talkSettingsURL("https://host/operator/")).toBe("");
     expect(talkSettingsURL("")).toBe("");
   });
+
+  // The operator builds test_room_url from the base IT reaches Nextcloud on,
+  // which behind AppAPI is routinely an internal hostname. Correct for the
+  // connection probe; unopenable as a link. The token is the operator's, the
+  // origin is this page's.
+  it("rebuilds the test room link against the origin serving the page", () => {
+    expect(talkRoomURL("https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/", "http://reverse-proxy/call/gc6ehz8e"))
+      .toBe("https://cloud.example.com/call/gc6ehz8e");
+    expect(talkRoomURL("https://host/nextcloud/apps/app_api/proxy/gocassini/operator/", "http://nextcloud/call/abc123"))
+      .toBe("https://host/nextcloud/call/abc123");
+  });
+
+  it("offers no room link without a token or a base", () => {
+    expect(talkRoomURL("https://host/apps/app_api/proxy/gocassini/operator/", "")).toBe("");
+    expect(talkRoomURL("https://host/operator/", "http://nextcloud/call/abc123")).toBe("");
+  });
 });
 
 
@@ -237,7 +248,15 @@ describe("a blocked row offers nothing", () => {
   });
 
   it("still offers them on a row that is not blocked", () => {
+    const live = { id: "talk.handoff", state: "passed", code: "talk_reachable", message: "" } as ReadinessCheck;
+    expect(rowActions(live).map(a => a.action)).toContain("connect_talk");
+  });
+
+  // The test room is Cassini's to create. This button asked a reader to paste a
+  // room URL, and the tool behind it refused to run until they did — which is
+  // why nobody could ever run it.
+  it("no longer asks for a test room to be chosen", () => {
     const live = { id: "talk.discovery", state: "passed", code: "talk_reachable", message: "" } as ReadinessCheck;
-    expect(rowActions(live).map(a => a.action)).toContain("test_room");
+    expect(rowActions(live).map(a => a.action)).not.toContain("test_room");
   });
 });

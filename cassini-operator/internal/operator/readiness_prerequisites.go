@@ -18,6 +18,13 @@ import "fmt"
 var readinessPrerequisites = map[string][]string{
 	"talk.authentication": {"talk.hpb"},
 	"talk.discovery":      {"talk.hpb", "talk.authentication"},
+	// A test recording exercises every link at once: Talk hands the call over
+	// (handoff), the recorder joins through the backend (hpb, authentication,
+	// discovery), and the result is published to Nextcloud (storage). Listing
+	// them all is what keeps the tool from appearing while it cannot succeed —
+	// the old version offered itself regardless and failed for a reason that
+	// was always already on screen, one row up.
+	"test": {"storage", "talk.hpb", "talk.authentication", "talk.discovery", "talk.handoff"},
 }
 
 // readinessRowNames are the labels used when naming a blocker in a message.
@@ -27,6 +34,9 @@ var readinessRowNames = map[string]string{
 	"talk.hpb":            "High Performance Backend",
 	"talk.authentication": "Signaling server credential",
 	"talk.discovery":      "Talk connection",
+	"talk.handoff":        "Recording credential",
+	"storage":             "Recording storage",
+	"test":                "Test recording",
 }
 
 // blockedReadinessCodes are the codes that already mean "waiting on something

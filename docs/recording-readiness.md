@@ -99,9 +99,24 @@ replaced. Include this file in your normal volume backup.
 
 ## Test the full path
 
-Press **Prepare test**, open the test room, start a call and use **Talk's**
-Start recording action. Speak for about 20 seconds and stop recording. The recording checks follow the first matching recording started through Talk after the test was
-prepared. A job started directly through the operator does not count.
+Press **Prepare test**. Cassini creates a public conversation named
+"Cassini recording test" as its own provisioning user, or reuses the one it made
+before; there is nothing to configure and no room URL to supply. Open that room,
+join the call and use **Talk's** Start recording action. Speak for about 20
+seconds and stop recording. The recording checks follow the first matching
+recording started through Talk after the test was prepared. A job started
+directly through the operator does not count.
+
+The **Test recording** row appears only once everything it depends on is in
+order — storage, the High Performance Backend, the signaling credential, the
+Talk connection and the recording handoff. Where one of those needs attention
+the row says what it is waiting for and offers no buttons, because a test run
+then can only fail for a reason already on screen.
+
+The same conversation is what the Talk connection check reads recording settings
+with, so it is created by the first check that needs it rather than by this
+button alone. If it is deleted, the next check notices the room is gone, forgets
+it, and makes a new one.
 
 After publishing finishes, open the recording, play its audio, and confirm
 that you can hear it. Then confirm playback in the recording checks. This is a
@@ -112,7 +127,7 @@ delayed transcript does not prevent audio playback confirmation.
 A failed/blocked job is shown with its stage. Inspect it in Operator and repair
 that stage, then rerun it or prepare a new test. If the checks keep waiting for
 Talk,
-check the selected room, moderator permission, and recording-backend handoff.
+check moderator permission in the test room and the recording-backend handoff.
 Do not prepare another test while your intended test is already recording.
 
 Outbound Talk and nonblocking storage preflight results retain their last
@@ -207,8 +222,9 @@ disabled, restore that choice through Talk's administration settings.
   `cassini talk-check` and `cassini doctor --target media --json` commands.
   The former shares discovery and hello/auth protocol implementations with
   live recording and produces redacted JSON.
-- `PUT /operator/talk/setup`: save an internal secret or test room, prepare a
-  test, or confirm playback of the matching published job. ADMIN only.
+- `PUT /operator/talk/setup`: save an internal secret, prepare a test — creating
+  the test conversation if there is not one already — or confirm playback of the
+  matching published job. ADMIN only.
 - `GET /operator/setup`: adds only a coarse `recording_state` for ordinary
   users. No private room URL, secret source, configuration detail or job ID.
 

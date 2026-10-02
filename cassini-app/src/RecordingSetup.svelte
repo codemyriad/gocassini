@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkSettingsURL as buildTalkSettingsURL, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -13,7 +13,6 @@
   const dispatch = createEventDispatcher<{ openStorage: void }>();
   let report: RecordingReadiness | null = null;
   let secret = "";
-  let room = "";
   let busy = false;
   let error = "";
   let stale = false;
@@ -31,6 +30,11 @@
   $: rows = report ? readinessRows(report) : [];
   let provisioningURL = "";
   let talkSettingsURL = "";
+  // The href for the test conversation. The operator's test_room_url carries
+  // the token; behind AppAPI its origin is an internal hostname, so the link a
+  // reader clicks has to be rebuilt against this page's own base.
+  $: testRoomHref = nextcloudBase && report?.test_room_url ? talkRoomURL(nextcloudBase, report.test_room_url) : "";
+  let nextcloudBase = "";
   let alive = true;
   // True only while a re-probe is in flight, so a row can say it is being
   // checked. Distinct from `busy`, which is also set by a plain read and by
@@ -55,7 +59,6 @@
       const changed = readinessHealthKey(report) !== readinessHealthKey(next);
       report = next; stale = false; error = "";
       if (changed) notifySetupChanged();
-      if (!room) room = next.test_room_url;
     } catch (e) { if (alive) { stale = true; error = e instanceof Error ? e.message : String(e); } }
     finally { busy = false; checking = false; checkingOnly = ""; }
   }
@@ -86,12 +89,20 @@
     const closing = panel === name && panelOwner === owner;
     panelOwner = owner;
     panel = closing ? "" : name;
-    if (name === "connect_talk") {
-      // Derive from the current operator URL, preserving installations under a subdirectory.
-      const base = new URL(provisioningBase ?? (await import("./operator/config")).loadConfig().operatorBasePath, window.location.href);
-      provisioningURL = base.href.replace(/\/$/, "") + "/talk/provisioning";
-      talkSettingsURL = buildTalkSettingsURL(base.href);
-    }
+    // Unconditionally: setup_hpb, configure_talk and test_recording all link
+    // into Nextcloud too, and deriving this only for connect_talk left their
+    // links absent — the HPB panel, the one row a broken install leads with,
+    // offered no way to reach the settings page it names.
+    await resolveNextcloudLinks();
+  }
+  // Derived from the current operator URL, preserving installations under a
+  // subdirectory.
+  async function resolveNextcloudLinks() {
+    if (nextcloudBase) return;
+    const base = new URL(provisioningBase ?? (await import("./operator/config")).loadConfig().operatorBasePath, window.location.href);
+    nextcloudBase = base.href;
+    provisioningURL = base.href.replace(/\/$/, "") + "/talk/provisioning";
+    talkSettingsURL = buildTalkSettingsURL(base.href);
   }
   onMount(() => {
     alive = true;
@@ -104,6 +115,8 @@
     // checked yet say so, and "Run all checks" or a row's own button takes a
     // reading.
     void load(false);
+    // So the test room link is ready without opening a panel first.
+    void resolveNextcloudLinks();
     // A setup change elsewhere means what is on screen is out of date, so
     // re-READ it. Deliberately not a re-probe: nobody asked for one, and a page
     // reacting to its own events is how a panel starts checking on its own.
@@ -129,7 +142,7 @@
   <!-- Describes what is actually here. The previous line named two of the
        seven things this reports and ended by telling a reader to verify a short
        recording through Talk, whose entry point no longer exists. -->
-  <p class="mt-2 text-sm text-base-content/70">What Cassini needs in order to record, and what to do about anything that is missing: the recording host, Nextcloud storage, Talk's signaling backend, and how much of the archive search can read.</p>
+  <p class="mt-2 text-sm text-base-content/70">What Cassini needs in order to record, and what to do about anything that is missing: the recording host, Nextcloud storage, Talk's signaling backend, how much of the archive search can read, and a short test recording to prove the whole path.</p>
   {#if error}<p role="alert" class="mt-3 text-error">{error}</p>{/if}
   {#if report}
     <ul class="mt-4 divide-y divide-base-300">
@@ -193,13 +206,6 @@
           <p class="mt-3 text-sm text-base-content/70">This is the internal secret your Talk signaling server is configured with. Cassini cannot read it from Talk, which is why it is asked for here.</p>
           {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
           <button class="btn btn-sm mt-3" disabled={busy} on:click={() => load(true, "talk.discovery")}>Test connection</button>
-        {:else if panel === "test_room"}
-          <h3 class="font-semibold">Choose a test room</h3>
-          <p class="my-2 text-sm">A dedicated room on this Nextcloud. Cassini checks the connection using its token, and never joins or records the call.</p>
-          <form on:submit|preventDefault={() => save({ test_room_url: room.trim() })}>
-            <label class="block">Talk room URL<input class="input input-bordered mt-1 block w-full" type="url" bind:value={room} placeholder="https://cloud.example.com/call/roomtoken" /></label>
-            <button class="btn btn-primary btn-sm mt-3" disabled={busy || !room.trim()}>Save test room</button>
-          </form>
         {:else if panel === "setup_hpb"}
           <h3 class="font-semibold">Talk’s High Performance Backend</h3>
           <p class="my-2 text-sm">Recording joins a call as a participant, which Talk supports only through standalone signaling. Without that backend Cassini cannot record, although calls between people keep working.</p>
@@ -211,19 +217,22 @@
           {#if provisioningURL}<p class="text-sm"><a class="link" href={provisioningURL} target="_blank" rel="noreferrer">Show both values</a></p>{/if}
           {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
         {:else if panel === "test_recording"}
-          <h3 class="font-semibold">Verify a recording through Talk</h3>
+          <h3 class="font-semibold">Record a test through Talk</h3>
+          <!-- No configuration. This step used to begin "choose a dedicated test
+               room", which is the one thing Cassini can do for itself, and which
+               made the whole tool unreachable until somebody pasted a URL. -->
+          <p class="my-2 text-sm">Cassini makes itself a conversation for this and waits. The recording is started from Talk, by you, exactly as a real one would be — which is what makes it worth running.</p>
           <ol class="my-3 list-inside list-decimal space-y-2 text-sm">
-            <li>Choose a dedicated test room, then press Prepare test below.</li>
-            <li>Open that room, start a call, and use Talk’s Start recording action.</li>
-            <li>Speak for about 20 seconds, then stop recording in Talk.</li>
-            <li>Wait for publishing, open the result, and play the audio to confirm that you can hear it.</li>
+            <li>Press Prepare test. Cassini creates a conversation named “Cassini recording test”, or reuses the one it made before.</li>
+            <li>Open the room, join the call, and use Talk’s Start recording action.</li>
+            <li>Say a few words, then stop the recording in Talk.</li>
+            <li>Wait for it to publish, then play the audio and confirm you can hear it.</li>
           </ol>
-          <p class="mb-3 text-sm text-base-content/70">If transcription is enabled, check the transcript afterward. A transcript is not required to confirm audio playback.</p>
-          <button class="btn btn-primary btn-sm" disabled={busy || !report.test_room_url} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
-          {#if report.test_room_url}<a class="btn btn-sm ml-2" href={report.test_room_url} target="_blank" rel="noreferrer">Open test room</a>{/if}
-          {#if !report.test_room_url}<button class="btn btn-sm ml-2" on:click={() => action("test_room", "talk.discovery")}>Choose test room</button>{/if}
+          <p class="mb-3 text-sm text-base-content/70">A recording captures a call, so the call needs someone in it: Cassini joins to record, not to talk. The conversation and the test recording are both ordinary ones, and can be deleted afterwards.</p>
+          <button class="btn btn-primary btn-sm" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
+          {#if testRoomHref}<a class="btn btn-sm ml-2" href={testRoomHref} target="_blank" rel="noreferrer">Open test room</a>{/if}
           {#if report.test.started_at}
-            <p class="mt-3 text-sm" role="status">{report.test.state === "waiting_for_talk" ? "Waiting for a recording started through Talk. If none arrives, check the handoff above." : `${report.test.stage ?? "Test"}: ${report.test.state}`}</p>
+            <p class="mt-3 text-sm" role="status">{report.test.state === "waiting_for_talk" ? "Waiting for a recording to start. Open the test room, join the call, and use Talk’s Start recording action." : `${report.test.stage ?? "Test"}: ${report.test.state}`}</p>
             {#if report.test.job_id}<p class="mt-1 text-xs">Recording {report.test.job_id}</p>{/if}
             {#if report.test.published && report.test.viewer_url}
               <a class="btn btn-sm mt-3" href={report.test.viewer_url} target="_blank" rel="noreferrer">Open published recording</a>
@@ -241,6 +250,5 @@
         </li>
       {/each}
     </ul>
-    {#if report.test.playback_verified_at}<p class="mt-4 text-sm">Last test playback confirmed {new Date(report.test.playback_verified_at).toLocaleString()}. Outbound connection findings show when they were checked; past playback does not verify the current handoff.</p>{/if}
   {/if}
 </section>

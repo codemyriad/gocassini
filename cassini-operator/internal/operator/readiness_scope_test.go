@@ -539,3 +539,115 @@ func TestOperatorReportsTheCredentialRowWhenItIsConfigured(t *testing.T) {
 		t.Errorf("the row overclaims: %q", row.Message)
 	}
 }
+
+// The test recording tool, which shipped unreachable: it refused to run until a
+// test room was chosen, and the row offering that form sat behind checks that
+// needed the room themselves. The room is Cassini's to create now, and the row
+// appears only where a test could actually succeed.
+func TestTestRecordingRowWaitsForTheChainItExercises(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled"},
+		{ID: "storage", State: "passed", Code: "storage_ready"},
+		{ID: "test", State: "not_verified", Code: "test_not_run", Action: "test_recording"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+	for _, c := range checks {
+		if c.ID != "test" {
+			continue
+		}
+		if c.Code != "check_blocked" {
+			t.Fatalf("test = %+v; a test cannot run without a backend to record through", c)
+		}
+		// The button is what makes the tool reachable, so a blocked row keeping
+		// it is how an administrator gets invited to run a test that must fail.
+		if c.Action != "" {
+			t.Errorf("a blocked test row still offers %q", c.Action)
+		}
+		if !strings.Contains(c.Message, "High Performance Backend") {
+			t.Errorf("the blocked test row does not name its blocker: %q", c.Message)
+		}
+	}
+}
+
+func TestTestRecordingRowReportsWhatTheTestEstablished(t *testing.T) {
+	rt := &Runtime{}
+	for _, tc := range []struct {
+		name  string
+		test  readinessTest
+		state string
+		code  string
+	}{
+		{"nothing run", readinessTest{State: "not_started"}, "not_verified", "test_not_run"},
+		{"armed", readinessTest{StartedAt: "2026-10-02T10:00:00Z", State: "waiting_for_talk"}, "not_verified", "test_in_progress"},
+		{"published", readinessTest{StartedAt: "2026-10-02T10:00:00Z", JobID: "j1", Published: true, State: "succeeded"}, "not_verified", "test_awaiting_playback"},
+		{"played back", readinessTest{StartedAt: "2026-10-02T10:00:00Z", JobID: "j1", Published: true, State: "succeeded", PlaybackVerifiedAt: "2026-10-02T10:05:00Z"}, "passed", "test_playback"},
+		{"failed", readinessTest{StartedAt: "2026-10-02T10:00:00Z", JobID: "j1", State: "failed", Stage: "upload"}, "needs_action", "test_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := rt.testRecordingRow(tc.test)
+			if row.State != tc.state || row.Code != tc.code {
+				t.Fatalf("row = %s/%s; want %s/%s", row.State, row.Code, tc.state, tc.code)
+			}
+			// Evidence stays dated: a playback confirmed months ago is still
+			// true, and still months old.
+			if tc.code == "test_playback" && row.CheckedAt != tc.test.PlaybackVerifiedAt {
+				t.Errorf("playback row is undated: %+v", row)
+			}
+		})
+	}
+}
+
+// A tool offering evidence on request is not a fault. Counting a test nobody
+// ran would leave a fully passing install permanently reading "needs
+// verification", with nothing an administrator could do to clear it.
+func TestAnUnrunTestDoesNotLowerTheVerdict(t *testing.T) {
+	passing := []readinessCheck{
+		{ID: "storage", State: "passed", Code: "storage_ready"},
+		{ID: "test", State: "not_verified", Code: "test_not_run"},
+	}
+	if got := worstReadinessState(verdictRows(passing)); got != "passed" {
+		t.Fatalf("verdict = %q; an unrun test must not unverify a passing install", got)
+	}
+	// A test that FAILED is a finding, and counts.
+	failed := []readinessCheck{
+		{ID: "storage", State: "passed", Code: "storage_ready"},
+		{ID: "test", State: "needs_action", Code: "test_failed"},
+	}
+	if got := worstReadinessState(verdictRows(failed)); got != "needs_action" {
+		t.Fatalf("verdict = %q; a failed test recording is a real fault", got)
+	}
+}
+
+// Every row a message can name has to be named the way the panel labels it: a
+// message calling a row something the reader cannot see on screen sends them
+// hunting for it.
+func TestBlockerNamesMatchTheRowsAPanelShows(t *testing.T) {
+	for id := range readinessPrerequisites {
+		for _, prereq := range readinessPrerequisites[id] {
+			if readinessRowNames[prereq] == "" {
+				t.Errorf("%s blocks %s but has no name to be called by", prereq, id)
+			}
+		}
+	}
+}
+
+// A conversation Cassini created can be deleted. Nothing about the stored URL
+// changes when it is: it still parses, so without this the connection check
+// fails forever against a room that is gone, with nothing a reader can do.
+func TestAMissingRoomIsForgottenSoTheNextCheckRemakesIt(t *testing.T) {
+	if !roomIsGone([]readinessCheck{{ID: "talk.discovery", Code: "talk_or_room_unavailable"}}) {
+		t.Error("a 404 from Talk's recording settings must retire the stored room")
+	}
+	if !roomIsGone([]readinessCheck{{ID: "talk.discovery", Code: "test_room_invalid"}}) {
+		t.Error("an unresolvable room must be retired")
+	}
+	// Everything else leaves it alone: a rejected credential or an unreachable
+	// Nextcloud says nothing about whether the conversation exists, and
+	// discarding it there would make every check create another one.
+	for _, code := range []string{"recording_auth_rejected", "nextcloud_unreachable", "recording_auth_verified", "probe_failed"} {
+		if roomIsGone([]readinessCheck{{ID: "talk.discovery", Code: code}}) {
+			t.Errorf("%s retired the test room; only a missing room should", code)
+		}
+	}
+}
