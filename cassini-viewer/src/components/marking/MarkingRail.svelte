@@ -30,15 +30,13 @@
     grab: { aMs: number; bMs: number; handle: boolean };
     pick: number;
     go: number;
+    scrub: number;
     select: PlacedMark;
   }>();
   let track: HTMLElement;
   // A handle drags one end with the other as the anchor, so crossing it swaps them.
   let drag: { anchorMs: number; y0: number; moved: boolean; handle: boolean } | null = null;
-
-  export function focus() {
-    track.focus({ preventScroll: true });
-  }
+  let scrub: { y0: number; offsetMs: number; moved: boolean; atMs: number } | null = null;
 
   $: map = !labels;
   $: columns = Math.max(0, ...marks.map((mark) => mark.column)) + 1;
@@ -50,18 +48,37 @@
     return Math.min(Math.max((event.clientY - box.top) / box.height, 0), 1) * durationMs;
   }
 
-  function down(event: PointerEvent, handleAnchorMs?: number) {
+  function down(event: PointerEvent, handleAnchorMs: number) {
     if (event.button > 0 || !(durationMs > 0) || !grabbing) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
     track.setPointerCapture?.(event.pointerId);
-    const handle = handleAnchorMs !== undefined;
-    drag = { anchorMs: handle ? handleAnchorMs : msAt(event), y0: event.clientY, moved: false, handle };
+    drag = { anchorMs: handleAnchorMs, y0: event.clientY, moved: false, handle: true };
+  }
+
+  function startScrub(event: PointerEvent) {
+    if (event.button > 0 || !(durationMs > 0)) {
+      return;
+    }
+    event.preventDefault();
+    track.setPointerCapture?.(event.pointerId);
+    const atMs = msAt(event);
+    const inSeen = visible && atMs >= visible.startMs && atMs <= visible.endMs;
+    const offsetMs = inSeen ? atMs - (visible!.startMs + visible!.endMs) / 2 : 0;
+    scrub = { y0: event.clientY, offsetMs, moved: false, atMs };
   }
 
   function move(event: PointerEvent) {
+    if (scrub) {
+      scrub.moved ||= Math.abs(event.clientY - scrub.y0) > CLICK_SLOP_PX;
+      if (scrub.moved) {
+        scrub = scrub;
+        dispatch("scrub", Math.min(Math.max(msAt(event) - scrub.offsetMs, 0), durationMs));
+      }
+      return;
+    }
     if (!drag) {
       return;
     }
@@ -72,9 +89,10 @@
   }
 
   function up() {
-    if (drag && !drag.moved && !drag.handle) {
-      dispatch("pick", drag.anchorMs);
+    if (scrub && !scrub.moved) {
+      dispatch("go", scrub.atMs);
     }
+    scrub = null;
     drag = null;
   }
 
@@ -154,16 +172,17 @@
   {:else}
   <div
     bind:this={track}
-    class="mr-track absolute inset-y-0 left-9 w-3.5 touch-none rounded-sm bg-base-content/8 focus-visible:outline-2 focus-visible:outline-offset-3 {grabbing ? 'cursor-crosshair' : ''}"
+    class="mr-track mr-scrub absolute inset-y-0 left-9 w-3.5 touch-none rounded-sm bg-base-content/8 focus-visible:outline-2 focus-visible:outline-offset-3"
+    class:scrubbing={scrub?.moved}
     tabindex={grabbing ? 0 : -1}
     role="group"
     aria-label={grabbing
-      ? "The whole meeting. Drag down it to grab a section; click, or press Enter, for one turn."
-      : "The whole meeting, and where its marks fall in it."}
-    on:pointerdown={(event) => down(event)}
+      ? "The whole meeting. Drag to scroll the transcript, click to go to a moment, or press Enter for the turn under the playhead."
+      : "The whole meeting. Drag to scroll the transcript, or click to go to a moment."}
+    on:pointerdown={startScrub}
     on:pointermove={move}
     on:pointerup={up}
-    on:pointercancel={() => (drag = null)}
+    on:pointercancel={() => ((drag = null), (scrub = null))}
     on:keydown={onKeydown}
   >
     {@render seen()}
@@ -211,6 +230,12 @@
     background-color: var(--tag);
     border: 0;
     border-radius: 2px;
+  }
+  .mr-scrub {
+    cursor: grab;
+  }
+  .mr-scrub.scrubbing {
+    cursor: grabbing;
   }
   .mr-seen {
     position: absolute;
