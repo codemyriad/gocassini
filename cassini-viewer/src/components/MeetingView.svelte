@@ -53,7 +53,6 @@
   } from "../core/types";
   import type {
     ArtifactMetadata,
-    ArtifactMetadataRow,
     ArtifactTimingPrecision,
     LoadedArtifact,
   } from "../viewer/loadArtifact";
@@ -964,27 +963,8 @@
     return "Select a word to seek to it.";
   }
 
-  function formatMetadataLabel(label: string): string {
-    return label
-      .split(".")
-      .map((part) =>
-        part
-          .replace(/[_-]+/g, " ")
-          .replace(/([a-z])([A-Z])/g, "$1 $2")
-          .replace(/\s+/g, " ")
-          .trim()
-          .replace(/\b\w/g, (match) => match.toUpperCase()),
-      )
-      .join(" / ");
-  }
 
-  function metadataSectionStartsOpen(_title: string): boolean {
-    return false;
-  }
 
-  function metadataRowKey(sectionTitle: string, row: ArtifactMetadataRow): string {
-    return `${sectionTitle}:${row.label}`;
-  }
 
   onMount(() => {
     window.addEventListener("keydown", handleWindowKeydown);
@@ -1111,7 +1091,6 @@
   $: syncHighlight(displaySegments, currentTimeMs);
   $: syncWordHighlight(wordPartsByBlock, currentTimeMs, activeSegmentIds);
   $: hasPrecomputedDisplay = displayTranscript !== null;
-  $: metadataSections = artifactMetadata?.sections ?? [];
   $: safeDurationMs = asFiniteMilliseconds(durationMs);
   $: clampedDurationMs = Math.max(0, safeDurationMs);
   $: clampedCurrentTimeMs = Math.min(Math.max(0, asFiniteMilliseconds(currentTimeMs)), clampedDurationMs || 0);
@@ -1230,6 +1209,8 @@
             room={hasRoom(meeting) ? roomLabelOf(meeting) : null}
             durationMs={transcriptIndex ? clampedDurationMs : 0}
             {speakerNames}
+            recording={artifactMetadata?.recording ?? null}
+            timing={timingPrecision}
           />
         </span>
         <MeetingTags session={marks} vocabulary={tagVocabulary} />
@@ -1487,81 +1468,6 @@
       </TranscriptFrame>
       </div>
 
-      {#if visibleSegments.length > 0 && transcriptIndex && (timingPrecision || artifactMetadata)}
-        <section class="mv-details grid gap-3 mt-8">
-          <div class="border-b border-base-300 pb-3">
-            <p class="text-lg font-medium text-base-content">
-              Meeting metadata
-            </p>
-            <p class="text-base-content/70 leading-normal text-xs">
-              Artifact metadata is shown as provided, so older files can remain usable with reduced timing precision.
-            </p>
-          </div>
-
-          {#if artifactMetadata}
-            <div class="grid gap-2.5">
-              {#each metadataSections as section}
-                <details
-                  class="collapse collapse-arrow bg-base-100 border border-base-300"
-                  open={metadataSectionStartsOpen(section.title)}
-                >
-                  <summary class="collapse-title text-base font-medium">{section.title}</summary>
-                  <div class="collapse-content">
-                    <dl
-                      class="grid grid-cols-[minmax(10rem,16rem)_minmax(0,1fr)] gap-y-2 gap-x-3.5 m-0 max-[980px]:grid-cols-1"
-                    >
-                      {#each section.rows as row (metadataRowKey(section.title, row))}
-                        <dt class="m-0 text-base-content/70 text-sm leading-snug">
-                          {formatMetadataLabel(row.label)}
-                        </dt>
-                        <dd class="m-0 text-base-content text-sm leading-normal break-words">
-                          {#if row.values && row.values.length > 0}
-                            <div class="flex flex-wrap gap-1.5">
-                              {#each row.values as value}
-                                <span class="badge badge-outline">{value}</span>
-                              {/each}
-                            </div>
-                          {:else if row.tone === "code"}
-                            <code
-                              class="inline-block px-1.5 py-0.5 rounded bg-base-300 text-base-content text-xs font-mono"
-                              >{row.value}</code
-                            >
-                          {:else}
-                            {row.value}
-                          {/if}
-                        </dd>
-                      {/each}
-                      {#if section.title === "Meeting" && timingPrecision}
-                        <dt class="m-0 text-base-content/70 text-sm leading-snug">
-                          Timing precision
-                        </dt>
-                        <dd class="m-0 text-base-content text-sm leading-normal break-words">
-                          <span
-                            class:text-warning={timingPrecision.level !== "word"}
-                            title={timingPrecision.detail}
-                          >
-                            {timingPrecision.label}
-                          </span>
-                          <p class="text-base-content/70 text-xs mt-1.5 leading-snug">
-                            {timingPrecision.detail}
-                          </p>
-                        </dd>
-                      {/if}
-                    </dl>
-                  </div>
-                </details>
-              {/each}
-              <details class="collapse collapse-arrow bg-base-100 border border-base-300">
-                <summary class="collapse-title text-base font-medium">Raw JSON</summary>
-                <div class="collapse-content">
-                  <pre
-                    class="m-0 text-base-content text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">{artifactMetadata.rawJson}</pre>
-                </div>
-              </details>
-            </div>
-          {/if}
-        </section>
-      {/if}
     {/if}
     </div>
   </svelte:element>
