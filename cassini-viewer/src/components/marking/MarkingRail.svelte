@@ -127,7 +127,7 @@
     >
       {@render seen()}
       {#each stops as ms, index}
-        <i class="pointer-events-none absolute bg-warning {index === current ? '-inset-x-1 -mt-0.5 h-1' : 'inset-x-px -mt-px h-0.5'}" style:top={pct(ms)}></i>
+        <i class="pointer-events-none absolute bg-primary {index === current ? '-inset-x-1 -mt-0.5 h-1' : 'inset-x-px -mt-px h-0.5'}" style:top={pct(ms)}></i>
       {/each}
       {#each marks as mark (mark.item.id)}
         <button
@@ -168,7 +168,7 @@
   >
     {@render seen()}
     {#each stops as ms, index}
-      <i class="pointer-events-none absolute bg-warning {index === current ? '-inset-x-1 -mt-0.5 h-1' : 'inset-x-px -mt-px h-0.5'}" style:top={pct(ms)}></i>
+      <i class="pointer-events-none absolute bg-primary {index === current ? '-inset-x-1 -mt-0.5 h-1' : 'inset-x-px -mt-px h-0.5'}" style:top={pct(ms)}></i>
     {/each}
     {#if selection}
       <i

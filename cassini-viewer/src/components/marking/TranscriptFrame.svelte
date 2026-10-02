@@ -47,6 +47,24 @@
   // How much of the bottom of the view the player covers.
   export let stickBottom = 0;
   export let viewHeight = 0;
+  export let barTarget: HTMLElement | null = null;
+  export let revealBar: () => void = () => {};
+
+  function mountIn(node: HTMLElement, target: HTMLElement | null) {
+    const home = node.parentNode;
+    const anchor = node.nextSibling;
+    const place = (next: HTMLElement | null) => {
+      if (next) next.appendChild(node);
+      else if (home && node.parentNode !== home) home.insertBefore(node, anchor);
+    };
+    place(target);
+    return {
+      update: place,
+      destroy() {
+        node.remove();
+      },
+    };
+  }
 
   // `native`: made with the reader's own text selection, whose handles stand
   // where the pins would.
@@ -62,7 +80,12 @@
   let rail: MarkingRail | undefined;
   let width = 0;
   let barHeight = 0;
+  $: barOffset = barTarget ? 0 : barHeight;
   let tagbarHeight = 0;
+  let railGap = 24;
+  onMount(() => {
+    railGap = 1.5 * (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
+  });
   let dockHeight = 0;
   let textHeight = 0;
   let selection: Selection | null = null;
@@ -90,7 +113,7 @@
   $: wide = width >= 720;
   // What the sticky bars cover of the view: the tag bar at the top where the
   // screen is wide, the dock above the player where it is not.
-  $: coverTop = barHeight + (marking && wide ? tagbarHeight : 0);
+  $: coverTop = barOffset + (marking && wide ? tagbarHeight : 0);
   $: coverBottom = marking && !wide ? dockHeight + 8 : 0;
   $: bracketColumns = Math.max(0, ...(view?.placed.map((mark) => mark.column) ?? [])) + 1;
   // Where a tag chip begins, measured the way MarkBrackets measures it: the
@@ -435,6 +458,11 @@
     const next = one && two ? { startMs: Math.min(one.startMs, two.startMs), endMs: Math.max(one.endMs, two.endMs) } : null;
     if (next?.startMs !== seen?.startMs || next?.endMs !== seen?.endMs) seen = next;
   }
+  export function remeasure() {
+    if (textCell) textHeight = textCell.clientHeight;
+    queueSeen();
+  }
+
   function queueSeen() {
     if (scroller && !seenFrame) seenFrame = requestAnimationFrame(measureSeen);
   }
@@ -612,7 +640,10 @@
 
   // Capture phase, so Esc clears a selection before the shell closes the sheet on it.
   function onKeydown(event: KeyboardEvent) {
-    if (event.defaultPrevented || !root || root.offsetParent === null) return;
+    if (event.defaultPrevented || !root) return;
+    const visible = root.offsetParent !== null;
+    const barVisible = barTarget ? barTarget.offsetParent !== null : visible;
+    if (!visible && !barVisible) return;
     const path = event.composedPath();
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
       const scope = root.closest(".meeting-viewer") ?? root;
@@ -631,10 +662,12 @@
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
-        toolbar.focusFind();
+        revealBar();
+        void tick().then(() => toolbar.focusFind());
       }
       return;
     }
+    if (!visible) return;
     const inField = path.some((node) => node instanceof HTMLElement && node.matches("input, textarea, select, [role='dialog']"));
     if (!editing || inField) return;
     if (event.key === "Escape") {
@@ -680,7 +713,9 @@
   </div>
   <div
     bind:offsetHeight={barHeight}
+    use:mountIn={barTarget}
     class="tf-bar sticky z-10 grid gap-2 bg-base-200 py-2"
+    class:tf-bar-pinned={barTarget}
     style:top="{Math.max(0, stickTop - 1)}px"
     style:margin-inline="calc(-1 * var(--tf-bleed, 8px))"
     style:padding-inline="var(--tf-bleed, 8px)"
@@ -703,7 +738,7 @@
     <div
       bind:offsetHeight={tagbarHeight}
       class="tf-tagbar relative sticky z-10 flex flex-wrap items-center gap-2"
-      style:top="{Math.max(0, stickTop - 1) + barHeight}px"
+      style:top="{Math.max(0, stickTop - 1) + barOffset}px"
       style:margin-inline="calc(-1 * var(--tf-bleed, 8px))"
       style:padding-inline="var(--tf-bleed, 8px)"
       style:--tf-tags-left="{tagsLeft - 10}px"
@@ -739,8 +774,8 @@
              the transcript: a short one is not stretched to match a screen. -->
         <div
           class="sticky"
-          style:top="{stickTop + coverTop + 12}px"
-          style:height="{Math.max(0, Math.min(viewHeight - coverTop - coverBottom - 24, textHeight))}px"
+          style:top="{stickTop + coverTop + railGap}px"
+          style:height="{Math.max(0, Math.min(viewHeight - coverTop - coverBottom - railGap - 12, textHeight))}px"
         >
           <MarkingRail
             bind:this={rail}
@@ -819,7 +854,7 @@
           {brackets}
           selectedId={selection?.itemId}
           bind:hoverId
-          stickTop={Math.max(0, stickTop - 1) + barHeight + 44}
+          stickTop={Math.max(0, stickTop - 1) + barOffset + 44}
           on:select={(event) => selectMark(event.detail)}
         />
         {#if stretchProps && wide}
@@ -838,7 +873,7 @@
                  line under the bars while any of that section is on screen. -->
             <div
               class="sticky"
-              style:top="{selectedBracket ? Math.max(0, stickTop - 1) + barHeight + 44 + cardDrop : 0}px"
+              style:top="{selectedBracket ? Math.max(0, stickTop - 1) + barOffset + 44 + cardDrop : 0}px"
             >
               <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
             </div>
@@ -859,7 +894,7 @@
          is the player's card, classes and all: in Nextcloud the border comes
          from a rule on .card. -->
     <div aria-hidden="true" style:height="{coverBottom}px"></div>
-    <div class="sticky z-20 h-0" style:bottom="{stickBottom - scrollerPad}px">
+    <div class="sticky z-[31] h-0" style:bottom="{stickBottom - scrollerPad}px">
       <div
         bind:offsetHeight={dockHeight}
         class="tf-dock card absolute bottom-0 grid gap-2 border border-base-300 bg-base-100 p-2 shadow-2xl"
@@ -940,13 +975,11 @@
   .tf-bar {
     position: sticky;
   }
-  .tf-bar::after {
-    content: "";
-    position: absolute;
-    left: var(--tf-bleed, 8px);
-    right: var(--tf-bleed, 8px);
-    bottom: 0;
-    border-bottom: 1px solid var(--color-base-300);
+  .tf-bar.tf-bar-pinned {
+    position: static;
+    background-color: transparent;
+    margin-inline: 0 !important;
+    padding: 0 !important;
   }
 
 
@@ -1038,11 +1071,11 @@
     --hl-fill: var(--lit-fill);
   }
   .frame :global([data-word-id][data-find]:not([data-active="true"])) {
-    background: color-mix(in oklab, var(--color-warning) 35%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-warning) 70%, transparent);
+    background: color-mix(in oklab, var(--color-primary) 35%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-primary) 70%, transparent);
   }
   .frame :global([data-word-id][data-find="current"]:not([data-active="true"])) {
-    color: var(--color-warning-content);
-    background: var(--color-warning);
+    color: var(--color-primary-content);
+    background: var(--color-primary);
   }
 </style>

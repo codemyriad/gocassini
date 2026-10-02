@@ -65,7 +65,7 @@ describe("a meeting view with no annotation loader", () => {
   it("offers find and nothing else: no rail, no marking, no marks, no header tags", () => {
     const session = createMarksSession(() => {});
     const html = frame(session);
-    expect(html).toContain('aria-label="Find in this meeting"');
+    expect(html).toContain('aria-label="Find in transcript"');
     expect(html).not.toContain("The whole meeting");
     expect(html).not.toContain("Mark with a tag");
     expect(html).not.toContain("Marks");
@@ -201,7 +201,7 @@ describe("a meeting view that can read marks but not write them", () => {
   });
 
   it("keeps find, which reads and changes nothing", async () => {
-    expect(frame(await readOnly(async () => meeting(true)))).toContain('aria-label="Find in this meeting"');
+    expect(frame(await readOnly(async () => meeting(true)))).toContain('aria-label="Find in transcript"');
   });
 });
 

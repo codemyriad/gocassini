@@ -10,6 +10,8 @@
     FileText,
     ArrowLeft,
     CassetteTape,
+    Search,
+    X,
   } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import {
@@ -129,7 +131,14 @@
   const localMarks = createMarksSession((result) => dispatch("tagsChanged", result));
   $: marks = marksSession ?? localMarks;
   let openedMarksFor: string | null = null;
-  let headerHeight = 0;
+  let tabsHeight = 0;
+  let searchSlot: HTMLElement | null = null;
+  let overlayEl: HTMLElement | null = null;
+  let playerEl: HTMLElement | null = null;
+  let transcriptFrame: { remeasure: () => void } | null = null;
+  let searchToggleEl: HTMLButtonElement | null = null;
+  let searchOpen = false;
+  let tabSwitching = false;
   let scrollHeight = 0;
   let playerHeight = 0;
   // The scroll area's scrollbar gutter, measured: it is 15px with a classic
@@ -204,6 +213,9 @@
   let followPlayback = true;
   let manualScrollLock = false;
   let pendingSeekMs: number | null = null;
+  type MeetingTab = "summary" | "transcript";
+  let activeTab: MeetingTab = "summary";
+  let tabScrollTop: Record<MeetingTab, number> = { summary: 0, transcript: 0 };
 
   let transcriptPane: HTMLElement | null = null;
   let audioEl: HTMLAudioElement | null = null;
@@ -419,6 +431,7 @@
     loading = true;
     errorMessage = "";
     pendingSeekMs = parseTimeHash(hostHash());
+    resetTabs();
     try {
       const artifact = await dataProvider.loadMeetingForEntry(entry);
       applyArtifact(artifact);
@@ -437,6 +450,7 @@
     loading = true;
     errorMessage = "";
     pendingSeekMs = parseTimeHash(hostHash());
+    resetTabs();
     try {
       const artifact = await dataProvider.loadBundledArtifact();
       applyArtifact(artifact);
@@ -677,7 +691,106 @@
     return key;
   }
 
+  function setOverlayHeight(height: number) {
+    const delta = height - tabsHeight;
+    tabsHeight = height;
+    if (!delta || tabSwitching || !scrollPaneEl || scrollPaneEl.scrollTop <= 0) return;
+    const pane = scrollPaneEl;
+    void tick().then(() => {
+      pane.scrollTop += delta;
+    });
+  }
+
+  function revealSearch() {
+    searchOpen = true;
+    if (shownTab !== "transcript") void selectTab("transcript");
+  }
+
+  function jumpToTranscript() {
+    if (shownTab !== "transcript") void selectTab("transcript");
+  }
+
+  async function toggleSearch() {
+    if (searchExpanded) {
+      searchOpen = false;
+      transcriptQuery = "";
+      searchToggleEl?.focus();
+      return;
+    }
+    if (shownTab !== "transcript") await selectTab("transcript");
+    searchOpen = true;
+    await tick();
+    searchSlot?.querySelector<HTMLInputElement>("input")?.focus();
+  }
+
+  function collapseSearchOnLeave(event: FocusEvent) {
+    const next = event.relatedTarget;
+    if (transcriptQuery.trim()) return;
+    if (next instanceof Node && (searchSlot?.contains(next) || searchToggleEl?.contains(next))) return;
+    searchOpen = false;
+  }
+
+  function resetTabs() {
+    activeTab = pendingSeekMs === null ? "summary" : "transcript";
+    searchOpen = false;
+    tabScrollTop = { summary: 0, transcript: 0 };
+  }
+
+  function trackHeight(node: HTMLElement, onHeight: (height: number) => void) {
+    let report = onHeight;
+    const measure = () => report(node.offsetHeight);
+    const observer = new ResizeObserver(measure);
+    observer.observe(node, { box: "border-box" });
+    measure();
+    return {
+      update(next: (height: number) => void) {
+        report = next;
+        measure();
+      },
+      destroy() {
+        observer.disconnect();
+      },
+    };
+  }
+
+  async function selectTab(tab: MeetingTab) {
+    if (tab === shownTab) return;
+    if (scrollPaneEl) tabScrollTop[shownTab] = scrollPaneEl.scrollTop;
+    tabSwitching = true;
+    activeTab = tab;
+    await tick();
+    if (overlayEl) tabsHeight = overlayEl.offsetHeight;
+    if (tab === "transcript") {
+      if (playerEl) playerHeight = playerEl.offsetHeight;
+      await tick();
+      transcriptFrame?.remeasure();
+    }
+    await tick();
+    tabSwitching = false;
+    if (scrollPaneEl) scrollPaneEl.scrollTop = tabScrollTop[tab];
+    if (tab === "transcript" && followPlayback && !manualScrollLock) {
+      const key = activeFollowRowKey ?? rowKeyNear(currentTimeMs);
+      if (key) {
+        lastAutoScrollRowKey = key;
+        void scrollSegmentIntoView(key, "auto");
+      }
+    }
+  }
+
+  function handleTabKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    const next: MeetingTab =
+      event.key === "Home" ? "summary" : event.key === "End" ? "transcript" : shownTab === "summary" ? "transcript" : "summary";
+    void selectTab(next);
+    const list = (event.currentTarget as HTMLElement).closest('[role="tablist"]');
+    list?.querySelector<HTMLElement>(`[data-tab="${next}"]`)?.focus();
+  }
+
   function resumeFollow() {
+    if (shownTab !== "transcript") {
+      void selectTab("transcript");
+    }
     followPlayback = true;
     manualScrollLock = false;
     const key = activeFollowRowKey ?? rowKeyNear(currentTimeMs);
@@ -1004,7 +1117,17 @@
   $: clampedCurrentTimeMs = Math.min(Math.max(0, asFiniteMilliseconds(currentTimeMs)), clampedDurationMs || 0);
   $: remainingMs = Math.max(0, clampedDurationMs - clampedCurrentTimeMs);
   $: speakerNames = speakers.map((s) => s.label || s.id).filter(Boolean);
+  $: hasSummaryTab = Boolean(summaryHtml) || linkedInsights.length > 0;
+  $: shownTab = hasSummaryTab ? activeTab : ("transcript" as MeetingTab);
+  $: overlayShown = Boolean(transcriptIndex) && (hasSummaryTab || displaySegments.length > 0);
+  $: tabsOffset = overlayShown ? tabsHeight : 0;
+  $: searchShown = searchOpen || transcriptQuery.trim() !== "" || !hasSummaryTab;
+  $: searchExpanded = searchShown;
+  $: void searchExpanded, void tick().then(() => {
+    if (overlayEl) setOverlayHeight(overlayEl.offsetHeight);
+  });
   $: if (
+    shownTab === "transcript" &&
     followPlayback &&
     !manualScrollLock &&
     activeFollowRowKey &&
@@ -1020,27 +1143,7 @@
   aria-label="Meeting view"
   class="meeting-viewer relative flex flex-col h-full min-h-0 min-w-0"
 >
-  <!-- Scroll container: holds the sticky header and all main content.
-       Bottom padding keeps the last lines of the transcript reachable
-       even when the (absolutely positioned) player overlaps the scroll.
-       `scrollbar-gutter: stable` reserves the scrollbar gutter persistently
-       so content width never shifts as scrollbar appears/disappears. -->
-  <div
-    bind:this={scrollPaneEl}
-    bind:clientHeight={scrollHeight}
-    bind:offsetWidth={scrollOuterWidth}
-    bind:clientWidth={scrollInnerWidth}
-    class="mv-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
-    <!-- Sticky header — the meeting's identity, and the transcript flows under
-         it. It used to be a strip of status badges with the title in a second,
-         SCROLLING header below, so the one thing that says which meeting you
-         are reading left the screen as soon as you started reading it. Title
-         and the facts that identify a meeting are here now; the badges and the
-         transcript switcher keep their place at the right, where they were.
-         Opaque rather than translucent: this panel sits over the browse list,
-         and a blurred header with a meeting list showing through it reads as
-         two pages at once. -->
-    <header class="sticky top-0 z-20 flex-none min-h-12 px-4 py-3 min-[981px]:px-6 bg-base-200 border-b border-base-300" bind:offsetHeight={headerHeight}>
+    <header class="mv-header relative z-40 flex-none min-h-12 px-4 py-3 min-[981px]:px-6 bg-base-200 border-b border-base-300">
     <div class="flex items-center gap-2 min-w-0">
     <!-- An embed has no list to go back to, however narrow it is (D-838). -->
     {#if !isDesktop && !inSheet && surface !== "embed"}
@@ -1134,6 +1237,23 @@
     {/if}
   </header>
 
+  <div class="mv-body relative flex flex-1 min-h-0 flex-col">
+  <!-- Scroll container: holds all main content.
+       Bottom padding keeps the last lines of the transcript reachable
+       even when the (absolutely positioned) player overlaps the scroll.
+       `scrollbar-gutter: stable` reserves the scrollbar gutter persistently
+       so content width never shifts as scrollbar appears/disappears. -->
+  <div
+    bind:this={scrollPaneEl}
+    bind:clientHeight={scrollHeight}
+    bind:offsetWidth={scrollOuterWidth}
+    bind:clientWidth={scrollInnerWidth}
+    class="mv-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col"
+    class:mv-scroll-no-player={shownTab !== "transcript"}>
+    {#if overlayShown}
+      <div class="flex-none" style:height="{tabsHeight}px" aria-hidden="true"></div>
+    {/if}
+
   {#if !transcriptIndex && (errorMessage || notFoundMessage)}
     <div class="grid place-items-center flex-1 p-4">
       <div class="card bg-base-100 w-full max-w-md border border-base-300">
@@ -1147,25 +1267,29 @@
   <div out:fade={contentFadeConfig()}>
   <!-- A page embedding us has its own <main>; a second one is a landmark
        screen readers would announce as the page's content (D-838). -->
-  <svelte:element this={surface === "embed" ? "div" : "main"} class="mv-main flex flex-col m-4 min-[981px]:mx-6 min-[981px]:mb-8">
-    {#if summaryHtml}
-      <!-- A card on the sheet's ground under a heading, like the insights and
-           the transcript under it: three sections of one sheet, titled the
-           same way. -->
+  <svelte:element this={surface === "embed" ? "div" : "main"} class="mv-main flex flex-col m-4 min-[981px]:mx-6 min-[981px]:mb-8" class:mv-main-tabbed={overlayShown}>
+    <div
+      class="mv-panel"
+      id="mv-panel-summary"
+      role={hasSummaryTab ? "tabpanel" : undefined}
+      aria-labelledby={hasSummaryTab ? "mv-tab-summary" : undefined}
+      hidden={shownTab !== "summary"}
+    >
+    {#if summaryHtml || linkedInsights.length > 0}
       <section>
-        <p class="mv-section-title">Summary</p>
-        <div class="mv-card">
+        <div>
+          {#if summaryHtml}
           <!-- Markdown rendered via {@html} can't receive Svelte-scoped
                styles, so per-tag styling is expressed through Tailwind's
                arbitrary descendant selectors on the wrapper. -->
           <div
             class="text-[15px] leading-relaxed text-base-content
-              [&>*+*]:mt-3.5
+              [&>*+*]:mt-4 [&>:is(h1,h2,h3,h4)+*]:mt-2
               [&>h1:first-child]:mt-0 [&>h2:first-child]:mt-0 [&>h3:first-child]:mt-0 [&>h4:first-child]:mt-0
-              [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-6 [&_h1]:leading-tight
-              [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:leading-tight
-              [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:leading-tight
-              [&_h4]:text-base [&_h4]:font-semibold [&_h4]:mt-4
+              [&_h1]:text-[20px] [&_h1]:font-semibold [&_h1]:mt-8 [&_h1]:leading-tight
+              [&_h2]:text-[18px] [&_h2]:font-semibold [&_h2]:mt-7 [&_h2]:leading-tight
+              [&_h3]:text-[16px] [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:leading-tight
+              [&_h4]:text-[15px] [&_h4]:font-semibold [&_h4]:mt-6
               [&_strong]:font-semibold [&_em]:italic
               [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:decoration-2
               [&_ul]:pl-6 [&_ul]:grid [&_ul]:gap-1.5 [&_ul]:list-disc
@@ -1177,47 +1301,48 @@
               [&_blockquote]:border-l-[3px] [&_blockquote]:border-primary/60 [&_blockquote]:pl-3.5 [&_blockquote]:py-0.5 [&_blockquote]:text-base-content/80
               [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-base-300"
           >{@html summaryHtml}</div>
+          {/if}
+          {#if linkedInsights.length > 0}
+            <div class="mv-summary-insights" class:mv-summary-insights-only={!summaryHtml}>
+              <h2 class="mv-summary-insights-title">Insights</h2>
+              <div class="mv-card mv-card-list">
+                {#each linkedInsights as record (record.id)}
+                  <button
+                    type="button"
+                    class="mv-insight flex w-full items-baseline gap-2 px-3 py-2 text-left cursor-pointer"
+                    on:click={() => dispatch("openInsight", record)}
+                  >
+                    <FileText size={14} class="shrink-0 self-center" aria-hidden="true" />
+                    <span class="min-w-0 flex-1 truncate text-sm font-medium">
+                      {insightHeadline(record)}
+                    </span>
+                    <span class="shrink-0 text-xs tabular-nums text-base-content/60">
+                      {formatInsightCreated(record)}
+                      {#if (insightSourceCounts.get(record.id) ?? 0) > 0}
+                        &middot; Context from {insightSourceCounts.get(record.id)}
+                        {insightSourceCounts.get(record.id) === 1 ? "meeting" : "meetings"}
+                      {/if}
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </div>
       </section>
     {/if}
 
-    <!-- Which insights read this meeting (D-721). Here, under the summary and
-         above the transcript, because it is a fact about the meeting of the
-         same kind as its summary — what came OUT of this conversation — and a
-         reader who has to scroll past the whole transcript to find it will
-         never find it. Rendered beside the recording rather than inside it:
-         what a meeting was used for is not part of what was recorded, which is
-         why the record comes from the shell rather than the artifact. -->
-    {#if linkedInsights.length > 0}
-      <!-- The same heading and card as the summary above it. -->
-      <section>
-        <p class="mv-section-title">Insights</p>
-        <div class="mv-card mv-card-list">
-          {#each linkedInsights as record (record.id)}
-            <button
-              type="button"
-              class="mv-insight flex w-full items-baseline gap-2 px-2 py-1 text-left cursor-pointer"
-              on:click={() => dispatch("openInsight", record)}
-            >
-              <FileText size={14} class="shrink-0 self-center" aria-hidden="true" />
-              <span class="min-w-0 flex-1 truncate text-sm font-medium">
-                {insightHeadline(record)}
-              </span>
-              <span class="shrink-0 text-xs tabular-nums text-base-content/60">
-                {formatInsightCreated(record)}
-                {#if (insightSourceCounts.get(record.id) ?? 0) > 0}
-                  &middot; Context from {insightSourceCounts.get(record.id)}
-                  {insightSourceCounts.get(record.id) === 1 ? "meeting" : "meetings"}
-                {/if}
-              </span>
-            </button>
-          {/each}
-        </div>
-      </section>
-    {/if}
 
+    </div>
+
+    <div
+      class="mv-panel"
+      id="mv-panel-transcript"
+      role={hasSummaryTab ? "tabpanel" : undefined}
+      aria-labelledby={hasSummaryTab ? "mv-tab-transcript" : undefined}
+      hidden={shownTab !== "transcript"}
+    >
     {#if displaySegments.length === 0}
-      <p class="mv-section-title">Transcript</p>
       <p class="text-base-content/70 text-sm leading-normal">
         {#if transcriptionStatus?.status === "failed"}Recording available. Transcription failed.
         {:else if transcriptionStatus?.status === "skipped"}
@@ -1230,6 +1355,7 @@
            heading rather than between it and the search under it. -->
       <div class="mv-transcript">
       <TranscriptFrame
+        bind:this={transcriptFrame}
         session={marks}
         vocabulary={tagVocabulary}
         words={timedWords}
@@ -1240,15 +1366,14 @@
         durationMs={clampedDurationMs}
         playheadMs={clampedCurrentTimeMs}
         seek={seekTo}
-        stickTop={headerHeight}
+        stickTop={tabsOffset}
+        barTarget={searchSlot}
+        revealBar={revealSearch}
         stickBottom={playerHeight}
-        viewHeight={scrollHeight - headerHeight - playerHeight}
+        viewHeight={scrollHeight - tabsOffset - playerHeight}
         let:chips
         let:openMark
       >
-        <svelte:fragment slot="title">
-          <p class="mv-section-title mv-section-title-bar">Transcript</p>
-        </svelte:fragment>
       {#if visibleSegments.length === 0}
       <!-- Distinct from the line above on purpose: "no transcript" and "nothing
            matched what you typed" are different facts, and the first one read as
@@ -1438,9 +1563,60 @@
         </section>
       {/if}
     {/if}
+    </div>
   </svelte:element>
   </div>
   {/if}
+  </div>
+    {#if overlayShown}
+      <div
+        class="mv-tabbar absolute top-0 left-0 z-[32]"
+        style:right="{scrollGutter}px"
+        bind:this={overlayEl}
+        use:trackHeight={setOverlayHeight}
+      >
+        <div class="mv-fade-blur" aria-hidden="true">{#each [1, 2, 4, 8, 16] as radius, layer (radius)}<div style:--blur="{radius}px" style:--layer={layer}></div>{/each}</div>
+        <div class="mv-tabrow" class:mv-tabrow-plain={!hasSummaryTab}>
+          {#if hasSummaryTab}
+            <div role="tablist" aria-label="Meeting content" class="mv-tabs tabs tabs-box tabs-sm">
+              {#each [["summary", "Summary"], ["transcript", "Transcript"]] as [id, label] (id)}
+                <button
+                  type="button"
+                  role="tab"
+                  class="tab"
+                  class:tab-active={shownTab === id}
+                  id={`mv-tab-${id}`}
+                  data-tab={id}
+                  aria-selected={shownTab === id}
+                  aria-controls={`mv-panel-${id}`}
+                  tabindex={shownTab === id ? 0 : -1}
+                  on:click={() => selectTab(id as MeetingTab)}
+                  on:keydown={handleTabKeydown}
+                >{label}</button>
+              {/each}
+            </div>
+            <button
+              bind:this={searchToggleEl}
+              type="button"
+              class="mv-search-toggle btn btn-sm btn-square btn-quiet"
+              aria-label={searchExpanded ? "Close search" : "Search the transcript"}
+              aria-expanded={searchExpanded}
+              on:click={toggleSearch}
+            >
+              {#if searchExpanded}<X size={16} aria-hidden="true" />{:else}<Search size={16} aria-hidden="true" />{/if}
+            </button>
+          {/if}
+          <div
+            bind:this={searchSlot}
+            class="mv-search-slot"
+            class:mv-search-open={searchShown}
+            on:focusin={jumpToTranscript}
+            on:focusout={collapseSearchOnLeave}
+          ></div>
+        </div>
+        <div class="mv-tabbar-gap" aria-hidden="true"></div>
+      </div>
+    {/if}
   </div>
 
   {#if loading && meeting}
@@ -1467,11 +1643,14 @@
        container, at every width, so the player lines up with the transcript
        and with the tagged-sections dock over it. -->
   <footer
+    bind:this={playerEl}
     bind:offsetHeight={playerHeight}
     style:right="{scrollGutter}px"
-    class="mv-player absolute bottom-0 left-0 z-30 p-2 min-[981px]:px-4 min-[981px]:pb-4 pointer-events-none [will-change:opacity]"
+    class="mv-player absolute bottom-0 left-0 z-30 p-2 px-[16px] min-[981px]:px-[24px] min-[981px]:pb-4 pointer-events-none [will-change:opacity]"
+    class:mv-player-hidden={shownTab !== "transcript"}
     transition:fade={playerFadeConfig()}
   >
+    <div class="mv-fade-blur mv-fade-blur-bottom" aria-hidden="true">{#each [1, 2, 4, 8, 16] as radius, layer (radius)}<div style:--blur="{radius}px" style:--layer={layer}></div>{/each}</div>
     <div class="card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
       {#if audioSrc}
         {#key audioSrc}
@@ -1570,18 +1749,27 @@
 <style>
   /* Summary and Insights: the operator's card surface (its run cards and
      .op-tint), a tint of the ink over the sheet's own ground. */
+  .mv-summary-insights {
+    margin-top: 28px;
+  }
+  .mv-summary-insights-only {
+    margin-top: 0;
+  }
+  .mv-summary-insights-title {
+    margin-bottom: 12px;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--color-base-content);
+  }
   .mv-card {
-    padding: 16px;
     background-color: color-mix(in oklch, var(--color-base-content) 4%, var(--color-base-200));
     border: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
     border-radius: var(--radius-box, 0.5rem);
   }
-  /* A list of documents, held close: 4px of card around rows that hover to
-     its own corners less that 4px, so the two curves stay concentric. */
   .mv-card-list {
     display: flex;
     flex-direction: column;
-    gap: 0;
     padding: 4px;
   }
   .mv-card-list .mv-insight {
@@ -1589,6 +1777,15 @@
   }
   .mv-insight:hover {
     background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+  .mv-player-hidden {
+    display: none;
+  }
+  .mv-scroll {
+    overflow-anchor: none;
+  }
+  .mv-scroll.mv-scroll-no-player {
+    padding-bottom: 32px;
   }
 
   /* The sticky transcript bar bleeds to the sheet's edges, so nothing scrolls
@@ -1606,6 +1803,199 @@
      above it, so summary, insights and transcript are evenly spaced. */
   .mv-main {
     gap: 28px;
+  }
+
+  .mv-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+  .mv-panel[hidden] {
+    display: none;
+  }
+
+  .mv-body {
+    --tf-bleed: 16px;
+  }
+  @media (min-width: 981px) {
+    .mv-body {
+      --tf-bleed: 24px;
+    }
+  }
+  .mv-tabbar {
+    padding: var(--tf-bleed) var(--tf-bleed) 0;
+  }
+  .mv-tabbar-gap {
+    height: calc(var(--tf-bleed) - 9px);
+  }
+  .mv-tabrow {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
+  }
+  .mv-search-toggle {
+    grid-column: 2;
+    justify-self: end;
+  }
+  .mv-search-slot {
+    grid-column: 1 / -1;
+    margin-top: 8px;
+  }
+  .mv-tabrow-plain .mv-search-slot {
+    margin-top: 0;
+  }
+  .mv-search-slot:not(.mv-search-open) {
+    display: none;
+  }
+
+  .mv-main.mv-main-tabbed {
+    margin-top: 0;
+  }
+  .mv-main-tabbed > .mv-panel:first-child {
+    padding-top: 9px;
+  }
+  .mv-tabbar .mv-tabs,
+  .mv-tabbar .mv-search-slot {
+    position: relative;
+  }
+  .mv-fade-blur {
+    --fade: 24px;
+    position: absolute;
+    inset: 0 1px calc(-1 * var(--fade));
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      var(--color-base-200) 0,
+      var(--color-base-200) calc(100% - var(--fade)),
+      transparent 100%
+    );
+  }
+  .mv-fade-blur.mv-fade-blur-bottom {
+    inset: calc(-1 * var(--fade)) 1px 0;
+    background: linear-gradient(
+      to top,
+      var(--color-base-200) 0,
+      var(--color-base-200) calc(100% - var(--fade)),
+      transparent 100%
+    );
+  }
+  .mv-fade-blur > div {
+    display: none;
+  }
+  @media (min-width: 981px) {
+    .mv-fade-blur {
+      inset: 0 1px -16px;
+      background: linear-gradient(
+        to bottom,
+        color-mix(in oklch, var(--color-base-200) 88%, transparent) 0%,
+        color-mix(in oklch, var(--color-base-200) 60%, transparent) 60%,
+        transparent 100%
+      );
+    }
+    .mv-fade-blur.mv-fade-blur-bottom {
+      inset: -24px 1px 0;
+      background: linear-gradient(
+        to top,
+        color-mix(in oklch, var(--color-base-200) 88%, transparent) 0%,
+        color-mix(in oklch, var(--color-base-200) 60%, transparent) 60%,
+        transparent 100%
+      );
+    }
+    .mv-fade-blur > div {
+      --band: 20%;
+      display: block;
+      position: absolute;
+      inset: 0;
+      -webkit-backdrop-filter: blur(var(--blur));
+      backdrop-filter: blur(var(--blur));
+      -webkit-mask-image: linear-gradient(
+        to top,
+        transparent calc(var(--band) * var(--layer)),
+        black calc(var(--band) * (var(--layer) + 1)),
+        black calc(var(--band) * (var(--layer) + 2)),
+        transparent calc(var(--band) * (var(--layer) + 3))
+      );
+      mask-image: linear-gradient(
+        to top,
+        transparent calc(var(--band) * var(--layer)),
+        black calc(var(--band) * (var(--layer) + 1)),
+        black calc(var(--band) * (var(--layer) + 2)),
+        transparent calc(var(--band) * (var(--layer) + 3))
+      );
+    }
+    .mv-fade-blur > div:last-child {
+      -webkit-mask-image: linear-gradient(to top, transparent 80%, black 100%);
+      mask-image: linear-gradient(to top, transparent 80%, black 100%);
+    }
+    .mv-fade-blur-bottom > div {
+      -webkit-mask-image: linear-gradient(
+        to bottom,
+        transparent calc(var(--band) * var(--layer)),
+        black calc(var(--band) * (var(--layer) + 1)),
+        black calc(var(--band) * (var(--layer) + 2)),
+        transparent calc(var(--band) * (var(--layer) + 3))
+      );
+      mask-image: linear-gradient(
+        to bottom,
+        transparent calc(var(--band) * var(--layer)),
+        black calc(var(--band) * (var(--layer) + 1)),
+        black calc(var(--band) * (var(--layer) + 2)),
+        transparent calc(var(--band) * (var(--layer) + 3))
+      );
+    }
+    .mv-fade-blur-bottom > div:last-child {
+      -webkit-mask-image: linear-gradient(to bottom, transparent 80%, black 100%);
+      mask-image: linear-gradient(to bottom, transparent 80%, black 100%);
+    }
+  }
+  @media (min-width: 981px) {
+    .mv-tabbar-gap {
+      height: 9px;
+    }
+    .mv-search-toggle {
+      display: none;
+    }
+    .mv-search-slot,
+    .mv-search-slot:not(.mv-search-open) {
+      display: block;
+      grid-column: 2;
+      grid-row: 1;
+      margin-top: 0;
+    }
+    .mv-tabrow-plain .mv-search-slot {
+      grid-column: 1 / -1;
+    }
+    .mv-main-tabbed > .mv-panel:first-child {
+      padding-top: calc(var(--tf-bleed, 16px) - 9px);
+    }
+  }
+  .mv-tabs.tabs-box {
+    width: fit-content;
+    padding: 3px;
+    gap: 2px;
+    background-color: var(--color-base-200);
+    border: 1px solid var(--color-base-300);
+    border-radius: 8px;
+    box-shadow: none;
+  }
+  .mv-tabs .tab {
+    --tab-height: 26px;
+    height: 26px;
+    padding-inline: 12px;
+    font-size: 13px;
+    font-weight: 550;
+    border-radius: 5px;
+    color: color-mix(in oklch, var(--color-base-content) 65%, var(--color-base-200));
+  }
+  .mv-tabs .tab:hover {
+    color: var(--color-base-content);
+  }
+  .mv-tabs .tab.tab-active {
+    background-color: color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-200));
+    color: var(--color-base-content);
+    box-shadow: none;
   }
 
   .mv-toggle {
@@ -1632,19 +2022,6 @@
     --btn-fg: var(--color-base-100);
   }
 
-  /* A section heading, a step under the meeting's name above it: Summary,
-     Insights and Transcript alike, each the same 0.5rem over what it heads.
-     Over the transcript that is the search bar's own top padding, which it
-     needs when it sticks, so there the heading adds nothing of its own. */
-  .mv-section-title {
-    margin-bottom: 0.5rem;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--color-base-content);
-  }
-  .mv-section-title-bar {
-    margin-bottom: 0;
-  }
 
   /* The anchor a reader scans between turns: full-strength ink and the
      heaviest weight on the row, on a quiet surface. */

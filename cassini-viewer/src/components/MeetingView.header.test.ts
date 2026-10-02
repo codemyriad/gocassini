@@ -13,7 +13,7 @@ describe("MeetingView header", () => {
     // scrolling header below it, so the one thing saying which meeting you were
     // reading left the screen the moment you started reading it.
     const header = meetingViewSource.slice(
-      meetingViewSource.indexOf("<header class=\"sticky"),
+      meetingViewSource.indexOf("<header class=\"mv-header"),
       meetingViewSource.indexOf("</header>"),
     );
     expect(header).toContain('{meeting ? meeting.title : "Meeting transcript viewer"}');
@@ -73,7 +73,7 @@ describe("MeetingView tagging", () => {
 
   it("keeps whole-meeting tags in the header and wraps the transcript in the marking frame", () => {
     const header = meetingViewSource.slice(
-      meetingViewSource.indexOf('<header class="sticky'),
+      meetingViewSource.indexOf('<header class="mv-header'),
       meetingViewSource.indexOf("</header>"),
     );
     expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
@@ -87,15 +87,10 @@ describe("MeetingView tagging", () => {
 });
 
 describe("MeetingView linked insights", () => {
-  it("shows what a meeting was used for under its summary, not under its transcript", () => {
-    // It was a strip pinned to the bottom of the sheet, below the whole
-    // transcript, where nobody scrolled to it. It is a fact of the same kind as
-    // the summary — what came OUT of this conversation — so it reads with it.
+  it("ends the summary with the insights this meeting fed, above the transcript", () => {
     const summaryAt = meetingViewSource.indexOf("{@html summaryHtml}");
-    const insightsAt = meetingViewSource.indexOf("{#if linkedInsights.length > 0}");
-    const transcriptAt = meetingViewSource.indexOf(
-      '<p class="mv-section-title mv-section-title-bar">Transcript</p>',
-    );
+    const insightsAt = meetingViewSource.indexOf('<h2 class="mv-summary-insights-title">Insights</h2>');
+    const transcriptAt = meetingViewSource.indexOf('<div class="mv-transcript">');
     expect(summaryAt).toBeGreaterThan(-1);
     expect(insightsAt).toBeGreaterThan(summaryAt);
     expect(transcriptAt).toBeGreaterThan(insightsAt);

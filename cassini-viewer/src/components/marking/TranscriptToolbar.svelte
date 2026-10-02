@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { ChevronDown, ChevronUp, Search, X } from "@lucide/svelte";
+  import { ChevronDown, ChevronUp, ListFilter, Search, X } from "@lucide/svelte";
 
   import Kbd from "../ui/Kbd.svelte";
 
@@ -44,8 +44,8 @@
         type="search"
         autocomplete="off"
         spellcheck="false"
-        placeholder="Find in this meeting"
-        aria-label="Find in this meeting"
+        placeholder="Find in transcript"
+        aria-label="Find in transcript"
         aria-keyshortcuts="Control+F Meta+F"
         on:keydown={onKeydown}
       />
@@ -55,6 +55,19 @@
       {#if finding}
         <!-- One object at the end of the field: the count and the two steppers
              are about the search's results, not about the words typed. -->
+        <button
+          type="button"
+          class="tt-filter"
+          class:on={onlyMatching}
+          aria-pressed={onlyMatching}
+          aria-label="Show only matching turns"
+          title={onlyMatching
+            ? "Showing only the turns that mention your search. Click to show the whole transcript again."
+            : "Hide every turn that doesn't mention your search, so you can read the matches together."}
+          on:click={() => (onlyMatching = !onlyMatching)}
+        >
+          <ListFilter size={13} aria-hidden="true" />
+        </button>
         <span class="tt-matches">
           <span class="tt-count tabular-nums" role="status">
             {stops > 0 ? `${current + 1} of ${stops}` : "No matches"}
@@ -73,30 +86,13 @@
           title="Clear the search"
           on:click={() => ((query = ""), field?.focus())}
         >
-          <X size={14} aria-hidden="true" />
+          <X size={13} aria-hidden="true" />
         </button>
       {:else}
-        <Kbd size="sm">{mac ? "⌘" : "Ctrl"} F</Kbd>
+        <span class="tt-kbd"><Kbd size="sm"><span>{mac ? "⌘" : "Ctrl"}</span><span>F</span></Kbd></span>
       {/if}
     </label>
   </div>
-  <!-- Beside the field, as a switch with its sentence: a second view of the
-       same search is a setting rather than an action, and as a plain chip it
-       read as a button that would do something. -->
-  {#if finding}
-    <!-- The player's Follow control, in miniature: a tinted, outlined box
-         holding its label and its switch, so the two toggles in this sheet are
-         the same kind of thing. -->
-    <label class="tt-only" class:on={onlyMatching}>
-      <input
-        type="checkbox"
-        role="switch"
-        class="toggle toggle-sm"
-        bind:checked={onlyMatching}
-      />
-      <span title="Show only the turns your search matched">Matches only</span>
-    </label>
-  {/if}
 
 </div>
 
@@ -105,7 +101,16 @@
      app rather than the size of the toolbar around it. */
   .tt-field {
     height: 2.25rem;
+    padding-inline: 8px;
+    border-radius: 8px;
     font-size: 0.875rem;
+    background-color: var(--color-base-200);
+    border-color: var(--color-base-300);
+  }
+  .tt-field:focus-within {
+    outline: none;
+    border-color: color-mix(in oklch, var(--color-base-content) 50%, var(--color-base-200));
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-base-content) 12%, transparent);
   }
   /* The browser's own clear control for type="search" is a blue gradient disc
      that cannot be styled, as it is in the browse list's field. */
@@ -117,20 +122,50 @@
   /* The shortcut chip: readable at the field's size, and squared off like the
      code chips elsewhere rather than rounded like a pill. */
   /* Ours, because the browser's own clear control cannot be styled. */
-  .tt-clear {
+
+  .tt-clear,
+  .tt-filter {
     display: inline-flex;
     flex: none;
-    margin-left: 4px;
-    padding: 3px;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 22px;
+    height: 22px;
+    padding: 0;
     cursor: pointer;
-    background: none;
-    border: 0;
+    border: 1px solid transparent;
     border-radius: 5px;
-    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
-  .tt-clear:hover {
-    background-color: color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  .tt-clear {
+    margin-left: -3px;
+    background-color: color-mix(in oklch, var(--color-base-content) 9%, transparent);
+  }
+  .tt-filter {
+    margin-left: 4px;
+    background-color: transparent;
+    border-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
+  }
+  .tt-filter.on {
+    background-color: color-mix(in oklch, var(--color-base-content) 9%, transparent);
+    border-color: transparent;
     color: var(--color-base-content);
+  }
+  .tt-clear:hover,
+  .tt-filter:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 15%, transparent);
+    color: var(--color-base-content);
+  }
+
+  .tt-kbd {
+    display: inline-flex;
+    flex: none;
+  }
+  @media (hover: none) and (pointer: coarse) {
+    .tt-kbd {
+      display: none;
+    }
   }
 
   /* The results pill, inside the field. */
@@ -139,7 +174,7 @@
     flex: none;
     align-items: center;
     gap: 5px;
-    margin-left: 4px;
+    margin-left: -3px;
     padding: 2px;
     background-color: color-mix(in oklch, var(--color-base-content) 9%, transparent);
     /* The corners a tag chip has, like every other chip in the app. */
@@ -174,25 +209,5 @@
     opacity: 0.4;
   }
 
-  .tt-only {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: 2.25rem;
-    padding: 0 8px;
-    cursor: pointer;
-    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
-    border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-field, 0.5rem);
-    font-size: 12.5px;
-    white-space: nowrap;
-    color: var(--color-base-content);
-  }
-  /* Off is grey, on is a stronger neutral, like the player's own toggle. */
-  .tt-only.on {
-    background-color: color-mix(in oklch, var(--color-base-content) 16%, transparent);
-    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
-  }
 
 </style>
