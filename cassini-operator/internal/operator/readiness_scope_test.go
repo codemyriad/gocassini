@@ -651,3 +651,65 @@ func TestAMissingRoomIsForgottenSoTheNextCheckRemakesIt(t *testing.T) {
 		}
 	}
 }
+
+// The test recording is an invitation, not a finding, so an unproven
+// prerequisite must also hold it back. Observed on a stack with no High
+// Performance Backend: the talk probe had not yet produced its row, nothing was
+// there for suppression to consult, and the panel offered "Record a test" on an
+// installation that cannot record at all.
+func TestTheTestWaitsForEvidenceNotJustForTheAbsenceOfFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rows  []readinessCheck
+		block bool
+		says  string
+	}{
+		{"no hpb row at all",
+			[]readinessCheck{{ID: "storage", State: "passed"}, {ID: "talk.discovery", State: "passed"}},
+			true, "has not been checked yet"},
+		{"hpb never checked",
+			[]readinessCheck{{ID: "storage", State: "passed"}, {ID: "talk.hpb", State: "not_verified", Code: "host_not_checked"}, {ID: "talk.discovery", State: "passed"}},
+			true, "has not been checked yet"},
+		{"connection never checked",
+			[]readinessCheck{{ID: "storage", State: "passed"}, {ID: "talk.hpb", State: "passed"}, {ID: "talk.discovery", State: "not_verified", Code: "connection_not_checked"}},
+			true, "has not been checked yet"},
+		{"hpb failed",
+			[]readinessCheck{{ID: "storage", State: "passed"}, {ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled"}, {ID: "talk.discovery", State: "passed"}},
+			true, "needs attention first"},
+		{"everything proven",
+			[]readinessCheck{{ID: "storage", State: "passed"}, {ID: "talk.hpb", State: "passed"}, {ID: "talk.discovery", State: "passed"}},
+			false, ""},
+		// A warning is a verdict: impaired but working, so a test can still run
+		// and is worth running.
+		{"a warning still allows the test",
+			[]readinessCheck{{ID: "storage", State: "passed"}, {ID: "talk.hpb", State: "warn", Code: "signaling_unreachable"}, {ID: "talk.discovery", State: "warn"}},
+			false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := append(tc.rows, readinessCheck{ID: "test", State: "not_verified", Code: "test_not_run", Action: "test_recording"})
+			sortReadinessRows(checks)
+			suppressBlockedRows(checks)
+			var test readinessCheck
+			for _, c := range checks {
+				if c.ID == "test" {
+					test = c
+				}
+			}
+			if tc.block {
+				if test.Code != "check_blocked" {
+					t.Fatalf("test = %+v; want it to wait", test)
+				}
+				if test.Action != "" {
+					t.Errorf("a waiting test row still offers %q", test.Action)
+				}
+				if !strings.Contains(test.Message, tc.says) {
+					t.Errorf("message %q does not say %q", test.Message, tc.says)
+				}
+				return
+			}
+			if test.Code != "test_not_run" || test.Action != "test_recording" {
+				t.Fatalf("test = %+v; want it offered", test)
+			}
+		})
+	}
+}

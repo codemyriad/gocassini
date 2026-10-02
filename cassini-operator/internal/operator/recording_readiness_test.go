@@ -732,9 +732,19 @@ func TestNonOkChecksCarryARemedy(t *testing.T) {
 		if c.State == "passed" {
 			continue
 		}
-		// Every non-ok check offers SOMETHING: a button to press, or a step to
-		// follow. A check that says only what is broken is the failure this
-		// requirement exists to prevent.
+		// A row WAITING on another check is the exception, and deliberately so:
+		// its remedy belongs to the prerequisite it names, and repeating it here
+		// splits one fix across rows. Its message is what to do — look at the
+		// row it points to — and that row carries the button.
+		if c.Code == "check_blocked" {
+			if !strings.Contains(c.Message, "depends on") {
+				t.Errorf("%s is blocked without naming what it waits for: %q", c.ID, c.Message)
+			}
+			continue
+		}
+		// Every other non-ok check offers SOMETHING: a button to press, or a
+		// step to follow. A check that says only what is broken is the failure
+		// this requirement exists to prevent.
 		if c.Action == "" && len(c.Steps) == 0 {
 			t.Errorf("%s (%s) says what is wrong and nothing about what to do", c.ID, c.Code)
 		}

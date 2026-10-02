@@ -40,6 +40,21 @@ it("offers the test recording only where its prerequisites hold", () => {
   }
 });
 
+// A designer reading row order in the gallery must be reading the product's
+// order. Every fixture had drifted from it before this was pinned.
+it("renders every scenario in the order the operator sends rows", () => {
+  const order = ["configuration", "host", "host.workdir", "host.tmpdir.writable", "storage",
+    "talk.hpb", "talk.authentication", "talk.discovery", "talk.handoff", "test", "archive.search"];
+  for (const scenario of doctorScenarios) {
+    const ranks = scenarioReport(scenario.id).checks.map(check => {
+      const at = order.indexOf(check.id);
+      if (at < 0) throw new Error(`${scenario.id} has unplaced row ${check.id}`);
+      return at;
+    });
+    expect(ranks, `${scenario.id} is out of order`).toEqual([...ranks].sort((a, b) => a - b));
+  }
+});
+
 it("simulates a repair without network calls, duplicate actions or shared state", async () => {
   vi.useFakeTimers();
   const fetch = vi.fn(() => { throw new Error("A preview must never access the network"); });

@@ -79,7 +79,11 @@ export const checkLabels: Record<string, string> = {
   // Nextcloud's configuration, where it has never been.
   "talk.authentication": "Signaling server credential",
   "talk.discovery": "Talk connection",
-  "talk.hpb": "High-performance backend",
+  // Nextcloud Talk's own term for it, capitalised the way its documentation
+  // does — and the same string the operator uses when a blocked row names this
+  // one as what it is waiting for. A message naming a row something the reader
+  // cannot see on screen sends them hunting.
+  "talk.hpb": "High Performance Backend",
   // Only appears when the credential could not be provisioned. The row used to
   // double as "has Talk called us lately", which was inherently historical and
   // could never legitimately read green, so that half is gone.

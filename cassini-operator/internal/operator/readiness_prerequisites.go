@@ -39,6 +39,25 @@ var readinessRowNames = map[string]string{
 	"test":                "Test recording",
 }
 
+// readinessProvenPrerequisites are prerequisites that must have been CHECKED
+// and found good — not merely "not currently failing".
+//
+// The ordinary rule above treats a prerequisite nobody has run as no reason to
+// suppress anything, which is right for a row reporting a FINDING: hiding one
+// because a neighbour was never checked loses real information.
+//
+// It is wrong for the test recording, which is not a finding but an invitation.
+// Observed on a stack with no High Performance Backend: the talk probe had not
+// yet produced its row, so there was no `talk.hpb` for suppression to consult,
+// and the panel offered "Record a test" on an installation that cannot record
+// at all. The test must appear only where a test can succeed, so for it an
+// unproven prerequisite — missing, or merely unverified — is also a reason to
+// wait. Every row named here is emitted on every report once checked, so
+// absence genuinely means "not established" rather than "nothing to say".
+var readinessProvenPrerequisites = map[string][]string{
+	"test": {"storage", "talk.hpb", "talk.discovery"},
+}
+
 // blockedReadinessCodes are the codes that already mean "waiting on something
 // else". A row in one of these states blocks the rows that depend on IT, and is
 // not rewritten by this pass — its own wording is better than anything generic.
@@ -78,6 +97,29 @@ func suppressBlockedRows(checks []readinessCheck) {
 		if !ok || blockedReadinessCodes[row.Code] || independentReadinessCodes[row.Code] {
 			continue
 		}
+		blocked := false
+		for _, prereqID := range readinessProvenPrerequisites[id] {
+			prereq, present := byID[prereqID]
+			if present && (prereq.State == "passed" || prereq.State == "warn") {
+				continue
+			}
+			name := readinessRowNames[prereqID]
+			if name == "" {
+				name = prereqID
+			}
+			// Two different facts, said differently: a check that FAILED is
+			// somebody's to fix, a check nobody has run is somebody's to run.
+			if present && prereq.State == "needs_action" {
+				blockRow(row, name, false)
+			} else {
+				blockRow(row, name, true)
+			}
+			blocked = true
+			break
+		}
+		if blocked {
+			continue
+		}
 		for _, prereqID := range readinessPrerequisites[id] {
 			prereq, ok := byID[prereqID]
 			if !ok {
@@ -90,15 +132,24 @@ func suppressBlockedRows(checks []readinessCheck) {
 			if name == "" {
 				name = prereqID
 			}
-			row.State = "not_verified"
-			row.Code = "check_blocked"
-			row.Message = fmt.Sprintf("Not checked: this depends on %s, which needs attention first.", name)
-			// No action and no remedy of its own. Both belong to the
-			// prerequisite, and offering them here splits one fix across rows.
-			row.Action = ""
-			row.Steps = nil
-			row.Repair = ""
+			blockRow(row, name, false)
 			break
 		}
 	}
+}
+
+// blockRow rewrites a row to say what it is waiting for and stop asking to be
+// looked at. No action and no remedy of its own: both belong to the
+// prerequisite, and offering them here splits one fix across rows.
+func blockRow(row *readinessCheck, blocker string, unchecked bool) {
+	row.State = "not_verified"
+	row.Code = "check_blocked"
+	if unchecked {
+		row.Message = fmt.Sprintf("Not checked: this depends on %s, which has not been checked yet. Run all checks first.", blocker)
+	} else {
+		row.Message = fmt.Sprintf("Not checked: this depends on %s, which needs attention first.", blocker)
+	}
+	row.Action = ""
+	row.Steps = nil
+	row.Repair = ""
 }
