@@ -103,6 +103,7 @@
   const painted = new Map<string, Map<HTMLElement, string>>();
 
   $: marking = $session.status === "ready";
+  $: framed = $session.status !== "off";
   // Seeing marks and making them are separate (D-775). `marking` still governs
   // everything that DRAWS — the rail, the brackets, the marks list — so a
   // published export shows exactly what the recording carries. `editing` governs
@@ -752,7 +753,7 @@
 
   <div
     class="tf-text mt-6 grid"
-    style:grid-template-columns={marking
+    style:grid-template-columns={framed
       ? wide
         ? `68px minmax(0,1fr) ${tagColumn}px`
         : `${RAIL_NARROW}px minmax(0,1fr)`
@@ -766,7 +767,7 @@
     on:click|capture={clickStart}
     on:click={clickEnd}
   >
-    {#if marking}
+    {#if framed}
       <div data-keep-selection>
         <!-- Between the sticky bars (the tag bar has no height of its own on a
              wide screen, and on a narrow one is a dock above the player), as
