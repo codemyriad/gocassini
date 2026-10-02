@@ -9,10 +9,7 @@
     Pause,
     FileText,
     ArrowLeft,
-    Users,
     CassetteTape,
-    Copy,
-    Download,
   } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import {
@@ -23,6 +20,8 @@
     type JudgedDisplaySegment,
   } from "../core/transcript";
   import TranscriptWords from "./TranscriptWords.svelte";
+  import ExportMenu from "./ExportMenu.svelte";
+  import MeetingFacts from "./MeetingFacts.svelte";
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
@@ -59,7 +58,7 @@
   import type { PortableTranscriptDescriptor } from "../viewer/portable";
   import { displaySegmentsForArtifact, safeMeetingStem, transcriptMarkdown } from "../viewer/meetingExport";
   import { loadAudioFile, saveBlob, saveTranscript } from "../viewer/exportTransfer";
-  import { formatMeetingDate, hasMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
+  import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { hasRoom, roomLabelOf } from "../viewer/rooms";
   import {
     formatInsightCreated,
@@ -1099,6 +1098,17 @@
           {/each}
         </div>
       {/if}
+      {#if transcriptIndex}
+        <ExportMenu
+          canCopy={!copyExportBusy && displaySegments.length > 0}
+          canDownloadTranscript={displaySegments.length > 0}
+          canDownloadAudio={Boolean(audioSrc) && !audioExportBusy}
+          status={exportStatus}
+          on:copy={copyTranscript}
+          on:transcript={downloadTranscript}
+          on:audio={downloadAudio}
+        />
+      {/if}
     </div>
 
 
@@ -1110,64 +1120,19 @@
     <!-- The tags stay with the name: they are the two things that say WHICH
          meeting this is, and both are worth having while reading it. -->
     {#if meeting}
-      <MeetingTags session={marks} vocabulary={tagVocabulary} />
-    {/if}
-    {#if transcriptIndex}
-      <div class="mt-2 flex flex-wrap items-center gap-1" role="group" aria-label="Take this meeting with you">
-        <button class="btn btn-ghost btn-xs" type="button" disabled={copyExportBusy || displaySegments.length === 0} on:click={copyTranscript}>
-          <Copy size={14} aria-hidden="true" /> Copy transcript
-        </button>
-        <button class="btn btn-ghost btn-xs" type="button" disabled={displaySegments.length === 0} on:click={downloadTranscript}>
-          <Download size={14} aria-hidden="true" /> Download transcript
-        </button>
-        <button class="btn btn-ghost btn-xs" type="button" disabled={!audioSrc || audioExportBusy} on:click={downloadAudio}>
-          <Download size={14} aria-hidden="true" /> Download audio
-        </button>
-        <span class="text-xs text-base-content/70" role="status">{exportStatus}</span>
+      <div class="mt-2 flex flex-wrap items-center gap-1.5">
+        <span class="mv-meta contents">
+          <MeetingFacts
+            dateLabel={meeting.dateLabel}
+            room={hasRoom(meeting) ? roomLabelOf(meeting) : null}
+            durationMs={transcriptIndex ? clampedDurationMs : 0}
+            {speakerNames}
+          />
+        </span>
+        <MeetingTags session={marks} vocabulary={tagVocabulary} />
       </div>
     {/if}
   </header>
-
-  <!-- Under the sticky header and scrolling away with the transcript: when a
-       meeting happened, where, how long it ran and who was in it are read once
-       on arrival, and a reader deep in the transcript is not asking them. -->
-  {#if meeting}
-    <div class="mv-meta px-4 min-[981px]:px-6">
-      <div class="mv-facts">
-        {#if hasMeetingDate(meeting.dateLabel)}
-          <span>{formatMeetingDate(meeting.dateLabel)}</span>
-        {/if}
-        {#if hasMeetingDate(meeting.dateLabel) && hasRoom(meeting)}
-          <span class="mv-rule" aria-hidden="true"></span>
-        {/if}
-        {#if hasRoom(meeting)}
-          <span class="truncate">{roomLabelOf(meeting)}</span>
-        {/if}
-        {#if transcriptIndex && clampedDurationMs > 0}
-          {#if hasMeetingDate(meeting.dateLabel) || hasRoom(meeting)}
-            <span class="mv-rule" aria-hidden="true"></span>
-          {/if}
-          <span class="tabular-nums">{formatClockTime(clampedDurationMs)}</span>
-        {/if}
-      </div>
-      {#if speakerNames.length > 0}
-        <div class="mv-speakers">
-          <!-- The count is the first chip: it labels the row from inside it,
-               so the names start a line rather than trailing a heading. -->
-          <span
-            class="mv-speaker mv-speaker-count"
-            title={`${speakerNames.length} ${speakerNames.length === 1 ? "participant" : "participants"}`}
-          >
-            <Users size={12} aria-hidden="true" />
-            {speakerNames.length}
-          </span>
-          {#each speakerNames as name}
-            <span class="mv-speaker">{name}</span>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
 
   {#if !transcriptIndex && (errorMessage || notFoundMessage)}
     <div class="grid place-items-center flex-1 p-4">
@@ -1626,9 +1591,6 @@
     background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
 
-  /* The identifying line: one size, one colour, separated by the rule the
-     meeting rows use, so it reads as a sentence rather than as four labelled
-     controls. */
   /* The sticky transcript bar bleeds to the sheet's edges, so nothing scrolls
      through the gap between it and the header above. */
   .mv-main {
@@ -1684,43 +1646,6 @@
     margin-bottom: 0;
   }
 
-  .mv-meta {
-    flex: none;
-    padding-top: 20px;
-    /* A wider gap under the participants than between the cards below: the
-       metadata is about the meeting, and what follows is what was written
-       about it. */
-    padding-bottom: 20px;
-  }
-  .mv-facts {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 2px 10px;
-    min-width: 0;
-    font-size: 13px;
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
-  }
-  .mv-rule {
-    flex: none;
-    width: 1px;
-    height: 10px;
-    background-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
-  }
-
-  /* Who was in it, on its own line: a list of names is a different kind of
-     fact from when and where, and it is the one that grows. */
-  /* Who was in it, on the same ground as the line above it: a bordered card
-     made a list of names look like a section of its own, when it is one more
-     fact about the meeting. */
-  .mv-speakers {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-    margin-top: 12px;
-  }
-  /* The corners a tag chip has, since that is what these look like. */
   /* The anchor a reader scans between turns: full-strength ink and the
      heaviest weight on the row, on a quiet surface. */
   .mv-speaker-name {
@@ -1767,18 +1692,4 @@
     margin-top: 0;
   }
 
-  .mv-speaker-count {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-variant-numeric: tabular-nums;
-    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
-  }
-  .mv-speaker {
-    padding: 2px 7px;
-    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
-    border-radius: 5px;
-    font-size: 12px;
-    color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
-  }
 </style>

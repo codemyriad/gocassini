@@ -736,6 +736,19 @@ span[data-word-id] {
   --tag-border: color-mix(in oklab, var(--tag) var(--tag-edge-mix), var(--color-base-100));
 }
 
+.btn.btn-quiet {
+  --btn-bg: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  --btn-border: var(--color-base-300);
+  --btn-fg: var(--color-base-content);
+  --btn-shadow: none;
+  --btn-inset: none;
+  text-shadow: none;
+}
+.btn.btn-quiet:hover,
+.btn.btn-quiet[aria-expanded="true"] {
+  --btn-bg: color-mix(in oklch, var(--color-base-content) 14%, transparent);
+}
+
 /* The surface of every tag popover: the picker, the swatches, the icons, the manager's menu. */
 .tag-popover {
   z-index: 50;

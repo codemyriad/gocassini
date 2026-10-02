@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import meetingFactsSource from "./MeetingFacts.svelte?raw";
 import meetingViewSource from "./MeetingView.svelte?raw";
 
 // Source-level assertions, for the reason MeetingList.test.ts gives: the suite
@@ -17,16 +18,13 @@ describe("MeetingView header", () => {
     );
     expect(header).toContain('{meeting ? meeting.title : "Meeting transcript viewer"}');
     expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
-    // When it happened, where, how long and who was in it are read once on
-    // arrival, so they scroll away with the transcript rather than holding a
-    // third of the screen through it.
-    expect(header).not.toContain("formatMeetingDate(meeting.dateLabel)");
-    expect(meetingViewSource).toContain('<div class="mv-meta px-4 min-[981px]:px-6">');
-    const meta = meetingViewSource.slice(meetingViewSource.indexOf('class="mv-meta'));
-    expect(meta).toContain("roomLabelOf(meeting)");
-    expect(meta).toContain("formatMeetingDate(meeting.dateLabel)");
-    expect(meta).toContain("formatClockTime(clampedDurationMs)");
-    expect(meta).toContain("{#each speakerNames as name}");
+    // When it happened, where, how long and who was in it sit behind one chip
+    // in the header that opens them in a popover, instead of a block of facts
+    // taking the top of the page.
+    expect(header).toContain("<MeetingFacts");
+    expect(header).toContain("room={hasRoom(meeting) ? roomLabelOf(meeting) : null}");
+    expect(header).toContain("durationMs={transcriptIndex ? clampedDurationMs : 0}");
+    expect(header).toContain('<span class="mv-meta contents">');
     // And there is no second header left to scroll away.
     expect(meetingViewSource).not.toContain('class="m-4 mb-8 min-[981px]:mx-8');
   });
@@ -40,14 +38,13 @@ describe("MeetingView header", () => {
   it("renders each fact only where it is known", () => {
     // The room and the date come from the catalog and are there before anything
     // loads; the duration and the speakers come out of the artifact and arrive
-    // with it. A duration of 0:00 under a title is a claim, not a placeholder.
-    expect(meetingViewSource).toContain("{#if transcriptIndex && clampedDurationMs > 0}");
-    expect(meetingViewSource).toContain("{#if speakerNames.length > 0}");
-    // The room and the date were the exceptions, and rendered their own
-    // absence: "No room", and the meeting's id standing under a calendar icon
-    // where a date belongs (D-775).
-    expect(meetingViewSource).toContain("{#if hasRoom(meeting)}");
-    expect(meetingViewSource).toContain("{#if hasMeetingDate(meeting.dateLabel)}");
+    // with it. A duration of 0:00 is a claim, not a placeholder, and the room
+    // and date never render their own absence (D-775).
+    expect(meetingFactsSource).toContain("{#if durationMs > 0}");
+    expect(meetingFactsSource).toContain("{#if speakerNames.length > 0}");
+    expect(meetingFactsSource).toContain("{#if room}");
+    expect(meetingFactsSource).toContain("$: dated = hasMeetingDate(dateLabel);");
+    expect(meetingFactsSource).toContain("{#if hasAny}");
   });
 
   it("supports the surface prop for embed mode", () => {

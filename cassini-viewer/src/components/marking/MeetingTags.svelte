@@ -25,7 +25,7 @@
 </script>
 
 {#if $session.status !== "off" && $session.status !== "loading"}
-  <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Tags on the whole meeting">
+  <div class="flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Tags on the whole meeting">
     {#if $session.status === "ready"}
       {#each view.whole as look (look.tag.id)}
         <TagChip
@@ -40,13 +40,13 @@
         <button
           bind:this={addButton}
           type="button"
-          class="btn btn-ghost btn-xs h-auto min-h-0 gap-1 border border-dashed border-base-content/30 px-2 py-0.5 font-medium"
+          class="add-tag"
           aria-haspopup="dialog"
           aria-expanded={adding}
           disabled={$session.busy}
           on:click={() => (adding = !adding)}
         >
-          <Plus size={12} aria-hidden="true" />Add tag
+          <Plus size={11} aria-hidden="true" />Add tag
         </button>
       {/if}
       {#if lost > 0}
@@ -101,3 +101,37 @@
     on:close={() => (adding = false)}
   />
 {/if}
+
+<style>
+  .add-tag {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 3px;
+    box-sizing: border-box;
+    height: 18px;
+    padding: 0 5px;
+    font-size: 11.5px;
+    font-weight: 550;
+    line-height: 1;
+    white-space: nowrap;
+    color: color-mix(in oklch, var(--color-base-content) 75%, var(--color-base-200));
+    background: none;
+    border: 1px dashed color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .add-tag:hover:not(:disabled),
+  .add-tag[aria-expanded="true"] {
+    color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+  .add-tag:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  .add-tag:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+</style>
