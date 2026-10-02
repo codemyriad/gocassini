@@ -116,7 +116,7 @@ describe("the embed's styling hooks (D-838)", () => {
   it("lay out inline with hooks MeetingView actually carries", () => {
     expect(LAYOUTS).toEqual(["inline"]);
     expect(attributesDoc).toContain('`layout`');
-    for (const hook of ["mv-title", "mv-meta", "mv-details", "mv-scroll", "mv-player"]) {
+    for (const hook of ["mv-title", "mv-meta", "mv-scroll", "mv-player"]) {
       expect(EMBED_CSS).toContain(`.${hook}`);
       expect(meetingViewSource).toMatch(new RegExp(`class="${hook}[ "]`));
     }

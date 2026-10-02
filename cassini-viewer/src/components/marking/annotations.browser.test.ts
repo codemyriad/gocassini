@@ -49,15 +49,16 @@ describe("annotation controls with delayed saves", () => {
     await openMeeting();
     await header().getByRole("button", { name: "Add tag", exact: true }).click();
     await pickTag("Immediate");
-    await expect.element(header().getByRole("button", { name: "Remove Immediate", exact: true })).toBeVisible();
+    await expect.element(header().getByRole("button", { name: "Immediate tag options", exact: true })).toBeVisible();
     await expect.element(header().getByRole("button", { name: "Add tag", exact: true })).toBeEnabled();
     await expect.element(header().getByText("Saving annotations…", { exact: true })).toBeVisible();
     expect(fixture.snapshot().annotations!.items).toEqual([]);
 
     await closeMeeting();
     await openMeeting();
-    await header().getByRole("button", { name: "Remove Immediate", exact: true }).click();
-    await expect.element(header().getByRole("button", { name: "Remove Immediate", exact: true })).not.toBeInTheDocument();
+    await header().getByRole("button", { name: "Immediate tag options", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Remove Immediate" }).click();
+    await expect.element(header().getByRole("button", { name: "Immediate tag options", exact: true })).not.toBeInTheDocument();
     expect(fixture.apply).toHaveBeenCalledTimes(1);
     expect(fixture.apply.mock.calls[0][1].ops).toEqual([
       { op: "mark", tag: { label: "Immediate" }, target: { kind: "meeting" } },
@@ -79,11 +80,15 @@ describe("annotation controls with delayed saves", () => {
     mountApp();
     await openMeeting();
     await page.getByRole("button", { name: /^Focus, .*marked by ana$/ }).click();
+    await expect.element(page.getByRole("slider", { name: "Where the section ends" })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Remove", exact: true })).not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
     page.getByRole("slider", { name: "Where the section ends" }).element().focus();
     await userEvent.keyboard("{ArrowRight}");
     await page.getByRole("button", { name: /^Save changes/ }).click();
     await expect.element(page.getByRole("button", { name: /^Save changes/ })).not.toBeInTheDocument();
     await page.getByRole("button", { name: /^Focus, .*marked by You$/ }).click();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
     await page.getByRole("button", { name: "Remove", exact: true }).click();
     await expect.element(page.getByRole("button", { name: /^Focus, .*marked by/ })).not.toBeInTheDocument();
     expect(fixture.apply).toHaveBeenCalledTimes(1);

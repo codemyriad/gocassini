@@ -34,6 +34,14 @@
   // applied here, because the rail and the result-line chip both need to agree
   // with it and neither is inside this component.
   export let meetings: MeetingCatalogEntry[] = [];
+  export let loading = false;
+  let fadingIn = false;
+  let shown = !loading;
+  $: if (!shown && !loading) {
+    shown = true;
+    fadingIn = true;
+    setTimeout(() => (fadingIn = false), 400);
+  }
   // The whole catalog's size, for "12 of 47 meetings" — the denominator is the
   // archive, not the current room, so a narrowed list says so.
   export let totalCount = 0;
@@ -179,7 +187,19 @@
   // Tags join the promise only where there are any. An install with no tags
   // yet would otherwise offer to search something that cannot match, which is
   // the same empty promise searchOffered exists to avoid.
-  $: tagsSearchable = meetingTags.size > 0;
+  const TAGS_SEARCHABLE_KEY = "cassini:list:tags-searchable";
+  let rememberedTagsSearchable = false;
+  try {
+    rememberedTagsSearchable = localStorage.getItem(TAGS_SEARCHABLE_KEY) === "1";
+  } catch {
+    rememberedTagsSearchable = false;
+  }
+  $: tagsSearchable = tags === null ? rememberedTagsSearchable : meetingTags.size > 0;
+  $: if (tags !== null) {
+    try {
+      localStorage.setItem(TAGS_SEARCHABLE_KEY, meetingTags.size > 0 ? "1" : "0");
+    } catch {}
+  }
   $: searchBoxLabel = searchOffered
     ? tagsSearchable
       ? `Search ${matchNounPlural}, their tags and what was said in them`
@@ -286,7 +306,7 @@
   aria-label="Meeting list"
   class="meeting-list flex flex-col min-w-0 min-h-0 h-full bg-base-100"
 >
-  <header class="searchbar flex-none">
+  <header class="searchbar flex-none" class:searchbar-pending={!shown} class:searchbar-in={fadingIn}>
     <div class="search-row">
       <!-- Narrow only: the rail is off-canvas there, so this is the way back to
            it. Labelled with the live room so the button also reports what the
@@ -348,6 +368,7 @@
     <!-- Fixed height: a chip appearing must not push the list down under the
          pointer. -->
     <div class="resultline" role="status">
+      {#if shown}
       {#if types.meetings}
         <span>{narrowed ? `${visibleMeetings.length} of ${totalCount} meetings` : plural(totalCount, "meeting")}</span>
       {/if}
@@ -362,6 +383,7 @@
       {:else if insightsOffered && insightsError}
         <span class="rule" aria-hidden="true"></span>
         <span>Insights could not be listed.</span>
+      {/if}
       {/if}
       {#if selectedRoomName !== null}
         <span class="chip">
@@ -411,7 +433,8 @@
   </header>
 
   <div
-    class="list-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable"
+    class="list-scroll relative flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable"
+    class:list-fade-in={fadingIn}
     class:list-scroll-inset={bottomOverlay}
     style={bottomOverlay ? `--list-bottom-inset: ${Math.round(bottomOverlayHeight) + 24}px` : undefined}
   >
@@ -437,6 +460,7 @@
         </span>
       </p>
     {/if}
+    {#if shown}
     {#if totalCount === 0 && totalInsightCount === 0}
       <div class="list-empty">
         <strong>No meetings yet</strong>
@@ -655,6 +679,7 @@
         </button>
       {/if}
     {/if}
+    {/if}
   </div>
 
   {#if tags && tagging}
@@ -773,6 +798,12 @@
     padding: 1rem var(--list-x) 6px;
     background-color: var(--color-base-100);
     border-bottom: 1px solid var(--color-base-300);
+  }
+  .searchbar.searchbar-pending {
+    visibility: hidden;
+  }
+  .searchbar.searchbar-in {
+    animation: list-in 250ms ease both;
   }
 
   .search-row {
@@ -975,6 +1006,15 @@
   }
   .list-note-error :global(svg) {
     color: var(--color-error);
+  }
+
+  .list-fade-in > :global(*) {
+    animation: list-in 250ms ease both;
+  }
+  @keyframes list-in {
+    from {
+      opacity: 0;
+    }
   }
 
   .group-head {

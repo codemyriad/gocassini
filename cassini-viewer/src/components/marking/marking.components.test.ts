@@ -65,7 +65,7 @@ describe("a meeting view with no annotation loader", () => {
   it("offers find and nothing else: no rail, no marking, no marks, no header tags", () => {
     const session = createMarksSession(() => {});
     const html = frame(session);
-    expect(html).toContain('aria-label="Find in this meeting"');
+    expect(html).toContain('aria-label="Find in transcript"');
     expect(html).not.toContain("The whole meeting");
     expect(html).not.toContain("Mark with a tag");
     expect(html).not.toContain("Marks");
@@ -82,7 +82,7 @@ describe("a meeting view with its marks loaded", () => {
     const saving = render(MeetingTags, { props: { session } }).body;
     expect(saving).toContain("Saving annotations");
     expect(saving).not.toContain("Tags saved");
-    expect(saving).toContain('aria-label="Remove budget"');
+    expect(saving).toContain('aria-label="budget tag options"');
     expect(saving).not.toContain("disabled");
     await Promise.resolve();
     reject(new AnnotationError(400, "Section could not be removed"));
@@ -109,10 +109,11 @@ describe("a meeting view with its marks loaded", () => {
     expect(html).not.toContain("Mark with a tag…");
   });
 
-  it("puts the whole-meeting tags in the header, removable, with a way to add one", async () => {
+  it("puts the whole-meeting tags in the header, opening to remove, with a way to add one", async () => {
     const html = render(MeetingTags, { props: { session: await opened(async () => meeting(true)) } }).body;
     expect(html).toContain("budget");
-    expect(html).toContain('aria-label="Remove budget"');
+    expect(html).toContain('aria-label="budget tag options"');
+    expect(html).not.toContain('aria-label="Remove budget"');
     expect(html).toContain("Add tag");
     expect(html).not.toContain("can't be placed");
   });
@@ -173,7 +174,7 @@ describe("a meeting view that can read marks but not write them", () => {
     expect(html).not.toContain("Mark with a tag…");
     const header = render(MeetingTags, { props: { session } }).body;
     expect(header).not.toContain("Add tag");
-    expect(header).not.toContain('aria-label="Remove budget"');
+    expect(header).not.toContain('aria-label="budget tag options"');
   });
 
   it("still says which marks cannot be placed, without offering to remove them", async () => {
@@ -201,7 +202,7 @@ describe("a meeting view that can read marks but not write them", () => {
   });
 
   it("keeps find, which reads and changes nothing", async () => {
-    expect(frame(await readOnly(async () => meeting(true)))).toContain('aria-label="Find in this meeting"');
+    expect(frame(await readOnly(async () => meeting(true)))).toContain('aria-label="Find in transcript"');
   });
 });
 
@@ -209,21 +210,18 @@ describe("the stretch toolbar", () => {
   const toolbar = (props: Record<string, unknown>) =>
     render(StretchToolbar, { props: { startMs: 1234, endMs: 5470, ...props } }).body;
 
-  it("offers to tag a new section, and to clear it, with its times", () => {
+  it("offers to copy, tag or cancel a new section, without repeating its times", () => {
     const html = toolbar({});
-    expect(html).toContain("0:01.2");
-    expect(html).toContain("0:05.4");
+    expect(html).toContain("Copy text");
     expect(html).toContain("Tag selection");
-    expect(html).toContain("Clear");
-    // No mode to set before tagging, and nothing to offer again yet.
-    expect(html).not.toContain("Keep this tag ready");
+    expect(html).toContain("Cancel");
+    expect(html).not.toContain("0:01.2");
+    expect(html).not.toContain("0:05.4");
     expect(html).not.toContain("Tag as ");
   });
 
-  it("offers the last tag used again, in one click, beside the way to pick any", () => {
-    const html = toolbar({ recent: { tagId: "t-hiring", label: "hiring" } });
-    expect(html).toContain('aria-label="Tag as hiring"');
-    expect(html).toContain("Tag selection");
+  it("says when the selection has been copied", () => {
+    expect(toolbar({ copied: true })).toContain("Copied");
   });
 
   it("saves a moved mark only when asked, and can remove it", async () => {
@@ -240,6 +238,19 @@ describe("the stretch toolbar", () => {
     expect(moved).toContain("Save changes");
     expect(moved).toContain("Remove");
     expect(moved).toContain("Cancel");
+  });
+
+  it("opens an existing mark read-only, with editing a step away", async () => {
+    const session = await opened(async () => meeting(true));
+    let state = { status: "off" } as Parameters<typeof viewMarks>[0];
+    session.subscribe((value) => (state = value))();
+    const mark = viewMarks(state, []).placed[0]!;
+    const html = toolbar({ mark, locked: true });
+    expect(html).toContain(mark.item.actor.id);
+    expect(html).toContain("Edit");
+    expect(html).toContain("Done");
+    expect(html).not.toContain("Remove");
+    expect(html).not.toContain("Save changes");
   });
 });
 

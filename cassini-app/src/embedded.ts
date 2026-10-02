@@ -138,6 +138,8 @@ export function neutralizeNestedContentChrome(
 // <div id="content"> (falling back to <body>), attaches an OPEN shadow root,
 // injects the bundled stylesheet at cssHref INTO the shadow, and returns the
 // #app element — inside the shadow — the SPA mounts into. Idempotent.
+const STYLESHEET_REVEAL_TIMEOUT_MS = 3000;
+
 export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement {
   const existingHost = doc.getElementById("cassini-shadow-host");
   const host = existingHost ?? doc.createElement("div");
@@ -168,14 +170,20 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
   if (appRoot) {
     return appRoot as HTMLElement;
   }
+  appRoot = doc.createElement("div");
+  (appRoot as HTMLElement).id = "app";
   if (cssHref) {
+    const root = appRoot as HTMLElement;
     const link = doc.createElement("link");
     link.rel = "stylesheet";
     link.href = cssHref;
+    root.style.visibility = "hidden";
+    const reveal = () => root.style.removeProperty("visibility");
+    link.addEventListener("load", reveal, { once: true });
+    link.addEventListener("error", reveal, { once: true });
+    setTimeout(reveal, STYLESHEET_REVEAL_TIMEOUT_MS);
     shadow.appendChild(link);
   }
-  appRoot = doc.createElement("div");
-  (appRoot as HTMLElement).id = "app";
   shadow.appendChild(appRoot);
   return appRoot as HTMLElement;
 }

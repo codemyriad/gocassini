@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import meetingFactsSource from "./MeetingFacts.svelte?raw";
 import meetingViewSource from "./MeetingView.svelte?raw";
 
 // Source-level assertions, for the reason MeetingList.test.ts gives: the suite
@@ -12,21 +13,18 @@ describe("MeetingView header", () => {
     // scrolling header below it, so the one thing saying which meeting you were
     // reading left the screen the moment you started reading it.
     const header = meetingViewSource.slice(
-      meetingViewSource.indexOf("<header class=\"sticky"),
+      meetingViewSource.indexOf("<header class=\"mv-header"),
       meetingViewSource.indexOf("</header>"),
     );
     expect(header).toContain('{meeting ? meeting.title : "Meeting transcript viewer"}');
-    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
-    // When it happened, where, how long and who was in it are read once on
-    // arrival, so they scroll away with the transcript rather than holding a
-    // third of the screen through it.
-    expect(header).not.toContain("formatMeetingDate(meeting.dateLabel)");
-    expect(meetingViewSource).toContain('<div class="mv-meta px-4 min-[981px]:px-6">');
-    const meta = meetingViewSource.slice(meetingViewSource.indexOf('class="mv-meta'));
-    expect(meta).toContain("roomLabelOf(meeting)");
-    expect(meta).toContain("formatMeetingDate(meeting.dateLabel)");
-    expect(meta).toContain("formatClockTime(clampedDurationMs)");
-    expect(meta).toContain("{#each speakerNames as name}");
+    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />");
+    // When it happened, where, how long and who was in it sit behind one chip
+    // in the header that opens them in a popover, instead of a block of facts
+    // taking the top of the page.
+    expect(header).toContain("<MeetingFacts");
+    expect(header).toContain("room={hasRoom(meeting) ? roomLabelOf(meeting) : null}");
+    expect(header).toContain("durationMs={transcriptIndex ? clampedDurationMs : 0}");
+    expect(header).toContain('<span class="mv-meta contents">');
     // And there is no second header left to scroll away.
     expect(meetingViewSource).not.toContain('class="m-4 mb-8 min-[981px]:mx-8');
   });
@@ -40,14 +38,13 @@ describe("MeetingView header", () => {
   it("renders each fact only where it is known", () => {
     // The room and the date come from the catalog and are there before anything
     // loads; the duration and the speakers come out of the artifact and arrive
-    // with it. A duration of 0:00 under a title is a claim, not a placeholder.
-    expect(meetingViewSource).toContain("{#if transcriptIndex && clampedDurationMs > 0}");
-    expect(meetingViewSource).toContain("{#if speakerNames.length > 0}");
-    // The room and the date were the exceptions, and rendered their own
-    // absence: "No room", and the meeting's id standing under a calendar icon
-    // where a date belongs (D-775).
-    expect(meetingViewSource).toContain("{#if hasRoom(meeting)}");
-    expect(meetingViewSource).toContain("{#if hasMeetingDate(meeting.dateLabel)}");
+    // with it. A duration of 0:00 is a claim, not a placeholder, and the room
+    // and date never render their own absence (D-775).
+    expect(meetingFactsSource).toContain("{#if durationMs > 0}");
+    expect(meetingFactsSource).toContain("{#if speakerNames.length > 0}");
+    expect(meetingFactsSource).toContain("{#if room}");
+    expect(meetingFactsSource).toContain("$: dated = hasMeetingDate(dateLabel);");
+    expect(meetingFactsSource).toContain("{#if hasAny}");
   });
 
   it("supports the surface prop for embed mode", () => {
@@ -76,10 +73,10 @@ describe("MeetingView tagging", () => {
 
   it("keeps whole-meeting tags in the header and wraps the transcript in the marking frame", () => {
     const header = meetingViewSource.slice(
-      meetingViewSource.indexOf('<header class="sticky'),
+      meetingViewSource.indexOf('<header class="mv-header'),
       meetingViewSource.indexOf("</header>"),
     );
-    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
+    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />");
     const frameAt = meetingViewSource.indexOf("<TranscriptFrame");
     expect(frameAt).toBeGreaterThan(-1);
     expect(meetingViewSource.indexOf("{#each transcriptRows as row (row.key)}")).toBeGreaterThan(frameAt);
@@ -90,15 +87,10 @@ describe("MeetingView tagging", () => {
 });
 
 describe("MeetingView linked insights", () => {
-  it("shows what a meeting was used for under its summary, not under its transcript", () => {
-    // It was a strip pinned to the bottom of the sheet, below the whole
-    // transcript, where nobody scrolled to it. It is a fact of the same kind as
-    // the summary — what came OUT of this conversation — so it reads with it.
+  it("ends the summary with the insights this meeting fed, above the transcript", () => {
     const summaryAt = meetingViewSource.indexOf("{@html summaryHtml}");
-    const insightsAt = meetingViewSource.indexOf("{#if linkedInsights.length > 0}");
-    const transcriptAt = meetingViewSource.indexOf(
-      '<p class="mv-section-title mv-section-title-bar">Transcript</p>',
-    );
+    const insightsAt = meetingViewSource.indexOf('<h2 class="mv-summary-insights-title">Insights</h2>');
+    const transcriptAt = meetingViewSource.indexOf('<div class="mv-transcript">');
     expect(summaryAt).toBeGreaterThan(-1);
     expect(insightsAt).toBeGreaterThan(summaryAt);
     expect(transcriptAt).toBeGreaterThan(insightsAt);
