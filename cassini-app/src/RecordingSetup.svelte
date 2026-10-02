@@ -19,7 +19,16 @@
   let stale = false;
   let panel = "";
   let panelOwner = "";
-  $: rows = report ? readinessRows(report).map(check => stale ? { ...check, state: "not_verified" as const, message: "Could not refresh this check. Check again for its current status." } : check) : [];
+  // The rows the operator sent, unaltered.
+  //
+  // A failed refresh used to rewrite EVERY row — state forced to not_verified,
+  // message replaced with "Could not refresh this check" — so one failed
+  // request erased the whole diagnosis. With no backend configured, the single
+  // real fault disappeared because a fetch failed. The findings the operator
+  // last gave are still the findings; that the panel could not reach it again
+  // is reported once, by the error banner, and belongs to the panel rather than
+  // to any check.
+  $: rows = report ? readinessRows(report) : [];
   let provisioningURL = "";
   let talkSettingsURL = "";
   let alive = true;
@@ -147,9 +156,13 @@
               {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
             </div>
             <div class="flex flex-wrap gap-2">
-              {#if check.repair}
+              {#if check.repair && repairLabels[check.repair]}
+                <!-- Only a repair this build knows how to name. "Fix this" for an
+                     unrecognised action offered a button whose effect the panel
+                     could not describe, which is the panel speaking for the
+                     operator again. -->
                 <button class="btn btn-sm btn-primary" disabled={busy}
-                  on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair] ?? "Fix this"}</button>
+                  on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair]}</button>
               {/if}
               {#if check.checkable && rowActions(check).every((item) => item.action !== "recheck")}
                 <button class="btn btn-sm btn-outline" disabled={busy}

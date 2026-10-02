@@ -507,3 +507,35 @@ func TestABlockedRowIsNotCheckable(t *testing.T) {
 	}
 	t.Fatal("talk.discovery missing")
 }
+
+// The operator reports the credential row in every state, including configured.
+//
+// The panel used to invent this row whenever the operator omitted it, choosing
+// its state, message, action, position and its own suppression rule — and
+// drifted, carrying wording this function had already replaced.
+func TestOperatorReportsTheCredentialRowWhenItIsConfigured(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	putRecordingSetup(t, rt, `{"internal_secret":"a-saved-secret"}`, 200)
+
+	var row *readinessCheck
+	for _, c := range rt.readiness(context.Background()).Checks {
+		if c.ID == "talk.authentication" {
+			copy := c
+			row = &copy
+		}
+	}
+	if row == nil {
+		t.Fatal("the operator omitted talk.authentication; the panel must not have to invent it")
+	}
+	if row.State != "passed" || row.Code != "internal_secret_configuration" {
+		t.Fatalf("configured credential = %+v", row)
+	}
+	// Claims only what saving proves. Whether Talk accepts it is the connection
+	// check's to establish, and claiming more reads green on an install that
+	// cannot record.
+	if !strings.Contains(row.Message, "connection check") {
+		t.Errorf("the row overclaims: %q", row.Message)
+	}
+}

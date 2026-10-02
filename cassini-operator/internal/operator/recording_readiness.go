@@ -636,6 +636,25 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 				readinessStep{Label: "Standalone signaling server: the `internalsecret` under `[clients]` in its configuration file"},
 				readinessStep{Label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until the connection is checked"})
 		}
+	} else if !failed {
+		// The configured case, which the OPERATOR now reports too.
+		//
+		// It used to be the panel's: when this row was absent the panel invented
+		// one, choosing its state, its message, its action, its position, and
+		// its own rule for when to suppress it. Five decisions this function
+		// already makes for every other row, duplicated in TypeScript, and
+		// drifted — the panel still carried the wording this row stopped using
+		// days ago.
+		//
+		// "Configured", not "passed as verified": saving a secret proves it was
+		// saved. Whether it is the RIGHT secret is the connection check's to
+		// establish, and claiming more here is how a row reads green on an
+		// install that cannot record.
+		message := "An internal secret is saved. The connection check is what confirms Talk accepts it."
+		if source == "env" {
+			message = "The internal secret comes from Cassini's deployment configuration. The connection check is what confirms Talk accepts it."
+		}
+		add("talk.authentication", "passed", "internal_secret_configuration", message, "configure_talk")
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		add("talk.handoff", "needs_action", "recording_secret_missing", "Cassini could not provision its recording credential. Check its persistent storage.", "connect_talk")

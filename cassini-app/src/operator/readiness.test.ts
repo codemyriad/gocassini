@@ -15,33 +15,35 @@ describe("recording setup", () => {
   expect(readSetupHealth({ok:true,state:"provisioned",recording_state:"needs_action"})?.recordingState).toBe("needs_action");
   expect(readSetupHealth({ok:true,state:"provisioned",recording_state:"warn"})?.recordingState).toBe("warn");
  });
- it("names optional transcription separately from audio recording", () => {
-  const report = {
-   state: "warn", recording_state: "passed",
-   checks: [{ id: "processing", state: "warn", code: "transcription_unavailable", message: "Model unavailable" }],
-  } as RecordingReadiness;
-  expect(readinessTitle(report)).toBe("Recording ready; transcription needs attention");
-  report.recording_state = "not_verified";
-  expect(readinessTitle(report)).toBe("Recording setup needs verification; transcription needs attention");
-  report.recording_state = "needs_action";
-  report.checks.push({ id: "storage", state: "needs_action", code: "storage_incomplete", message: "" });
-  expect(readinessTitle(report)).toBe("One recording check needs attention");
-  report.recording_state = "warn";
-  expect(readinessTitle(report)).toBe("Recording checks need attention");
+ // Both of the tests this replaces were built on the `processing` row, removed
+ // in the 2026-09-25 review — so they had been pinning unreachable branches of
+ // readinessTitle ever since.
+ it("takes its verdict from the operator and counts rows only for the wording", () => {
+  const report = (over: Partial<RecordingReadiness>): RecordingReadiness => ({
+   state: "passed", recording_state: "passed", checks: [], secret_configured: true,
+   secret_source: "setup", test_room_url: "", test: { state: "idle", published: false }, ...over,
+  } as RecordingReadiness);
+
+  expect(readinessTitle(report({}))).toBe("Recording checks passed");
+  expect(readinessTitle(report({ recording_state: "warn" }))).toBe("Recording checks need attention");
+  expect(readinessTitle(report({ recording_state: "not_verified" }))).toBe("Recording setup needs verification");
+
+  const broken = { id: "storage", state: "needs_action", code: "storage_incomplete", message: "" } as ReadinessCheck;
+  expect(readinessTitle(report({ recording_state: "needs_action", checks: [broken] })))
+   .toBe("One recording check needs attention");
+  expect(readinessTitle(report({ recording_state: "needs_action", checks: [broken, { ...broken, id: "talk.hpb" }] })))
+   .toBe("2 recording checks need attention");
  });
- it("names archive warnings and unverified coverage beside ready audio", () => {
+
+ // Archive coverage is excluded from the recording verdict, so a shortfall
+ // there is invisible in the heading unless it is named.
+ it("names an archive shortfall beside a working recorder", () => {
+  const archive = { id: "archive.search", state: "warn", code: "search_coverage_partial", message: "" } as ReadinessCheck;
   const report = {
-   state: "warn", recording_state: "passed",
-   checks: [{ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "" }],
+   state: "warn", recording_state: "passed", checks: [archive], secret_configured: true,
+   secret_source: "setup", test_room_url: "", test: { state: "idle", published: false },
   } as RecordingReadiness;
   expect(readinessTitle(report)).toBe("Recording ready; archive search needs attention");
-  report.checks.unshift({ id: "processing", state: "warn", code: "transcription_unavailable", message: "" });
-  expect(readinessTitle(report)).toBe("Recording ready; transcription and archive search need attention");
-  report.checks[1].state = "not_verified";
-  expect(readinessTitle(report)).toBe("Recording ready; transcription needs attention; archive search coverage not verified");
-  report.checks.shift();
-  report.state = "not_verified";
-  expect(readinessTitle(report)).toBe("Recording ready; archive search coverage not verified");
  });
 });
 
@@ -54,16 +56,12 @@ it("notifies health changes while ignoring timestamps and job progress", () => {
  expect(readinessHealthKey(report)).not.toBe(before);
 });
 
-it("says a saved credential is configured, not verified", () => {
- const report = {secret_configured:true, secret_source:"setup", checks:[{id:"talk.hpb",state:"needs_action",code:"signaling_auth_failed",message:"Authentication rejected"}], test:{playback_verified_at:"2026-09-11T00:00:00Z"}} as RecordingReadiness;
- const rows = readinessRows(report);
- expect(checkStateLabel(rows.find(c=>c.id==="talk.authentication")!)).toBe("Configured");
- // No test row. It was removed in the 2026-09-25 review, and synthesising one
- // here put it back on screen — where its only action sent the reader to the
- // Talk connection row, which is not a test recording.
- expect(rows.some(c=>c.id==="test")).toBe(false);
- report.checks.push({id:"configuration",state:"needs_action",code:"setup_store_unreadable",message:"Unreadable"});
- expect(readinessRows(report).some(c=>c.id==="talk.authentication")).toBe(false);
+it("labels a configured credential as configured, not verified", () => {
+ // The operator sends this row now. What stays the panel's is turning the
+ // state into a word, and "Configured" rather than "Passed" is the point: a
+ // saved secret proves it was saved, not that Talk accepts it.
+ const row = { id: "talk.authentication", state: "passed", code: "internal_secret_configuration", message: "" } as ReadinessCheck;
+ expect(checkStateLabel(row)).toBe("Configured");
 });
 
 // D-763: the checklist reads at a glance.
@@ -117,9 +115,9 @@ describe("the instance's worst news", () => {
 
   // The header reads the rows the list renders, including the one readinessRows
   // still synthesises — otherwise it can disagree with what is under it.
-  it("counts the synthesised credential row", () => {
-    const noSecret = { ...report([]), secret_configured: false, secret_source: "unset" as const };
-    expect(reportTone(noSecret)).toBe("error");
+  it("reads the rows it is given, including ones the operator added", () => {
+    const credential = { id: "talk.authentication", state: "needs_action", code: "internal_secret_missing", message: "" } as ReadinessCheck;
+    expect(reportTone(report([credential]))).toBe("error");
   });
 });
 
@@ -225,33 +223,6 @@ describe("where to send an administrator", () => {
   });
 });
 
-describe("offering a form only where it can change something", () => {
-  const report = (checks: ReadinessCheck[], configured: boolean): RecordingReadiness => ({
-    state: "needs_action", checks, secret_configured: configured, secret_source: "setup",
-    test_room_url: "", test: { state: "idle", published: false },
-  });
-  const noBackend = { id: "talk.hpb", state: "needs_action", code: "hpb_disabled", message: "" } as ReadinessCheck;
-  const backend = { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "" } as ReadinessCheck;
-
-  // The operator withholds the action when the secret cannot be useful. The
-  // panel used to add it back, offering a form that would change nothing.
-  it("withholds the credential form when there is no backend to authenticate to", () => {
-    const row = readinessRows(report([noBackend], true)).find(c => c.id === "talk.authentication")!;
-    expect(rowActions(row).map(a => a.action)).not.toContain("configure_talk");
-  });
-
-  it("offers it when a backend exists", () => {
-    const row = readinessRows(report([backend], true)).find(c => c.id === "talk.authentication")!;
-    expect(rowActions(row).map(a => a.action)).toContain("configure_talk");
-  });
-
-  // An operator-sent action is always honoured: that is the case where the
-  // secret is missing AND a backend exists.
-  it("honours an action the operator did send", () => {
-    const sent = { id: "talk.authentication", state: "needs_action", code: "internal_secret_missing", message: "", action: "configure_talk" } as ReadinessCheck;
-    expect(rowActions(sent).map(a => a.action)).toContain("configure_talk");
-  });
-});
 
 describe("a blocked row offers nothing", () => {
   // The operator strips the row's own action, but the panel's standing actions

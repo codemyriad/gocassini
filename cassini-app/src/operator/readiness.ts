@@ -91,27 +91,32 @@ export const checkLabels: Record<string, string> = {
 export const stateLabels: Record<CheckState, string> = {
   passed: "Passed", warn: "Needs attention", needs_action: "Needs action", not_verified: "Not verified",
 };
+// readinessTitle is the heading, derived from the verdict the OPERATOR reached.
+//
+// It used to reach its own: re-counting needs_action rows with its own notion of
+// which are optional, and composing prose about transcription warnings — from a
+// `processing` row removed in the 2026-09-25 review, so that branch had been
+// dead and unreachable since. A second aggregation in the panel can disagree
+// with the first, and did.
+//
+// Counting rows for the phrasing is presentation and stays here. Deciding what
+// the instance's verdict IS does not.
 export function readinessTitle(report: RecordingReadiness): string {
-  const recordingState = report.recording_state ?? report.state;
-  const optional = (id: string) => id === "processing" || id.startsWith("archive.");
-  const transcriptionWarns = report.checks.some(c => c.id === "processing" && c.state === "warn");
-  const archiveWarns = report.checks.some(c => c.id.startsWith("archive.") && c.state === "warn");
-  const archiveUnknown = report.checks.some(c => c.id.startsWith("archive.") && c.state === "not_verified");
-  const warning = transcriptionWarns && archiveWarns
-    ? "transcription and archive search need attention"
-    : transcriptionWarns ? "transcription needs attention" : archiveWarns ? "archive search needs attention" : "";
-  const optionalDetail = [warning, archiveUnknown ? "archive search coverage not verified" : ""].filter(Boolean).join("; ");
-  if (recordingState === "needs_action") {
-    const count = report.checks.filter(c => c.state === "needs_action" &&
-      (report.recording_state === undefined || !optional(c.id))).length;
-    return count ? `${count === 1 ? "One recording check needs" : `${count} recording checks need`} attention` : "Recording setup needs attention";
+  const verdict = report.recording_state ?? report.state;
+  // Archive coverage is excluded from the recording verdict, so a shortfall
+  // there would otherwise be invisible in the heading.
+  const archive = report.checks.some(c => c.id.startsWith("archive.") && (c.state === "warn" || c.state === "needs_action"))
+    ? "archive search needs attention"
+    : "";
+  if (verdict === "needs_action") {
+    const count = report.checks.filter(c => c.state === "needs_action").length;
+    return count === 1 ? "One recording check needs attention" : `${count} recording checks need attention`;
   }
-  if (recordingState === "not_verified") {
-    return optionalDetail ? `Recording setup needs verification; ${optionalDetail}` : "Recording setup needs verification";
+  if (verdict === "warn") return "Recording checks need attention";
+  if (verdict === "not_verified") {
+    return archive ? `Recording setup needs verification; ${archive}` : "Recording setup needs verification";
   }
-  if (recordingState === "warn") return "Recording checks need attention";
-  if (optionalDetail) return `Recording ready; ${optionalDetail}`;
-  return "Recording checks passed";
+  return archive ? `Recording ready; ${archive}` : "Recording checks passed";
 }
 // Ignore check timestamps and job progress: the shell only needs health changes.
 export function readinessHealthKey(report: RecordingReadiness | null): string {
@@ -121,31 +126,15 @@ export function readinessHealthKey(report: RecordingReadiness | null): string {
 }
 
 // Keep configuration reachable from its own row even after its check passes.
+// readinessRows is the rows to render, in the order the operator sent them.
+//
+// It used to SYNTHESISE talk.authentication when the operator omitted it,
+// choosing its state, message, action, position and its own suppression rule —
+// and drifted, carrying wording the operator had replaced. The operator reports
+// that row itself now. The panel renders what it is told and decides nothing
+// about what a check found.
 export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
-  const rows = [...report.checks];
-  const unreadable = rows.some(c => c.code === "setup_store_unreadable");
-  if (!unreadable && !rows.some(c => c.id === "talk.authentication")) {
-    // After talk.hpb, never before it. The backend has to exist before its
-    // credential means anything, and a reader who meets the credential first
-    // reads the requirement before the reason it does not apply.
-    const at = rows.findIndex(c => c.id.startsWith("talk.") && c.id !== "talk.hpb");
-    const noBackend = rows.some(c => c.code === "hpb_disabled");
-    rows.splice(at < 0 ? rows.length : at, 0, {
-      id: "talk.authentication", state: report.secret_configured ? "passed" : "needs_action",
-      // Changing a saved secret is worth offering — unless there is no backend
-      // for it to authenticate to, in which case editing it achieves nothing.
-      ...(noBackend ? {} : { action: "configure_talk" }),
-      // No "HPB authentication is checked separately" trailer. It pointed at a
-      // check that only happens once a backend exists and the probe gets that
-      // far, so on an install with no High Performance Backend it told a reader
-      // nothing at all. The Talk connection and backend rows report that.
-      code: "internal_secret_configuration", message: report.secret_source === "env"
-        ? "The internal secret comes from Cassini's deployment configuration."
-        : report.secret_configured ? "An internal secret is saved."
-        : "Enter the internal secret from your Talk signaling server.",
-    });
-  }
-  return rows;
+  return [...report.checks];
 }
 
 export function rowActions(check: ReadinessCheck): { action: string; label: string }[] {
