@@ -2,12 +2,32 @@ package operator
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+// actingUser is the Nextcloud user whose click reached this handler.
+//
+// AppAPI signs every proxied request with AUTHORIZATION-APP-API, which is
+// base64("<userId>:<appSecret>") — the same encoding Cassini uses in the other
+// direction to act as a user. The user id is the part before the first colon;
+// the secret is not checked here, because AppAPI already authenticated the
+// request and gated the route to administrators.
+func actingUser(r *http.Request) string {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(r.Header.Get("AUTHORIZATION-APP-API")))
+	if err != nil {
+		return ""
+	}
+	user, _, found := strings.Cut(string(raw), ":")
+	if !found {
+		return ""
+	}
+	return strings.TrimSpace(user)
+}
 
 // roomIsGone reports whether the connection probe failed because the
 // conversation Cassini checks with no longer exists — or because Talk itself is
@@ -28,22 +48,27 @@ func roomIsGone(checks []readinessCheck) bool {
 const testRoomName = "Cassini recording test"
 
 // ensureTestRoom returns a room to run the recording test in, creating a
-// dedicated conversation when none is configured.
+// dedicated conversation when there is not already a usable one.
 //
 // This exists so the test needs no configuration. It used to refuse with
 // "Choose a test room first", which put a form in front of the one tool whose
 // whole value is being quick to reach — and the room it asked for is one
 // Cassini can perfectly well make for itself.
 //
-// Created as the provisioning user, through the same act-as-user path that
-// reads Talk's signaling mode. roomType 3 is a PUBLIC conversation, which is
-// what makes the link usable: the room belongs to Cassini's own account, so an
-// administrator opening a group conversation they were never invited to would
-// be turned away from the one room they were just told to join. A public room
-// is joinable by its link, needs no invitee list, and can be deleted when the
-// test is done.
-func (rt *Runtime) ensureTestRoom(ctx context.Context, existing string) (string, error) {
-	if rt.validTestRoom(existing) {
+// `wantOwner` is who the room has to belong to. It matters because Talk's Start
+// recording action is moderator-only and the creator of a conversation is its
+// owner: a room made by Cassini's own account leaves the administrator who
+// opens it an ordinary participant, with no way to start the recording they
+// were just told to start. Reported from staging, and the reason this takes an
+// owner at all. An empty wantOwner means Cassini's provisioning user and
+// accepts any existing room — that is the connection check, which only needs a
+// token to read recording settings with and does not care whose room it is.
+//
+// roomType 3 is a PUBLIC conversation: joinable by its link, needing no invitee
+// list, and deletable when the test is done.
+func (rt *Runtime) ensureTestRoom(ctx context.Context, existing, currentOwner, wantOwner string) (string, error) {
+	wantOwner = strings.TrimSpace(wantOwner)
+	if rt.validTestRoom(existing) && (wantOwner == "" || currentOwner == wantOwner) {
 		return existing, nil
 	}
 	base := rt.readinessBackendURL()
@@ -58,7 +83,7 @@ func (rt *Runtime) ensureTestRoom(ctx context.Context, existing string) (string,
 		return "", fmt.Errorf("a test room needs the AppAPI environment")
 	}
 	client := &http.Client{Timeout: ncProvisionTimeout}
-	status, body, err := cfg.apiPostForm(ctx, client, cfg.ocsURL("/apps/spreed/api/v4/room"), url.Values{
+	status, body, err := cfg.apiPostFormAs(ctx, client, wantOwner, cfg.ocsURL("/apps/spreed/api/v4/room"), url.Values{
 		"roomType": {"3"},
 		"roomName": {testRoomName},
 	})

@@ -223,7 +223,7 @@
                made the whole tool unreachable until somebody pasted a URL. -->
           <p class="my-2 text-sm">Cassini makes itself a conversation for this and waits. The recording is started from Talk, by you, exactly as a real one would be — which is what makes it worth running.</p>
           <ol class="my-3 list-inside list-decimal space-y-2 text-sm">
-            <li>Press Prepare test. Cassini creates a conversation named “Cassini recording test”, or reuses the one it made before.</li>
+            <li>Press Prepare test. Cassini creates a conversation named “Cassini recording test” in your name, so that you can moderate it — Talk’s Start recording action belongs to a conversation’s moderators.</li>
             <li>Open the room, join the call, and use Talk’s Start recording action.</li>
             <li>Say a few words, then stop the recording in Talk.</li>
             <li>Wait for it to publish, then play the audio and confirm you can hear it.</li>

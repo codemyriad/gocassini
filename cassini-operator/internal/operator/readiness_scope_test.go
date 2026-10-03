@@ -764,3 +764,49 @@ func TestTheTestWaitsForEvidenceNotJustForTheAbsenceOfFailure(t *testing.T) {
 		})
 	}
 }
+
+// Talk's Start recording action belongs to a conversation's moderators, and the
+// creator of a conversation is its owner. A room created by Cassini's own
+// account therefore leaves the administrator who opens it an ordinary
+// participant, unable to start the recording they were just told to start.
+// Reported from staging: "I pressed Prepare test and opened the room, but I
+// can't start a recording since I'm an admin but not a room moderator."
+func TestArmingATestMakesTheRoomBelongToWhoeverArmedIt(t *testing.T) {
+	rt := &Runtime{}
+	rt.cfg.TalkBackendURL = "https://nc.test"
+	for _, tc := range []struct {
+		name     string
+		existing string
+		owner    string
+		want     string
+		remake   bool
+	}{
+		{"no room yet", "", "", "admin", true},
+		{"somebody else's room", "https://nc.test/call/abc12345", "cassini", "admin", true},
+		{"already theirs", "https://nc.test/call/abc12345", "admin", "admin", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The decision the handler makes before it calls out to Talk.
+			remake := !rt.validTestRoom(tc.existing) || (tc.want != "" && tc.owner != tc.want)
+			if remake != tc.remake {
+				t.Fatalf("remake = %v, want %v: a room the administrator cannot moderate is no use to them", remake, tc.remake)
+			}
+		})
+	}
+}
+
+// The connection check only needs a token to read Talk's recording settings
+// with, so it must reuse whatever room exists rather than making a second one
+// every time a different administrator has armed a test.
+func TestTheConnectionCheckAcceptsAnyExistingRoom(t *testing.T) {
+	rt := &Runtime{}
+	rt.cfg.TalkBackendURL = "https://nc.test"
+	room := "https://nc.test/call/abc12345"
+	got, err := rt.ensureTestRoom(context.Background(), room, "admin", "")
+	if err != nil {
+		t.Fatalf("ensureTestRoom: %v", err)
+	}
+	if got != room {
+		t.Fatalf("got %q; the check must not replace a usable room it did not create", got)
+	}
+}

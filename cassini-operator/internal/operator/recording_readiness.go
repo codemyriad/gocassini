@@ -64,8 +64,12 @@ type readinessStep struct {
 }
 
 type recordingSetupState struct {
-	InternalSecret     string `json:"internal_secret,omitempty"`
-	TestRoomURL        string `json:"test_room_url,omitempty"`
+	InternalSecret string `json:"internal_secret,omitempty"`
+	TestRoomURL    string `json:"test_room_url,omitempty"`
+	// Who the conversation belongs to, and therefore who can start a recording
+	// in it. Stored because Talk will not tell us cheaply, and because a test
+	// armed by a different administrator needs a room of their own.
+	TestRoomOwner      string `json:"test_room_owner,omitempty"`
 	TestStartedAt      string `json:"test_started_at,omitempty"`
 	PlaybackJobID      string `json:"playback_job_id,omitempty"`
 	PlaybackVerifiedAt string `json:"playback_verified_at,omitempty"`
@@ -506,10 +510,11 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 			// somebody pasted a room URL into a form, which is the one piece of
 			// configuration Cassini can do for itself. Created once and kept,
 			// so the test recording below reuses the same conversation.
-			if created, err := rt.ensureTestRoom(ctx, room); err == nil {
+			if created, err := rt.ensureTestRoom(ctx, room, s.state.TestRoomOwner, ""); err == nil {
 				s.mu.Lock()
 				next := s.state
 				next.TestRoomURL = created
+				next.TestRoomOwner = ""
 				if err := rt.saveRecordingSetupLocked(next); err != nil {
 					rt.logger.Printf("ERROR: could not persist the created test room: %v", err)
 				}
@@ -560,6 +565,7 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 			s.mu.Lock()
 			next := s.state
 			next.TestRoomURL = ""
+			next.TestRoomOwner = ""
 			if err := rt.saveRecordingSetupLocked(next); err != nil {
 				rt.logger.Printf("ERROR: could not forget the missing test room: %v", err)
 			}
@@ -1049,10 +1055,14 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		next.PlaybackVerifiedAt = ""
 	}
 	if body.Action == "arm_test" {
-		if !rt.validTestRoom(next.TestRoomURL) {
-			// Make one rather than demanding one. The room is the only thing
-			// this test ever needed configured, and Cassini can create it.
-			created, err := rt.ensureTestRoom(r.Context(), next.TestRoomURL)
+		// Make one rather than demanding one. The room is the only thing this
+		// test ever needed configured, and Cassini can create it — in the name
+		// of whoever pressed the button, because Talk's Start recording action
+		// belongs to a conversation's moderators and a room created by
+		// Cassini's own account leaves an administrator unable to record in it.
+		owner := actingUser(r)
+		if !rt.validTestRoom(next.TestRoomURL) || (owner != "" && next.TestRoomOwner != owner) {
+			created, err := rt.ensureTestRoom(r.Context(), next.TestRoomURL, next.TestRoomOwner, owner)
 			if err != nil {
 				s.mu.Unlock()
 				rt.logger.Printf("ERROR: could not prepare a test room: %v", err)
@@ -1060,6 +1070,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 			next.TestRoomURL = created
+			next.TestRoomOwner = owner
 		}
 		next.TestStartedAt = nowUTCString()
 		next.PlaybackJobID = ""
