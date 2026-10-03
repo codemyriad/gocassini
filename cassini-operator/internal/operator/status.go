@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -42,7 +43,7 @@ const (
 	signalingInternalSecretHint = "Talk recording needs CASSINI_TALK_SIGNALING_INTERNAL_SECRET " +
 		"(the Talk signaling server's [clients] internalsecret). On Nextcloud AIO, read it with " +
 		"`docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the " +
-		"[clients] internalsecret in the signaling server config. Save it in Cassini → Operator → Publish pipeline → Talk authentication, or set it in the External Apps deploy " +
+		"[clients] internalsecret in the signaling server config. Save it in Cassini → Operator → Doctor → Signaling server credential, or set it in the External Apps deploy " +
 		"options, or with `occ app_api:app:register <app> <daemon> --env " +
 		"CASSINI_TALK_SIGNALING_INTERNAL_SECRET=<value>`. See docs/exapp-install.md."
 
@@ -148,8 +149,10 @@ func (rt *Runtime) signalingInternalSecretConfigured() bool {
 }
 
 const (
-	speechEngineRefActiveMarker   = "reference frontend active"
-	speechEngineRefInactiveMarker = "reference frontend optimization inactive"
+	// The id doctor gives its speech-runtime check. A contract between the two
+	// modules, and — unlike the prose markers this replaces — one that cannot
+	// be broken by an editing pass.
+	speechRuntimeCheckID = "speech.runtime"
 )
 
 // probeReferenceFrontend reports whether the active sherpa runtime includes
@@ -182,16 +185,45 @@ func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference
 	if bin != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "build")
+		// --json, so this reads a CHECK BY ID rather than grepping a sentence.
+		//
+		// It used to substring-match speechEngineRefActiveMarker against
+		// doctor's prose. Those marker constants are declared once in the
+		// recorder and again here, in a separate Go module, with nothing
+		// enforcing that the two copies agree — so rewording one doctor summary
+		// silently cost this probe its answer, with no test and no compile
+		// error to catch it (D-798).
+		//
+		// The id is stable by contract; the summary is free to be reworded.
+		cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "build", "--json")
 		cmd.WaitDelay = 500 * time.Millisecond
 		cmd.Env = rt.childEnv()
 		if out, err := cmd.Output(); err == nil || len(out) > 0 {
-			text := string(out)
-			if strings.Contains(text, speechEngineRefActiveMarker) {
-				return true, true
+			var checks []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
 			}
-			if strings.Contains(text, speechEngineRefInactiveMarker) {
-				return true, false
+			if err := json.Unmarshal(out, &checks); err != nil {
+				// Left unknown, but not unsaid: a doctor whose document does
+				// not parse is a broken contract between the two modules, and
+				// silence here would look exactly like "no reference runtime".
+				rt.logger.Printf("WARNING: could not read doctor --json while probing the speech runtime: %v", err)
+			} else {
+				for _, check := range checks {
+					if check.ID != speechRuntimeCheckID {
+						continue
+					}
+					// warn is how doctor reports the reference frontend being
+					// absent; ok means it is active. Anything else is a doctor
+					// this operator does not understand, and is left unknown
+					// rather than guessed at.
+					switch check.Status {
+					case "ok":
+						return true, true
+					case "warn":
+						return true, false
+					}
+				}
 			}
 		}
 	}

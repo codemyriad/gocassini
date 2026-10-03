@@ -6,6 +6,41 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("re-checking one row", () => {
+  const ok = () =>
+    new Response(JSON.stringify({ state: "passed", checks: [], secret_configured: true, secret_source: "setup", test_room_url: "", test: { state: "not_started", published: false } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  it("names the rows to re-check, so one row costs one probe", async () => {
+    const fetchMock = vi.fn(async () => ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("https://operator.test").checkReadiness(["archive.search"]);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/health/check");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ only: ["archive.search"] });
+  });
+
+  it("sends no body when every probe should run", async () => {
+    // The operator reads an absent body as "run everything". Sending {"only":[]}
+    // instead would be a request that names nothing, which it refuses.
+    const fetchMock = vi.fn(async () => ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new OperatorClient("https://operator.test");
+    await client.checkReadiness();
+    await client.checkReadiness([]);
+
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit).body).toBeUndefined();
+    }
+  });
+});
+
 describe("operator settings client", () => {
   it("normalizes an older or partial settings response", async () => {
     vi.stubGlobal(

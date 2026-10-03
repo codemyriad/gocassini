@@ -153,7 +153,7 @@ describe("the shell after the Setup tab", () => {
     expect(appSource).toContain("function openRecordingSetup()");
     // Both hops: the surface alone opens the default panel (Recordings) and
     // leaves the reader hunting for the checks.
-    expect(appSource).toContain('applyPanel(applySurface(window.location.hash, "operator"), "pipeline")');
+    expect(appSource).toContain('applyPanel(applySurface(window.location.hash, "operator"), "doctor")');
     // Announced once, so the surface, the panel nav and the viewer agree.
     expect(appSource).toContain('window.dispatchEvent(new PopStateEvent("popstate"))');
     // Nothing may point at the surface D-756 removed.

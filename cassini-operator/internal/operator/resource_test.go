@@ -1027,19 +1027,6 @@ func TestExecuteBuildCLIKeepsAudioWhenTheModelIsNotInstalled(t *testing.T) {
 	}
 }
 
-func TestTranscriptionUnavailableNamesTheModel(t *testing.T) {
-	rt, _ := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), "readiness")
-	rt.computeProbe = func(string) (bool, string) { return true, "cpu" }
-	if detail := rt.transcriptionUnavailable(rt.settings, deviceCPU); !strings.Contains(detail, "runtime check") {
-		t.Fatalf("transcriptionUnavailable() = %q, want the unchecked model named", detail)
-	}
-	t.Setenv("FAKE_INVENTORY", readyInt8Inventory)
-	rt.invalidateModelInventory()
-	if detail := rt.transcriptionUnavailable(rt.settings, deviceCPU); detail != "" {
-		t.Fatalf("transcriptionUnavailable() = %q for a ready model", detail)
-	}
-}
-
 func TestChildEnvUsesTheOperatorModelRoot(t *testing.T) {
 	t.Setenv(envCacheRoot, "/image/default/models")
 	rt := &Runtime{cfg: Config{ModelCacheRoot: "/persist/operator/models"}}

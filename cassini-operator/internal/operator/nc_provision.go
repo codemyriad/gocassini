@@ -157,12 +157,23 @@ func (c ExAppConfig) apiGetAs(ctx context.Context, client *http.Client, actAs, r
 }
 
 func (c ExAppConfig) apiPostForm(ctx context.Context, client *http.Client, rawURL string, form url.Values) (int, []byte, error) {
+	return c.apiPostFormAs(ctx, client, "", rawURL, form)
+}
+
+// apiPostFormAs attributes the call to a named Nextcloud user. An empty actAs
+// keeps Cassini's own provisioning user, which is the default for everything
+// Cassini does on its own behalf.
+func (c ExAppConfig) apiPostFormAs(ctx context.Context, client *http.Client, actAs string, rawURL string, form url.Values) (int, []byte, error) {
 	body := form.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, withFormatJSON(rawURL), strings.NewReader(body))
 	if err != nil {
 		return 0, nil, err
 	}
-	c.setAppAPIProvisionHeaders(req)
+	if strings.TrimSpace(actAs) == "" {
+		c.setAppAPIProvisionHeaders(req)
+	} else {
+		c.setAppAPIProvisionHeadersAs(req, strings.TrimSpace(actAs))
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.ContentLength = int64(len(body))
 	return doReadBody(client, req)
