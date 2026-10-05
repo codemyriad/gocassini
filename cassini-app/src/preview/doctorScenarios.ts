@@ -1,12 +1,21 @@
+// Example data for the Doctor gallery: the real panel rendered against reports
+// the operator could send. `npm run design -w cassini-app` opens it.
+//
+// Hand-written, so it has to be kept in step with what produces it — the
+// operator's recording_readiness.go, recording_test_tool.go and
+// search_readiness.go, and the recorder's talk/readiness.go. Change a message,
+// a code or an action there and change it here in the same commit: the tests
+// pin the shape (row order, no removed rows, every action named, checkable and
+// probe agreeing), not the wording.
 import type { OperatorClient } from "../operator/client";
 import { checkLabels, type CheckState, type ReadinessCheck, type RecordingReadiness } from "../operator/readiness";
 
 export const doctorScenarios = [
   { id: "healthy", title: "Healthy recording setup", description: "Every check passing, a saved credential, and a test recording someone played back." },
   { id: "first-run", title: "Checks have not run yet", description: "Nothing established, and nothing claimed: the state a freshly installed Cassini reports." },
-  { id: "no-backend", title: "No signaling backend (the common one)", description: "One row to act on. The credential, the connection and the test all say what they are waiting for and offer nothing." },
-  { id: "missing-secret", title: "Missing Talk internal secret", description: "The credential row names the two places the value can be read, and opens the form." },
-  { id: "rejected-secret", title: "HPB rejects a saved secret", description: "A credential is saved and the backend refuses it — green on one row, failing on the next." },
+  { id: "no-backend", title: "No signaling backend (the common one)", description: "One row to act on. The connection and the test say what they are waiting for and offer nothing." },
+  { id: "missing-secret", title: "Missing Talk internal secret", description: "The backend row names the two places the value can be read, and opens the form." },
+  { id: "rejected-secret", title: "HPB rejects a saved secret", description: "A credential is saved and the backend refuses it, on the one row that reports both." },
   { id: "missing-hpb", title: "Talk has no signaling server", description: "The backend row points at Nextcloud's own documentation and settings." },
   { id: "connection-unreachable", title: "Cannot reach Nextcloud", description: "A check that ran and failed to reach the server: a warning, not an absence." },
   { id: "recording-handoff", title: "Recording backend needs connecting", description: "Talk does not know Cassini as a recording backend yet." },
