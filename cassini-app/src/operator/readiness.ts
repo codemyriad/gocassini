@@ -33,6 +33,9 @@ export interface ReadinessCheck {
   // The operator says so — the row-to-probe mapping is readinessScopeFor's, and
   // a second copy here drifted into a spinner for a probe that never ran.
   checkable?: boolean;
+  // Which probe establishes this row. Rows sharing one are refreshed together,
+  // so pressing Check on either of them re-runs both.
+  probe?: string;
   // Where to read about a fault the operator cannot repair. A link, not a
   // procedure: an instruction we cannot verify is worse than a reference.
   docs?: string;

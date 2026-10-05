@@ -861,3 +861,35 @@ func TestArmingHonoursARoomTheCallerNamed(t *testing.T) {
 		t.Error("the test was not armed")
 	}
 }
+
+// A row says which probe establishes it, so the panel can be honest about what
+// a Check button refreshes. Reported as: pressing Test connection on the
+// backend row made the Talk connection check run — one probe reports both.
+func TestRowsNameTheProbeThatEstablishesThem(t *testing.T) {
+	for id, want := range map[string]string{
+		"talk.hpb":             "talk",
+		"talk.discovery":       "talk",
+		"storage":              "storage",
+		"host.workdir":         "host",
+		"host.tmpdir.writable": "host",
+		"archive.search":       "archive",
+		// Read from saved configuration, not probed: no button, no probe name.
+		"configuration": "",
+		"talk.handoff":  "",
+		"test":          "",
+	} {
+		if got := probeNameFor(id); got != want {
+			t.Errorf("probeNameFor(%q) = %q, want %q", id, got, want)
+		}
+	}
+	// And the two must agree: anything with a probe is checkable, and anything
+	// checkable has a probe. A row that spins without being refreshed, or is
+	// refreshed without saying so, is the confusion this pair exists to remove.
+	for _, id := range readinessRowOrder {
+		named := probeNameFor(id) != ""
+		scoped := !readinessScopeFor([]string{id}).empty()
+		if named != scoped {
+			t.Errorf("%s: probe named=%v but scope runs=%v", id, named, scoped)
+		}
+	}
+}

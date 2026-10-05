@@ -52,7 +52,10 @@ type readinessCheck struct {
 	Checkable bool `json:"checkable,omitempty"`
 	// Docs is where to read about this check, for a fault the operator cannot
 	// repair and should not pretend to instruct. A stable URL, not a procedure.
-	Docs      string `json:"docs,omitempty"`
+	Docs string `json:"docs,omitempty"`
+	// Which probe establishes this row. Rows sharing one are refreshed together
+	// by a single check, whichever of them asked for it.
+	Probe     string `json:"probe,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
 }
 
@@ -753,6 +756,9 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// Check button invites a reader to press something that will fail.
 		resp.Checks[i].Checkable = resp.Checks[i].Code != "check_blocked" &&
 			!readinessScopeFor([]string{resp.Checks[i].ID}).empty()
+		if resp.Checks[i].Checkable {
+			resp.Checks[i].Probe = probeNameFor(resp.Checks[i].ID)
+		}
 	}
 	resp.State = worstReadinessState(verdictRows(resp.Checks))
 	resp.RecordingState = recordingCapabilityState(resp.Checks)

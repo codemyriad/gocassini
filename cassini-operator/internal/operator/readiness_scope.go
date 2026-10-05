@@ -51,6 +51,28 @@ func readinessScopeFor(ids []string) readinessScope {
 	return scope
 }
 
+// probeNameFor is the probe a row is established by, or "" for a row read from
+// saved configuration rather than probed.
+//
+// Exposed on the row so the panel can say what a check will actually refresh.
+// One probe can produce several rows — the Talk probe establishes both the
+// backend and the connection — and a Check button that spins on one row while
+// quietly rewriting another is the panel describing something that is not
+// happening. Reported as "why does pressing this run the other check?".
+func probeNameFor(id string) string {
+	switch id = strings.TrimSpace(id); {
+	case id == "storage":
+		return "storage"
+	case id == "host" || strings.HasPrefix(id, "host."):
+		return "host"
+	case id == "talk.discovery" || id == "talk.hpb":
+		return "talk"
+	case strings.HasPrefix(id, "archive."):
+		return "archive"
+	}
+	return ""
+}
+
 // probeCoalesceWindow collapses rapid duplicate clicks on the same row. Held
 // per scope rather than globally, so retrying the host does not silently skip a
 // storage check somebody asked for a second later.

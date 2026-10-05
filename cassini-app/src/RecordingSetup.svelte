@@ -63,6 +63,15 @@
     }
   }
 
+  // One probe can establish several rows — the Talk probe reports both the
+  // backend and the connection — so a check asked for by one of them refreshes
+  // the others too. Saying so beats a spinner on one row while another silently
+  // changes underneath it.
+  function sharesProbe(check: { probe?: string }, withRow: string): boolean {
+    if (!check.probe || !withRow) return false;
+    return rows.some(row => row.id === withRow && row.probe === check.probe);
+  }
+
   async function load(check = false, only = "") {
     // One guard, and only for work this reader started. There was a second one
     // for the five-second refresh, which dropped any click landing during a
@@ -180,7 +189,7 @@
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id)}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/60"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
+              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/60"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
               {#if check.docs}
                 <p class="mt-1 text-sm"><a class="link" href={check.docs} target="_blank" rel="noreferrer">Read Nextcloud's documentation</a></p>
