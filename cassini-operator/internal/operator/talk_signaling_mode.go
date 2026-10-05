@@ -138,3 +138,59 @@ func (rt *Runtime) hpbFinding(ctx context.Context) *readinessCheck {
 	}
 	return hpbCheckForMode(mode)
 }
+
+// backendUnknownCodes are the states in which no High Performance Backend is
+// known to exist: it is absent, or nothing has established whether it is there.
+var backendUnknownCodes = map[string]bool{
+	"hpb_disabled":           true,
+	"hpb_missing":            true,
+	"hpb_not_checked":        true,
+	"signaling_mode_unknown": true,
+}
+
+// mergeCredentialIntoBackend folds what is known about the signaling credential
+// into the backend row.
+//
+// They were two rows reporting one thing. The credential is the High
+// Performance Backend's own, it exists only to authenticate to it, and this row
+// is where that attempt succeeds or fails — so a separate "Signaling server
+// credential" row could only say whether a value had been SAVED. It said it as
+// "Passed", on installations where nothing had ever tried to use the value, and
+// where a backend existed without one both rows carried the same sentence and
+// the same button. Its message even sent the reader to the Talk connection
+// check, which authenticates with a different secret entirely and could not
+// confirm this one.
+//
+// With no backend, the credential is not mentioned at all: there is nothing to
+// authenticate to, and asking for it is how one missing backend turned into two
+// rows wanting attention.
+func mergeCredentialIntoBackend(row *readinessCheck, secret, source string) {
+	if backendUnknownCodes[row.Code] {
+		return
+	}
+	if strings.TrimSpace(secret) == "" {
+		// Where to READ it, named. The same two locations the startup log has
+		// always given; a row that asks for a secret without saying where it
+		// lives sends an administrator hunting, which is what happened.
+		row.State, row.Code = "needs_action", "internal_secret_missing"
+		row.Message = "Talk has a High Performance Backend, and Cassini needs that server's internal secret to join calls invisibly. This is not a Nextcloud setting: it belongs to the signaling server, which is why Cassini cannot read it for you."
+		row.Action = "configure_talk"
+		row.Steps = []readinessStep{
+			{Label: "Nextcloud All-in-One: docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"},
+			{Label: "Standalone signaling server: the `internalsecret` under `[clients]` in its configuration file"},
+			{Label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs"},
+		}
+		return
+	}
+	// A secret IS saved, so the row keeps whatever the check found and simply
+	// stays editable: without this the form is unreachable once the check
+	// passes, and the value can never be rotated from here again.
+	if row.Action == "" {
+		row.Action = "configure_talk"
+	}
+	if row.Code == "hpb_declared_unverified" && source == "env" {
+		row.Message = "Talk names a High Performance Backend, and the internal secret comes from Cassini's deployment configuration. Whether that secret is the right one is what this check establishes."
+	} else if row.Code == "hpb_declared_unverified" {
+		row.Message = "Talk names a High Performance Backend and an internal secret is saved. Whether Cassini can authenticate with it is what this check establishes."
+	}
+}

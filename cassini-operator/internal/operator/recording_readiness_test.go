@@ -162,8 +162,11 @@ func TestReadinessAdmissionAndPublicResponse(t *testing.T) {
 	if rt.recordingConfigurationRefusal(req) == "" {
 		t.Fatal("missing credential admitted")
 	}
+	// Not needs_action: with no check run, nothing has established that a
+	// backend exists, and a credential demanded for a backend that may not be
+	// there is the noise this panel had. Admission refuses either way, above.
 	report := rt.readiness(context.Background())
-	if report.State != "needs_action" {
+	if report.State != "not_verified" {
 		t.Fatalf("state=%s", report.State)
 	}
 	putRecordingSetup(t, rt, `{"internal_secret":"private-internal","test_room_url":"https://cloud.test/call/privateroom"}`, 200)

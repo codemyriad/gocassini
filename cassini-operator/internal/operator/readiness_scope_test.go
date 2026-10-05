@@ -33,7 +33,7 @@ func TestReadinessScopeMapsRowsToTheProbeBehindThem(t *testing.T) {
 
 	// Read from saved configuration, not probed. Naming one of these asks for
 	// work that does not exist, and must not quietly widen into everything.
-	for _, id := range []string{"configuration", "talk.authentication", "talk.handoff", "test", "nonsense"} {
+	for _, id := range []string{"configuration", "talk.handoff", "test", "nonsense"} {
 		if got := readinessScopeFor([]string{id}); !got.empty() {
 			t.Errorf("readinessScopeFor(%q) = %+v; nothing probes that row", id, got)
 		}
@@ -219,7 +219,7 @@ func TestRowsSayWhetherAProbeCanReCheckThem(t *testing.T) {
 	}
 
 	// Read from saved configuration. Offering a re-check would wait for nothing.
-	for _, id := range []string{"configuration", "talk.authentication", "talk.handoff"} {
+	for _, id := range []string{"configuration", "talk.handoff"} {
 		if c, ok := byID[id]; ok && c.Checkable {
 			t.Errorf("%s is read from configuration but claims a probe re-checks it", id)
 		}
@@ -296,7 +296,9 @@ func TestTheBackendRowIsAlwaysOnTheChecklist(t *testing.T) {
 	if row.Action != "recheck" {
 		t.Errorf("an unchecked row offers no way to check it: %+v", row)
 	}
-	// And it must not be invented twice when a probe already reported one.
+	// And it must not be invented twice when a probe already reported one. With
+	// a secret saved, since a missing one is itself a verdict for this row.
+	t.Setenv(envTalkSignalingInternalSecret, "saved-secret")
 	rt.recordingSetup.checks = []readinessCheck{{ID: "talk.hpb", State: "passed", Code: "hpb_authenticated"}}
 	rt.recordingSetup.checkedAt = time.Now()
 	seen := 0
@@ -320,18 +322,18 @@ func TestTheBackendRowIsAlwaysOnTheChecklist(t *testing.T) {
 // should i recover the talk signaling server internal secret" — on a stack with
 // no signaling server at all. The guidance existed, in the startup log and
 // /status, and never reached the row that asks the question.
-func TestCredentialRowSaysWhereTheSecretLivesAndDefersToTheBackend(t *testing.T) {
+func TestTheBackendRowCarriesTheCredentialItAuthenticatesWith(t *testing.T) {
 	resetDirectSubstrate(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	row := func() readinessCheck {
 		t.Helper()
 		for _, c := range rt.readiness(context.Background()).Checks {
-			if c.ID == "talk.authentication" {
+			if c.ID == "talk.hpb" {
 				return c
 			}
 		}
-		t.Fatal("talk.authentication missing")
+		t.Fatal("talk.hpb missing")
 		return readinessCheck{}
 	}
 
@@ -341,10 +343,11 @@ func TestCredentialRowSaysWhereTheSecretLivesAndDefersToTheBackend(t *testing.T)
 	rt.recordingSetup.checks = []readinessCheck{{ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled"}}
 	rt.recordingSetup.checkedAt = time.Now()
 	rt.recordingSetup.mu.Unlock()
-	if c := row(); c.State == "needs_action" {
-		t.Fatalf("asked for the secret with no backend to use it: %+v", c)
-	} else if c.Code != "internal_secret_not_needed_yet" {
-		t.Fatalf("row with no backend = %+v", c)
+	// The row stays the backend's own fault; the credential is not mentioned,
+	// because there is nothing for it to authenticate to and asking for it is
+	// how one missing backend became two rows wanting attention.
+	if c := row(); c.Code != "hpb_disabled" {
+		t.Fatalf("row with no backend = %+v; want the backend fault, unembellished", c)
 	}
 
 	// A backend exists: now the secret is genuinely required, and the row has to
@@ -418,16 +421,16 @@ func TestUncheckedHostRowsAreTheRowsACheckProduces(t *testing.T) {
 	}
 }
 
-// The backend comes before the credential that authenticates to it.
+// The backend comes before the connection it carries.
 //
-// Assembled order put talk.authentication first, so a reader met "this
-// credential is required" above the row explaining there is no backend for it to
-// authenticate to. The talk rows are a dependency chain and should read as one.
-func TestBackendRowComesBeforeTheCredentialThatAuthenticatesToIt(t *testing.T) {
+// The talk rows are a dependency chain and should read as one: a backend has to
+// exist before Cassini can authenticate to it, and only then can the connection
+// be verified. Assembled order once put them the other way round, so a reader
+// met the consequence above its cause.
+func TestBackendRowComesBeforeTheConnectionItCarries(t *testing.T) {
 	checks := []readinessCheck{
 		{ID: "archive.search"},
 		{ID: "talk.discovery"},
-		{ID: "talk.authentication"},
 		{ID: "storage"},
 		{ID: "talk.hpb"},
 		{ID: "host.workdir"},
@@ -438,7 +441,7 @@ func TestBackendRowComesBeforeTheCredentialThatAuthenticatesToIt(t *testing.T) {
 	for _, c := range checks {
 		got = append(got, c.ID)
 	}
-	want := []string{"host.workdir", "storage", "talk.hpb", "talk.authentication", "talk.discovery", "archive.search", "something.new"}
+	want := []string{"host.workdir", "storage", "talk.hpb", "talk.discovery", "archive.search", "something.new"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("order = %v, want %v", got, want)
@@ -460,8 +463,6 @@ func TestBackendRowComesBeforeTheCredentialThatAuthenticatesToIt(t *testing.T) {
 func TestOneMissingPrerequisiteProducesOneActionableRow(t *testing.T) {
 	checks := []readinessCheck{
 		{ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled", Docs: "https://example.invalid/"},
-		{ID: "talk.authentication", State: "needs_action", Code: "internal_secret_missing", Action: "configure_talk",
-			Steps: []readinessStep{{Label: "read it from somewhere"}}},
 		{ID: "talk.discovery", State: "needs_action", Code: "recording_auth_rejected", Action: "recheck"},
 		{ID: "storage", State: "passed", Code: "storage_ready"},
 	}
@@ -566,30 +567,41 @@ func TestABlockedRowIsNotCheckable(t *testing.T) {
 // The panel used to invent this row whenever the operator omitted it, choosing
 // its state, message, action, position and its own suppression rule — and
 // drifted, carrying wording this function had already replaced.
-func TestOperatorReportsTheCredentialRowWhenItIsConfigured(t *testing.T) {
+// A saved credential must stay editable from the row it belongs to. Without
+// this the form is unreachable the moment the check passes, and the value can
+// never be rotated from the panel again.
+//
+// What is NOT here any more: a row reading "Passed" because a value was saved.
+// Saving proves only that something was typed; this row reports whether the
+// backend accepted it, which is a different claim and the one worth making.
+func TestASavedCredentialStaysEditableOnTheBackendRow(t *testing.T) {
 	resetDirectSubstrate(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	putRecordingSetup(t, rt, `{"internal_secret":"a-saved-secret"}`, 200)
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.checks = []readinessCheck{{ID: "talk.hpb", State: "passed", Code: "hpb_authenticated", Message: "accepted"}}
+	rt.recordingSetup.checkedAt = time.Now()
+	rt.recordingSetup.mu.Unlock()
 
 	var row *readinessCheck
 	for _, c := range rt.readiness(context.Background()).Checks {
-		if c.ID == "talk.authentication" {
+		if c.ID == "talk.hpb" {
 			copy := c
 			row = &copy
 		}
+		if c.ID == "talk.authentication" {
+			t.Fatal("a separate credential row is back; it reported one fact twice")
+		}
 	}
 	if row == nil {
-		t.Fatal("the operator omitted talk.authentication; the panel must not have to invent it")
+		t.Fatal("no backend row")
 	}
-	if row.State != "passed" || row.Code != "internal_secret_configuration" {
-		t.Fatalf("configured credential = %+v", row)
+	if row.State != "passed" || row.Code != "hpb_authenticated" {
+		t.Fatalf("a saved secret rewrote a verdict somebody checked: %+v", row)
 	}
-	// Claims only what saving proves. Whether Talk accepts it is the connection
-	// check's to establish, and claiming more reads green on an install that
-	// cannot record.
-	if !strings.Contains(row.Message, "connection check") {
-		t.Errorf("the row overclaims: %q", row.Message)
+	if row.Action != "configure_talk" {
+		t.Errorf("the credential form is unreachable once the check passes: %+v", row)
 	}
 }
 

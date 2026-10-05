@@ -32,7 +32,7 @@ it("offers the test recording only where its prerequisites hold", () => {
     const row = report.checks.find(check => check.id === "test");
     if (!row) continue;
     const blockers = report.checks.filter(check =>
-      ["storage", "talk.hpb", "talk.authentication", "talk.discovery", "talk.handoff"].includes(check.id) &&
+      ["storage", "talk.hpb", "talk.discovery", "talk.handoff"].includes(check.id) &&
       check.state === "needs_action");
     if (blockers.length > 0 && row.action) {
       throw new Error(`${scenario.id} invites a test recording while ${blockers[0].id} needs attention`);
@@ -44,7 +44,7 @@ it("offers the test recording only where its prerequisites hold", () => {
 // order. Every fixture had drifted from it before this was pinned.
 it("renders every scenario in the order the operator sends rows", () => {
   const order = ["configuration", "host", "host.workdir", "host.tmpdir.writable", "storage",
-    "talk.hpb", "talk.authentication", "talk.discovery", "talk.handoff", "test", "archive.search"];
+    "talk.hpb", "talk.discovery", "talk.handoff", "test", "archive.search"];
   for (const scenario of doctorScenarios) {
     const ranks = scenarioReport(scenario.id).checks.map(check => {
       const at = order.indexOf(check.id);

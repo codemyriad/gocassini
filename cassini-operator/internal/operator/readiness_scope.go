@@ -30,7 +30,7 @@ func (s readinessScope) empty() bool {
 // readinessScopeFor maps row ids to the probes that establish them.
 //
 // Unknown ids, and rows that are read from saved configuration rather than
-// probed — configuration, talk.authentication, talk.handoff — contribute
+// probed — configuration, talk.handoff — contribute
 // nothing. A request naming only those yields an empty scope, which the caller
 // must refuse rather than silently run everything: a button that quietly does
 // far more than it says is worse than one that does not work.

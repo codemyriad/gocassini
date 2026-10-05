@@ -52,7 +52,6 @@ const rowOrder = [
   "host", "host.workdir", "host.tmpdir.writable",
   "storage",
   "talk.hpb",
-  "talk.authentication",
   "talk.discovery",
   "talk.handoff",
   "test",
@@ -95,7 +94,9 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       { id: "host.workdir", state: "passed", code: "workdir", message: "working directory is writable", checked_at },
       { id: "host.tmpdir.writable", state: "passed", code: "tmpdir.writable", message: "temporary directory is writable", checked_at },
       { id: "storage", state: "passed", code: "storage_ready", message: "Cassini can store and share recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers.", checked_at },
-      { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", checked_at },
+      // Keeps its credential action even while passing: the form has to stay
+      // reachable, or the secret can never be rotated from the panel again.
+      { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", action: "configure_talk", checked_at },
       { id: "talk.discovery", state: "passed", code: "recording_auth_verified", message: "Talk accepted Cassini's recording credential.", checked_at },
       { id: "archive.search", state: "passed", code: "search_archive_files_accounted_for", message: "The search index records 12 indexed meeting(s). Every Opus file in the checked archive listing has an index outcome.", checked_at },
     ],
@@ -141,19 +142,19 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       // three below it carry a sentence each.
       report.secret_configured = false; report.secret_source = "unset";
       set({ id: "talk.hpb", state: "needs_action", code: "hpb_disabled", message: "Recording cannot work until Talk has a High Performance Backend. Cassini records by joining the call as a hidden participant, and Talk only allows that through standalone signaling. Calls between people keep working without it.", action: "setup_hpb", docs: "https://nextcloud-talk.readthedocs.io/en/stable/quick-install/", checked_at });
-      set(blocked("talk.authentication", "High Performance Backend"));
       set(blocked("talk.discovery", "High Performance Backend"));
       report.checks.push(blocked("test", "High Performance Backend"));
       break;
     case "missing-secret":
       report.secret_configured = false; report.secret_source = "unset";
-      set({ id: "talk.authentication", state: "needs_action", code: "internal_secret_missing", message: "This is not a Nextcloud setting. It belongs to Talk's signaling server, and Cassini needs the same value in order to join calls invisibly. Nextcloud does not hold it anywhere, which is why Cassini cannot read it for you.", action: "configure_talk", steps: [
+      // One row, because it is one fact: the backend exists and Cassini has no
+      // credential for it.
+      set({ id: "talk.hpb", state: "needs_action", code: "internal_secret_missing", message: "Talk has a High Performance Backend, and Cassini needs that server's internal secret to join calls invisibly. This is not a Nextcloud setting: it belongs to the signaling server, which is why Cassini cannot read it for you.", action: "configure_talk", checked_at, steps: [
         { label: "Nextcloud All-in-One: docker exec nextcloud-aio-talk printenv INTERNAL_SECRET" },
         { label: "Standalone signaling server: the `internalsecret` under `[clients]` in its configuration file" },
-        { label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until the connection is checked" },
+        { label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs" },
       ] });
-      set({ id: "talk.hpb", state: "not_verified", code: "internal_secret_missing", message: "Talk has standalone signaling configured. Supply its internal client secret to verify HPB authentication.", action: "configure_talk", checked_at });
-      report.checks.push(blocked("test", "Signaling server credential"));
+      set(blocked("talk.discovery", "High Performance Backend"));
       break;
     case "rejected-secret":
       set({ id: "talk.hpb", state: "needs_action", code: "signaling_auth_failed", message: "HPB rejected internal-client authentication. Check the internal secret and server authentication configuration.", action: "configure_talk", checked_at }); break;
@@ -270,7 +271,6 @@ export function createPreviewClient(id: string): DoctorClient {
       await delay(250);
       if (payload.internal_secret?.trim()) {
         report.secret_configured = true; report.secret_source = "setup";
-        report.checks = report.checks.filter(check => check.id !== "talk.authentication");
         const healthy = scenarioReport("healthy");
         report.checks = report.checks.map(check => check.id === "talk.hpb" ? healthy.checks.find(row => row.id === "talk.hpb")! : check);
       }

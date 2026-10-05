@@ -16,27 +16,28 @@ import "fmt"
 // asking to be looked at. The prerequisite keeps the attention, because it is
 // the only row where acting changes anything.
 var readinessPrerequisites = map[string][]string{
-	"talk.authentication": {"talk.hpb"},
-	"talk.discovery":      {"talk.hpb", "talk.authentication"},
+	// The credential used to sit between these two as a row of its own. It is
+	// part of the backend row now — same server, same fact — so the chain is
+	// one link shorter.
+	"talk.discovery": {"talk.hpb"},
 	// A test recording exercises every link at once: Talk hands the call over
 	// (handoff), the recorder joins through the backend (hpb, authentication,
 	// discovery), and the result is published to Nextcloud (storage). Listing
 	// them all is what keeps the tool from appearing while it cannot succeed —
 	// the old version offered itself regardless and failed for a reason that
 	// was always already on screen, one row up.
-	"test": {"storage", "talk.hpb", "talk.authentication", "talk.discovery", "talk.handoff"},
+	"test": {"storage", "talk.hpb", "talk.discovery", "talk.handoff"},
 }
 
 // readinessRowNames are the labels used when naming a blocker in a message.
 // They match the panel's own labels: a message that calls a row something the
 // reader cannot see on screen sends them hunting.
 var readinessRowNames = map[string]string{
-	"talk.hpb":            "High Performance Backend",
-	"talk.authentication": "Signaling server credential",
-	"talk.discovery":      "Talk connection",
-	"talk.handoff":        "Recording credential",
-	"storage":             "Recording storage",
-	"test":                "Test recording",
+	"talk.hpb":       "High Performance Backend",
+	"talk.discovery": "Talk connection",
+	"talk.handoff":   "Recording credential",
+	"storage":        "Recording storage",
+	"test":           "Test recording",
 }
 
 // readinessProvenPrerequisites are prerequisites that must have been CHECKED

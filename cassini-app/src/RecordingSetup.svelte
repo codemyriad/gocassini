@@ -235,7 +235,10 @@
           {/if}
           <p class="mt-3 text-sm text-base-content/70">This is the internal secret your Talk signaling server is configured with. Cassini cannot read it from Talk, which is why it is asked for here.</p>
           {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
-          <button class="btn btn-sm mt-3" disabled={busy} on:click={() => load(true, "talk.discovery")}>Test connection</button>
+          <!-- No "Test connection" button. It fired the Talk connection check,
+               which authenticates with the RECORDING secret and can say nothing
+               about this one — the row this form belongs to is the backend row,
+               and its own Check button is what tries the credential. -->
         {:else if panel === "setup_hpb"}
           <h3 class="font-semibold">Talk’s High Performance Backend</h3>
           <p class="my-2 text-sm">Recording joins a call as a participant, which Talk supports only through standalone signaling. Without that backend Cassini cannot record, although calls between people keep working.</p>

@@ -56,12 +56,12 @@ it("notifies health changes while ignoring timestamps and job progress", () => {
  expect(readinessHealthKey(report)).not.toBe(before);
 });
 
-it("labels a configured credential as configured, not verified", () => {
- // The operator sends this row now. What stays the panel's is turning the
- // state into a word, and "Configured" rather than "Passed" is the point: a
- // saved secret proves it was saved, not that Talk accepts it.
- const row = { id: "talk.authentication", state: "passed", code: "internal_secret_configuration", message: "" } as ReadinessCheck;
- expect(checkStateLabel(row)).toBe("Configured");
+// "Configured" is gone with the row that needed it. There is no longer a check
+// whose green means "a value was saved" — the credential lives on the backend
+// row, where green means the backend accepted it.
+it("has no word for a check that only means something was saved", () => {
+  const row = { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "" } as ReadinessCheck;
+  expect(checkStateLabel(row)).toBe("Passed");
 });
 
 // D-763: the checklist reads at a glance.

@@ -65,11 +65,14 @@ checking. Do not change proxy routing solely because an icon is absent.
    makes recordings visible to every account on the instance. To restrict them to
    meeting participants, use that section to enable the required apps and change
    the audience. Complete any service-account repair it requests.
-2. Open **Talk authentication**. Supply the signaling server's `[clients] internalsecret`. An AIO host administrator retrieves it with
+2. Open **High Performance Backend**. Supply the signaling server's `[clients] internalsecret`. An AIO host administrator retrieves it with
    `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. This is different
-   from the recording-backend secret, which Cassini generates itself.
-3. Choose a dedicated **Test room** on this Nextcloud. The URL is stored so
-   Cassini can recheck after restarting. Public links and `/index.php/call/` links
+   from the recording-backend secret, which Cassini generates itself. The
+   credential lives on this row because this is the server it authenticates to,
+   and this check is what accepts or rejects it; the form stays reachable once
+   it passes, so the secret can be rotated.
+3. Cassini keeps its own test conversation. The room is stored so it can recheck
+   after restarting, and is recreated if deleted. Public links and `/index.php/call/` links
    are supported even when AppAPI uses an internal hostname. Cassini extracts
    the room token and always probes its deployment-configured Talk backend
    (`CASSINI_TALK_BACKEND_URL`, falling back to `NEXTCLOUD_URL`); the pasted
@@ -108,7 +111,7 @@ recording started through Talk after the test was prepared. A job started
 directly through the operator does not count.
 
 The **Test recording** row appears only once everything it depends on is in
-order — storage, the High Performance Backend, the signaling credential, the
+order — storage, the High Performance Backend and its credential, the
 Talk connection and the recording handoff. Where one of those needs attention
 the row says what it is waiting for and offers no buttons, because a test run
 then can only fail for a reason already on screen.

@@ -93,10 +93,6 @@ export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
   "archive.search": "Archive search",
-  // Named for whose credential it is. "Internal credential" read as something
-  // of Cassini's or Nextcloud's, and an administrator went looking for it in
-  // Nextcloud's configuration, where it has never been.
-  "talk.authentication": "Signaling server credential",
   "talk.discovery": "Talk connection",
   // Nextcloud Talk's own term for it, capitalised the way its documentation
   // does — and the same string the operator uses when a blocked row names this
@@ -170,8 +166,8 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // Talk connection still showed Check and Test room.
   if (check.code === "check_blocked") return [];
   // "Talk authentication" named the row this button sits on, back when the row
-  // was called that. The row is "Signaling server credential" now, so the button
-  // said one thing and the heading above it another.
+  // was called that. The credential lives on the High Performance Backend row
+  // now — one server, one fact — so the button says what it does instead.
   // Every action the operator and the recorder can emit. An action missing from
   // here used to render as "Configure" and open whichever drawer the panel fell
   // through to — which for setup_hpb, the row a backend-less install leads
@@ -187,11 +183,10 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
     repair_configuration: "How to repair this",
   };
   const actions = check.action ? [check.action] : [];
-  // talk.authentication is NOT here. The operator withholds its action when the
-  // secret cannot be useful — no High Performance Backend to authenticate to —
-  // and a panel that adds the form back offers a reader a way to configure
-  // something that will change nothing. Where the secret IS useful, the row
-  // carries the action itself.
+  // The backend row is not here either: the operator withholds its credential
+  // action when there is no backend to authenticate to, and a panel that adds
+  // the form back offers a reader a way to configure something that would
+  // change nothing. Where the secret IS useful, that row carries the action.
   // talk.discovery no longer keeps a "Test room" button: the room is Cassini's
   // to create, so there is no longer anything for a reader to choose.
   const persistent: Record<string,string> = { "talk.handoff":"connect_talk" };
@@ -285,7 +280,6 @@ export function formatAge(checkedAt: string, now: Date = new Date()): string {
 }
 
 export function checkStateLabel(check: ReadinessCheck): string {
-  if (check.code === "internal_secret_configuration" && check.state === "passed") return "Configured";
   if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
   return stateLabels[check.state];
 }

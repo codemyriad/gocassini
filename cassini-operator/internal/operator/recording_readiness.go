@@ -668,57 +668,6 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// a reader told to look down the page looks in the wrong place.
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "Cassini cannot store or share recordings in Nextcloud yet. The storage details name the step that failed.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
-	hpbDisabled := false
-	for _, p := range probes {
-		if p.Code == "hpb_disabled" {
-			hpbDisabled = true
-		}
-	}
-	if secret == "" && !failed {
-		// Where to READ it, named. The same two locations the startup log has
-		// always given — a row that asks for a secret and does not say where it
-		// lives sends an administrator hunting, which is what happened.
-		//
-		// Two named places, not a procedure branched on a declared install type:
-		// these are where the value IS, whoever deployed it.
-		if hpbDisabled {
-			// The secret authenticates Cassini to the High Performance Backend.
-			// With no backend there is nothing to authenticate to, and nothing
-			// an administrator can usefully do about this row yet — the backend
-			// row above is the one to act on. Demanding it here reported one
-			// fault twice and sent the reader to the wrong one.
-			addWithSteps("talk.authentication", "not_verified", "internal_secret_not_needed_yet",
-				"Not needed yet. Cassini joins a call as an invisible signaling client, and this secret is how it authenticates to Talk's High Performance Backend — it belongs to that server, not to Nextcloud. There is no backend configured, so there is nothing to authenticate to and setting it now would change nothing.",
-				"",
-				readinessStep{Label: "Declare a standalone signaling server under Talk → Administration settings → Signaling server. This credential becomes required, and checkable, once Talk names one"})
-		} else {
-			addWithSteps("talk.authentication", "needs_action", "internal_secret_missing",
-				"This is not a Nextcloud setting. It belongs to Talk's signaling server, and Cassini needs the same value in order to join calls invisibly. Nextcloud does not hold it anywhere, which is why Cassini cannot read it for you.",
-				"configure_talk",
-				readinessStep{Label: "Nextcloud All-in-One: docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"},
-				readinessStep{Label: "Standalone signaling server: the `internalsecret` under `[clients]` in its configuration file"},
-				readinessStep{Label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until the connection is checked"})
-		}
-	} else if !failed {
-		// The configured case, which the OPERATOR now reports too.
-		//
-		// It used to be the panel's: when this row was absent the panel invented
-		// one, choosing its state, its message, its action, its position, and
-		// its own rule for when to suppress it. Five decisions this function
-		// already makes for every other row, duplicated in TypeScript, and
-		// drifted — the panel still carried the wording this row stopped using
-		// days ago.
-		//
-		// "Configured", not "passed as verified": saving a secret proves it was
-		// saved. Whether it is the RIGHT secret is the connection check's to
-		// establish, and claiming more here is how a row reads green on an
-		// install that cannot record.
-		message := "An internal secret is saved. The connection check is what confirms Talk accepts it."
-		if source == "env" {
-			message = "The internal secret comes from Cassini's deployment configuration. The connection check is what confirms Talk accepts it."
-		}
-		add("talk.authentication", "passed", "internal_secret_configuration", message, "configure_talk")
-	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		add("talk.handoff", "needs_action", "recording_secret_missing", "Cassini could not provision its recording credential. Check its persistent storage.", "connect_talk")
 	}
@@ -760,6 +709,16 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		add("talk.hpb", "not_verified", "hpb_not_checked",
 			"Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one. Check again to run it.",
 			"recheck")
+	}
+	// The credential belongs to that same row. It used to have one of its own,
+	// which could only ever report whether a value had been SAVED — and did so
+	// as "Passed", on an install where nothing had tried to use it.
+	if !failed {
+		for i := range resp.Checks {
+			if resp.Checks[i].ID == "talk.hpb" {
+				mergeCredentialIntoBackend(&resp.Checks[i], secret, source)
+			}
+		}
 	}
 	if includeOptional {
 		resp.Checks = append(resp.Checks, rt.lastArchiveCoverage())
@@ -866,7 +825,6 @@ var readinessRowOrder = []string{
 	"host", "host.workdir", "host.tmpdir.writable",
 	"storage",
 	"talk.hpb",
-	"talk.authentication",
 	"talk.discovery",
 	"talk.handoff",
 	"test",
