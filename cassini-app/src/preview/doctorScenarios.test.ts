@@ -65,6 +65,24 @@ it("shows the backend row in every scenario", () => {
   }
 });
 
+// A designer judging the row's affordances has to see the buttons the product
+// renders. The fixtures set no `checkable` and no `probe`, so every row was
+// missing its own Check button and no two rows shared a spinner.
+it("marks the rows the product marks as checkable", () => {
+  for (const scenario of doctorScenarios) {
+    for (const check of scenarioReport(scenario.id).checks) {
+      const probed = ["storage", "talk.hpb", "talk.discovery", "archive.search"].includes(check.id)
+        || check.id.startsWith("host.");
+      if (check.code === "check_blocked") {
+        expect(check.checkable, `${scenario.id}/${check.id} offers a check it cannot run`).toBeFalsy();
+        continue;
+      }
+      expect(!!check.checkable, `${scenario.id}/${check.id} checkable`).toBe(probed);
+      expect(!!check.probe, `${scenario.id}/${check.id} probe`).toBe(probed);
+    }
+  }
+});
+
 it("simulates a repair without network calls, duplicate actions or shared state", async () => {
   vi.useFakeTimers();
   const fetch = vi.fn(() => { throw new Error("A preview must never access the network"); });

@@ -218,6 +218,22 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       : { id: "test", state: "not_verified", code: "test_not_run", action: "test_recording",
           message: "Nothing has been recorded through Talk yet. A short test recording is what proves the whole path, from a call to audio you can play." });
   }
+  // What the operator marks on every row it sends: which probe establishes it,
+  // and therefore whether the row carries its own Check button. The fixtures set
+  // neither, so the gallery rendered a checklist with fewer buttons than the
+  // product has — on a passing storage row, none at all where production shows
+  // one. Mirrors probeNameFor in readiness_scope.go.
+  for (const check of report.checks) {
+    const probe = check.id === "host" || check.id.startsWith("host.") ? "host"
+      : check.id.startsWith("archive.") ? "archive"
+      : ({ storage: "storage", "talk.hpb": "talk", "talk.discovery": "talk" } as Record<string, string>)[check.id] ?? "";
+    // A blocked row is not checkable: running its probe cannot succeed while
+    // its prerequisite is unmet, so offering the button invites a failure.
+    if (probe && check.code !== "check_blocked") {
+      check.probe = probe;
+      check.checkable = true;
+    }
+  }
   report.checks = sortRows(report.checks);
   updateVerdict(report);
   return report;
