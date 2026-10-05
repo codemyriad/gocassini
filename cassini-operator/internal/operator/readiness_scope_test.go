@@ -2,6 +2,8 @@ package operator
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -808,5 +810,42 @@ func TestTheConnectionCheckAcceptsAnyExistingRoom(t *testing.T) {
 	}
 	if got != room {
 		t.Fatalf("got %q; the check must not replace a usable room it did not create", got)
+	}
+}
+
+// A caller who names a room has chosen it deliberately. The installed-ExApp
+// e2e arms the test against the private conversation it is about to record in,
+// and then asserts the test followed THAT job to publication — so silently
+// substituting a freshly created room would not fail loudly, it would measure
+// the wrong thing. Creating one as the acting administrator is for the panel's
+// button, which names no room.
+func TestArmingHonoursARoomTheCallerNamed(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkBackendURL = "https://nc.test"
+	named := "https://nc.test/index.php/call/chosen12"
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/talk/setup",
+		strings.NewReader(`{"test_room_url":"`+named+`","action":"arm_test"}`))
+	// The header AppAPI signs every proxied request with; without the fix the
+	// acting user is what triggers the substitution.
+	req.Header.Set("AUTHORIZATION-APP-API",
+		base64.StdEncoding.EncodeToString([]byte("admin:secret")))
+	rt.recordingSetupHandler(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("arm_test = %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp readinessResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.TestRoomURL != named {
+		t.Fatalf("test room = %q, want the room the caller named (%q)", resp.TestRoomURL, named)
+	}
+	if resp.Test.StartedAt == "" {
+		t.Error("the test was not armed")
 	}
 }

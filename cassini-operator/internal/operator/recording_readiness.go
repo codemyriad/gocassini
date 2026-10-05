@@ -1060,8 +1060,15 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		// of whoever pressed the button, because Talk's Start recording action
 		// belongs to a conversation's moderators and a room created by
 		// Cassini's own account leaves an administrator unable to record in it.
+		//
+		// Unless this request named a room. A caller who supplies one has
+		// chosen it deliberately — the installed-ExApp e2e arms the test
+		// against the private conversation it is about to record in — and
+		// replacing it would point the test at a different room and quietly
+		// invalidate what the caller was measuring.
 		owner := actingUser(r)
-		if !rt.validTestRoom(next.TestRoomURL) || (owner != "" && next.TestRoomOwner != owner) {
+		supplied := body.TestRoomURL != nil && strings.TrimSpace(*body.TestRoomURL) != ""
+		if !supplied && (!rt.validTestRoom(next.TestRoomURL) || (owner != "" && next.TestRoomOwner != owner)) {
 			created, err := rt.ensureTestRoom(r.Context(), next.TestRoomURL, next.TestRoomOwner, owner)
 			if err != nil {
 				s.mu.Unlock()
@@ -1071,6 +1078,11 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 			}
 			next.TestRoomURL = created
 			next.TestRoomOwner = owner
+		} else if supplied {
+			// Whose room it is, is unknown — so do not claim it is the
+			// caller's, or the next arming would reuse a room they may not be
+			// able to moderate.
+			next.TestRoomOwner = ""
 		}
 		next.TestStartedAt = nowUTCString()
 		next.PlaybackJobID = ""
