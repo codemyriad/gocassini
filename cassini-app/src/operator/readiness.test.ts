@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, rowActions, talkRoomURL, talkSettingsURL, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, rowActions, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -260,6 +260,39 @@ describe("every action the backend can send has a button", () => {
   it("offers nothing for an action it cannot name", () => {
     const row = { id: "storage", state: "needs_action", code: "x", message: "", action: "invent_a_backend" } as unknown as ReadinessCheck;
     expect(rowActions(row)).toEqual([]);
+  });
+});
+
+// Reported from staging: "I had to reload the doctor panel for it to catch my
+// test recording." The panel does not poll — deliberately — but a recording
+// under way is the one thing that moves without the reader touching anything.
+describe("following a test recording that is under way", () => {
+  const now = new Date("2026-10-05T12:00:00Z");
+  const report = (test: Partial<RecordingReadiness["test"]>): RecordingReadiness => ({
+    state: "passed", checks: [], secret_configured: true, secret_source: "env", test_room_url: "",
+    test: { state: "idle", published: false, ...test },
+  });
+
+  it("follows a recording Talk is still working on", () => {
+    expect(testInFlight(report({ started_at: "2026-10-05T11:58:00Z", state: "waiting_for_talk" }), now)).toBe(true);
+    expect(testInFlight(report({ started_at: "2026-10-05T11:58:00Z", state: "running", job_id: "j1", stage: "upload" }), now)).toBe(true);
+  });
+
+  // Both of these are waiting on a person, not on the server: play it back, or
+  // go and look at why it stopped. Nothing further arrives on its own.
+  it("stops once the next move belongs to a person", () => {
+    expect(testInFlight(report({ started_at: "2026-10-05T11:58:00Z", state: "succeeded", published: true }), now)).toBe(false);
+    expect(testInFlight(report({ started_at: "2026-10-05T11:58:00Z", state: "failed" }), now)).toBe(false);
+  });
+
+  it("follows nothing when no test was armed", () => {
+    expect(testInFlight(report({}), now)).toBe(false);
+    expect(testInFlight(null, now)).toBe(false);
+  });
+
+  // A test armed and abandoned must not make every later visit poll for it.
+  it("gives up on a test armed long ago", () => {
+    expect(testInFlight(report({ started_at: "2026-10-05T11:00:00Z", state: "waiting_for_talk" }), now)).toBe(false);
   });
 });
 

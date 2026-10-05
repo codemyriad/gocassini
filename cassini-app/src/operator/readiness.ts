@@ -58,6 +58,25 @@ export interface RecordingReadiness {
     viewer_url?: string;
   };
 }
+// Whether a test recording is still moving on its own.
+//
+// The only part of this panel whose state advances without the reader touching
+// anything: Talk starts the recording, and the job records, uploads, builds and
+// publishes. Everything else changes only when somebody presses a button, which
+// is why this panel does not poll — and why this one case has to be followed.
+//
+// It stops being in flight the moment the next step belongs to a person:
+// published (play it and confirm) or failed (go and look). The age cap keeps a
+// test armed and abandoned days ago from being followed every time the panel is
+// opened — nothing is arriving for it.
+export function testInFlight(report: RecordingReadiness | null, now: Date = new Date()): boolean {
+  const test = report?.test;
+  if (!test?.started_at || test.published || test.state === "failed") return false;
+  const started = new Date(test.started_at).getTime();
+  if (Number.isNaN(started)) return false;
+  return now.getTime() - started < 30 * 60 * 1000;
+}
+
 export interface RecordingSetupUpdate {
   internal_secret?: string;
   test_room_url?: string;

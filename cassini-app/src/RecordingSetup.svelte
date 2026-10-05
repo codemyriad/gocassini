@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -44,6 +44,24 @@
   // that row shows a spinner: marking them all would claim work that is not
   // happening.
   let checkingOnly = "";
+
+  // A read that does not announce itself: no busy, so no button is disabled and
+  // nothing flickers. Used only while waiting for a recording that is already
+  // under way — see followTest below.
+  async function refreshQuietly() {
+    if (busy) return;
+    try {
+      const next = await operatorClient.getReadiness();
+      if (!alive) return;
+      const changed = readinessHealthKey(report) !== readinessHealthKey(next);
+      report = next;
+      if (changed) notifySetupChanged();
+    } catch {
+      // A failed background read says nothing the reader needs. The findings on
+      // screen are still the last ones the operator gave; an error banner for a
+      // refresh nobody asked for is the noise this panel had before.
+    }
+  }
 
   async function load(check = false, only = "") {
     // One guard, and only for work this reader started. There was a second one
@@ -117,6 +135,18 @@
     void load(false);
     // So the test room link is ready without opening a panel first.
     void resolveNextcloudLinks();
+    // While a test recording is under way, follow it.
+    //
+    // This is NOT the five-second health poll that was removed: it is a cheap
+    // READ of findings the operator already holds, it runs no probe, it
+    // disables no button, and it stops by itself the moment the recording
+    // reaches a state only a person can move on from. Without it the one part
+    // of this panel whose state advances on its own — Talk starts the
+    // recording, the job records, uploads, builds and publishes, none of it
+    // touched by the reader — sat still until somebody reloaded the page.
+    // Reported from staging: "I had to reload the doctor panel for it to catch
+    // my test recording."
+    const follow = setInterval(() => { if (testInFlight(report)) void refreshQuietly(); }, 5000);
     // A setup change elsewhere means what is on screen is out of date, so
     // re-READ it. Deliberately not a re-probe: nobody asked for one, and a page
     // reacting to its own events is how a panel starts checking on its own.
@@ -130,7 +160,7 @@
     // What this gives up, knowingly: a check run in another tab is not picked
     // up here, and a running re-index does not advance on its own. Run all
     // checks shows both.
-    return () => { alive = false; secret = ""; unsubscribe(); };
+    return () => { alive = false; secret = ""; unsubscribe(); clearInterval(follow); };
   });
 </script>
 
