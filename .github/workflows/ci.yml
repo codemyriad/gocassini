@@ -105,10 +105,6 @@ jobs:
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-negative-manifest.sh
           ./harness/bin/test-harness-prerequisites.sh
-      # No shellcheck step here. lint.yml runs it over every tracked *.sh with
-      # -x and --source-path, and is a required check — this job used to repeat
-      # it over a hand-written list of 19 scripts, with weaker flags and no way
-      # to notice a new script nobody added to the list.
       - name: Parse every harness shell script
         run: |
           set -euo pipefail
