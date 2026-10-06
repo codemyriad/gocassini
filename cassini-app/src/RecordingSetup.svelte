@@ -191,13 +191,11 @@
 <div class="space-y-4">
 <header class="op-panel-head">
   <div>
-    <div class="op-panel-title">
+    <div class="op-panel-title justify-between">
       <h1 id="doctor-title">Doctor</h1>
+      <button class="op-btn inline-flex items-center gap-1.5" type="button" disabled={busy} on:click={() => load(true)}><ListChecks size={15} aria-hidden="true" />{busy ? "Checking…" : "Run all checks"}</button>
     </div>
     <p>What Cassini needs to record and search meetings, and what to do when something needs attention.</p>
-  </div>
-  <div class="op-panel-actions">
-    <button class="op-btn inline-flex items-center gap-1.5" type="button" disabled={busy} on:click={() => load(true)}><ListChecks size={15} aria-hidden="true" />{busy ? "Checking…" : "Run all checks"}</button>
   </div>
 </header>
 {#if verdict}
