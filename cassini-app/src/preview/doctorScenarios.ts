@@ -150,7 +150,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       // the layout most worth getting right: one row carries the fault and the
       // three below it carry a sentence each.
       report.secret_configured = false; report.secret_source = "unset";
-      set({ id: "talk.hpb", state: "needs_action", code: "hpb_disabled", message: "Recording cannot work until Talk has a High Performance Backend. Cassini records by joining the call as a hidden participant, and Talk only allows that through standalone signaling. Calls between people keep working without it.", action: "setup_hpb", docs: "https://nextcloud-talk.readthedocs.io/en/stable/quick-install/", checked_at });
+      set({ id: "talk.hpb", state: "needs_action", code: "hpb_disabled", message: "Recording cannot work until Talk has a High Performance Backend. Cassini records by joining the call as a hidden participant, and Talk only allows that through standalone signaling — here it is signalling by itself. Nothing else about Talk is affected.", docs: "https://nextcloud-talk.readthedocs.io/en/stable/quick-install/", checked_at });
       set(blocked("talk.discovery", "High Performance Backend"));
       report.checks.push(blocked("test", "High Performance Backend"));
       break;

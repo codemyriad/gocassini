@@ -103,7 +103,7 @@
         <p class="mt-1 text-sm text-base-content/70">{selected.description}</p>
       </div>
       <div style:max-width={width || null} class="op-settings {width ? 'rounded-box border border-dashed border-base-300 p-2' : ''}">
-        <RecordingSetup {operatorClient} provisioningBase="https://preview.invalid/operator" on:openStorage={() => { notice = "This would open Publish pipeline in the live app. Server configuration is unavailable in this preview."; }} />
+        <RecordingSetup {operatorClient} provisioningBase="https://preview.invalid/index.php/apps/app_api/proxy/gocassini/operator/" on:openStorage={() => { notice = "This would open Publish pipeline in the live app. Server configuration is unavailable in this preview."; }} />
       </div>
       {#if notice}<p class="rounded-box bg-base-100 p-4 text-sm" role="status">{notice}</p>{/if}
     {:else}
