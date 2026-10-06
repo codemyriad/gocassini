@@ -213,7 +213,7 @@
 {/if}
 {#if error}<p role="alert" class="text-sm {toneClasses.error}">{error}</p>{/if}
 {#if report}
-<section class="rounded-box border border-base-300 bg-base-100 px-5 py-2 shadow-sm" aria-labelledby="doctor-title" aria-busy={busy}>
+<section class="op-tint px-5 py-2" aria-labelledby="doctor-title" aria-busy={busy}>
     <ul class="divide-y divide-base-300">
       {#each rows as check, index}
         <li class="py-3" data-check-id={check.id}>
