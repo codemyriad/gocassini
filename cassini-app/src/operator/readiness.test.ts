@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, rowActions, rowGuide, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -347,5 +347,35 @@ describe("the guide a row offers", () => {
 
   it("offers nothing on a row waiting for another check", () => {
     expect(rowGuide(row({ code: "check_blocked", docs: "https://example.invalid/guide" }))).toBeNull();
+  });
+});
+
+describe("the time a run of checks shares", () => {
+  const at = (id: string, checked_at?: string, code = "x"): ReadinessCheck =>
+    ({ id, state: "passed", code, message: "", checked_at });
+
+  it("treats checks stamped seconds apart as one run, and reports its oldest time", () => {
+    const shared = sharedCheckTime([at("host.workdir", "2026-10-06T10:00:01Z"), at("storage", "2026-10-06T10:00:00Z"), at("talk.hpb", "2026-10-06T10:00:09Z")]);
+    expect(shared?.checkedAt).toBe("2026-10-06T10:00:00Z");
+    expect([...shared?.ids ?? []].sort()).toEqual(["host.workdir", "storage", "talk.hpb"]);
+  });
+
+  it("leaves out a row checked on its own later", () => {
+    const shared = sharedCheckTime([at("host.workdir", "2026-10-06T10:00:00Z"), at("storage", "2026-10-06T10:00:02Z"), at("talk.hpb", "2026-10-06T10:20:00Z")]);
+    expect(shared?.ids.has("talk.hpb")).toBe(false);
+    expect(shared?.ids.size).toBe(2);
+  });
+
+  it("leaves out the test row, whose time is a person's playback", () => {
+    const shared = sharedCheckTime([at("storage", "2026-10-06T10:00:00Z"), at("test", "2026-10-06T10:00:00Z", "test_playback")]);
+    expect(shared?.ids.has("test")).toBe(false);
+  });
+
+  it("prefers the later run when two are the same size", () => {
+    expect(sharedCheckTime([at("a", "2026-10-04T10:00:00Z"), at("b", "2026-10-06T10:00:00Z")])?.checkedAt).toBe("2026-10-06T10:00:00Z");
+  });
+
+  it("has nothing to share when nothing was checked", () => {
+    expect(sharedCheckTime([at("storage"), at("talk.hpb", "not a time")])).toBeNull();
   });
 });

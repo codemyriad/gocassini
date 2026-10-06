@@ -271,6 +271,24 @@ export function reportTone(report: RecordingReadiness): CheckTone {
 // This carries the freshness that used to be smuggled into the state itself:
 // an aged check keeps its verdict and says how old it is, rather than decaying
 // into "not verified" and making an idle panel look broken (D-798).
+const sameRunWindowMs = 60_000;
+
+export function sharedCheckTime(checks: ReadinessCheck[]): { checkedAt: string; ids: Set<string> } | null {
+  const timed = checks
+    .filter(check => check.code !== "test_playback" && check.checked_at && !Number.isNaN(Date.parse(check.checked_at)))
+    .map(check => ({ id: check.id, raw: check.checked_at as string, at: Date.parse(check.checked_at as string) }))
+    .sort((a, b) => a.at - b.at);
+  if (timed.length === 0) return null;
+  const runs: (typeof timed)[] = [];
+  for (const item of timed) {
+    const run = runs[runs.length - 1];
+    if (run && item.at - run[run.length - 1].at <= sameRunWindowMs) run.push(item);
+    else runs.push([item]);
+  }
+  const largest = runs.reduce((best, run) => run.length >= best.length ? run : best);
+  return { checkedAt: largest[0].raw, ids: new Set(largest.map(item => item.id)) };
+}
+
 export function formatAge(checkedAt: string, now: Date = new Date()): string {
   const at = new Date(checkedAt);
   if (Number.isNaN(at.getTime())) {

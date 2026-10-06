@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { BookOpen, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Settings, TriangleAlert } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -31,6 +31,7 @@
   $: rows = report ? readinessRows(report) : [];
   $: verdict = stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "";
   $: verdictTone = report && !stale ? reportTone(report) : "neutral";
+  $: shared = report ? sharedCheckTime(report.checks) : null;
   const calloutTone: Record<CheckTone, string> = {
     success: "alert-success alert-tinted",
     warning: "alert-warning alert-tinted",
@@ -199,9 +200,12 @@
   </div>
 </header>
 {#if verdict}
-  <div class="alert alert-soft items-start gap-3 py-2 text-sm {calloutTone[verdictTone]}" role="status">
+  <div class="alert alert-soft items-start gap-2 px-3 py-2 text-sm {calloutTone[verdictTone]}" role="status">
     <svelte:component this={toneIcons[verdictTone]} size={16} class="mt-0.5 shrink-0 {verdictTone === 'neutral' ? 'opacity-70' : toneClasses[verdictTone]}" aria-hidden="true" />
-    <p class="font-semibold text-base-content">{verdict}</p>
+    <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <p class="font-semibold text-base-content">{verdict}</p>
+      {#if shared}<p class="text-xs text-base-content/70" title={new Date(shared.checkedAt).toLocaleString()}>Checked {formatAge(shared.checkedAt)}</p>{/if}
+    </div>
   </div>
 {/if}
 {#if error}<p role="alert" class="text-sm {toneClasses.error}">{error}</p>{/if}
@@ -245,7 +249,7 @@
               </ul>
             </details>
           {/if}
-          {#if check.checked_at}<p class="mt-2 flex items-center gap-1 text-xs text-base-content/65" title={new Date(check.checked_at).toLocaleString()}><svelte:component this={check.code === "test_playback" ? Headphones : Clock} size={12} class="shrink-0" aria-hidden="true" />{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
+          {#if check.checked_at && (check.code === "test_playback" || !shared?.ids.has(check.id))}<p class="mt-2 flex items-center gap-1 text-xs text-base-content/65" title={new Date(check.checked_at).toLocaleString()}><svelte:component this={check.code === "test_playback" ? Headphones : Clock} size={12} class="shrink-0" aria-hidden="true" />{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
           {#if rowGuide(check)}
             <div class="mt-3 flex flex-wrap gap-2">
               <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={rowGuide(check)?.href} target="_blank" rel="noreferrer"><BookOpen size={15} class="shrink-0" aria-hidden="true" />{rowGuide(check)?.label}</a>
