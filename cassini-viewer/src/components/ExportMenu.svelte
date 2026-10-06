@@ -7,6 +7,7 @@
   export let canCopy = true;
   export let canDownloadTranscript = true;
   export let canDownloadAudio = true;
+  export let audioLabel = "Download audio";
   export let status = "";
   export let includeContext = false;
   export let canExportContext = true;
@@ -81,7 +82,7 @@
       <FileText size={14} aria-hidden="true" />Download {plural ? "transcripts" : "transcript"}
     </button>
     <button type="button" role="menuitem" class="em-item" disabled={!canDownloadAudio} on:click={() => choose("audio")}>
-      <FileAudio size={14} aria-hidden="true" />Download audio
+      <FileAudio size={14} aria-hidden="true" />{audioLabel}
     </button>
   </div>
 {/if}

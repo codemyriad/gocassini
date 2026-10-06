@@ -123,7 +123,7 @@ func newAnnotationsNextcloud(t *testing.T, visible ...string) *annotationsNextcl
 			body.WriteString(`</d:multistatus>`)
 			w.WriteHeader(http.StatusMultiStatus)
 			_, _ = io.WriteString(w, body.String())
-		case (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasSuffix(base, ".opus"):
+		case (r.Method == http.MethodGet || r.Method == http.MethodHead) && isMeetingFile(base):
 			nc.frontMu.Lock()
 			if r.Method == http.MethodGet {
 				nc.callerGETs = append(nc.callerGETs, r.URL.Path)
@@ -157,7 +157,7 @@ func (nc *annotationsNextcloud) seed(rel, body string, rules any) {
 }
 
 func (nc *annotationsNextcloud) beforeOwner(r *http.Request, base string) {
-	if r.Method != http.MethodGet || !strings.HasSuffix(base, ".opus") {
+	if r.Method != http.MethodGet || !isMeetingFile(base) {
 		return
 	}
 	nc.frontMu.Lock()

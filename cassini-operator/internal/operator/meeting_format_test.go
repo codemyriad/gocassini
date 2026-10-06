@@ -87,3 +87,49 @@ func TestMixedCatalogDiscoveryAndAssets(t *testing.T) {
 		t.Fatalf("%v %v", assets, err)
 	}
 }
+
+func TestJSONAnnotationQueuePersistsAndConfirms(t *testing.T) {
+	nc := newAnnotationsNextcloud(t, "MEETING1.json")
+	store := newTestAnnotationStore(t)
+	empty := annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000}
+	raw, _ := json.Marshal(empty)
+	const rel = ncRecordingsRoot + "/meetings/MEETING1.json"
+	nc.seed(rel, string(raw), nil)
+	recordMarks(t, store, "MEETING1.json", empty)
+	s, h := tagChangeService(t, nc.url, snapshotCLI(t), store)
+	metadata, err := openMeetingMetadataStore(filepath.Join(t.TempDir(), meetingMetadataFilename), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	s.exapp.meetingMetadata = metadata
+	if err := s.exapp.meetingMetadata.Put(context.Background(), 42, "MEETING1.json", json.RawMessage(`{"id":"MEETING1","title":"Meeting","meetingPath":"./meetings/MEETING1.json"}`)); err != nil {
+		t.Fatal(err)
+	}
+	first := postAsync(t, h, markRequest("one", "json-1"))
+	last := postAsync(t, h, markRequest("two", "json-2"))
+	if first.Sync.State != "pending" || last.Sync.Desired <= first.Sync.Desired || len(nc.ifMatches()) != 0 {
+		t.Fatal("request did not queue durably")
+	}
+	if err := s.syncAnnotation(context.Background(), "MEETING1.json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.document(context.Background(), "MEETING1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sync.State != "saved" || !sameAnnotationDocument(got.Annotations, last.Annotations) {
+		t.Fatalf("not confirmed: %+v", got)
+	}
+	var archived annotateResult
+	if err := json.Unmarshal([]byte(nc.recording(rel)), &archived); err != nil {
+		t.Fatal(err)
+	}
+	if !sameAnnotationDocument(archived.Annotations, last.Annotations) {
+		t.Fatal("wrong archive snapshot")
+	}
+	replay := postAsync(t, h, markRequest("one", "json-1"))
+	if replay.StateToken != first.StateToken {
+		t.Fatal("idempotent receipt lost")
+	}
+}
