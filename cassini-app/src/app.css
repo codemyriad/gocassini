@@ -51,3 +51,8 @@ body,
   display: flex;
   flex-direction: column;
 }
+
+@utility alert-tinted {
+  background: color-mix(in oklab, var(--alert-color, var(--color-base-content)) 18%, var(--color-base-100));
+  --alert-border-color: color-mix(in oklab, var(--alert-color, var(--color-base-content)) 35%, var(--color-base-100));
+}

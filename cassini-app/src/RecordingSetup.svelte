@@ -1,7 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
+  import { CircleAlert, CircleCheck, Info, TriangleAlert } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -28,6 +29,14 @@
   // is reported once, by the error banner, and belongs to the panel rather than
   // to any check.
   $: rows = report ? readinessRows(report) : [];
+  $: verdict = stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "";
+  $: verdictTone = report && !stale ? reportTone(report) : "neutral";
+  const calloutTone: Record<CheckTone, string> = {
+    success: "alert-success alert-tinted",
+    warning: "alert-warning alert-tinted",
+    error: "alert-error alert-tinted",
+    neutral: "",
+  };
   let provisioningURL = "";
   let talkSettingsURL = "";
   // The href for the test conversation. The operator's test_room_url carries
@@ -173,18 +182,39 @@
   });
 </script>
 
-<section class="rounded-box border border-base-300 bg-base-100 p-5 shadow-sm" aria-labelledby="recording-readiness-title" aria-busy={busy}>
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 id="recording-readiness-title" class="text-lg font-semibold {report && !stale ? toneClasses[reportTone(report)] : ''}">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
+<div class="space-y-4">
+<header class="op-panel-head">
+  <div>
+    <div class="op-panel-title">
+      <h1 id="doctor-title">Doctor</h1>
+    </div>
+    <!-- Describes what is actually here. The previous line named two of the
+         seven things this reports and ended by telling a reader to verify a short
+         recording through Talk, whose entry point no longer exists. -->
+    <p>What Cassini needs in order to record, and what to do about anything that is missing: the recording host, Nextcloud storage, Talk's signaling backend, how much of the archive search can read, and a short test recording to prove the whole path.</p>
+  </div>
+  <div class="op-panel-actions">
     <button class="btn btn-sm" disabled={busy} on:click={() => load(true)}>{busy ? "Checking…" : "Run all checks"}</button>
   </div>
-  <!-- Describes what is actually here. The previous line named two of the
-       seven things this reports and ended by telling a reader to verify a short
-       recording through Talk, whose entry point no longer exists. -->
-  <p class="mt-2 text-sm text-base-content/70">What Cassini needs in order to record, and what to do about anything that is missing: the recording host, Nextcloud storage, Talk's signaling backend, how much of the archive search can read, and a short test recording to prove the whole path.</p>
-  {#if error}<p role="alert" class="mt-3 text-error">{error}</p>{/if}
-  {#if report}
-    <ul class="mt-4 divide-y divide-base-300">
+</header>
+{#if verdict}
+  <div class="alert alert-soft items-start gap-3 py-2 text-sm {calloutTone[verdictTone]}" role="status">
+    {#if verdictTone === "success"}
+      <CircleCheck size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+    {:else if verdictTone === "warning"}
+      <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+    {:else if verdictTone === "error"}
+      <CircleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+    {:else}
+      <Info size={16} class="mt-0.5 shrink-0 opacity-70" aria-hidden="true" />
+    {/if}
+    <p class="font-semibold text-base-content">{verdict}</p>
+  </div>
+{/if}
+{#if error}<p role="alert" class="text-sm text-error">{error}</p>{/if}
+{#if report}
+<section class="rounded-box border border-base-300 bg-base-100 px-5 py-2 shadow-sm" aria-labelledby="doctor-title" aria-busy={busy}>
+    <ul class="divide-y divide-base-300">
       {#each rows as check, index}
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-start justify-between gap-3">
@@ -298,5 +328,6 @@
         </li>
       {/each}
     </ul>
-  {/if}
 </section>
+{/if}
+</div>
