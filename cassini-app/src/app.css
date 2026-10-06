@@ -65,3 +65,12 @@ body,
   background: color-mix(in oklab, var(--alert-color, var(--color-base-content)) 18%, var(--color-base-100));
   --alert-border-color: color-mix(in oklab, var(--alert-color, var(--color-base-content)) 35%, var(--color-base-100));
 }
+@utility btn-outline-hover {
+  &:hover:not(:disabled) {
+    --btn-bg: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+    --btn-border: var(--color-base-content);
+    --btn-shadow: 0 0 0 0 transparent;
+    --btn-inset: 0 0 0 0 transparent;
+    color: var(--color-base-content);
+  }
+}

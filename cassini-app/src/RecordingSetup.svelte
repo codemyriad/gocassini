@@ -226,11 +226,11 @@
                   on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair]}</button>
               {/if}
               {#if check.checkable && rowActions(check).every((item) => item.action !== "recheck")}
-                <button class="btn btn-sm btn-outline" disabled={busy}
+                <button class="btn btn-sm btn-outline btn-outline-hover" disabled={busy}
                   on:click={() => load(true, check.id)}>Check</button>
               {/if}
               {#each rowActions(check) as item}
-                <button class="btn btn-sm btn-outline" disabled={busy} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
+                <button class="btn btn-sm btn-outline btn-outline-hover" disabled={busy} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
               {/each}
             </div>
           </div>
@@ -254,7 +254,7 @@
             <div class="mt-3 flex flex-wrap gap-2">
               <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={rowGuide(check)?.href} target="_blank" rel="noreferrer"><BookOpen size={15} class="shrink-0" aria-hidden="true" />{rowGuide(check)?.label}</a>
               {#if talkSettingsURL && check.id === "talk.hpb"}
-                <a class="btn btn-sm btn-outline" href={talkSettingsURL} target="_blank" rel="noreferrer"><Settings size={15} aria-hidden="true" />Open Talk settings</a>
+                <a class="btn btn-sm btn-outline btn-outline-hover" href={talkSettingsURL} target="_blank" rel="noreferrer"><Settings size={15} aria-hidden="true" />Open Talk settings</a>
               {/if}
             </div>
           {/if}
