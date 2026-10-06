@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # wire-cassini.sh — install/update Cassini on a Nextcloud All-in-One (AIO) host.
 #
-# The demo sandbox runs on Nextcloud AIO (the substrate a real admin runs), NOT
+# The staging sandbox runs on Nextcloud AIO (the substrate a real admin runs), NOT
 # the CI/dev harness. AIO owns Nextcloud, Postgres, the Talk HPB (signaling +
 # Janus + TURN), and the reverse-proxy apache. This script owns only the
 # Cassini-specific wiring on top of a already-provisioned AIO instance:
@@ -42,7 +42,7 @@ fi
 
 # --- Configuration -----------------------------------------------------------
 
-SANDBOX_DOMAIN="${SANDBOX_DOMAIN:-demo.nextcloud.codemyriad.io}"
+SANDBOX_DOMAIN="${SANDBOX_DOMAIN:-staging.nextcloud.codemyriad.io}"
 SANDBOX_SCHEME="${SANDBOX_SCHEME:-https}"
 PUBLIC_URL="${SANDBOX_PUBLIC_URL:-$SANDBOX_SCHEME://$SANDBOX_DOMAIN}"
 
