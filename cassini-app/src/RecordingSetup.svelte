@@ -214,35 +214,9 @@
     <ul class="divide-y divide-base-300">
       {#each rows as check, index}
         <li class="py-3" data-check-id={check.id}>
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div class="min-w-0 flex-1">
-              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
-              <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
-              {#if rowGuide(check)}
-                <div class="mt-3 flex flex-wrap gap-2">
-                  <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={rowGuide(check)?.href} target="_blank" rel="noreferrer"><BookOpen size={15} class="shrink-0" aria-hidden="true" />{rowGuide(check)?.label}</a>
-                  {#if talkSettingsURL && check.id === "talk.hpb"}
-                    <a class="btn btn-sm btn-outline" href={talkSettingsURL} target="_blank" rel="noreferrer"><Settings size={15} aria-hidden="true" />Open Talk settings</a>
-                  {/if}
-                </div>
-              {/if}
-              {#if (check.steps ?? []).length > 0}
-                <!-- Behind a disclosure, as SetupNotice does it: an
-                     administrator who wants to press a button never has to read
-                     a command line, and one who wants the commands can open
-                     them. -->
-                <details class="mt-2">
-                  <summary class="cursor-pointer text-xs text-base-content/70">What to do about it</summary>
-                  <ul class="mt-2 space-y-2">
-                    {#each check.steps ?? [] as step}
-                      <li class="text-xs text-base-content/80">{step.label}</li>
-                    {/each}
-                  </ul>
-                </details>
-              {/if}
-              {#if check.checked_at}<p class="mt-1 text-xs text-base-content/65" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
-            </div>
-            <div class="flex flex-wrap gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <p class="flex min-w-0 flex-[1_1_12rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} <span class="whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-center gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
+            <div class="flex flex-wrap gap-2 *:[--size:1.75rem]">
               {#if check.repair && repairLabels[check.repair]}
                 <!-- Only a repair this build knows how to name. "Fix this" for an
                      unrecognised action offered a button whose effect the panel
@@ -260,6 +234,30 @@
               {/each}
             </div>
           </div>
+          <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
+          {#if (check.steps ?? []).length > 0}
+            <!-- Behind a disclosure, as SetupNotice does it: an
+                 administrator who wants to press a button never has to read
+                 a command line, and one who wants the commands can open
+                 them. -->
+            <details class="mt-2">
+              <summary class="cursor-pointer text-xs text-base-content/70">What to do about it</summary>
+              <ul class="mt-2 space-y-2">
+                {#each check.steps ?? [] as step}
+                  <li class="text-xs text-base-content/80">{step.label}</li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if check.checked_at}<p class="mt-1 text-xs text-base-content/65" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
+          {#if rowGuide(check)}
+            <div class="mt-3 flex flex-wrap gap-2">
+              <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={rowGuide(check)?.href} target="_blank" rel="noreferrer"><BookOpen size={15} class="shrink-0" aria-hidden="true" />{rowGuide(check)?.label}</a>
+              {#if talkSettingsURL && check.id === "talk.hpb"}
+                <a class="btn btn-sm btn-outline" href={talkSettingsURL} target="_blank" rel="noreferrer"><Settings size={15} aria-hidden="true" />Open Talk settings</a>
+              {/if}
+            </div>
+          {/if}
     {#if panel && panelOwner === check.id && rows.findIndex(row => row.id === check.id) === index}
       <div class="mt-3 rounded-box bg-base-200 p-4">
         {#if panel === "configure_talk"}
