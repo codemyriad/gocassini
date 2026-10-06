@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, rowActions, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, rowActions, rowGuide, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -241,7 +241,7 @@ describe("where to send an administrator", () => {
 // better than a wrong one but still means a row with no way forward.
 describe("every action the backend can send has a button", () => {
   const emitted = ["recheck", "configure_talk", "connect_talk", "setup_storage",
-    "setup_hpb", "test_recording", "repair_configuration"];
+    "test_recording", "repair_configuration"];
 
   it("names each one", () => {
     for (const action of emitted) {
@@ -257,6 +257,12 @@ describe("every action the backend can send has a button", () => {
   // Rather than a "Configure" that opens whichever drawer the panel falls
   // through to. That fall-through showed the "restore recording-setup.json"
   // text for faults with nothing to do with that file.
+  it("turns setup_hpb into the setup guide rather than a button", () => {
+    const row = { id: "talk.hpb", state: "needs_action", code: "hpb_missing", message: "", action: "setup_hpb" } as ReadinessCheck;
+    expect(rowActions(row)).toEqual([]);
+    expect(rowGuide(row)).toEqual({ href: hpbGuideURL, label: "How to set up a High Performance Backend" });
+  });
+
   it("offers nothing for an action it cannot name", () => {
     const row = { id: "storage", state: "needs_action", code: "x", message: "", action: "invent_a_backend" } as unknown as ReadinessCheck;
     expect(rowActions(row)).toEqual([]);
@@ -319,5 +325,27 @@ describe("a blocked row offers nothing", () => {
   it("no longer asks for a test room to be chosen", () => {
     const live = { id: "talk.discovery", state: "passed", code: "talk_reachable", message: "" } as ReadinessCheck;
     expect(rowActions(live).map(a => a.action)).not.toContain("test_room");
+  });
+});
+
+describe("the guide a row offers", () => {
+  const row = (over: Partial<ReadinessCheck> = {}): ReadinessCheck =>
+    ({ id: "talk.hpb", state: "needs_action", code: "hpb_disabled", message: "", ...over });
+
+  it("uses the docs the operator sends", () => {
+    expect(rowGuide(row({ docs: "https://example.invalid/guide" })))
+      .toEqual({ href: "https://example.invalid/guide", label: "How to set up a High Performance Backend" });
+  });
+
+  it("names a guide on another row generically", () => {
+    expect(rowGuide(row({ id: "storage", docs: "https://example.invalid/guide" }))?.label).toBe("Read Nextcloud's guide");
+  });
+
+  it("offers nothing without docs or a setup action", () => {
+    expect(rowGuide(row())).toBeNull();
+  });
+
+  it("offers nothing on a row waiting for another check", () => {
+    expect(rowGuide(row({ code: "check_blocked", docs: "https://example.invalid/guide" }))).toBeNull();
   });
 });

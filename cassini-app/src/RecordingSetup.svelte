@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { CircleAlert, CircleCheck, Info, ListChecks, TriangleAlert } from "@lucide/svelte";
+  import { BookOpen, CircleAlert, CircleCheck, Info, ListChecks, Settings, TriangleAlert } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -218,8 +218,13 @@
             <div class="min-w-0 flex-1">
               <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="ml-2 inline-flex items-center gap-1 text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
-              {#if check.docs}
-                <p class="mt-1 text-sm"><a class="link" href={check.docs} target="_blank" rel="noreferrer">Read Nextcloud's documentation</a></p>
+              {#if rowGuide(check)}
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={rowGuide(check)?.href} target="_blank" rel="noreferrer"><BookOpen size={15} class="shrink-0" aria-hidden="true" />{rowGuide(check)?.label}</a>
+                  {#if talkSettingsURL && check.id === "talk.hpb"}
+                    <a class="btn btn-sm btn-outline" href={talkSettingsURL} target="_blank" rel="noreferrer"><Settings size={15} aria-hidden="true" />Open Talk settings</a>
+                  {/if}
+                </div>
               {/if}
               {#if (check.steps ?? []).length > 0}
                 <!-- Behind a disclosure, as SetupNotice does it: an
@@ -275,11 +280,6 @@
                which authenticates with the RECORDING secret and can say nothing
                about this one — the row this form belongs to is the backend row,
                and its own Check button is what tries the credential. -->
-        {:else if panel === "setup_hpb"}
-          <h3 class="font-semibold">Talk’s High Performance Backend</h3>
-          <p class="my-2 text-sm">Recording joins a call as a participant, which Talk supports only through standalone signaling. Without that backend Cassini cannot record, although calls between people keep working.</p>
-          <p class="text-sm"><a class="link" href="https://nextcloud-talk.readthedocs.io/en/stable/quick-install/" target="_blank" rel="noreferrer">Read Nextcloud's Talk documentation</a></p>
-          {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
         {:else if panel === "connect_talk"}
           <h3 class="font-semibold">Use Cassini as Talk’s recording backend</h3>
           <p class="my-2 text-sm">Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk.</p>

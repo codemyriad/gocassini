@@ -162,6 +162,19 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
   return [...report.checks];
 }
 
+export const hpbGuideURL = "https://nextcloud-talk.readthedocs.io/en/stable/quick-install/";
+
+const guideLabels: Record<string, string> = {
+  "talk.hpb": "How to set up a High Performance Backend",
+};
+
+export function rowGuide(check: ReadinessCheck): { href: string; label: string } | null {
+  if (check.code === "check_blocked") return null;
+  const href = check.docs ?? (check.action === "setup_hpb" ? hpbGuideURL : undefined);
+  if (!href) return null;
+  return { href, label: guideLabels[check.id] ?? "Read Nextcloud's guide" };
+}
+
 export function rowActions(check: ReadinessCheck): { action: string; label: string }[] {
   // A row waiting on another check offers nothing. Its remedy belongs to the
   // prerequisite, and the operator already strips its action — but the standing
@@ -182,7 +195,6 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
     test_recording: "Record a test",
     recheck: "Check again",
     setup_storage: "Set up storage",
-    setup_hpb: "How to set this up",
     repair_configuration: "How to repair this",
   };
   const actions = check.action ? [check.action] : [];
