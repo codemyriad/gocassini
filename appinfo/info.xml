@@ -6,28 +6,29 @@
   <summary>Record, transcribe and search Nextcloud Talk meetings on your own hardware.</summary>
   <description><![CDATA[Cassini is a recording backend for Nextcloud Talk that puts you in control of your meeting data.
 
-- **Record and transcribe on your own infrastructure.** Speech-to-text runs in-process with sherpa-onnx and NVIDIA Parakeet models, on CPU or on a CUDA GPU.
+- **Record and transcribe on your own infrastructure.** Speech-to-text runs in-process with sherpa-onnx and NVIDIA Parakeet models, on CPU or on a CUDA GPU. Transcription is optional and starts off: an administrator installs a model from Settings, or imports one copied in by hand on an air-gapped server.
 - **AI is opt-in.** Summaries and cross-meeting insights run only once you configure a model, local or third-party, in the app.
 - **One portable file per meeting.** Audio, transcript, speaker names, summary and tags in a single `.opus` that any player opens and that stays readable without Cassini.
 
 **What you get**
 
 - Works in any Talk room, group calls and 1:1. Press *Record*; Cassini is the recording server behind the same button.
-- Transcripts with synced audio playback and the right name on every line, taken from Talk's signalling rather than guessed from voices.
+- Transcripts with synced audio playback and the right name on every line, taken from Talk's signalling rather than guessed from voices. Copy or download a transcript as Markdown, or download the audio.
 - Recordings are shared with the local people, groups and Teams captured from each Talk room. Nextcloud Files checks access to every file.
 - Search and tags across meetings.
+- A Doctor checklist for administrators that answers "is recording going to work?" and offers a fix where Cassini can make one.
 - A CLI and an agent skill, so scripts and coding agents read the same meetings with the same permissions a person has.
 
 **Requirements**
 
-- Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
-- Talk's High-performance backend. Cassini joins calls as an internal signalling client and needs the signalling server's `internalsecret`, the one value you supply by hand.
+- Nextcloud 33.0.9 to 35 with AppAPI and a HaRP deploy daemon.
+- Talk's High-performance backend. Cassini joins calls as an internal signalling client and needs the signalling server's `internalsecret`, the one value you supply by hand, in the Doctor checklist after installing.
 - Nextcloud Files sharing enabled. No Team folders or Everyone Group app is required.
 - Optional: an NVIDIA GPU with the Container Toolkit, for faster transcription. CPU works on amd64 and arm64.
 
 **What leaves your server**
 
-Recording and transcription never leave your hardware. If you configure a language model, transcript text goes to it for summaries and for questions people ask in the app. Nothing else is sent, and there is no telemetry. Full note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md
+Recordings and transcripts never leave your hardware. When an administrator installs a transcription model, the server downloads it from `dist.gocassini.com`; nothing about your meetings is sent. If you configure a language model, transcript text goes to it for summaries and for questions people ask in the app. Nothing else is sent, and there is no telemetry. Full note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md
 
 **Cassini is in beta.** We run it daily on our own Nextcloud, but expect rough edges. Read the changelog before you update and open an issue if something breaks.
 
@@ -172,11 +173,6 @@ Documentation: https://gocassini.com/docs]]></description>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^operator\/health\/repair$</url>
-        <verb>POST</verb>
-        <access_level>ADMIN</access_level>
-      </route>
-      <route>
         <url>^operator\/talk\/setup$</url>
         <verb>PUT</verb>
         <access_level>ADMIN</access_level>
@@ -232,23 +228,14 @@ Documentation: https://gocassini.com/docs]]></description>
         <verb>GET,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
-      <!-- ADMIN: storage mode (D-616, D-671). GET reports which storage model
-           this archive is under, where it keeps recordings, what the other one
-           would need, and the setup plan for it; POST re-checks the instance,
-           previews a switch, attempts the native app installs, or finishes a
-           switch that stopped part way; PUT switches modes, which COPIES every
-           published recording into the other mode's root and then empties the
-           one it came from. ADMIN like the rest of the operator API — the
-           blockers name accounts and folder ids, and the PUT relocates the
-           archive.
-
-           One route rather than three paths, because AppAPI matches url AND
-           verb: either way an install that predates this manifest has to be
-           re-registered before the new surface is reachable, so the only thing
-           left to choose is which is tidier to read. -->
+      <!-- ADMIN: recordings storage status. GET reports whether the "cassini"
+           service account exists and whether its Files tree and the sharing
+           API are ready, with the setup steps still missing; POST
+           {"action":"recheck"} re-probes Nextcloud after the browser creates
+           the account. ADMIN like the rest of the operator API. -->
       <route>
         <url>^operator\/storage\/?$</url>
-        <verb>GET,POST,PUT</verb>
+        <verb>GET,POST</verb>
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,
