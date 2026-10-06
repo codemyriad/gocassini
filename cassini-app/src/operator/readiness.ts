@@ -234,7 +234,7 @@ export const toneClasses: Record<CheckTone, string> = {
   success: "text-success-strong",
   warning: "text-warning-strong",
   error: "text-error-strong",
-  neutral: "text-base-content/60",
+  neutral: "text-base-content/65",
 };
 
 // The instance's worst news, for the header.
