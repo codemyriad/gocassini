@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { CircleAlert, CircleCheck, Info, TriangleAlert } from "@lucide/svelte";
+  import { CircleAlert, CircleCheck, Info, ListChecks, TriangleAlert } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
@@ -194,7 +194,7 @@
     <p>What Cassini needs in order to record, and what to do about anything that is missing: the recording host, Nextcloud storage, Talk's signaling backend, how much of the archive search can read, and a short test recording to prove the whole path.</p>
   </div>
   <div class="op-panel-actions">
-    <button class="btn btn-sm" disabled={busy} on:click={() => load(true)}>{busy ? "Checking…" : "Run all checks"}</button>
+    <button class="op-btn inline-flex items-center gap-1.5" type="button" disabled={busy} on:click={() => load(true)}><ListChecks size={15} aria-hidden="true" />{busy ? "Checking…" : "Run all checks"}</button>
   </div>
 </header>
 {#if verdict}
