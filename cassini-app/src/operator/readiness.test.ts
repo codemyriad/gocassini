@@ -175,7 +175,7 @@ describe("the warning tone, now that something can produce it", () => {
   });
 
   it("renders amber for a row that is impaired but working", () => {
-    expect(toneClasses[checkTone(check())]).toBe("text-warning");
+    expect(toneClasses[checkTone(check())]).toBe("text-warning-strong");
   });
 });
 

@@ -231,9 +231,9 @@ export function checkTone(check: ReadinessCheck): CheckTone {
 }
 
 export const toneClasses: Record<CheckTone, string> = {
-  success: "text-success",
-  warning: "text-warning",
-  error: "text-error",
+  success: "text-success-strong",
+  warning: "text-warning-strong",
+  error: "text-error-strong",
   neutral: "text-base-content/60",
 };
 

@@ -52,6 +52,15 @@ body,
   flex-direction: column;
 }
 
+@utility text-success-strong {
+  color: oklch(from color-mix(in oklch, var(--color-success) 60%, oklch(from var(--color-base-content) l 0 none)) l calc(c / 0.6) h);
+}
+@utility text-warning-strong {
+  color: oklch(from color-mix(in oklch, var(--color-warning) 60%, oklch(from var(--color-base-content) l 0 none)) l calc(c / 0.6) h);
+}
+@utility text-error-strong {
+  color: oklch(from color-mix(in oklch, var(--color-error) 60%, oklch(from var(--color-base-content) l 0 none)) l calc(c / 0.6) h);
+}
 @utility alert-tinted {
   background: color-mix(in oklab, var(--alert-color, var(--color-base-content)) 18%, var(--color-base-100));
   --alert-border-color: color-mix(in oklab, var(--alert-color, var(--color-base-content)) 35%, var(--color-base-100));

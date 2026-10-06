@@ -200,18 +200,18 @@
 {#if verdict}
   <div class="alert alert-soft items-start gap-3 py-2 text-sm {calloutTone[verdictTone]}" role="status">
     {#if verdictTone === "success"}
-      <CircleCheck size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+      <CircleCheck size={16} class="mt-0.5 shrink-0 {toneClasses.success}" aria-hidden="true" />
     {:else if verdictTone === "warning"}
-      <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+      <TriangleAlert size={16} class="mt-0.5 shrink-0 {toneClasses.warning}" aria-hidden="true" />
     {:else if verdictTone === "error"}
-      <CircleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+      <CircleAlert size={16} class="mt-0.5 shrink-0 {toneClasses.error}" aria-hidden="true" />
     {:else}
       <Info size={16} class="mt-0.5 shrink-0 opacity-70" aria-hidden="true" />
     {/if}
     <p class="font-semibold text-base-content">{verdict}</p>
   </div>
 {/if}
-{#if error}<p role="alert" class="text-sm text-error">{error}</p>{/if}
+{#if error}<p role="alert" class="text-sm {toneClasses.error}">{error}</p>{/if}
 {#if report}
 <section class="rounded-box border border-base-300 bg-base-100 px-5 py-2 shadow-sm" aria-labelledby="doctor-title" aria-busy={busy}>
     <ul class="divide-y divide-base-300">
@@ -238,7 +238,7 @@
                   </ul>
                 </details>
               {/if}
-              {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
+              {#if check.checked_at}<p class="mt-1 text-xs text-base-content/60" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
             </div>
             <div class="flex flex-wrap gap-2">
               {#if check.repair && repairLabels[check.repair]}
