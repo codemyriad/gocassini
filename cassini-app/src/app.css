@@ -74,3 +74,8 @@ body,
     color: var(--color-base-content);
   }
 }
+@utility btn-outline-quiet {
+  &:not(:hover, :disabled) {
+    --btn-border: color-mix(in oklab, var(--color-base-content) 30%, transparent);
+  }
+}

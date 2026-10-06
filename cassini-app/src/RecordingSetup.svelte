@@ -222,11 +222,11 @@
                   on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair]}</button>
               {/if}
               {#if check.checkable && rowActions(check).every((item) => item.action !== "recheck")}
-                <button class="btn btn-sm btn-outline btn-outline-hover" disabled={busy}
+                <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy}
                   on:click={() => load(true, check.id)}>Check</button>
               {/if}
               {#each rowActions(check) as item}
-                <button class="btn btn-sm btn-outline btn-outline-hover" disabled={busy} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
+                <button class="btn btn-sm btn-outline {item.action === "recheck" ? "btn-outline-quiet" : ""} btn-outline-hover" disabled={busy} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
               {/each}
             </div>
           </div>
