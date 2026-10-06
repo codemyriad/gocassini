@@ -60,6 +60,15 @@ type streamSummary struct {
 }
 
 func InspectPath(out io.Writer, path string) error {
+	if strings.EqualFold(filepath.Ext(path), ".json") && filepath.Base(path) != "session.json" {
+		meeting, err := ExtractMeeting(path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "%s cassini=ok profile=transcription-only title=%q words=%d playback=unavailable\n", path, meeting.Manifest.Meeting.Title, meeting.Transcript.WordCount)
+		return nil
+	}
+
 	if artifactPath, ok := detectSessionArtifactPath(path); ok {
 		return inspectSessionArtifact(out, artifactPath)
 	}

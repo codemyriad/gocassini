@@ -3,6 +3,7 @@ package inspect
 import (
 	"encoding/base64"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"gocassini/internal/portable"
@@ -47,6 +48,14 @@ type ExtractedMeeting struct {
 // deliberately does NOT verify audio integrity; callers that need that gate
 // use `cassini inspect` explicitly.
 func ExtractMeeting(path string) (ExtractedMeeting, error) {
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		tags, err := portable.ReadTranscriptionTags(path)
+		if err != nil {
+			return ExtractedMeeting{}, err
+		}
+		return extractMeetingTags(path, tags)
+	}
+
 	meta, err := probePortableAudio(path)
 	if err != nil {
 		return ExtractedMeeting{}, err
@@ -59,6 +68,10 @@ func ExtractMeeting(path string) (ExtractedMeeting, error) {
 	// the format tag map empty, so both sets must be merged before any lookup.
 	tags := mergePortableTags(meta.Format.Tags, stream.Tags)
 
+	return extractMeetingTags(path, tags)
+}
+
+func extractMeetingTags(path string, tags map[string]string) (ExtractedMeeting, error) {
 	formatTag := metadataTag(tags, "CASSINI_FORMAT")
 	if formatTag == "" {
 		return ExtractedMeeting{}, fmt.Errorf("%s carries no CASSINI_FORMAT metadata (not a portable meeting)", path)

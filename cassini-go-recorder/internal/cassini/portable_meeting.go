@@ -142,7 +142,7 @@ type portableAudioIntegrity struct {
 const maxPortableMeetingIdentityPasses = 4
 
 func isPortableMeetingOutput(path string) bool {
-	return strings.EqualFold(filepath.Ext(path), ".opus")
+	return strings.EqualFold(filepath.Ext(path), ".opus") || strings.EqualFold(filepath.Ext(path), ".json")
 }
 
 func preparePortableMeetingOutput(path string) (string, error) {
@@ -203,6 +203,35 @@ func sanitizeWorkPrefix(value string) string {
 }
 
 func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, opts portablePackOptions) error {
+	if strings.EqualFold(filepath.Ext(outPath), ".json") {
+		resolved, err := preparePortableMeetingOutput(outPath)
+		if err != nil {
+			return err
+		}
+		dir, err := os.MkdirTemp(filepath.Dir(resolved), ".transcription-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir)
+		audio := filepath.Join(dir, strings.TrimSuffix(filepath.Base(resolved), ".json")+".opus")
+		if err := packMeetingBundle(ctx, meetingDir, audio, opts); err != nil {
+			return err
+		}
+		tags, err := portableMeetingTags(audio)
+		if err != nil {
+			return err
+		}
+		raw, err := portable.EncodeTranscription(tags)
+		if err != nil {
+			return err
+		}
+		stage := filepath.Join(dir, "meeting.json")
+		if err := os.WriteFile(stage, raw, 0600); err != nil {
+			return err
+		}
+		return commitPortableMeetingOutput(stage, resolved)
+	}
+
 	resolvedOut, err := preparePortableMeetingOutput(outPath)
 	if err != nil {
 		return err
@@ -592,6 +621,14 @@ func titleFromSourceName(path string) string {
 }
 
 func writePortableMeetingFile(ctx context.Context, audioPath string, outPath string, tags map[string]string) error {
+	if strings.EqualFold(filepath.Ext(outPath), ".json") {
+		raw, err := portable.EncodeTranscription(tags)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(outPath, raw, 0600)
+	}
+
 	args := []string{
 		"-y",
 		"-v", "error",
@@ -622,7 +659,7 @@ func writePortableMeetingFile(ctx context.Context, audioPath string, outPath str
 }
 
 func createPortableStagePath(outPath string) (string, error) {
-	file, err := os.CreateTemp(filepath.Dir(outPath), ".cassini-stage-*.opus")
+	file, err := os.CreateTemp(filepath.Dir(outPath), ".cassini-stage-*"+filepath.Ext(outPath))
 	if err != nil {
 		return "", fmt.Errorf("create staged portable meeting path: %w", err)
 	}
@@ -638,6 +675,11 @@ func createPortableStagePath(outPath string) (string, error) {
 }
 
 func verifyPortableMeetingFile(path string, manifest portable.Manifest) error {
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		_, err := portable.ReadTranscriptionTags(path)
+		return err
+	}
+
 	policy := strings.ToLower(strings.TrimSpace(manifest.Integrity.MatchPolicy))
 	if policy != portable.AudioMatchPolicy {
 		return fmt.Errorf("verify portable meeting file: unsupported audio match policy %q", policy)

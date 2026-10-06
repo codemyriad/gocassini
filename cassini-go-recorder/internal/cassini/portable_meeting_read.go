@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -38,6 +39,9 @@ import (
 // both are read and merged. Format tags win a collision, matching the ordering
 // `cassini inspect` already uses.
 func portableMeetingTags(path string) (map[string]string, error) {
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		return portable.ReadTranscriptionTags(path)
+	}
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
 		"-show_entries", "format_tags:stream_tags",
