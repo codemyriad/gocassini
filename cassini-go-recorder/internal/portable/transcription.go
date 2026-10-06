@@ -48,7 +48,7 @@ func DecodeTranscription(raw []byte) (map[string]string, error) {
 	if err := json.Compact(&compact, doc.Source); err != nil {
 		return nil, err
 	}
-	manifest, err := DecodePublishedManifest(compact.Bytes())
+	_, err := DecodePublishedManifest(compact.Bytes())
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +59,10 @@ func DecodeTranscription(raw []byte) (map[string]string, error) {
 	if err := putJSONPayload(tags, "CASSINI_PAYLOAD_", compact.Bytes()); err != nil {
 		return nil, err
 	}
-	entries := append(append([]TranscriptEntry{}, manifest.Transcripts...), manifest.ReadableTranscripts...)
+	entries, err := transcriptionEntries(doc.Source)
+	if err != nil {
+		return nil, err
+	}
 	for _, entry := range entries {
 		raw, ok := doc.Bodies[entry.ID]
 		if !ok {
@@ -76,18 +79,20 @@ func DecodeTranscription(raw []byte) (map[string]string, error) {
 		if encoded.SHA256 != entry.PayloadRef.SHA256 || encoded.RawBytes != entry.PayloadRef.RawBytes {
 			return nil, fmt.Errorf("transcript %s integrity mismatch", entry.ID)
 		}
-		// Reproduce the original chunk layout, including files using a custom chunk
-		// size. Descriptor counts/bytes describe the original compressed payload.
+		// The JSON body hash is authoritative. Rebuild transport descriptors
+		// for this adapter's compressor; JSON does not depend on gzip bytes.
 		prefix := entry.PayloadRef.Prefix
 		if err := putJSONPayload(tags, prefix, compact.Bytes()); err != nil {
 			return nil, err
 		}
-		if encoded.CompressedBytes != entry.PayloadRef.GzipBytes {
-			return nil, fmt.Errorf("transcript %s compressed size mismatch", entry.ID)
+		entry.PayloadRef.GzipBytes = encoded.CompressedBytes
+		entry.PayloadRef.ChunkCount = len(encoded.Chunks)
+		if err := updateTranscriptionRef(&doc.Source, entry); err != nil {
+			return nil, err
 		}
-		if entry.PayloadRef.ChunkCount != len(encoded.Chunks) {
-			return nil, fmt.Errorf("unsupported transcript chunk layout")
-		}
+	}
+	if err := putJSONPayload(tags, "CASSINI_PAYLOAD_", doc.Source); err != nil {
+		return nil, err
 	}
 	return tags, nil
 }
@@ -137,7 +142,7 @@ func EncodeTranscription(tags map[string]string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	manifest, err := DecodePublishedManifest(raw)
+	_, err = DecodePublishedManifest(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +152,11 @@ func EncodeTranscription(tags map[string]string) ([]byte, error) {
 			doc.Tags[k] = v
 		}
 	}
-	for _, entry := range append(append([]TranscriptEntry{}, manifest.Transcripts...), manifest.ReadableTranscripts...) {
+	entries, err := transcriptionEntries(raw)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
 		body, err := payloadJSON(normalized, entry.PayloadRef.Prefix)
 		if err != nil {
 			return nil, err
@@ -164,7 +173,16 @@ func EncodeTranscription(tags map[string]string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = DecodeTranscription(result); err != nil {
+	normalized, err = DecodeTranscription(result)
+	if err != nil {
+		return nil, err
+	}
+	doc.Source, err = payloadJSON(normalized, "CASSINI_PAYLOAD_")
+	if err != nil {
+		return nil, err
+	}
+	result, err = json.Marshal(doc)
+	if err != nil {
 		return nil, err
 	}
 	return append(result, '\n'), nil
@@ -182,4 +200,55 @@ func IsTranscriptionFile(path string) bool {
 		Kind string `json:"kind"`
 	}
 	return json.NewDecoder(f).Decode(&header) == nil && header.Kind == TranscriptionKind
+}
+
+// Include unknown readable roles in the container round trip, even though the
+// display reader does not render them. Their bodies must survive an edit.
+func transcriptionEntries(raw []byte) ([]TranscriptEntry, error) {
+	var source struct {
+		Transcripts []json.RawMessage `json:"transcripts"`
+		Readable    []json.RawMessage `json:"readableTranscripts"`
+	}
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return nil, err
+	}
+	var entries []TranscriptEntry
+	for _, raw := range append(source.Transcripts, source.Readable...) {
+		var ref struct {
+			ID         string     `json:"id"`
+			PayloadRef PayloadRef `json:"payloadRef"`
+		}
+		if err := json.Unmarshal(raw, &ref); err != nil {
+			return nil, err
+		}
+		if ref.ID != "" && ref.PayloadRef.Prefix != "" {
+			entries = append(entries, TranscriptEntry{ID: ref.ID, PayloadRef: ref.PayloadRef})
+		}
+	}
+	return entries, nil
+}
+func updateTranscriptionRef(raw *json.RawMessage, entry TranscriptEntry) error {
+	var source map[string]json.RawMessage
+	if err := json.Unmarshal(*raw, &source); err != nil {
+		return err
+	}
+	for _, key := range []string{"transcripts", "readableTranscripts"} {
+		if source[key] == nil {
+			continue
+		}
+		var entries []map[string]json.RawMessage
+		if err := json.Unmarshal(source[key], &entries); err != nil {
+			return err
+		}
+		for _, fields := range entries {
+			var id string
+			if json.Unmarshal(fields["id"], &id) == nil && id == entry.ID {
+				fields["payloadRef"], _ = json.Marshal(entry.PayloadRef)
+			}
+		}
+		source[key], _ = json.Marshal(entries)
+	}
+	var err error
+	*raw, err = json.Marshal(source)
+	return err
 }

@@ -133,3 +133,32 @@ func TestJSONAnnotationQueuePersistsAndConfirms(t *testing.T) {
 		t.Fatal("idempotent receipt lost")
 	}
 }
+
+func TestMeetingFormatUpgradeKeepsLegacyAttempts(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	if err := rt.store.migrateDownTo(13); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"queued", "failed", "succeeded"} {
+		insertJob(t, rt.store.db, state, nowUTCString())
+		if _, err := rt.store.db.Exec(`UPDATE job_attempts SET state=? WHERE job_id=?`, state, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rt.store.ensureSchema(); err != nil {
+		t.Fatal(err)
+	}
+	rt.cfg.MeetingFormat = "json"
+	for _, id := range []string{"queued", "failed", "succeeded"} {
+		if err := rt.enqueueSealJobNonBlocking(id, 2, "unused", "unused", nowUTCString()); err != nil {
+			t.Fatal(err)
+		}
+		for _, attempt := range []int{1, 2} {
+			var format string
+			if err := rt.store.db.QueryRow(`SELECT format FROM meeting_format WHERE job_id=? AND attempt_number=?`, id, attempt).Scan(&format); err != nil || format != "opus" {
+				t.Fatalf("%s attempt %d: %q %v", id, attempt, format, err)
+			}
+		}
+	}
+}

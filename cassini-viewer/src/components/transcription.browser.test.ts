@@ -19,7 +19,6 @@ it("shows a transcription-only badge and notice with transcript but no player", 
  host=document.createElement("div");host.style.height="100vh";document.body.append(host);
  app=mount(App,{target:host,props:{dataProvider:provider}});
  await expect.element(page.getByText("Transcription only",{exact:true})).toBeVisible();
- await page.getByRole("button",{name:/^Text meeting/}).click();
  await expect.element(page.getByText("Transcription-only artefact — audio was not stored. Playback is unavailable.",{exact:true})).toBeVisible();
  await expect.element(page.getByRole("button",{name:"Download meeting file",exact:true})).toBeEnabled();
  expect(host.querySelector("audio")).toBeNull();

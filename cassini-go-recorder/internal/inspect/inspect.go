@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"gocassini/internal/cassette"
+	"gocassini/internal/portable"
 	"gocassini/pkg/core/session"
 	"gocassini/pkg/core/store"
 	"gocassini/pkg/core/timeline"
@@ -60,7 +61,7 @@ type streamSummary struct {
 }
 
 func InspectPath(out io.Writer, path string) error {
-	if strings.EqualFold(filepath.Ext(path), ".json") && filepath.Base(path) != "session.json" {
+	if (strings.EqualFold(filepath.Ext(path), ".json") && filepath.Base(path) != "session.json") || portable.IsTranscriptionFile(path) {
 		meeting, err := ExtractMeeting(path)
 		if err != nil {
 			return err

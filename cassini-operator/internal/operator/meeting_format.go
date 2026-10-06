@@ -11,7 +11,10 @@ func isMeetingFile(name string) bool {
 	return strings.HasSuffix(name, ".opus") || strings.HasSuffix(name, ".json")
 }
 func meetingStem(name string) string {
-	return strings.TrimSuffix(strings.TrimSuffix(name, ".opus"), ".json")
+	if isMeetingFile(name) {
+		return strings.TrimSuffix(name, path.Ext(name))
+	}
+	return name
 }
 func meetingContentType(name string) string {
 	if strings.HasSuffix(name, ".json") {

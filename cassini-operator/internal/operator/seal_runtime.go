@@ -117,7 +117,9 @@ func (rt *Runtime) enqueueSealJobNonBlocking(jobID string, attemptNumber int, jo
 	// A rerun updates the existing artefact in its original format. This
 	// preserves its Nextcloud file ID, shares and durable annotation identity.
 	var previous string
-	_ = rt.store.db.QueryRowContext(context.Background(), `SELECT format FROM meeting_format WHERE job_id=? ORDER BY attempt_number LIMIT 1`, jobID).Scan(&previous)
+	if err := rt.store.db.QueryRowContext(context.Background(), `SELECT format FROM meeting_format WHERE job_id=? ORDER BY attempt_number LIMIT 1`, jobID).Scan(&previous); err != nil && err != sql.ErrNoRows {
+		return err
+	}
 	if previous != "" {
 		format = previous
 	} else {
