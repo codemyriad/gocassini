@@ -21,7 +21,9 @@ import (
 // CASSINI_STT_MODEL=int8, which would otherwise shadow the chosen tier) so the
 // recorder's auto-detect + tier resolution (D-434) actually runs (D-435).
 type STTSettings struct {
-	RetainVideo          bool     `json:"retain_video"`
+	RetainVideo bool `json:"retain_video"`
+	// MeetingFormat controls publication, independently of transcription and local capture retention.
+	MeetingFormat        string   `json:"meeting_format"`
 	TranscriptionEnabled bool     `json:"transcription_enabled"`
 	ActiveModel          string   `json:"active_model,omitempty"`
 	ActiveRevision       string   `json:"active_revision,omitempty"`
@@ -248,6 +250,7 @@ func detectSettings() STTSettings {
 	gpu := detectGPU()
 	cores := runtime.NumCPU()
 	return STTSettings{
+		MeetingFormat:       "opus",
 		Quality:             defaultQualityForHardware(cudaCapableHost()),
 		Source:              sttSourceAuto,
 		HardwareFingerprint: hardwareFingerprint(gpu, cores),
@@ -287,6 +290,12 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	var s STTSettings
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return STTSettings{}, fmt.Errorf("parse settings %s: %w", path, err)
+	}
+	if s.MeetingFormat == "" {
+		s.MeetingFormat = "opus"
+	}
+	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
+		return STTSettings{}, fmt.Errorf("invalid meeting_format %q", s.MeetingFormat)
 	}
 	aliases, err := normalizeSearchAliases(s.SearchAliases)
 	if err != nil {
@@ -330,6 +339,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			terms := s.TranscriptionTerms
 			s = detectSettings()
 			s.TranscriptionEnabled, s.ActiveModel, s.ActiveRevision = previous.TranscriptionEnabled, previous.ActiveModel, previous.ActiveRevision
+			s.MeetingFormat = previous.MeetingFormat
 			s.SearchAliases = previous.SearchAliases
 			s.RetainVideo = previous.RetainVideo
 			// Vocabulary is independent of the hardware-derived quality tier.
@@ -391,6 +401,12 @@ func reportSettingsMigration(report SettingsMigrationReporter, path string, migr
 // Save writes settings.json atomically (temp file + rename) so a crash mid-write
 // cannot truncate the persisted config.
 func Save(path string, s STTSettings) error {
+	if s.MeetingFormat == "" {
+		s.MeetingFormat = "opus"
+	}
+	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
+		return fmt.Errorf("meeting_format must be opus or json")
+	}
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("settings path must not be empty")
 	}
@@ -531,8 +547,13 @@ const (
 // installation/readiness is reported by the model inventory.
 func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
 	effective := s.effective()
+	availability := "Recordings remain available as audio."
+	if s.MeetingFormat == "json" {
+		availability = "Transcription-only publications have no playable audio."
+		effective.Note = strings.ReplaceAll(effective.Note, "Recordings remain available as audio.", availability)
+	}
 	if !s.TranscriptionEnabled {
-		effective.Note = "Transcription is off. Recordings remain available as audio."
+		effective.Note = "Transcription is off. " + availability
 		effective.Model = ""
 		effective.MinFreeMemoryMB = 0
 		return effective
@@ -540,7 +561,7 @@ func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
 	effective.Model = s.ActiveModel
 	effective.MinFreeMemoryMB = resourceLimitsFromEnv().minFreeMemForBuild(effective.Device, effective.Model)
 	if s.ActiveModel == "" {
-		effective.Note = "Transcription needs a prepared model in Settings. Recordings remain available as audio."
+		effective.Note = "Transcription needs a prepared model in Settings. " + availability
 	}
 	return effective
 }
@@ -601,6 +622,7 @@ type settingsResponse struct {
 // "field set to empty". Omitted quality preserves the automatic/user policy source.
 type settingsUpdate struct {
 	RetainVideo          *bool     `json:"retain_video"`
+	MeetingFormat        *string   `json:"meeting_format"`
 	TranscriptionEnabled *bool     `json:"transcription_enabled"`
 	ActiveModel          *string   `json:"active_model"`
 	ActiveRevision       *string   `json:"active_revision"`
@@ -618,7 +640,11 @@ type settingsUpdate struct {
 func (rt *Runtime) currentSettings() STTSettings {
 	rt.settingsMu.RLock()
 	defer rt.settingsMu.RUnlock()
-	return rt.settings
+	s := rt.settings
+	if s.MeetingFormat == "" {
+		s.MeetingFormat = "opus"
+	}
+	return s
 }
 
 // setSettings replaces the in-memory STT policy under the write lock.
@@ -713,6 +739,13 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.RetainVideo != nil {
 		updated.RetainVideo = *in.RetainVideo
+	}
+	if in.MeetingFormat != nil {
+		if *in.MeetingFormat != "opus" && *in.MeetingFormat != "json" {
+			writeJSONError(w, http.StatusBadRequest, "meeting_format must be opus or json")
+			return
+		}
+		updated.MeetingFormat = *in.MeetingFormat
 	}
 	if in.TranscriptionEnabled != nil {
 		updated.TranscriptionEnabled = *in.TranscriptionEnabled

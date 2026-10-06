@@ -116,6 +116,7 @@ export interface SettingsEffective {
 
 export interface Settings {
   retain_video?: boolean;
+  meeting_format?: "opus" | "json";
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;
@@ -137,6 +138,7 @@ export interface Settings {
 
 export interface SettingsUpdate {
   retain_video?: boolean;
+  meeting_format?: "opus" | "json";
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;

@@ -320,6 +320,7 @@ function normalizeSettings(raw: unknown): Settings {
     note: asString(rawEffective.note),
   };
   return {
+    meeting_format: value.meeting_format === "json" ? "json" : "opus",
     transcription_enabled: value.transcription_enabled === true,
     retain_video: value.retain_video === true,
     active_model: asString(value.active_model),

@@ -526,9 +526,10 @@ accept these documents. Annotation writes retain the source audio digest and
 meeting timeline; time-range marks remain useful without playback. File reads
 recognize the JSON document even when a Nextcloud recipient renames a share.
 
-For the operator, set `CASSINI_MEETING_FORMAT=json` (or `--meeting-format=json`).
-An empty/unset environment setting uses the default `opus`; unsupported values
-are rejected. The selection is recorded before the first seal is queued and
+In **Settings → Publish pipeline → Published meeting**, select **Transcription
+only (.json)** and save. The default is **Include audio (.opus)**. This uses the
+existing persisted `settings.json` and admin settings API (`meeting_format`);
+unsupported values are rejected. The selection is recorded before the first seal is queued and
 survives restart. Subsequent attempts of that meeting keep the recorded format,
 so reruns preserve its Nextcloud file ID, shares and annotation queue. Existing
 meetings from before this setting continue to use Opus. Changing the setting

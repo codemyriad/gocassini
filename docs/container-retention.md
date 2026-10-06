@@ -424,7 +424,8 @@ and unavailable-source rerun protection.
 
 ### Transcription-only output
 
-With `CASSINI_MEETING_FORMAT=json`, the current published output and immutable
+With **Transcription only (.json)** selected in **Settings → Publish pipeline**,
+the current published output and immutable
 attempt seal are `.json` files. They follow the same current-output and attempt
 history deadlines, promotion journal and expiry recovery as `.opus` files.
 Captured `.run` and intermediate `.meeting` audio still follow their existing

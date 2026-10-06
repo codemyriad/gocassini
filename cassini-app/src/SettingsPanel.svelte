@@ -79,6 +79,8 @@
   ];
 
   let settings: Settings | null = null;
+  let meetingFormat: "opus" | "json" = "opus";
+  let savedMeetingFormat: "opus" | "json" = "opus";
   let transcriptionEnabled = false;
   let retainVideo = false;
   let savedRetainVideo = false;
@@ -193,6 +195,8 @@
 
   function applySettings(next: Settings) {
     settings = next;
+    meetingFormat = next.meeting_format ?? "opus";
+    savedMeetingFormat = meetingFormat;
     transcriptionEnabled = next.transcription_enabled === true;
     retainVideo = next.retain_video === true;
     savedRetainVideo = retainVideo;
@@ -256,6 +260,7 @@
       try {
         applySettings(
           await operatorClient.putSettings({
+            meeting_format: meetingFormat,
             transcription_enabled: transcriptionEnabled,
             retain_video: retainVideo,
             active_model: activeModel,
@@ -411,6 +416,7 @@
   $: sttDirty =
     settings !== null &&
     (retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
+      meetingFormat !== savedMeetingFormat ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
       transcriptionTermsText !== savedTranscriptionTermsText ||
@@ -521,6 +527,19 @@
     <p class="op-state">Settings aren't available.</p>
   {:else}
     <div class="pipe-body">
+      <section class="op-tint p-4">
+        <label class="op-field" for="meeting-format">
+          <span class="op-field-label">Published meeting</span>
+          <select id="meeting-format" class="op-input" bind:value={meetingFormat} disabled={saving}>
+            <option value="opus">Include audio (.opus)</option>
+            <option value="json">Transcription only (.json)</option>
+          </select>
+        </label>
+        <p class="set-row-sub">Transcription-only files keep speaker blocks, summaries, metadata, tags and annotations, without audio playback. Applies to new meetings; reruns keep their original format. Local captured audio follows Storage retention settings.</p>
+        {#if meetingFormat === "json" && !transcriptionEnabled}
+          <p class="set-row-sub">Transcription is off. Enable it below to include a transcript; otherwise new meetings will contain neither a transcript nor playable audio.</p>
+        {/if}
+      </section>
       <!-- What the operator found, and — the part the tier alone does not
            answer — what the next build will actually do with it. The device is
            auto-selected, and on a host with no usable GPU that answer is the
@@ -569,7 +588,7 @@
             </p>
           {:else}
             <p class="hw-effective">
-              Transcription is off. Recordings are published as audio. If you turn it on, it runs on the
+              Transcription is off. If you turn it on, it runs on the
               <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>.
             </p>
           {/if}
@@ -620,7 +639,7 @@
             {#if transcriptionEnabled}
               Applies to every recording on this machine.
             {:else}
-              Transcription is off, so recordings are published as audio. To transcribe, install
+              Transcription is off. To transcribe, install
               and enable a model below.
             {/if}
             {#if runsOnGPU}
