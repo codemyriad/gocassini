@@ -215,22 +215,14 @@
       {#each rows as check, index}
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-            <p class="flex min-w-0 flex-[1_1_12rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}"><svelte:component this={toneIcons[checkTone(check)]} size={14} class="shrink-0 self-center" aria-hidden="true" />{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-center gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
+            <p class="flex min-w-0 flex-[1_1_9rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}"><svelte:component this={toneIcons[checkTone(check)]} size={14} class="shrink-0 self-center" aria-hidden="true" />{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-center gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
             <div class="flex flex-wrap gap-2 *:[--size:1.75rem]">
-              {#if check.repair && repairLabels[check.repair]}
-                <!-- Only a repair this build knows how to name. "Fix this" for an
-                     unrecognised action offered a button whose effect the panel
-                     could not describe, which is the panel speaking for the
-                     operator again. -->
-                <button class="btn btn-sm btn-primary" disabled={busy}
-                  on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair]}</button>
-              {/if}
               {#if check.checkable && rowActions(check).every((item) => item.action !== "recheck")}
                 <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy}
                   on:click={() => load(true, check.id)}>Check</button>
               {/if}
-              {#each rowActions(check) as item}
-                <button class="btn btn-sm btn-outline {item.action === "recheck" ? "btn-outline-quiet" : ""} btn-outline-hover" disabled={busy} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
+              {#each rowActions(check).filter((item) => item.action === "recheck") as item}
+                <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
               {/each}
             </div>
           </div>
@@ -250,12 +242,25 @@
             </details>
           {/if}
           {#if check.checked_at && (check.code === "test_playback" || !shared?.ids.has(check.id))}<p class="mt-2 flex items-center gap-1 text-xs text-base-content/65" title={new Date(check.checked_at).toLocaleString()}><svelte:component this={check.code === "test_playback" ? Headphones : Clock} size={12} class="shrink-0" aria-hidden="true" />{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
-          {#if rowGuide(check)}
+          {#if (check.repair && repairLabels[check.repair]) || rowGuide(check) || rowActions(check).some((item) => item.action !== "recheck")}
             <div class="mt-3 flex flex-wrap gap-2">
-              <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={rowGuide(check)?.href} target="_blank" rel="noreferrer"><BookOpen size={15} class="shrink-0" aria-hidden="true" />{rowGuide(check)?.label}</a>
-              {#if talkSettingsURL && check.id === "talk.hpb"}
-                <a class="btn btn-sm btn-outline btn-outline-hover" href={talkSettingsURL} target="_blank" rel="noreferrer"><Settings size={15} aria-hidden="true" />Open Talk settings</a>
+              {#if check.repair && repairLabels[check.repair]}
+                <!-- Only a repair this build knows how to name. "Fix this" for an
+                     unrecognised action offered a button whose effect the panel
+                     could not describe, which is the panel speaking for the
+                     operator again. -->
+                <button class="btn btn-sm btn-primary" disabled={busy}
+                  on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair]}</button>
               {/if}
+              {#if rowGuide(check)}
+                <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={rowGuide(check)?.href} target="_blank" rel="noreferrer"><BookOpen size={15} class="shrink-0" aria-hidden="true" />{rowGuide(check)?.label}</a>
+                {#if talkSettingsURL && check.id === "talk.hpb"}
+                  <a class="btn btn-sm btn-outline btn-outline-hover" href={talkSettingsURL} target="_blank" rel="noreferrer"><Settings size={15} aria-hidden="true" />Open Talk settings</a>
+                {/if}
+              {/if}
+              {#each rowActions(check).filter((item) => item.action !== "recheck") as item}
+                <button class="btn btn-sm btn-outline btn-outline-hover" disabled={busy} aria-expanded={item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
+              {/each}
             </div>
           {/if}
     {#if panel && panelOwner === check.id && rows.findIndex(row => row.id === check.id) === index}
