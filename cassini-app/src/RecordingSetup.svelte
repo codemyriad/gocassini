@@ -37,6 +37,12 @@
     error: "alert-error alert-tinted",
     neutral: "",
   };
+  const toneIcons: Record<CheckTone, typeof CircleCheck> = {
+    success: CircleCheck,
+    warning: TriangleAlert,
+    error: CircleAlert,
+    neutral: Info,
+  };
   let provisioningURL = "";
   let talkSettingsURL = "";
   // The href for the test conversation. The operator's test_room_url carries
@@ -196,15 +202,7 @@
 </header>
 {#if verdict}
   <div class="alert alert-soft items-start gap-3 py-2 text-sm {calloutTone[verdictTone]}" role="status">
-    {#if verdictTone === "success"}
-      <CircleCheck size={16} class="mt-0.5 shrink-0 {toneClasses.success}" aria-hidden="true" />
-    {:else if verdictTone === "warning"}
-      <TriangleAlert size={16} class="mt-0.5 shrink-0 {toneClasses.warning}" aria-hidden="true" />
-    {:else if verdictTone === "error"}
-      <CircleAlert size={16} class="mt-0.5 shrink-0 {toneClasses.error}" aria-hidden="true" />
-    {:else}
-      <Info size={16} class="mt-0.5 shrink-0 opacity-70" aria-hidden="true" />
-    {/if}
+    <svelte:component this={toneIcons[verdictTone]} size={16} class="mt-0.5 shrink-0 {verdictTone === 'neutral' ? 'opacity-70' : toneClasses[verdictTone]}" aria-hidden="true" />
     <p class="font-semibold text-base-content">{verdict}</p>
   </div>
 {/if}
@@ -215,7 +213,7 @@
       {#each rows as check, index}
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-            <p class="flex min-w-0 flex-[1_1_12rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} <span class="whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-center gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
+            <p class="flex min-w-0 flex-[1_1_12rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}"><svelte:component this={toneIcons[checkTone(check)]} size={14} class="shrink-0 self-center" aria-hidden="true" />{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-center gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
             <div class="flex flex-wrap gap-2 *:[--size:1.75rem]">
               {#if check.repair && repairLabels[check.repair]}
                 <!-- Only a repair this build knows how to name. "Fix this" for an
