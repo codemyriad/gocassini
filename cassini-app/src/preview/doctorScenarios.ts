@@ -277,7 +277,7 @@ export function createPreviewClient(id: string): DoctorClient {
       // The fault remains until a simulated edit or repair fixes it. Rechecking
       // updates freshness, without making an intentionally broken case healthy.
       if (id !== "old-findings" || !initialCheck) for (const check of report.checks) {
-        if ((!only || only.includes(check.id)) && check.checked_at) check.checked_at = new Date().toISOString();
+        if ((!only || only.includes(check.id)) && check.checked_at && check.code !== "test_playback") check.checked_at = new Date().toISOString();
       }
       initialCheck = false;
       return read();
