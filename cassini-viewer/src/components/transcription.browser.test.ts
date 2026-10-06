@@ -20,7 +20,8 @@ it("shows a transcription-only badge and notice with transcript but no player", 
  app=mount(App,{target:host,props:{dataProvider:provider}});
  await expect.element(page.getByText("Transcription only",{exact:true})).toBeVisible();
  await expect.element(page.getByText("Transcription-only artefact — audio was not stored. Playback is unavailable.",{exact:true})).toBeVisible();
- await expect.element(page.getByRole("button",{name:"Download meeting file",exact:true})).toBeEnabled();
+ await page.getByRole("button",{name:"Export",exact:true}).click();
+ await expect.element(page.getByRole("menuitem",{name:"Download meeting file",exact:true})).toBeEnabled();
  expect(host.querySelector("audio")).toBeNull();
  expect(host.textContent).toContain(fixture.source.speakers[0].label);
  expect(fetcher.mock.calls.every(([url])=>url===meeting.meetingPath)).toBe(true);

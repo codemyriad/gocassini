@@ -101,7 +101,7 @@
             {#each Object.keys(settings.history.fine) as kind}<RetentionPolicyField bind:policy={settings.history.fine[kind]} label={retentionLabels[kind]} />{/each}
           {/if}
         </section>
-        <section class="op-tint p-4"><RetentionPolicyField bind:policy={settings.current} label="Current output archive" /><p class="text-sm">The latest local meeting archive and playable audio copy expire together. Removing these local copies saves space; recordings already published in Nextcloud remain available.</p></section>
+        <section class="op-tint p-4"><RetentionPolicyField bind:policy={settings.current} label="Current output archive" /><p class="text-sm">The latest local build bundle and meeting file expire together. Removing these local copies saves space; recordings already published in Nextcloud remain available.</p></section>
         <section class="op-tint p-4"><RetentionPolicyField bind:policy={settings.logs} label="Logs" /><p class="text-sm">Processing logs help diagnose failures and grow with each attempt. This does not include operator service logs.</p></section>
         {#if settings.nextcloud}
         <section class="op-tint p-4 grid gap-3">

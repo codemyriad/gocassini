@@ -77,7 +77,7 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   if (selected.length === 0) {
-    throw new Error(`No meeting directories or .opus files found in ${sourceDir}.`);
+    throw new Error(`No meeting directories, .opus or .json meeting files found in ${sourceDir}.`);
   }
 
   rmSync(outputDir, { recursive: true, force: true });

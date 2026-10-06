@@ -93,7 +93,7 @@ func (rt *Runtime) storageCategoryIndex(ctx context.Context) (*storageCategoryIn
 			sourceAssigned = true
 		}
 		if attempt == current && state == "succeeded" && published.Valid {
-			index.assign("current", anchor(published), canonicalMeetingPath(root, id), canonicalOpusPath(root, id), attemptSealDir(root, id, attempt), attemptMeetingPath(root, id, attempt))
+			index.assign("current", anchor(published), canonicalMeetingPath(root, id), canonicalOpusPath(root, id), filepath.Join(currentRoot(root), id+".json"), attemptSealDir(root, id, attempt), attemptMeetingPath(root, id, attempt))
 		}
 		if stage != "done" {
 			continue

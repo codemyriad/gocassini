@@ -36,6 +36,7 @@ func TestStorageCategoriesUseRetentionOwnershipAndDates(t *testing.T) {
 	}
 	writeUsageFile(t, filepath.Join(canonicalRunPath(root, "published"), "audio.opus"), 31)
 	writeUsageFile(t, canonicalOpusPath(root, "published"), 37)
+	writeUsageFile(t, filepath.Join(currentRoot(root), "published.json"), 41)
 
 	index, err := rt.storageCategoryIndex(t.Context())
 	if err != nil {
@@ -53,6 +54,9 @@ func TestStorageCategoriesUseRetentionOwnershipAndDates(t *testing.T) {
 		t.Fatal("capture duplicate lost source policy")
 	}
 	current := index.paths[canonicalOpusPath(root, "published")]
+	if index.paths[filepath.Join(currentRoot(root), "published.json")] != current {
+		t.Fatal("JSON output lost current policy")
+	}
 	if current.category != "current" || current.date != "2026-01-03" {
 		t.Fatalf("current = %+v", current)
 	}

@@ -162,3 +162,32 @@ func TestMeetingFormatUpgradeKeepsLegacyAttempts(t *testing.T) {
 		}
 	}
 }
+
+func TestMeetingFormatConfiguration(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", makeFakeOperatorRepoRoot(t))
+	for _, tc := range []struct {
+		name, env string
+		args      []string
+		want      string
+		invalid   bool
+	}{
+		{name: "default", want: "opus"},
+		{name: "json environment", env: "json", want: "json"},
+		{name: "flag precedence", env: "json", args: []string{"--meeting-format=opus"}, want: "opus"},
+		{name: "unsupported", env: "mp3", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CASSINI_MEETING_FORMAT", tc.env)
+			cfg, code, err := loadConfig(tc.args, ioDiscard{})
+			if tc.invalid {
+				if err == nil || code != 2 {
+					t.Fatalf("accepted invalid format: %d %v", code, err)
+				}
+				return
+			}
+			if err != nil || code != 0 || cfg.MeetingFormat != tc.want {
+				t.Fatalf("format %q code %d error %v", cfg.MeetingFormat, code, err)
+			}
+		})
+	}
+}
