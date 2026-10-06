@@ -2,7 +2,7 @@
 
 Administrators configure **Nextcloud Files > Whole meetings** in Operator >
 Storage. The default is **Keep forever**. A finite policy deletes the published
-`.opus`, including audio, transcript and meeting notes, and removes the meeting
+`.opus` or transcription-only `.json`, including all its transcript and meeting notes, and removes the meeting
 from active Files, Cassini lists, search and annotations. Container retention
 remains independent; see [container retention](container-retention.md).
 
@@ -15,12 +15,12 @@ Age uses the published meeting's optional `recordedAtLocal`, falling back to
 mandatory `createdAtUtc` only when `recordedAtLocal` is absent. The local
 recording timestamp supplies its own calendar date without a timezone shift;
 creation timestamps are evaluated on UTC dates. Adoption still requires a
-matching `<job-id>.opus` and successful publication. Invalid or unavailable
+matching `<job-id>.opus` or `<job-id>.json` and successful publication. Invalid or unavailable
 timestamps keep the file unchanged; job completion dates are never substituted.
 Existing job-based lifecycle records migrate to these timestamps at the next
 sweep. The chosen timestamps persist, so republish, reruns and annotations do
 not reset an adopted meeting's age. Older catalog entries require downloading
-the published Opus once during adoption to read its embedded timestamps.
+the published meeting file once during adoption to read its embedded timestamps.
 
 Preview, operation-status inspection and imperative sweep are API-only
 inspection/development tools. The UI provides policy settings. The durable
@@ -62,7 +62,7 @@ due meetings continue. Journal, capability and inventory failures stop new work.
 Restored content is removed again only when its original managed identity can be
 verified. Changed IDs, paths or ETags are never silently accepted.
 
-After timestamp adoption, deletion does not require downloading the Opus. A
+After timestamp adoption, deletion does not require downloading the meeting file. A
 strong ETag guards the mutation; the file ID and exact DAV response path guard
 identity. Retention DAV requests refuse redirects with AppAPI credentials.
 Tombstones prevent serving, publishing and projection rebuilds during retirement.

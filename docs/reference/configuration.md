@@ -127,6 +127,7 @@ Important env vars:
 | `WORK_ROOT` | fallback work-root env |
 | `CASSINI_OPERATOR_SITE_ROOT` | site-root path |
 | `CASSINI_PUBLISH_SINK` | publish sink name; `--sink` wins over it. Declared in `appinfo/info.xml` so AppAPI injects it |
+| `CASSINI_MEETING_FORMAT` | `opus` (default) or `json` (transcription-only); `--meeting-format` wins. Declared in `appinfo/info.xml`. New meetings use this format; reruns keep their original format. Local capture retention is independent. |
 | `CASSINI_ARTIFACT_RETENTION` | Deprecated and ignored; retained for deployment compatibility. Use Operator → Storage. |
 | `SITE_ROOT` | fallback site-root env |
 | `CASSINI_BIN` | Cassini CLI binary path |

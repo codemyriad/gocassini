@@ -421,3 +421,11 @@ npm run build:all --workspace cassini-app
 The browser tests use synthetic APIs, never real recordings. Retention tests
 verify whole-bundle deletion, independent output retention, settings migration
 and unavailable-source rerun protection.
+
+### Transcription-only output
+
+With `CASSINI_MEETING_FORMAT=json`, the current published output and immutable
+attempt seal are `.json` files. They follow the same current-output and attempt
+history deadlines, promotion journal and expiry recovery as `.opus` files.
+Captured `.run` and intermediate `.meeting` audio still follow their existing
+container policies; the publication setting does not change those policies.

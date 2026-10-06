@@ -105,6 +105,11 @@ Documentation: https://gocassini.com/docs]]></description>
         <description>Selects the publish destination: "nextcloud-files" stores recordings in the "cassini" service account's private Nextcloud Files tree and grants direct Files shares to captured Talk room participants. This is the default for an installed app and requires no additional Nextcloud app. "local" keeps recordings on the app's own volume for standalone development. Leave empty for the installed app. See docs/direct-shares-cutover.md for existing recordings.</description>
       </variable>
       <variable>
+        <name>CASSINI_MEETING_FORMAT</name>
+        <display-name>Published meeting format</display-name>
+        <description>Use "json" to store transcription-only meeting files, including speaker timing, summaries, metadata and annotations, without audio in Nextcloud Files. The default "opus" includes audio playback. This choice applies to new meetings; reruns retain the existing meeting format and shares. Both formats can coexist. Local captured audio follows the separate container retention settings.</description>
+      </variable>
+      <variable>
         <name>CASSINI_ARTIFACT_RETENTION</name>
         <display-name>Deprecated working-file retention</display-name>
         <description>Deprecated and ignored. Configure container-local retention in Operator → Storage. All categories default to keep forever; choose 7, 30, 60, 90 or custom days, evaluated on UTC dates. Successful duplicate working copies are cleaned independently. Published Nextcloud files and job metadata are not evicted.</description>
