@@ -29,7 +29,6 @@ beforeEach(() => {
   document.body.append(host);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
-    if (path.endsWith("/operations")) return Response.json({ operations: [{ name: "old.opus", status: "delete-intent", updatedAt: "2026-09-30", error: "Recovery will retry" }], nextOffset: 1 });
     expect(path).toBe("/operator/storage/retention");
     if (init?.method === "PUT") {
       puts += 1;
@@ -116,6 +115,20 @@ describe("retention settings in the browser", () => {
     await expect.element(page.getByRole("status")).toBeVisible();
   });
 
+  it("saves the whole-meeting policy without inspection or sweep controls", async () => {
+    mountPanel();
+    const meetings = page.getByRole("group", { name: "Whole meetings", exact: true });
+    await expect.element(meetings).toBeVisible();
+    await meetings.getByRole("checkbox").click();
+    await meetings.getByRole("button", { name: "7 days", exact: true }).click();
+    expect(puts).toBe(0);
+    expect(page.getByRole("button", { name: /preview|sweep|operation/i }).all()).toHaveLength(0);
+    await meetings.getByRole("button", { name: "30 days", exact: true }).click();
+    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await expect.element(page.getByText("Retention settings saved.")).toBeVisible();
+    expect(saved.nextcloud).toEqual({ meetings: { forever: false, count: 30, unit: "days" } });
+  });
+
   it("confirms unchanged defaults without a scroll gate", async () => {
     host.style.height = "3000px";
     app = mount(RetentionPanel, { target: host, props: {
@@ -125,22 +138,6 @@ describe("retention settings in the browser", () => {
     await page.getByRole("button", { name: "Save retention settings" }).click();
     expect(puts).toBe(1);
     expect(saved.revision).toBe(1);
-  });
-
-  it("saves the whole-meeting policy without preview or sweep controls", async () => {
-    mountPanel();
-    const meetings = page.getByRole("group", { name: "Whole meetings", exact: true });
-    await expect.element(meetings).toBeVisible();
-    await meetings.getByRole("checkbox").click();
-    await meetings.getByRole("button", { name: "7 days", exact: true }).click();
-    expect(puts).toBe(0);
-    expect(page.getByRole("button", { name: /preview|sweep/i }).all()).toHaveLength(0);
-    await meetings.getByRole("button", { name: "30 days", exact: true }).click();
-    await page.getByRole("button", { name: "Save retention settings" }).click();
-    await expect.element(page.getByText("Retention settings saved.")).toBeVisible();
-    expect(saved.nextcloud).toEqual({ meetings: { forever: false, count: 30, unit: "days" } });
-    await page.getByRole("button", { name: "Refresh Nextcloud operation status" }).click();
-    await expect.element(page.getByText("old.opus: delete-intent (2026-09-30); Recovery will retry")).toBeVisible();
   });
 
   it.each([1280, 390])("has no horizontal overflow at %ipx", async (width) => {

@@ -22,8 +22,10 @@ sweep. The chosen timestamps persist, so republish, reruns and annotations do
 not reset an adopted meeting's age. Older catalog entries require downloading
 the published Opus once during adoption to read its embedded timestamps.
 
-Preview and imperative sweep are API-only inspection/development tools. The UI
-provides policy settings and operation status. Preview evaluates proposed
+Preview, operation-status inspection and imperative sweep are API-only
+inspection/development tools. The UI provides policy settings. The durable
+operation journal and backend logging remain available; an inspection UI is
+deferred. Preview evaluates proposed
 settings without saving settings, lifecycle migrations or deletion intent.
 Saving activates the
 policy for startup and scheduled sweeps; it does not sweep immediately. The
