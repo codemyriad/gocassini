@@ -188,10 +188,7 @@
     <div class="op-panel-title">
       <h1 id="doctor-title">Doctor</h1>
     </div>
-    <!-- Describes what is actually here. The previous line named two of the
-         seven things this reports and ended by telling a reader to verify a short
-         recording through Talk, whose entry point no longer exists. -->
-    <p>What Cassini needs in order to record, and what to do about anything that is missing: the recording host, Nextcloud storage, Talk's signaling backend, how much of the archive search can read, and a short test recording to prove the whole path.</p>
+    <p>What Cassini needs to record and search meetings, and what to do when something needs attention.</p>
   </div>
   <div class="op-panel-actions">
     <button class="op-btn inline-flex items-center gap-1.5" type="button" disabled={busy} on:click={() => load(true)}><ListChecks size={15} aria-hidden="true" />{busy ? "Checking…" : "Run all checks"}</button>
