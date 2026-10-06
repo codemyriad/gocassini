@@ -83,3 +83,24 @@ func TestRetiredProjectionCannotBeRebuilt(t *testing.T) {
 		t.Fatal("expired text returned to index", err)
 	}
 }
+
+func TestMeetingLifecycleTimestampSchemaUpgrade(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	// Simulate the previous schema with an existing retirement tombstone.
+	if _, err := rt.store.db.Exec(`ALTER TABLE meeting_lifecycle DROP COLUMN created_at_utc;
+ ALTER TABLE meeting_lifecycle DROP COLUMN recorded_at_local;
+ INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source)
+ VALUES('m.opus',42,'Cassini/meetings/m.opus','retired','2020-01-01T00:00:00Z','recording-completed');`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := rt.store.ensureMeetingLifecycleSchema(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, ok, err := rt.store.meetingLifecycle(context.Background(), "m.opus")
+	if err != nil || !ok || m.State != "retired" || m.Anchor != "2020-01-01T00:00:00Z" || m.CreatedAtUTC != "" || m.RecordedAtLocal != "" {
+		t.Fatal(m, ok, err)
+	}
+}

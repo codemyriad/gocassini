@@ -174,6 +174,8 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
     const sttVariantLabel = describeSpeechToTextVariant({ provenance: portable.provenance }) || describeVariantSuffix(meetingId);
     return {
       id: meetingId,
+      createdAtUtc: portable.meeting.createdAtUtc,
+      recordedAtLocal: portable.meeting.recordedAtLocal ?? "",
       audioPath: recordingsBaseUrl ? `${recordingsBaseUrl}meetings/${targetFileName}` : `./meetings/${targetFileName}`,
       title: sttVariantLabel ? `${meetingTitle} (${sttVariantLabel})` : meetingTitle,
       dateLabel,

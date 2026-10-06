@@ -35,8 +35,8 @@ func TestRemoteRetentionIsolatesRecoveryConflicts(t *testing.T) {
 			}
 			now := time.Now().UTC()
 			root := ncRecordingsRoot + "/meetings"
-			a := meetingLifecycle{Name: "a.opus", FileID: 42, Path: root + "/a.opus", State: "active", Anchor: now.AddDate(0, 0, -2).Format(time.RFC3339), AnchorSource: "recording-completed"}
-			b := meetingLifecycle{Name: "b.opus", FileID: 43, Path: root + "/b.opus", State: "active", Anchor: now.AddDate(0, 0, -120).Format(time.RFC3339), AnchorSource: "recording-completed"}
+			a := meetingLifecycle{Name: "a.opus", FileID: 42, Path: root + "/a.opus", State: "active", Anchor: now.AddDate(0, 0, -2).Format(time.RFC3339), CreatedAtUTC: now.AddDate(0, 0, -2).Format(time.RFC3339), AnchorSource: "createdAtUtc"}
+			b := meetingLifecycle{Name: "b.opus", FileID: 43, Path: root + "/b.opus", State: "active", Anchor: now.AddDate(0, 0, -120).Format(time.RFC3339), CreatedAtUTC: now.Format(time.RFC3339), RecordedAtLocal: now.AddDate(0, 0, -120).Format("2006-01-02T15:04:05"), AnchorSource: "recordedAtLocal"}
 			for _, m := range []meetingLifecycle{a, b} {
 				insertJob(t, rt.store.db, strings.TrimSuffix(m.Name, ".opus"), m.Anchor)
 				if _, err := rt.store.db.Exec(`UPDATE jobs SET stage='done',state='succeeded' WHERE id=?`, strings.TrimSuffix(m.Name, ".opus")); err != nil {

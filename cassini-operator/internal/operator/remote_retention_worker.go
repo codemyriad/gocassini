@@ -97,51 +97,48 @@ func (s *annotationService) retentionInventory(ctx context.Context) ([]meetingLi
 		if !published {
 			continue
 		}
-		anchor := retentionAnchor(job.RecordFinishedAt)
-		attempts, err := s.rt.store.ListJobAttempts(ctx, job.ID)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, attempt := range attempts {
-			date := retentionAnchor(attempt.RecordFinishedAt)
-			if !date.IsZero() && (anchor.IsZero() || date.Before(anchor)) {
-				anchor = date
-			}
-		}
-		if anchor.IsZero() {
-			continue
-		}
-		byName[name] = meetingLifecycle{Name: name, FileID: id, Path: ncRecordingsRoot + "/meetings/" + names[id], State: "active", Anchor: anchor.UTC().Format(time.RFC3339Nano), AnchorSource: "recording-completed"}
+		byName[name] = meetingLifecycle{Name: name, FileID: id, Path: ncRecordingsRoot + "/meetings/" + names[id], State: "active"}
 	}
 	meetings := []meetingLifecycle{}
 	for name, m := range byName {
-		meetings = append(meetings, m)
 		delete(ids, name)
+		if m.State == "active" {
+			if err := s.loadMeetingRetentionAge(ctx, &m); err != nil {
+				skipped = append(skipped, remoteRetentionEffect{Name: name, CreatedAtUTC: m.CreatedAtUTC, RecordedAtLocal: m.RecordedAtLocal, Decision: "keep", Action: "skip", Reason: "Published meeting timestamps could not be established; file left unchanged."})
+				continue
+			}
+		}
+		meetings = append(meetings, m)
 	}
 	for name := range ids {
-		skipped = append(skipped, remoteRetentionEffect{Name: name, Action: "skip", Reason: "Managed provenance or original recording date could not be established; file left unchanged."})
+		skipped = append(skipped, remoteRetentionEffect{Name: name, Decision: "keep", Action: "skip", Reason: "Managed provenance could not be established; file left unchanged."})
 	}
 	sort.Slice(meetings, func(i, j int) bool { return meetings[i].Name < meetings[j].Name })
 	sort.Slice(skipped, func(i, j int) bool { return skipped[i].Name < skipped[j].Name })
 	return meetings, skipped, nil
 }
 
-func (s *annotationService) reconcileRetentionInventory(ctx context.Context) error {
+func (s *annotationService) reconcileRetentionInventory(ctx context.Context) ([]meetingLifecycle, error) {
 	meetings, _, err := s.retentionInventory(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, m := range meetings {
 		if _, ok, err := s.rt.store.meetingLifecycle(ctx, m.Name); err != nil {
-			return err
+			return nil, err
 		} else if ok {
+			if m.State == "active" {
+				if _, err := s.rt.store.db.ExecContext(ctx, `UPDATE meeting_lifecycle SET age_anchor=?,anchor_source=?,created_at_utc=?,recorded_at_local=? WHERE name=? AND state='active' AND file_id=? AND document_path=? AND anchor_source NOT IN ('createdAtUtc','recordedAtLocal')`, m.Anchor, m.AnchorSource, m.CreatedAtUTC, m.RecordedAtLocal, m.Name, m.FileID, m.Path); err != nil {
+					return nil, err
+				}
+			}
 			continue
 		}
 		if err := s.rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return meetings, nil
 }
 
 func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Time) error {
@@ -165,16 +162,13 @@ func (s *annotationService) runRemoteRetention(ctx context.Context, now time.Tim
 	if err != nil {
 		return errors.Join(recovery.failures, err)
 	}
-	if err := s.reconcileRetentionInventory(ctx); err != nil {
+	meetings, err := s.reconcileRetentionInventory(ctx)
+	if err != nil {
 		return errors.Join(recovery.failures, err)
 	}
 	s.rt.retention.mu.Lock()
 	settings := s.rt.retention.settings
 	s.rt.retention.mu.Unlock()
-	meetings, err := s.rt.store.retainedMeetings(ctx)
-	if err != nil {
-		return errors.Join(recovery.failures, err)
-	}
 	failures := recovery.failures
 	for _, m := range meetings {
 		if err := ctx.Err(); err != nil {

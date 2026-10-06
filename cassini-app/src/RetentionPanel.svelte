@@ -24,19 +24,11 @@
     split = value.history.mode === "fine" || !!value.history.fine_initialized;
     notifyRetentionChanged(value);
   }
-  let preview: import("./operator/retention").RetentionPreview | null = null;
-  let previewSettings = "";
   let operations: import("./operator/retention").RetentionOperations | null = null;
   async function loadOperations(offset = 0) {
     if (!operatorClient) return;
     try { operations = await operatorClient.retentionOperations(offset); }
     catch(e) { error=e instanceof Error?e.message:String(e); }
-  }
-  async function previewNextcloud() {
-   if (!settings || !operatorClient) return;
-   busy=true; error="";
-   try { preview=await operatorClient.previewRetention(settings);previewSettings=JSON.stringify(settings); }
-   catch(e) {error=e instanceof Error?e.message:String(e);} finally {busy=false;}
   }
   let split = false;
   const supportedZones = (Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
@@ -132,17 +124,7 @@
           <h3 class="font-semibold">Nextcloud Files</h3>
           <RetentionPolicyField bind:policy={settings.nextcloud.meetings} label="Whole meetings" />
           <p class="text-sm">Deletes the published meeting, including its audio, transcription and meeting notes. The meeting disappears from shared Files and Cassini.</p>
-          <p class="text-sm">Ages use the original recording date, including existing managed meetings. Nextcloud manages previous versions and Deleted files; their storage usage is unknown.</p>
-          <button class="btn btn-secondary justify-self-start" type="button" on:click={previewNextcloud}>Preview Nextcloud retention</button>
-          {#if preview && previewSettings === JSON.stringify(settings)}
-            <div role="status">
-              <p>{preview.retire} meeting removals due as of {preview.now}.</p>
-              {#if !preview.capability}<p>{preview.reason}</p>{/if}
-              <p>{preview.historyNotice}</p>
-              <p>Active Nextcloud meetings: {preview.usage.count} files, {preview.usage.bytes.toLocaleString()} logical bytes.</p>
-              <ul>{#each preview.meetings as effect}<li>{effect.name}: {effect.action}{effect.deadline ? `; expires ${effect.deadline}` : ""}{effect.reason ? `; ${effect.reason}` : ""}</li>{/each}</ul>
-            </div>
-          {/if}
+          <p class="text-sm">Ages use the recorded local date when available, otherwise the published meeting’s creation date. Nextcloud manages previous versions and Deleted files; their storage usage is unknown.</p>
           <button class="btn btn-secondary justify-self-start" type="button" on:click={() => loadOperations()}>Refresh Nextcloud operation status</button>
           {#if operations}
             <div aria-label="Nextcloud retention operations">

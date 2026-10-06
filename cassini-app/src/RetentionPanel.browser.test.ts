@@ -29,10 +29,6 @@ beforeEach(() => {
   document.body.append(host);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
-    if (path.endsWith("/preview")) return Response.json({
-      retire: 1, now: "2026-09-30", capability: true, historyNotice: "Versions and trash are separate.",
-      usage: { count: 2, bytes: 123 }, meetings: [{ name: "old.opus", action: "retire", deadline: "2026-09-29" }, { name: "unknown.opus", action: "skip", reason: "Missing history" }],
-    });
     if (path.endsWith("/operations")) return Response.json({ operations: [{ name: "old.opus", status: "delete-intent", updatedAt: "2026-09-30", error: "Recovery will retry" }], nextOffset: 1 });
     expect(path).toBe("/operator/storage/retention");
     if (init?.method === "PUT") {
@@ -131,18 +127,15 @@ describe("retention settings in the browser", () => {
     expect(saved.revision).toBe(1);
   });
 
-  it("previews one whole-meeting policy and displays recovery status", async () => {
+  it("saves the whole-meeting policy without preview or sweep controls", async () => {
     mountPanel();
     const meetings = page.getByRole("group", { name: "Whole meetings", exact: true });
     await expect.element(meetings).toBeVisible();
     await meetings.getByRole("checkbox").click();
     await meetings.getByRole("button", { name: "7 days", exact: true }).click();
     expect(puts).toBe(0);
-    await page.getByRole("button", { name: "Preview Nextcloud retention" }).click();
-    await expect.element(page.getByText("old.opus: retire; expires 2026-09-29")).toBeVisible();
-    await expect.element(page.getByText("unknown.opus: skip; Missing history")).toBeVisible();
+    expect(page.getByRole("button", { name: /preview|sweep/i }).all()).toHaveLength(0);
     await meetings.getByRole("button", { name: "30 days", exact: true }).click();
-    expect(page.getByText("old.opus: retire; expires 2026-09-29").all()).toHaveLength(0);
     await page.getByRole("button", { name: "Save retention settings" }).click();
     await expect.element(page.getByText("Retention settings saved.")).toBeVisible();
     expect(saved.nextcloud).toEqual({ meetings: { forever: false, count: 30, unit: "days" } });

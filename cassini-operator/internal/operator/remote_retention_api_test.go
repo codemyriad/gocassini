@@ -15,7 +15,7 @@ func TestRemotePreviewDoesNotPersistIntent(t *testing.T) {
 	defer close()
 	rt.retention = newRetentionConfig(filepath.Join(t.TempDir(), "settings.json"))
 	ctx := context.Background()
-	m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", State: "active", Anchor: "2020-01-01T00:00:00Z", AnchorSource: "recording-completed"}
+	m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", State: "active", Anchor: "2020-01-01T00:00:00Z", CreatedAtUTC: "2020-01-01T00:00:00Z", AnchorSource: "createdAtUtc"}
 	if err := rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestRemotePreviewDoesNotPersistIntent(t *testing.T) {
 
 func TestWholeMeetingPolicyDeadlines(t *testing.T) {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	m := meetingLifecycle{Name: "m.opus", State: "active", Anchor: "2026-08-02T23:59:59Z", AnchorSource: "recording-completed"}
+	m := meetingLifecycle{Name: "m.opus", State: "active", Anchor: "2026-08-02T23:59:59Z", CreatedAtUTC: "2026-08-02T23:59:59Z", AnchorSource: "createdAtUtc"}
 	for _, tc := range []struct {
 		policy           retentionPolicy
 		valid            bool
@@ -77,8 +77,39 @@ func TestWholeMeetingPolicyDeadlines(t *testing.T) {
 			t.Fatal(got)
 		}
 	}
+	m.State = "active"
 	m.Anchor = "invalid"
 	if got := evaluateRemoteRetention(m, defaultNextcloudRetention(), now); got.Action != "skip" {
 		t.Fatal(got)
+	}
+}
+
+func TestPreviewPublishedAgeAndDecision(t *testing.T) {
+	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		recorded string
+		age      int
+		decision string
+	}{
+		{"2026-08-02T23:59:59", 30, "evict"},
+		{"", 1, "keep"},
+		{"2026-09-02T00:00:00", -1, "keep"},
+	} {
+		m := meetingLifecycle{Name: "m.opus", State: "active", CreatedAtUTC: "2026-08-31T12:00:00Z", RecordedAtLocal: tc.recorded}
+		if err := setMeetingRetentionAge(&m); err != nil {
+			t.Fatal(err)
+		}
+		effect := evaluateRemoteRetention(m, nextcloudRetentionSettings{Meetings: retentionPolicy{Count: 30, Unit: "days"}}, now)
+		raw, err := json.Marshal(effect)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var row map[string]any
+		if err := json.Unmarshal(raw, &row); err != nil {
+			t.Fatal(err)
+		}
+		if row["name"] != "m.opus" || row["createdAtUtc"] != m.CreatedAtUTC || row["recordedAtLocal"] != tc.recorded || row["age"] != float64(tc.age) || row["decision"] != tc.decision {
+			t.Fatalf("wrong preview: %s", raw)
+		}
 	}
 }

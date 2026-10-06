@@ -31,6 +31,11 @@ type remoteRetentionPreview struct {
 	Meetings      []remoteRetentionEffect `json:"meetings"`
 }
 type remoteRetentionEffect struct {
+	CreatedAtUTC    string `json:"createdAtUtc"`
+	RecordedAtLocal string `json:"recordedAtLocal"`
+	Age             *int   `json:"age"`
+	Decision        string `json:"decision"`
+
 	Bytes    *int64 `json:"bytes,omitempty"`
 	Name     string `json:"name"`
 	Action   string `json:"action"`
@@ -39,15 +44,20 @@ type remoteRetentionEffect struct {
 }
 
 func evaluateRemoteRetention(m meetingLifecycle, p nextcloudRetentionSettings, now time.Time) remoteRetentionEffect {
-	effect := remoteRetentionEffect{Name: m.Name, Action: "keep"}
+	effect := remoteRetentionEffect{Name: m.Name, Action: "keep", Decision: "keep", CreatedAtUTC: m.CreatedAtUTC, RecordedAtLocal: m.RecordedAtLocal}
 	anchor, err := time.Parse(time.RFC3339Nano, m.Anchor)
-	if err != nil || m.AnchorSource == "" {
-		effect.Action = "skip"
-		effect.Reason = "original age is unknown"
-		return effect
+	validAge := err == nil && (m.AnchorSource == "createdAtUtc" || m.AnchorSource == "recordedAtLocal")
+	if validAge {
+		age := int(utcDate(now).Sub(utcDate(anchor)).Hours() / 24)
+		effect.Age = &age
 	}
 	if m.State == "retired" || m.State == "retiring" {
 		effect.Action = m.State
+		return effect
+	}
+	if !validAge {
+		effect.Action = "skip"
+		effect.Reason = "original age is unknown"
 		return effect
 	}
 	if d := p.Meetings.deadline(anchor); !d.IsZero() {
@@ -55,11 +65,12 @@ func evaluateRemoteRetention(m meetingLifecycle, p nextcloudRetentionSettings, n
 	}
 	if p.Meetings.due(anchor, now) {
 		effect.Action = "retire"
+		effect.Decision = "evict"
 	}
 	return effect
 }
 func (s *Store) retainedMeetings(ctx context.Context) ([]meetingLifecycle, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source FROM meeting_lifecycle ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local FROM meeting_lifecycle ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +78,7 @@ func (s *Store) retainedMeetings(ctx context.Context) ([]meetingLifecycle, error
 	result := []meetingLifecycle{}
 	for rows.Next() {
 		var m meetingLifecycle
-		if err := rows.Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource); err != nil {
+		if err := rows.Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource, &m.CreatedAtUTC, &m.RecordedAtLocal); err != nil {
 			return nil, err
 		}
 		result = append(result, m)
@@ -149,6 +160,9 @@ func (rt *Runtime) remoteRetentionPreviewHandler(w http.ResponseWriter, r *http.
 				effect.Action = "skip"
 				effect.Reason = "Meeting is busy."
 			}
+		}
+		if effect.Action != "retire" {
+			effect.Decision = "keep"
 		}
 		result.Meetings = append(result.Meetings, effect)
 		if effect.Action == "retire" {

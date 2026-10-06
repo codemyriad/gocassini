@@ -12,4 +12,4 @@ export function changeRetentionMode(group: RetentionGroup, mode: "group" | "fine
 }
 
 export interface RetentionOperations { operations: {name:string;status:string;error:string;updatedAt:string}[]; offset:number; nextOffset:number; historyNotice:string }
-export interface RetentionPreview {usage:{count:number;bytes:number};now:string; revision:number; capability:boolean; reason?:string; historyNotice:string; retire:number; meetings:{name:string;action:string;deadline?:string;reason?:string}[]}
+export interface RetentionPreview {usage:{count:number;bytes:number};now:string; revision:number; capability:boolean; reason?:string; historyNotice:string; retire:number; meetings:{name:string;createdAtUtc:string;recordedAtLocal:string;age:number|null;decision:"evict"|"keep";action:string;deadline?:string;reason?:string}[]}

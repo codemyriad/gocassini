@@ -15,12 +15,14 @@ var meetingProjectionLocks keyedLocks
 var errMeetingRetired = errors.New("meeting has expired")
 
 type meetingLifecycle struct {
-	Name         string `json:"name"`
-	FileID       int64  `json:"fileId"`
-	Path         string `json:"documentPath"`
-	State        string `json:"state"`
-	Anchor       string `json:"ageAnchor"`
-	AnchorSource string `json:"anchorSource"`
+	CreatedAtUTC    string `json:"createdAtUtc"`
+	RecordedAtLocal string `json:"recordedAtLocal"`
+	Name            string `json:"name"`
+	FileID          int64  `json:"fileId"`
+	Path            string `json:"documentPath"`
+	State           string `json:"state"`
+	Anchor          string `json:"ageAnchor"`
+	AnchorSource    string `json:"anchorSource"`
 }
 
 func (s *Store) ensureMeetingLifecycleSchema() error {
@@ -31,7 +33,21 @@ func (s *Store) ensureMeetingLifecycleSchema() error {
  CREATE TABLE IF NOT EXISTS remote_retention_operation(
  name TEXT PRIMARY KEY REFERENCES meeting_lifecycle(name), operation_json BLOB NOT NULL,
  status TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);`)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, column := range []string{"created_at_utc", "recorded_at_local"} {
+		var present int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('meeting_lifecycle') WHERE name=?`, column).Scan(&present); err != nil {
+			return err
+		}
+		if present == 0 {
+			if _, err := s.db.Exec(`ALTER TABLE meeting_lifecycle ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func logicalMeetingName(name string) string {
@@ -49,7 +65,7 @@ func (s *Store) meetingLifecycle(ctx context.Context, name string) (meetingLifec
 	if s == nil {
 		return m, false, nil
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source FROM meeting_lifecycle WHERE name=?`, logicalMeetingName(name)).Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource)
+	err := s.db.QueryRowContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local FROM meeting_lifecycle WHERE name=?`, logicalMeetingName(name)).Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource, &m.CreatedAtUTC, &m.RecordedAtLocal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, false, nil
 	}
@@ -68,7 +84,7 @@ func (s *Store) adoptMeetingLifecycle(ctx context.Context, m meetingLifecycle) e
 	if _, err := time.Parse(time.RFC3339Nano, m.Anchor); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source) VALUES(?,?,?,?,?,?) ON CONFLICT(name) DO NOTHING`, m.Name, m.FileID, m.Path, m.State, m.Anchor, m.AnchorSource)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(name) DO NOTHING`, m.Name, m.FileID, m.Path, m.State, m.Anchor, m.AnchorSource, m.CreatedAtUTC, m.RecordedAtLocal)
 	if err != nil {
 		return err
 	}

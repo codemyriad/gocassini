@@ -2,6 +2,7 @@ package cassini
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -455,6 +456,7 @@ Paths:
 func runInspect(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini inspect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	dumpMeetingTimes := fs.Bool("meeting-times", false, "dump portable meeting retention timestamps as JSON")
 	dumpTranscript := fs.Bool("transcript", false, "dump the default words transcript from a portable .opus as transcript.words.v1.json to stdout (instead of the inspect summary)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
@@ -466,6 +468,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
   cassini inspect /path/to/session.json
   cassini inspect /path/to/archive.csr
   cassini inspect --transcript ./archive/meeting.opus
+  cassini inspect --meeting-times ./archive/meeting.opus
 
 `+"\n")
 	}
@@ -480,7 +483,25 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	if *dumpMeetingTimes && *dumpTranscript {
+		return 2
+	}
 	path := fs.Arg(0)
+	if *dumpMeetingTimes {
+		meeting, err := inspectpkg.ExtractMeeting(path)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(struct {
+			CreatedAtUTC    string `json:"createdAtUtc"`
+			RecordedAtLocal string `json:"recordedAtLocal"`
+		}{meeting.Manifest.Meeting.CreatedAtUTC, meeting.Manifest.Meeting.RecordedAtLocal}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
 
 	// --transcript reads the default words transcript back out of a published
 	// portable .opus and writes it as transcript.words.v1.json to stdout. This
