@@ -245,7 +245,7 @@ func (rt *Runtime) expireCanonicalArchives(ctx context.Context, job Job, attempt
 			return nil
 		}
 		// Include the latest seal's hardlink/copy, but not different versions.
-		return rt.expirePaths(id, published, "current", s.Current, retentionAnchor(a.PublishFinishedAt), now, s.Revision, canonicalMeetingPath(rt.cfg.WorkRoot, id), canonicalOpusPath(rt.cfg.WorkRoot, id), attemptSealDir(rt.cfg.WorkRoot, id, published), attemptMeetingPath(rt.cfg.WorkRoot, id, published))
+		return rt.expirePaths(id, published, "current", s.Current, retentionAnchor(a.PublishFinishedAt), now, s.Revision, canonicalMeetingPath(rt.cfg.WorkRoot, id), canonicalOpusPath(rt.cfg.WorkRoot, id), filepath.Join(currentRoot(rt.cfg.WorkRoot), id+".json"), attemptSealDir(rt.cfg.WorkRoot, id, published), attemptMeetingPath(rt.cfg.WorkRoot, id, published))
 	}
 	return nil
 }

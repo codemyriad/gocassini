@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"path"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -113,13 +112,14 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 		dateLabel := ""
 		if entry != nil {
 			var probe struct {
-				AudioPath string `json:"audioPath"`
-				DateLabel string `json:"dateLabel"`
+				AudioPath   string `json:"audioPath"`
+				MeetingPath string `json:"meetingPath"`
+				DateLabel   string `json:"dateLabel"`
 			}
 			if json.Unmarshal(entry, &probe) != nil {
 				continue
 			}
-			name = catalogEntryOpusName(probe.AudioPath, "")
+			name = catalogEntryOpusName(meetingPath(probe.AudioPath, probe.MeetingPath), "")
 			dateLabel = probe.DateLabel
 		} else {
 			// The owner's current archive inventory gives the original name
@@ -129,17 +129,21 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 			if name == "" {
 				continue
 			}
+			fileField := "audioPath"
+			if meetingExtension(name) == ".json" {
+				fileField = "meetingPath"
+			}
 			fallback, marshalErr := json.Marshal(map[string]any{
-				"id":        strings.TrimSuffix(name, ".opus"),
-				"title":     strings.TrimSuffix(name, ".opus"),
-				"audioPath": "./meetings/" + name,
+				"id":      meetingStem(name),
+				"title":   meetingStem(name),
+				fileField: "./meetings/" + name,
 			})
 			if marshalErr != nil {
 				return directShareSnapshot{}, marshalErr
 			}
 			entry = fallback
 		}
-		if !strings.HasSuffix(name, ".opus") || path.Base(name) != name {
+		if !isMeetingFile(name) || path.Base(name) != name {
 			continue
 		}
 		if err := c.meetingNotRetired(ctx, name); err != nil {
@@ -172,7 +176,7 @@ func (c ExAppConfig) recipientRecordingPath(ctx context.Context, client *http.Cl
 	if err := c.meetingNotRetired(ctx, opusName); err != nil {
 		return "", errRecordingNotShared
 	}
-	if path.Base(opusName) != opusName || !strings.HasSuffix(opusName, ".opus") {
+	if path.Base(opusName) != opusName || !isMeetingFile(opusName) {
 		return "", fmt.Errorf("invalid recording name")
 	}
 	if cached, ok := c.sharePaths.get(caller, opusName); ok {

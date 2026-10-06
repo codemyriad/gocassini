@@ -58,6 +58,11 @@ export function main(argv = process.argv.slice(2)) {
     }
 
     if (entry.isFile() && isPortableMeeting(entry.name)) {
+      if (extname(entry.name).toLowerCase() === ".json") {
+        let doc;
+        try { doc = JSON.parse(readFileSync(join(sourceDir, entry.name), "utf8")); } catch { continue; }
+        if (doc?.kind !== "cassini-transcription") continue;
+      }
       const meetingId = entry.name.slice(0, -extname(entry.name).length) || "meeting";
       if (seen.has(meetingId)) {
         continue;
@@ -106,7 +111,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   console.log(`viewer catalog -> ${join(outputDir, "catalog.json")}`);
   for (const meeting of meetings) {
-    const meetingRef = meeting.audioPath ? `${meeting.id}.opus` : meeting.id;
+    const meetingRef = meeting.meetingPath ? `${meeting.id}.json` : meeting.audioPath ? `${meeting.id}.opus` : meeting.id;
     console.log(`${meeting.id} -> ${join(outputDir, "meetings", meetingRef)}`);
   }
 }
@@ -167,7 +172,8 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
     // at recording time) beats anything derived from the file name; packer
     // defaults that merely echo the id fall through to describeMeeting.
     const meetingTitle = preferredPortableTitle(portable, meetingId) || title;
-    const targetFileName = `${meetingId}.opus`;
+    const transcriptionOnly = extname(sourcePath).toLowerCase() === ".json";
+    const targetFileName = `${meetingId}${extname(sourcePath)}`;
     if (!recordingsBaseUrl) {
       cpSync(sourcePath, join(outputDir, "meetings", targetFileName));
     }
@@ -176,7 +182,9 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       id: meetingId,
       createdAtUtc: portable.meeting.createdAtUtc,
       recordedAtLocal: portable.meeting.recordedAtLocal ?? "",
-      audioPath: recordingsBaseUrl ? `${recordingsBaseUrl}meetings/${targetFileName}` : `./meetings/${targetFileName}`,
+      [transcriptionOnly ? "meetingPath" : "audioPath"]: recordingsBaseUrl ? `${recordingsBaseUrl}meetings/${targetFileName}` : `./meetings/${targetFileName}`,
+      meetingFormat: transcriptionOnly ? "json" : "opus",
+      hasAudio: !transcriptionOnly,
       title: sttVariantLabel ? `${meetingTitle} (${sttVariantLabel})` : meetingTitle,
       dateLabel,
       speakerCount: transcript.speakers?.length ?? 0,
@@ -241,6 +249,24 @@ export function extractPortableManifest(path) {
 // it references. The resolved body fields exist only in memory; the main wire
 // manifest remains an index.
 export function readPortableMeeting(path) {
+  if (extname(path).toLowerCase() === ".json") {
+    const doc = JSON.parse(readFileSync(path, "utf8"));
+    if (doc.kind !== "cassini-transcription" || doc.version !== 1) throw new Error("Unsupported transcription document");
+    const indexManifest = doc.source;
+    validatePublishedPortableManifest(indexManifest, path);
+    for (const entry of [...indexManifest.transcripts, ...(indexManifest.readableTranscripts ?? [])]) {
+      if (!Object.hasOwn(doc.bodies, entry.id)) throw new Error(`Missing transcript ${entry.id}`);
+      const raw = JSON.stringify(doc.bodies[entry.id]).replace(/[<>&\u2028\u2029]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+      if (createHash("sha256").update(raw).digest("hex") !== entry.payloadRef.sha256) throw new Error(`Transcript integrity mismatch: ${entry.id}`);
+    }
+    const manifest = structuredClone(indexManifest);
+    const words = pickPortableEntry(indexManifest.transcripts, "", "");
+    manifest.transcript = doc.bodies[words.id];
+    const display = pickPortableEntry(indexManifest.readableTranscripts ?? [], "display", words.id);
+    if (display) manifest.displayTranscript = doc.bodies[display.id];
+    return { manifest, indexManifest, tags: doc.tags };
+  }
+
   const output = execFileSync("ffprobe", [
     "-v",
     "error",
@@ -1185,7 +1211,7 @@ export function copyPublicMeetingFiles(sourceMeetingDir, targetMeetingDir, manif
 }
 
 export function isPortableMeeting(fileName) {
-  return extname(fileName).toLowerCase() === ".opus";
+  return [".opus", ".json"].includes(extname(fileName).toLowerCase());
 }
 
 // portableRoomFields returns the room and lineage fields a catalog entry should

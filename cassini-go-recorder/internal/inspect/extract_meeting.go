@@ -48,7 +48,7 @@ type ExtractedMeeting struct {
 // deliberately does NOT verify audio integrity; callers that need that gate
 // use `cassini inspect` explicitly.
 func ExtractMeeting(path string) (ExtractedMeeting, error) {
-	if strings.EqualFold(filepath.Ext(path), ".json") {
+	if strings.EqualFold(filepath.Ext(path), ".json") || portable.IsTranscriptionFile(path) {
 		tags, err := portable.ReadTranscriptionTags(path)
 		if err != nil {
 			return ExtractedMeeting{}, err

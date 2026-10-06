@@ -11,6 +11,11 @@ import (
 )
 
 func TestWholeMeetingDeletionIdentityAndRecovery(t *testing.T) {
+	for _, ext := range []string{".opus", ".json"} {
+		t.Run(ext, func(t *testing.T) { testWholeMeetingDeletionIdentityAndRecovery(t, ext) })
+	}
+}
+func testWholeMeetingDeletionIdentityAndRecovery(t *testing.T, ext string) {
 	for _, scenario := range []string{"delete", "changed-id", "changed-etag", "changed-path", "missing", "busy", "stale-settings", "restore"} {
 		t.Run(scenario, func(t *testing.T) {
 			rt, close := newBareSealRuntime(t)
@@ -27,7 +32,7 @@ func TestWholeMeetingDeletionIdentityAndRecovery(t *testing.T) {
 			if _, err := rt.store.db.Exec(`UPDATE jobs SET stage='done',state='succeeded' WHERE id='m'`); err != nil {
 				t.Fatal(err)
 			}
-			m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", State: "active", Anchor: "2020-01-01T00:00:00Z", CreatedAtUTC: "2020-01-01T00:00:00Z", AnchorSource: "createdAtUtc"}
+			m := meetingLifecycle{Name: "m" + ext, FileID: 42, Path: ncRecordingsRoot + "/meetings/m" + ext, State: "active", Anchor: "2020-01-01T00:00:00Z", CreatedAtUTC: "2020-01-01T00:00:00Z", AnchorSource: "createdAtUtc"}
 			if err := rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
 				t.Fatal(err)
 			}
@@ -83,7 +88,7 @@ func TestWholeMeetingDeletionIdentityAndRecovery(t *testing.T) {
 			}
 			defer search.Close()
 			rt.searchStore = search
-			if err := metadata.Put(ctx, m.FileID, m.Name, []byte(`{"id":"m","audioPath":"meetings/m.opus"}`)); err != nil {
+			if err := metadata.Put(ctx, m.FileID, m.Name, []byte(`{"id":"m","meetingPath":"meetings/m`+ext+`"}`)); err != nil {
 				t.Fatal(err)
 			}
 			if err := search.ReplaceMeeting(ctx, m.Name, "digest", searchRowSourceWords, []searchRow{{Text: "secret words"}}); err != nil {
@@ -132,14 +137,14 @@ func TestWholeMeetingDeletionIdentityAndRecovery(t *testing.T) {
 			}{
 				{`SELECT COUNT(*) FROM meeting_metadata`, metadata.db},
 				{`SELECT COUNT(*) FROM segment_ref`, search.db},
-				{`SELECT COUNT(*) FROM meeting_annotations WHERE opus_name='m.opus'`, annotations.db},
+				{`SELECT COUNT(*) FROM meeting_annotations WHERE opus_name='m` + ext + `'`, annotations.db},
 			} {
 				if err := check.db.QueryRow(check.query).Scan(&count); err != nil || count != 0 {
 					t.Fatalf("cleanup %s count=%d err=%v", check.query, count, err)
 				}
 			}
 			var receipt string
-			if err := annotations.db.QueryRow(`SELECT response FROM annotation_receipt WHERE opus_name='m.opus'`).Scan(&receipt); err != nil || receipt != `{"expired":true}` {
+			if err := annotations.db.QueryRow(`SELECT response FROM annotation_receipt WHERE opus_name='m` + ext + `'`).Scan(&receipt); err != nil || receipt != `{"expired":true}` {
 				t.Fatalf("receipt %s %v", receipt, err)
 			}
 			if err := annotations.db.QueryRow(`SELECT response FROM annotation_receipt WHERE opus_name='other.opus'`).Scan(&receipt); err != nil || receipt != `{"notes":"private"}` {

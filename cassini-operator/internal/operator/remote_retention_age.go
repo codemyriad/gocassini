@@ -65,7 +65,7 @@ func (s *annotationService) loadMeetingRetentionAge(ctx context.Context, m *meet
 		return err
 	}
 	defer os.RemoveAll(dir)
-	file := filepath.Join(dir, "meeting.opus")
+	file := filepath.Join(dir, "meeting"+meetingExtension(m.Path))
 	if _, _, _, err := s.exapp.davDownloadFile(ctx, retentionDAVClient(s.client), ncRecordingsOwner, m.Path, file, 0, state.ETag); err != nil {
 		return err
 	}

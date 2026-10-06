@@ -188,7 +188,7 @@ func (c ExAppConfig) archiveBackfillTargets(ctx context.Context) ([]searchBackfi
 	}
 	targets := make([]searchBackfillTarget, 0, len(names))
 	for _, name := range names {
-		jobID := strings.TrimSuffix(name, ".opus")
+		jobID := meetingStem(name)
 		if jobID == "" || strings.ContainsAny(jobID, "/\\\x00\r\n") {
 			continue
 		}

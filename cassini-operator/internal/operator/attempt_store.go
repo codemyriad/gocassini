@@ -123,7 +123,7 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 	var pending int
 	if err := s.db.QueryRowContext(ctx, `SELECT
  (SELECT count(*) FROM artifact_operations WHERE job_id=?) +
- (SELECT count(*) FROM remote_retention_operation WHERE name=? AND status!='completed')`, job.ID, job.ID+".opus").Scan(&pending); err != nil || pending != 0 {
+ (SELECT count(*) FROM remote_retention_operation WHERE name IN (?,?) AND status!='completed')`, job.ID, job.ID+".opus", job.ID+".json").Scan(&pending); err != nil || pending != 0 {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
 	var source string

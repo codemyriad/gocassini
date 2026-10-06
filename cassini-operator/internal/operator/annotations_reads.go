@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 )
 
 func (s *annotationService) readDocument(ctx context.Context, caller, meetingID, opusName, relPath string) (annotateResult, error) {
@@ -94,7 +93,7 @@ func (s *annotationService) importListedDocuments(ctx context.Context, caller st
 		return
 	}
 	for _, entry := range entries {
-		if missing[entry.opusName] && strings.HasSuffix(entry.opusName, ".opus") {
+		if missing[entry.opusName] && isMeetingFile(entry.opusName) {
 			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
 			if err != nil {
 				continue

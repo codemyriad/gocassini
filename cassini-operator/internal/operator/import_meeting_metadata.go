@@ -106,15 +106,16 @@ func mapSeedMetadata(catalog siteCatalog, inventory map[int64]string) ([]seedMet
 	rows := make([]seedMetadataRow, 0, len(catalog.Meetings))
 	for _, entry := range catalog.Meetings {
 		var probe struct {
-			ID        string `json:"id"`
-			AudioPath string `json:"audioPath"`
+			ID          string `json:"id"`
+			AudioPath   string `json:"audioPath"`
+			MeetingPath string `json:"meetingPath"`
 		}
 		if err := json.Unmarshal(entry, &probe); err != nil {
 			return nil, err
 		}
-		name := strings.TrimPrefix(probe.AudioPath, "./meetings/")
-		if probe.ID == "" || seenIDs[probe.ID] || probe.AudioPath != "./meetings/"+name || path.Base(name) != name || !strings.HasSuffix(name, ".opus") || seen[name] || ids[name] <= 0 {
-			return nil, fmt.Errorf("invalid, duplicate, or absent destination recording: %q", probe.AudioPath)
+		name := strings.TrimPrefix(meetingPath(probe.AudioPath, probe.MeetingPath), "./meetings/")
+		if probe.ID == "" || seenIDs[probe.ID] || meetingPath(probe.AudioPath, probe.MeetingPath) != "./meetings/"+name || path.Base(name) != name || !isMeetingFile(name) || seen[name] || ids[name] <= 0 {
+			return nil, fmt.Errorf("invalid, duplicate, or absent destination recording: %q", meetingPath(probe.AudioPath, probe.MeetingPath))
 		}
 		seen[name], seenIDs[probe.ID] = true, true
 		rows = append(rows, seedMetadataRow{ids[name], name, entry})

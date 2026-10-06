@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -83,6 +82,9 @@ func (s *annotationService) retentionInventory(ctx context.Context) ([]meetingLi
 	skipped := []remoteRetentionEffect{}
 	for _, job := range jobs {
 		name := job.ID + ".opus"
+		if ids[name] == 0 {
+			name = job.ID + ".json"
+		}
 		if _, ok := byName[name]; ok {
 			continue
 		}
@@ -212,7 +214,7 @@ func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetin
 	if action != "retire" {
 		return fmt.Errorf("unsupported retention action")
 	}
-	unlock, ok := s.rt.store.tryLockArtifacts(strings.TrimSuffix(m.Name, ".opus"))
+	unlock, ok := s.rt.store.tryLockArtifacts(meetingStem(m.Name))
 	if !ok {
 		return nil
 	}
@@ -224,7 +226,7 @@ func (s *annotationService) prepareRemoteRetention(ctx context.Context, m meetin
 	if pending {
 		return nil
 	}
-	job, err := s.rt.store.GetJob(ctx, strings.TrimSuffix(m.Name, ".opus"))
+	job, err := s.rt.store.GetJob(ctx, meetingStem(m.Name))
 	if err != nil {
 		return err
 	}
@@ -318,7 +320,7 @@ func (s *annotationService) recoverRemoteRetentionPass(ctx context.Context) (rem
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		unlock, ok := s.rt.store.tryLockArtifacts(strings.TrimSuffix(op.Name, ".opus"))
+		unlock, ok := s.rt.store.tryLockArtifacts(meetingStem(op.Name))
 		if !ok {
 			continue
 		}

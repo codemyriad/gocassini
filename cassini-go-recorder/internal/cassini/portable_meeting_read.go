@@ -39,7 +39,7 @@ import (
 // both are read and merged. Format tags win a collision, matching the ordering
 // `cassini inspect` already uses.
 func portableMeetingTags(path string) (map[string]string, error) {
-	if strings.EqualFold(filepath.Ext(path), ".json") {
+	if strings.EqualFold(filepath.Ext(path), ".json") || portable.IsTranscriptionFile(path) {
 		return portable.ReadTranscriptionTags(path)
 	}
 	cmd := exec.Command("ffprobe",

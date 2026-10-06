@@ -75,7 +75,8 @@ type Config struct {
 	// PublishSink names where published meetings go (publish_sink.go, D-533).
 	// Empty means unset, which resolves to the default; a non-empty unknown
 	// name is rejected at startup.
-	PublishSink string
+	PublishSink   string
+	MeetingFormat string
 	// ArtifactRetention is a deprecated compatibility option. Known legacy
 	// values are accepted but ignored; Operator → Storage owns retention.
 	ArtifactRetention string
@@ -575,6 +576,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
+	fs.StringVar(&cfg.MeetingFormat, "meeting-format", envOrDefaultAny([]string{"CASSINI_MEETING_FORMAT"}, "opus"), "published meeting format: opus or json (transcription only)")
 	fs.StringVar(&cfg.PublishSink, "sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
 	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "deprecated and ignored; configure Operator → Storage (default keep forever)")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
@@ -642,6 +644,9 @@ Flags:
 	}
 	if cfg.MaxBuildWorkers < 1 {
 		return Config{}, 2, errors.New("--max-build-workers must be >= 1")
+	}
+	if cfg.MeetingFormat != "opus" && cfg.MeetingFormat != "json" {
+		return cfg, 2, fmt.Errorf("meeting-format must be opus or json")
 	}
 	cfg.PublishSink = strings.TrimSpace(cfg.PublishSink)
 	if err := validatePublishSinkName(cfg.PublishSink); err != nil {

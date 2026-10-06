@@ -169,3 +169,17 @@ func EncodeTranscription(tags map[string]string) ([]byte, error) {
 	}
 	return append(result, '\n'), nil
 }
+
+// IsTranscriptionFile recognizes the document by content, including a renamed
+// Nextcloud share. File extensions are a discovery hint, not the wire identity.
+func IsTranscriptionFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var header struct {
+		Kind string `json:"kind"`
+	}
+	return json.NewDecoder(f).Decode(&header) == nil && header.Kind == TranscriptionKind
+}

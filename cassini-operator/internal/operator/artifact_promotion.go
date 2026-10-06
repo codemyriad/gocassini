@@ -44,7 +44,7 @@ func promoteOpusFile(workRoot, sourceOpusPath, jobID string) (string, error) {
 		return "", fmt.Errorf("sealed portable meeting is not a file: %s", sourceOpusPath)
 	}
 
-	destination := canonicalOpusPath(workRoot, jobID)
+	destination := filepath.Join(currentRoot(workRoot), jobID+meetingExtension(sourceOpusPath))
 	stagingRoot := currentStagingRoot(workRoot)
 	if err := os.MkdirAll(stagingRoot, 0o755); err != nil {
 		return "", fmt.Errorf("create staging root: %w", err)

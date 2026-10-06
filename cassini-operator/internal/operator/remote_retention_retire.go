@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remoteRetentionOperation) error {
@@ -191,7 +190,7 @@ func scrubRetiredResult(raw []byte, name string) ([]byte, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return nil, err
 	}
-	id := strings.TrimSuffix(name, ".opus")
+	id := meetingStem(name)
 	var scrub func(any) any
 	scrub = func(v any) any {
 		switch item := v.(type) {

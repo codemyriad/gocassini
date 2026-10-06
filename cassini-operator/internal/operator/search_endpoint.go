@@ -392,6 +392,7 @@ func decodeCatalogEntries(raw []byte) ([]catalogHydration, error) {
 			RoomID       string `json:"roomId"`
 			RoomName     string `json:"roomName"`
 			AudioPath    string `json:"audioPath"`
+			MeetingPath  string `json:"meetingPath"`
 			ArtifactPath string `json:"artifactPath"`
 		} `json:"meetings"`
 	}
@@ -401,7 +402,7 @@ func decodeCatalogEntries(raw []byte) ([]catalogHydration, error) {
 	entries := make([]catalogHydration, 0, len(catalog.Meetings))
 	for _, meeting := range catalog.Meetings {
 		entries = append(entries, catalogHydration{
-			id: strings.TrimSpace(meeting.ID), opusName: catalogEntryOpusName(meeting.AudioPath, meeting.ArtifactPath),
+			id: strings.TrimSpace(meeting.ID), opusName: catalogEntryOpusName(meetingPath(meeting.AudioPath, meeting.MeetingPath), meeting.ArtifactPath),
 			title: meeting.Title, dateLabel: meeting.DateLabel,
 			roomID: meeting.RoomID, roomName: meeting.RoomName,
 		})

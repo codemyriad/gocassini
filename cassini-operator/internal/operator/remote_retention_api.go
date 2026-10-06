@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -156,7 +155,7 @@ func (rt *Runtime) remoteRetentionPreviewHandler(w http.ResponseWriter, r *http.
 				usage.Count++
 				usage.Bytes += state.Size
 			}
-			if job, e := rt.store.GetJob(r.Context(), strings.TrimSuffix(m.Name, ".opus")); e == nil && job.Stage != "done" {
+			if job, e := rt.store.GetJob(r.Context(), meetingStem(m.Name)); e == nil && job.Stage != "done" {
 				effect.Action = "skip"
 				effect.Reason = "Meeting is busy."
 			}

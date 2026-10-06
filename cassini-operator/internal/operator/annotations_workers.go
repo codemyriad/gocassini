@@ -202,7 +202,7 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 		return err
 	}
 	defer os.RemoveAll(dir)
-	in, out := filepath.Join(dir, "in.opus"), filepath.Join(dir, "out.opus")
+	in, out := filepath.Join(dir, "in"+meetingExtension(rel)), filepath.Join(dir, "out"+meetingExtension(rel))
 	if _, _, err = s.exapp.stageRecording(ctx, s.client, ncRecordingsOwner, rel, in, maxAnnotateRecordingBytes, state.ETag); err != nil {
 		return err
 	}
@@ -299,7 +299,7 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	if _, err = store.db.ExecContext(ctx, `UPDATE annotation_head SET in_flight=?,input_etag=?,output_sha256=?,output_size=? WHERE opus_name=?`, desired, state.ETag, digest, info.Size(), name); err != nil {
 		return err
 	}
-	if _, _, err = s.exapp.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, rel, out, ncRecordingsContentType, state.ETag); err != nil {
+	if _, _, err = s.exapp.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, rel, out, meetingContentType(rel), state.ETag); err != nil {
 		return err
 	}
 	if err = s.exapp.verifyUploadedLeaf(ctx, s.client, rel, info.Size()); err != nil {

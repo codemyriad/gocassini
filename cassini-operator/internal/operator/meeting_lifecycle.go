@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"strings"
 	"time"
 )
 
@@ -54,7 +53,7 @@ func logicalMeetingName(name string) string {
 	if path.Base(name) != name {
 		return ""
 	}
-	if strings.HasSuffix(name, ".opus") {
+	if isMeetingFile(name) {
 		return name
 	}
 	return ""

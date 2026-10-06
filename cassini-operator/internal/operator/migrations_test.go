@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-func TestMigrationsRunContiguouslyThroughModelInstallJobs(t *testing.T) {
+func TestMigrationsRunContiguouslyThroughMeetingFormat(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
 	last := migrations[len(migrations)-1]
-	if last.Version != 13 || last.Name != "model_install_jobs" {
-		t.Fatalf("last migration = %04d_%s, want 0013_model_install_jobs", last.Version, last.Name)
+	if last.Version != 14 || last.Name != "meeting_format" {
+		t.Fatalf("last migration = %04d_%s, want 0014_meeting_format", last.Version, last.Name)
 	}
 }
 

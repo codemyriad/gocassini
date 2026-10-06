@@ -621,7 +621,7 @@ func titleFromSourceName(path string) string {
 }
 
 func writePortableMeetingFile(ctx context.Context, audioPath string, outPath string, tags map[string]string) error {
-	if strings.EqualFold(filepath.Ext(outPath), ".json") {
+	if strings.EqualFold(filepath.Ext(outPath), ".json") || portable.IsTranscriptionFile(audioPath) {
 		raw, err := portable.EncodeTranscription(tags)
 		if err != nil {
 			return err
@@ -675,7 +675,7 @@ func createPortableStagePath(outPath string) (string, error) {
 }
 
 func verifyPortableMeetingFile(path string, manifest portable.Manifest) error {
-	if strings.EqualFold(filepath.Ext(path), ".json") {
+	if strings.EqualFold(filepath.Ext(path), ".json") || portable.IsTranscriptionFile(path) {
 		_, err := portable.ReadTranscriptionTags(path)
 		return err
 	}

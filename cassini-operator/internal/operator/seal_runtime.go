@@ -2,9 +2,11 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 )
 
@@ -111,6 +113,28 @@ func (rt *Runtime) failSeal(task sealTask, attemptOpus string, cause error, fini
 // source of truth and the requeue dispatcher re-delivers any task the channel
 // could not accept (full queue) or never saw (operator restart) (D-367).
 func (rt *Runtime) enqueueSealJobNonBlocking(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
+	format := rt.cfg.MeetingFormat
+	// A rerun updates the existing artefact in its original format. This
+	// preserves its Nextcloud file ID, shares and durable annotation identity.
+	var previous string
+	_ = rt.store.db.QueryRowContext(context.Background(), `SELECT format FROM meeting_format WHERE job_id=? ORDER BY attempt_number LIMIT 1`, jobID).Scan(&previous)
+	if previous != "" {
+		format = previous
+	} else {
+		var published int
+		if err := rt.store.db.QueryRowContext(context.Background(), `SELECT count(*) FROM job_attempts WHERE job_id=? AND publish_finished_at IS NOT NULL AND state='succeeded'`, jobID).Scan(&published); err != nil {
+			return err
+		}
+		if published > 0 {
+			format = "opus"
+		}
+	}
+	if format == "" {
+		format = "opus"
+	}
+	if _, err := rt.store.db.ExecContext(context.Background(), `INSERT INTO meeting_format(job_id,attempt_number,format) VALUES(?,?,?) ON CONFLICT DO NOTHING`, jobID, attemptNumber, format); err != nil {
+		return err
+	}
 	if err := rt.store.MarkSealQueued(context.Background(), jobID, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt); err != nil {
 		return err
 	}
@@ -163,11 +187,16 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 	// The room's display name is also the meeting title (D-462); its token is
 	// what `cassini pack` derives the published room id from (D-622).
 	roomToken, roomName := rt.talkRoomForJob(task.JobID)
+	format := "opus"
+	err = rt.store.db.QueryRowContext(ctx, `SELECT format FROM meeting_format WHERE job_id=? AND attempt_number=?`, task.JobID, task.AttemptNumber).Scan(&format)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
 	return packAttemptMeetingToOpus(
 		ctx,
 		rt.cfg.CassiniBin,
 		task.ArtifactMeetingPath,
-		attemptOpusPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber),
+		filepath.Join(attemptSealDir(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber), task.JobID+"."+format),
 		roomName,
 		roomToken,
 		roomName,
