@@ -43,7 +43,8 @@ type readinessCheck struct {
 	// Repair names something the operator can do about this check ITSELF, which
 	// the panel renders as a button, instead of printing a shell line for an
 	// administrator to go and run.
-	Repair string `json:"repair,omitempty"`
+	Repair  string `json:"repair,omitempty"`
+	Running bool   `json:"running,omitempty"`
 	// Checkable says a probe establishes THIS row, so it can be re-checked on
 	// its own. Sent rather than worked out again in the panel: the mapping from
 	// row to probe is readinessScopeFor's, and a second copy in TypeScript

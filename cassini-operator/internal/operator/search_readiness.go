@@ -107,6 +107,8 @@ func (rt *Runtime) describeSearchRepair(check *readinessCheck) {
 	switch {
 	case running:
 		check.Repair = ""
+		check.Running = true
+		check.Steps = nil
 		check.Message += " Re-indexing is running now."
 		return
 	case err != nil:

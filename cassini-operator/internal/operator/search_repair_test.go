@@ -76,7 +76,7 @@ func TestCoverageRowReportsARunningBackfill(t *testing.T) {
 				continue
 			}
 			found = true
-			if strings.Count(check.Message, "Re-indexing is running now.") != 1 || check.Repair != "" {
+			if strings.Count(check.Message, "Re-indexing is running now.") != 1 || check.Repair != "" || !check.Running || len(check.Steps) != 0 {
 				t.Fatalf("health poll did not report the running repair: %+v", check)
 			}
 		}
@@ -84,7 +84,7 @@ func TestCoverageRowReportsARunningBackfill(t *testing.T) {
 			t.Fatal("archive check missing")
 		}
 	}
-	if rt.archiveCoverage.check.Repair != repairBackfillSearch || strings.Contains(rt.archiveCoverage.check.Message, "running") {
+	if rt.archiveCoverage.check.Repair != repairBackfillSearch || rt.archiveCoverage.check.Running || strings.Contains(rt.archiveCoverage.check.Message, "running") {
 		t.Fatalf("reading repair progress changed the cached observation: %+v", rt.archiveCoverage.check)
 	}
 }
