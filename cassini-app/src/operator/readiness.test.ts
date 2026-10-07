@@ -400,3 +400,16 @@ describe("names quoted in a step", () => {
     expect(labelParts("Paste it unchanged")).toEqual([{ text: "Paste it unchanged", code: false }]);
   });
 });
+
+describe("the credential action on the backend row", () => {
+  const row = (state: ReadinessCheck["state"]): ReadinessCheck =>
+    ({ id: "talk.hpb", state, code: "x", message: "", action: "configure_talk" });
+
+  it("offers to change a secret that is saved and working", () => {
+    expect(rowActions(row("passed")).map(a => a.label)).toEqual(["Change secret"]);
+  });
+
+  it("asks for one while it is missing or refused", () => {
+    expect(rowActions(row("needs_action")).map(a => a.label)).toEqual(["Set credential"]);
+  });
+});

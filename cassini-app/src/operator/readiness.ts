@@ -212,7 +212,11 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // whose effect the panel cannot describe and whose drawer it does not have.
   // Same rule as the repair buttons: offering a control the panel cannot
   // explain is how a reader ends up reading an instruction for another fault.
-  return actions.filter(action => labels[action]).map(action => ({ action, label: labels[action] }));
+  const passedLabels: Record<string, string> = { configure_talk: "Change secret" };
+  return actions.filter(action => labels[action]).map(action => ({
+    action,
+    label: check.state === "passed" && passedLabels[action] ? passedLabels[action] : labels[action],
+  }));
 }
 
 // How loudly a check should read. Colour is redundant with the label text
