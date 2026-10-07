@@ -3,7 +3,7 @@
   import { BookOpen, Check, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Play, Settings, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "./CommandBlock.svelte";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, labelParts, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -33,6 +33,15 @@
   $: verdict = stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "";
   $: verdictTone = report && !stale ? reportTone(report) : "neutral";
   $: shared = report ? sharedCheckTime(report.checks) : null;
+  $: followUp = report && !stale ? testFollowUp(report) : "";
+  let panelRoot: HTMLElement | null = null;
+  function goToTest(): void {
+    const row = panelRoot?.querySelector<HTMLElement>('[data-check-id="test"]');
+    if (!row) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
+    row.querySelector<HTMLElement>(".mt-3 a, .mt-3 button")?.focus({ preventScroll: true });
+  }
   $: waitingForTalk = report?.test.state === "waiting_for_talk";
   $: awaitingPlayback = !!report?.test.published && !!report?.test.viewer_url && !report?.test.playback_verified_at;
   const testSteps = [
@@ -201,7 +210,7 @@
   });
 </script>
 
-<div class="@container space-y-4">
+<div class="@container space-y-4" bind:this={panelRoot}>
 <header class="op-panel-head">
   <div>
     <div class="op-panel-title justify-between">
@@ -215,7 +224,7 @@
   <div class="alert alert-soft items-start gap-2 px-3 py-2 text-sm {calloutTone[verdictTone]}" role="status">
     <svelte:component this={toneIcons[verdictTone]} size={16} class="mt-0.5 shrink-0 {verdictTone === 'neutral' ? 'opacity-70' : toneClasses[verdictTone]}" aria-hidden="true" />
     <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-      <p class="font-semibold text-base-content">{verdict}</p>
+      <p class="font-semibold text-base-content">{verdict}{#if followUp}; <button type="button" class="link font-semibold" on:click={goToTest}>{followUp}</button>{/if}</p>
       {#if shared}<p class="text-xs text-base-content/70" title={new Date(shared.checkedAt).toLocaleString()}>Checked {formatAge(shared.checkedAt)}</p>{/if}
     </div>
   </div>

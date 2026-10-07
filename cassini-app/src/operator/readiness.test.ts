@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, labelParts, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, labelParts, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -423,3 +423,25 @@ describe("the test row while a test is under way", () => {
   });
 });
 
+describe("the verdict while a test is unfinished", () => {
+  const now = new Date("2026-10-07T10:10:00Z");
+  const withTest = (test: Partial<RecordingReadiness["test"]>): RecordingReadiness =>
+    ({ state: "passed", recording_state: "passed", checks: [], test: { state: "", published: false, ...test } } as unknown as RecordingReadiness);
+
+  it("says what is left while the test waits for Talk", () => {
+    expect(testFollowUp(withTest({ state: "waiting_for_talk", started_at: "2026-10-07T10:05:00Z" }), now)).toBe("your test recording is waiting for you in Talk");
+  });
+
+  it("asks for playback once the recording is published", () => {
+    expect(testFollowUp(withTest({ state: "succeeded", published: true, viewer_url: "https://x.invalid/r", started_at: "2026-10-07T10:00:00Z" }), now)).toBe("play your test recording to finish it");
+  });
+
+  it("says the test did not finish when it failed, however long ago", () => {
+    expect(testFollowUp(withTest({ state: "failed", started_at: "2026-10-01T10:00:00Z" }), now)).toBe("your test recording did not finish");
+  });
+
+  it("says nothing once playback is confirmed, or for a test abandoned long ago", () => {
+    expect(testFollowUp(withTest({ published: true, viewer_url: "https://x.invalid/r", playback_verified_at: "2026-10-07T10:09:00Z" }), now)).toBe("");
+    expect(testFollowUp(withTest({ state: "waiting_for_talk", started_at: "2026-10-06T10:00:00Z" }), now)).toBe("");
+  });
+});

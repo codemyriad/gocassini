@@ -82,6 +82,15 @@ export function testInFlight(report: RecordingReadiness | null, now: Date = new 
   return now.getTime() - started < 30 * 60 * 1000;
 }
 
+export function testFollowUp(report: RecordingReadiness, now: Date = new Date()): string {
+  const test = report.test;
+  if (!test || test.playback_verified_at) return "";
+  if (test.state === "failed") return "your test recording did not finish";
+  if (test.published && test.viewer_url) return "play your test recording to finish it";
+  if (!testInFlight(report, now)) return "";
+  return test.state === "waiting_for_talk" ? "your test recording is waiting for you in Talk" : "your test recording is still in progress";
+}
+
 export interface RecordingSetupUpdate {
   internal_secret?: string;
   test_room_url?: string;
