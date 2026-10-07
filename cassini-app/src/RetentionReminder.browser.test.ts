@@ -26,6 +26,8 @@ let releaseSave: (() => void) | null;
 let puts: number;
 let gets: number;
 let statusCalls: number;
+let retainVideo: boolean;
+let captureWrites: Record<string, unknown>[];
 let access: {
   ok: boolean;
   state: string;
@@ -47,6 +49,8 @@ beforeEach(() => {
   puts = 0;
   gets = 0;
   statusCalls = 0;
+  retainVideo = false;
+  captureWrites = [];
   access = { ok: true, state: "ready", service_account: { exists: true }, setup: [] };
   Object.assign(window, {
     __CASSINI_CONFIG__: { operatorBasePath: "/operator" },
@@ -61,6 +65,15 @@ beforeEach(() => {
       return Response.json(admin ? { ok: true, recordings_access: access } : { error: "Forbidden" },
         { status: admin ? 200 : 403 });
     }
+    if (path === "/operator/settings") {
+      if (method === "PUT") {
+        const body = JSON.parse(String(init?.body));
+        captureWrites.push(body);
+        retainVideo = body.retain_video;
+      }
+      return Response.json({ quality: "balanced", source: "auto", retain_video: retainVideo, transcription_enabled: false });
+    }
+    if (path === "/operator/settings/workflows") return Response.json([]);
     if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [], downloads_allowed: false, device: "cpu" });
     if (path === "/operator/setup") return Response.json({ ok: true, state: "ready", mode: "direct_shares",
       features: { summaries: false, insights: false } });
@@ -168,6 +181,51 @@ describe("retention reminder in the app", () => {
     await expect.poll(() => requestedURL).toBe("https://nextcloud.example.test/call/room");
     expect(puts).toBe(0);
     expect(saved.revision).toBe(0);
+    expect(retainVideo).toBe(false);
+    expect(captureWrites).toEqual([]);
+  });
+
+  it.each([false, true])("retention Save and Ignore preserve video consent (%s)", async (video) => {
+    retainVideo = video;
+    await open();
+    await openStorage();
+    await save().click();
+    await expect.element(reminder()).not.toBeInTheDocument();
+    expect(retainVideo).toBe(video);
+    expect(captureWrites).toEqual([]);
+
+    saved = defaults();
+    await open();
+    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await expect.element(reminder()).not.toBeInTheDocument();
+    expect(saved.revision).toBe(1);
+    expect(retainVideo).toBe(video);
+    expect(captureWrites).toEqual([]);
+  });
+
+  it("saves video opt-in independently while retention remains unconfirmed", async () => {
+    await open("#surface=operator&panel=pipeline");
+    const video = page.getByRole("checkbox", { name: "Capture video", exact: true });
+    await expect.element(video).not.toBeChecked();
+    await expect.element(reminder()).toBeVisible();
+    await video.click();
+    const ignore = page.getByRole("button", { name: "Don't remind again", exact: true });
+    await expect.element(ignore).toBeDisabled();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(page.getByRole("button", { name: "Save", exact: true })).not.toBeInTheDocument();
+    expect(captureWrites).toHaveLength(1);
+    expect(captureWrites[0]).toMatchObject({ retain_video: true });
+    expect(captureWrites[0]).not.toHaveProperty("quality");
+    expect(saved.revision).toBe(0);
+    expect(puts).toBe(0);
+    await expect.element(reminder()).toBeVisible();
+    await expect.element(ignore).toBeEnabled();
+    await ignore.click();
+    await expect.element(reminder()).not.toBeInTheDocument();
+    expect(retainVideo).toBe(true);
+    await open("#surface=operator&panel=pipeline");
+    await expect.element(video).toBeChecked();
+    expect(captureWrites).toHaveLength(1);
   });
 
   it("does not resurrect an acknowledged reminder when later reads would fail", async () => {

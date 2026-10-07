@@ -52,9 +52,10 @@ administrator-only `PUT /settings` accepts an optional `retain_video` boolean
 and an optional `quality` field. Omitting `quality` preserves both the current
 quality and its automatic/user policy source; explicitly supplying it pins the
 quality as user-selected. Omitting `retain_video` preserves the saved choice;
-explicit false disables future video capture. The app offers this choice during
-installation alongside retention and later in Settings. Hardware detection and
-unrelated settings updates preserve explicit consent.
+explicit false disables future video capture. The app offers this choice in
+**Operator → Publish pipeline**, independently of retention confirmation or
+reminder dismissal. Hardware detection and unrelated settings updates preserve
+explicit consent.
 
 Recording admission resolves the trusted saved policy and stores `retain_video`
 and `capture_mode` (`audio-only` or `audio-video`) in the job's request JSON.

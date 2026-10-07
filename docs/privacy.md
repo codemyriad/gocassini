@@ -29,10 +29,11 @@ on your own network too.
 
 ## Video capture consent
 
-Cassini records audio only by default. During installation, **Capture video** is
-presented unchecked alongside storage retention. An administrator can explicitly
-enable it there or later in **Settings**. Saving applies to subsequent recordings;
-a recording already admitted keeps its original capture policy.
+Cassini records audio only by default. An administrator can explicitly enable
+**Capture video** in **Operator → Publish pipeline**. Reviewing or dismissing the
+retention reminder does not change this choice. Saving capture settings applies
+to subsequent recordings; a recording already admitted keeps its original
+capture policy.
 
 With the default, the recorder requests audio without video, declines video in
 each negotiated answer, and rejects video at the capture writer. Audio control
