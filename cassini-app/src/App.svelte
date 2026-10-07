@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
   import { AppDataProvider } from "./appDataProvider";
   import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
   import SetupNotice from "./SetupNotice.svelte";
-  import RetentionSetup from "./RetentionSetup.svelte";
+  import RetentionReminder from "./RetentionReminder.svelte";
+  import { onRetentionChanged } from "./operator/retentionSignal";
   import type { RetentionSettings } from "./operator/retention";
   import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
@@ -28,6 +29,7 @@
     applyPanel,
     applySurface,
     readSurface,
+    readPanel,
     type OperatorPanel,
     type Surface,
   } from "./surfaceRouting";
@@ -105,15 +107,55 @@
   // route that carries it is the one the shell already calls at mount.
   let setupFeatures: SetupFeatures | null = null;
   let recordingNeedsAction = false;
-  let retentionReview: RetentionSettings | null = null;
-  let retentionReviewChecked = false;
-  let retentionReviewError = false;
+  let appFrame: HTMLDivElement;
+  let retentionSettings: RetentionSettings | null = null;
+  let retentionError = "";
+  let retentionLoading = false;
+  let retentionGeneration = 0;
+  let destroyed = false;
+  let stopListeningForRetentionChanges: (() => void) | null = null;
 
+  function acceptRetention(settings: RetentionSettings): void {
+    if (destroyed || !operatorClient) return;
+    // A panel load or old shell request must not undo a more recent save.
+    if (retentionSettings && settings.revision < retentionSettings.revision) return;
+    retentionGeneration++;
+    retentionSettings = settings;
+    retentionError = "";
+    retentionLoading = false;
+  }
+
+  async function refreshRetention(): Promise<void> {
+    const client = operatorClient;
+    if (!client || destroyed || (retentionSettings && retentionSettings.revision > 0)) return;
+    const generation = ++retentionGeneration;
+    retentionLoading = true;
+    try {
+      const settings = await client.getRetention();
+      if (!destroyed && generation === retentionGeneration && client === operatorClient) acceptRetention(settings);
+    } catch {
+      if (!destroyed && generation === retentionGeneration && client === operatorClient) {
+        retentionError = "Could not load retention settings.";
+      }
+    } finally {
+      if (generation === retentionGeneration) retentionLoading = false;
+    }
+  }
+
+  function focusRetention(): void {
+    appFrame?.querySelector<HTMLElement>("#retention-policies h2")?.focus();
+  }
   function openStorage(): void {
-    const hash = applyPanel(applySurface(window.location.hash, "operator"), "storage");
-    window.history.pushState({}, "", locationWithHash(hash));
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    retentionReviewError = false;
+    if (surface === "operator" && readPanel(window.location.hash) === "storage") {
+      focusRetention();
+      return;
+    }
+    guardLeave(() => {
+      const hash = applyPanel(applySurface(window.location.hash, "operator"), "storage");
+      window.history.pushState({}, "", locationWithHash(hash));
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      void tick().then(focusRetention);
+    });
   }
 
   // The same answer, whole, for the one field that is not a capability: the
@@ -451,27 +493,21 @@
     // this component has mounted, but registering afterwards would make that
     // ordering a thing to keep true rather than a thing that cannot fail.
     stopListeningForSetupChanges = onSetupChanged(() => {
-      void readInstanceState();
+      void readInstanceState().then(() => refreshRetention());
     });
+    stopListeningForRetentionChanges = onRetentionChanged(acceptRetention);
+    window.addEventListener("focus", refreshRetention);
 
     await readInstanceState();
-    // Only the authoritative admin probe permits this read. Revision zero is
-    // an unconfirmed policy; any successful Save (in either host) confirms it.
-    // Check once per page so account setup health refreshes preserve the draft
-    // and Set up later remains a session-only dismissal.
-    try {
-      if (operatorClient) {
-        const settings = await operatorClient.getRetention();
-        if (settings.revision === 0) retentionReview = settings;
-      }
-    } catch {
-      retentionReviewError = true;
-    } finally {
-      retentionReviewChecked = true;
-    }
+    // Advisory only: Operator never waits for this request.
+    if (!destroyed) void refreshRetention();
   });
 
   onDestroy(() => {
+    destroyed = true;
+    retentionGeneration++;
+    stopListeningForRetentionChanges?.();
+    window.removeEventListener("focus", refreshRetention);
     stopListeningForSetupChanges?.();
     stopListeningForSetupChanges = null;
     if (typeof window !== "undefined") {
@@ -480,14 +516,8 @@
   });
 </script>
 
-<div class="cassini-app-frame">
-<div class="cassini-app-content" inert={!!retentionReview} aria-hidden={retentionReview ? "true" : undefined}>
-{#if retentionReviewError && operatorAvailable}
-  <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
-    Could not load retention settings.
-    <button class="btn btn-sm ml-2" on:click={openStorage}>Review retention in Storage</button>
-  </div>
-{/if}
+<div class="cassini-app-frame" bind:this={appFrame}>
+<div class="cassini-app-content">
 <!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab is
      gone (D-751) and `setup` is no longer a surface (D-756), so the checks now
      live in Operator › Publish pipeline, above the recording-access section.
@@ -538,6 +568,14 @@
       </button>
     </nav>
 
+    {#if operatorClient && (retentionSettings?.revision === 0 || retentionError)}
+      <div class="cassini-shell-banner" inert={overlayOpen} data-theme={themeMode}>
+        <div class="cassini-root" data-theme={themeMode}>
+          <RetentionReminder settings={retentionSettings} error={retentionError} loading={retentionLoading}
+            on:review={openStorage} on:retry={() => void refreshRetention()} />
+        </div>
+      </div>
+    {/if}
     {#if setupNotice && !setupNotice.blocking}
       <!-- Advisory: setup is unproven but the archive still reads, so this is a
            strip above the list, not a replacement for it. Kept beside the nav
@@ -562,7 +600,7 @@
            substrate stops them starting a recording or reading job history. -->
       <div
         class="cassini-shell-surface cassini-shell-scroll scroll-stable"
-        class:cassini-shell-hidden={surface !== "browse" && !retentionReview}
+        class:cassini-shell-hidden={surface !== "browse"}
         data-theme={themeMode}
       >
         <div class="cassini-root" data-theme={themeMode}>
@@ -579,7 +617,7 @@
       <!-- Browse stays mounted (preserves list/meeting/playback state) and is
            hidden while an admin surface is active; those mount only when active
            so the operator's SSE stream + polling don't run in the background. -->
-      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse" && !retentionReview}>
+      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
         <ViewerApp {ncMode} {dataProvider} {audience} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
           <!-- Its opposite, driven by the same bit (D-700): the readiness card
@@ -600,7 +638,7 @@
         </ViewerApp>
       </div>
     {/if}
-    {#if surface === "operator" && retentionReviewChecked && !retentionReview}
+    {#if surface === "operator" && operatorClient}
       <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
            .cassini-root: putting .cassini-root's height:100% on the flex/scroll
            element fought the flex sizing. Here the outer div is a clean bounded
@@ -681,17 +719,12 @@
 {/if}
 
 </div>
-{#if retentionReview && operatorClient}
-  <div class="cassini-retention-setup cassini-root" data-theme={themeMode}>
-    <RetentionSetup {operatorClient} initialSettings={retentionReview} on:done={() => { retentionReview = null; }} />
-  </div>
-{/if}
+
 </div>
 
 <style>
   .cassini-app-frame { position: relative; height: 100%; min-height: 0; overflow: hidden; }
-  .cassini-app-content { height: 100%; min-height: 0; }
-  .cassini-retention-setup { position: absolute; inset: 0; z-index: 100; min-height: 0; background: transparent; }
+  .cassini-app-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
   /* Plain CSS (not Tailwind utilities) so the nav renders regardless of content
      scanning; theme tokens come from app.css (:root / :host). */
   .cassini-shell {

@@ -7,57 +7,35 @@ They do not delete recordings published to Nextcloud Files or the live site.
 
 The same page shows [storage usage by retention category and date](storage-usage.md).
 
-## Initial setup
+## Initial retention reminder
 
-When an administrator opens Cassini before retention has ever been saved,
-**Choose what Cassini keeps** presents the current Nextcloud recording-access
-panel and the complete retention editor on one scrolling screen. A missing
-recordings account can be created there using the administrator's Nextcloud
-session. Account setup and retention saving are independent: an account problem
-does not discard retention choices, and account setup remains available in
-**Operator → Publish pipeline**.
-
-The editor is the same component used by **Operator → Storage**, including
-categories, grouped/fine-grained history, day presets, custom days, schedule,
-validation, reload and conflict handling. Future retention fields belong in that
-shared panel so both places receive them together.
+Cassini is usable before an administrator saves retention settings. Administrators
+see a nonblocking **Review retention settings** banner until the configuration
+has been saved. **Review settings** opens the existing editor in
+**Operator → Storage**. Saving unchanged defaults is allowed on the first save.
+Merely visiting Storage does not acknowledge the reminder.
 
 ```text
-Initial setup --------+--> shared retention panel --> existing GET/PUT API
-Operator -> Storage -+                                    |
-                                               saved policies + revision
-Initial setup --> shared recording-access panel          |
-                                                  future opens skip setup
+Open app -> browse / record / play with effective settings
+     |
+     +-- revision zero -> reminder -> Storage -> Save
+                                                |
+                                    persisted revision > 0
+                                                |
+                                    reminder hidden across sessions
 ```
 
-**Save and continue** persists the displayed policies, even if unchanged, and
-closes the review. The existing settings revision records completion; it works
-across browsers and container restarts. Installations with any previously saved
-retention settings skip the review. Existing installations that have never saved
-retention settings also receive it.
+The existing saved revision records acknowledgement for the whole installation,
+across browsers and operator restarts. Previously saved installations skip the
+reminder. A failed read or save remains recoverable without blocking app use.
+Changes made in another session are picked up when the window regains focus;
+unsaved editor changes are never overwritten by that refresh.
 
-The review is a modal over the Cassini scaffold. Its body scrolls inside the
-screen bounds while the action footer stays visible. **Save and continue**
-unlocks after the bottom is reached (or immediately if all content fits), and
-native form validation still applies. Escape and backdrop clicks do not close
-the review; a successful save is required. Reloading saved settings warns before
-discarding edits. Errors remain visible in the footer.
-
-```text
-Cassini scaffold (inert beneath modal)
-  +-- Review header
-  +-- Scrollable access + retention settings
-  +-- Fixed actions -> bottom reached -> Save -> close modal
-```
-
-The review does not gate recording. A failed initial read offers a link to
-Storage for recovery rather than inventing settings or blocking the rest of
-Cassini. Non-admins are never asked to configure retention.
-
-This setup change preserves the existing keep-forever defaults. It does not add
-an audio-only capture switch or expiry of published Nextcloud files. Those are
-separate policies; a container-local retention choice is not a promise to erase
-every copy of a recording.
+Defaults remain **Keep forever** for all container-local categories. This does
+not configure camera capture or published Nextcloud expiry. Recording credentials,
+permissions and publishing-account readiness remain independent requirements.
+The recording-access panel and account creation are available in
+**Operator → Publish pipeline**, with existing setup/health notices for failures.
 
 ## Configuring policies
 

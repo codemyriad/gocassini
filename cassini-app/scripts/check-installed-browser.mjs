@@ -37,48 +37,16 @@ try {
   const response = await page.goto(url.href);
   assert.equal(response.status(), 200);
   // Playwright locators pierce the app's open shadow root.
-  // Fresh installs require retention confirmation. Exercise the real UI,
-  // including the scroll gate, before testing the recording underneath it.
-  const review = page.getByRole("dialog", { name: "Choose what Cassini keeps", exact: true });
-  await review.waitFor({ state: "visible" });
+  // The recording must be usable before the admin acknowledges retention.
+  // A meeting sheet makes shell chrome inert but does not remove the reminder.
+  const reminder = page.locator(".retention-reminder");
+  await reminder.waitFor({ state: "visible" });
   const retentionURL = new URL("/index.php/apps/app_api/proxy/gocassini/operator/storage/retention", base).href;
   const beforeResponse = await page.request.get(retentionURL, { headers: { "Cache-Control": "no-cache" } });
   assert.equal(beforeResponse.status(), 200);
   const before = await beforeResponse.json();
-  assert.equal(before.revision, 0, "fresh installs must start with unconfirmed settings");
-  const scroller = review.getByRole("region", { name: "Setup settings", exact: true });
-  const confirm = review.getByRole("button", { name: "Save and continue", exact: true });
-  const scrolls = await scroller.evaluate(el => el.scrollHeight > el.clientHeight);
-  if (scrolls) assert.equal(await confirm.isDisabled(), true, "confirmation requires reviewing the bottom");
-  await page.keyboard.press("Escape");
-  assert.equal(await review.isVisible(), true, "Escape must not dismiss setup");
-  const bounds = await review.boundingBox();
-  await page.mouse.click(bounds.x - 5, bounds.y + 5);
-  assert.equal(await review.isVisible(), true, "the backdrop must not dismiss setup");
-  await page.screenshot({ path: `${out}/retention-review.png`, fullPage: true });
-  const footerBefore = await confirm.boundingBox();
-  await scroller.evaluate(el => el.scrollTo(0, el.scrollHeight));
-  assert.equal((await confirm.boundingBox()).y, footerBefore.y, "footer must stay fixed while scrolling");
-  const [savedResponse] = await Promise.all([
-    page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "PUT"),
-    confirm.click(),
-  ]);
-  assert.equal(savedResponse.status(), 200, "retention confirmation must persist");
-  const saved = await savedResponse.json();
-  assert.equal(saved.revision, before.revision + 1);
-  assert.deepEqual({ ...saved, revision: before.revision }, before, "confirmation must preserve every policy");
-  await review.waitFor({ state: "hidden" });
-  checks.retention_review = true;
-  // Wait for the app's retention read after reload, rather than its optimistic
-  // shell, to verify that the confirmation really persisted.
-  const [reloadedResponse] = await Promise.all([
-    page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "GET"),
-    page.reload(),
-  ]);
-  assert.equal(reloadedResponse.status(), 200);
-  assert.deepEqual(await reloadedResponse.json(), saved);
-  assert.equal(await review.count(), 0, "saved review must not return after reload");
-  checks.retention_review_persisted = true;
+  assert.equal(before.revision, 0, "fresh installs must start with unacknowledged settings");
+  assert.equal(await page.getByRole("dialog", { name: "Choose what Cassini keeps" }).count(), 0);
   await page.locator(".cassini-shell").waitFor({ state: "visible" });
   checks.embedded_app = true;
   await page.locator(".cassini-word").first().waitFor({ state: "visible" });
@@ -98,6 +66,44 @@ try {
     return find(document);
   });
   checks.recording_playback = true;
+  const stillUnconfirmed = await (await page.request.get(retentionURL)).json();
+  assert.equal(stillUnconfirmed.revision, 0, "playback must not acknowledge retention");
+  // Navigate out of the meeting sheet through its normal Close action first.
+  await page.locator('button[aria-label="Close the meeting"][title="Close (Esc)"]').click();
+  await reminder.getByRole("button", { name: "Review settings", exact: true }).click();
+  const [savedResponse] = await Promise.all([
+    page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "PUT"),
+    page.getByRole("button", { name: "Save retention settings", exact: true }).click(),
+  ]);
+  assert.equal(savedResponse.status(), 200);
+  const saved = await savedResponse.json();
+  assert.deepEqual(saved, { ...before, revision: before.revision + 1 });
+  await reminder.waitFor({ state: "hidden" });
+  checks.retention_review = true;
+  const [reloadedResponse] = await Promise.all([
+    page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "GET"),
+    page.reload(),
+  ]);
+  assert.equal(reloadedResponse.status(), 200);
+  assert.deepEqual(await reloadedResponse.json(), saved);
+  assert.equal(await reminder.count(), 0);
+  checks.retention_review_persisted = true;
+  await page.goto(url.href);
+  await page.locator(".cassini-word").first().waitFor({ state: "visible" });
+  assert.equal(await reminder.count(), 0);
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForFunction(() => {
+    const roots = [document];
+    while (roots.length) {
+      for (const element of roots.pop().querySelectorAll("*")) {
+        if (element.tagName === "AUDIO" && element.currentTime > 0) return true;
+        if (element.shadowRoot) roots.push(element.shadowRoot);
+      }
+    }
+    return false;
+  });
+  checks.recording_playback_after_review = true;
+
   assert.deepEqual(errors, [], "uncaught browser errors");
   await page.screenshot({ path: `${out}/installed.png`, fullPage: true });
   await writeFile(`${out}/result.json`, JSON.stringify({ result: "passed", checks, job_id: summary.last_job_id }, null, 2));

@@ -1,40 +1,25 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount, onDestroy, tick } from "svelte";
+  import { createEventDispatcher, onMount, onDestroy } from "svelte";
   import { unsavedChanges, leavePrompt, guardLeave } from "./operator/unsaved";
   import type { OperatorClient } from "./operator/client";
   import { changeRetentionMode, retentionLabels, type RetentionSettings } from "./operator/retention";
   import RetentionPolicyField from "./RetentionPolicyField.svelte";
+  import { notifyRetentionChanged } from "./operator/retentionSignal";
   import RetentionActions from "./RetentionActions.svelte";
   export let operatorClient: OperatorClient | null = null;
-  // Both Storage and initial setup render this entire editor. Hosts only own
-  // completion/navigation; policy structure and persistence stay here.
+  // Storage owns the complete policy editor and its draft.
   export let initialSettings: RetentionSettings | null = null;
-  export let review = false;
   export let busy = false;
   export let disabled = false;
   export let formId = "retention-settings-form";
-  let scroller: HTMLDivElement;
-  // Latch after reaching the end: scrolling back to edit must not relock Save.
-  let reviewed = false;
-  function checkReview() {
-    if (settings && scroller?.clientHeight > 0 && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 2) reviewed = true;
-  }
-  function observeContent(node: HTMLElement) {
-    if (!review) return;
-    const observer = new ResizeObserver(checkReview);
-    observer.observe(node);
-    observer.observe(node.parentElement!);
-    return { destroy: () => observer.disconnect() };
-  }
   const dispatch = createEventDispatcher<{ saved: RetentionSettings }>();
   let settings: RetentionSettings | null = null;
   let saved = "", error = "", notice = "";
   function accept(value: RetentionSettings) {
-    reviewed = false;
     settings = JSON.parse(JSON.stringify(value));
     saved = JSON.stringify(settings);
     split = value.history.mode === "fine" || !!value.history.fine_initialized;
-    if (review) void tick().then(checkReview);
+    notifyRetentionChanged(value);
   }
   let split = false;
   const supportedZones = (Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
@@ -55,20 +40,24 @@
     if (value === "fine") split = true;
   }
   async function save() {
-    if (!settings || !operatorClient || busy || disabled || (review && !reviewed)) return; busy = true; error = ""; notice = "";
+    if (!settings || !operatorClient || busy || disabled) return; busy = true; error = ""; notice = "";
     try { const result = await operatorClient.putRetention(settings); accept(result); notice = "Retention settings saved."; dispatch("saved", result); }
     catch (e) { error = e instanceof Error ? e.message : String(e); } finally { busy = false; }
+  }
+  function beforeUnload(event: BeforeUnloadEvent) {
+    if ($unsavedChanges || busy) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
   }
   onMount(() => { if (initialSettings) accept(initialSettings); else void load(); });
   $: unsavedChanges.set(!!settings && JSON.stringify(settings) !== saved);
   onDestroy(() => { unsavedChanges.set(false); leavePrompt.set(null); });
 </script>
-<section class="retention-panel" class:review id="retention-policies">
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex (the scroll region must support keyboard review) -->
-  <div class="retention-scroll" bind:this={scroller} on:scroll={checkReview} tabindex={review ? 0 : undefined} role={review ? "region" : undefined} aria-label={review ? "Setup settings" : undefined}>
-  <div class="retention-content" use:observeContent>
-  <slot name="before" />
-  <h2 class="text-xl font-semibold">Retention policies</h2>
+<svelte:window on:beforeunload={beforeUnload} />
+<section class="retention-panel" id="retention-policies">
+  <div class="retention-content">
+  <h2 class="text-xl font-semibold" tabindex="-1">Retention policies</h2>
   <p>Choose how long Cassini keeps files in its container. Keep forever uses more space as recordings accumulate; shorter windows free space after cleanup. All categories currently default to keep forever.</p>
   <p class="text-sm">Published recordings in Nextcloud and job metadata are not deleted by these policies. These settings do not choose whether cameras are captured.</p>
   <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Retention ages use UTC dates. Cleanup runs at startup and on the daily schedule below. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
@@ -114,22 +103,13 @@
     <p role="status">Loading retention settings…</p>
   {/if}
   </div>
-  </div>
   <div class="retention-footer">
-    <RetentionActions {formId} {review} {reviewed} {error} {notice}
-      disabled={busy || disabled} canSave={!!settings && (review ? reviewed : JSON.stringify(settings) !== saved)}
+    <RetentionActions {formId} {error} {notice}
+      disabled={busy || disabled} canSave={!!settings && (settings.revision === 0 || JSON.stringify(settings) !== saved)}
       on:reload={() => guardLeave(load)} />
   </div>
 </section>
 
 <style>
   .retention-panel, .retention-content { display: grid; gap: 16px; min-width: 0; }
-  .review { display: flex; flex-direction: column; min-height: 0; height: 100%; gap: 0; }
-  .review .retention-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-  .review .retention-content { padding: 24px; }
-  .review .retention-footer { flex: none; border-top: 1px solid var(--color-base-300); padding: 16px 24px; }
-  @media (max-width: 600px) {
-    .review .retention-content { padding: 16px; }
-    .review .retention-footer { padding: 12px 16px; }
-  }
 </style>

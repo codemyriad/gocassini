@@ -264,3 +264,30 @@ func TestRetentionMigrateRecordingPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestRetentionUnchangedDefaultsAcknowledgeAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "retention_settings.json")
+	rt := &Runtime{retention: newRetentionConfig(path)}
+	before := rt.retention.settings
+	data, err := json.Marshal(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPut, "/storage/retention", bytes.NewReader(data))
+	r.Header.Set("If-Match", `"0"`)
+	w := httptest.NewRecorder()
+	rt.retentionHandler(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unchanged save: %d %s", w.Code, w.Body.String())
+	}
+	reloaded := newRetentionConfig(path)
+	if reloaded.loadErr != nil {
+		t.Fatal(reloaded.loadErr)
+	}
+	before.Revision = 1
+	want, _ := json.Marshal(before)
+	got, _ := json.Marshal(reloaded.settings)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("changed policy on acknowledgement: got %s, want %s", got, want)
+	}
+}

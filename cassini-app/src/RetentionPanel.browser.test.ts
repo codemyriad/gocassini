@@ -54,6 +54,7 @@ function mountPanel() {
 
 describe("retention settings in the browser", () => {
   it("keeps edits local until Save, retains fine controls, and handles stale revisions", async () => {
+    saved.revision = 1;
     mountPanel();
     await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).toBeVisible();
     await expect.element(page.getByText("Keep forever", { exact: true }).first()).toBeVisible();
@@ -113,13 +114,13 @@ describe("retention settings in the browser", () => {
     await expect.element(page.getByRole("status")).toBeVisible();
   });
 
-  it("allows confirmation without scrolling when every setting fits", async () => {
+  it("confirms unchanged defaults without a scroll gate", async () => {
     host.style.height = "3000px";
     app = mount(RetentionPanel, { target: host, props: {
-      operatorClient: new OperatorClient("/operator"), initialSettings: initialSettings(), review: true,
+      operatorClient: new OperatorClient("/operator"), initialSettings: initialSettings(),
     } });
-    await expect.element(page.getByRole("button", { name: "Save and continue" })).toBeEnabled();
-    await page.getByRole("button", { name: "Save and continue" }).click();
+    await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeEnabled();
+    await page.getByRole("button", { name: "Save retention settings" }).click();
     expect(puts).toBe(1);
     expect(saved.revision).toBe(1);
   });
