@@ -36,7 +36,7 @@
     success: "alert-success alert-tinted",
     warning: "alert-warning alert-tinted",
     error: "alert-error alert-tinted",
-    neutral: "",
+    neutral: "op-tint",
   };
   const toneIcons: Record<CheckTone, typeof CircleCheck> = {
     success: CircleCheck,
