@@ -232,11 +232,11 @@
                  administrator who wants to press a button never has to read
                  a command line, and one who wants the commands can open
                  them. -->
-            <details class="mt-2">
-              <summary class="cursor-pointer text-xs text-base-content/70">What to do about it</summary>
-              <ul class="mt-2 space-y-2">
+            <details class="group mt-2">
+              <summary class="tpl-toggle text-sm! group-open:text-base-content!"><span class="tpl-chev" aria-hidden="true"></span>What to do about it</summary>
+              <ul class="mt-2 ml-px space-y-2 border-l-2 border-base-300 pl-3">
                 {#each check.steps ?? [] as step}
-                  <li class="text-xs text-base-content/80">{step.label}</li>
+                  <li class="text-sm text-base-content/70">{step.label}</li>
                 {/each}
               </ul>
             </details>
