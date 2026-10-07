@@ -1222,7 +1222,7 @@
       </div>
     {/if}
     {#if transcriptIndex && transcriptionOnly}
-      <p class="mt-2 text-sm text-base-content/70" role="status">Transcription-only artefact — audio was not stored. Playback is unavailable.</p>
+      <p class="mt-2 text-sm text-base-content/70" role="status">This meeting contains a transcript without audio. Playback is unavailable.</p>
     {/if}
   </header>
 

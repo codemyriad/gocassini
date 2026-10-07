@@ -1,4 +1,11 @@
+export interface MediaCleanupStatus {
+  status: "waiting" | "pending" | "error" | "completed";
+  last_error?: string;
+  completed_at?: string;
+}
+
 export interface Job {
+  media_cleanup?: MediaCleanupStatus;
 	/** True when retention has deleted the original source recording. */
 	source_expired?: boolean;
   id: string;
@@ -87,7 +94,7 @@ export interface JobAttempt {
 }
 
 export interface JobDetailResponse {
-  availability?: { source: string; output: string; published_attempt: number; rerun_blocked_reason?: string };
+  availability?: { media_cleanup?: MediaCleanupStatus; source_retention?: string; source: string; output: string; published_attempt: number; rerun_blocked_reason?: string };
   job: Job;
   attempts: JobAttempt[];
 }
@@ -117,6 +124,7 @@ export interface SettingsEffective {
 export interface Settings {
   retain_video?: boolean;
   meeting_format?: "opus" | "json";
+  source_retention?: "storage-policy" | "delete-after-processing";
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;
@@ -139,6 +147,7 @@ export interface Settings {
 export interface SettingsUpdate {
   retain_video?: boolean;
   meeting_format?: "opus" | "json";
+  source_retention?: "storage-policy" | "delete-after-processing";
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;

@@ -83,6 +83,8 @@
   let savedMeetingFormat: "opus" | "json" = "opus";
   let transcriptionEnabled = false;
   let retainVideo = false;
+  let sourceRetention: "storage-policy" | "delete-after-processing" = "storage-policy";
+  let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
   let activeModel = "";
   let activeRevision = "";
@@ -199,6 +201,8 @@
     savedMeetingFormat = meetingFormat;
     transcriptionEnabled = next.transcription_enabled === true;
     retainVideo = next.retain_video === true;
+    sourceRetention = next.source_retention ?? "storage-policy";
+    savedSourceRetention = sourceRetention;
     savedRetainVideo = retainVideo;
     activeModel = next.active_model ?? "";
     activeRevision = next.active_revision ?? "";
@@ -261,6 +265,7 @@
         applySettings(
           await operatorClient.putSettings({
             meeting_format: meetingFormat,
+            source_retention: sourceRetention,
             transcription_enabled: transcriptionEnabled,
             retain_video: retainVideo,
             active_model: activeModel,
@@ -415,7 +420,7 @@
   // the LLM one.
   $: sttDirty =
     settings !== null &&
-    (retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
+    (sourceRetention !== savedSourceRetention || retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
       meetingFormat !== savedMeetingFormat ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
@@ -507,7 +512,7 @@
   </header>
 
 {#if operatorClient}
-  {#if settings}<CaptureVideoField bind:retainVideo disabled={loading || saving} />{/if}
+  {#if settings}<CaptureVideoField bind:retainVideo deleteSource={sourceRetention === "delete-after-processing"} disabled={loading || saving || sourceRetention === "delete-after-processing"} />{/if}
 {/if}
 
 <!-- The readiness checks offer a "Set up storage" action that scrolls here,
@@ -530,12 +535,31 @@
       <section class="op-tint p-4">
         <label class="op-field" for="meeting-format">
           <span class="op-field-label">Published meeting</span>
-          <select id="meeting-format" class="op-input" bind:value={meetingFormat} disabled={saving}>
+          <select id="meeting-format" class="op-input" bind:value={meetingFormat} on:change={() => { if (meetingFormat === "opus") sourceRetention = "storage-policy"; }} disabled={saving}>
             <option value="opus">Include audio (.opus)</option>
             <option value="json">Transcription only (.json)</option>
           </select>
         </label>
-        <p class="set-row-sub">Transcription-only files keep speaker blocks, summaries, metadata, tags and annotations, without audio playback. Applies to new meetings; reruns keep their original format. Local captured audio follows Storage retention settings.</p>
+        <p class="set-row-sub">Transcription-only files keep speaker blocks, summaries, metadata, tags and annotations, without audio playback. Applies to new meetings; reruns keep their original format. Choose separately whether to keep source media for processing reruns.</p>
+        {#if meetingFormat === "json"}
+          <label class="op-field" for="source-retention">
+            <span class="op-field-label">Source media after processing</span>
+            <select id="source-retention" class="op-input" bind:value={sourceRetention} disabled={saving}
+              on:change={() => { if (sourceRetention === "delete-after-processing") retainVideo = false; }}>
+              <option value="storage-policy">Keep under Storage policies — allow reruns</option>
+              <option value="delete-after-processing">Delete when processing finishes or fails</option>
+            </select>
+          </label>
+          {#if sourceRetention === "delete-after-processing"}
+            <p class="set-row-sub">Uses audio-only capture. Audio is stored temporarily to produce the transcript, then source media and temporary audio are deleted after publication succeeds or processing permanently fails. Processing cannot be rerun. If transcription fails, there may be no usable transcript. Temporary retries during the initial job remain possible.</p>
+            <p class="set-row-sub">The transcript, meeting information and diagnostic logs remain under their existing retention policies. Applies only to recordings accepted after Save; existing and active recordings keep their saved policy.</p>
+            {#if !transcriptionEnabled || !activeModel || !activeRevision}
+              <p class="err-box" role="alert">Enable a prepared transcription model below before saving source deletion.</p>
+            {/if}
+          {:else}
+            <p class="set-row-sub">Published meetings have no audio playback. Source media stays on the server under Storage policies, so processing can be rerun while the source exists.</p>
+          {/if}
+        {/if}
         {#if meetingFormat === "json" && !transcriptionEnabled}
           <p class="set-row-sub">Transcription is off. Enable it below to include a transcript; otherwise new meetings will contain neither a transcript nor playable audio.</p>
         {/if}
@@ -872,7 +896,7 @@
           </div>
         {:else}
           <p class="save-bar-text">{saving ? "Saving changes…" : "You have unsaved changes"}</p>
-          <button class="sb-btn sb-light" type="button" disabled={saving || !isDirty} on:click={handleSave}>
+          <button class="sb-btn sb-light" type="button" disabled={saving || !isDirty || (sourceRetention === "delete-after-processing" && (!transcriptionEnabled || !activeModel || !activeRevision))} on:click={handleSave}>
             {#if saving}
               <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
               Saving…

@@ -612,6 +612,25 @@
     }
   }
 
+  let submittingCleanup = false;
+  let cleanupQueuedJob = "";
+  async function handleRetryCleanup() {
+    if (!operatorClient || !selectedJob?.job || submittingCleanup) return;
+    submittingCleanup = true;
+    actionError = "";
+    try {
+      await operatorClient.retryMediaCleanup(selectedJob.job.id);
+      cleanupQueuedJob = selectedJob.job.id;
+      await refreshJobs();
+      await selectJob(selectedJob.job.id, { allowJobsRefresh: false });
+    } catch (error) { actionError = asMessage(error); }
+    finally { submittingCleanup = false; }
+  }
+
+  function cleanupLabel(status: string): string {
+    return ({ waiting: "Media deletion after processing", pending: "Media deletion pending", error: "Media deletion failed", completed: "Media deleted" } as Record<string, string>)[status] ?? status;
+  }
+
   async function handleRerunJob() {
     if (!operatorClient || !selectedJob?.job || !canRerunSelectedJob) {
       return;
@@ -913,9 +932,9 @@
   $: jobFinished = selectedJob?.job.stage === "done";
   $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
-  $: recordingDeleted = selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired === true;
+  $: recordingDeleted = selectedJob?.availability?.source === "deleted" || selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired === true;
   $: rerunBlockedReason =
-    recordingDeleted ? "The source recording was deleted by the retention policy. This job can no longer be rerun." : selectedJob?.availability?.rerun_blocked_reason || (rerunVisible && !selectedJob?.job.artifact_run_path
+    (selectedJob?.availability?.source === "expired" || selectedJob?.job.source_expired ? "The source recording was deleted by the retention policy. This job can no longer be rerun." : selectedJob?.availability?.rerun_blocked_reason) || (rerunVisible && !selectedJob?.job.artifact_run_path
       ? "This run produced no recording to rerun from."
       : "");
   $: canStopSelectedJob = !submittingStop && stopApplies;
@@ -1167,6 +1186,9 @@
                             {job.build_deferral_count === 1 ? "deferral" : "deferrals"}
                           </p>
                         {/if}
+                        {#if job.media_cleanup}
+                          <span class="badge badge-outline badge-sm mt-1" class:badge-warning={job.media_cleanup.status === "error"} title={job.media_cleanup.last_error || "Transcription-only publication; source media is deleted after processing."}>{cleanupLabel(job.media_cleanup.status)}</span>
+                        {/if}
                         {#if job.source_expired}
                           <span class="badge badge-outline badge-warning badge-sm mt-1" title="The source recording was deleted by retention. This job can no longer be rerun.">Recording deleted</span>
                         {/if}
@@ -1299,6 +1321,19 @@
                       {/each}
                     </div>
                   </div>
+                  {#if selectedJob.availability?.media_cleanup}
+                    {@const cleanup = selectedJob.availability.media_cleanup}
+                    <div class="op-tint p-3 grid gap-2" role="status">
+                      <p class="font-semibold">{cleanupLabel(cleanup.status)}</p>
+                      <p class="text-sm">Transcription-only publication. Source media is deleted after processing finishes or fails.</p>
+                      {#if cleanup.completed_at}<p class="text-sm">Completed: {cleanup.completed_at}</p>{/if}
+                      {#if cleanup.last_error}<p class="text-sm text-warning">{cleanup.last_error}</p>{/if}
+                      {#if cleanup.status === "error"}
+                        <button class="op-button" type="button" disabled={submittingCleanup} on:click={handleRetryCleanup}>Retry media deletion</button>
+                        {#if cleanupQueuedJob === selectedJob.job.id}<p class="text-sm">Retry requested. Cleanup is checked within 30 seconds.</p>{/if}
+                      {/if}
+                    </div>
+                  {/if}
                   {#if rerunBlockedReason && rerunVisible}
                     <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
                       <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />

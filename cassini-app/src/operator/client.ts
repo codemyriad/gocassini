@@ -136,6 +136,10 @@ export class OperatorClient {
     });
   }
 
+  async retryMediaCleanup(jobId: string): Promise<{ status: string }> {
+    return this.#request(`/jobs/${encodeURIComponent(jobId)}/cleanup`, { method: "POST" });
+  }
+
   async rerunJob(jobId: string): Promise<RerunJobResponse> {
     return this.#request<RerunJobResponse>(`/jobs/${encodeURIComponent(jobId)}/rerun`, {
       method: "POST",
@@ -321,6 +325,7 @@ function normalizeSettings(raw: unknown): Settings {
   };
   return {
     meeting_format: value.meeting_format === "json" ? "json" : "opus",
+    source_retention: value.source_retention === "delete-after-processing" ? "delete-after-processing" : "storage-policy",
     transcription_enabled: value.transcription_enabled === true,
     retain_video: value.retain_video === true,
     active_model: asString(value.active_model),

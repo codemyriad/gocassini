@@ -1151,6 +1151,7 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for i := range jobs {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
+			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i])
 		}
 		writeJSON(w, http.StatusOK, jobs)
 	case http.MethodPost:
@@ -1468,16 +1469,17 @@ func (s *Store) Close() error {
 }
 
 type Job struct {
-	SourceExpired        bool    `json:"source_expired,omitempty"`
-	ID                   string  `json:"id"`
-	Provider             string  `json:"provider"`
-	RequestJSON          string  `json:"request_json"`
-	Stage                string  `json:"stage"`
-	State                string  `json:"state"`
-	CurrentAttemptNumber int     `json:"current_attempt_number"`
-	RerunCount           int     `json:"rerun_count"`
-	ArtifactRunPath      *string `json:"artifact_run_path"`
-	ArtifactMeetingPath  *string `json:"artifact_meeting_path"`
+	MediaCleanup         *mediaCleanupStatus `json:"media_cleanup,omitempty"`
+	SourceExpired        bool                `json:"source_expired,omitempty"`
+	ID                   string              `json:"id"`
+	Provider             string              `json:"provider"`
+	RequestJSON          string              `json:"request_json"`
+	Stage                string              `json:"stage"`
+	State                string              `json:"state"`
+	CurrentAttemptNumber int                 `json:"current_attempt_number"`
+	RerunCount           int                 `json:"rerun_count"`
+	ArtifactRunPath      *string             `json:"artifact_run_path"`
+	ArtifactMeetingPath  *string             `json:"artifact_meeting_path"`
 	// ArtifactOpusPath is the canonical portable meeting, current/<id>.opus,
 	// promoted from the attempt the seal stage sealed. ArtifactOpusSHA256 is
 	// that file's digest, which the publish worker re-checks before delivering

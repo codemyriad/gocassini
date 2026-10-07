@@ -88,3 +88,24 @@ describe("retention eviction in the operator browser UI", () => {
     await expect.element(page.getByText("The source recording was deleted by the retention policy. This job can no longer be rerun.", { exact: true })).toBeVisible();
   });
 });
+
+it("blocks rerun while deletion failed and offers a separate cleanup retry", async () => {
+  const cleanup = { status: "error", last_error: "permission denied" };
+  const recording = { ...job("Transcript meeting", false), media_cleanup: cleanup };
+  const writes: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (init?.method === "POST") { writes.push(path); return Response.json({ status: "queued" }); }
+    if (path === "/operator/jobs") return Response.json([recording]);
+    if (path === "/operator/jobs/Transcript meeting") return Response.json({ job: recording, attempts: [], availability: { source: "present", output: "present", published_attempt: 1, media_cleanup: cleanup, rerun_blocked_reason: "This recording deletes source media after processing; processing cannot be rerun." } });
+    return Response.json({});
+  }));
+  app = mount(Operator, { target: host });
+  await expect.element(page.getByText("Transcript meeting", { exact: true })).toBeVisible();
+  await userEvent.click(card("Transcript meeting"));
+  await expect.element(page.getByRole("button", { name: "Rerun", exact: true })).toBeDisabled();
+  await expect.element(page.getByText("permission denied", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Retry media deletion", exact: true }).click();
+  expect(writes).toEqual(["/operator/jobs/Transcript meeting/cleanup"]);
+  await expect.element(page.getByText("Retry requested. Cleanup is checked within 30 seconds.")).toBeVisible();
+});
