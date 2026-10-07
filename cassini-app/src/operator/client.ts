@@ -31,6 +31,7 @@ import type {
 const SETTINGS_QUALITIES: readonly SettingsQuality[] = ["fast", "balanced", "best"];
 
 export interface OperatorStateChangeEvent {
+  availability?: JobDetailResponse["availability"];
   type: string;
   job_id: string;
   attempt_number?: number;

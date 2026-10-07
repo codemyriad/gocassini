@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func insertDisposalJob(t *testing.T, rt *Runtime, id, stage, state string) Job {
@@ -301,4 +302,125 @@ func TestDisposalPermanentResourceFailureEndsJob(t *testing.T) {
 		t.Fatalf("stranded media: %s/%s", job.Stage, job.State)
 	}
 	assertAbsent(t, run)
+}
+
+func TestDisposalLocalPublicationKeepsDeliveredJSONAndSearch(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	job := insertDisposalJob(t, rt, "local-json", "publish", "queued")
+	run := seedReadyRunBundle(t, rt.cfg.WorkRoot, job.ID)
+	meeting := attemptMeetingPath(rt.cfg.WorkRoot, job.ID, 1)
+	mediaFile(t, filepath.Join(meeting, "meeting.webm"))
+	if err := os.WriteFile(filepath.Join(meeting, "transcript.words.v1.json"), []byte(ingestTranscript), 0600); err != nil {
+		t.Fatal(err)
+	}
+	index, err := openSearchStore(filepath.Join(t.TempDir(), searchStoreFilename), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+	rt.searchStore = index
+	seal := filepath.Join(attemptSealDir(rt.cfg.WorkRoot, job.ID, 1), job.ID+".json")
+	mediaFile(t, seal)
+	digest, _ := fileSHA256(seal)
+	if _, err = rt.store.db.Exec(`UPDATE job_attempts SET artifact_opus_path=?,artifact_opus_sha256=? WHERE job_id=?`, seal, digest, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	site := attemptSitePath(rt.cfg.WorkRoot, job.ID, 1)
+	mediaFile(t, filepath.Join(site, "meetings", job.ID+".json"))
+	catalog := `{"version":"cassini.viewer.catalog.v1","meetings":[{"id":"local-json","meetingPath":"./meetings/local-json.json"}]}`
+	if err = os.WriteFile(filepath.Join(site, "catalog.json"), []byte(catalog), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rt.publishJobFn = func(context.Context, publishTask) (string, error) { return site, nil }
+	rt.runPublishJob(publishTask{JobID: job.ID, AttemptNumber: 1, OpusPath: seal, OpusSHA256: digest})
+	job = mustGetJob(t, rt.store, job.ID)
+	if job.State != "succeeded" {
+		t.Fatalf("%+v", job)
+	}
+	if rt.mediaCleanupStatus(job).Status != "completed" {
+		t.Fatal("cleanup incomplete")
+	}
+	assertAbsent(t, run)
+	assertAbsent(t, meeting)
+	assertAbsent(t, site)
+	if _, err = os.Stat(filepath.Join(rt.cfg.SiteRoot, "meetings", job.ID+".json")); err != nil {
+		t.Fatal(err)
+	}
+	if hits := matches(t, index, "acquisition"); len(hits) != 1 {
+		t.Fatalf("lost index: %+v", hits)
+	}
+}
+
+func TestRecordFailureCleansMediaBeforeWaitReturns(t *testing.T) {
+	rt, close := newTestRuntime(t)
+	defer close()
+	rt.setSettings(disposalSettings())
+	rt.recordJobFn = func(_ context.Context, j Job, _ TriggerRequest) (recordResult, error) {
+		path := attemptRunPath(rt.cfg.WorkRoot, j.ID, 1)
+		mediaFile(t, filepath.Join(path, "recording.mkv"))
+		return recordResult{ArtifactRunPath: path}, errors.New("capture failed")
+	}
+	req := TriggerRequest{Platform: nextcloudTalkProvider, URL: "https://example.test/call/room", GuestName: defaultGuestName, TalkAuthMode: defaultTalkAuthMode}
+	resp, start, err := rt.prepareRecordJob(context.Background(), nextcloudTalkProvider, "{}", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start()
+	rt.WaitForRecordJobs(5 * time.Second)
+	job := mustGetJob(t, rt.store, resp.ID)
+	if rt.mediaCleanupStatus(job).Status != "completed" {
+		t.Fatal("capture failure retained media")
+	}
+	assertAbsent(t, attemptRunPath(rt.cfg.WorkRoot, resp.ID, 1))
+}
+
+func TestDisposalEventsCarryRerunRestrictionAndCleanupStatus(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	job := insertDisposalJob(t, rt, "events", "done", "failed")
+	rt.events = newEventHub()
+	events, cancel := rt.events.Subscribe()
+	defer cancel()
+	rt.store.SetStateChangePublisher(rt.publishStateChangeEvent)
+	rt.store.emitStateChange(context.Background(), "job.updated", job.ID, 1)
+	event := <-events
+	if event.Availability == nil || event.Availability.RerunBlockedReason == "" || event.Job.MediaCleanup.Status != "pending" {
+		t.Fatalf("lost restriction: %+v", event)
+	}
+	rt.attemptMediaCleanup(job.ID)
+	event = <-events
+	if event.Availability.MediaCleanup.Status != "completed" || event.Availability.Source != "deleted" {
+		t.Fatalf("stale cleanup: %+v", event)
+	}
+}
+
+func TestMediaCleanupRecoveryAfterUnlinkBeforeJournalCommit(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	job := insertDisposalJob(t, rt, "unlink-crash", "done", "failed")
+	source := canonicalRunPath(rt.cfg.WorkRoot, job.ID)
+	mediaFile(t, filepath.Join(source, "recording.mkv"))
+	dir := rt.operationDir(job.ID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	rel, _ := filepath.Rel(rt.cfg.WorkRoot, source)
+	op := artifactOperation{Job: job.ID, Attempt: 1, Action: "remove", Kind: "media-disposal", Targets: []string{rel}}
+	if err := rt.saveOperation(op); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(source, filepath.Join(dir, "old-0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	rt.runMediaCleanupPass()
+	if state := rt.mediaCleanupStatus(job); state.Status != "completed" {
+		t.Fatalf("recovery stranded: %+v", state)
+	}
+	if rt.pendingArtifactOperation(job.ID) {
+		t.Fatal("journal not cleared")
+	}
 }

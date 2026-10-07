@@ -132,6 +132,11 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 	if err := validateArtifactTree(rt.cfg.WorkRoot, dir); err != nil {
 		return err
 	}
+	// A crash may remove the operation directory before clearing its journal.
+	// Recreate the empty directory so replay can fsync and finish idempotently.
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
 	allowed := map[string]bool{}
 	for _, p := range []string{canonicalRunPath(rt.cfg.WorkRoot, op.Job), canonicalMeetingPath(rt.cfg.WorkRoot, op.Job), filepath.Join(currentRoot(rt.cfg.WorkRoot), op.Job+".json"), canonicalOpusPath(rt.cfg.WorkRoot, op.Job), attemptRunPath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptMeetingPath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptSealDir(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptSitePath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptLogsDir(rt.cfg.WorkRoot, op.Job, op.Attempt)} {
 		rel, _ := filepath.Rel(rt.cfg.WorkRoot, p)
@@ -232,6 +237,12 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
+	}
+	// Disposal completion must survive a host crash as well as a process restart.
+	if op.Kind == "media-disposal" {
+		if err := syncArtifactDir(filepath.Dir(dir)); err != nil {
+			return err
+		}
 	}
 	if _, err := rt.store.db.Exec(`DELETE FROM artifact_operations WHERE job_id=?`, op.Job); err != nil {
 		return err

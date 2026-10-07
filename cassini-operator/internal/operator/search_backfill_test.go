@@ -692,3 +692,16 @@ func TestBackfillUpgradesArchiveRowsWhenTheBundleReturns(t *testing.T) {
 		t.Errorf("row_source = %q, want the bundle's segments", source)
 	}
 }
+
+func TestBackfillJSONAfterSourceMediaDeletion(t *testing.T) {
+	f := newBackfillFixture(t)
+	// Neither a .run nor a .meeting exists. The published JSON supplies words.
+	archive, calls := stubArchive(archiveWords, digestOf("json"), nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), []searchBackfillTarget{{JobID: "TEXT", OpusName: "TEXT.json"}}, deliveredState("json"), archive)
+	if err != nil || report.Indexed != 1 || *calls != 1 {
+		t.Fatalf("report=%+v calls=%d err=%v", report, *calls, err)
+	}
+	if hits := matches(t, f.rt.searchStore, "acquisition"); len(hits) != 1 {
+		t.Fatalf("lost transcript search: %+v", hits)
+	}
+}

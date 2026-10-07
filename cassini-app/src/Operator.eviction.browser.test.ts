@@ -108,4 +108,39 @@ it("blocks rerun while deletion failed and offers a separate cleanup retry", asy
   await page.getByRole("button", { name: "Retry media deletion", exact: true }).click();
   expect(writes).toEqual(["/operator/jobs/Transcript meeting/cleanup"]);
   await expect.element(page.getByText("Retry requested. Cleanup is checked within 30 seconds.")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Retry media deletion", exact: true })).toBeEnabled();
+  // Processing is already terminal, but cleanup still needs polling.
+  cleanup.status = "completed";
+  await expect.poll(() => host.textContent, { timeout: 5000 }).toContain("Media deleted");
+});
+
+it("keeps rerun blocked when live updates replace selected job details", async () => {
+  const recording = job("Live transcript", false);
+  const availability = { source: "present", output: "present", published_attempt: 1, media_cleanup: { status: "pending" }, rerun_blocked_reason: "Media is scheduled for deletion; processing cannot be rerun." };
+  let stream: FakeEventSource;
+  class FakeEventSource extends EventTarget {
+    onopen?: () => void;
+    onerror?: () => void;
+    onmessage?: (event: MessageEvent) => void;
+    constructor() { super(); stream = this; }
+    close() {}
+  }
+  vi.stubGlobal("EventSource", FakeEventSource);
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (path === "/operator/jobs") return Response.json([recording]);
+    if (path === "/operator/jobs/Live transcript") return Response.json({ job: recording, attempts: [], availability });
+    return Response.json({});
+  }));
+  app = mount(Operator, { target: host });
+  await expect.element(page.getByText("Live transcript", { exact: true })).toBeVisible();
+  await userEvent.click(card("Live transcript"));
+  await expect.element(page.getByRole("button", { name: "Rerun", exact: true })).toBeDisabled();
+  stream!.onopen?.();
+  // Legacy events omit availability; newer events include its updated value.
+  stream!.dispatchEvent(new MessageEvent("job.updated", { data: JSON.stringify({ type: "job.updated", job_id: recording.id, job: recording }) }));
+  await expect.element(page.getByRole("button", { name: "Rerun", exact: true })).toBeDisabled();
+  stream!.dispatchEvent(new MessageEvent("job.updated", { data: JSON.stringify({ type: "job.updated", job_id: recording.id, job: recording, availability: { ...availability, source: "deleted", media_cleanup: { status: "completed" } } }) }));
+  await expect.element(page.getByText("Media deleted", { exact: true })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Rerun", exact: true })).toBeDisabled();
 });

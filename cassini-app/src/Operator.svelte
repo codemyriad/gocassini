@@ -722,6 +722,7 @@
     }
     selectedJob = {
       job: event.job,
+      availability: event.availability ?? selectedJob.availability,
       attempts: upsertAttempt(selectedJob.attempts, event.attempt),
     };
     updatePolling();
@@ -755,7 +756,8 @@
     // (the selected job, or any active job in the list). refreshJobs re-arms
     // this, so it keeps polling until the work settles.
     const hasActiveWork =
-      (selectedJob != null && isJobActive(selectedJob.job)) || jobs.some(isJobActive);
+      (selectedJob != null && (isJobActive(selectedJob.job) || (selectedJob.availability?.media_cleanup != null && selectedJob.availability.media_cleanup.status !== "completed"))) ||
+      jobs.some(job => isJobActive(job) || (job.media_cleanup != null && job.media_cleanup.status !== "completed"));
     if (!hasActiveWork) {
       return;
     }

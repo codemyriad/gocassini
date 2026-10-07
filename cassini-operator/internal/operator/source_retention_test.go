@@ -3,6 +3,9 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,5 +74,43 @@ func TestRetainedJSONPolicyDoesNotDeleteSource(t *testing.T) {
 	raw, _ := json.Marshal(TriggerRequest{ProcessingPolicy: &recordingProcessingPolicy{MeetingFormat: "json", SourceRetention: sourceStoragePolicy}})
 	if deletesSourceMedia(Job{RequestJSON: string(raw)}) || deletesSourceMedia(Job{RequestJSON: "{}"}) {
 		t.Fatal("retained or legacy meeting opted into deletion")
+	}
+}
+
+func TestSourceRetentionSettingsAPIRejectsConflictingUpdates(t *testing.T) {
+	rt, close := newTestRuntime(t)
+	defer close()
+	rt.setSettings(disposalSettings())
+	for _, body := range []string{`{"meeting_format":"opus"}`, `{"retain_video":true}`, `{"transcription_enabled":false}`, `{"source_retention":"unknown"}`} {
+		rec := httptest.NewRecorder()
+		rt.handlePutSettings(rec, httptest.NewRequest("PUT", "/settings", strings.NewReader(body)))
+		if rec.Code != 400 {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+		if rt.currentSettings().SourceRetention != sourceDeleteAfterProcessing {
+			t.Fatal("invalid update mutated policy")
+		}
+	}
+	rec := httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest("PUT", "/settings", strings.NewReader(`{"source_retention":"storage-policy","retain_video":true}`)))
+	if rec.Code != 200 {
+		t.Fatalf("retain sources: %d %s", rec.Code, rec.Body.String())
+	}
+	if s := rt.currentSettings(); s.MeetingFormat != "json" || !s.RetainVideo || s.SourceRetention != sourceStoragePolicy {
+		t.Fatalf("choices conflated: %+v", s)
+	}
+}
+
+func TestSourceRetentionSettingsSurviveReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s := disposalSettings()
+	s.Quality = sttQualityBalanced
+	s.Source = sttSourceUser
+	if err := Save(path, s); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadOrInitSettings(path)
+	if err != nil || got.SourceRetention != sourceDeleteAfterProcessing || got.MeetingFormat != "json" {
+		t.Fatalf("%+v %v", got, err)
 	}
 }
