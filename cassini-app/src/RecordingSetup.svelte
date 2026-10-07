@@ -53,9 +53,13 @@
     "Say a few words, then stop the recording in Talk.",
     "Wait for it to publish, then play the audio and confirm you can hear it.",
   ];
-  $: testStepsDone = report
-    ? [!!report.test.started_at, !!report.test.job_id || !!report.test.published, !!report.test.published, !!report.test.playback_verified_at]
-    : [];
+  $: testProgress = !report ? 0
+    : report.test.playback_verified_at ? 4
+    : report.test.published ? 3
+    : report.test.job_id ? 2
+    : report.test.started_at ? 1
+    : 0;
+  $: testStepsDone = testSteps.map((_, stepIndex) => stepIndex < testProgress);
   const calloutTone: Record<CheckTone, string> = {
     success: "alert-success alert-tinted",
     warning: "alert-warning alert-tinted",
