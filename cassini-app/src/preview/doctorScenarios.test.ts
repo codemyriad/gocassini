@@ -115,10 +115,10 @@ it("keeps a failed refresh visible across polling", async () => {
   vi.useFakeTimers();
   const client = createPreviewClient("refresh-error");
   expect((await client.getReadiness()).state).toBe("passed");
-  const pending = expect(client.checkReadiness()).rejects.toThrow("could not refresh");
+  const pending = expect(client.checkReadiness()).rejects.toMatchObject({ status: 503 });
   await vi.advanceTimersByTimeAsync(700);
   await pending;
-  await expect(client.getReadiness()).rejects.toThrow("could not refresh");
+  await expect(client.getReadiness()).rejects.toMatchObject({ status: 503 });
 });
 
 it("has valid independent fixtures for every listed URL and rejects unknown ones", () => {

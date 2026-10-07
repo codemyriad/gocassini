@@ -31,7 +31,7 @@ export const doctorScenarios = [
   { id: "search-failed-index", title: "Re-index failed: search index unavailable", description: "A retry would fail the same way, so the row offers steps, not a button." },
   { id: "search-failed-environment", title: "Re-index failed: AppAPI settings missing", description: "Cassini is running without the settings AppAPI gives it. No retry, a deployment step instead." },
   { id: "old-findings", title: "Passing checks are two days old", description: "Age is shown separately from the verdict; simulated checks refresh timestamps." },
-  { id: "refresh-error", title: "Refreshing diagnostics fails", description: "Previously loaded rows become unverified and show the connection error." },
+  { id: "refresh-error", title: "Refreshing diagnostics fails", description: "Cassini stops answering after the first read. The callout says why and offers to try again, and the rows keep their last results." },
 ] as const;
 
 type DoctorClient = Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
@@ -302,12 +302,12 @@ export function createPreviewClient(id: string): DoctorClient {
   };
   return {
     async getReadiness() {
-      if (id === "refresh-error" && readCount++ > 0) throw new Error("Preview: could not refresh recording checks. Check the connection and try again.");
+      if (id === "refresh-error" && readCount++ > 0) throw Object.assign(new Error("503 Service Unavailable"), { status: 503 });
       return read();
     },
     async checkReadiness(only) {
       await delay(650);
-      if (id === "refresh-error") throw new Error("Preview: could not refresh recording checks. Check the connection and try again.");
+      if (id === "refresh-error") throw Object.assign(new Error("503 Service Unavailable"), { status: 503 });
       // The fault remains until a simulated edit or repair fixes it. Rechecking
       // updates freshness, without making an intentionally broken case healthy.
       if (id !== "old-findings" || !initialCheck) for (const check of report.checks) {

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import RecordingSetup from "../RecordingSetup.svelte";
   import { createPreviewClient, doctorScenarios } from "./doctorScenarios";
+  import { notifySetupChanged } from "../operator/setupSignal";
 
   export let scenario = "";
   const selected = doctorScenarios.find(item => item.id === scenario);
@@ -40,6 +41,11 @@
   let root: HTMLDivElement;
   let themeHost: HTMLElement | null = null;
   let pageTheme: string | undefined;
+  onMount(() => {
+    if (selected?.id !== "refresh-error") return;
+    const failingRead = setTimeout(notifySetupChanged, 400);
+    return () => clearTimeout(failingRead);
+  });
   onMount(() => {
     const tree = root.getRootNode();
     if (!(tree instanceof ShadowRoot) || !(tree.host instanceof HTMLElement)) return;
