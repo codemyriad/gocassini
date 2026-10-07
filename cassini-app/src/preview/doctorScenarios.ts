@@ -126,7 +126,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   // suppression — so a row left in the shared base would preview as a green
   // "test passed" beside a backend that needs attention.
   if (id === "healthy" || id === "old-findings") {
-    report.checks.push({ id: "test", state: "passed", code: "test_playback", message: "A recording started in Talk was published, and its audio was confirmed by playing it.", checked_at });
+    report.checks.push({ id: "test", state: "passed", code: "test_playback", message: "A recording started in Talk was published, and its audio was confirmed by playing it.", action: "test_recording", checked_at });
   }
   switch (id) {
     case "first-run":
@@ -319,6 +319,9 @@ export function createPreviewClient(id: string): DoctorClient {
       }
       if (payload.action === "arm_test") report.test = { state: "waiting_for_talk", published: false, started_at: new Date().toISOString() };
       if (payload.action === "confirm_playback") report.test.playback_verified_at = new Date().toISOString();
+      const testRow = report.checks.find(check => check.id === "test");
+      if (testRow && payload.action === "arm_test") Object.assign(testRow, { state: "not_verified", code: "test_in_progress", message: "Cassini is waiting for a recording started in the test room.", checked_at: undefined });
+      if (testRow && payload.action === "confirm_playback") Object.assign(testRow, { state: "passed", code: "test_playback", message: "A recording started in Talk was published, and its audio was confirmed by playing it.", checked_at: report.test.playback_verified_at });
       updateVerdict(report); return read();
     },
   };
