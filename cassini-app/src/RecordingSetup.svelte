@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, Settings, TriangleAlert, Video, X } from "@lucide/svelte";
+  import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, Settings, TextSearch, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "./CommandBlock.svelte";
   import { checkLabels, checkStateLabel, checkTone, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
@@ -283,8 +283,8 @@
                      unrecognised action offered a button whose effect the panel
                      could not describe, which is the panel speaking for the
                      operator again. -->
-                <button class="btn btn-sm btn-primary" disabled={busy}
-                  on:click={() => repair(check.repair ?? "")}>{repairLabels[check.repair]}</button>
+                <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" disabled={busy}
+                  on:click={() => repair(check.repair ?? "")}><TextSearch size={15} class="shrink-0" aria-hidden="true" />{repairLabels[check.repair]}</button>
               {/if}
               {#if rowGuide(check)}
                 <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={rowGuide(check)?.href} target="_blank" rel="noreferrer"><BookOpen size={15} class="shrink-0" aria-hidden="true" />{rowGuide(check)?.label}</a>
@@ -318,7 +318,7 @@
               <label class="block text-sm font-semibold" for="talk-internal-secret">Internal secret</label>
               <div class="mt-1 flex flex-col items-start gap-2 @md:flex-row @md:items-stretch">
                 <input id="talk-internal-secret" class="input input-bordered w-full min-w-0 @md:w-auto @md:flex-1" type="password" autocomplete="new-password" bind:value={secret} />
-                <button class="btn btn-primary shrink-0 pb-0.5" disabled={busy || !secret.trim()}>Save secret</button>
+                <button class="op-btn inline-flex h-10 shrink-0 items-center justify-center" disabled={busy || !secret.trim()}>Save secret</button>
               </div>
             </form>
           {/if}
@@ -350,7 +350,7 @@
             {:else if (waitingForTalk && testRoomHref) || awaitingPlayback}
               <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
             {:else}
-              <button class="btn btn-primary btn-sm" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
+              <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center py-1.5 text-left text-xs!" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
               {#if testRoomHref}<a class="btn btn-sm" href={testRoomHref} target="_blank" rel="noreferrer">Open test room</a>{/if}
             {/if}
           </div>
