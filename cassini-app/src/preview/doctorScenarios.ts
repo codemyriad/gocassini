@@ -211,9 +211,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       break;
     case "test-failed":
       report.test = { state: "failed", published: false, job_id: "preview-recording", stage: "upload", started_at: new Date(now.getTime() - 600000).toISOString() };
-      set({ id: "test", state: "needs_action", code: "test_failed", message: "The test recording did not finish; it stopped at upload.", action: "test_recording", steps: [
-        { label: "Cassini's log records why the recording stopped; the other checks here cover the causes it can detect" },
-      ] });
+      set({ id: "test", state: "needs_action", code: "test_failed", message: "The test recording did not finish; it stopped at upload.", action: "test_recording" });
       break;
     case "search-partial": case "search-running": case "search-failed":
       set({ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "The search index records 9 indexed meeting(s); 3 archive Opus recordings without index rows. The checked archive has recordings outside search coverage." +
