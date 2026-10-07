@@ -107,6 +107,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 - **[Recording permissions](./direct-shares-cutover.md)** — built-in Nextcloud Files shares for each recording, the one-user cutover, and the metadata cache.
 - **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the optional LLM operations that can send text off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
+- **[Production data → local harness](../harness/README.md#95-seeding-published-recordings)** — pull Nextcloud recordings, capture the operator volume, and seed an installed ExApp.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
 - **[Releasing Cassini](./release.md)** — maintainer guide: the version ladder, the local `prepare-release.sh` flow, and the GitHub + App Store publish workflow.
 
