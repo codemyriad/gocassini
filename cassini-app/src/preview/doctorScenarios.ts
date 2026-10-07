@@ -19,6 +19,7 @@ export const doctorScenarios = [
   { id: "missing-hpb", title: "Talk has no signaling server", description: "The backend row points at Nextcloud's own documentation and settings." },
   { id: "connection-unreachable", title: "Cannot reach Nextcloud", description: "A check that ran and failed to reach the server: a warning, not an absence." },
   { id: "recording-handoff", title: "Recording backend needs connecting", description: "Talk does not know Cassini as a recording backend yet." },
+  { id: "secret-missing", title: "Cassini has no recording secret", description: "Cassini could not create its own recording secret, so there is nothing to give Talk yet. One row to fix, on Cassini's side." },
   { id: "test-waiting", title: "Test recording: waiting for Talk", description: "The test is armed and waiting for somebody to press record in Talk." },
   { id: "test-published", title: "Test recording: confirm playback", description: "The recording published. Only a person pressing play can finish this check." },
   { id: "test-failed", title: "Test recording failed", description: "The one check whose failure is a finding rather than a missing verdict." },
@@ -180,11 +181,18 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       set(blocked("test", "Talk connection"));
       break;
     case "recording-handoff":
-      set({ id: "talk.handoff", state: "needs_action", code: "recording_secret_missing", message: "Cassini could not provision its recording credential. Check its persistent storage.", action: "connect_talk" });
-      set({ id: "talk.discovery", state: "needs_action", code: "recording_secret_missing", message: "Configure Cassini's recording credential and connect Talk first.", action: "connect_talk", checked_at });
-      // A backend IS declared; with no recording credential the probe never
-      // gets far enough to verify it. Reported, rather than left out.
-      set({ id: "talk.hpb", state: "not_verified", code: "hpb_declared_unverified", message: "Talk names a High Performance Backend. Whether Cassini can authenticate to it is what the Talk connection check below establishes.", action: "recheck", checked_at });
+      set({ id: "talk.discovery", state: "needs_action", code: "recording_auth_rejected", message: "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.", action: "connect_talk", checked_at });
+      set(blocked("talk.hpb", "Talk connection"));
+      break;
+    case "secret-missing":
+      set({ id: "talk.handoff", state: "needs_action", code: "recording_secret_missing", message: "Cassini has no recording secret. It creates one when it starts and keeps it on its data volume, and that did not succeed.", steps: [
+        { label: "Check that Cassini's data volume is mounted and writable: the secret is saved next to its database" },
+        { label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again" },
+        { label: "Or set one yourself in `CASSINI_TALK_RECORDING_SECRET`, in Cassini's deploy options. A secret set there always wins" },
+      ] });
+      set(blocked("talk.discovery", "Recording credential"));
+      set(blocked("talk.hpb", "Recording credential"));
+      set(blocked("test", "Recording credential"));
       break;
     case "storage-blocked":
       set({ id: "storage", state: "needs_action", code: "storage_admission_blocked", message: "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", action: "setup_storage", checked_at }); break;
@@ -225,7 +233,8 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       const row = report.checks.find(check => check.id === id);
       return !!row && (row.state === "passed" || row.state === "warn");
     };
-    const blocker = ["storage", "talk.hpb", "talk.discovery"].find(id => !proven(id));
+    const chain = ["storage", "talk.hpb", "talk.discovery"];
+    const blocker = chain.find(id => report.checks.find(check => check.id === id)?.state === "needs_action") ?? chain.find(id => !proven(id));
     report.checks.push(blocker
       ? blocked("test", checkLabels[blocker] ?? blocker, report.checks.find(check => check.id === blocker)?.state !== "needs_action")
       : { id: "test", state: "not_verified", code: "test_not_run", action: "test_recording",
