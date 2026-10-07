@@ -155,10 +155,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS segment_fts USING fts5(
 // searchStore is the sidecar index.
 type searchStore struct {
 	sidecarDB
+	lifecycle *Store
 	// In-process index writes invalidate the operator's cached coverage.
 	// External writers are still bounded by the cache TTL.
 	revision atomic.Uint64
-	lifecycle *Store
 }
 
 // searchStorePath is where the index lives for a given job-database path, or

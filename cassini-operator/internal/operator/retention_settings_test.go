@@ -265,6 +265,32 @@ func TestRetentionMigrateRecordingPolicy(t *testing.T) {
 	}
 }
 
+func TestWholeMeetingSettingsRejectUnsupportedSchema(t *testing.T) {
+	for _, nextcloud := range []string{`{"recordings":{"forever":true},"transcriptions":{"forever":true}}`, `{}`, `{"meetings":{"count":0,"unit":"days"}}`} {
+		settings := defaultRetentionSettings()
+		raw, err := json.Marshal(settings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &object); err != nil {
+			t.Fatal(err)
+		}
+		object["nextcloud"] = json.RawMessage(nextcloud)
+		raw, err = json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(t.TempDir(), "retention.json")
+		if err := os.WriteFile(file, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if c := newRetentionConfig(file); c.loadErr == nil {
+			t.Fatalf("accepted %s", nextcloud)
+		}
+	}
+}
+
 func TestRetentionUnchangedDefaultsAcknowledgeAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "retention_settings.json")
 	rt := &Runtime{retention: newRetentionConfig(path)}
@@ -289,31 +315,5 @@ func TestRetentionUnchangedDefaultsAcknowledgeAcrossRestart(t *testing.T) {
 	got, _ := json.Marshal(reloaded.settings)
 	if !bytes.Equal(got, want) {
 		t.Fatalf("changed policy on acknowledgement: got %s, want %s", got, want)
-	}
-}
-
-func TestWholeMeetingSettingsRejectUnsupportedSchema(t *testing.T) {
-	for _, nextcloud := range []string{`{"recordings":{"forever":true},"transcriptions":{"forever":true}}`, `{}`, `{"meetings":{"count":0,"unit":"days"}}`} {
-		settings := defaultRetentionSettings()
-		raw, err := json.Marshal(settings)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var object map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &object); err != nil {
-			t.Fatal(err)
-		}
-		object["nextcloud"] = json.RawMessage(nextcloud)
-		raw, err = json.Marshal(object)
-		if err != nil {
-			t.Fatal(err)
-		}
-		file := filepath.Join(t.TempDir(), "retention.json")
-		if err := os.WriteFile(file, raw, 0600); err != nil {
-			t.Fatal(err)
-		}
-		if c := newRetentionConfig(file); c.loadErr == nil {
-			t.Fatalf("accepted %s", nextcloud)
-		}
 	}
 }

@@ -41,8 +41,10 @@ reminder. A failed read or save remains recoverable without blocking app use.
 Changes made in another session are picked up when the window regains focus;
 unsaved editor changes are never overwritten by that refresh.
 
-Defaults remain **Keep forever** for all container-local categories. This does
-not configure camera capture or published Nextcloud expiry. Recording credentials,
+Defaults remain **Keep forever** for container-local categories and the separate
+[Nextcloud whole-meeting policy](nextcloud-retention.md). Storage saves both in
+the same configuration; dismissing the reminder preserves both policies. Camera
+capture remains independent. Recording credentials,
 permissions and publishing-account readiness remain independent requirements.
 The recording-access panel and account creation are available in
 **Operator → Publish pipeline**, with existing setup/health notices for failures.

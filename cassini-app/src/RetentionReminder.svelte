@@ -9,6 +9,7 @@
   export let dismissing = false;
   const dispatch = createEventDispatcher<{ review: void; retry: void; ignore: void }>();
   $: keepsForever = settings && [settings.recordings, settings.current, settings.logs,
+    ...(settings.nextcloud ? [settings.nextcloud.meetings] : []),
     ...(settings.history.mode === "fine" ? Object.values(settings.history.fine) : [settings.history.policy])]
     .every(policy => policy.forever);
 </script>
@@ -16,7 +17,7 @@
 <section class="retention-reminder" aria-label="Retention reminder">
   <div>
     <p class="font-semibold">Review retention settings</p>
-    <p>{keepsForever ? "Cassini currently keeps container files indefinitely." : "Review how long Cassini keeps container files."} You can keep using the app and review this in Storage.</p>
+    <p>{keepsForever ? "Cassini currently keeps container files and published meetings indefinitely." : "Review how long Cassini keeps container files and published meetings."} You can keep using the app and review this in Storage.</p>
     {#if settings?.revision === 0}
       <p class="scope">Dismissing applies to this installation. Current settings will be kept.</p>
       {#if dirty}<p class="scope">Save or discard your changes before dismissing.</p>{/if}

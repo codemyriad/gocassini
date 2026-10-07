@@ -5,7 +5,7 @@ import type { RetentionSettings } from "./retention";
 import { dismissRetentionReminder, retentionMutationBusy, withRetentionMutation } from "./retentionReminder";
 
 const policy = (): RetentionSettings => ({
-  version: 3, revision: 0, schedule: { time: "15:45", timezone: "Europe/Rome" },
+  version: 4, revision: 0, nextcloud: { meetings: { forever: true } }, schedule: { time: "15:45", timezone: "Europe/Rome" },
   recordings: { forever: false, count: 45, unit: "days" },
   current: { forever: true }, logs: { forever: true },
   history: { mode: "group", fine_initialized: true, policy: { forever: true },
@@ -14,8 +14,9 @@ const policy = (): RetentionSettings => ({
 });
 
 describe("installation-wide retention dismissal", () => {
-  it("saves the current snapshot unchanged, including schedule and inactive policies", async () => {
+  it("saves the current snapshot unchanged, including Nextcloud expiry, schedule and inactive policies", async () => {
     const current = policy();
+    current.nextcloud = { meetings: { forever: false, count: 90, unit: "days" } };
     const before = structuredClone(current);
     const client = { getRetention: vi.fn().mockResolvedValue(current),
       putRetention: vi.fn().mockResolvedValue({ ...current, revision: 1 }) };
