@@ -364,7 +364,7 @@ func TestTheBackendRowCarriesTheCredentialItAuthenticatesWith(t *testing.T) {
 	}
 	var joined string
 	for _, s := range c.Steps {
-		joined += s.Label + " "
+		joined += s.Label + " " + strings.Join(s.Commands, " ") + " "
 	}
 	// The misconception this copy exists to kill: an administrator reading
 	// "internal credential" went looking in Nextcloud's configuration, where
@@ -890,6 +890,61 @@ func TestRowsNameTheProbeThatEstablishesThem(t *testing.T) {
 		scoped := !readinessScopeFor([]string{id}).empty()
 		if named != scoped {
 			t.Errorf("%s: probe named=%v but scope runs=%v", id, named, scoped)
+		}
+	}
+}
+
+func TestAnUnreachableNextcloudIsOneRowToActOnNotTwo(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "storage", State: "passed", Code: "storage_ready"},
+		{ID: "talk.hpb", State: "warn", Code: "signaling_mode_unknown", Action: "recheck"},
+		{ID: "talk.discovery", State: "warn", Code: "nextcloud_host_not_found", Action: "recheck"},
+		{ID: "test", State: "not_verified", Code: "test_not_run", Action: "test_recording"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+
+	byID := map[string]readinessCheck{}
+	for _, c := range checks {
+		byID[c.ID] = c
+	}
+	if c := byID["talk.discovery"]; c.Code != "nextcloud_host_not_found" || c.State != "warn" {
+		t.Fatalf("talk.discovery = %+v; the row that found the fault must keep it, or nothing is left to act on", c)
+	}
+	for _, id := range []string{"talk.hpb", "test"} {
+		c := byID[id]
+		if c.Code != "check_blocked" || !strings.Contains(c.Message, "Talk connection") || c.Action != "" {
+			t.Fatalf("%s = %+v; want it waiting on the Talk connection, with nothing of its own to press", id, c)
+		}
+	}
+}
+
+func TestAnUnknownBackendStandsAloneWhenNextcloudAnswered(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "talk.hpb", State: "warn", Code: "signaling_mode_unknown", Action: "recheck"},
+		{ID: "talk.discovery", State: "passed", Code: "recording_auth_verified"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+	for _, c := range checks {
+		if c.ID == "talk.hpb" && c.Code != "signaling_mode_unknown" {
+			t.Fatalf("talk.hpb = %+v; with the connection working, the backend lookup failing is its own finding", c)
+		}
+	}
+}
+
+func TestATestBehindFailedStorageStillNamesStorage(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "storage", State: "needs_action", Code: "storage_incomplete"},
+		{ID: "talk.hpb", State: "warn", Code: "signaling_mode_unknown"},
+		{ID: "talk.discovery", State: "warn", Code: "nextcloud_timeout"},
+		{ID: "test", State: "not_verified", Code: "test_not_run", Action: "test_recording"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+	for _, c := range checks {
+		if c.ID == "test" && !strings.Contains(c.Message, "Recording storage") {
+			t.Fatalf("test = %+v; the first unmet prerequisite is storage", c)
 		}
 	}
 }

@@ -80,6 +80,20 @@ var independentReadinessCodes = map[string]bool{
 	"talk_backend_url_invalid": true,
 }
 
+var nextcloudUnreachableCodes = map[string]bool{
+	"nextcloud_unreachable":         true,
+	"nextcloud_host_not_found":      true,
+	"nextcloud_connection_refused":  true,
+	"nextcloud_timeout":             true,
+	"nextcloud_tls_untrusted":       true,
+	"nextcloud_server_error":        true,
+	"nextcloud_unexpected_response": true,
+}
+
+func provenReadinessRow(row *readinessCheck) bool {
+	return row != nil && (row.State == "passed" || row.State == "warn")
+}
+
 // suppressBlockedRows rewrites, in place, any row whose prerequisite is unmet.
 //
 // A prerequisite is unmet when it demands action, or when it is itself blocked.
@@ -91,11 +105,21 @@ func suppressBlockedRows(checks []readinessCheck) {
 	for i := range checks {
 		byID[checks[i].ID] = &checks[i]
 	}
+	rootCauses := map[string]bool{}
+	if discovery, hpb := byID["talk.discovery"], byID["talk.hpb"]; discovery != nil && hpb != nil &&
+		nextcloudUnreachableCodes[discovery.Code] && hpb.Code == "signaling_mode_unknown" {
+		name := readinessRowNames["talk.discovery"]
+		blockRow(hpb, name, false)
+		if test := byID["test"]; test != nil && !blockedReadinessCodes[test.Code] && provenReadinessRow(byID["storage"]) {
+			blockRow(test, name, false)
+		}
+		rootCauses["talk.discovery"] = true
+	}
 	// In declared order, so a blocked prerequisite propagates down the chain in
 	// one pass: no backend blocks the credential, which blocks the connection.
 	for _, id := range readinessRowOrder {
 		row, ok := byID[id]
-		if !ok || blockedReadinessCodes[row.Code] || independentReadinessCodes[row.Code] {
+		if !ok || rootCauses[id] || blockedReadinessCodes[row.Code] || independentReadinessCodes[row.Code] {
 			continue
 		}
 		blocked := false

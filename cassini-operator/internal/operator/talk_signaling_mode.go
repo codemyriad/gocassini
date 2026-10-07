@@ -176,8 +176,8 @@ func mergeCredentialIntoBackend(row *readinessCheck, secret, source string) {
 		row.Message = "Talk has a High Performance Backend, and Cassini needs that server's internal secret to join calls invisibly. This is not a Nextcloud setting: it belongs to the signaling server, which is why Cassini cannot read it for you."
 		row.Action = "configure_talk"
 		row.Steps = []readinessStep{
-			{Label: "Nextcloud All-in-One: docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"},
-			{Label: "Standalone signaling server: the `internalsecret` under `[clients]` in its configuration file"},
+			{Label: "On Nextcloud All-in-One, print it with:", Commands: []string{"docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"}},
+			{Label: "On a standalone signaling server, it is `internalsecret` under `[clients]` in its configuration file"},
 			{Label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs"},
 		}
 		return

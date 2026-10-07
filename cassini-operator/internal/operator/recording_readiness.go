@@ -63,7 +63,8 @@ type readinessCheck struct {
 // that shape for storage faults, with the commands behind a disclosure so an
 // administrator who just wants the button never reads a command line.
 type readinessStep struct {
-	Label string `json:"label"`
+	Label    string   `json:"label"`
+	Commands []string `json:"commands,omitempty"`
 }
 
 type recordingSetupState struct {
