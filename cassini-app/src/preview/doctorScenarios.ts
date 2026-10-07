@@ -27,7 +27,9 @@ export const doctorScenarios = [
   { id: "setup-unreadable", title: "Saved configuration is unreadable", description: "Persistent setup needs repair; credentials cannot be confirmed." },
   { id: "search-partial", title: "Archive search is incomplete", description: "Audio is ready. Re-index now simulates progress and completion in this tab." },
   { id: "search-running", title: "Re-indexing is running", description: "Repair progress appears without a duplicate repair button." },
-  { id: "search-failed", title: "The last re-index failed", description: "The failed repair stays visible, with a simulated retry available." },
+  { id: "search-failed", title: "The last re-index failed", description: "Nextcloud could not list the archive. The row says so, points at Recording storage, and offers to try again." },
+  { id: "search-failed-index", title: "Re-index failed: search index unavailable", description: "A retry would fail the same way, so the row offers steps, not a button." },
+  { id: "search-failed-environment", title: "Re-index failed: AppAPI settings missing", description: "Cassini is running without the settings AppAPI gives it. No retry, a deployment step instead." },
   { id: "old-findings", title: "Passing checks are two days old", description: "Age is shown separately from the verdict; simulated checks refresh timestamps." },
   { id: "refresh-error", title: "Refreshing diagnostics fails", description: "Previously loaded rows become unverified and show the connection error." },
 ] as const;
@@ -213,11 +215,31 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       report.test = { state: "failed", published: false, job_id: "preview-recording", stage: "upload", started_at: new Date(now.getTime() - 600000).toISOString() };
       set({ id: "test", state: "needs_action", code: "test_failed", message: "The test recording did not finish; it stopped at upload.", action: "test_recording" });
       break;
-    case "search-partial": case "search-running": case "search-failed":
+    case "search-partial": case "search-running":
       set({ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet." +
-        (id === "search-running" ? " Re-indexing is running now." : id === "search-failed" ? " The last re-index did not finish: the archive could not be read." : ""),
-        action: "recheck", repair: id === "search-running" ? undefined : "backfill_search", running: id === "search-running" || undefined, repair_failed: id === "search-failed" || undefined,
+        (id === "search-running" ? " Re-indexing is running now." : ""),
+        action: "recheck", repair: id === "search-running" ? undefined : "backfill_search", running: id === "search-running" || undefined,
         steps: id === "search-running" ? undefined : [{ label: "Re-index now adds the 3 recordings that are not in search yet" }], checked_at }); break;
+    case "search-failed":
+      set({ id: "archive.search", state: "warn", code: "search_reindex_archive_unreadable", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. The last re-index could not list the recordings archive in Nextcloud.",
+        action: "recheck", repair: "backfill_search", repair_failed: true, steps: [
+          { label: "Recording storage uses the same access to the archive. If it needs attention, fix that first" },
+          { label: "If it passes, Nextcloud was probably busy or restarting, so try re-indexing again" },
+          { label: "The full error is in Cassini's log. On the Docker host:", commands: ["docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"] },
+        ], checked_at }); break;
+    case "search-failed-environment":
+      set({ id: "archive.search", state: "warn", code: "search_reindex_environment", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. The last re-index could not read the settings AppAPI gives Cassini, so trying again would fail the same way.",
+        action: "recheck", repair_failed: true, steps: [
+          { label: "Cassini is running without its AppAPI settings (`NEXTCLOUD_URL`, `APP_SECRET`, `APP_ID`). Deploy it through AppAPI rather than starting its container by hand" },
+          { label: "The full error is in Cassini's log. On the Docker host:", commands: ["docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"] },
+        ], checked_at }); break;
+    case "search-failed-index":
+      set({ id: "archive.search", state: "warn", code: "search_reindex_index_unavailable", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. The last re-index could not use the search index, so trying again would fail the same way.",
+        action: "recheck", repair_failed: true, steps: [
+          { label: "Check that Cassini's data volume is mounted and writable: the search index is kept on it" },
+          { label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps" },
+          { label: "The full error is in Cassini's log. On the Docker host:", commands: ["docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"] },
+        ], checked_at }); break;
   }
   // The test row is on EVERY report the operator sends — offered where a test
   // could succeed, waiting where it could not. Most fixtures simply omitted it,
