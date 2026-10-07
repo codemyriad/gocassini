@@ -413,3 +413,10 @@ describe("the credential action on the backend row", () => {
     expect(rowActions(row("needs_action")).map(a => a.label)).toEqual(["Set credential"]);
   });
 });
+
+describe("the test row while a test is under way", () => {
+  it("offers its steps rather than asking for another test", () => {
+    const row = { id: "test", state: "not_verified", code: "test_in_progress", message: "", action: "test_recording" } as ReadinessCheck;
+    expect(rowActions(row).map(a => a.label)).toEqual(["Show steps"]);
+  });
+});

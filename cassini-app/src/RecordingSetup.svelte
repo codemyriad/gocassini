@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { BookOpen, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Settings, TriangleAlert, X } from "@lucide/svelte";
+  import { BookOpen, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Settings, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "./CommandBlock.svelte";
   import { checkLabels, checkStateLabel, checkTone, formatAge, labelParts, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
@@ -33,6 +33,7 @@
   $: verdict = stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "";
   $: verdictTone = report && !stale ? reportTone(report) : "neutral";
   $: shared = report ? sharedCheckTime(report.checks) : null;
+  $: waitingForTalk = report?.test.state === "waiting_for_talk";
   const calloutTone: Record<CheckTone, string> = {
     success: "alert-success alert-tinted",
     warning: "alert-warning alert-tinted",
@@ -216,7 +217,7 @@
       {#each rows as check, index}
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-            <p class="flex min-w-0 flex-[1_1_9rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}"><svelte:component this={toneIcons[checkTone(check)]} size={14} class="shrink-0 self-center" aria-hidden="true" />{checkStateLabel(check)}</span>{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-center gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
+            <p class="flex min-w-0 flex-[1_1_9rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}"><svelte:component this={toneIcons[checkTone(check)]} size={14} class="shrink-0 self-center" aria-hidden="true" />{checkStateLabel(check)}</span>{#if check.id === "test" && waitingForTalk}<span class="inline-flex items-center gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Waiting</span>{/if}{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-center gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs" aria-hidden="true"></span>Checking…</span>{/if}</p>
             <div class="flex flex-wrap gap-2 *:[--size:1.75rem]">
               {#if check.checkable && rowActions(check).every((item) => item.action !== "recheck")}
                 <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy}
@@ -245,6 +246,9 @@
           {#if check.checked_at && (check.code === "test_playback" || !shared?.ids.has(check.id))}<p class="mt-2 flex items-center gap-1 text-xs text-base-content/65" title={new Date(check.checked_at).toLocaleString()}><svelte:component this={check.code === "test_playback" ? Headphones : Clock} size={12} class="shrink-0" aria-hidden="true" />{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
           {#if (check.repair && repairLabels[check.repair]) || rowGuide(check) || rowActions(check).some((item) => item.action !== "recheck")}
             <div class="mt-3 flex flex-wrap gap-2">
+              {#if check.id === "test" && waitingForTalk && testRoomHref}
+                <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={testRoomHref} target="_blank" rel="noreferrer"><Video size={15} class="shrink-0" aria-hidden="true" />Open test room</a>
+              {/if}
               {#if check.repair && repairLabels[check.repair]}
                 <!-- Only a repair this build knows how to name. "Fix this" for an
                      unrecognised action offered a button whose effect the panel
@@ -260,10 +264,11 @@
                 {/if}
               {/if}
               {#each rowActions(check).filter((item) => item.action !== "recheck") as item}
-                <button class="btn btn-sm btn-outline {check.state === "passed" ? "btn-outline-quiet" : ""} btn-outline-hover" disabled={busy} aria-expanded={item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
+                <button class="btn btn-sm btn-outline {check.state === "passed" || check.code === "test_in_progress" ? "btn-outline-quiet" : ""} btn-outline-hover" disabled={busy} aria-expanded={item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
               {/each}
             </div>
           {/if}
+          {#if check.id === "test" && waitingForTalk}<p class="mt-2 text-xs text-base-content/65">Cassini picks the recording up by itself, so there is no need to reload this page.</p>{/if}
     {#if panel && panelOwner === check.id && rows.findIndex(row => row.id === check.id) === index}
       <div class="relative mt-3 rounded-box border border-base-300 bg-base-200 p-4">
         <button class="btn btn-ghost btn-sm btn-square absolute top-3 right-3" type="button" aria-label="Close" on:click={() => { panel = ""; secret = ""; }}><X size={16} aria-hidden="true" /></button>
@@ -306,8 +311,14 @@
             <li>Wait for it to publish, then play the audio and confirm you can hear it.</li>
           </ol>
           <p class="mb-3 text-sm text-base-content/70">A recording captures a call, so the call needs someone in it: Cassini joins to record, not to talk. The conversation and the test recording are both ordinary ones, and can be deleted afterwards.</p>
-          <button class="btn btn-primary btn-sm" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
-          {#if testRoomHref}<a class="btn btn-sm ml-2" href={testRoomHref} target="_blank" rel="noreferrer">Open test room</a>{/if}
+          <div class="flex flex-wrap gap-2">
+            {#if waitingForTalk && testRoomHref}
+              <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
+            {:else}
+              <button class="btn btn-primary btn-sm" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
+              {#if testRoomHref}<a class="btn btn-sm" href={testRoomHref} target="_blank" rel="noreferrer">Open test room</a>{/if}
+            {/if}
+          </div>
           {#if report.test.started_at}
             <p class="mt-3 text-sm" role="status">{report.test.state === "waiting_for_talk" ? "Waiting for a recording to start. Open the test room, join the call, and use Talk’s Start recording action." : `${report.test.stage ?? "Test"}: ${report.test.state}`}</p>
             {#if report.test.job_id}<p class="mt-1 text-xs">Recording {report.test.job_id}</p>{/if}
