@@ -420,3 +420,27 @@ The current API is not:
 It is the operator’s control and inspection surface. The one exception is
 `/insights`: it is per-caller and multi-user by construction, which is why it
 lives outside the ADMIN operator surface rather than beside `/jobs`.
+
+## Publication and source retention
+
+`GET/PUT /settings` includes `source_retention`: `storage-policy` (default) or
+`delete-after-processing`. Omission preserves the saved choice. Disposal requires
+`meeting_format=json`, `retain_video=false`, and enabled prepared transcription;
+incompatible combinations return 400, and an unprepared selection returns 409.
+The administrator can change settings during a recording. Admission freezes
+capture and publication/retention policy in the job's request JSON; disposal jobs
+also preserve their required transcription settings. Legacy jobs are unchanged.
+
+Job details expose `availability.source_retention` and optional
+`availability.media_cleanup` with `status` (`waiting`, `pending`, `error`,
+`completed`), `last_error` and `completed_at`. Job-list rows include
+`media_cleanup`; disposal state events include both that job field and
+`availability`. Successfully removed source media uses availability `deleted`,
+distinct from age-based `expired`. Rerun returns 409 for disposal jobs even if
+cleanup has not finished.
+
+`POST /jobs/{id}/cleanup` requests a cleanup retry for a terminal disposal job.
+It returns 202 and resets the retry deadline; the worker checks due work every
+30 seconds, subject to existing job/archive locks. It never reruns processing.
+The installed `/operator/jobs/{id}/cleanup` route is ADMIN-only and requires the
+normal versioned AppAPI route update when deploying.

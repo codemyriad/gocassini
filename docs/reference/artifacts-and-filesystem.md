@@ -2,6 +2,16 @@
 
 This page describes Cassini’s main artifact types and the operator’s runtime layout.
 
+Transcription-only publication uses portable `.json` instead of `.opus`, including
+the corresponding current, sealed and published paths described below. The
+`artifact_opus_path` API field retains its historical name for both formats.
+JSON publication normally retains source bundles for reruns. With explicit
+`delete-after-processing` retention, successful promotion keeps only JSON;
+terminal success or failure triggers journaled removal of source bundles, Opus
+aliases and attempt media staging. Disposal subprocesses use job-owned
+`runs/<job-id>--attempt-NNN.scratch` temporary directories, also removed by cleanup.
+See [source disposal](../proposals/source-media-disposal/implementation.md).
+
 ## The four artifact shapes to know
 
 | Artifact | Produced by | Purpose |

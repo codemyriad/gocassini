@@ -430,3 +430,26 @@ attempt seal are `.json` files. They follow the same current-output and attempt
 history deadlines, promotion journal and expiry recovery as `.opus` files.
 Captured `.run` and intermediate `.meeting` audio still follow their existing
 container policies; the publication setting does not change those policies.
+
+### Explicit deletion after processing
+
+**Settings → Publish pipeline → Source media after processing** can override
+normal media retention for newly admitted transcription-only publications.
+**Keep under Storage policies** preserves the existing behavior, including
+source-based reruns. **Delete when processing finishes or fails** requires
+JSON publication, audio-only capture and prepared transcription. It removes
+source recordings and media intermediates after successful publication or any
+terminal failure, even if Storage says Keep forever. It does not delete the
+published transcript. JSON outputs and logs continue to use their existing rules.
+
+Cleanup has a durable obligation, an operation journal and restart recovery;
+failed cleanup is visible in the operator and retried automatically. **Retry
+media deletion** retries cleanup only. Processing reruns are blocked even while
+cleanup is pending or has failed. Active/queued processing retains its inputs;
+permanent resource failures terminate rather than leaving disposal jobs blocked.
+
+Settings changes affect subsequently accepted recordings only. Existing JSON
+publications never silently opt into source deletion. See the
+[implementation](proposals/source-media-disposal/implementation.md) and
+[usage guide](proposals/source-media-disposal/tutorial.md) for deletion targets,
+recovery and verification.

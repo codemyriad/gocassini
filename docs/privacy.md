@@ -284,3 +284,20 @@ could not use.
   LLM knobs.
 - [Artifacts and filesystem](./reference/artifacts-and-filesystem.md) — artifact
   types, the operator layout, and retention.
+
+## Transcription-only publication and source deletion
+
+Publishing a transcription-only JSON does not by itself delete captured audio.
+By default source media remains under Storage policies and can support reruns.
+Administrators may explicitly select **Delete when processing finishes or fails**
+for future transcription-only recordings. This uses audio-only capture, keeps
+media temporarily through initial processing, and deletes it after publication
+succeeds or processing permanently fails. Failure may leave no usable transcript.
+The operator shows actual cleanup progress and errors; a missing viewer player
+is not evidence of completed source deletion. Processing cannot be rerun in this
+mode, including while deletion is pending. The saved recording policy survives
+in job metadata and the published JSON provenance.
+
+Published transcripts, summaries, metadata and logs remain under their respective
+policies. This is deletion of Cassini-managed media, not a promise that audio
+never touches disk or that external backups/snapshots are erased.

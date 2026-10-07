@@ -3,7 +3,8 @@
 - ✅ Persist independent publication and source-retention policy at admission.
 - ✅ Enforce transcription and contain temporary media; durable terminal cleanup.
 - ✅ Settings and operator cleanup/rerun UI.
-- 🔄 Integration verification, documentation, changelog and draft PR.
+- ✅ Integration verification, documentation and changelog.
+- 🔄 Push and stacked draft PR.
 
 The approved behavior keeps capture, publication and source retention independent.
 JSON publication can retain source media for reruns. Explicit disposal requires
