@@ -193,7 +193,7 @@
     // touched by the reader — sat still until somebody reloaded the page.
     // Reported from staging: "I had to reload the doctor panel for it to catch
     // my test recording."
-    const follow = setInterval(() => { if (testInFlight(report)) void refreshQuietly(); }, 5000);
+    const follow = setInterval(() => { if (testInFlight(report) || report?.checks.some(check => check.running)) void refreshQuietly(); }, 5000);
     // A setup change elsewhere means what is on screen is out of date, so
     // re-READ it. Deliberately not a re-probe: nobody asked for one, and a page
     // reacting to its own events is how a panel starts checking on its own.
@@ -205,8 +205,7 @@
     // while it did, and dropped clicks that landed on it.
     //
     // What this gives up, knowingly: a check run in another tab is not picked
-    // up here, and a running re-index does not advance on its own. Run all
-    // checks shows both.
+    // up here. Run all checks shows it.
     return () => { alive = false; secret = ""; unsubscribe(); clearInterval(follow); };
   });
 </script>
@@ -237,7 +236,7 @@
       {#each rows as check, index}
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-            <p class="flex min-w-0 flex-[1_1_9rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}"><svelte:component this={toneIcons[checkTone(check)]} size={14} class="shrink-0 self-center" aria-hidden="true" />{checkStateLabel(check)}</span>{#if check.id === "test" && waitingForTalk}<span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs self-center" aria-hidden="true"></span>Waiting</span>{/if}{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs self-center" aria-hidden="true"></span>Checking…</span>{/if}</p>
+            <p class="flex min-w-0 flex-[1_1_9rem] flex-wrap items-baseline gap-x-2 py-1 font-medium">{checkLabels[check.id] ?? check.id} {#if !check.running}<span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal {toneClasses[checkTone(check)]}"><svelte:component this={toneIcons[checkTone(check)]} size={14} class="shrink-0 self-center" aria-hidden="true" />{checkStateLabel(check)}</span>{/if}{#if check.id === "test" && waitingForTalk}<span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs self-center" aria-hidden="true"></span>Waiting</span>{/if}{#if check.running}<span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs self-center" aria-hidden="true"></span>{check.id === "archive.search" ? "Re-indexing" : "Running"}</span>{/if}{#if checking && check.checkable && (checkingOnly === "" || checkingOnly === check.id || sharesProbe(check, checkingOnly))}<span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs self-center" aria-hidden="true"></span>Checking…</span>{/if}</p>
             <div class="flex flex-wrap gap-2 *:[--size:1.75rem]">
               {#if check.checkable && rowActions(check).every((item) => item.action !== "recheck")}
                 <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy}
@@ -298,6 +297,7 @@
             </div>
           {/if}
           {#if check.id === "test" && waitingForTalk}<p class="mt-2 text-xs text-base-content/65">Cassini picks the recording up by itself, so there is no need to reload this page.</p>{/if}
+          {#if check.running}<p class="mt-2 text-xs text-base-content/65">This row updates by itself when re-indexing finishes, so there is no need to reload this page.</p>{/if}
           {#if check.id === "test" && awaitingPlayback}
             <label class="mt-3 flex w-fit cursor-pointer items-center gap-2 text-sm">
               <input type="checkbox" class="checkbox checkbox-xs border-base-content/55" checked={!!report.test.playback_verified_at} disabled={busy} on:change={() => save({ action: "confirm_playback", job_id: report?.test.job_id })} />

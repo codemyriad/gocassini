@@ -445,3 +445,20 @@ describe("the verdict while a test is unfinished", () => {
     expect(testFollowUp(withTest({ state: "waiting_for_talk", started_at: "2026-10-06T10:00:00Z" }), now)).toBe("");
   });
 });
+
+describe("the verdict while a repair is running", () => {
+  const archive = (running: boolean): RecordingReadiness => ({
+    state: "warn", recording_state: "passed",
+    checks: [{ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "", running }],
+  } as unknown as RecordingReadiness);
+
+  it("says the archive is re-indexing, in the recording verdict's own tone", () => {
+    expect(readinessTitle(archive(true))).toBe("Recording ready; archive search is re-indexing");
+    expect(reportTone(archive(true))).toBe("success");
+  });
+
+  it("still asks for attention when the gap is not being worked on", () => {
+    expect(readinessTitle(archive(false))).toBe("Recording ready; archive search needs attention");
+    expect(reportTone(archive(false))).toBe("warning");
+  });
+});

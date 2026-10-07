@@ -27,6 +27,7 @@ export interface ReadinessCheck {
   // `action`: plenty of remedies are not a place to navigate to, but a command
   // to run on a host this app cannot reach.
   steps?: ReadinessStep[];
+  running?: boolean;
   // Something the operator can do about this check itself, rendered as a
   // button. Replaces printing a command for an administrator to go and run:
   // this panel is ADMIN-only and the operator can already do the work.
@@ -141,9 +142,10 @@ export function readinessTitle(report: RecordingReadiness): string {
   const verdict = report.recording_state ?? report.state;
   // Archive coverage is excluded from the recording verdict, so a shortfall
   // there would otherwise be invisible in the heading.
-  const archive = report.checks.some(c => c.id.startsWith("archive.") && (c.state === "warn" || c.state === "needs_action"))
+  const archiveRows = report.checks.filter(c => c.id.startsWith("archive.") && (c.state === "warn" || c.state === "needs_action"));
+  const archive = archiveRows.some(c => !c.running)
     ? "archive search needs attention"
-    : "";
+    : archiveRows.length > 0 ? "archive search is re-indexing" : "";
   if (verdict === "needs_action") {
     const count = report.checks.filter(c => c.state === "needs_action").length;
     return count === 1 ? "One recording check needs attention" : `${count} recording checks need attention`;
@@ -278,7 +280,10 @@ export const toneClasses: Record<CheckTone, string> = {
 // beside it: the operator excludes a test nobody ran from its verdict, and a
 // panel counting that row would paint a fully passing install grey.
 export function reportTone(report: RecordingReadiness): CheckTone {
-  return checkTone({ id: "", state: report.state, code: "", message: "" });
+  const outstanding = report.checks.filter(c => (c.state === "warn" || c.state === "needs_action") && !c.running);
+  const onlyRunning = outstanding.length === 0 && report.checks.some(c => c.running);
+  const state = onlyRunning ? (report.recording_state ?? report.state) : report.state;
+  return checkTone({ id: "", state, code: "", message: "" });
 }
 
 // How long ago a check established what it established.
