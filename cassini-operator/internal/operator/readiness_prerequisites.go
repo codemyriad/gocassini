@@ -137,6 +137,10 @@ func suppressBlockedRows(checks []readinessCheck) {
 			}
 		}
 	}
+	if archive, storage := byID["archive.search"], byID["storage"]; archive != nil && storage != nil &&
+		archive.Code == "search_reindex_archive_unreadable" && storage.State == "needs_action" {
+		blockRow(archive, readinessRowNames["storage"], false)
+	}
 	// In declared order, so a blocked prerequisite propagates down the chain in
 	// one pass: no backend blocks the credential, which blocks the connection.
 	for _, id := range readinessRowOrder {
@@ -203,4 +207,6 @@ func blockRow(row *readinessCheck, blocker string, unchecked bool) {
 	row.Action = ""
 	row.Steps = nil
 	row.Repair = ""
+	row.Running = false
+	row.RepairFailed = false
 }

@@ -23,6 +23,24 @@ const repairBackfillSearch = "backfill_search"
 // read on demand, so it is generous for the same reason.
 const backfillRunTimeout = 2 * time.Hour
 
+const (
+	searchRepairArchiveUnreadable = "archive"
+	searchRepairIndexUnavailable  = "index"
+	searchRepairEnvironment       = "environment"
+)
+
+type searchRepairError struct {
+	kind string
+	err  error
+}
+
+func (e *searchRepairError) Error() string { return e.err.Error() }
+func (e *searchRepairError) Unwrap() error { return e.err }
+
+func searchRepairFailure(kind string, err error) error {
+	return &searchRepairError{kind: kind, err: err}
+}
+
 type searchRepairState struct {
 	mu        sync.Mutex
 	running   bool
@@ -99,25 +117,29 @@ func (rt *Runtime) startSearchBackfill() bool {
 
 func (rt *Runtime) runSearchBackfill() (searchBackfillReport, error) {
 	if rt.searchStore == nil {
-		return searchBackfillReport{}, errors.New("the search index is not open")
+		return searchBackfillReport{}, searchRepairFailure(searchRepairIndexUnavailable, errors.New("the search index is not open"))
 	}
 	cfg, err := LoadExAppConfig()
 	if err != nil {
-		return searchBackfillReport{}, fmt.Errorf("read the AppAPI environment: %w", err)
+		return searchBackfillReport{}, searchRepairFailure(searchRepairEnvironment, fmt.Errorf("read the AppAPI environment: %w", err))
 	}
 	if !cfg.Active {
-		return searchBackfillReport{}, errors.New("backfill needs the AppAPI environment")
+		return searchBackfillReport{}, searchRepairFailure(searchRepairEnvironment, errors.New("backfill needs the AppAPI environment"))
 	}
 	ctx, cancel := context.WithTimeout(rt.ctx, backfillRunTimeout)
 	defer cancel()
 	targets, err := cfg.archiveBackfillTargets(ctx)
 	if err != nil {
-		return searchBackfillReport{}, fmt.Errorf("read the archive catalog: %w", err)
+		return searchBackfillReport{}, searchRepairFailure(searchRepairArchiveUnreadable, fmt.Errorf("read the archive catalog: %w", err))
 	}
 	if len(targets) == 0 {
 		return searchBackfillReport{}, nil
 	}
-	return rt.backfillSearchIndex(ctx, targets,
+	report, err := rt.backfillSearchIndex(ctx, targets,
 		cfg.archiveDeliveredState(),
 		cfg.archiveOpusReader(rt.cfg.CassiniBin, rt.cfg.WorkRoot))
+	if err != nil {
+		return report, searchRepairFailure(searchRepairIndexUnavailable, err)
+	}
+	return report, nil
 }

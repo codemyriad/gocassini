@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -113,10 +114,53 @@ func (rt *Runtime) describeSearchRepair(check *readinessCheck) {
 		return
 	case err != nil:
 		check.RepairFailed = true
-		check.Message += " The last re-index did not finish: " + err.Error()
+		describeSearchRepairFailure(check, err)
 	case ran && !finished.IsZero():
 		check.Message += fmt.Sprintf(" The last re-index added %d, left %d unchanged, found %d not searchable and failed on %d.",
 			report.Indexed, report.Unchanged, report.Unavailable, report.Failed)
+	}
+}
+
+var searchRepairLogStep = readinessStep{
+	Label:    "The full error is in Cassini's log. On the Docker host:",
+	Commands: []string{"docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"},
+}
+
+func describeSearchRepairFailure(check *readinessCheck, err error) {
+	var failure *searchRepairError
+	kind := ""
+	if errors.As(err, &failure) {
+		kind = failure.kind
+	}
+	switch kind {
+	case searchRepairArchiveUnreadable:
+		check.Code = "search_reindex_archive_unreadable"
+		check.Message += " The last re-index could not list the recordings archive in Nextcloud."
+		check.Steps = []readinessStep{
+			{Label: "Recording storage uses the same access to the archive. If it needs attention, fix that first"},
+			{Label: "If it passes, Nextcloud was probably busy or restarting, so try re-indexing again"},
+			searchRepairLogStep,
+		}
+	case searchRepairIndexUnavailable:
+		check.Code = "search_reindex_index_unavailable"
+		check.Repair = ""
+		check.Message += " The last re-index could not use the search index, so trying again would fail the same way."
+		check.Steps = []readinessStep{
+			{Label: "Check that Cassini's data volume is mounted and writable: the search index is kept on it"},
+			{Label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps"},
+			searchRepairLogStep,
+		}
+	case searchRepairEnvironment:
+		check.Code = "search_reindex_environment"
+		check.Repair = ""
+		check.Message += " The last re-index could not read the settings AppAPI gives Cassini, so trying again would fail the same way."
+		check.Steps = []readinessStep{
+			{Label: "Cassini is running without its AppAPI settings (`NEXTCLOUD_URL`, `APP_SECRET`, `APP_ID`). Deploy it through AppAPI rather than starting its container by hand"},
+			searchRepairLogStep,
+		}
+	default:
+		check.Message += " The last re-index did not finish: " + err.Error()
+		check.Steps = append(check.Steps, searchRepairLogStep)
 	}
 }
 
