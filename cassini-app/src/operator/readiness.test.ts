@@ -319,6 +319,11 @@ describe("a blocked row offers nothing", () => {
     expect(rowActions(live).map(a => a.action)).toContain("connect_talk");
   });
 
+  it("offers no Connect Talk while Cassini has no secret to give Talk", () => {
+    const missing = { id: "talk.handoff", state: "needs_action", code: "recording_secret_missing", message: "" } as ReadinessCheck;
+    expect(rowActions(missing).map(a => a.action)).not.toContain("connect_talk");
+  });
+
   // The test room is Cassini's to create. This button asked a reader to paste a
   // room URL, and the tool behind it refused to run until they did — which is
   // why nobody could ever run it.

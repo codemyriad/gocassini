@@ -207,7 +207,7 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // talk.discovery no longer keeps a "Test room" button: the room is Cassini's
   // to create, so there is no longer anything for a reader to choose.
   const persistent: Record<string,string> = { "talk.handoff":"connect_talk" };
-  if (persistent[check.id] && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
+  if (persistent[check.id] && check.code !== "recording_secret_missing" && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
   // An action this build cannot name gets no button, rather than a "Configure"
   // whose effect the panel cannot describe and whose drawer it does not have.
   // Same rule as the repair buttons: offering a control the panel cannot
