@@ -28,6 +28,7 @@ export interface ReadinessCheck {
   // to run on a host this app cannot reach.
   steps?: ReadinessStep[];
   running?: boolean;
+  repair_failed?: boolean;
   // Something the operator can do about this check itself, rendered as a
   // button. Replaces printing a command for an administrator to go and run:
   // this panel is ADMIN-only and the operator can already do the work.
@@ -104,6 +105,13 @@ export const repairLabels: Record<string, string> = {
   backfill_search: "Re-index now",
 };
 
+const retryLabels: Record<string, string> = { backfill_search: "Try re-indexing again" };
+
+export function repairLabel(check: ReadinessCheck): string {
+  const repair = check.repair ?? "";
+  return (check.repair_failed && retryLabels[repair]) || repairLabels[repair] || "";
+}
+
 export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
@@ -143,9 +151,11 @@ export function readinessTitle(report: RecordingReadiness): string {
   // Archive coverage is excluded from the recording verdict, so a shortfall
   // there would otherwise be invisible in the heading.
   const archiveRows = report.checks.filter(c => c.id.startsWith("archive.") && (c.state === "warn" || c.state === "needs_action"));
-  const archive = archiveRows.some(c => !c.running)
-    ? "archive search needs attention"
-    : archiveRows.length > 0 ? "archive search is re-indexing" : "";
+  const archive = archiveRows.some(c => c.repair_failed && !c.running)
+    ? "archive search re-index failed"
+    : archiveRows.some(c => !c.running)
+      ? "archive search needs attention"
+      : archiveRows.length > 0 ? "archive search is re-indexing" : "";
   if (verdict === "needs_action") {
     const count = report.checks.filter(c => c.state === "needs_action").length;
     return count === 1 ? "One recording check needs attention" : `${count} recording checks need attention`;
@@ -337,7 +347,10 @@ export function formatAge(checkedAt: string, now: Date = new Date()): string {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+const repairNouns: Record<string, string> = { backfill_search: "Re-index" };
+
 export function checkStateLabel(check: ReadinessCheck): string {
+  if (check.repair_failed) return `${repairNouns[check.repair ?? ""] ?? "Repair"} failed`;
   if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
   return stateLabels[check.state];
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, labelParts, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, labelParts, repairLabel, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -460,5 +460,24 @@ describe("the verdict while a repair is running", () => {
   it("still asks for attention when the gap is not being worked on", () => {
     expect(readinessTitle(archive(false))).toBe("Recording ready; archive search needs attention");
     expect(reportTone(archive(false))).toBe("warning");
+  });
+});
+
+describe("a repair that failed", () => {
+  const row = { id: "archive.search", state: "warn", code: "search_coverage_partial", message: "", repair: "backfill_search", repair_failed: true } as ReadinessCheck;
+
+  it("says so in the row's status", () => {
+    expect(checkStateLabel(row)).toBe("Re-index failed");
+    expect(checkTone(row)).toBe("warning");
+  });
+
+  it("offers to try again rather than to start fresh", () => {
+    expect(repairLabel(row)).toBe("Try re-indexing again");
+    expect(repairLabel({ ...row, repair_failed: false })).toBe("Re-index now");
+  });
+
+  it("says so in the verdict", () => {
+    const report = { state: "warn", recording_state: "passed", checks: [row] } as unknown as RecordingReadiness;
+    expect(readinessTitle(report)).toBe("Recording ready; archive search re-index failed");
   });
 });
