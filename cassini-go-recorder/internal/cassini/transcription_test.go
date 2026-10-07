@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
 
 	"gocassini/internal/inspect"
 	"gocassini/internal/portable"
+	"gocassini/internal/transcribe"
 )
 
 func TestTranscriptionRoundtripAndAnnotations(t *testing.T) {
@@ -120,5 +122,59 @@ func TestTranscriptionPackSnapshotAndRepublishPreserveDisplayAndSummary(t *testi
 	}
 	if meeting.Manifest.Meeting.Title != "Rerun" {
 		t.Fatal("renamed JSON was not recognized")
+	}
+}
+
+// Exercise capture metadata through a delayed build, both pack formats, and
+// audio eviction. The input name deliberately carries a conflicting date.
+func TestRecordingTimeSurvivesBuildPackAndTranscriptionExport(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "meeting.meeting")
+	if err := writeReadyMeetingBundleFixture(bundle, "source.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(dir, "renamed--20261007T120000.mkv")
+	const recorded = "2026-03-10T14:00:00"
+	if raw, err := exec.Command("ffmpeg", "-y", "-v", "error", "-i", filepath.Join(bundle, "meeting.webm"), "-c:a", "copy", "-metadata", "recorded_at_local="+recorded, input).CombinedOutput(); err != nil {
+		t.Fatalf("mkv fixture: %v: %s", err, raw)
+	}
+	if err := transcribe.BuildMeetingArtifact(context.Background(), input, bundle, transcribe.BuildConfig{TranscriptionMode: "off"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	for _, ext := range []string{".opus", ".json"} {
+		path := packAnnotateBundle(t, bundle, filepath.Join(dir, "published"+ext))
+		meeting, err := inspect.ExtractMeeting(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if meeting.Manifest.Meeting.RecordedAtLocal != recorded {
+			t.Fatalf("%s lost recording date: %+v", ext, meeting.Manifest.Meeting)
+		}
+		if ext == ".opus" {
+			tags, err := portableMeetingTags(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tags["CASSINI_RECORDED_AT_LOCAL"] != recorded {
+				t.Fatalf("mirror lost recording date: %+v", tags)
+			}
+			raw, err := portable.EncodeTranscription(tags)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Source struct {
+					Meeting portable.Meeting `json:"meeting"`
+				} `json:"source"`
+				Tags map[string]string `json:"tags"`
+			}
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			if doc.Source.Meeting.RecordedAtLocal != recorded || doc.Tags["CASSINI_RECORDED_AT_LOCAL"] != recorded {
+				t.Fatalf("transcription conversion lost recording time: %s", raw)
+			}
+		}
 	}
 }
