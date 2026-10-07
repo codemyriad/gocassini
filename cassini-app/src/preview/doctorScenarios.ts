@@ -216,7 +216,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     case "search-partial": case "search-running": case "search-failed":
       set({ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet." +
         (id === "search-running" ? " Re-indexing is running now." : id === "search-failed" ? " The last re-index did not finish: the archive could not be read." : ""),
-        action: "recheck", repair: id === "search-running" ? undefined : "backfill_search", running: id === "search-running" || undefined,
+        action: "recheck", repair: id === "search-running" ? undefined : "backfill_search", running: id === "search-running" || undefined, repair_failed: id === "search-failed" || undefined,
         steps: id === "search-running" ? undefined : [{ label: "Re-index now adds the 3 recordings that are not in search yet" }], checked_at }); break;
   }
   // The test row is on EVERY report the operator sends — offered where a test
@@ -300,6 +300,7 @@ export function createPreviewClient(id: string): DoctorClient {
       if (check && check.repair) {
         delete check.repair;
         delete check.steps;
+        delete check.repair_failed;
         check.running = true;
         check.message = "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. Re-indexing is running now.";
         repairStarted = Date.now();
