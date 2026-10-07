@@ -110,7 +110,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       // reachable, or the secret can never be rotated from the panel again.
       { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", action: "configure_talk", checked_at },
       { id: "talk.discovery", state: "passed", code: "recording_auth_verified", message: "Talk accepted Cassini's recording credential.", checked_at },
-      { id: "archive.search", state: "passed", code: "search_archive_files_accounted_for", message: "The search index records 12 indexed meeting(s). Every Opus file in the checked archive listing has an index outcome.", checked_at },
+      { id: "archive.search", state: "passed", code: "search_archive_files_accounted_for", message: "12 meetings are searchable. Every recording in the archive is accounted for.", checked_at },
     ],
   };
   const set = (check: ReadinessCheck) => {
@@ -214,9 +214,9 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       set({ id: "test", state: "needs_action", code: "test_failed", message: "The test recording did not finish; it stopped at upload.", action: "test_recording" });
       break;
     case "search-partial": case "search-running": case "search-failed":
-      set({ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "The search index records 9 indexed meeting(s); 3 archive Opus recordings without index rows. The checked archive has recordings outside search coverage." +
+      set({ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet." +
         (id === "search-running" ? " Re-indexing is running now." : id === "search-failed" ? " The last re-index did not finish: the archive could not be read." : ""),
-        action: "recheck", repair: id === "search-running" ? undefined : "backfill_search", steps: [{ label: "Re-index the 3 recording(s) with no index row or an unverified bundle" }], checked_at }); break;
+        action: "recheck", repair: id === "search-running" ? undefined : "backfill_search", steps: [{ label: "Re-index now adds the 3 recordings that are not in search yet" }], checked_at }); break;
   }
   // The test row is on EVERY report the operator sends — offered where a test
   // could succeed, waiting where it could not. Most fixtures simply omitted it,
@@ -271,7 +271,7 @@ export function createPreviewClient(id: string): DoctorClient {
       const healthy = scenarioReport("healthy");
       report.checks = report.checks.map(check => check.id === "archive.search" ? {
         ...healthy.checks.find(row => row.id === "archive.search")!, checked_at: new Date().toISOString(),
-        message: "The search index records 12 indexed meeting(s). Every Opus file in the checked archive listing has an index outcome. Last re-index: 3 indexed, 9 unchanged, 0 not searchable, 0 failed.",
+        message: "12 meetings are searchable. Every recording in the archive is accounted for. The last re-index added 3, left 9 unchanged, found 0 not searchable and failed on 0.",
       } : check);
       updateVerdict(report); repairStarted = 0;
     }
@@ -298,7 +298,7 @@ export function createPreviewClient(id: string): DoctorClient {
       const check = report.checks.find(row => row.id === "archive.search");
       if (check && check.repair) {
         delete check.repair;
-        check.message = "The search index records 9 indexed meeting(s); 3 archive Opus recordings without index rows. The checked archive has recordings outside search coverage. Re-indexing is running now.";
+        check.message = "9 meetings are searchable. Of the others, 3 are in the archive but not indexed yet. Re-indexing is running now.";
         repairStarted = Date.now();
       }
       return read();

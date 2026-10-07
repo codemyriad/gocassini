@@ -93,7 +93,7 @@ it("simulates a repair without network calls, duplicate actions or shared state"
   expect(repair.checks.find(row => row.id === "archive.search")?.message).toContain("running now");
   await vi.advanceTimersByTimeAsync(4500);
   const finished = await client.getReadiness();
-  expect(finished.checks.find(row => row.id === "archive.search")?.message).toContain("Last re-index: 3 indexed");
+  expect(finished.checks.find(row => row.id === "archive.search")?.message).toContain("The last re-index added 3");
   expect(finished.state).toBe("passed");
   expect((await createPreviewClient("search-partial").getReadiness()).state).toBe("warn");
   expect(fetch).not.toHaveBeenCalled();
