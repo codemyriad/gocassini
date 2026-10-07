@@ -87,9 +87,11 @@ function uncheckedBackend(): ReadinessCheck {
 // action, no steps, and a sentence naming what it waits for. Written as data
 // because these fixtures do not run the operator's suppression — they show its
 // OUTPUT, which is what a designer is laying out.
-function blocked(id: string, blocker: string): ReadinessCheck {
+function blocked(id: string, blocker: string, unchecked = false): ReadinessCheck {
   return { id, state: "not_verified", code: "check_blocked",
-    message: `Not checked: this depends on ${blocker}, which needs attention first.` };
+    message: unchecked
+      ? `Not checked: this depends on ${blocker}, which has not been checked yet. Run all checks first.`
+      : `Not checked: this depends on ${blocker}, which needs attention first.` };
 }
 
 export function scenarioReport(id: string, now = new Date()): RecordingReadiness {
@@ -223,7 +225,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     };
     const blocker = ["storage", "talk.hpb", "talk.discovery"].find(id => !proven(id));
     report.checks.push(blocker
-      ? blocked("test", checkLabels[blocker] ?? blocker)
+      ? blocked("test", checkLabels[blocker] ?? blocker, report.checks.find(check => check.id === blocker)?.state !== "needs_action")
       : { id: "test", state: "not_verified", code: "test_not_run", action: "test_recording",
           message: "Nothing has been recorded through Talk yet. A short test recording is what proves the whole path, from a call to audio you can play." });
   }
