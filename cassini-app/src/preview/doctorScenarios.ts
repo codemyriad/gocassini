@@ -103,7 +103,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   const report: RecordingReadiness = {
     state: "passed", recording_state: "passed", secret_configured: true, secret_source: "setup",
     test_room_url: "https://preview.invalid/call/review-room",
-    test: { state: "succeeded", published: true, job_id: "preview-recording", playback_verified_at: checked_at, viewer_url: "https://preview.invalid/recording" },
+    test: { state: "not_started", published: false },
     checks: [
       { id: "host.workdir", state: "passed", code: "workdir", message: "working directory is writable", checked_at },
       { id: "host.tmpdir.writable", state: "passed", code: "tmpdir.writable", message: "temporary directory is writable", checked_at },
@@ -128,6 +128,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   // suppression — so a row left in the shared base would preview as a green
   // "test passed" beside a backend that needs attention.
   if (id === "healthy" || id === "old-findings") {
+    report.test = { state: "succeeded", published: true, job_id: "preview-recording", playback_verified_at: checked_at, viewer_url: "https://preview.invalid/recording" };
     report.checks.push({ id: "test", state: "passed", code: "test_playback", message: "A recording started in Talk was published, and its audio was confirmed by playing it.", action: "test_recording", checked_at });
   }
   switch (id) {
