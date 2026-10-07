@@ -13,6 +13,7 @@
   import { loadConfig } from "./operator/config";
   import { OperatorClient } from "./operator/client";
   import SettingsPanel from "./SettingsPanel.svelte";
+  import RecordingSetup from "./RecordingSetup.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
   import type { OperatorPanel } from "./surfaceRouting";
@@ -38,6 +39,12 @@
 <div class="op-settings">
   {#if configError}
     <section class="alert alert-error text-sm">{configError}</section>
+  {:else if panel === "doctor"}
+    <!-- The checks are a diagnostic, not a setting. They lived under Publish
+         pipeline because that is where recording setup was configured, which
+         made the one screen that answers "is this working" the hardest one to
+         find. -->
+    <RecordingSetup {operatorClient} on:openStorage={() => dispatch("panel", "pipeline")} />
   {:else if panel === "endpoints"}
     <LLMSettingsPanel {operatorClient} />
   {:else if panel === "pipeline"}

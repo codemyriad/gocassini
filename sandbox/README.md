@@ -1,6 +1,6 @@
 # Cassini Sandbox (Nextcloud AIO)
 
-The demo sandbox at **https://demo.nextcloud.codemyriad.io** runs on **Nextcloud
+The staging sandbox at **https://staging.nextcloud.codemyriad.io** runs on **Nextcloud
 All-in-One (AIO)** — the substrate a real admin runs, and the one
 [cloud.codemyriad.io](https://cloud.codemyriad.io) uses. This is deliberate: the
 sandbox should mirror a real deployment installing Cassini, not the CI/dev
@@ -76,7 +76,7 @@ ssh -L 8080:localhost:8080 <sandbox-host>
 # browse https://localhost:8080, note the passphrase
 ```
 
-In the wizard: set the domain `demo.nextcloud.codemyriad.io`, then on the
+In the wizard: set the domain `staging.nextcloud.codemyriad.io`, then on the
 optional-containers page **enable Talk** (and Talk recording if listed), and
 **Download and start containers**. Record the generated admin password (or let
 `wire-cassini.sh` reset it — see below).
@@ -86,7 +86,7 @@ optional-containers page **enable Talk** (and Talk recording if listed), and
 Route `/exapps/*` to HaRP and everything else to AIO's apache:
 
 ```caddyfile
-demo.nextcloud.codemyriad.io:443 {
+staging.nextcloud.codemyriad.io:443 {
     encode gzip zstd
 
     handle /exapps/* {
@@ -144,12 +144,12 @@ sudo install -d -g docker -m 2770 /opt/cassini-aio   # setgid: files inherit the
 
 ```bash
 # PUBLIC Talk welcome (proves the /exapps route + HaRP tunnel):
-curl -fsS https://demo.nextcloud.codemyriad.io/index.php/apps/app_api/proxy/gocassini/api/v1/welcome
+curl -fsS https://staging.nextcloud.codemyriad.io/index.php/apps/app_api/proxy/gocassini/api/v1/welcome
 # → {"version":1}
 
 # ADMIN status (Talk secrets, STT device, DB/storage):
 curl -fsS -u admin:<password> \
-  https://demo.nextcloud.codemyriad.io/index.php/apps/app_api/proxy/gocassini/operator/status
+  https://staging.nextcloud.codemyriad.io/index.php/apps/app_api/proxy/gocassini/operator/status
 # → "signaling_internal_secret_configured": true
 ```
 

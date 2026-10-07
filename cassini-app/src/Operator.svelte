@@ -25,6 +25,10 @@
       items: [{ id: "recordings", label: "Recordings" }],
     },
     {
+      label: "Diagnostics",
+      items: [{ id: "doctor", label: "Doctor" }],
+    },
+    {
       label: "Settings",
       items: [
         { id: "endpoints", label: "AI providers" },

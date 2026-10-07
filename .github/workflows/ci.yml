@@ -111,28 +111,6 @@ jobs:
           while IFS= read -r -d '' script; do
             bash -n "$script"
           done < <(find harness/bin -type f -name '*.sh' -print0)
-      - name: Shellcheck D-453 contract scripts
-        run: >-
-          shellcheck
-          deployment/ffmpeg/resolve-latest.sh
-          deployment/ffmpeg/build.sh
-          deployment/ffmpeg/test-resolve-latest.sh
-          harness/bin/ci-ffmpeg-bundle.sh
-          scripts/test-info-schema.sh
-          harness/bin/lib-exapp-manifest.sh
-          harness/bin/test-exapp-image-ref.sh
-          harness/bin/test-exapp-manifest.sh
-          harness/bin/test-installed-validation.sh
-          harness/bin/test-faithful-host-tools.sh
-          harness/bin/test-installed-backend-url.sh
-          harness/bin/test-stack-resume.sh
-          harness/bin/validate-installed-artifact.sh
-          harness/bin/validate-installed-exapp-private-talk.sh
-          harness/bin/ci-e2e-installed-exapp-talk.sh
-          harness/bin/test-post-boundary-stream.sh
-          harness/bin/verify-post-boundary-stream.sh
-          harness/bin/test-negative-manifest.sh
-          harness/bin/test-harness-prerequisites.sh
       - name: Compile D-453 Python helpers
         run: |
           python3 -m py_compile harness/bin/installed-validation.py

@@ -212,7 +212,10 @@
       return;
     }
     const url = new URL(window.location.href);
-    url.hash = applyPanel(applySurface(window.location.hash, "operator"), "pipeline").replace(/^#/, "");
+    // The checks live in Doctor now. This button exists because the banner said
+    // recording is broken, so it has to land on the screen that says what is
+    // broken — not on the panel that used to host it.
+    url.hash = applyPanel(applySurface(window.location.hash, "operator"), "doctor").replace(/^#/, "");
     window.history.pushState({}, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
@@ -652,14 +655,19 @@
     /* The first-run dialog's scrim is absolute against THIS, not the viewport:
        a fixed one would dim Nextcloud's own header and sidebar too. */
     position: relative;
-    /* A DEFINITE height (not just min-height) so the viewer's height:100% chain
-       resolves through the shell wrapper — :host{height:100%} in the embedded
-       shadow build. With only min-height the wrapper's height is indefinite and
-       the viewer's `.cassini-root{height:100%}` (which carries the bg-base-200
-       grid) collapses to content height, leaving the meeting view with no
-       background / broken layout (D-420 V3). */
-    height: 100%;
-    min-height: 100%;
+    /* A DEFINITE height, so the viewer's height:100% chain resolves through this
+       wrapper: with an indefinite one the viewer's `.cassini-root{height:100%}`
+       (which carries the bg-base-200 grid) collapses to content height and the
+       meeting view loses its background and layout (D-420 V3).
+       `flex: 1 1 auto` + `min-height: 0` in #app's flex column gives exactly
+       that — a used height the flex algorithm resolved — and, unlike
+       `height: 100%`, one that accounts for chrome rendered ABOVE the shell.
+       D-763's "recording needs action" banner is such chrome, and with
+       `height: 100%` the shell overflowed the visible area by the banner's
+       height, putting the bottom of every panel out of scrolling reach. Same
+       pattern as .cassini-shell-surface below. */
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   /* Colours resolve through a three-step chain, outermost wins:

@@ -60,7 +60,7 @@
       "name": "Parakeet TDT 0.6B v3 \u2014 fp32",
       "description": "Multilingual speech recognition, full precision weights",
       "license": "CC-BY-4.0",
-      "source_url": "https://assets.gocassini.codemyriad.io/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3.tar.bz2",
+      "source_url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
       "source_sha256": "9125e6a7beb392821f19a3633b80bb2847599580e34ed42a4128732978ad759c",
       "files": [
         {

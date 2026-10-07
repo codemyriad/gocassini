@@ -30,3 +30,24 @@ body,
 #app {
   height: 100%;
 }
+
+/* ...and a flex COLUMN, because the shell is not always the only child.
+   D-763's "recording needs action" banner renders above it, and with #app as a
+   block the banner's height was simply ADDED to a shell that still claimed
+   `height: 100%`: the operator pane ended 77px below the visible area (the
+   banner, plus its margin collapsing out through #app and pushing #app itself
+   down), so the bottom of whatever was open could not be scrolled to at all.
+   The scroller was not broken — it was off-screen.
+
+   Worst where it hurts most: the banner only appears when a check needs
+   attention, which is exactly when somebody opens Doctor to read the checks.
+
+   As a column, chrome above the shell takes its space OUT of the shell's
+   instead of on top of it, and a flex container does not collapse its child's
+   margins through itself. The shell becomes a bounded flex child
+   (`flex: 1 1 auto; min-height: 0`), the same pattern .cassini-shell-surface
+   already uses one level down, where a child's `height: 100%` resolves fine. */
+#app {
+  display: flex;
+  flex-direction: column;
+}

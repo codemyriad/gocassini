@@ -52,6 +52,22 @@ func TestEnsureModelPrefersTheBundledRoot(t *testing.T) {
 	}
 }
 
+func TestEnsureModelHasNoArchiveForFP32V3(t *testing.T) {
+	// The fp32 v3 model has no bundle archive; it is installed file by file
+	// from dist.gocassini.com. EnsureModel must say so instead of downloading.
+	t.Setenv(envBundledModelRoot, "")
+	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "")
+	cacheRoot := t.TempDir()
+
+	_, err := EnsureModel(cacheRoot, ModelParakeet06BV3, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "has no archive download") {
+		t.Fatalf("EnsureModel() error = %v, want the no-archive error", err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(cacheRoot, "models")); err == nil && len(entries) != 0 {
+		t.Errorf("model cache = %v, want nothing written", entries)
+	}
+}
+
 func TestEnsureModelRefusesToRepairADeclaredBundledModel(t *testing.T) {
 	// A model the image claims to bake, but does not have, is a broken image.
 	// Downloading over the top would hide that, so EnsureModel fails and says

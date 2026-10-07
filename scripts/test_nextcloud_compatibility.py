@@ -192,6 +192,16 @@ class ReleaseTests(unittest.TestCase):
                         self.build()
                     self.jobs[job]['result'] = 'success'
 
+    def test_required_jobs_match_release_evidence_needs(self):
+        # The qualify job runs only on a release tag, so a required job the
+        # workflow no longer has would otherwise surface first as a blocked
+        # release (v0.2.0-beta.8: e2e-install, removed with the storage modes).
+        lines = (policy.ROOT / evidence.WORKFLOW).read_text().splitlines()
+        start = lines.index('  release-evidence:')
+        needs = next(line for line in lines[start:] if line.strip().startswith('needs:'))
+        declared = {job.strip() for job in needs.split('[', 1)[1].rsplit(']', 1)[0].split(',')}
+        self.assertEqual(set(evidence.REQUIRED_JOBS), declared)
+
     def test_retagged_registry_image_blocks(self):
         self.images['cpu']['digest'] = 'sha256:' + '5' * 64
         with self.assertRaisesRegex(ValueError, 'registry tag differs'):

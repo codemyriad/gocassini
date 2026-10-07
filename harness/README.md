@@ -26,6 +26,10 @@ are documented when a flow intentionally calls them directly.
 10. [Repository structure and operational reference](#10-repository-structure-and-operational-reference)
 11. [Teardown reference](#11-teardown-reference)
 
+Production data: [pull Nextcloud recordings](#95-seeding-published-recordings),
+[capture the operator volume](#96-seeding-the-installed-operator-volume), and
+[seed both together](#97-seeding-both-production-data-sources).
+
 ## Purpose
 
 `harness/` is the reproducible E2E lab for Nextcloud Talk/Spreed testing:
@@ -1369,9 +1373,54 @@ CALL_URL="$(./bin/cassini dev room create --name "Basic video room" | tail -n1)"
 
 ### 9.5 Seeding published recordings
 
-Use `cassini dev meetings pull --out harness/runtime/seed/prod` to download
-recordings visible to your Nextcloud account. The output is a confidential local
-static archive. New pulls write a `cassini.seed.pack.v2` manifest with SHA-256
+The production data comes from two places: published recordings in Nextcloud
+Files and processing history/artifacts in the operator volume. Use the CLI pull
+below for Files; capture the operator volume separately in section 9.6. Copying
+only the operator volume does not retrieve recordings stored in Nextcloud Files.
+
+Run local commands from the repo root with the [development prerequisites](../docs/quick-start.md)
+installed (`./bin/cassini` builds the Go CLI). Seeding requires Docker Compose,
+Python 3, and local `ffprobe`; `--annotations current` also requires `ffmpeg`.
+Use a Nextcloud app password for an account that can read the required recordings
+(see [authentication](../docs/agent-meeting-access.md)). The pull only exports
+that account's readable meetings, not every user's Files or the Nextcloud database.
+
+In a local **Bash** shell, set the production connection and preview the transfer:
+
+```bash
+umask 077
+mkdir -p harness/runtime/seed/prod
+export CASSINI_NC_URL="https://cloud.example.com"
+export CASSINI_NC_USER="your-production-user"
+read -r -s -p 'Nextcloud app password: ' CASSINI_NC_APP_PASSWORD
+printf '\n'
+export CASSINI_NC_APP_PASSWORD
+./bin/cassini dev meetings pull --out harness/runtime/seed/prod --dry-run
+./bin/cassini dev meetings pull --out harness/runtime/seed/prod --annotations current
+unset CASSINI_NC_APP_PASSWORD CASSINI_NC_URL CASSINI_NC_USER
+```
+
+Replace the example URL and username. Use `--room`, `--from`, `--to`, or
+`--limit` on both pull commands to narrow the selection. For delivered-file
+annotations only (or a server without the annotations API), omit
+`--annotations current`. Re-run a failed pull with the same connection, output,
+filters, and annotation policy before seeding.
+
+Keep the resulting layout intact:
+
+```text
+harness/runtime/seed/prod/
+  catalog.json
+  seed-manifest.json
+  meetings/
+    <id>.opus
+```
+
+`harness/runtime/` is gitignored; both this pack and the operator snapshot below
+contain confidential production data and should stay out of commits and shared
+artifacts. Use separate directories for different captures.
+
+New pulls write a `cassini.seed.pack.v2` manifest with SHA-256
 hashes, remote ETags, selection/completeness information, and the annotation
 policy. Resume skips a recording only when its strong ETag and local hash match;
 servers without ETags are downloaded again. A failed/partial v2 pull must be
@@ -1418,6 +1467,68 @@ against the catalog, including metadata. Keep the pack out of version control.
 
 ### 9.6 Seeding the installed operator volume
 
+Capture the **entire persistent-volume root** from the Docker host running the
+production ExApp (which may differ from the Nextcloud host). The standard mount
+is `/nc_app_gocassini_data`; confirm it before copying:
+
+```bash
+# On the production Docker host; adjust the container name if necessary.
+docker inspect nc_app_gocassini --format '{{range .Mounts}}{{println .Destination .Source}}{{end}}'
+```
+
+The required local shape is `nc_app_gocassini_data/operator/jobs/` plus a nonempty
+`nc_app_gocassini_data/operator/jobs.sqlite3`. Keep all per-attempt directories
+under `jobs/`, including raw media, intermediate outputs, and logs. Also retain
+other volume contents: annotation databases, any SQLite `-wal`/`-shm` sidecars,
+settings, lifecycle state, models, and any legacy `site/` directory. Do not copy
+only the SQLite DB, only the job folders, or substitute a Nextcloud data-directory
+backup. For overridden storage paths, consult [persistent storage](../docs/exapp-install.md#persistent-storage)
+and assemble the expected layout from the actual durable paths.
+
+For a consistent manual capture, arrange a maintenance window with no active
+recordings or processing and wait for annotation synchronization to finish.
+The following **production-host Bash** example stops Cassini during the copy;
+Nextcloud itself stays running. It uses a new directory for each capture and
+restarts the container even if the copy fails:
+
+```bash
+set -euo pipefail
+umask 077
+snapshot_dir="$(mktemp -d "$HOME/cassini-operator-snapshot.XXXXXX")"
+mkdir "$snapshot_dir/nc_app_gocassini_data"
+trap 'docker start nc_app_gocassini >/dev/null' EXIT
+docker stop nc_app_gocassini >/dev/null
+docker cp nc_app_gocassini:/nc_app_gocassini_data/. \
+  "$snapshot_dir/nc_app_gocassini_data/"
+docker start nc_app_gocassini >/dev/null
+trap - EXIT
+printf 'Snapshot directory: %s\n' "$snapshot_dir"
+```
+
+Use an account with Docker access. Copy the printed snapshot to the development
+machine, replacing the example SSH host and absolute remote path below. Run this
+from the **local repo root**, using a fresh destination:
+
+```bash
+umask 077
+mkdir -p harness/runtime/seed/operator-prod
+scp -r operator@production-docker-host:/absolute/snapshot/path/nc_app_gocassini_data \
+  harness/runtime/seed/operator-prod/
+```
+
+The seed argument is the extracted volume root, **not** its `operator/` child or
+its parent snapshot directory:
+
+```text
+harness/runtime/seed/operator-prod/nc_app_gocassini_data/
+  operator/
+    jobs.sqlite3
+    jobs/
+    annotations.sqlite3    # if present
+    ...                    # remaining volume contents and SQLite sidecars
+  site/                    # if present
+```
+
 `--seed-operator` copies an AppAPI persistent-volume root containing
 `operator/jobs/` and `operator/jobs.sqlite3` into a fresh installed ExApp volume. The harness checks the
 source before startup and bind-mounts it read-only for the copy. It refuses
@@ -1445,6 +1556,45 @@ export those using `--annotations current` and capture a synchronized snapshot.
 An operator-only restore retains its durable annotation database. Source
 Nextcloud file IDs and shares are never portable, and importing an operator
 volume alone does not populate Nextcloud Files.
+
+### 9.7 Seeding both production data sources
+
+After pulling Files and capturing a synchronized operator snapshot, validate
+both locally without starting containers:
+
+```bash
+python3 harness/bin/validate-seeds.py \
+  --published harness/runtime/seed/prod \
+  --operator harness/runtime/seed/operator-prod/nc_app_gocassini_data
+```
+
+Then start a fresh installed ExApp with both seeds:
+
+```bash
+./bin/cassini dev stack up --cassini installed-exapp --build \
+  --seed-published harness/runtime/seed/prod \
+  --seed-operator harness/runtime/seed/operator-prod/nc_app_gocassini_data
+./bin/cassini dev stack status
+```
+
+`--build` builds the local ExApp image; omit it if the expected local image
+already exists. Do not use `--resume` for an operator restore. If replacing an
+existing local lab, first use the [teardown reference](#11-teardown-reference)
+to remove its volumes; that discards the lab's current data. Keep the source
+seed directories for subsequent fresh runs.
+
+Startup restores the operator volume first, then imports the published pack and
+rebuilds destination indexes. Check that preflight and the published-seed admin
+listing verification succeed. Open `http://127.0.0.1:28080/` (or your configured
+harness URL), log in as `admin` / `admin` with default credentials, and check the
+Cassini recordings and Operator job history. Imported recordings have local
+read-only shares for `admin`; original production shares and users are not
+recreated. Use locally recorded meetings for permission tests.
+
+If validation reports an incomplete pack, repeat the pull. If it reports pending
+annotation edits in the operator snapshot, export with `--annotations current`,
+let production synchronization finish, and capture a new operator snapshot.
+Do not delete source database rows or the manifest to bypass these checks.
 
 ## 10. Repository structure and operational reference
 
