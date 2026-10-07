@@ -13,11 +13,17 @@ import (
 // ConnectionCheck contains only stable codes and safe messages. Never return
 // upstream error bodies: they may contain credentials or private room details.
 type ConnectionCheck struct {
-	ID      string `json:"id"`
-	State   string `json:"state"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Action  string `json:"action,omitempty"`
+	ID      string           `json:"id"`
+	State   string           `json:"state"`
+	Code    string           `json:"code"`
+	Message string           `json:"message"`
+	Action  string           `json:"action,omitempty"`
+	Steps   []ConnectionStep `json:"steps,omitempty"`
+}
+
+type ConnectionStep struct {
+	Label    string   `json:"label"`
+	Commands []string `json:"commands,omitempty"`
 }
 
 // ProbeConnection authenticates exactly as the recorder does, but never joins
@@ -27,7 +33,7 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 	r.resolveProcessScopedTalkConfig()
 	checks := []ConnectionCheck{}
 	add := func(id, state, code, message, action string) {
-		checks = append(checks, ConnectionCheck{id, state, code, message, action})
+		checks = append(checks, ConnectionCheck{ID: id, State: state, Code: code, Message: message, Action: action})
 	}
 	if err := r.resolveTalkTarget(); err != nil {
 		// The room is Cassini's own, created by the operator, so a reader is
@@ -57,7 +63,8 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 			// Nextcloud. That is a finding about the deployment, and reporting
 			// it as an absence left a real fault rendering as a neutral "not
 			// verified" row that flagged nothing (D-798).
-			add("talk.discovery", "warn", "nextcloud_unreachable", "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.", "recheck")
+			finding := classifyUnreachable(err)
+			checks = append(checks, ConnectionCheck{ID: "talk.discovery", State: "warn", Code: finding.code, Message: finding.message, Action: "recheck", Steps: finding.steps})
 		}
 		return checks
 	}

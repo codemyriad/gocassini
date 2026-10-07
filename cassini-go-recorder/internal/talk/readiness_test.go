@@ -131,15 +131,18 @@ func TestProbeReportsAnUnreachableNextcloudAsAWarningNotAnAbsence(t *testing.T) 
 	}
 	found := false
 	for _, c := range checks {
-		if c.Code != "nextcloud_unreachable" {
+		if c.Code != "nextcloud_connection_refused" {
 			continue
 		}
 		found = true
 		if c.State != "warn" {
-			t.Fatalf("nextcloud_unreachable = %q; a probe that tried and failed must warn", c.State)
+			t.Fatalf("nextcloud_connection_refused = %q; a probe that tried and failed must warn", c.State)
+		}
+		if len(c.Steps) == 0 {
+			t.Fatalf("nextcloud_connection_refused carries no steps; the reader is owed what to do: %+v", c)
 		}
 	}
 	if !found {
-		t.Fatalf("no nextcloud_unreachable finding: %+v", checks)
+		t.Fatalf("no nextcloud_connection_refused finding for a closed port: %+v", checks)
 	}
 }
