@@ -31,7 +31,6 @@ func (rt *Runtime) testRecordingRow(test readinessTest) readinessCheck {
 		if test.Stage != "" {
 			row.Message = "The test recording did not finish; it stopped at " + test.Stage + "."
 		}
-		row.Steps = []readinessStep{{Label: "Cassini's log records why the recording stopped; the other checks here cover the causes it can detect"}}
 	case test.Published:
 		row.State, row.Code = "not_verified", "test_awaiting_playback"
 		row.Message = "The test recording was published. Playing it is what confirms the audio arrived."

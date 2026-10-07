@@ -225,6 +225,7 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   const codeLabels: Record<string, Record<string, string>> = {
     test_in_progress: { test_recording: "Show steps" },
     test_awaiting_playback: { test_recording: "Show steps" },
+    test_failed: { test_recording: "Show steps" },
   };
   return actions.filter(action => labels[action]).map(action => ({
     action,

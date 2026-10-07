@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { BookOpen, Check, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Play, Settings, TriangleAlert, Video, X } from "@lucide/svelte";
+  import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, Settings, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "./CommandBlock.svelte";
   import { checkLabels, checkStateLabel, checkTone, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
@@ -12,7 +12,7 @@
   // own Doctor panel — so this action has to move the reader there. It used to
   // scrollIntoView an id that was on the same page; from here that id is not
   // mounted at all, and the button would silently do nothing.
-  const dispatch = createEventDispatcher<{ openStorage: void }>();
+  const dispatch = createEventDispatcher<{ openStorage: void; openRun: string }>();
   let report: RecordingReadiness | null = null;
   let secret = "";
   let busy = false;
@@ -44,6 +44,7 @@
   }
   $: waitingForTalk = report?.test.state === "waiting_for_talk";
   $: awaitingPlayback = !!report?.test.published && !!report?.test.viewer_url && !report?.test.playback_verified_at;
+  $: testFailed = report?.test.state === "failed";
   const testSteps = [
     "Press Prepare test. Cassini creates a conversation named “Cassini recording test” in your name, so that you can moderate it — Talk’s Start recording action belongs to a conversation’s moderators.",
     "Open the room, join the call, and use Talk’s Start recording action.",
@@ -224,7 +225,7 @@
   <div class="alert alert-soft items-start gap-2 px-3 py-2 text-sm {calloutTone[verdictTone]}" role="status">
     <svelte:component this={toneIcons[verdictTone]} size={16} class="mt-0.5 shrink-0 {verdictTone === 'neutral' ? 'opacity-70' : toneClasses[verdictTone]}" aria-hidden="true" />
     <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-      <p class="font-semibold text-base-content">{verdict}{#if followUp}; <button type="button" class="link font-semibold" on:click={goToTest}>{followUp}</button>{/if}</p>
+      <p class="font-semibold text-base-content">{verdict}{#if followUp}{testFailed && report?.recording_state === "passed" ? ", but " : "; "}<button type="button" class="link font-semibold" on:click={goToTest}>{followUp}</button>{/if}</p>
       {#if shared}<p class="text-xs text-base-content/70" title={new Date(shared.checkedAt).toLocaleString()}>Checked {formatAge(shared.checkedAt)}</p>{/if}
     </div>
   </div>
@@ -268,6 +269,12 @@
               {#if check.id === "test" && waitingForTalk && testRoomHref}
                 <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={testRoomHref} target="_blank" rel="noreferrer"><Video size={15} class="shrink-0" aria-hidden="true" />Open test room</a>
               {/if}
+              {#if check.id === "test" && testFailed}
+                {#if report.test.job_id}
+                  <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" on:click={() => dispatch("openRun", report?.test.job_id ?? "")}><FileSearch size={15} class="shrink-0" aria-hidden="true" />See why it stopped</button>
+                {/if}
+                <button class="btn btn-sm btn-outline btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
+              {/if}
               {#if check.id === "test" && awaitingPlayback}
                 <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={report.test.viewer_url} target="_blank" rel="noreferrer"><Play size={15} class="shrink-0" aria-hidden="true" />Play the recording</a>
               {/if}
@@ -286,7 +293,7 @@
                 {/if}
               {/if}
               {#each rowActions(check).filter((item) => item.action !== "recheck") as item}
-                <button class="btn btn-sm btn-outline {check.state === "passed" || check.code === "test_in_progress" || check.code === "test_awaiting_playback" ? "btn-outline-quiet" : ""} btn-outline-hover" disabled={busy} aria-expanded={item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
+                <button class="btn btn-sm btn-outline {check.state === "passed" || check.code === "test_in_progress" || check.code === "test_awaiting_playback" || check.code === "test_failed" ? "btn-outline-quiet" : ""} btn-outline-hover" disabled={busy} aria-expanded={item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
               {/each}
             </div>
           {/if}
@@ -339,7 +346,8 @@
           </ol>
           <p class="mb-3 text-sm text-base-content/70">A recording captures a call, so the call needs someone in it: Cassini joins to record, not to talk. The conversation and the test recording are both ordinary ones, and can be deleted afterwards.</p>
           <div class="flex flex-wrap gap-2">
-            {#if (waitingForTalk && testRoomHref) || awaitingPlayback}
+            {#if testFailed}
+            {:else if (waitingForTalk && testRoomHref) || awaitingPlayback}
               <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
             {:else}
               <button class="btn btn-primary btn-sm" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
@@ -347,7 +355,7 @@
             {/if}
           </div>
           {#if report.test.started_at}
-            {#if !waitingForTalk && !awaitingPlayback}<p class="mt-3 text-sm" role="status">{`${report.test.stage ?? "Test"}: ${report.test.state}`}</p>{/if}
+            {#if !waitingForTalk && !awaitingPlayback && !testFailed}<p class="mt-3 text-sm" role="status">{`${report.test.stage ?? "Test"}: ${report.test.state}`}</p>{/if}
             {#if report.test.job_id}<p class="mt-1 text-xs">Recording {report.test.job_id}</p>{/if}
             {#if report.test.published && report.test.viewer_url && !awaitingPlayback}
               <a class="btn btn-sm mt-3" href={report.test.viewer_url} target="_blank" rel="noreferrer">Open published recording</a>
