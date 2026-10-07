@@ -193,7 +193,7 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
     configure_talk: "Set credential",
     connect_talk: "Connect Talk",
     test_recording: "Record a test",
-    recheck: "Check again",
+    recheck: "Check",
     setup_storage: "Set up storage",
     repair_configuration: "How to repair this",
   };

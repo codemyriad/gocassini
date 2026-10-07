@@ -80,7 +80,7 @@ function sortRows(checks: ReadinessCheck[]): ReadinessCheck[] {
 // fixture that drops it shows a checklist the product never sends.
 function uncheckedBackend(): ReadinessCheck {
   return { id: "talk.hpb", state: "not_verified", code: "hpb_not_checked", action: "recheck",
-    message: "Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one. Check again to run it." };
+    message: "Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one." };
 }
 
 // A row waiting on another check, exactly as the operator rewrites one: no
@@ -133,9 +133,9 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
         // the first check.
         { id: "host.workdir", state: "not_verified", code: "host_not_checked", message: "Not checked yet.", action: "recheck" },
         { id: "host.tmpdir.writable", state: "not_verified", code: "host_not_checked", message: "Not checked yet.", action: "recheck" },
-        { id: "storage", state: "not_verified", code: "storage_not_checked", message: "Nextcloud storage has not been checked yet. Check again to run it.", action: "recheck" },
+        { id: "storage", state: "not_verified", code: "storage_not_checked", message: "Nextcloud storage has not been checked yet.", action: "recheck" },
         uncheckedBackend(),
-        { id: "talk.discovery", state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet. Check again to run it.", action: "recheck" },
+        { id: "talk.discovery", state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet.", action: "recheck" },
         { id: "archive.search", state: "not_verified", code: "search_coverage_not_checked", message: "Archive search coverage has not been checked yet.", action: "recheck" },
       ];
       report.test_room_url = "";
@@ -302,7 +302,7 @@ export function createPreviewClient(id: string): DoctorClient {
       if (payload.test_room_url !== undefined) {
         report.test_room_url = "https://preview.invalid/call/review-room";
         const check = report.checks.find(row => row.id === "talk.discovery");
-        if (check) Object.assign(check, { state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet. Check again to run it.", action: "recheck" });
+        if (check) Object.assign(check, { state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet.", action: "recheck" });
       }
       if (payload.action === "arm_test") report.test = { state: "waiting_for_talk", published: false, started_at: new Date().toISOString() };
       if (payload.action === "confirm_playback") report.test.playback_verified_at = new Date().toISOString();

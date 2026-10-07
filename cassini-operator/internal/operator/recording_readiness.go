@@ -652,7 +652,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// Safe because this panel reports rather than authorises: admission is
 		// decided separately by ncAccessSubstrate.recordingRefusal(), checked
 		// above and not bounded by this TTL.
-		add("storage", "not_verified", "storage_not_checked", "Nextcloud storage has not been checked yet. Check again to run it.", "recheck")
+		add("storage", "not_verified", "storage_not_checked", "Nextcloud storage has not been checked yet.", "recheck")
 	} else if access.OK {
 		// Says what was established, in the reader's terms. "The Nextcloud
 		// storage preflight passed" named an internal routine and no fact: the
@@ -684,7 +684,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// are different facts: no probe result at all is an absence, whereas an
 		// aged one is a finding that happens to be old. Probe results are
 		// in-memory only, so a restart genuinely leaves nothing established.
-		add("talk.discovery", "not_verified", "connection_not_checked", "The Talk connection has not been checked yet. Check again to run it.", "recheck")
+		add("talk.discovery", "not_verified", "connection_not_checked", "The Talk connection has not been checked yet.", "recheck")
 	} else {
 		// Stamped with when the probe ran, so its age travels with the verdict
 		// instead of replacing it.
@@ -710,7 +710,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	// there to wait for.
 	if !hasReadinessRow(resp.Checks, "talk.hpb") {
 		add("talk.hpb", "not_verified", "hpb_not_checked",
-			"Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one. Check again to run it.",
+			"Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one.",
 			"recheck")
 	}
 	// The credential belongs to that same row. It used to have one of its own,
