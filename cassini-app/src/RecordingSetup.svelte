@@ -1,9 +1,9 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, Settings, TextSearch, TriangleAlert, Video, X } from "@lucide/svelte";
+  import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, RefreshCw, Settings, TextSearch, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "./CommandBlock.svelte";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, repairLabel, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, describeRefreshFailure, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, repairLabel, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -18,6 +18,8 @@
   let busy = false;
   let error = "";
   let stale = false;
+  let refreshFailure = "";
+  let lastLoad = { check: false, only: "" };
   let panel = "";
   let panelOwner = "";
   // The rows the operator sent, unaltered.
@@ -115,6 +117,7 @@
     // for the five-second refresh, which dropped any click landing during a
     // read; the refresh is gone and so is the guard.
     if (busy) return;
+    lastLoad = { check, only };
     busy = true; checking = check; checkingOnly = only; error = "";
     try {
       const next = check
@@ -124,7 +127,7 @@
       const changed = readinessHealthKey(report) !== readinessHealthKey(next);
       report = next; stale = false; error = "";
       if (changed) notifySetupChanged();
-    } catch (e) { if (alive) { stale = true; error = e instanceof Error ? e.message : String(e); } }
+    } catch (e) { if (alive) { stale = true; refreshFailure = describeRefreshFailure(e); } }
     finally { busy = false; checking = false; checkingOnly = ""; }
   }
   async function save(payload: RecordingSetupUpdate) {
@@ -220,7 +223,19 @@
     <p>What Cassini needs to record and search meetings, and what to do when something needs attention.</p>
   </div>
 </header>
-{#if verdict}
+{#if stale}
+  <div class="alert alert-soft alert-warning alert-tinted items-start gap-2 px-3 py-2 text-sm" role="alert">
+    <TriangleAlert size={16} class="mt-0.5 shrink-0 {toneClasses.warning}" aria-hidden="true" />
+    <div class="min-w-0">
+      <p class="font-semibold text-base-content">Couldn’t refresh the checks</p>
+      <p class="mt-0.5 text-base-content/80">{refreshFailure}</p>
+      <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" disabled={busy} on:click={() => load(lastLoad.check, lastLoad.only)}><RefreshCw size={15} class="shrink-0" aria-hidden="true" />{busy ? "Trying…" : "Try again"}</button>
+        {#if shared}<p class="text-xs text-base-content/70" title={new Date(shared.checkedAt).toLocaleString()}>Last checked {formatAge(shared.checkedAt)}</p>{/if}
+      </div>
+    </div>
+  </div>
+{:else if verdict}
   <div class="alert alert-soft items-start gap-2 px-3 py-2 text-sm {calloutTone[verdictTone]}" role="status">
     <svelte:component this={toneIcons[verdictTone]} size={16} class="mt-0.5 shrink-0 {verdictTone === 'neutral' ? 'opacity-70' : toneClasses[verdictTone]}" aria-hidden="true" />
     <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, labelParts, repairLabel, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, describeRefreshFailure, formatAge, hpbGuideURL, labelParts, repairLabel, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -484,5 +484,26 @@ describe("a repair that failed", () => {
   it("says so in the verdict", () => {
     const report = { state: "warn", recording_state: "passed", checks: [row] } as unknown as RecordingReadiness;
     expect(readinessTitle(report)).toBe("Recording ready; archive search re-index failed");
+  });
+});
+
+describe("a refresh that failed", () => {
+  const http = (status: number) => Object.assign(new Error(`${status}`), { status });
+
+  it("sends an expired session to sign in again", () => {
+    expect(describeRefreshFailure(http(401))).toMatch(/^Your Nextcloud session may have expired/);
+    expect(describeRefreshFailure(http(403))).toMatch(/Reload the page and sign in again/);
+  });
+
+  it("reads a gateway error as Cassini not responding", () => {
+    for (const status of [502, 503, 504]) expect(describeRefreshFailure(http(status))).toMatch(/^Cassini is not responding/);
+  });
+
+  it("reads a fetch that never answered as the connection", () => {
+    expect(describeRefreshFailure(new TypeError("Failed to fetch"))).toMatch(/^Your browser could not reach Nextcloud/);
+  });
+
+  it("passes on what Cassini said for anything else", () => {
+    expect(describeRefreshFailure(http(500))).toBe("Cassini answered with an error: 500");
   });
 });

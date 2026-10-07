@@ -93,6 +93,21 @@ export function testFollowUp(report: RecordingReadiness, now: Date = new Date())
   return test.state === "waiting_for_talk" ? "your test recording is waiting for you in Talk" : "your test recording is still in progress";
 }
 
+export function describeRefreshFailure(error: unknown): string {
+  const status = (error as { status?: unknown } | null)?.status;
+  if (status === 401 || status === 403) {
+    return "Your Nextcloud session may have expired, or this account is no longer an administrator. Reload the page and sign in again.";
+  }
+  if (status === 502 || status === 503 || status === 504) {
+    return "Cassini is not responding. It may be restarting, so wait a moment and try again. If it keeps happening, check that Cassini is enabled under Nextcloud's apps.";
+  }
+  if (error instanceof TypeError) {
+    return "Your browser could not reach Nextcloud. Check the connection, then try again.";
+  }
+  const message = error instanceof Error ? error.message.trim() : String(error ?? "").trim();
+  return message ? `Cassini answered with an error: ${message}` : "Something went wrong. Try again.";
+}
+
 export interface RecordingSetupUpdate {
   internal_secret?: string;
   test_room_url?: string;
