@@ -2,7 +2,8 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { BookOpen, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Settings, TriangleAlert, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import CommandBlock from "./CommandBlock.svelte";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, labelParts, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -236,7 +237,7 @@
               <summary class="tpl-toggle text-sm! group-open:text-base-content!"><span class="tpl-chev" aria-hidden="true"></span>What to do about it</summary>
               <ul class="mt-2 ml-px space-y-2 border-l-2 border-base-300 pl-3">
                 {#each check.steps ?? [] as step}
-                  <li class="text-sm text-base-content/70">{step.label}</li>
+                  <li class="text-sm text-base-content/70">{#each labelParts(step.label) as part}{#if part.code}<code class="rounded bg-base-200 px-1 py-0.5 font-mono text-[0.85em] text-base-content">{part.text}</code>{:else}{part.text}{/if}{/each}{#each step.commands ?? [] as command}<CommandBlock {command} />{/each}</li>
                 {/each}
               </ul>
             </details>
@@ -270,7 +271,7 @@
           <h3 class="pr-10 font-semibold">Connect to Talk’s signaling server</h3>
           <p class="my-2 text-sm">Use the signaling server’s internal client secret. This is different from the recording-backend secret, which Cassini generates itself.</p>
           {#if report.secret_source === "env"}
-            <p class="text-sm">Managed by deployment configuration. Change CASSINI_TALK_SIGNALING_INTERNAL_SECRET in Cassini’s deploy options.</p>
+            <p class="text-sm">Managed by deployment configuration. Change <code class="rounded bg-base-200 px-1 py-0.5 font-mono text-[0.85em] text-base-content">CASSINI_TALK_SIGNALING_INTERNAL_SECRET</code> in Cassini’s deploy options.</p>
           {:else}
             <p class="my-2 text-sm">{report.secret_configured ? "An internal secret is saved. Enter a new value to replace it." : "No internal secret is saved."}</p>
             <form class="mt-3" on:submit|preventDefault={() => save({ internal_secret: secret })}>

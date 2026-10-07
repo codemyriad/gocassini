@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hpbGuideURL, labelParts, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -377,5 +377,21 @@ describe("the time a run of checks shares", () => {
 
   it("has nothing to share when nothing was checked", () => {
     expect(sharedCheckTime([at("storage"), at("talk.hpb", "not a time")])).toBeNull();
+  });
+});
+
+describe("names quoted in a step", () => {
+  it("renders backticked names as code and keeps the prose around them", () => {
+    expect(labelParts("the `internalsecret` under `[clients]` in its file")).toEqual([
+      { text: "the ", code: false },
+      { text: "internalsecret", code: true },
+      { text: " under ", code: false },
+      { text: "[clients]", code: true },
+      { text: " in its file", code: false },
+    ]);
+  });
+
+  it("leaves a label without backticks as one run of text", () => {
+    expect(labelParts("Paste it unchanged")).toEqual([{ text: "Paste it unchanged", code: false }]);
   });
 });

@@ -5,14 +5,16 @@ export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
 // One thing to do about a check that is not ok. Mirrors SetupNoticeStep, which
 // already renders this shape for storage faults: commands behind a disclosure,
 // so an administrator who just wants the button never reads a command line.
-// A remedy in words. No commands: this panel is ADMIN-only and the operator can
-// do the work, so where a repair is possible the row carries `repair` and the
-// panel renders a button (review 2026-09-25). Printing a shell line asked a
-// reader to find a terminal and the right container to trigger something the
-// process showing them the message could simply do — and how `occ` is invoked
-// varies by deployment, so the instruction was a guess as often as not.
+// Where the operator can do the work, the row carries `repair` and the panel
+// renders a button instead (review 2026-09-25). `commands` is only for what
+// Cassini cannot read or run for itself, each labelled with where it applies.
 export interface ReadinessStep {
   label: string;
+  commands?: string[];
+}
+
+export function labelParts(label: string): { text: string; code: boolean }[] {
+  return label.split("`").map((text, index) => ({ text, code: index % 2 === 1 })).filter(part => part.text !== "");
 }
 
 export interface ReadinessCheck {
