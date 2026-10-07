@@ -112,6 +112,7 @@ func (rt *Runtime) describeSearchRepair(check *readinessCheck) {
 		check.Message += " Re-indexing is running now."
 		return
 	case err != nil:
+		check.RepairFailed = true
 		check.Message += " The last re-index did not finish: " + err.Error()
 	case ran && !finished.IsZero():
 		check.Message += fmt.Sprintf(" The last re-index added %d, left %d unchanged, found %d not searchable and failed on %d.",

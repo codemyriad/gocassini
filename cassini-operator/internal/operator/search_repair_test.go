@@ -109,7 +109,7 @@ func TestCachedCoverageReportsRepairCompletionAndFailure(t *testing.T) {
 			rt.searchRepair.err = outcome.err
 			for i := 0; i < 2; i++ {
 				check := rt.lastArchiveCoverage()
-				if strings.Count(check.Message, outcome.want) != 1 || check.Repair != repairBackfillSearch {
+				if strings.Count(check.Message, outcome.want) != 1 || check.Repair != repairBackfillSearch || check.RepairFailed != (outcome.err != nil) {
 					t.Fatalf("cached coverage did not reflect the repair outcome: %+v", check)
 				}
 			}
