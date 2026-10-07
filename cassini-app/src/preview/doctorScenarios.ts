@@ -161,8 +161,8 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       // One row, because it is one fact: the backend exists and Cassini has no
       // credential for it.
       set({ id: "talk.hpb", state: "needs_action", code: "internal_secret_missing", message: "Talk has a High Performance Backend, and Cassini needs that server's internal secret to join calls invisibly. This is not a Nextcloud setting: it belongs to the signaling server, which is why Cassini cannot read it for you.", action: "configure_talk", checked_at, steps: [
-        { label: "Nextcloud All-in-One: docker exec nextcloud-aio-talk printenv INTERNAL_SECRET" },
-        { label: "Standalone signaling server: the `internalsecret` under `[clients]` in its configuration file" },
+        { label: "On Nextcloud All-in-One, print it with:", commands: ["docker exec nextcloud-aio-talk printenv INTERNAL_SECRET"] },
+        { label: "On a standalone signaling server, it is `internalsecret` under `[clients]` in its configuration file" },
         { label: "Paste it unchanged — one differing character fails exactly as a wrong credential would, and nothing can tell the difference until this check runs" },
       ] });
       set(blocked("talk.discovery", "High Performance Backend"));
@@ -172,10 +172,12 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     case "missing-hpb":
       set({ id: "talk.hpb", state: "needs_action", code: "hpb_missing", message: "Talk has no standalone signaling server configured. Enable its high-performance backend.", action: "setup_hpb", checked_at }); break;
     case "connection-unreachable":
-      set({ id: "talk.discovery", state: "warn", code: "nextcloud_unreachable", message: "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.", action: "recheck", checked_at });
-      // The probe stopped before it could report a backend, which is exactly
-      // when this row used to vanish. It stands in rather than disappearing.
-      set({ id: "talk.hpb", state: "warn", code: "signaling_mode_unknown", message: "Cassini could not read Talk's signaling configuration, so it cannot tell whether a High Performance Backend is available.", action: "recheck", checked_at });
+      set({ id: "talk.discovery", state: "warn", code: "nextcloud_host_not_found", message: "Cassini could not find Nextcloud at the address it was given: the name does not resolve from Cassini's container.", action: "recheck", checked_at, steps: [
+        { label: "Cassini reaches Nextcloud at `NEXTCLOUD_URL`, or at `CASSINI_TALK_BACKEND_URL` when that is set. The address has to work from inside Cassini's container, not only from your browser" },
+        { label: "To test the address, run this on the Nextcloud host. It should print an HTTP status such as 200, not an error:", commands: [`docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\\n" "$NEXTCLOUD_URL/status.php"'`] },
+      ] });
+      set(blocked("talk.hpb", "Talk connection"));
+      set(blocked("test", "Talk connection"));
       break;
     case "recording-handoff":
       set({ id: "talk.handoff", state: "needs_action", code: "recording_secret_missing", message: "Cassini could not provision its recording credential. Check its persistent storage.", action: "connect_talk" });
