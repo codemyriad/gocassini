@@ -80,7 +80,9 @@
 
   function rememberedCount(key: string, fallback: number): number {
     try {
-      const value = Number(localStorage.getItem(key));
+      const stored = localStorage.getItem(key);
+      if (stored === null) return fallback;
+      const value = Number(stored);
       return Number.isInteger(value) && value >= 0 && value <= 50 ? value : fallback;
     } catch {
       return fallback;
