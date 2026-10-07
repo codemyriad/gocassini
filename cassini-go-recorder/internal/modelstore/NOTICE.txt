@@ -19,10 +19,10 @@ https://github.com/k2-fsa/sherpa-onnx
 https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models
 
 Cassini obtains the two int8 models from the sherpa-onnx release. The fp32
-model comes from the existing Cassini model distribution at:
-https://assets.gocassini.codemyriad.io/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3.tar.bz2
-For this distribution, Cassini extracts the model files and compresses each
-file independently using seekable Zstandard. Decompressed file contents are
+model is Cassini's own ONNX export of NVIDIA's original checkpoint; the files
+published here are its only distribution.
+For this distribution, Cassini compresses each model file independently using
+seekable Zstandard. Decompressed file contents are
 unchanged. ONNX conversion and int8 quantization are changes from NVIDIA's
 original model format. No endorsement by NVIDIA or sherpa-onnx is implied.
 

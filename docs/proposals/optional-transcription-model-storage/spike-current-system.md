@@ -60,7 +60,7 @@ Requests used the URLs in the current catalogue. Each GET read one response byte
 | Artifact | Observation on 2026-09-21 | Interpretation |
 |---|---|---|
 | v3 int8 archive on GitHub Releases | HEAD: 200, `Content-Length: 487170055`, byte ranges advertised. GET with `Range: bytes=0-0`: 206, `Content-Range: bytes 0-0/487170055`, length 1. | Basic range support demonstrated on this route. This is compressed archive size, about 487 MB, not installed footprint. |
-| v3 fp32 archive on `assets.gocassini.codemyriad.io` | HEAD: 403. Range GET: 200, `Content-Length: 2421315109`, byte ranges advertised, no `Content-Range`. | GET is accessible from this environment, about 2.42 GB compressed. This response did not honor the range. HEAD failure alone would have been a false availability diagnosis. |
+| v3 fp32 archive on the former Cassini assets host | HEAD: 403. Range GET: 200, `Content-Length: 2421315109`, byte ranges advertised, no `Content-Range`. | GET is accessible from this environment, about 2.42 GB compressed. This response did not honor the range. HEAD failure alone would have been a false availability diagnosis. |
 
 A client must accept 206 only with the expected offset, total length, and validator. A 200 response to a resume request must start that file afresh, never append it. These probes do not establish all CDN behavior or the cause of the fp32 result. Test nonzero-offset resume and interrupted transfers against the actual archive origin before claiming resume support.
 
