@@ -95,7 +95,7 @@ func TestCachedCoverageReportsRepairCompletionAndFailure(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"completed", nil, "Last re-index: 2 indexed, 0 unchanged, 0 not searchable, 0 failed."},
+		{"completed", nil, "The last re-index added 2, left 0 unchanged, found 0 not searchable and failed on 0."},
 		{"failed", errors.New("archive unavailable"), "The last re-index did not finish: archive unavailable"},
 	} {
 		t.Run(outcome.name, func(t *testing.T) {
