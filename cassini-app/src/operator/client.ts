@@ -465,6 +465,8 @@ function normalizeSetupSteps(value: unknown): StorageSetupStep[] {
   });
 }
 
+function asCount(value: unknown): number { return Math.max(0, Math.floor(asNumber(value))); }
+
 function normalizeStorageUsage(raw: unknown): StorageUsage {
   const value = raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const sources: StorageUsageSource[] = [];

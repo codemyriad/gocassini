@@ -228,11 +228,7 @@ Documentation: https://gocassini.com/docs]]></description>
         <verb>GET,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
-      <!-- ADMIN: recordings storage status. GET reports whether the "cassini"
-           service account exists and whether its Files tree and the sharing
-           API are ready, with the setup steps still missing; POST
-           {"action":"recheck"} re-probes Nextcloud after the browser creates
-           the account. ADMIN like the rest of the operator API. -->
+      <!-- ADMIN: storage usage summaries and per-category details. -->
       <route>
         <url>^operator\/storage\/usage\/?$</url>
         <verb>GET,POST</verb>
@@ -243,6 +239,11 @@ Documentation: https://gocassini.com/docs]]></description>
         <verb>GET,POST</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: recordings storage status. GET reports whether the "cassini"
+           service account exists and whether its Files tree and the sharing
+           API are ready, with the setup steps still missing; POST
+           {"action":"recheck"} re-probes Nextcloud after the browser creates
+           the account. ADMIN like the rest of the operator API. -->
       <route>
         <url>^operator\/storage\/?$</url>
         <verb>GET,POST</verb>

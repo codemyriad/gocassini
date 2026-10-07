@@ -30,7 +30,7 @@ describe("recordings storage API", () => {
   });
 });
 
-describe("OperatorClient storage", () => {
+describe("Storage usage API", () => {
   it("reads the recording and build folder sizes from the separate usage endpoint", async () => {
     const fetchMock = vi.fn(async () =>
       reply({

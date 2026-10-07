@@ -104,8 +104,6 @@ npm ci
 npx playwright install chromium
 npm test --workspace=cassini-app
 npm run build:all --workspace=cassini-app
-npm run test:storage-browser --workspace=cassini-app
-npm run test:retention-browser --workspace=cassini-app
 cd cassini-operator
 go test ./...
 ```
