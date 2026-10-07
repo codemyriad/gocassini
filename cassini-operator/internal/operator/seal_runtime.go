@@ -114,6 +114,13 @@ func (rt *Runtime) failSeal(task sealTask, attemptOpus string, cause error, fini
 // could not accept (full queue) or never saw (operator restart) (D-367).
 func (rt *Runtime) enqueueSealJobNonBlocking(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
 	format := rt.currentSettings().MeetingFormat
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil {
+		return err
+	}
+	if policy := processingPolicy(job); policy != nil {
+		format = policy.MeetingFormat
+	}
 	// A rerun updates the existing artefact in its original format. This
 	// preserves its Nextcloud file ID, shares and durable annotation identity.
 	var previous string

@@ -239,20 +239,21 @@ type Runtime struct {
 }
 
 type TriggerRequest struct {
-	RetainVideo           bool    `json:"retain_video"`
-	CaptureMode           string  `json:"capture_mode,omitempty"`
-	Platform              string  `json:"platform"`
-	BaseURL               string  `json:"baseURL,omitempty"`
-	TalkConnectURL        string  `json:"talkConnectURL,omitempty"`
-	RoomToken             string  `json:"roomToken,omitempty"`
-	URL                   string  `json:"url,omitempty"`
-	TalkAuthMode          string  `json:"talkAuthMode"`
-	GuestName             string  `json:"guestName"`
-	DurationSeconds       *int    `json:"duration,omitempty"`
-	StopWhenRoomEmpty     bool    `json:"stopWhenRoomEmpty"`
-	RoomEmptyGraceSeconds float64 `json:"roomEmptyGrace"`
-	StopWhenRoomEmptySet  bool    `json:"-"`
-	RoomEmptyGraceSet     bool    `json:"-"`
+	ProcessingPolicy      *recordingProcessingPolicy `json:"processing_policy,omitempty"`
+	RetainVideo           bool                       `json:"retain_video"`
+	CaptureMode           string                     `json:"capture_mode,omitempty"`
+	Platform              string                     `json:"platform"`
+	BaseURL               string                     `json:"baseURL,omitempty"`
+	TalkConnectURL        string                     `json:"talkConnectURL,omitempty"`
+	RoomToken             string                     `json:"roomToken,omitempty"`
+	URL                   string                     `json:"url,omitempty"`
+	TalkAuthMode          string                     `json:"talkAuthMode"`
+	GuestName             string                     `json:"guestName"`
+	DurationSeconds       *int                       `json:"duration,omitempty"`
+	StopWhenRoomEmpty     bool                       `json:"stopWhenRoomEmpty"`
+	RoomEmptyGraceSeconds float64                    `json:"roomEmptyGrace"`
+	StopWhenRoomEmptySet  bool                       `json:"-"`
+	RoomEmptyGraceSet     bool                       `json:"-"`
 }
 
 type createJobResponse struct {
@@ -1316,7 +1317,16 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 	}
 
 	// Freeze trusted capture policy at admission; caller JSON is never consent.
-	req.RetainVideo = rt.currentSettings().RetainVideo
+	settings := rt.currentSettings()
+	if err := normalizeSourceRetention(&settings); err != nil {
+		rt.releaseRecordSlot()
+		return createJobResponse{}, nil, fmt.Errorf("%w: %v", errRecordingSetup, err)
+	}
+	req.ProcessingPolicy = &recordingProcessingPolicy{MeetingFormat: settings.MeetingFormat, SourceRetention: settings.SourceRetention}
+	if settings.SourceRetention == sourceDeleteAfterProcessing {
+		req.ProcessingPolicy.Transcription = &settings
+	}
+	req.RetainVideo = settings.RetainVideo
 	req.CaptureMode = "audio-only"
 	if req.RetainVideo {
 		req.CaptureMode = "audio-video"

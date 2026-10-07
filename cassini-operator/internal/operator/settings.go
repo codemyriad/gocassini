@@ -21,7 +21,8 @@ import (
 // CASSINI_STT_MODEL=int8, which would otherwise shadow the chosen tier) so the
 // recorder's auto-detect + tier resolution (D-434) actually runs (D-435).
 type STTSettings struct {
-	RetainVideo bool `json:"retain_video"`
+	RetainVideo     bool   `json:"retain_video"`
+	SourceRetention string `json:"source_retention"`
 	// MeetingFormat controls publication, independently of transcription and local capture retention.
 	MeetingFormat        string   `json:"meeting_format"`
 	TranscriptionEnabled bool     `json:"transcription_enabled"`
@@ -297,6 +298,9 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if s.MeetingFormat != "opus" && s.MeetingFormat != "json" {
 		return STTSettings{}, fmt.Errorf("invalid meeting_format %q", s.MeetingFormat)
 	}
+	if err := normalizeSourceRetention(&s); err != nil {
+		return STTSettings{}, err
+	}
 	aliases, err := normalizeSearchAliases(s.SearchAliases)
 	if err != nil {
 		return STTSettings{}, fmt.Errorf("parse settings %s search_aliases: %w", path, err)
@@ -340,6 +344,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s = detectSettings()
 			s.TranscriptionEnabled, s.ActiveModel, s.ActiveRevision = previous.TranscriptionEnabled, previous.ActiveModel, previous.ActiveRevision
 			s.MeetingFormat = previous.MeetingFormat
+			s.SourceRetention = previous.SourceRetention
 			s.SearchAliases = previous.SearchAliases
 			s.RetainVideo = previous.RetainVideo
 			// Vocabulary is independent of the hardware-derived quality tier.
@@ -401,6 +406,9 @@ func reportSettingsMigration(report SettingsMigrationReporter, path string, migr
 // Save writes settings.json atomically (temp file + rename) so a crash mid-write
 // cannot truncate the persisted config.
 func Save(path string, s STTSettings) error {
+	if err := normalizeSourceRetention(&s); err != nil {
+		return err
+	}
 	if s.MeetingFormat == "" {
 		s.MeetingFormat = "opus"
 	}
@@ -621,6 +629,7 @@ type settingsResponse struct {
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
 // "field set to empty". Omitted quality preserves the automatic/user policy source.
 type settingsUpdate struct {
+	SourceRetention      *string   `json:"source_retention"`
 	RetainVideo          *bool     `json:"retain_video"`
 	MeetingFormat        *string   `json:"meeting_format"`
 	TranscriptionEnabled *bool     `json:"transcription_enabled"`
@@ -641,6 +650,9 @@ func (rt *Runtime) currentSettings() STTSettings {
 	rt.settingsMu.RLock()
 	defer rt.settingsMu.RUnlock()
 	s := rt.settings
+	if s.SourceRetention == "" {
+		s.SourceRetention = sourceStoragePolicy
+	}
 	if s.MeetingFormat == "" {
 		s.MeetingFormat = "opus"
 	}
@@ -737,6 +749,9 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		updated.Quality = quality
 		updated.Source = sttSourceUser
 	}
+	if in.SourceRetention != nil {
+		updated.SourceRetention = *in.SourceRetention
+	}
 	if in.RetainVideo != nil {
 		updated.RetainVideo = *in.RetainVideo
 	}
@@ -784,10 +799,15 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		updated.TranscriptionTerms = terms
 	}
 
+	if err := normalizeSourceRetention(&updated); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Check the model only when this request would change what transcribes.
 	// Readiness is invalidated by every restart and upgrade, so re-checking an
 	// unchanged selection would refuse unrelated edits such as vocabulary.
-	if updated.TranscriptionEnabled && transcriptionSelectionChanged(current, updated) {
+	if updated.TranscriptionEnabled && (transcriptionSelectionChanged(current, updated) || (updated.SourceRetention == sourceDeleteAfterProcessing && current.SourceRetention != sourceDeleteAfterProcessing)) {
 		device, err := resolveDeviceForSettings(updated)
 		if err != nil {
 			writeJSONError(w, 409, err.Error())
