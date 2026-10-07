@@ -213,7 +213,10 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // Same rule as the repair buttons: offering a control the panel cannot
   // explain is how a reader ends up reading an instruction for another fault.
   const passedLabels: Record<string, string> = { configure_talk: "Change secret" };
-  const codeLabels: Record<string, Record<string, string>> = { test_in_progress: { test_recording: "Show steps" } };
+  const codeLabels: Record<string, Record<string, string>> = {
+    test_in_progress: { test_recording: "Show steps" },
+    test_awaiting_playback: { test_recording: "Show steps" },
+  };
   return actions.filter(action => labels[action]).map(action => ({
     action,
     label: codeLabels[check.code]?.[action] ?? (check.state === "passed" && passedLabels[action] ? passedLabels[action] : labels[action]),

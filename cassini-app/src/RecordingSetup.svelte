@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { BookOpen, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Settings, TriangleAlert, Video, X } from "@lucide/svelte";
+  import { BookOpen, Check, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Play, Settings, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "./CommandBlock.svelte";
   import { checkLabels, checkStateLabel, checkTone, formatAge, labelParts, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
@@ -34,6 +34,16 @@
   $: verdictTone = report && !stale ? reportTone(report) : "neutral";
   $: shared = report ? sharedCheckTime(report.checks) : null;
   $: waitingForTalk = report?.test.state === "waiting_for_talk";
+  $: awaitingPlayback = !!report?.test.published && !!report?.test.viewer_url && !report?.test.playback_verified_at;
+  const testSteps = [
+    "Press Prepare test. Cassini creates a conversation named “Cassini recording test” in your name, so that you can moderate it — Talk’s Start recording action belongs to a conversation’s moderators.",
+    "Open the room, join the call, and use Talk’s Start recording action.",
+    "Say a few words, then stop the recording in Talk.",
+    "Wait for it to publish, then play the audio and confirm you can hear it.",
+  ];
+  $: testStepsDone = report
+    ? [!!report.test.started_at, !!report.test.job_id || !!report.test.published, !!report.test.published, !!report.test.playback_verified_at]
+    : [];
   const calloutTone: Record<CheckTone, string> = {
     success: "alert-success alert-tinted",
     warning: "alert-warning alert-tinted",
@@ -249,6 +259,9 @@
               {#if check.id === "test" && waitingForTalk && testRoomHref}
                 <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={testRoomHref} target="_blank" rel="noreferrer"><Video size={15} class="shrink-0" aria-hidden="true" />Open test room</a>
               {/if}
+              {#if check.id === "test" && awaitingPlayback}
+                <a class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" href={report.test.viewer_url} target="_blank" rel="noreferrer"><Play size={15} class="shrink-0" aria-hidden="true" />Play the recording</a>
+              {/if}
               {#if check.repair && repairLabels[check.repair]}
                 <!-- Only a repair this build knows how to name. "Fix this" for an
                      unrecognised action offered a button whose effect the panel
@@ -264,11 +277,17 @@
                 {/if}
               {/if}
               {#each rowActions(check).filter((item) => item.action !== "recheck") as item}
-                <button class="btn btn-sm btn-outline {check.state === "passed" || check.code === "test_in_progress" ? "btn-outline-quiet" : ""} btn-outline-hover" disabled={busy} aria-expanded={item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
+                <button class="btn btn-sm btn-outline {check.state === "passed" || check.code === "test_in_progress" || check.code === "test_awaiting_playback" ? "btn-outline-quiet" : ""} btn-outline-hover" disabled={busy} aria-expanded={item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id, check.checkable ?? false)}>{item.label}</button>
               {/each}
             </div>
           {/if}
           {#if check.id === "test" && waitingForTalk}<p class="mt-2 text-xs text-base-content/65">Cassini picks the recording up by itself, so there is no need to reload this page.</p>{/if}
+          {#if check.id === "test" && awaitingPlayback}
+            <label class="mt-3 flex w-fit cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" class="checkbox checkbox-xs border-base-content/55" checked={!!report.test.playback_verified_at} disabled={busy} on:change={() => save({ action: "confirm_playback", job_id: report?.test.job_id })} />
+              I played the recording and could hear the audio
+            </label>
+          {/if}
     {#if panel && panelOwner === check.id && rows.findIndex(row => row.id === check.id) === index}
       <div class="relative mt-3 rounded-box border border-base-300 bg-base-200 p-4">
         <button class="btn btn-ghost btn-sm btn-square absolute top-3 right-3" type="button" aria-label="Close" on:click={() => { panel = ""; secret = ""; }}><X size={16} aria-hidden="true" /></button>
@@ -305,14 +324,13 @@
                made the whole tool unreachable until somebody pasted a URL. -->
           <p class="my-2 text-sm">Cassini makes itself a conversation for this and waits. The recording is started from Talk, by you, exactly as a real one would be — which is what makes it worth running.</p>
           <ol class="my-3 list-inside list-decimal space-y-2 text-sm">
-            <li>Press Prepare test. Cassini creates a conversation named “Cassini recording test” in your name, so that you can moderate it — Talk’s Start recording action belongs to a conversation’s moderators.</li>
-            <li>Open the room, join the call, and use Talk’s Start recording action.</li>
-            <li>Say a few words, then stop the recording in Talk.</li>
-            <li>Wait for it to publish, then play the audio and confirm you can hear it.</li>
+            {#each testSteps as step, stepIndex}
+              <li class={testStepsDone[stepIndex] ? "text-base-content/50" : ""}>{#if testStepsDone[stepIndex]}<span class="sr-only">{"Done: "}</span><Check size={14} class="mr-1 inline align-[-2px]" aria-hidden="true" /><span class="line-through">{step}</span>{:else}{step}{/if}</li>
+            {/each}
           </ol>
           <p class="mb-3 text-sm text-base-content/70">A recording captures a call, so the call needs someone in it: Cassini joins to record, not to talk. The conversation and the test recording are both ordinary ones, and can be deleted afterwards.</p>
           <div class="flex flex-wrap gap-2">
-            {#if waitingForTalk && testRoomHref}
+            {#if (waitingForTalk && testRoomHref) || awaitingPlayback}
               <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
             {:else}
               <button class="btn btn-primary btn-sm" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
@@ -320,9 +338,9 @@
             {/if}
           </div>
           {#if report.test.started_at}
-            <p class="mt-3 text-sm" role="status">{report.test.state === "waiting_for_talk" ? "Waiting for a recording to start. Open the test room, join the call, and use Talk’s Start recording action." : `${report.test.stage ?? "Test"}: ${report.test.state}`}</p>
+            {#if !waitingForTalk && !awaitingPlayback}<p class="mt-3 text-sm" role="status">{`${report.test.stage ?? "Test"}: ${report.test.state}`}</p>{/if}
             {#if report.test.job_id}<p class="mt-1 text-xs">Recording {report.test.job_id}</p>{/if}
-            {#if report.test.published && report.test.viewer_url}
+            {#if report.test.published && report.test.viewer_url && !awaitingPlayback}
               <a class="btn btn-sm mt-3" href={report.test.viewer_url} target="_blank" rel="noreferrer">Open published recording</a>
               <button class="btn btn-sm mt-3" disabled={busy || !!report.test.playback_verified_at} on:click={() => save({ action: "confirm_playback", job_id: report?.test.job_id })}>I played the published audio</button>
             {/if}

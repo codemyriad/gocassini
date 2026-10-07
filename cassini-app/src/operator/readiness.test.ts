@@ -416,7 +416,10 @@ describe("the credential action on the backend row", () => {
 
 describe("the test row while a test is under way", () => {
   it("offers its steps rather than asking for another test", () => {
-    const row = { id: "test", state: "not_verified", code: "test_in_progress", message: "", action: "test_recording" } as ReadinessCheck;
-    expect(rowActions(row).map(a => a.label)).toEqual(["Show steps"]);
+    for (const code of ["test_in_progress", "test_awaiting_playback"]) {
+      const row = { id: "test", state: "not_verified", code, message: "", action: "test_recording" } as ReadinessCheck;
+      expect(rowActions(row).map(a => a.label)).toEqual(["Show steps"]);
+    }
   });
 });
+
