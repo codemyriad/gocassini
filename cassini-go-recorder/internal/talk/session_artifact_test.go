@@ -3,6 +3,7 @@ package talk
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -740,9 +741,21 @@ func TestSessionArtifactUpdateParticipantDisplayReplacesSyntheticShortIDPlacehol
 }
 
 func TestSessionArtifactPersistsRecordingLocalTimeAtStart(t *testing.T) {
-	previous := time.Local
-	time.Local = time.FixedZone("recording-site", 2*60*60)
-	defer func() { time.Local = previous }()
+	// Recorder tests can leave asynchronous logging in flight. Changing the
+	// global time.Local races with those readers, even without t.Parallel.
+	// Start a fresh process whose timezone is set before Go initializes it.
+	const childEnv = "CASSINI_TEST_RECORDING_TIME_CHILD"
+	if os.Getenv(childEnv) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestSessionArtifactPersistsRecordingLocalTimeAtStart$")
+		cmd.Env = append(os.Environ(), childEnv+"=1", "TZ=Etc/GMT-2")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("recording timezone subprocess: %v\n%s", err, output)
+		}
+		return
+	}
+	if _, offset := time.Now().Zone(); offset != 2*60*60 {
+		t.Fatalf("expected UTC+2 recording timezone, got offset %d", offset)
+	}
 	artifact, err := newSessionCaptureArtifact(filepath.Join(t.TempDir(), "meeting.mkv"), "", "room", "recorder", false)
 	if err != nil {
 		t.Fatal(err)
