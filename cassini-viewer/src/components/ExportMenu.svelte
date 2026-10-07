@@ -8,8 +8,12 @@
   export let canDownloadTranscript = true;
   export let canDownloadAudio = true;
   export let status = "";
+  export let includeContext = false;
+  export let canExportContext = true;
+  export let plural = false;
+  export let label = "Export this meeting";
 
-  const dispatch = createEventDispatcher<{ copy: void; transcript: void; audio: void }>();
+  const dispatch = createEventDispatcher<{ copy: void; transcript: void; audio: void; copyContext: void; context: void }>();
 
   let open = false;
   let anchor: HTMLButtonElement;
@@ -19,7 +23,7 @@
     node.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
   };
 
-  function choose(action: "copy" | "transcript" | "audio") {
+  function choose(action: "copy" | "transcript" | "audio" | "copyContext" | "context") {
     open = false;
     anchor?.focus();
     dispatch(action);
@@ -58,15 +62,23 @@
     use:focusFirst
     role="menu"
     tabindex="-1"
-    aria-label="Export this meeting"
+    aria-label={label}
     class="tag-popover grid w-52 p-1"
     on:keydown={onKeydown}
   >
+    {#if includeContext}
+      <button type="button" role="menuitem" class="em-item" disabled={!canExportContext} on:click={() => choose("copyContext")}>
+        <Copy size={14} aria-hidden="true" />Copy full context
+      </button>
+      <button type="button" role="menuitem" class="em-item" disabled={!canExportContext} on:click={() => choose("context")}>
+        <FileText size={14} aria-hidden="true" />Download full context
+      </button>
+    {/if}
     <button type="button" role="menuitem" class="em-item" disabled={!canCopy} on:click={() => choose("copy")}>
-      <Copy size={14} aria-hidden="true" />Copy transcript
+      <Copy size={14} aria-hidden="true" />Copy {plural ? "transcripts" : "transcript"}
     </button>
     <button type="button" role="menuitem" class="em-item" disabled={!canDownloadTranscript} on:click={() => choose("transcript")}>
-      <FileText size={14} aria-hidden="true" />Download transcript
+      <FileText size={14} aria-hidden="true" />Download {plural ? "transcripts" : "transcript"}
     </button>
     <button type="button" role="menuitem" class="em-item" disabled={!canDownloadAudio} on:click={() => choose("audio")}>
       <FileAudio size={14} aria-hidden="true" />Download audio
