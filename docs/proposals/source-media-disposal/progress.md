@@ -1,8 +1,8 @@
 # Source media disposal
 
-- 🔄 Persist independent publication and source-retention policy at admission.
-- ⬜ Enforce transcription and contain temporary media; durable terminal cleanup.
-- ⬜ Settings and operator cleanup/rerun UI.
+- ✅ Persist independent publication and source-retention policy at admission.
+- ✅ Enforce transcription and contain temporary media; durable terminal cleanup.
+- 🔄 Settings and operator cleanup/rerun UI.
 - ⬜ Integration verification, documentation, changelog and draft PR.
 
 The approved behavior keeps capture, publication and source retention independent.

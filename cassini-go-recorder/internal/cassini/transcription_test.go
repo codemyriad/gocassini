@@ -178,3 +178,42 @@ func TestRecordingTimeSurvivesBuildPackAndTranscriptionExport(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscriptionPolicySurvivesSourceDeletion(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "meeting.meeting")
+	if err := writeReadyMeetingBundleFixture(bundle, "source.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(bundle, "manifest.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err = json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest["provenance"] = map[string]any{"recording": map[string]string{"captureMode": "audio-only", "sourceRetention": "delete-after-processing"}}
+	source := manifest["source"].(map[string]any)
+	source["recordedAtLocal"] = "2026-03-10T14:00:00"
+	raw, _ = json.Marshal(manifest)
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := packAnnotateBundle(t, bundle, filepath.Join(dir, "meeting.json"))
+	if err = os.RemoveAll(bundle); err != nil {
+		t.Fatal(err)
+	}
+	meeting, err := inspect.ExtractMeeting(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meeting.Manifest.Meeting.RecordedAtLocal != "2026-03-10T14:00:00" {
+		t.Fatal("lost recording time")
+	}
+	if meeting.Manifest.Provenance == nil || meeting.Manifest.Provenance.Recording == nil || meeting.Manifest.Provenance.Recording.SourceRetention != "delete-after-processing" {
+		t.Fatalf("lost policy: %+v", meeting.Manifest.Provenance)
+	}
+}

@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-func TestMigrationsRunContiguouslyThroughMeetingFormat(t *testing.T) {
+func TestMigrationsRunContiguouslyThroughMediaCleanup(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
 	last := migrations[len(migrations)-1]
-	if last.Version != 14 || last.Name != "meeting_format" {
-		t.Fatalf("last migration = %04d_%s, want 0014_meeting_format", last.Version, last.Name)
+	if last.Version != 15 || last.Name != "media_cleanup" {
+		t.Fatalf("last migration = %04d_%s, want 0015_media_cleanup", last.Version, last.Name)
 	}
 }
 

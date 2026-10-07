@@ -36,7 +36,7 @@ import (
 // The meeting bundle is passed in rather than re-derived: it is what the build
 // recorded and what the seal task carries, so a seal packs the bundle the DB
 // says it is packing rather than one that merely shares its naming convention.
-func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opusPath, title, roomToken, roomName, jobID string, attemptNumber int, logSink io.Writer) (string, error) {
+func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opusPath, title, roomToken, roomName, jobID string, attemptNumber int, logSink io.Writer, childEnv ...[]string) (string, error) {
 	if strings.TrimSpace(meetingPath) == "" {
 		return "", fmt.Errorf("no meeting bundle to seal")
 	}
@@ -86,6 +86,9 @@ func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opus
 		cmd.Stderr = logSink
 	}
 	cmd.Env = os.Environ()
+	if len(childEnv) > 0 {
+		cmd.Env = childEnv[0]
+	}
 	// Match build/record: kill the whole process group on ctx cancel so any
 	// ffmpeg/ffprobe grandchildren spawned by `cassini pack` don't outlive it.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

@@ -138,6 +138,16 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 		allowed[rel] = true
 	}
 	for i, rel := range op.Targets {
+		if op.Kind == "media-disposal" && op.Action == "remove" {
+			for _, p := range append(mediaPromotionPaths(rt.cfg.WorkRoot, op.Job), attemptScratchPath(rt.cfg.WorkRoot, op.Job, op.Attempt)) {
+				r, _ := filepath.Rel(rt.cfg.WorkRoot, p)
+				allowed[r] = true
+			}
+			sealRel, _ := filepath.Rel(rt.cfg.WorkRoot, attemptSealDir(rt.cfg.WorkRoot, op.Job, op.Attempt))
+			if filepath.Dir(rel) == sealRel && filepath.Base(rel) != op.Job+".json" {
+				allowed[rel] = true
+			}
+		}
 		if !allowed[rel] {
 			return fmt.Errorf("unowned operation target %q", rel)
 		}
@@ -390,7 +400,11 @@ func (rt *Runtime) promotePublishedPair(job string, attempt int) error {
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	missingMeeting := false
+	jobRow, err := rt.store.GetJob(context.Background(), job)
+	if err != nil {
+		return err
+	}
+	missingMeeting := deletesSourceMedia(jobRow)
 	if _, e := os.Stat(meeting); os.IsNotExist(e) && prior == 0 {
 		missingMeeting = true
 	} else if e != nil {

@@ -265,7 +265,10 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	cmd := exec.Command(rt.cfg.CassiniBin, args...)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
-	cmd.Env = rt.recordChildEnv()
+	cmd.Env, err = rt.mediaScratchEnv(rt.recordChildEnv(), job.ID, job.CurrentAttemptNumber)
+	if err != nil {
+		return recordResult{}, err
+	}
 	if rt.processingPolicy() == policyRecordingFirst {
 		cmd.Env = setEnvKey(cmd.Env, "CASSINI_RECORD_FINALIZE_LOCK", filepath.Join(rt.cfg.WorkRoot, ".record-finalize.lock"))
 	}
@@ -556,7 +559,7 @@ func parseJobPath(path string) (id string, action string, ok bool) {
 		if parts[0] == "" || parts[1] == "" {
 			return "", "", false
 		}
-		if parts[1] != "stop" && parts[1] != "rerun" {
+		if parts[1] != "stop" && parts[1] != "rerun" && parts[1] != "cleanup" {
 			return "", "", false
 		}
 		return parts[0], parts[1], true

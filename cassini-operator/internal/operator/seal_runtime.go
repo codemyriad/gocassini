@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 )
@@ -56,6 +57,7 @@ func (rt *Runtime) sealWorker() {
 func (rt *Runtime) runSealJob(task sealTask) {
 	unlock := rt.store.lockArtifacts(task.JobID)
 	defer unlock()
+	defer rt.cleanupMediaAfterStage(task.JobID)
 	if err := rt.waitForRecordingIdle(); err != nil {
 		return
 	}
@@ -201,6 +203,10 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 	if err != nil && err != sql.ErrNoRows {
 		return "", err
 	}
+	env, err := rt.mediaScratchEnv(os.Environ(), task.JobID, task.AttemptNumber)
+	if err != nil {
+		return "", err
+	}
 	return packAttemptMeetingToOpus(
 		ctx,
 		rt.cfg.CassiniBin,
@@ -211,7 +217,7 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 		roomName,
 		task.JobID,
 		task.AttemptNumber,
-		sink,
+		sink, env,
 	)
 }
 

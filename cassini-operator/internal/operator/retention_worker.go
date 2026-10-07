@@ -171,6 +171,12 @@ func (rt *Runtime) expireJobArtifacts(ctx context.Context, id string, s retentio
 	if job.Stage != "done" || (job.State != "succeeded" && job.State != "failed" && job.State != "interrupted") {
 		return nil
 	}
+	if deletesSourceMedia(job) {
+		state := rt.mediaCleanupStatus(job)
+		if state.Status != "completed" {
+			return nil
+		}
+	}
 	attempts, err := rt.store.ListJobAttempts(ctx, id)
 	if err != nil {
 		return err

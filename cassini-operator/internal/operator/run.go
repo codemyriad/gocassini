@@ -884,6 +884,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.workerWG.Add(1)
 	go rt.requeueDispatcher()
 	rt.startRetentionWorker()
+	rt.startMediaCleanupWorker()
 	return rt
 }
 
@@ -1211,9 +1212,10 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 }
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
+	defer rt.recordWG.Done()
 	unlock := rt.store.lockArtifacts(job.ID)
 	defer unlock()
-	defer rt.recordWG.Done()
+	defer rt.cleanupMediaAfterStage(job.ID)
 	// The record slot is freed as soon as the record subprocess exits (the
 	// releaseSlot call below): post-record bookkeeping — Talk delivery with
 	// its retry schedule, the build handoff — must not hold recording
@@ -1566,6 +1568,11 @@ INSERT INTO jobs (
 	)
 	if err != nil {
 		return fmt.Errorf("insert job: %w", err)
+	}
+	if deletesSourceMedia(job) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO media_cleanup(job_id) VALUES(?)`, job.ID); err != nil {
+			return err
+		}
 	}
 	if err := insertInitialAttemptTx(tx, job); err != nil {
 		return err
@@ -2016,6 +2023,14 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rt.handleStopJob(w, r, id)
+		return
+	}
+	if action == "cleanup" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleRetryMediaCleanup(w, r, id)
 		return
 	}
 	if action == "rerun" {

@@ -76,10 +76,16 @@ type Manifest struct {
 	Annotations json.RawMessage `json:"annotations,omitempty"`
 }
 
+type RecordingProvenance struct {
+	CaptureMode     string `json:"captureMode"`
+	SourceRetention string `json:"sourceRetention"`
+}
+
 type Provenance struct {
-	SpeechToText      *ProcessingStep `json:"speechToText,omitempty"`
-	DisplayTranscript *ProcessingStep `json:"displayTranscript,omitempty"`
-	MeetingSummary    *ProcessingStep `json:"meetingSummary,omitempty"`
+	Recording         *RecordingProvenance `json:"recording,omitempty"`
+	SpeechToText      *ProcessingStep      `json:"speechToText,omitempty"`
+	DisplayTranscript *ProcessingStep      `json:"displayTranscript,omitempty"`
+	MeetingSummary    *ProcessingStep      `json:"meetingSummary,omitempty"`
 	// Attribution is meeting-level, not a per-transcript ProcessingStep: the
 	// cross-track attribution stage runs once against the default raw
 	// transcript. Nil for legacy files and attribution-less builds, and

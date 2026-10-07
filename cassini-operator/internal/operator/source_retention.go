@@ -3,6 +3,8 @@ package operator
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 )
 
 const (
@@ -53,4 +55,33 @@ func processingPolicy(job Job) *recordingProcessingPolicy {
 func deletesSourceMedia(job Job) bool {
 	p := processingPolicy(job)
 	return p != nil && p.SourceRetention == sourceDeleteAfterProcessing
+}
+
+// Save only the public policy, not the operator's model settings, in the
+// published provenance. This is a policy declaration, not a deletion receipt.
+func stampMediaPolicy(meeting string, job Job) error {
+	var req TriggerRequest
+	if err := json.Unmarshal([]byte(job.RequestJSON), &req); err != nil {
+		return err
+	}
+	path := filepath.Join(meeting, "manifest.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var manifest map[string]any
+	if err = json.Unmarshal(raw, &manifest); err != nil {
+		return err
+	}
+	provenance, ok := manifest["provenance"].(map[string]any)
+	if !ok {
+		provenance = map[string]any{}
+	}
+	provenance["recording"] = map[string]string{"captureMode": req.CaptureMode, "sourceRetention": req.ProcessingPolicy.SourceRetention}
+	manifest["provenance"] = provenance
+	raw, err = json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0600)
 }

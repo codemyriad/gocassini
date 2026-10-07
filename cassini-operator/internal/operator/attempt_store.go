@@ -120,6 +120,13 @@ WHERE job_id = ? AND attempt_number = ?`, column), path, nowUTCString(), jobID, 
 func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string) (Job, error) {
 	unlock := s.lockArtifacts(job.ID)
 	defer unlock()
+	fresh, err := s.GetJob(ctx, job.ID)
+	if err != nil {
+		return Job{}, err
+	}
+	if deletesSourceMedia(fresh) {
+		return Job{}, fmt.Errorf("%w: source media is scheduled for deletion after processing", ErrJobNotEligibleForRerun)
+	}
 	var pending int
 	if err := s.db.QueryRowContext(ctx, `SELECT
  (SELECT count(*) FROM artifact_operations WHERE job_id=?) +
