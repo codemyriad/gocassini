@@ -46,6 +46,9 @@ const (
 )
 
 type modelSpec struct {
+	// URL is the bundle archive EnsureModel downloads. It is empty for a model
+	// with no archive: install it with Settings, `cassini models`, or
+	// deployment/models/fetch-models.sh, which use dist.gocassini.com.
 	URL string
 
 	// CTC models: single model file.
@@ -106,8 +109,6 @@ var knownModels = map[ModelID]modelSpec{
 		FeatureDim:   128,
 	},
 	ModelParakeet06BV3: {
-		URL: "https://assets.gocassini.codemyriad.io/" +
-			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v3.tar.bz2",
 		EncoderFile:  "encoder.onnx",
 		DecoderFile:  "decoder.onnx",
 		JoinerFile:   "joiner.onnx",
@@ -227,6 +228,12 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 		return ModelPaths{}, fmt.Errorf(
 			"model %s missing required files and CASSINI_DISALLOW_MODEL_DOWNLOAD=1; "+
 				"missing: %s", id, strings.Join(missing, ", "))
+	}
+
+	if spec.URL == "" {
+		return ModelPaths{}, fmt.Errorf(
+			"model %s has no archive download; install it with cassini models "+
+				"or deployment/models/fetch-models.sh", id)
 	}
 
 	required := RequiredModelFileNames(id)
