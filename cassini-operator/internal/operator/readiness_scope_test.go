@@ -948,3 +948,102 @@ func TestATestBehindFailedStorageStillNamesStorage(t *testing.T) {
 		}
 	}
 }
+
+func TestAMissingRecordingSecretIsOneRowToFixOnCassinisSide(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "talk.hpb", State: "not_verified", Code: "hpb_declared_unverified", Action: "configure_talk"},
+		{ID: "talk.discovery", State: "needs_action", Code: "recording_secret_missing", Action: "connect_talk"},
+		{ID: "talk.handoff", State: "needs_action", Code: "recording_secret_missing",
+			Steps: []readinessStep{{Label: "Check that Cassini's data volume is mounted and writable"}}},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+	for _, c := range checks {
+		switch c.ID {
+		case "talk.handoff":
+			if c.State != "needs_action" || c.Action != "" || len(c.Steps) == 0 {
+				t.Fatalf("talk.handoff = %+v; want the one row to act on, with steps and no Connect Talk: there is no secret to give Talk", c)
+			}
+		case "talk.discovery":
+			if c.Code != "check_blocked" || !strings.Contains(c.Message, "Recording credential") {
+				t.Fatalf("talk.discovery = %+v; want it waiting on the recording credential it would authenticate with", c)
+			}
+		}
+	}
+}
+
+func TestATestNamesTheFailedCheckBeforeAnUnconfirmedOne(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "storage", State: "passed", Code: "storage_ready"},
+		{ID: "talk.hpb", State: "not_verified", Code: "hpb_declared_unverified", Action: "recheck"},
+		{ID: "talk.discovery", State: "needs_action", Code: "recording_auth_rejected", Action: "connect_talk"},
+		{ID: "test", State: "not_verified", Code: "test_not_run", Action: "test_recording"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+	for _, c := range checks {
+		if c.ID != "test" {
+			continue
+		}
+		if !strings.Contains(c.Message, "Talk connection, which needs attention first") {
+			t.Fatalf("test = %q; running every check cannot confirm the backend while Talk refuses Cassini, so the refusal is what to name", c.Message)
+		}
+	}
+}
+
+func TestABackendThatTheProbeNeverReachedWaitsOnWhatStoppedIt(t *testing.T) {
+	cases := []struct {
+		name, discoveryCode, discoveryState, wantRoot, wantRootCode string
+		withHandoff                                                 bool
+	}{
+		{"talk refused cassini", "recording_auth_rejected", "needs_action", "Talk connection", "recording_auth_rejected", false},
+		{"talk or the room unavailable", "talk_or_room_unavailable", "needs_action", "Talk connection", "talk_or_room_unavailable", false},
+		{"nextcloud unreachable", "nextcloud_timeout", "warn", "Talk connection", "nextcloud_timeout", false},
+		{"no recording secret", "recording_secret_missing", "needs_action", "Recording credential", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			checks := []readinessCheck{
+				{ID: "storage", State: "passed", Code: "storage_ready"},
+				{ID: "talk.hpb", State: "not_verified", Code: "hpb_declared_unverified", Action: "recheck"},
+				{ID: "talk.discovery", State: c.discoveryState, Code: c.discoveryCode, Action: "connect_talk"},
+				{ID: "test", State: "not_verified", Code: "test_not_run", Action: "test_recording"},
+			}
+			if c.withHandoff {
+				checks = append(checks, readinessCheck{ID: "talk.handoff", State: "needs_action", Code: "recording_secret_missing"})
+			}
+			sortReadinessRows(checks)
+			suppressBlockedRows(checks)
+			byID := map[string]readinessCheck{}
+			for _, row := range checks {
+				byID[row.ID] = row
+			}
+			for _, id := range []string{"talk.hpb", "test"} {
+				if row := byID[id]; row.Code != "check_blocked" || !strings.Contains(row.Message, c.wantRoot) || row.Action != "" {
+					t.Fatalf("%s = %+v; want it waiting on %s with no button of its own", id, row, c.wantRoot)
+				}
+			}
+			if c.wantRootCode != "" {
+				if row := byID["talk.discovery"]; row.Code != c.wantRootCode {
+					t.Fatalf("talk.discovery = %+v; the row that found the fault must keep it", row)
+				}
+			} else if row := byID["talk.discovery"]; row.Code != "check_blocked" || !strings.Contains(row.Message, c.wantRoot) {
+				t.Fatalf("talk.discovery = %+v; want it waiting on %s", row, c.wantRoot)
+			}
+		})
+	}
+}
+
+func TestAConfirmedOrMissingBackendIsNotTreatedAsUnreached(t *testing.T) {
+	checks := []readinessCheck{
+		{ID: "talk.hpb", State: "needs_action", Code: "hpb_disabled"},
+		{ID: "talk.discovery", State: "needs_action", Code: "recording_auth_rejected"},
+	}
+	sortReadinessRows(checks)
+	suppressBlockedRows(checks)
+	for _, row := range checks {
+		if row.ID == "talk.hpb" && row.Code != "hpb_disabled" {
+			t.Fatalf("talk.hpb = %+v; a backend known to be missing is the fault, not something waiting", row)
+		}
+	}
+}

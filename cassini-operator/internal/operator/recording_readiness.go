@@ -673,7 +673,11 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "Cassini cannot store or share recordings in Nextcloud yet. The storage details name the step that failed.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
-		add("talk.handoff", "needs_action", "recording_secret_missing", "Cassini could not provision its recording credential. Check its persistent storage.", "connect_talk")
+		addWithSteps("talk.handoff", "needs_action", "recording_secret_missing",
+			"Cassini has no recording secret. It creates one when it starts and keeps it on its data volume, and that did not succeed.", "",
+			readinessStep{Label: "Check that Cassini's data volume is mounted and writable: the secret is saved next to its database"},
+			readinessStep{Label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again"},
+			readinessStep{Label: "Or set one yourself in `CASSINI_TALK_RECORDING_SECRET`, in Cassini's deploy options. A secret set there always wins"})
 	}
 	if refusal := rt.talkBackendMisconfigured(); refusal != "" {
 		// Ahead of the room check: no room can make this work, and "choose a
