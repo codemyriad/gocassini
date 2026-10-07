@@ -2,6 +2,7 @@ import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import App from "./App.svelte";
+import { notifySetupChanged } from "./operator/setupSignal";
 import "./app.css";
 
 const defaults = () => ({
@@ -102,6 +103,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  releaseSave?.();
   if (app) await unmount(app);
   app = undefined;
   host.remove();
@@ -302,6 +304,89 @@ describe("retention reminder in the app", () => {
     await expect.element(page.getByText("Nextcloud sharing is ready.", { exact: true })).toBeVisible();
     await expect.element(reminder()).toBeVisible();
     expect(puts).toBe(0);
+  });
+
+  it("dismisses only after persistence, keeps all values and survives a new session", async () => {
+    await open();
+    await expect.element(reminder()).toBeVisible();
+    const before = structuredClone(saved);
+    holdSave = true;
+    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await expect.poll(() => releaseSave !== null).toBe(true);
+    await expect.element(reminder()).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Dismissing…", exact: true })).toBeDisabled();
+    expect(puts).toBe(1);
+    const beforeProbe = statusCalls;
+    notifySetupChanged();
+    await expect.poll(() => statusCalls).toBeGreaterThan(beforeProbe);
+    releaseSave!();
+    holdSave = false;
+    await expect.element(reminder()).not.toBeInTheDocument();
+    expect(saved).toEqual({ ...before, revision: 1 });
+    await open();
+    await expect.poll(() => gets).toBeGreaterThan(2);
+    expect(reminder().all()).toHaveLength(0);
+    expect(puts).toBe(1);
+  });
+
+  it("keeps a failed dismissal visible and allows retry", async () => {
+    await open();
+    failPut = true;
+    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not dismiss the reminder");
+    expect(saved.revision).toBe(0);
+    failPut = false;
+    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await expect.element(reminder()).not.toBeInTheDocument();
+    expect(saved.revision).toBe(1);
+  });
+
+  it("protects a dirty draft and excludes Ignore while the editor saves", async () => {
+    await open();
+    await openStorage();
+    const ignore = page.getByRole("button", { name: "Don't remind again", exact: true });
+    await source().getByRole("button", { name: "30 days", exact: true }).click();
+    await expect.element(ignore).toBeDisabled();
+    await expect.element(page.getByText("Save or discard your changes before dismissing.")).toBeVisible();
+    await page.getByRole("button", { name: "Reload saved settings" }).click();
+    await page.getByRole("button", { name: "Leave", exact: true }).click();
+    await expect.element(ignore).toBeEnabled();
+    holdSave = true;
+    await save().click();
+    await expect.poll(() => releaseSave !== null).toBe(true);
+    await expect.element(ignore).toBeDisabled();
+    releaseSave!();
+    holdSave = false;
+    await expect.element(reminder()).not.toBeInTheDocument();
+    expect(puts).toBe(1);
+  });
+
+  it("acknowledges a save that completes after leaving the pristine editor", async () => {
+    await open();
+    await openStorage();
+    holdSave = true;
+    await save().click();
+    await expect.poll(() => releaseSave !== null).toBe(true);
+    await page.getByRole("button", { name: "Browse", exact: true }).click();
+    await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).not.toBeInTheDocument();
+    releaseSave!();
+    holdSave = false;
+    await expect.element(reminder()).not.toBeInTheDocument();
+    expect(saved.revision).toBe(1);
+  });
+
+  it("blocks editor changes while Ignore is saving", async () => {
+    await open();
+    await openStorage();
+    holdSave = true;
+    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await expect.poll(() => releaseSave !== null).toBe(true);
+    await expect.element(save()).toBeDisabled();
+    await expect.element(source().getByRole("checkbox")).toBeDisabled();
+    releaseSave!();
+    holdSave = false;
+    await expect.element(reminder()).not.toBeInTheDocument();
+    expect(puts).toBe(1);
   });
 
   it.each([[1280, 900, "saturn-light"], [390, 900, "saturn-light"], [390, 900, "saturn-dark"], [900, 450, "saturn-light"]] as const)(

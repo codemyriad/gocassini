@@ -11,18 +11,27 @@ The same page shows [storage usage by retention category and date](storage-usage
 
 Cassini is usable before an administrator saves retention settings. Administrators
 see a nonblocking **Review retention settings** banner until the configuration
-has been saved. **Review settings** opens the existing editor in
+has been saved or explicitly dismissed. **Review settings** opens the existing editor in
 **Operator → Storage**. Saving unchanged defaults is allowed on the first save.
 Merely visiting Storage does not acknowledge the reminder.
+
+**Don't remind again** saves the latest effective configuration unchanged and
+suppresses the reminder for the whole installation. It does not use a browser-local
+preference or change retention durations. Save and dismissal deliberately share
+the same saved-revision representation; it does not record which action was used.
+Ignore is disabled while settings contain unsaved changes or another retention
+save is running. A failed dismissal stays visible and can be retried; a concurrent
+administrator's saved policy is preserved by the existing revision checks.
 
 ```text
 Open app -> browse / record / play with effective settings
      |
-     +-- revision zero -> reminder -> Storage -> Save
-                                                |
-                                    persisted revision > 0
-                                                |
-                                    reminder hidden across sessions
+     +-- revision zero -> reminder --+--> Storage -> Save --+
+                                     +--> Don't remind ----+
+                                                           |
+                                               persisted revision > 0
+                                                           |
+                                               hidden across sessions
 ```
 
 The existing saved revision records acknowledgement for the whole installation,

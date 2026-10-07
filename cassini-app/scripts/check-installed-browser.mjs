@@ -5,8 +5,9 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
-const [summaryPath, out] = process.argv.slice(2);
-assert(summaryPath && out, "Usage: check-installed-browser.mjs VALIDATOR_SUMMARY OUTPUT_DIR");
+const [summaryPath, out, retentionAction = "save"] = process.argv.slice(2);
+assert(summaryPath && out, "Usage: check-installed-browser.mjs VALIDATOR_SUMMARY OUTPUT_DIR [save|ignore]");
+assert(["save", "ignore"].includes(retentionAction), "retention action must be save or ignore");
 const summary = JSON.parse(await readFile(summaryPath, "utf8"));
 assert.equal(summary.result, "passed");
 assert(summary.last_job_id, "validator did not identify its recording");
@@ -70,16 +71,19 @@ try {
   assert.equal(stillUnconfirmed.revision, 0, "playback must not acknowledge retention");
   // Navigate out of the meeting sheet through its normal Close action first.
   await page.locator('button[aria-label="Close the meeting"][title="Close (Esc)"]').click();
-  await reminder.getByRole("button", { name: "Review settings", exact: true }).click();
+  if (retentionAction === "save") {
+    await reminder.getByRole("button", { name: "Review settings", exact: true }).click();
+  }
   const [savedResponse] = await Promise.all([
     page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "PUT"),
-    page.getByRole("button", { name: "Save retention settings", exact: true }).click(),
+    page.getByRole("button", { name: retentionAction === "save" ? "Save retention settings" : "Don't remind again", exact: true }).click(),
   ]);
   assert.equal(savedResponse.status(), 200);
   const saved = await savedResponse.json();
   assert.deepEqual(saved, { ...before, revision: before.revision + 1 });
   await reminder.waitFor({ state: "hidden" });
   checks.retention_review = true;
+  if (retentionAction === "ignore") checks.retention_dismissal = true;
   const [reloadedResponse] = await Promise.all([
     page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "GET"),
     page.reload(),

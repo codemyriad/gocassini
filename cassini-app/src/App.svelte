@@ -8,10 +8,11 @@
   import SetupNotice from "./SetupNotice.svelte";
   import RetentionReminder from "./RetentionReminder.svelte";
   import { onRetentionChanged } from "./operator/retentionSignal";
+  import { dismissRetentionReminder, retentionMutationBusy } from "./operator/retentionReminder";
   import type { RetentionSettings } from "./operator/retention";
   import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
-  import { guardLeave } from "./operator/unsaved";
+  import { guardLeave, unsavedChanges } from "./operator/unsaved";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
   import {
     buildFeatureNotice,
@@ -111,6 +112,7 @@
   let retentionSettings: RetentionSettings | null = null;
   let retentionError = "";
   let retentionLoading = false;
+  let dismissingRetention = false;
   let retentionGeneration = 0;
   let destroyed = false;
   let stopListeningForRetentionChanges: (() => void) | null = null;
@@ -140,6 +142,21 @@
     } finally {
       if (generation === retentionGeneration) retentionLoading = false;
     }
+  }
+
+  async function ignoreRetention(): Promise<void> {
+    const client = operatorClient;
+    if (!client || $unsavedChanges || $retentionMutationBusy || dismissingRetention) return;
+    dismissingRetention = true;
+    retentionError = "";
+    try {
+      const settings = await dismissRetentionReminder(client);
+      if (!destroyed && client === operatorClient) acceptRetention(settings);
+    } catch (error) {
+      if (!destroyed && client === operatorClient) {
+        retentionError = `Could not dismiss the reminder: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    } finally { dismissingRetention = false; }
   }
 
   function focusRetention(): void {
@@ -432,7 +449,7 @@
         fetchSetupHealth(operatorBasePath),
       ]);
       operatorAvailable = probe.available;
-      operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;
+      operatorClient = probe.available ? (operatorClient ?? new OperatorClient(operatorBasePath)) : null;
       setupHealth = health;
       setupFeatures = health?.features ?? null;
       recordingNeedsAction = health?.recordingState === "needs_action";
@@ -572,7 +589,8 @@
       <div class="cassini-shell-banner" inert={overlayOpen} data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
           <RetentionReminder settings={retentionSettings} error={retentionError} loading={retentionLoading}
-            on:review={openStorage} on:retry={() => void refreshRetention()} />
+            dirty={$unsavedChanges} busy={$retentionMutationBusy} dismissing={dismissingRetention}
+            on:review={openStorage} on:retry={() => void refreshRetention()} on:ignore={() => void ignoreRetention()} />
         </div>
       </div>
     {/if}

@@ -5,6 +5,7 @@
   import { changeRetentionMode, retentionLabels, type RetentionSettings } from "./operator/retention";
   import RetentionPolicyField from "./RetentionPolicyField.svelte";
   import { notifyRetentionChanged } from "./operator/retentionSignal";
+  import { retentionMutationBusy, withRetentionMutation } from "./operator/retentionReminder";
   import RetentionActions from "./RetentionActions.svelte";
   export let operatorClient: OperatorClient | null = null;
   // Storage owns the complete policy editor and its draft.
@@ -13,9 +14,11 @@
   export let disabled = false;
   export let formId = "retention-settings-form";
   const dispatch = createEventDispatcher<{ saved: RetentionSettings }>();
+  let alive = true;
   let settings: RetentionSettings | null = null;
   let saved = "", error = "", notice = "";
   function accept(value: RetentionSettings) {
+    if (!alive) return;
     settings = JSON.parse(JSON.stringify(value));
     saved = JSON.stringify(settings);
     split = value.history.mode === "fine" || !!value.history.fine_initialized;
@@ -28,6 +31,7 @@
     busy = true; error = ""; notice = "";
     try { if (!operatorClient) throw new Error("Operator unavailable"); accept(await operatorClient.getRetention());
     } catch (e) {
+      if (!alive) return;
       error = e instanceof Error ? e.message : String(e);
       // guardLeave cleared the flag before attempting a reload. If it failed,
       // the draft is still here and must still be protected on the next exit.
@@ -40,9 +44,23 @@
     if (value === "fine") split = true;
   }
   async function save() {
-    if (!settings || !operatorClient || busy || disabled) return; busy = true; error = ""; notice = "";
-    try { const result = await operatorClient.putRetention(settings); accept(result); notice = "Retention settings saved."; dispatch("saved", result); }
-    catch (e) { error = e instanceof Error ? e.message : String(e); } finally { busy = false; }
+    if (!settings || !operatorClient || busy || disabled || $retentionMutationBusy) return;
+    busy = true;
+    error = "";
+    notice = "";
+    const snapshot = settings;
+    const client = operatorClient;
+    try {
+      const result = await withRetentionMutation(() => client.putRetention(snapshot));
+      // Navigation may remove this editor while the server commits the save.
+      // The shell still needs the committed revision; never restore the draft.
+      if (!alive) { notifyRetentionChanged(result); return; }
+      accept(result);
+      notice = "Retention settings saved.";
+      dispatch("saved", result);
+    } catch (e) {
+      if (alive) error = e instanceof Error ? e.message : String(e);
+    } finally { busy = false; }
   }
   function beforeUnload(event: BeforeUnloadEvent) {
     if ($unsavedChanges || busy) {
@@ -52,7 +70,7 @@
   }
   onMount(() => { if (initialSettings) accept(initialSettings); else void load(); });
   $: unsavedChanges.set(!!settings && JSON.stringify(settings) !== saved);
-  onDestroy(() => { unsavedChanges.set(false); leavePrompt.set(null); });
+  onDestroy(() => { alive = false; unsavedChanges.set(false); leavePrompt.set(null); });
 </script>
 <svelte:window on:beforeunload={beforeUnload} />
 <section class="retention-panel" id="retention-policies">
@@ -63,7 +81,7 @@
   <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Retention ages use UTC dates. Cleanup runs at startup and on the daily schedule below. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
   {#if settings}
     <form id={formId} class="grid gap-4" on:submit|preventDefault={save}>
-      <fieldset disabled={busy || disabled} class="grid gap-4">
+      <fieldset disabled={busy || disabled || $retentionMutationBusy} class="grid gap-4">
         <section class="op-tint p-4">
           <h3 class="font-semibold">Recordings</h3>
           <RetentionPolicyField bind:policy={settings.recordings} label="Source recordings" />
@@ -105,7 +123,7 @@
   </div>
   <div class="retention-footer">
     <RetentionActions {formId} {error} {notice}
-      disabled={busy || disabled} canSave={!!settings && (settings.revision === 0 || JSON.stringify(settings) !== saved)}
+      disabled={busy || disabled || $retentionMutationBusy} canSave={!!settings && (settings.revision === 0 || JSON.stringify(settings) !== saved)}
       on:reload={() => guardLeave(load)} />
   </div>
 </section>
