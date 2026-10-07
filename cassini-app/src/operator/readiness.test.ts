@@ -471,6 +471,11 @@ describe("a repair that failed", () => {
     expect(checkTone(row)).toBe("warning");
   });
 
+  it("keeps saying what failed when there is no retry to offer", () => {
+    expect(checkStateLabel({ ...row, repair: undefined })).toBe("Re-index failed");
+    expect(repairLabel({ ...row, repair: undefined })).toBe("");
+  });
+
   it("offers to try again rather than to start fresh", () => {
     expect(repairLabel(row)).toBe("Try re-indexing again");
     expect(repairLabel({ ...row, repair_failed: false })).toBe("Re-index now");

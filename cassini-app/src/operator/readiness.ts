@@ -347,10 +347,10 @@ export function formatAge(checkedAt: string, now: Date = new Date()): string {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
-const repairNouns: Record<string, string> = { backfill_search: "Re-index" };
+const failedRepairNouns: Record<string, string> = { "archive.search": "Re-index" };
 
 export function checkStateLabel(check: ReadinessCheck): string {
-  if (check.repair_failed) return `${repairNouns[check.repair ?? ""] ?? "Repair"} failed`;
+  if (check.repair_failed) return `${failedRepairNouns[check.id] ?? "Repair"} failed`;
   if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
   return stateLabels[check.state];
 }
