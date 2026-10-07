@@ -1,6 +1,7 @@
 package talk
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -735,5 +736,32 @@ func TestSessionArtifactUpdateParticipantDisplayReplacesSyntheticShortIDPlacehol
 	}
 	if !strings.Contains(string(raw), `"display": "Lisa"`) {
 		t.Fatalf("expected persisted participant display in session json: %s", string(raw))
+	}
+}
+
+func TestSessionArtifactPersistsRecordingLocalTimeAtStart(t *testing.T) {
+	previous := time.Local
+	time.Local = time.FixedZone("recording-site", 2*60*60)
+	defer func() { time.Local = previous }()
+	artifact, err := newSessionCaptureArtifact(filepath.Join(t.TempDir(), "meeting.mkv"), "", "room", "recorder", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer artifact.close()
+	raw, err := os.ReadFile(artifact.sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved session.Session
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	start, err := time.Parse(time.RFC3339Nano, saved.StartedWallUTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := start.In(time.Local).Format("2006-01-02T15:04:05")
+	if saved.RecordedAtLocal != want {
+		t.Fatalf("recorded local time = %q, want %q", saved.RecordedAtLocal, want)
 	}
 }

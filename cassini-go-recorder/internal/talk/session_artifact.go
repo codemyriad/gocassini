@@ -129,11 +129,12 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 	now := time.Now()
 	monoBaseNS := uint64(now.UnixNano())
 	meta := session.Session{
-		Version:        session.SchemaVersion,
-		CaptureMode:    captureMode(retainVideo),
-		SessionID:      fmt.Sprintf("%s_%s", base, sessionID),
-		StartedWallUTC: now.UTC().Format(time.RFC3339Nano),
-		StartedMonoNS:  monoBaseNS,
+		Version:         session.SchemaVersion,
+		CaptureMode:     captureMode(retainVideo),
+		SessionID:       fmt.Sprintf("%s_%s", base, sessionID),
+		StartedWallUTC:  now.UTC().Format(time.RFC3339Nano),
+		RecordedAtLocal: now.Format("2006-01-02T15:04:05"),
+		StartedMonoNS:   monoBaseNS,
 		Platform: session.Platform{
 			Name:       "nextcloudtalk",
 			Deployment: "custom",

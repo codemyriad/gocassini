@@ -10,6 +10,7 @@ type Session struct {
 	Version          int            `json:"version"`
 	SessionID        string         `json:"session_id"`
 	StartedWallUTC   string         `json:"started_wall_utc"`
+	RecordedAtLocal  string         `json:"recorded_at_local,omitempty"`
 	StartedMonoNS    uint64         `json:"started_mono_ns"`
 	Platform         Platform       `json:"platform"`
 	Transceivers     []Transceiver  `json:"transceivers,omitempty"`
