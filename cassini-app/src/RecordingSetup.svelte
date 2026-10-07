@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { BookOpen, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Settings, TriangleAlert } from "@lucide/svelte";
+  import { BookOpen, CircleAlert, CircleCheck, Clock, Headphones, Info, ListChecks, Settings, TriangleAlert, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, repairLabels, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
@@ -264,32 +264,36 @@
             </div>
           {/if}
     {#if panel && panelOwner === check.id && rows.findIndex(row => row.id === check.id) === index}
-      <div class="mt-3 rounded-box bg-base-200 p-4">
+      <div class="relative mt-3 rounded-box border border-base-300 bg-base-200 p-4">
+        <button class="btn btn-ghost btn-sm btn-square absolute top-3 right-3" type="button" aria-label="Close" on:click={() => { panel = ""; secret = ""; }}><X size={16} aria-hidden="true" /></button>
         {#if panel === "configure_talk"}
-          <h3 class="font-semibold">Connect to Talk’s signaling server</h3>
+          <h3 class="pr-10 font-semibold">Connect to Talk’s signaling server</h3>
           <p class="my-2 text-sm">Use the signaling server’s internal client secret. This is different from the recording-backend secret, which Cassini generates itself.</p>
           {#if report.secret_source === "env"}
             <p class="text-sm">Managed by deployment configuration. Change CASSINI_TALK_SIGNALING_INTERNAL_SECRET in Cassini’s deploy options.</p>
           {:else}
             <p class="my-2 text-sm">{report.secret_configured ? "An internal secret is saved. Enter a new value to replace it." : "No internal secret is saved."}</p>
-            <form on:submit|preventDefault={() => save({ internal_secret: secret })}>
-              <label class="form-control block">Internal secret<input class="input input-bordered mt-1 block w-full" type="password" autocomplete="new-password" bind:value={secret} /></label>
-              <button class="btn btn-primary btn-sm mt-3" disabled={busy || !secret.trim()}>Save secret</button>
+            <form class="mt-3" on:submit|preventDefault={() => save({ internal_secret: secret })}>
+              <label class="block text-sm font-semibold" for="talk-internal-secret">Internal secret</label>
+              <div class="mt-1 flex flex-col items-start gap-2 @md:flex-row @md:items-stretch">
+                <input id="talk-internal-secret" class="input input-bordered w-full min-w-0 @md:w-auto @md:flex-1" type="password" autocomplete="new-password" bind:value={secret} />
+                <button class="btn btn-primary shrink-0 pb-0.5" disabled={busy || !secret.trim()}>Save secret</button>
+              </div>
             </form>
           {/if}
-          <p class="mt-3 text-sm text-base-content/70">This is the internal secret your Talk signaling server is configured with. Cassini cannot read it from Talk, which is why it is asked for here.</p>
-          {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
+          <p class="mt-3 text-xs text-base-content/65">This is the internal secret your Talk signaling server is configured with. Cassini cannot read it from Talk, which is why it is asked for here.</p>
+          {#if talkSettingsURL}<p class="mt-1 text-xs"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
           <!-- No "Test connection" button. It fired the Talk connection check,
                which authenticates with the RECORDING secret and can say nothing
                about this one — the row this form belongs to is the backend row,
                and its own Check button is what tries the credential. -->
         {:else if panel === "connect_talk"}
-          <h3 class="font-semibold">Use Cassini as Talk’s recording backend</h3>
+          <h3 class="pr-10 font-semibold">Use Cassini as Talk’s recording backend</h3>
           <p class="my-2 text-sm">Talk needs Cassini's recording-server URL and its recording secret. Cassini generates the secret itself but cannot write Talk's configuration, so the values have to be given to Talk.</p>
           {#if provisioningURL}<p class="text-sm"><a class="link" href={provisioningURL} target="_blank" rel="noreferrer">Show both values</a></p>{/if}
           {#if talkSettingsURL}<p class="mt-1 text-sm"><a class="link" href={talkSettingsURL} target="_blank" rel="noreferrer">Open Talk's administration settings</a></p>{/if}
         {:else if panel === "test_recording"}
-          <h3 class="font-semibold">Record a test through Talk</h3>
+          <h3 class="pr-10 font-semibold">Record a test through Talk</h3>
           <!-- No configuration. This step used to begin "choose a dedicated test
                room", which is the one thing Cassini can do for itself, and which
                made the whole tool unreachable until somebody pasted a URL. -->
@@ -319,10 +323,9 @@
                recording-setup.json from backup for a fault that had nothing to
                do with the file. rowActions now drops an action this build
                cannot name, so there is no longer an unnamed branch to land in. -->
-          <h3 class="font-semibold">Cassini’s saved configuration cannot be read</h3>
+          <h3 class="pr-10 font-semibold">Cassini’s saved configuration cannot be read</h3>
           <p class="my-2 text-sm">Ask your server administrator to check Cassini’s persistent volume and restore recording-setup.json from backup, then restart Cassini and check again.</p>
         {/if}
-        <button class="btn btn-ghost btn-sm mt-4" on:click={() => { panel = ""; secret = ""; }}>Close</button>
       </div>
     {/if}
         </li>
