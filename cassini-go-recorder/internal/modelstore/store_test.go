@@ -247,6 +247,27 @@ func TestSingleFileModelImportsFromTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Saved under another name, as a browser does with a second download:
+	// still the model's file, compressed or not.
+	for _, name := range []string{"model.int8.onnx(1).zst", "nemo.onnx"} {
+		renamed := New(t.TempDir())
+		renamed.Catalogue = s.Catalogue
+		body := data[f.Artifact]
+		if !strings.HasSuffix(name, ".zst") {
+			body = raw
+		}
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, body, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := renamed.Import(ctx, m, ImportOptions{From: path}); err != nil {
+			t.Fatalf("import %s: %v", name, err)
+		}
+		if err := renamed.Complete(m); err != nil {
+			t.Fatalf("import %s: %v", name, err)
+		}
+	}
+
 	other := New(t.TempDir())
 	other.Catalogue = s.Catalogue
 	wrong := filepath.Join(t.TempDir(), f.Path)

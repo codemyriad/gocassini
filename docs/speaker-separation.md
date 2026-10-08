@@ -309,8 +309,8 @@ Nothing is installed by default, and nothing downloads it on its own.
 - **Air-gapped.** `cassini models pack nemotron-3-diarization-int8 --out
   diarizer.tar` on a connected machine, then `cassini models import --from
   diarizer.tar` on the server. `import` also takes the one model file itself,
-  `model.int8.onnx` or the CDN's `model.int8.onnx.zst`, with `--model` and
-  `--revision`.
+  `model.int8.onnx` or the CDN's `model.int8.onnx.zst` (under any name: it is
+  told compressed by its content), with `--model` and `--revision`.
 
 The diarizer has no VAD and runs on the CPU only: `--device cuda` is refused.
 It lands in `models/nemotron-3-diarization-int8/<source-sha256>/model.int8.onnx`

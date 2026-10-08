@@ -2,9 +2,11 @@ package modelstore
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/bzip2"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -230,13 +232,19 @@ func (s *Store) Import(ctx context.Context, m Model, opts ImportOptions) error {
 					return err
 				}
 			}
-		case len(m.Files) == 1 && strings.TrimSuffix(filepath.Base(opts.From), ".zst") == m.Files[0].Path:
+		case len(m.Files) == 1 && (m.Kind == KindDiarization || strings.TrimSuffix(filepath.Base(opts.From), ".zst") == m.Files[0].Path):
 			// One copied model file, as downloaded (.zst) or decompressed: a
-			// single-file model such as the diarizer has no upstream archive.
+			// single-file model such as the diarizer has no upstream archive,
+			// so its file is taken whatever a browser named it, and told
+			// compressed or not by its content.
 			entry := m.Files[0]
 			a, _ := s.Catalogue.Artifact(entry.Artifact)
 			dest := filepath.Join(md, entry.Path)
-			if strings.HasSuffix(opts.From, ".zst") {
+			compressed, err := isZstdFile(opts.From)
+			if err != nil {
+				return err
+			}
+			if compressed {
 				if err := verifyFile(ctx, opts.From, a.Size, a.SHA256); err != nil {
 					return err
 				}
@@ -361,4 +369,23 @@ func (s *Store) unpack(ctx context.Context, m Model, reader io.Reader, stage str
 		}
 	}
 	return nil
+}
+
+// zstdMagic opens every Zstandard frame (RFC 8878).
+var zstdMagic = []byte{0x28, 0xb5, 0x2f, 0xfd}
+
+func isZstdFile(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	head := make([]byte, len(zstdMagic))
+	if _, err := io.ReadFull(f, head); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return false, nil
+		}
+		return false, err
+	}
+	return bytes.Equal(head, zstdMagic), nil
 }
