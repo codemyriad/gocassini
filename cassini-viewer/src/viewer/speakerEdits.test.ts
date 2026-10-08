@@ -84,6 +84,10 @@ describe("speaker edits documents", () => {
     expect(describeSpeakerEditsError(new SpeakerEditsError(409, "unavailable", { reason: "no-source-audio" }))).toBe(
       "Each participant's own audio was not kept for this recording.",
     );
+    // A rerun that was never published: who can fix it, and where.
+    expect(describeSpeakerEditsError(new SpeakerEditsError(409, "unavailable", { reason: "unpublished-rebuild" }))).toMatch(
+      /not published\. An administrator can run it again from Cassini Admin\.$/,
+    );
     expect(describeSpeakerEditsError(new SpeakerEditsError(409, "unavailable", { reason: "later" }))).toMatch(/cannot be changed/);
   });
 

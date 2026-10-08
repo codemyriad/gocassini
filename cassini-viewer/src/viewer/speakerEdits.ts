@@ -65,7 +65,8 @@ export type SpeakerEditsUnavailableReason =
   | "no-job"
   | "no-source-audio"
   | "no-transcript"
-  | "diarization-unavailable";
+  | "diarization-unavailable"
+  | "unpublished-rebuild";
 
 // How far the operator is with the revision it is applying, while `state` is
 // "applying". `estimatedMs` is its guess, made once per attempt, of the time
@@ -165,6 +166,8 @@ export const UNAVAILABLE_REASONS: Record<SpeakerEditsUnavailableReason, string> 
   "no-source-audio": "Each participant's own audio was not kept for this recording.",
   "no-transcript": "This recording has no transcript to separate.",
   "diarization-unavailable": "Voice separation is not installed on this server. An administrator can download it in Cassini's Settings.",
+  "unpublished-rebuild":
+    "This recording was processed again and the new version was not published. An administrator can run it again from Cassini Admin.",
 };
 
 // Whether nothing can be saved for this meeting at all. Without the diarizer
