@@ -270,14 +270,17 @@ type speakerDiarizationSplit struct {
 }
 
 // speakerSummaryRecord is the summary member of x-speakerDiarization: the
-// summary.md apply wrote (by SHA-256), the model that wrote it and the edits
-// (by SHA-256) it was written for. Apply skips the summary model when both
-// hashes still match, so a retried or replayed apply is not billed again.
+// summary.md apply wrote (by SHA-256), the model that wrote it, the edits it
+// was written for and the edited transcript it was written from (both by
+// SHA-256). Apply skips the summary model while summary.md and the edited
+// transcript are still those, so a retried or replayed apply, or a new
+// revision that changes nobody's words or name, is not billed again.
 type speakerSummaryRecord struct {
-	Rewritten   bool   `json:"rewritten"`
-	Model       string `json:"model,omitempty"`
-	SHA256      string `json:"sha256"`
-	EditsSHA256 string `json:"editsSha256"`
+	Rewritten        bool   `json:"rewritten"`
+	Model            string `json:"model,omitempty"`
+	SHA256           string `json:"sha256"`
+	EditsSHA256      string `json:"editsSha256"`
+	TranscriptSHA256 string `json:"transcriptSha256,omitempty"`
 }
 
 type speakerDiarizationBase struct {
@@ -769,8 +772,17 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 			previous = nil
 		}
 	}
-	if previous != nil && previous.EditsSHA256 == editsSHA256 {
-		return speakerSummaryPlan{status: "unchanged", record: previous}, nil
+	// Keyed on what the model reads, not on the edits document: a new
+	// revision with the same effect (a label for a voice that has no words,
+	// the same edits saved again) gives the same transcript.
+	transcriptSHA256, err := edited.SHA256()
+	if err != nil {
+		return speakerSummaryPlan{}, fmt.Errorf("hash edited transcript: %w", err)
+	}
+	if previous != nil && previous.TranscriptSHA256 == transcriptSHA256 {
+		kept := *previous
+		kept.EditsSHA256 = editsSHA256
+		return speakerSummaryPlan{status: "unchanged", record: &kept}, nil
 	}
 	body, model, err := summarizeSpeakersFn(edited)
 	if err != nil {
@@ -782,7 +794,7 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 	return speakerSummaryPlan{
 		status: "regenerated",
 		body:   []byte(body),
-		record: &speakerSummaryRecord{Rewritten: true, Model: model, SHA256: sha256Hex([]byte(body)), EditsSHA256: editsSHA256},
+		record: &speakerSummaryRecord{Rewritten: true, Model: model, SHA256: sha256Hex([]byte(body)), EditsSHA256: editsSHA256, TranscriptSHA256: transcriptSHA256},
 	}, nil
 }
 

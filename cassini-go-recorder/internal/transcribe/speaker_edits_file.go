@@ -1,6 +1,8 @@
 package transcribe
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -69,6 +71,17 @@ func (t TranscriptSpeakers) WithSpeakers(segments []Segment, roster []RosterEntr
 	}
 	out.file.Segments = buildTranscriptSegmentEntries(segments)
 	return out, nil
+}
+
+// SHA256 is the SHA-256 of the file Write writes: what identifies the
+// transcript a summary was written from.
+func (t TranscriptSpeakers) SHA256() (string, error) {
+	data, err := json.MarshalIndent(t.file, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append(data, '\n'))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // Write writes the file atomically.

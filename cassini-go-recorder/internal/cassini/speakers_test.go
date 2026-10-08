@@ -1213,7 +1213,11 @@ func TestSpeakersApplyRewritesTheSummaryAndUndoRestoresIt(t *testing.T) {
 		t.Errorf("the build's summary was not kept byte for byte: %q", got)
 	}
 	record, _ := speakersRecord(t, bundle)
-	want := &speakerSummaryRecord{Rewritten: true, Model: "test-model", SHA256: sha256Hex([]byte(rewritten)), EditsSHA256: sha256Hex([]byte(namedDoc))}
+	written, err := os.ReadFile(filepath.Join(bundle, speakersDefaultTranscript))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &speakerSummaryRecord{Rewritten: true, Model: "test-model", SHA256: sha256Hex([]byte(rewritten)), EditsSHA256: sha256Hex([]byte(namedDoc)), TranscriptSHA256: sha256Hex(written)}
 	if !reflect.DeepEqual(record.Summary, want) {
 		t.Errorf("x-speakerDiarization.summary = %+v, want %+v", record.Summary, want)
 	}
@@ -1336,6 +1340,13 @@ func TestSpeakersApplyCallsTheSummaryModelOncePerEdits(t *testing.T) {
 
 	expect("other edits", writeSpeakersEdits(t, tmp, "renamed.json", speakersSplitDoc(2,
 		`"merges":[],"labels":[{"speakerId":"`+speakersRoomID+`~1","label":"Mina"}]`)), "regenerated", 2)
+	// The same edits saved again, at a new revision, and a name for a voice
+	// that has no words: the transcript the model would read is the same.
+	expect("same edits, next revision", writeSpeakersEdits(t, tmp, "renamed-again.json", speakersSplitDoc(3,
+		`"merges":[],"labels":[{"speakerId":"`+speakersRoomID+`~1","label":"Mina"},{"speakerId":"`+speakersRoomID+`~9","label":"Nobody"}]`)), "unchanged", 2)
+	if record, _ := speakersRecord(t, bundle); record.Summary == nil || record.Summary.EditsSHA256 != record.EditsSHA256 {
+		t.Errorf("an unchanged summary does not name the edits it now stands for: %+v (edits %s)", record.Summary, record.EditsSHA256)
+	}
 
 	writeSpeakersSummary(t, bundle, []byte("## Summary\nedited by hand\n"))
 	renamed := filepath.Join(tmp, "renamed.json")

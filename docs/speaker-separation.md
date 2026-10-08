@@ -82,8 +82,10 @@ Until someone names it, a voice is called `<device label> · Speaker n`.
 | `manifest.json` | See below. `wordCount` is unchanged. |
 
 The summary model is called before apply writes anything, and only when
-`summary.md` is not already the one apply wrote for these exact edits: a
-retried apply, or a replay onto a bundle that already has them, reports
+`summary.md` is not already the one apply wrote from this exact edited
+transcript: a retried apply, a replay onto a bundle that already has the
+edits, or a new revision that changes nobody's words or name (the same
+edits saved again, a name for a voice with no words) reports
 `"summary":"unchanged"` and costs nothing. A rebuilt bundle has the build's
 fresh summary and no record of a rewrite, so a rerun's replay rewrites it.
 
@@ -110,8 +112,9 @@ derives both from the words.
   only their words), the edits revision and SHA-256, and per split the voice
   ids, turn count, number of voices found and whether it was inconclusive.
   Once apply has rewritten `summary.md` it also has `summary`:
-  `{"rewritten": true, "model", "sha256", "editsSha256"}`, the SHA-256 of the
-  summary it wrote and of the edits it was written for
+  `{"rewritten": true, "model", "sha256", "editsSha256", "transcriptSha256"}`,
+  the SHA-256 of the summary it wrote, of the edits it now stands for and of
+  the edited transcript it was written from
   (`provenance.meetingSummary` still describes the build's summary, now
   `summary.raw-asr.md`). Counts, ids and hashes only. The bundle's copy also keeps `base`, the manifest
   members as the build wrote them; `base` is never packed.
