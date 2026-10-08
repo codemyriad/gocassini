@@ -137,6 +137,15 @@ describe("voiceSamples", () => {
     expect(samples.get("a")).toMatchObject({ startMs: 5000, endMs: 9000 });
   });
 
+  it("breaks a run at a long pause, so a sample is not mostly silence", () => {
+    // A few words at the start, nothing from anyone for a minute, then a
+    // stretch of speech: the stretch is the sample, not the start.
+    const samples = voiceSamples({
+      segments: [segment("a1", "a", [[0, 400], [60_000, 61_000], [61_000, 63_500]])],
+    });
+    expect(samples.get("a")).toEqual({ speechMs: 3900, startMs: 60_000, endMs: 63_500 });
+  });
+
   it("stops a sample after six seconds", () => {
     const samples = voiceSamples({ segments: [segment("a1", "a", [[1000, 20_000]])] });
     expect(samples.get("a")).toEqual({ speechMs: 19_000, startMs: 1000, endMs: 7000 });

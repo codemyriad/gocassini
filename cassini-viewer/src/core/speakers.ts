@@ -117,11 +117,13 @@ export interface VoiceSample {
 }
 
 export const VOICE_SAMPLE_MS = 6000;
+// A pause longer than this between one speaker's words ends their run.
+export const VOICE_SAMPLE_GAP_MS = 2000;
 
 // voiceSamples finds, for every speaker, the best few seconds to listen to:
 // the longest run of their words, in time order, that no other speaker's word
-// interrupts. That is the stretch most likely to be that voice alone, which is
-// what a person naming it needs to hear.
+// and no long pause interrupts. That is the stretch most likely to be that
+// voice alone, speaking, which is what a person naming it needs to hear.
 export function voiceSamples(
   transcript: Pick<TranscriptWordsV1, "segments">,
   maxMs = VOICE_SAMPLE_MS,
@@ -151,7 +153,9 @@ export function voiceSamples(
     const sample = samples.get(word.speaker) ?? { speechMs: 0, startMs: 0, endMs: 0 };
     sample.speechMs += word.endMs - word.startMs;
     samples.set(word.speaker, sample);
-    if (run && run.speaker === word.speaker) {
+    // A long silence ends a run too: a sample that starts on a few words and
+    // waits half a minute for the next ones is mostly silence.
+    if (run && run.speaker === word.speaker && word.startMs - run.endMs <= VOICE_SAMPLE_GAP_MS) {
       run.endMs = Math.max(run.endMs, word.endMs);
     } else {
       close();
