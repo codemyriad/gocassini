@@ -46,6 +46,8 @@ const (
 	speakersRawASRID           = portable.DefaultWordsTranscriptID
 	speakersDiarizationKey     = "x-speakerDiarization"
 	speakersCaptionsFile       = "captions.vtt"
+	speakersSummaryFile        = "summary.md"
+	speakersBaseSummary        = "summary.raw-asr.md"
 	speakersDisplayTranscript  = "transcript.display.v1.json"
 	speakersReadableTranscript = "transcript.readable.v1.json"
 )
@@ -208,6 +210,12 @@ type speakersApplyReport struct {
 	Inconclusive []string              `json:"inconclusive"`
 	Merged       int                   `json:"merged"`
 	SpeakerCount int                   `json:"speakerCount"`
+	// Summary says what happened to summary.md: "none" (the meeting has no
+	// summary), "unchanged", "regenerated" (rewritten for the new speakers),
+	// "restored" (the build's own summary is back), or "stale" (no summary
+	// model, or it failed: the summary still credits the speakers it was
+	// written for).
+	Summary string `json:"summary"`
 }
 
 type speakersSplitReport struct {
@@ -435,8 +443,15 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir stri
 		return speakersApplyReport{}, fmt.Errorf("manifest speakerCount: %w", err)
 	}
 	report.SpeakerCount = baseCount
+	report.Summary = "unchanged"
+	if !fileExists(filepath.Join(root, speakersSummaryFile)) && !fileExists(filepath.Join(root, speakersBaseSummary)) {
+		report.Summary = "none"
+	}
 
 	if !effective {
+		if fileExists(filepath.Join(root, speakersBaseSummary)) {
+			report.Summary = "restored"
+		}
 		if applied {
 			if err := restoreSpeakerBase(root, manifest, files, stash, primaryPath, baseRaw, base); err != nil {
 				return speakersApplyReport{}, err
@@ -481,6 +496,9 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir stri
 			return speakersApplyReport{}, fmt.Errorf("write speaker edits: %w", err)
 		}
 		if err := regenerateSpeakerCaptions(root, edited); err != nil {
+			return speakersApplyReport{}, err
+		}
+		if report.Summary, err = refreshSpeakerSummary(root, edited); err != nil {
 			return speakersApplyReport{}, err
 		}
 		// Display and readable documents carry their own copies of speaker
@@ -607,6 +625,9 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 	if err := regenerateSpeakerCaptions(root, base); err != nil {
 		return err
 	}
+	if err := restoreSpeakerSummary(root); err != nil {
+		return err
+	}
 	if len(stash.Transcripts) > 0 {
 		files.set("transcripts", stash.Transcripts)
 	} else {
@@ -633,6 +654,64 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 		return err
 	}
 	return removeIfExists(filepath.Join(root, speakersRawASRTranscript))
+}
+
+// summarizeSpeakersFn writes a new summary for an edited transcript; tests
+// replace it so no LLM is called.
+var summarizeSpeakersFn = func(t transcribe.TranscriptSpeakers) (string, error) {
+	cfg := transcribe.DefaultBuildConfig().SummaryLLM
+	if !cfg.IsConfigured() {
+		return "", errSummaryModelUnavailable
+	}
+	return t.Summarize(cfg)
+}
+
+var errSummaryModelUnavailable = errors.New("no summary model configured")
+
+// refreshSpeakerSummary rewrites summary.md for the edited speakers, so its
+// action items name the people the transcript now names. The build's own
+// summary is kept byte for byte beside it, the first time, so undoing every
+// edit restores it. A meeting without a summary gets none.
+func refreshSpeakerSummary(root string, edited transcribe.TranscriptSpeakers) (string, error) {
+	path := filepath.Join(root, speakersSummaryFile)
+	basePath := filepath.Join(root, speakersBaseSummary)
+	if !fileExists(path) && !fileExists(basePath) {
+		return "none", nil
+	}
+	if !fileExists(basePath) {
+		original, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read summary: %w", err)
+		}
+		if err := writeFileAtomic(basePath, original, 0o644); err != nil {
+			return "", fmt.Errorf("keep original summary: %w", err)
+		}
+	}
+	body, err := summarizeSpeakersFn(edited)
+	if err != nil {
+		// The transcript is still right; only the prose lags behind it.
+		return "stale", nil
+	}
+	if err := writeFileAtomic(path, []byte(body), 0o644); err != nil {
+		return "", fmt.Errorf("write summary: %w", err)
+	}
+	return "regenerated", nil
+}
+
+// restoreSpeakerSummary puts the build's own summary back.
+func restoreSpeakerSummary(root string) error {
+	basePath := filepath.Join(root, speakersBaseSummary)
+	if !fileExists(basePath) {
+		return nil
+	}
+	original, err := os.ReadFile(basePath)
+	if err != nil {
+		return fmt.Errorf("read original summary: %w", err)
+	}
+	if err := writeFileAtomic(filepath.Join(root, speakersSummaryFile), original, 0o644); err != nil {
+		return fmt.Errorf("restore summary: %w", err)
+	}
+	return removeIfExists(basePath)
 }
 
 func regenerateSpeakerCaptions(root string, transcript transcribe.TranscriptSpeakers) error {

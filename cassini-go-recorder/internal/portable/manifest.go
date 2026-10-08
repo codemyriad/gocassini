@@ -227,6 +227,18 @@ type Integrity struct {
 type Speaker struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+	// Device names the participant a voice was separated from, when this
+	// speaker is one of several people who shared a device. The original
+	// transcript kept beside the separated one still credits the device,
+	// and the roster otherwise has no name for it once its voices are named.
+	// A hint: readers that do not know it show the voice as any speaker.
+	Device *SpeakerDevice `json:"x-device,omitempty"`
+}
+
+// SpeakerDevice is the participant whose audio a voice was separated from.
+type SpeakerDevice struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 type TranscriptItem struct {

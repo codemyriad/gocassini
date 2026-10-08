@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -244,14 +245,44 @@ func ApplySpeakerEdits(base []Segment, baseRoster []RosterEntry, doc SpeakerEdit
 		}
 		return id
 	}
-	var roster []RosterEntry
-	seen := map[string]bool{}
+	// The roster keeps the original order, with each split device replaced
+	// in place by its voices in voice order, so a device's voices sit
+	// together for every reader of speakers[], not only the People panel.
+	present := map[string]bool{}
+	var firstSeen []string
 	for _, seg := range segments {
-		if seg.SpeakerID == "" || seen[seg.SpeakerID] {
-			continue
+		if seg.SpeakerID != "" && !present[seg.SpeakerID] {
+			present[seg.SpeakerID] = true
+			firstSeen = append(firstSeen, seg.SpeakerID)
 		}
-		seen[seg.SpeakerID] = true
-		roster = append(roster, RosterEntry{ID: seg.SpeakerID, Label: labelFor(seg.SpeakerID)})
+	}
+	voicesOf := map[string][]string{}
+	for _, id := range firstSeen {
+		if parent := VoiceParent(id); parent != "" {
+			voicesOf[parent] = append(voicesOf[parent], id)
+		}
+	}
+	for _, ids := range voicesOf {
+		sort.Slice(ids, func(i, j int) bool { return voiceNumber(ids[i]) < voiceNumber(ids[j]) })
+	}
+	var roster []RosterEntry
+	listed := map[string]bool{}
+	add := func(id string) {
+		if !listed[id] {
+			listed[id] = true
+			roster = append(roster, RosterEntry{ID: id, Label: labelFor(id)})
+		}
+	}
+	for _, r := range baseRoster {
+		if present[r.ID] {
+			add(r.ID)
+		}
+		for _, voice := range voicesOf[r.ID] {
+			add(voice)
+		}
+	}
+	for _, id := range firstSeen {
+		add(id)
 	}
 	return segments, roster, report, nil
 }

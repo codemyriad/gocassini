@@ -62,7 +62,7 @@ func TestApplySpeakerEditsSplitsMergesAndNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"room~1=Mira", "ben=Ben", "room~2=Meeting room · Speaker 2"}
+	want := []string{"room~1=Mira", "room~2=Meeting room · Speaker 2", "ben=Ben"}
 	if !reflect.DeepEqual(rosterLabels(gotRoster), want) {
 		t.Fatalf("roster %v want %v", rosterLabels(gotRoster), want)
 	}
@@ -153,5 +153,29 @@ func TestApplySpeakerEditsLeavesADeviceWholeWhenOnlyOneVoiceIsFound(t *testing.T
 	}
 	if !reflect.DeepEqual(got, base) || !reflect.DeepEqual(gotRoster, roster) {
 		t.Fatal("an inconclusive split must leave the transcript as it was")
+	}
+}
+
+func TestApplySpeakerEditsListsADevicesVoicesTogetherInItsPlace(t *testing.T) {
+	// Voice 2 speaks only after Ben, but it is listed next to voice 1, where
+	// the device was, not after Ben.
+	base := MergeAndSortSegments([][]Segment{
+		{{SpeakerID: "ana", Words: []Word{{Text: "first", StartMS: 0, EndMS: 300}}}},
+		{{SpeakerID: "room", Words: []Word{
+			{Text: "hello", StartMS: 1000, EndMS: 1400},
+			{Text: "later", StartMS: 5000, EndMS: 5400},
+		}}},
+		{{SpeakerID: "ben", Words: []Word{{Text: "hi", StartMS: 3000, EndMS: 3300}}}},
+	})
+	roster := []RosterEntry{{ID: "ana", Label: "Ana"}, {ID: "room", Label: "Room"}, {ID: "ben", Label: "Ben"}}
+	sets := map[string]SpeakerTurnSet{"room": {Format: SpeakerTurnsFormat, SpeakerID: "room",
+		Turns: []SpeakerTurnEntry{{900, 1500, 0}, {4900, 5500, 1}}}}
+	_, got, _, err := ApplySpeakerEdits(base, roster, edits([]string{"room"}, nil), sets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ana=Ana", "room~1=Room · Speaker 1", "room~2=Room · Speaker 2", "ben=Ben"}
+	if !reflect.DeepEqual(rosterLabels(got), want) {
+		t.Fatalf("roster %v want %v", rosterLabels(got), want)
 	}
 }

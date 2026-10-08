@@ -308,6 +308,7 @@ func TestSpeakersApplySplitsASharedDevice(t *testing.T) {
 		Missing:      []string{},
 		Inconclusive: []string{},
 		SpeakerCount: 3,
+		Summary:      "none",
 	}
 	if !reflect.DeepEqual(report, wantReport) {
 		t.Errorf("report = %+v, want %+v", report, wantReport)
@@ -921,9 +922,12 @@ func TestSpeakersApplyThenPackKeepsTheAudioAndTheMarks(t *testing.T) {
 		t.Errorf("transcripts %v default %q, want separated-voices (default) and raw-asr", wordIDs, defaultID)
 	}
 	voice1, voice2 := speakersRoomID+"~1", speakersRoomID+"~2"
+	// Each voice names its device: the original transcript credits the
+	// device, and the file has no other place left that holds its name.
+	room := &portable.SpeakerDevice{ID: speakersRoomID, Label: "Meeting room"}
 	wantSpeakers := []portable.Speaker{
-		{ID: voice1, Label: "Meeting room · Speaker 1"},
-		{ID: voice2, Label: "Meeting room · Speaker 2"},
+		{ID: voice1, Label: "Meeting room · Speaker 1", Device: room},
+		{ID: voice2, Label: "Meeting room · Speaker 2", Device: room},
 		{ID: speakersBenID, Label: "Ben"},
 	}
 	if !reflect.DeepEqual(manifest.Speakers, wantSpeakers) {
@@ -978,5 +982,74 @@ func TestSpeakersShowOnABundle(t *testing.T) {
 	if code != 0 || !strings.Contains(stdout, "default transcript: separated-voices (of separated-voices, raw-asr)") ||
 		!strings.Contains(stdout, "speaker edits revision: 1") || !strings.Contains(stdout, "(voice on Meeting room)") {
 		t.Errorf("show after a split: exit %d\n%s", code, stdout)
+	}
+}
+
+// A summary credits whoever the transcript credited when it was written, so a
+// split or a name rewrites it; undoing every edit brings the build's back.
+func TestSpeakersApplyRewritesTheSummaryAndUndoRestoresIt(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	original := []byte("## Action items\n- Meeting room: book the hall\n")
+	if err := os.WriteFile(filepath.Join(bundle, speakersSummaryFile), original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	summarize := func(tr transcribe.TranscriptSpeakers) (string, error) {
+		for _, r := range tr.Roster() {
+			asked = append(asked, r.Label)
+		}
+		return "## Action items\n- Mira: book the hall\n", nil
+	}
+	defer func(prev func(transcribe.TranscriptSpeakers) (string, error)) { summarizeSpeakersFn = prev }(summarizeSpeakersFn)
+	summarizeSpeakersFn = summarize
+
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	named := writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, `"merges":[],"labels":[{"speakerId":"`+speakersRoomID+`~1","label":"Mira"}]`))
+	report := speakersApplyOK(t, bundle, named, turnsDir)
+	if report.Summary != "regenerated" {
+		t.Fatalf("summary = %q, want regenerated", report.Summary)
+	}
+	if want := []string{"Mira", "Meeting room · Speaker 2", "Ben"}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("summary written for %v, want the edited speakers %v", asked, want)
+	}
+	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !strings.Contains(string(got), "Mira") {
+		t.Errorf("summary.md = %q, want the rewritten summary", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(bundle, speakersBaseSummary)); !bytes.Equal(got, original) {
+		t.Errorf("the build's summary was not kept byte for byte: %q", got)
+	}
+
+	empty := writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":2,"splits":[],"merges":[],"labels":[]}`)
+	report = speakersApplyOK(t, bundle, empty, turnsDir)
+	if report.Summary != "restored" {
+		t.Fatalf("summary after undo = %q, want restored", report.Summary)
+	}
+	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !bytes.Equal(got, original) {
+		t.Errorf("summary.md after undo = %q, want the build's", got)
+	}
+	if fileExists(filepath.Join(bundle, speakersBaseSummary)) {
+		t.Error("the kept copy of the build's summary survived the undo")
+	}
+}
+
+// Without a summary model the transcript is still separated; the summary is
+// left as it was and the report says it is stale.
+func TestSpeakersApplyKeepsTheSummaryWhenItCannotBeRewritten(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	original := []byte("## Summary\nMeeting room spoke.\n")
+	if err := os.WriteFile(filepath.Join(bundle, speakersSummaryFile), original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer func(prev func(transcribe.TranscriptSpeakers) (string, error)) { summarizeSpeakersFn = prev }(summarizeSpeakersFn)
+	summarizeSpeakersFn = func(transcribe.TranscriptSpeakers) (string, error) { return "", errSummaryModelUnavailable }
+
+	report := speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "split.json", speakersSplitDoc(1, speakersNoMergesNoLabels)), writeSpeakersTurns(t, tmp, false))
+	if report.Summary != "stale" || len(report.Splits) != 1 {
+		t.Fatalf("report = %+v, want the split applied and the summary stale", report)
+	}
+	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !bytes.Equal(got, original) {
+		t.Errorf("summary.md = %q, want it left as it was", got)
 	}
 }

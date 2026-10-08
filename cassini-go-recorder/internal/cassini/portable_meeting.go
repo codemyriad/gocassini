@@ -14,6 +14,7 @@ import (
 
 	"gocassini/internal/meetingtime"
 	"gocassini/internal/portable"
+	"gocassini/internal/transcribe"
 )
 
 type portablePackOptions struct {
@@ -528,7 +529,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			SampleCount: audio.SampleCount,
 			DurationMS:  audio.DurationMS,
 		},
-		Speakers:   source.Transcript.Speakers,
+		Speakers:   withVoiceDevices(source.Transcript.Speakers, source.AdditionalTranscripts),
 		Provenance: source.Artifact.Provenance,
 	})
 	if len(source.SummaryMarkdown) > 0 {
@@ -675,4 +676,28 @@ func verifyPortableOpusIntegrity(audio portableAudioIntegrity, integrity portabl
 		return fmt.Errorf("verify portable meeting file: duration mismatch")
 	}
 	return nil
+}
+
+// withVoiceDevices names, on each separated voice ("<device>~n"), the device
+// it came from, taking the device's label from the other transcripts in the
+// bundle (the original transcript still lists it). The roster is the default
+// transcript's, so without this the device's name would not be in the file.
+func withVoiceDevices(roster []portable.Speaker, others []portableNamedTranscript) []portable.Speaker {
+	labels := map[string]string{}
+	for _, other := range others {
+		for _, speaker := range other.Transcript.Speakers {
+			if _, ok := labels[speaker.ID]; !ok {
+				labels[speaker.ID] = speaker.Label
+			}
+		}
+	}
+	out := make([]portable.Speaker, len(roster))
+	for i, speaker := range roster {
+		out[i] = speaker
+		parent := transcribe.VoiceParent(speaker.ID)
+		if label, ok := labels[parent]; ok && parent != "" && label != "" {
+			out[i].Device = &portable.SpeakerDevice{ID: parent, Label: label}
+		}
+	}
+	return out
 }

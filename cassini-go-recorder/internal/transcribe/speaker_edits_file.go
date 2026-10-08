@@ -94,3 +94,15 @@ func (t TranscriptSpeakers) LogicalSpeakerCount() int {
 	}
 	return count
 }
+
+// Summarize asks the summary LLM for a new meeting summary of this transcript,
+// labelled from its roster, with low-confidence words left out exactly as the
+// build leaves them out.
+func (t TranscriptSpeakers) Summarize(cfg LLMConfig) (string, error) {
+	streams := make([]AudioStream, len(t.file.Speakers))
+	for i, s := range t.file.Speakers {
+		streams[i] = AudioStream{Index: -1, SpeakerID: s.ID, SpeakerLabel: s.Label}
+	}
+	segments, _ := WithoutLowConfidenceWords(t.Segments())
+	return buildMeetingSummaryFn(cfg, streams, segments)
+}

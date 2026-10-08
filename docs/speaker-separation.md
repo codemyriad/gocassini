@@ -76,7 +76,13 @@ Until someone names it, a voice is called `<device label> · Speaker n`.
 | `transcript.raw-asr.words.v1.json` | The original transcript, byte for byte. It is the base of every later apply and is never overwritten. |
 | `speaker-edits.json` | The edits document as applied. |
 | `captions.vtt` | Regenerated from the separated transcript. |
+| `summary.md` | Rewritten for the edited speakers when the bundle has a summary (one call to the summary model). |
+| `summary.raw-asr.md` | The build's summary, byte for byte, kept the first time the summary is rewritten. |
 | `manifest.json` | See below. `wordCount` is unchanged. |
+
+If no summary model is set up, or the call fails, `summary.md` is left as it
+was and the apply report says `"summary":"stale"`; the People panel shows that
+as a note. Undoing every edit puts the build's summary back.
 
 `transcript.display.v1.json` and `transcript.readable.v1.json`, when present,
 are removed: they carry their own copies of speaker labels, and the viewer
@@ -98,6 +104,8 @@ derives both from the words.
   members as the build wrote them; `base` is never packed.
 - `speakerCount` counts each voice in place of its device. Participants who
   said nothing have no roster entry but stay counted, as the build counted them.
+  The roster keeps the build's order, with each split device replaced in place
+  by its voices in voice order.
 
 An edits document that changes nothing (no applied split, no merge, no label
 that changes a name) restores the bundle as the build wrote it: the original
@@ -129,9 +137,13 @@ reads the build's values from the manifest itself.
 The `raw-asr` items still name the original device id, which is not in the
 global speaker list once its words all went to voices. The device is kept out
 of that list on purpose: every reader of `speakers[]` would count it as one
-more person. A reader that shows a non-default transcript accepts speaker ids
-it does not find in the list (the device of a voice is the id before the last
-`~`, and its name is the voices' default label without ` · Speaker n`).
+more person. Instead each voice names its device in an optional hint,
+`"x-device": {"id", "label"}`, which `cassini pack` fills in from the `raw-asr`
+transcript's own speakers. A reader that shows a non-default transcript
+accepts speaker ids it does not find in the list, names such a device from
+that hint (or, in older files, from a voice's default label without
+` · Speaker n`), and counts only the speakers that have words in the
+transcript it shows.
 
 ## Commands
 

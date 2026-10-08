@@ -477,6 +477,24 @@
         "label": {
           "type": "string",
           "minLength": 1
+        },
+        "x-device": {
+          "type": "object",
+          "description": "Hint on a voice separated from a device several people shared: the participant the voice came from. A non-default transcript may still credit that participant id, which is otherwise not in this list.",
+          "required": [
+            "id",
+            "label"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     },
