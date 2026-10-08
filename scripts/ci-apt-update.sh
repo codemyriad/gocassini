@@ -122,6 +122,58 @@ if (( PRUNE_ONLY )); then
   exit 0
 fi
 
-# Retries cover the ordinary transient mirror blip, which is a different failure
-# from the one above and is worth absorbing rather than reporting.
-apt-get update -o Acquire::Retries=3
+# Keep network limits for subsequent apt installs too (including Playwright's).
+# These are inactivity limits, not an overall deadline for an update.
+APT_CONFIG_DIR="${APT_CONFIG_DIR:-/etc/apt/apt.conf.d}"
+APT_MAIN_SOURCES="${APT_MAIN_SOURCES:-/etc/apt/sources.list}"
+APT_UPDATE_DEADLINE="${APT_UPDATE_DEADLINE:-180s}"
+mkdir -p "$APT_CONFIG_DIR"
+printf '%s\n' 'Acquire::http::Timeout "30";' \
+  'Acquire::https::Timeout "30";' 'Acquire::Retries "2";' \
+  > "$APT_CONFIG_DIR/99-cassini-network-limits"
+
+update_indexes() {
+  # Fail on partial index acquisition too; stale indexes must not hide an outage.
+  # Kill the whole update process group if graceful termination does not finish.
+  timeout --kill-after=15s "$APT_UPDATE_DEADLINE" \
+    apt-get update -o APT::Update::Error-Mode=any
+}
+
+if update_indexes; then
+  exit 0
+else
+  update_status=$?
+fi
+echo "[apt] update failed (status $update_status); checking direct-archive recovery" >&2
+
+# Only x64 uses this archive. Never redirect ARM's ports.ubuntu.com sources.
+if [[ "$(dpkg --print-architecture)" != amd64 ]]; then
+  echo '[apt] direct-archive recovery is limited to amd64' >&2
+  exit "$update_status"
+fi
+
+recovered=0
+source_files=()
+[[ ! -f "$APT_MAIN_SOURCES" ]] || source_files+=("$APT_MAIN_SOURCES")
+if [[ -d "$APT_SOURCES_DIR" ]]; then
+  while IFS= read -r file; do
+    source_files+=("$file")
+  done < <(find "$APT_SOURCES_DIR" -maxdepth 1 -type f \( -name '*.list' -o -name '*.sources' \) | sort)
+fi
+# Match whole URI tokens, preserving suites, components, architectures and keys.
+# Cover both the runner's mirror list and older images with a direct Azure URI.
+mirror_pattern='(^|[[:space:]])(mirror\+file:/etc/apt/apt-mirrors\.txt|https?://azure\.archive\.ubuntu\.com/ubuntu/?)([[:space:]]|$)'
+for file in "${source_files[@]}"; do
+  if grep -Eq "$mirror_pattern" "$file"; then
+    sed -E -i "s#$mirror_pattern#\\1https://archive.ubuntu.com/ubuntu/\\3#g" "$file"
+    echo "[apt] direct Ubuntu archive enabled in $file" >&2
+    recovered=1
+  fi
+done
+if (( ! recovered )); then
+  echo '[apt] no recognized Azure/mirror-list sources to recover' >&2
+  exit "$update_status"
+fi
+
+echo '[apt] retrying once with the direct Ubuntu archive' >&2
+update_indexes
