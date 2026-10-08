@@ -179,3 +179,44 @@ func TestApplySpeakerEditsListsADevicesVoicesTogetherInItsPlace(t *testing.T) {
 		t.Fatalf("roster %v want %v", rosterLabels(got), want)
 	}
 }
+
+// Summarize builds the same prompt the build does: speakers named from the
+// edited roster, and words whose speaker is uncertain left out.
+func TestTranscriptSpeakersSummarizeNamesTheEditedSpeakersAndDropsUncertainWords(t *testing.T) {
+	segments := []Segment{
+		{SpeakerID: "room~1", StartMS: 0, EndMS: 900, Text: "book the hall", Words: []Word{
+			{Text: "book", StartMS: 0, EndMS: 300},
+			{Text: "the", StartMS: 300, EndMS: 500},
+			{Text: "hall", StartMS: 500, EndMS: 900},
+		}},
+		{SpeakerID: "ben", StartMS: 1000, EndMS: 1900, Text: "sure maybe", Words: []Word{
+			{Text: "sure", StartMS: 1000, EndMS: 1400},
+			{Text: "maybe", StartMS: 1500, EndMS: 1900, LowConfidenceSpeaker: true},
+		}},
+	}
+	transcript, err := TranscriptSpeakers{}.WithSpeakers(segments, []RosterEntry{{ID: "room~1", Label: "Mira"}, {ID: "ben", Label: "Ben"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := LLMConfig{BaseURL: "https://example.test/v1", Model: "test-model"}
+	var prompt string
+	var gotCfg LLMConfig
+	prev := buildMeetingSummaryFn
+	buildMeetingSummaryFn = func(c LLMConfig, streams []AudioStream, segs []Segment) (string, error) {
+		gotCfg = c
+		prompt = formatTranscriptForSummary(streams, segs)
+		return "## Summary\n", nil
+	}
+	t.Cleanup(func() { buildMeetingSummaryFn = prev })
+
+	body, err := transcript.Summarize(cfg)
+	if err != nil || body != "## Summary\n" {
+		t.Fatalf("Summarize = %q, %v", body, err)
+	}
+	if gotCfg != cfg {
+		t.Errorf("summary model config = %+v, want %+v", gotCfg, cfg)
+	}
+	if want := "Mira: book the hall\nBen: sure\n"; prompt != want {
+		t.Errorf("prompt = %q, want %q", prompt, want)
+	}
+}

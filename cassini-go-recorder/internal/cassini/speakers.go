@@ -211,10 +211,12 @@ type speakersApplyReport struct {
 	Merged       int                   `json:"merged"`
 	SpeakerCount int                   `json:"speakerCount"`
 	// Summary says what happened to summary.md: "none" (the meeting has no
-	// summary), "unchanged", "regenerated" (rewritten for the new speakers),
+	// summary), "unchanged" (nothing to do, or already written for these
+	// exact edits), "regenerated" (rewritten for the new speakers),
 	// "restored" (the build's own summary is back), or "stale" (no summary
 	// model, or it failed: the summary still credits the speakers it was
-	// written for).
+	// written for; the reason is on stderr, and applying the same edits again
+	// tries again).
 	Summary string `json:"summary"`
 }
 
@@ -238,6 +240,10 @@ type speakerDiarizationRecord struct {
 	EditsRevision    int                       `json:"editsRevision"`
 	EditsSHA256      string                    `json:"editsSha256"`
 	Splits           []speakerDiarizationSplit `json:"splits"`
+	// Summary is present once apply has rewritten summary.md, and says for
+	// which edits and with which model; provenance.meetingSummary still
+	// describes the build's summary, now kept as summary.raw-asr.md.
+	Summary *speakerSummaryRecord `json:"summary,omitempty"`
 	// Base holds the manifest members the build wrote and apply rewrites, so
 	// an edits document that changes nothing restores them exactly. Only on
 	// the bundle's own manifest; never packed.
@@ -250,6 +256,17 @@ type speakerDiarizationSplit struct {
 	TurnCount    int      `json:"turnCount"`
 	SpeakerCount int      `json:"speakerCount"`
 	Inconclusive bool     `json:"inconclusive"`
+}
+
+// speakerSummaryRecord is the summary member of x-speakerDiarization: the
+// summary.md apply wrote (by SHA-256), the model that wrote it and the edits
+// (by SHA-256) it was written for. Apply skips the summary model when both
+// hashes still match, so a retried or replayed apply is not billed again.
+type speakerSummaryRecord struct {
+	Rewritten   bool   `json:"rewritten"`
+	Model       string `json:"model,omitempty"`
+	SHA256      string `json:"sha256"`
+	EditsSHA256 string `json:"editsSha256"`
 }
 
 type speakerDiarizationBase struct {
@@ -284,7 +301,7 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "cassini speakers apply: %v\n", err)
 		return speakersExitRuntime
 	}
-	report, err := applySpeakerEditsToBundle(files[0], editsRaw, *turnsDir)
+	report, err := applySpeakerEditsToBundle(files[0], editsRaw, *turnsDir, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return speakersExitCodeFor(err)
@@ -316,8 +333,9 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 // applySpeakerEditsToBundle applies an edits document to a .meeting bundle in
 // place. The original transcript is kept byte for byte as the raw-asr
 // transcript and is the base of every apply, so applying is idempotent and an
-// edits document that changes nothing leaves no trace.
-func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir string) (speakersApplyReport, error) {
+// edits document that changes nothing leaves no trace. Warnings (a summary
+// that could not be rewritten) go to stderr.
+func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir string, stderr io.Writer) (speakersApplyReport, error) {
 	doc, err := transcribe.ParseSpeakerEdits(editsRaw)
 	if err != nil {
 		return speakersApplyReport{}, speakersFail(speakersExitRuntime, "invalid: %v", err)
@@ -449,6 +467,9 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir stri
 	}
 
 	if !effective {
+		// The kept copy of the build's summary goes last in an undo, so while
+		// it is there the summary still has to be put back, even when an
+		// interrupted undo already removed the raw-asr copy.
 		if fileExists(filepath.Join(root, speakersBaseSummary)) {
 			report.Summary = "restored"
 		}
@@ -456,6 +477,8 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir stri
 			if err := restoreSpeakerBase(root, manifest, files, stash, primaryPath, baseRaw, base); err != nil {
 				return speakersApplyReport{}, err
 			}
+		} else if err := restoreSpeakerSummary(root); err != nil {
+			return speakersApplyReport{}, err
 		}
 	} else {
 		report.SpeakerCount = baseCount + edited.LogicalSpeakerCount() - base.LogicalSpeakerCount()
@@ -483,6 +506,14 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir stri
 				Inconclusive: report.Splits[i].Inconclusive,
 			})
 		}
+		// The summary model runs before the first write: it is the slow,
+		// fallible step, and the bundle stays as it was while it runs.
+		summary, err := planSpeakerSummary(root, previous.Summary, edited, record.EditsSHA256, stderr)
+		if err != nil {
+			return speakersApplyReport{}, err
+		}
+		report.Summary = summary.status
+		record.Summary = summary.record
 		if !applied {
 			// Kept byte for byte: this is the base of every later apply.
 			if err := writeFileAtomic(rawASRPath, baseRaw, 0o644); err != nil {
@@ -498,7 +529,7 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir stri
 		if err := regenerateSpeakerCaptions(root, edited); err != nil {
 			return speakersApplyReport{}, err
 		}
-		if report.Summary, err = refreshSpeakerSummary(root, edited); err != nil {
+		if err := writeSpeakerSummary(root, summary); err != nil {
 			return speakersApplyReport{}, err
 		}
 		// Display and readable documents carry their own copies of speaker
@@ -625,7 +656,7 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 	if err := regenerateSpeakerCaptions(root, base); err != nil {
 		return err
 	}
-	if err := restoreSpeakerSummary(root); err != nil {
+	if err := putBackSpeakerSummary(root); err != nil {
 		return err
 	}
 	if len(stash.Transcripts) > 0 {
@@ -653,53 +684,100 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 	if err := removeIfExists(filepath.Join(root, speakersEditsFile)); err != nil {
 		return err
 	}
-	return removeIfExists(filepath.Join(root, speakersRawASRTranscript))
+	if err := removeIfExists(filepath.Join(root, speakersRawASRTranscript)); err != nil {
+		return err
+	}
+	// After the raw-asr copy: while the build's summary is kept, the next
+	// apply knows the summary was rewritten and reports it restored.
+	return removeIfExists(filepath.Join(root, speakersBaseSummary))
 }
 
-// summarizeSpeakersFn writes a new summary for an edited transcript; tests
-// replace it so no LLM is called.
-var summarizeSpeakersFn = func(t transcribe.TranscriptSpeakers) (string, error) {
+// summarizeSpeakersFn writes a new summary for an edited transcript and names
+// the model that wrote it; tests replace it so no LLM is called.
+var summarizeSpeakersFn = func(t transcribe.TranscriptSpeakers) (body, model string, err error) {
 	cfg := transcribe.DefaultBuildConfig().SummaryLLM
 	if !cfg.IsConfigured() {
-		return "", errSummaryModelUnavailable
+		return "", "", errSummaryModelUnavailable
 	}
-	return t.Summarize(cfg)
+	body, err = t.Summarize(cfg)
+	return body, cfg.Model, err
 }
 
 var errSummaryModelUnavailable = errors.New("no summary model configured")
 
-// refreshSpeakerSummary rewrites summary.md for the edited speakers, so its
-// action items name the people the transcript now names. The build's own
-// summary is kept byte for byte beside it, the first time, so undoing every
-// edit restores it. A meeting without a summary gets none.
-func refreshSpeakerSummary(root string, edited transcribe.TranscriptSpeakers) (string, error) {
-	path := filepath.Join(root, speakersSummaryFile)
-	basePath := filepath.Join(root, speakersBaseSummary)
-	if !fileExists(path) && !fileExists(basePath) {
-		return "none", nil
-	}
-	if !fileExists(basePath) {
-		original, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read summary: %w", err)
-		}
-		if err := writeFileAtomic(basePath, original, 0o644); err != nil {
-			return "", fmt.Errorf("keep original summary: %w", err)
-		}
-	}
-	body, err := summarizeSpeakersFn(edited)
-	if err != nil {
-		// The transcript is still right; only the prose lags behind it.
-		return "stale", nil
-	}
-	if err := writeFileAtomic(path, []byte(body), 0o644); err != nil {
-		return "", fmt.Errorf("write summary: %w", err)
-	}
-	return "regenerated", nil
+// speakerSummaryPlan is what an apply does to summary.md, decided before the
+// bundle is touched.
+type speakerSummaryPlan struct {
+	status string // the report's summary value
+	body   []byte // the new summary.md, nil to leave it as it is
+	record *speakerSummaryRecord
 }
 
-// restoreSpeakerSummary puts the build's own summary back.
-func restoreSpeakerSummary(root string) error {
+// planSpeakerSummary rewrites the summary for the edited speakers, so its
+// action items name the people the transcript now names. It calls the
+// summary model only when summary.md is not already the one written for
+// these exact edits: a retried apply, or a replay onto a bundle this apply
+// already wrote, costs nothing, while a rebuilt bundle (whose fresh summary
+// has no record) is rewritten. A meeting without a summary gets none.
+func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited transcribe.TranscriptSpeakers, editsSHA256 string, stderr io.Writer) (speakerSummaryPlan, error) {
+	path := filepath.Join(root, speakersSummaryFile)
+	if !fileExists(path) && !fileExists(filepath.Join(root, speakersBaseSummary)) {
+		return speakerSummaryPlan{status: "none"}, nil
+	}
+	// The record is kept only while summary.md is still the file it names.
+	if previous != nil {
+		current, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return speakerSummaryPlan{}, fmt.Errorf("read summary: %w", err)
+		}
+		if err != nil || sha256Hex(current) != previous.SHA256 {
+			previous = nil
+		}
+	}
+	if previous != nil && previous.EditsSHA256 == editsSHA256 {
+		return speakerSummaryPlan{status: "unchanged", record: previous}, nil
+	}
+	body, model, err := summarizeSpeakersFn(edited)
+	if err != nil {
+		// The transcript is still right; only the prose lags behind it.
+		// No record for these edits, so applying them again retries.
+		fmt.Fprintf(stderr, "cassini speakers apply: summary not rewritten, it still credits the earlier speakers: %v\n", err)
+		return speakerSummaryPlan{status: "stale", record: previous}, nil
+	}
+	return speakerSummaryPlan{
+		status: "regenerated",
+		body:   []byte(body),
+		record: &speakerSummaryRecord{Rewritten: true, Model: model, SHA256: sha256Hex([]byte(body)), EditsSHA256: editsSHA256},
+	}, nil
+}
+
+// writeSpeakerSummary writes a planned summary. The build's own summary is
+// kept byte for byte beside it, the first time, so undoing every edit
+// restores it.
+func writeSpeakerSummary(root string, plan speakerSummaryPlan) error {
+	if plan.body == nil {
+		return nil
+	}
+	path := filepath.Join(root, speakersSummaryFile)
+	basePath := filepath.Join(root, speakersBaseSummary)
+	if !fileExists(basePath) && fileExists(path) {
+		original, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read summary: %w", err)
+		}
+		if err := writeFileAtomic(basePath, original, 0o644); err != nil {
+			return fmt.Errorf("keep original summary: %w", err)
+		}
+	}
+	if err := writeFileAtomic(path, plan.body, 0o644); err != nil {
+		return fmt.Errorf("write summary: %w", err)
+	}
+	return nil
+}
+
+// putBackSpeakerSummary writes the build's own summary back over summary.md,
+// keeping the copy; restoreSpeakerBase removes the copy last.
+func putBackSpeakerSummary(root string) error {
 	basePath := filepath.Join(root, speakersBaseSummary)
 	if !fileExists(basePath) {
 		return nil
@@ -711,7 +789,15 @@ func restoreSpeakerSummary(root string) error {
 	if err := writeFileAtomic(filepath.Join(root, speakersSummaryFile), original, 0o644); err != nil {
 		return fmt.Errorf("restore summary: %w", err)
 	}
-	return removeIfExists(basePath)
+	return nil
+}
+
+// restoreSpeakerSummary puts the build's own summary back and drops the copy.
+func restoreSpeakerSummary(root string) error {
+	if err := putBackSpeakerSummary(root); err != nil {
+		return err
+	}
+	return removeIfExists(filepath.Join(root, speakersBaseSummary))
 }
 
 func regenerateSpeakerCaptions(root string, transcript transcribe.TranscriptSpeakers) error {

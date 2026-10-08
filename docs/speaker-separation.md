@@ -80,9 +80,17 @@ Until someone names it, a voice is called `<device label> · Speaker n`.
 | `summary.raw-asr.md` | The build's summary, byte for byte, kept the first time the summary is rewritten. |
 | `manifest.json` | See below. `wordCount` is unchanged. |
 
+The summary model is called before apply writes anything, and only when
+`summary.md` is not already the one apply wrote for these exact edits: a
+retried apply, or a replay onto a bundle that already has them, reports
+`"summary":"unchanged"` and costs nothing. A rebuilt bundle has the build's
+fresh summary and no record of a rewrite, so a rerun's replay rewrites it.
+
 If no summary model is set up, or the call fails, `summary.md` is left as it
-was and the apply report says `"summary":"stale"`; the People panel shows that
-as a note. Undoing every edit puts the build's summary back.
+was, the reason goes to stderr (the operator's attempt log), and the apply
+report says `"summary":"stale"`; the People panel shows that as a note.
+Applying the same edits again tries again. Undoing every edit puts the build's
+summary back.
 
 `transcript.display.v1.json` and `transcript.readable.v1.json`, when present,
 are removed: they carry their own copies of speaker labels, and the viewer
@@ -100,7 +108,11 @@ derives both from the words.
   `sourceSeparation: false` (voices are not separated from each other's sound,
   only their words), the edits revision and SHA-256, and per split the voice
   ids, turn count, number of voices found and whether it was inconclusive.
-  Counts and ids only. The bundle's copy also keeps `base`, the manifest
+  Once apply has rewritten `summary.md` it also has `summary`:
+  `{"rewritten": true, "model", "sha256", "editsSha256"}`, the SHA-256 of the
+  summary it wrote and of the edits it was written for
+  (`provenance.meetingSummary` still describes the build's summary, now
+  `summary.raw-asr.md`). Counts, ids and hashes only. The bundle's copy also keeps `base`, the manifest
   members as the build wrote them; `base` is never packed.
 - `speakerCount` counts each voice in place of its device. Participants who
   said nothing have no roster entry but stay counted, as the build counted them.
@@ -122,7 +134,9 @@ that transcribes the meeting replays the edits then.
 If apply is interrupted, the next apply finishes the job: the raw-asr copy is
 written before the manifest changes and removed only after an undo has put the
 manifest back, and while the manifest carries no `x-speakerDiarization` apply
-reads the build's values from the manifest itself.
+reads the build's values from the manifest itself. An undo removes
+`summary.raw-asr.md` last of all, so an undo that stopped part way still puts
+the build's summary back and says so (`"summary":"restored"`).
 
 ## In the portable `.opus`
 
@@ -142,8 +156,9 @@ more person. Instead each voice names its device in an optional hint,
 transcript's own speakers. A reader that shows a non-default transcript
 accepts speaker ids it does not find in the list, names such a device from
 that hint (or, in older files, from a voice's default label without
-` · Speaker n`), and counts only the speakers that have words in the
-transcript it shows.
+` · Speaker n`), and lists it where its first voice is. The viewer counts and
+lists the meeting's people the same way whichever transcript is shown: each
+voice is a person, and a split device is not counted on top of its voices.
 
 ## Commands
 
@@ -160,7 +175,8 @@ cassini speakers diarize ./runs/weekly.run --speaker spk_… --out ./turns/spk_�
 # Apply the edits in place. Turns are read from <turns-dir>/<speakerId>.json.
 # Exit 5 when a split has no turns file ("turns-missing: <id>"). --json prints
 # {"revision","splits":[{"speakerId","voices","inconclusive"}],"missing",
-#  "inconclusive","merged","speakerCount"}.
+#  "inconclusive","merged","speakerCount","summary"}. A summary that could not be
+# rewritten is reported "stale" with the reason on stderr.
 cassini speakers apply ./meetings/weekly.meeting --edits ./edits.json --turns-dir ./turns --json
 ```
 
