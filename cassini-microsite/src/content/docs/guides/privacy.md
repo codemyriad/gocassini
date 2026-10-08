@@ -8,9 +8,10 @@ copied: "2026-09-17"
 Recording and transcription run on your own hardware. No audio and no transcript
 leaves the host for those steps.
 
-If you configure a language model, transcript text goes to it in two cases:
-automatically, to summarise each meeting, and on request, when someone asks a
-question about meetings they have access to.
+If you configure a language model, transcript text goes to it in three cases:
+automatically, to summarise each meeting; again, when someone who can open a
+meeting separates, merges or names its voices; and on request, when someone asks
+a question about meetings they have access to.
 
 There is no telemetry.
 
@@ -27,7 +28,9 @@ configure an endpoint, and both send text, never audio.
 | Recording the call | Local (the Cassini container) | No |
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models) | No |
 | Speaker labels | Local (from Talk signalling, not audio analysis) | No |
+| Separating voices on a shared device | Local, only when someone asks for one participant (Nemotron diarization) | No |
 | Meeting summary | A language-model endpoint — **only if one is configured** | **Only if the endpoint is external** |
+| Summary rewritten after a speaker edit | A language-model endpoint — **only if one is configured**, and only when somebody saves an edit | **Only if the endpoint is external** |
 | Insight (a question asked of selected meetings) | A language-model endpoint — **only if one is configured**, and only when somebody asks | **Only if the endpoint is external** |
 | Publishing the archive | Nextcloud Files, on your servers | No |
 
@@ -57,7 +60,15 @@ writes artifacts:
   stays on the app volume until that volume is deleted.
 - **Manifests** — internal bundle descriptors recording each artifact's kind,
   state, and integrity hashes.
-- **Logs** — per-attempt operator logs.
+- **Separated voices** — only when someone who can read a meeting says several
+  people shared one device: that participant's speaker turns (times and a voice
+  number, no audio and no voice embedding), the edits people made, including
+  the names they typed and who saved them, and the original transcript kept
+  beside the separated one. Every saved revision stays in the meeting's attempt
+  history, so a name typed and later removed is still there, and renaming a
+  participant does not remove the name Talk gave them from the published file.
+- **Logs** — per-attempt operator logs, including the edits and turns a speaker
+  edit applied.
 - **Operator database** — job and attempt history plus insight-run records,
   including any typed question. It does not store recording audio, transcripts,
   summaries, or insight answer bodies.
@@ -150,8 +161,8 @@ Nextcloud Files deletes that copy.
 
 ## What leaves your infrastructure, and when
 
-Two steps can transmit data off your infrastructure. Both are the same act — one
-call to the configured endpoint — and neither happens unless an endpoint is
+Three steps can transmit data off your infrastructure. All are the same act — one
+call to the configured endpoint — and none happens unless an endpoint is
 configured. Nothing is configured by default.
 
 **1. The meeting summary**, produced automatically after a meeting is transcribed
@@ -160,9 +171,19 @@ comes back and is sealed into the published meeting. Nobody asks for it; it is
 part of the pipeline, and it is skipped when there is no endpoint or when the
 summary step is switched off.
 
-**2. An insight**, when somebody in the app picks meetings and asks a question of
-them. This is the first thing in Cassini that sends transcripts to a model on a
-person's command, from inside the app, and it is worth stating plainly:
+**2. The summary, written again after a speaker edit.** When somebody who can
+open a meeting separates the voices on a shared device, says two voices are the
+same person, or names a voice, the recording is republished with a new summary.
+**Any reader of the meeting triggers it**, and what is sent is the whole
+transcript **with the names that reader typed**, through the summary step's
+endpoint and the instance's key. It is skipped when there is no endpoint or the
+summary step is switched off, and saving edits that change nobody's words or
+name sends nothing. Typed names are personal data about the people named: your
+notices to meeting participants should cover them.
+
+**3. An insight**, when somebody in the app picks meetings and asks a question of
+them. This sends transcripts to a model on a person's command, from inside the
+app, for a question they choose, and it is worth stating plainly:
 
 - **What is sent** is the transcript and summary text of the meetings they
   picked, in order, plus the question they typed. It is assembled **as them** — a
@@ -188,12 +209,12 @@ person's command, from inside the app, and it is worth stating plainly:
 
 If the endpoint is external, its operator processes what it receives under its
 own terms; review them before configuring it. Call audio and the recording itself
-are **never** sent off your infrastructure for either step: only text, and only
+are **never** sent off your infrastructure for any of these steps: only text, and only
 the text of meetings the request is entitled to.
 
 ### Controls
 
-- **Configure no endpoint** — no external calls at all, from either step.
+- **Configure no endpoint** — no external calls at all, from any step.
   Transcripts are still produced and published locally; summaries are skipped and
   the app offers no way to ask a question.
 - **`LLM_BASE_URL`** — point summaries and insights at a self-hosted or
@@ -248,8 +269,14 @@ other AI setting is readable without being an administrator.
 - **Transcription is entirely local.** Speech-to-text runs in-process using local
   Parakeet models and Silero VAD. No audio and no transcript leaves your
   infrastructure for transcription.
-- **Speaker labels are not inferred from audio.** They come from Talk's
-  signalling server, on participant join events, so no voice analysis is done.
+- **Speaker labels come from Talk, not from audio.** Each participant's label
+  comes from Talk's signalling server, on participant join events. Cassini never
+  analyses voices on its own initiative and builds no voiceprints.
+- **Voice separation is on demand, local, and keeps no voice data.** When
+  somebody says several people shared one participant's device, Cassini runs a
+  local diarization model over that participant's own audio track. It stores
+  only turn timestamps, never audio features or embeddings, so it cannot
+  recognise a voice in another meeting.
 - **No telemetry or analytics.** Cassini does not phone home — it reports nothing
   about you or your meetings.
 
