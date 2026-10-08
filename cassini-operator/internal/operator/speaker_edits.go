@@ -309,8 +309,10 @@ func (s *Store) QueueSpeakerEdits(ctx context.Context, jobID string, expectRevis
 	}
 	// A refine replaces whatever the job is doing, so it waits until the job
 	// is doing nothing. A failed job is idle — that is how a failed refine is
-	// retried — and so is one a restart interrupted.
-	if !((stage == "done" && (state == "succeeded" || state == "failed")) || state == "interrupted") {
+	// retried — and so is one a restart interrupted, and one whose rebuild
+	// was blocked for want of resources a refine does not need (it never
+	// started, so the published meeting is still the one in current/).
+	if !((stage == "done" && (state == "succeeded" || state == "failed")) || state == "interrupted" || state == "blocked") {
 		return revision, errSpeakerEditsBusy
 	}
 

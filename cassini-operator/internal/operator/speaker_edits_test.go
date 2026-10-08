@@ -206,6 +206,20 @@ func TestQueueSpeakerEditsAcceptsAnInterruptedJob(t *testing.T) {
 	}
 }
 
+// A rebuild blocked for want of resources never started, so the job is idle:
+// a refine needs none of what it waited for. Refusing it as busy left every
+// speaker edit of the meeting refused until an administrator came by.
+func TestQueueSpeakerEditsAcceptsABlockedJob(t *testing.T) {
+	store, workRoot := openSpeakerTestStore(t)
+	seedSpeakerJob(t, store, workRoot, "JOB1")
+	if _, err := store.db.Exec(`UPDATE jobs SET stage = 'build', state = 'blocked' WHERE id = 'JOB1'`); err != nil {
+		t.Fatal(err)
+	}
+	if revision, err := store.QueueSpeakerEdits(context.Background(), "JOB1", 0, splitDoc(speakerTestRoom), "alice", nowUTCString()); err != nil || revision != 1 {
+		t.Fatalf("QueueSpeakerEdits(blocked job) = %d, %v; want 1, nil", revision, err)
+	}
+}
+
 func TestSpeakerSplitTurnsAreWriteOnce(t *testing.T) {
 	store, _ := openSpeakerTestStore(t)
 	ctx := context.Background()
