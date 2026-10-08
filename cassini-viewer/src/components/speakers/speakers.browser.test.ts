@@ -281,6 +281,17 @@ describe("separating the voices on a shared device", () => {
     await expect.element(page.getByRole("menuitem", { name: "Treat as one person again" })).toBeEnabled();
   });
 
+  it("says when the summary could not be rewritten for the new speakers", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateRoom();
+    await details().getByRole("button", { name: "Separate voices" }).click();
+    fixture.applied(separated, { ...splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]), summary: "stale" });
+    await expect
+      .element(details().getByText("The summary was written before these speaker changes."))
+      .toBeVisible();
+  });
+
   it("offers to retry when the recording could not be updated", async () => {
     fixture = speakersFixture();
     mountView();

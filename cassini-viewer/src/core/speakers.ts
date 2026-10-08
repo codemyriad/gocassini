@@ -79,6 +79,22 @@ export function groupSpeakers(
   return listed;
 }
 
+// speakersWhoSpeak keeps the roster entries that have words in this
+// transcript, in roster order. One roster serves every transcript in a file:
+// on the original transcript of a separated meeting it still lists the voices
+// that only the separated transcript credits, and counting those would count
+// the device's people twice. A transcript with no words keeps its roster.
+export function speakersWhoSpeak(
+  transcript: Pick<TranscriptWordsV1, "speakers" | "segments">,
+): TranscriptSpeaker[] {
+  const speaking = new Set<string>();
+  for (const segment of transcript.segments) {
+    if (segment.speaker && segment.words.length > 0) speaking.add(segment.speaker);
+  }
+  if (speaking.size === 0) return [...transcript.speakers];
+  return transcript.speakers.filter((speaker) => speaking.has(speaker.id));
+}
+
 // How many people the groups add up to, counting a device whose words all went
 // to voices as its voices and every other device as one person.
 export function countPeople(groups: readonly SpeakerGroup[]): { voices: number; devices: number; split: boolean } {

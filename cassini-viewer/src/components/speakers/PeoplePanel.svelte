@@ -82,6 +82,7 @@
         !server?.report?.inconclusive.includes(split.speakerId),
     ),
   );
+  $: summaryStale = server?.report?.summary === "stale";
   $: inconclusive = (server?.report?.inconclusive ?? []).filter(
     (id) => doc && isSplit(doc, id) && !groups.some((group) => group.device.id === id && group.voices.length > 0),
   );
@@ -315,8 +316,11 @@
 
     {#if editable && server}
       {@const stale = recordingBehind($store)}
-      {#if $store.error || problem || inconclusive.length > 0 || $store.saving || server.state !== "idle" || stale || changed}
+      {#if $store.error || problem || inconclusive.length > 0 || summaryStale || $store.saving || server.state !== "idle" || stale || changed}
         <div class="pp-footer">
+          {#if summaryStale}
+            <p class="pp-note" role="status">The summary was written before these speaker changes.</p>
+          {/if}
           {#each inconclusive as id (id)}
             <p class="pp-note" role="status">
               Couldn't separate voices on {deviceLabels.get(id) ?? id}: only one voice found

@@ -28,7 +28,7 @@
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
   import { createSpeakersSession, SPEAKER_POLL_MS } from "./speakers/session";
-  import { groupSpeakers, voiceSamples } from "../core/speakers";
+  import { groupSpeakers, speakersWhoSpeak, voiceSamples } from "../core/speakers";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
   import type { AnnotationResult, MeetingTag, VocabularyTag } from "../viewer/annotations";
@@ -1122,7 +1122,7 @@
   }
 
   $: summaryHtml = renderSummaryHtml(summaryMarkdown);
-  $: speakers = transcriptIndex?.transcript.speakers ?? [];
+  $: speakers = transcriptIndex ? speakersWhoSpeak(transcriptIndex.transcript) : [];
   // Reading order, then EFFECTIVE timings, then overlap. The order matters:
   // the producer appends wordless segments last so the array cannot be trusted
   // to be sorted, and the overlap analysis has to see repaired spans or it

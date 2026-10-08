@@ -1076,7 +1076,7 @@ describe("buildTranscriptWordsFromPortable original transcript after separation"
     { id: "spk_room~2", label: "Mira" },
     { id: "spk_ben", label: "Ben" },
   ];
-  const original = (speakers: Array<{ id: string; label: string }>) => ({
+  const original = (speakers: Array<Record<string, unknown>>) => ({
     meeting: { durationMs: 5000 },
     speakers,
     transcript: {
@@ -1093,6 +1093,16 @@ describe("buildTranscriptWordsFromPortable original transcript after separation"
     );
     expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "Room laptop" });
     expect(transcript.speakers.slice(0, 3)).toEqual(separatedRoster);
+  });
+
+  it("takes the device's name from the voices' x-device hint", () => {
+    const renamed = [
+      { id: "spk_room~1", label: "Leo", "x-device": { id: "spk_room", label: "Meeting room laptop" } },
+      { id: "spk_room~2", label: "Mira", "x-device": { id: "spk_room", label: "Meeting room laptop" } },
+      { id: "spk_ben", label: "Ben" },
+    ];
+    const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(renamed) as never));
+    expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "Meeting room laptop" });
   });
 
   it("falls back to the device id when every voice has been renamed", () => {
@@ -1115,5 +1125,13 @@ describe("buildTranscriptWordsFromPortable original transcript after separation"
     expect(readable.segments.map((segment) => segment.speaker)).toEqual(["spk_room", "spk_ben"]);
     expect(readable.speakers).toContainEqual({ id: "spk_room", label: "Room laptop" });
     expect(readable.speakers.slice(0, 3)).toEqual(separatedRoster);
+  });
+});
+
+describe("transcript switcher labels", () => {
+  it("names the separated and original transcripts for a reader", () => {
+    const manifest = { version: 1 } as PortableMeetingManifest;
+    expect(describeTranscript(makeTranscriptEntry({ id: "separated-voices" }), manifest, true).label).toBe("Separated voices");
+    expect(describeTranscript(makeTranscriptEntry({ id: "raw-asr" }), manifest, false).label).toBe("Original");
   });
 });

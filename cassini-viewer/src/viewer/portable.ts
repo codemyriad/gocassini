@@ -610,7 +610,17 @@ function isNonEmptyAnnotationString(value: unknown): value is string {
   return typeof value === "string" && value !== "";
 }
 
+// Transcript ids the producer itself writes, named for a reader. A separated
+// meeting holds its original transcript as "raw-asr"; "Raw Asr" means nothing
+// to someone choosing between the two.
+const KNOWN_TRANSCRIPT_LABELS: Record<string, string> = {
+  "separated-voices": "Separated voices",
+  "raw-asr": "Original",
+};
+
 function humanizeTranscriptId(value: string): string {
+  const known = KNOWN_TRANSCRIPT_LABELS[value];
+  if (known) return known;
   return value
     .replace(/[_-]+/g, " ")
     .trim()
@@ -856,7 +866,7 @@ export function buildTranscriptWordsFromPortable(
       durationMs: safeToInt(portable.meeting?.durationMs, 0),
       sha256: safeToString(portable.integrity?.opusAudioSha256) || undefined,
     },
-    speakers: withSplitDevices(speakers, segments),
+    speakers: withSplitDevices(speakers, segments, portable.speakers),
     segments,
   };
 }
@@ -871,15 +881,25 @@ export function buildTranscriptWordsFromPortable(
 function withSplitDevices(
   speakers: TranscriptSpeaker[],
   segments: Array<{ speaker?: string }>,
+  rawRoster: unknown = [],
 ): TranscriptSpeaker[] {
   const known = new Set(speakers.map((speaker) => speaker.id));
+  // A voice names its device in "x-device" (the producer's hint); that is the
+  // only place the device's own name survives once every voice is named.
+  const deviceLabels = new Map<string, string>();
+  for (const entry of Array.isArray(rawRoster) ? rawRoster : []) {
+    const device = asRecord(asRecord(entry)["x-device"]);
+    const id = safeToString(device.id);
+    const label = safeToString(device.label).trim();
+    if (id && label && !deviceLabels.has(id)) deviceLabels.set(id, label);
+  }
   const added: TranscriptSpeaker[] = [];
   for (const segment of segments) {
     const id = segment.speaker;
     if (!id || known.has(id)) continue;
     known.add(id);
-    let label = id;
-    for (const voice of speakers) {
+    let label = deviceLabels.get(id) ?? id;
+    for (const voice of deviceLabels.has(id) ? [] : speakers) {
       if (!voice.id.startsWith(`${id}~`)) continue;
       const match = /^(.*) · Speaker \d+$/u.exec(voice.label);
       if (match && match[1]) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { countPeople, groupSpeakers, isVoiceId, voiceNumber, voiceParent, voiceSamples } from "./speakers";
+import { countPeople, groupSpeakers, isVoiceId, speakersWhoSpeak, voiceNumber, voiceParent, voiceSamples } from "./speakers";
 import type { TranscriptSegment } from "./types";
 
 describe("voice ids", () => {
@@ -128,5 +128,35 @@ describe("voiceSamples", () => {
   it("stops a sample after six seconds", () => {
     const samples = voiceSamples({ segments: [segment("a1", "a", [[1000, 20_000]])] });
     expect(samples.get("a")).toEqual({ speechMs: 19_000, startMs: 1000, endMs: 7000 });
+  });
+});
+
+describe("speakersWhoSpeak", () => {
+  const word = (id: string) => [{ id, text: "w", startMs: 0, endMs: 1 }];
+  it("leaves out roster entries the transcript never credits", () => {
+    // The original transcript of a separated meeting: the roster still lists
+    // the voices, but only the device speaks here.
+    const transcript = {
+      speakers: [
+        { id: "room~1", label: "Mira" },
+        { id: "room~2", label: "Leo" },
+        { id: "ben", label: "Ben" },
+        { id: "room", label: "Meeting room" },
+      ],
+      segments: [
+        { id: "s0", speaker: "room", startMs: 0, endMs: 1, text: "w", words: word("s0:w_0") },
+        { id: "s1", speaker: "ben", startMs: 2, endMs: 3, text: "w", words: word("s1:w_0") },
+      ],
+    };
+    expect(speakersWhoSpeak(transcript)).toEqual([
+      { id: "ben", label: "Ben" },
+      { id: "room", label: "Meeting room" },
+    ]);
+    expect(countPeople(groupSpeakers(speakersWhoSpeak(transcript))).voices).toBe(2);
+  });
+
+  it("keeps the whole roster of a transcript without words", () => {
+    const speakers = [{ id: "a", label: "A" }, { id: "b", label: "B" }];
+    expect(speakersWhoSpeak({ speakers, segments: [] })).toEqual(speakers);
   });
 });

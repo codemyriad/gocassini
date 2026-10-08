@@ -52,6 +52,10 @@ export interface SpeakerSplitReport {
 export interface SpeakerEditsReport {
   splits: SpeakerSplitReport[];
   inconclusive: string[];
+  // What happened to the meeting summary. "stale" means it could not be
+  // rewritten (no summary model, or it failed), so it still credits the
+  // speakers it was written for.
+  summary?: "none" | "unchanged" | "regenerated" | "restored" | "stale";
 }
 
 export type SpeakerEditsRunState = "idle" | "applying" | "failed" | "unavailable";
