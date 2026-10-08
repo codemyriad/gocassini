@@ -131,6 +131,10 @@ func TestRefineDiarizesOnceAppliesAndPublishes(t *testing.T) {
 	if len(apply) != 1 || !strings.HasPrefix(apply[0], "speakers apply "+attemptMeetingPath(rt.cfg.WorkRoot, "JOB1", 2)+" ") || !strings.HasSuffix(apply[0], "--json") {
 		t.Fatalf("apply calls = %v, want one on the refine's own bundle", apply)
 	}
+	// The CLI refuses stored turns measured on any other recording.
+	if !strings.Contains(apply[0], " --recording "+canonicalRunPath(rt.cfg.WorkRoot, "JOB1")+" ") {
+		t.Fatalf("apply call %q does not name the capture the turns must come from", apply[0])
+	}
 
 	// The refined bundle is what was promoted, and it is the same audio.
 	current := canonicalMeetingPath(rt.cfg.WorkRoot, "JOB1")

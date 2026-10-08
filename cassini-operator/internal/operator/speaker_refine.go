@@ -196,7 +196,9 @@ func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetin
 	if err := os.WriteFile(editsPath, raw, 0o644); err != nil {
 		return fmt.Errorf("write speaker edits: %w", err)
 	}
-	report, err := rt.runSpeakersCLI(ctx, env, logFile, "apply", meetingPath, "--edits", editsPath, "--turns-dir", turnsDir, "--json")
+	// --recording: stored turns are applied only to the capture they were
+	// measured on, which the CLI checks by its SHA-256.
+	report, err := rt.runSpeakersCLI(ctx, env, logFile, "apply", meetingPath, "--edits", editsPath, "--turns-dir", turnsDir, "--recording", task.ArtifactRunPath, "--json")
 	if err != nil {
 		return err
 	}

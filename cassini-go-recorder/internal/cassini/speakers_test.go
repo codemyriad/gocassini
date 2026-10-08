@@ -3,6 +3,8 @@ package cassini
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -729,6 +731,79 @@ func TestSpeakersApplyRefusesInvalidInput(t *testing.T) {
 		if code, _, _ := runSpeakersForTest(args...); code != speakersExitUsage {
 			t.Errorf("speakers %v: exit %d, want usage %d", args, code, speakersExitUsage)
 		}
+	}
+}
+
+// rewriteSpeakersTurns changes the room's stored turn set in place.
+func rewriteSpeakersTurns(t *testing.T, turnsDir string, change func(*transcribe.SpeakerTurnSet)) {
+	t.Helper()
+	path := filepath.Join(turnsDir, speakersRoomID+".json")
+	set, err := transcribe.ReadSpeakerTurnSet(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	change(&set)
+	if err := transcribe.WriteSpeakerTurnSet(path, set); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Turns are times in one recording. Given the recording, apply refuses turns
+// measured on any other: they would credit words to voices that never said
+// them, and they are stored write-once, so nothing would ever correct it.
+func TestSpeakersApplyRefusesTurnsOfAnotherRecording(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	edits := writeSpeakersEdits(t, tmp, "edits.json", speakersSplitDoc(1, speakersNoMergesNoLabels))
+	recording := filepath.Join(tmp, "capture.mkv")
+	if err := os.WriteFile(recording, []byte("the capture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotDir(t, bundle)
+
+	code, _, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--recording", recording)
+
+	if code != speakersExitRuntime || !strings.HasPrefix(stderr, "turns-source-mismatch: "+speakersRoomID) {
+		t.Fatalf("exit %d stderr %q, want a runtime failure naming the mismatch", code, stderr)
+	}
+	if diffs := diffSnapshots(before, snapshotDir(t, bundle)); len(diffs) != 0 {
+		t.Fatalf("a refused apply changed the bundle: %v", diffs)
+	}
+
+	sum := sha256.Sum256([]byte("the capture"))
+	rewriteSpeakersTurns(t, turnsDir, func(set *transcribe.SpeakerTurnSet) { set.Source.SHA256 = hex.EncodeToString(sum[:]) })
+	if code, _, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--recording", recording); code != 0 {
+		t.Fatalf("turns of this recording: exit %d stderr %q", code, stderr)
+	}
+}
+
+func TestSpeakersApplyRefusesTurnsThatCannotBeApplied(t *testing.T) {
+	cases := map[string]func(*transcribe.SpeakerTurnSet){
+		"no recording":   func(s *transcribe.SpeakerTurnSet) { s.Source.SHA256 = "" },
+		"no model":       func(s *transcribe.SpeakerTurnSet) { s.Model.SHA256 = "" },
+		"backwards turn": func(s *transcribe.SpeakerTurnSet) { s.Turns[1].EndMS = s.Turns[1].StartMS },
+		"negative start": func(s *transcribe.SpeakerTurnSet) { s.Turns[0].StartMS = -5 },
+		"negative voice": func(s *transcribe.SpeakerTurnSet) { s.Turns[0].Speaker = -1 },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+			bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+			turnsDir := writeSpeakersTurns(t, tmp, false)
+			rewriteSpeakersTurns(t, turnsDir, change)
+			edits := writeSpeakersEdits(t, tmp, "edits.json", speakersSplitDoc(1, speakersNoMergesNoLabels))
+			before := snapshotDir(t, bundle)
+
+			code, _, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir)
+
+			if code != speakersExitRuntime || !strings.HasPrefix(stderr, "read turns: ") {
+				t.Errorf("exit %d stderr %q, want the turns refused", code, stderr)
+			}
+			if diffs := diffSnapshots(before, snapshotDir(t, bundle)); len(diffs) != 0 {
+				t.Errorf("a refused apply changed the bundle: %v", diffs)
+			}
+		})
 	}
 }
 

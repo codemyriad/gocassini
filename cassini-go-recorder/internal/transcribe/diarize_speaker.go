@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,36 @@ func ReadSpeakerTurnSet(path string) (SpeakerTurnSet, error) {
 		return set, fmt.Errorf("%s: missing speakerId", path)
 	}
 	return set, nil
+}
+
+// Check refuses a set that cannot be applied faithfully: one that does not
+// say which recording and which model it came from, or whose turns are not
+// spans of time with a voice number.
+func (s SpeakerTurnSet) Check() error {
+	if !isHexSHA256(s.Source.SHA256) {
+		return fmt.Errorf("turns of %s do not name the recording they were measured on", s.SpeakerID)
+	}
+	if strings.TrimSpace(s.Model.SHA256) == "" {
+		return fmt.Errorf("turns of %s do not name the model that measured them", s.SpeakerID)
+	}
+	for i, t := range s.Turns {
+		if t.StartMS < 0 || t.EndMS <= t.StartMS || t.Speaker < 0 {
+			return fmt.Errorf("turns of %s: turn %d (%d-%d ms, voice %d) is not a span with a voice", s.SpeakerID, i, t.StartMS, t.EndMS, t.Speaker)
+		}
+	}
+	return nil
+}
+
+func isHexSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
 }
 
 // WriteSpeakerTurnSet writes a set atomically.

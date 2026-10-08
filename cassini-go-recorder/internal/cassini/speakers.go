@@ -112,7 +112,7 @@ func runSpeakers(ctx context.Context, args []string, stdout, stderr io.Writer) i
 func printSpeakersUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   cassini speakers diarize <x.run|x.mkv> --speaker <speakerId> --out <turns.json> [--model <path>]
-  cassini speakers apply   <dir.meeting> --edits <edits.json> --turns-dir <dir> [--json]
+  cassini speakers apply   <dir.meeting> --edits <edits.json> --turns-dir <dir> [--recording <x.run|x.mkv>] [--json]
   cassini speakers show    <x.meeting|x.opus> [--json]
 
 Separate the voices of people who shared one device.
@@ -126,7 +126,8 @@ nemotron-3-diarization-int8).
 apply rewrites a .meeting bundle in place from its original transcript, the
 edits document (cassini.speaker-edits.v1) and <turns-dir>/<speakerId>.json for
 each split. It runs no model and never touches the audio. An edits document
-that changes nothing restores the bundle as it was built.
+that changes nothing restores the bundle as it was built. With --recording,
+turns measured on any other recording are refused.
 
 show prints the speakers a meeting has, the default transcript and the edits
 revision applied.
@@ -291,9 +292,10 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 	editsPath := fs.String("edits", "", "speaker edits document (cassini.speaker-edits.v1)")
 	turnsDir := fs.String("turns-dir", "", "directory holding <speakerId>.json turns for each split")
 	emitJSON := fs.Bool("json", false, "print the report as JSON")
+	recording := fs.String("recording", "", "the capture (x.run or x.mkv) the turns were measured on; turns measured on any other recording are refused")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
-  cassini speakers apply ./meetings/meeting.meeting --edits ./edits.json --turns-dir ./turns [--json]
+  cassini speakers apply ./meetings/meeting.meeting --edits ./edits.json --turns-dir ./turns [--recording ./runs/meeting.run] [--json]
 
 `)
 		fs.PrintDefaults()
@@ -311,7 +313,19 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "cassini speakers apply: %v\n", err)
 		return speakersExitRuntime
 	}
-	report, err := applySpeakerEditsToBundle(files[0], editsRaw, *turnsDir, stderr)
+	recordingSHA256 := ""
+	if *recording != "" {
+		input, err := resolveBuildInput(*recording)
+		if err != nil {
+			fmt.Fprintf(stderr, "cassini speakers apply: %v\n", err)
+			return speakersExitRuntime
+		}
+		if recordingSHA256, err = annotateFileSHA256(input.RecordingPath); err != nil {
+			fmt.Fprintf(stderr, "cassini speakers apply: hash recording: %v\n", err)
+			return speakersExitRuntime
+		}
+	}
+	report, err := applySpeakerEditsToBundle(files[0], editsRaw, *turnsDir, recordingSHA256, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return speakersExitCodeFor(err)
@@ -344,8 +358,9 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 // place. The original transcript is kept byte for byte as the raw-asr
 // transcript and is the base of every apply, so applying is idempotent and an
 // edits document that changes nothing leaves no trace. Warnings (a summary
-// that could not be rewritten) go to stderr.
-func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir string, stderr io.Writer) (speakersApplyReport, error) {
+// that could not be rewritten) go to stderr. With recordingSHA256, every turn
+// set must have been measured on that recording.
+func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, recordingSHA256 string, stderr io.Writer) (speakersApplyReport, error) {
 	doc, err := transcribe.ParseSpeakerEdits(editsRaw)
 	if err != nil {
 		return speakersApplyReport{}, speakersFail(speakersExitRuntime, "invalid: %v", err)
@@ -362,6 +377,14 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir stri
 		}
 		if err != nil {
 			return speakersApplyReport{}, speakersFail(speakersExitRuntime, "read turns: %v", err)
+		}
+		if err := set.Check(); err != nil {
+			return speakersApplyReport{}, speakersFail(speakersExitRuntime, "read turns: %v", err)
+		}
+		// Turns name times in one recording; on another they would credit
+		// words to voices that never said them.
+		if recordingSHA256 != "" && set.Source.SHA256 != recordingSHA256 {
+			return speakersApplyReport{}, speakersFail(speakersExitRuntime, "turns-source-mismatch: %s was measured on recording %s, not on %s", split.SpeakerID, set.Source.SHA256, recordingSHA256)
 		}
 		turnSets[split.SpeakerID] = set
 	}

@@ -174,17 +174,20 @@ cassini speakers show "./Weekly Sync.opus" --json
 cassini speakers diarize ./runs/weekly.run --speaker spk_… --out ./turns/spk_….json
 
 # Apply the edits in place. Turns are read from <turns-dir>/<speakerId>.json.
+# With --recording, turns measured on any other recording are refused
+# ("turns-source-mismatch: <id>", exit 1); the operator always passes it.
 # Exit 5 when a split has no turns file ("turns-missing: <id>"). --json prints
 # {"revision","splits":[{"speakerId","voices","inconclusive"}],"missing",
 #  "inconclusive","merged","speakerCount","summary"}. A summary that could not be
 # rewritten is reported "stale" with the reason on stderr.
-cassini speakers apply ./meetings/weekly.meeting --edits ./edits.json --turns-dir ./turns --json
+cassini speakers apply ./meetings/weekly.meeting --edits ./edits.json --turns-dir ./turns --recording ./runs/weekly.run --json
 ```
 
 The turns file (`cassini.speaker-turns.v1`) holds the participant id, the
 stream indexes used, the recording's file name and SHA-256, the model name,
 SHA-256 and runtime, the settings, and the turns. No audio and no voice
-embedding.
+embedding. apply refuses a set that names no recording or model, or whose
+turns are not spans of time with a voice number.
 
 apply fails rather than publish if the bundle's audio changes while it runs.
 
