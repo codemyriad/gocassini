@@ -29,7 +29,7 @@
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
   import {
     createSpeakersSession,
-    segmentationBehind,
+    reloadDue,
     SPEAKER_POLL_MS,
     speakerOverlayFor,
     systemClock,
@@ -1271,10 +1271,11 @@
   $: peopleTranscript = withSpeakerOverlay(openedTranscript ?? transcriptIndex?.transcript ?? null, speakerOverlay);
   $: speakerGroups = groupSpeakers(withoutSplitDevices(peopleTranscript?.speakers ?? []), participants, splitDevices);
   $: speakerSamples = speakerEditsOffered && peopleTranscript ? voiceSamples(peopleTranscript) : new Map();
-  // A recording separated differently from the one the operator published
-  // is read again, once per apply, unless the reader is listening: a reload
-  // replaces the player, so then "Voices updated · Reload" waits for them.
-  $: speakersReloadDue = segmentationBehind(
+  // A recording separated differently from the one the operator published,
+  // or with an older summary, is read again, once per apply, unless the
+  // reader is listening: a reload replaces the player, so then "Voices
+  // updated · Reload" waits for them.
+  $: speakersReloadDue = reloadDue(
     $speakerSession,
     new Set((openedTranscript?.speakers ?? []).map((speaker) => speaker.id)),
   );

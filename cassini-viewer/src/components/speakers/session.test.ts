@@ -5,6 +5,7 @@ import { emptySpeakerEdits, SpeakerEditsError, type SpeakerEditsState } from "..
 import {
   createSpeakersSession,
   recordingBehind,
+  reloadDue,
   segmentationBehind,
   sinceAnswer,
   SPEAKER_POLL_MS,
@@ -346,6 +347,25 @@ describe("segmentationBehind", () => {
     // Up to date, or still applying.
     expect(behind(2, [], { revision: 2, appliedRevision: 2, report: { splits: [], inconclusive: [] } })).toBe(false);
     expect(behind(0, [], { revision: 2, appliedRevision: 1, state: "applying", report: report(["dev0~1", "dev0~2"]) })).toBe(false);
+  });
+});
+
+describe("reloadDue", () => {
+  const shown = new Set(["dev0~1", "dev0~2"]);
+  const split = { splits: [{ speakerId: "dev0", voices: ["dev0~1", "dev0~2"], inconclusive: false }], inconclusive: [] };
+  const due = (shownRevision: number, server: Partial<SpeakerEditsState>) =>
+    reloadDue({ shownRevision, server: state(server) }, shown);
+
+  it("reads the recording again for a summary rewritten after names or merges", () => {
+    // A name saved since: the voices are the same, the summary is new.
+    expect(due(1, { revision: 2, appliedRevision: 2, report: { ...split, summary: "regenerated" } })).toBe(true);
+    // No summary rewritten, or it could not be: the overlay is enough.
+    for (const summary of ["unchanged", "stale", "none"] as const) {
+      expect(due(1, { revision: 2, appliedRevision: 2, report: { ...split, summary } })).toBe(false);
+    }
+    // Once a recording with it is on screen, or while still applying.
+    expect(due(2, { revision: 2, appliedRevision: 2, report: { ...split, summary: "regenerated" } })).toBe(false);
+    expect(due(1, { revision: 2, appliedRevision: 1, state: "applying", report: { ...split, summary: "regenerated" } })).toBe(false);
   });
 });
 

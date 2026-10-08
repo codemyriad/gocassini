@@ -136,6 +136,24 @@ export function segmentationBehind(
   return [...voices].some((id) => !shown.has(id));
 }
 
+// Whether the recording on screen has an older summary than the one the
+// operator published: names and merges are shown on the recording at once
+// (the overlay), but the summary rewritten for them is only in the
+// republished recording, so it is read again for that too.
+export function summaryBehind({ server, shownRevision }: Pick<SpeakersState, "server" | "shownRevision">): boolean {
+  if (!server || server.state !== "idle" || shownRevision === null) return false;
+  return server.report?.summary === "regenerated" && server.appliedRevision > shownRevision;
+}
+
+// Whether the recording on screen should be read again: separated
+// differently, or its summary rewritten since.
+export function reloadDue(
+  state: Pick<SpeakersState, "server" | "shownRevision">,
+  shownSpeakers: ReadonlySet<string>,
+): boolean {
+  return segmentationBehind(state, shownSpeakers) || summaryBehind(state);
+}
+
 // The saved names and merges the recording on screen does not have yet, to be
 // shown on it (applySpeakerOverlay) until a recording published with them is
 // loaded: the revision being applied, or the one applied, when it is newer

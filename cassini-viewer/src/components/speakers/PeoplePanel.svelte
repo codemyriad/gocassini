@@ -18,7 +18,7 @@
     MAX_SPEAKER_LABEL_LENGTH,
   } from "../../viewer/speakerEdits";
   import { popover, stepIndex } from "../tags/popover";
-  import { segmentationBehind, sinceAnswer, type SpeakersSession, type SpeakersState } from "./session";
+  import { reloadDue, sinceAnswer, type SpeakersSession, type SpeakersState } from "./session";
 
   // The People section of the meeting details popover: every participant's
   // device, with the voices separated from a shared one listed beneath it.
@@ -99,7 +99,7 @@
   // different person again, needs the republished recording ("Voices updated ·
   // Reload").
   $: shownVoices = new Set(groups.flatMap((group) => group.voices.map((voice) => voice.id)));
-  $: stale = segmentationBehind($store, shownVoices);
+  $: stale = reloadDue($store, shownVoices);
   $: nameable = editable && !locked && groups.some((group) => group.voices.length > 0);
   $: summaryStale = server?.report?.summary === "stale";
   $: inconclusive = (server?.report?.inconclusive ?? []).filter(
