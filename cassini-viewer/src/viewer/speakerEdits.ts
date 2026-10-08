@@ -56,6 +56,9 @@ export interface SpeakerEditsReport {
   // rewritten (no summary model, or it failed), so it still credits the
   // speakers it was written for.
   summary?: "none" | "unchanged" | "regenerated" | "restored" | "stale";
+  // Which summary the published recording has: the SHA-256 of one rewritten
+  // for speaker edits, "" for the build's own. Absent from older operators.
+  summarySha256?: string;
 }
 
 export type SpeakerEditsRunState = "idle" | "applying" | "failed" | "unavailable";

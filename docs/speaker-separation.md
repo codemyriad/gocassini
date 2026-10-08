@@ -185,8 +185,11 @@ cassini speakers diarize ./runs/weekly.run --speaker spk_â€¦ --out ./turns/spk_â
 # ("turns-source-mismatch: <id>", exit 1); the operator always passes it.
 # Exit 5 when a split has no turns file ("turns-missing: <id>"). --json prints
 # {"revision","splits":[{"speakerId","voices","inconclusive"}],"missing",
-#  "inconclusive","merged","speakerCount","summary"}. A summary that could not be
-# rewritten is reported "stale" with the reason on stderr.
+#  "inconclusive","merged","speakerCount","summary","summarySha256"}. A summary
+# that could not be rewritten is reported "stale" with the reason on stderr.
+# summarySha256 names the summary the meeting now has (x-speakerDiarization's
+# summary.sha256, "" for the build's own), whatever this apply did to it: the
+# viewer reads the recording again whenever it differs from the one on screen.
 cassini speakers apply ./meetings/weekly.meeting --edits ./edits.json --turns-dir ./turns --recording ./runs/weekly.run --json
 ```
 

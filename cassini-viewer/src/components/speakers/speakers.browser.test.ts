@@ -604,6 +604,41 @@ describe("changes shown as soon as they are saved", () => {
     await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
   });
 
+  // An apply that leaves the summary alone does not make the one rewritten
+  // before it, which the reader has not read yet, any less new.
+  it("still offers a summary rewritten while the reader listened after an apply that left it alone", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateAndReload();
+    const summaryPanel = () => root.querySelector("#mv-panel-summary")?.textContent ?? "";
+
+    await nameField(voice(1)).fill("Mira");
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(status()).toHaveTextContent(/^Updating the recording…/);
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect.poll(() => player().paused).toBe(false);
+    const rewritten = { markdown: "## Summary\n\nMira books the bridge.", sha256: "rewritten-for-mira" };
+    fixture.applied(renamed, { ...splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]), summary: "regenerated" }, rewritten);
+    await openPeople();
+    await expect.element(details().getByText("Voices updated ·")).toBeVisible();
+
+    // A name for a voice whose words are already credited to it: the
+    // transcript the summary is written from does not change.
+    await nameField(voice(3)).fill("Ana");
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(status()).toHaveTextContent(/^Updating the recording…/);
+    fixture.applied(renamed, { ...splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]), summary: "unchanged" });
+    await expect.element(details().getByText("Updating the recording…")).not.toBeInTheDocument();
+    await expect.element(details().getByText("Voices updated ·")).toBeVisible();
+    expect(freshLoads()).toBe(1);
+    expect(summaryPanel()).not.toContain("Mira books the bridge.");
+
+    player().pause();
+    await details().getByRole("button", { name: "Reload" }).click();
+    await expect.poll(summaryPanel).toContain("Mira books the bridge.");
+    await expect.element(details().getByText("Voices updated ·")).not.toBeInTheDocument();
+  });
+
   it("does not replace the player when the reader starts listening while the recording is read", async () => {
     fixture = speakersFixture();
     mountView();

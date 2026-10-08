@@ -363,7 +363,7 @@
     errorMessage = "";
     manualScrollLock = false;
     lastAutoScrollRowKey = "";
-    speakerSession.showing(artifact.speakerEditsRevision ?? 0);
+    speakerSession.showing(artifact.speakerEditsRevision ?? 0, artifact.speakerSummarySha256 ?? "");
   }
 
   function applySwitchedTranscript(artifact: LoadedArtifact) {
@@ -1272,7 +1272,7 @@
   $: speakerGroups = groupSpeakers(withoutSplitDevices(peopleTranscript?.speakers ?? []), participants, splitDevices);
   $: speakerSamples = speakerEditsOffered && peopleTranscript ? voiceSamples(peopleTranscript) : new Map();
   // A recording separated differently from the one the operator published,
-  // or with an older summary, is read again, once per apply, unless the
+  // or with another summary, is read again, once per apply, unless the
   // reader is listening: a reload replaces the player, so then "Voices
   // updated · Reload" waits for them.
   $: speakersReloadDue = reloadDue(

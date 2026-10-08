@@ -229,6 +229,12 @@ type speakersApplyReport struct {
 	// written for; the reason is on stderr, and applying the same edits again
 	// tries again).
 	Summary string `json:"summary"`
+	// SummarySHA256 says which summary the meeting now has: the SHA-256 of
+	// the summary.md apply wrote, as x-speakerDiarization.summary records it
+	// on the default transcript, or "" for the build's own (or none). A
+	// reader compares it with the recording it shows: the last apply's
+	// Summary alone does not say whether an earlier one rewrote it.
+	SummarySHA256 string `json:"summarySha256"`
 }
 
 type speakersSplitReport struct {
@@ -550,6 +556,9 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 		}
 		report.Summary = summary.status
 		record.Summary = summary.record
+		if summary.record != nil {
+			report.SummarySHA256 = summary.record.SHA256
+		}
 		if !applied {
 			// Kept byte for byte: this is the base of every later apply, and
 			// the only copy of it once the primary transcript is replaced, so

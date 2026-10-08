@@ -69,6 +69,14 @@ export interface LoadedArtifact {
    */
   speakerEditsRevision?: number;
   /**
+   * Which summary this recording has: the SHA-256 of one rewritten for
+   * people's speaker edits (`x-speakerDiarization.summary.sha256`, beside
+   * `editsRevision`), absent for the build's own. The People panel compares
+   * it with the one the operator last published, which an apply that leaves
+   * the summary alone still names.
+   */
+  speakerSummarySha256?: string;
+  /**
    * The devices whose voices were separated, with the names the file gives
    * them (each voice's `x-device` hint in a portable `.opus`). Where no
    * operator says what the participants were (an embed, a static export),
@@ -392,6 +400,7 @@ function buildPortableLoadedArtifact({
     availableTranscripts,
     currentTranscriptId,
     speakerEditsRevision: readSpeakerEditsRevision(manifest),
+    speakerSummarySha256: readSpeakerSummarySha256(manifest),
     splitDevices: readSplitDevices(manifest.speakers),
   };
 }
@@ -632,6 +641,17 @@ export function readSpeakerEditsRevision(manifest: PortableMeetingManifest): num
   const step = asMaybeObject(speechToText?.[getDefaultTranscriptId(manifest)]);
   const revision = asMaybeObject(step?.["x-speakerDiarization"])?.editsRevision;
   return typeof revision === "number" && Number.isInteger(revision) && revision > 0 ? revision : undefined;
+}
+
+/**
+ * The SHA-256 of the summary speaker edits rewrote, which a published
+ * recording records beside their revision, or undefined for the build's own.
+ */
+export function readSpeakerSummarySha256(manifest: PortableMeetingManifest): string | undefined {
+  const speechToText = asMaybeObject(asMaybeObject(manifest.provenance)?.speechToText);
+  const step = asMaybeObject(speechToText?.[getDefaultTranscriptId(manifest)]);
+  const sha256 = asMaybeObject(asMaybeObject(step?.["x-speakerDiarization"])?.summary)?.sha256;
+  return typeof sha256 === "string" && sha256 !== "" ? sha256 : undefined;
 }
 
 function asLooseObject(input: unknown): Record<string, unknown> {

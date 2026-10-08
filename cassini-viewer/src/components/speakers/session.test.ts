@@ -367,6 +367,44 @@ describe("reloadDue", () => {
     expect(due(2, { revision: 2, appliedRevision: 2, report: { ...split, summary: "regenerated" } })).toBe(false);
     expect(due(1, { revision: 2, appliedRevision: 1, state: "applying", report: { ...split, summary: "regenerated" } })).toBe(false);
   });
+
+  // Which summary the operator published, against the one on screen: what
+  // the last apply did to it is not enough.
+  const summaryDue = (shownRevision: number, shownSummary: string, server: Partial<SpeakerEditsState>) =>
+    reloadDue({ shownRevision, shownSummary, server: state(server) }, new Set());
+  const none = { splits: [], inconclusive: [] };
+
+  it("reads the recording again when undoing a name puts the build's summary back", () => {
+    // A device renamed at revision 1, its summary rewritten and read; the name
+    // taken away at 2. The words are cut as before, and the summary is the
+    // build's again.
+    const restored = { ...none, summary: "restored" as const, summarySha256: "" };
+    expect(summaryDue(1, "renamed", { revision: 2, appliedRevision: 2, report: restored })).toBe(true);
+    // Once the recording with the build's summary is on screen: nothing.
+    expect(summaryDue(0, "", { revision: 2, appliedRevision: 2, report: restored })).toBe(false);
+  });
+
+  it("still reads a rewritten summary after a later apply that left it alone", () => {
+    // Revision 2 rewrote the summary while the reader listened, so the
+    // recording on screen is revision 1's; revision 3 changed nobody's words.
+    const unchanged = { ...none, summary: "unchanged" as const, summarySha256: "rewritten-at-2" };
+    expect(summaryDue(1, "summary-at-1", { revision: 3, appliedRevision: 3, report: unchanged })).toBe(true);
+    expect(summaryDue(2, "rewritten-at-2", { revision: 3, appliedRevision: 3, report: unchanged })).toBe(false);
+    // A summary that could not be rewritten is the one already on screen.
+    expect(summaryDue(2, "rewritten-at-2", { revision: 3, appliedRevision: 3, report: { ...unchanged, summary: "stale" } })).toBe(false);
+  });
+
+  it("keeps the summary on screen with the recording, across opening the session again", async () => {
+    const session = createSpeakersSession();
+    session.showing(1, "renamed");
+    const restored = { ...none, summary: "restored" as const, summarySha256: "" };
+    await session.open(async () => state({ revision: 2, appliedRevision: 2, report: restored }), async () => state());
+    expect(get(session).shownSummary).toBe("renamed");
+    expect(reloadDue(get(session), new Set())).toBe(true);
+    session.showing(0);
+    expect(reloadDue(get(session), new Set())).toBe(false);
+    session.close();
+  });
 });
 
 describe("segmentationBehind after a merge is taken back", () => {

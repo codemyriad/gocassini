@@ -200,6 +200,9 @@ export function speakersFixture(
   let lastError = "";
   let doc: SpeakerEditsDoc = { format: SPEAKER_EDITS_FORMAT, revision: 0, splits: [], merges: [], labels: [] };
   let report: SpeakerEditsReport | null = null;
+  // The summary the published recording has: its text, and the SHA-256 the
+  // producer records for one rewritten for speaker edits ("" for the build's).
+  let summary: { markdown: string | null; sha256: string } = { markdown: null, sha256: "" };
 
   const progress = () =>
     options.estimateMs === undefined
@@ -244,16 +247,23 @@ export function speakersFixture(
     phase(next: SpeakerEditsPhase) {
       phase = next;
     },
-    // The operator republished the recording with the saved revision.
-    applied(next: (audio: string) => LoadedArtifact, nextReport: SpeakerEditsReport | null = report) {
-      published = next(audioSrc);
+    // The operator republished the recording with the saved revision, and
+    // with `nextSummary`, or the summary it had. The report names the
+    // summary published whatever the apply did to it.
+    applied(
+      next: (audio: string) => LoadedArtifact,
+      nextReport: SpeakerEditsReport | null = report,
+      nextSummary: { markdown: string | null; sha256: string } = summary,
+    ) {
+      summary = nextSummary;
+      published = { ...next(audioSrc), summary: summary.markdown, speakerSummarySha256: summary.sha256 || undefined };
       // As the producer records it: only a recording whose speakers the
       // edits changed says which edits it was published with.
       if (published.transcript.speakers.some((speaker) => speaker.id.includes("~"))) {
         published = { ...published, speakerEditsRevision: revision };
       }
       appliedRevision = revision;
-      report = nextReport;
+      report = nextReport && { ...nextReport, summarySha256: summary.sha256 };
       state = available ? "idle" : "unavailable";
     },
     // What the operator says about the meeting from now on.

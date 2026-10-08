@@ -1221,11 +1221,14 @@ func TestSpeakersApplyRewritesTheSummaryAndUndoRestoresIt(t *testing.T) {
 	if !reflect.DeepEqual(record.Summary, want) {
 		t.Errorf("x-speakerDiarization.summary = %+v, want %+v", record.Summary, want)
 	}
+	if report.SummarySHA256 != want.SHA256 {
+		t.Errorf("report summarySha256 = %q, want the rewritten summary's %q", report.SummarySHA256, want.SHA256)
+	}
 
 	empty := writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":2,"splits":[],"merges":[],"labels":[]}`)
 	report = speakersApplyOK(t, bundle, empty, turnsDir)
-	if report.Summary != "restored" {
-		t.Fatalf("summary after undo = %q, want restored", report.Summary)
+	if report.Summary != "restored" || report.SummarySHA256 != "" {
+		t.Fatalf("summary after undo = %q (sha256 %q), want restored, the build's own", report.Summary, report.SummarySHA256)
 	}
 	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !bytes.Equal(got, original) {
 		t.Errorf("summary.md after undo = %q, want the build's", got)
@@ -1336,6 +1339,11 @@ func TestSpeakersApplyCallsTheSummaryModelOncePerEdits(t *testing.T) {
 	}
 	if record, _ := speakersRecord(t, bundle); record.Summary == nil || record.Summary.SHA256 != sha256Hex(written) {
 		t.Errorf("an unchanged apply lost the summary record: %+v", record.Summary)
+	}
+	// An apply that leaves the summary still says which one the meeting has:
+	// a reader may not have the earlier apply's yet.
+	if report := speakersApplyOK(t, bundle, named, turnsDir); report.SummarySHA256 != sha256Hex(written) {
+		t.Errorf("an unchanged apply reports summarySha256 %q, want the kept summary's %q", report.SummarySHA256, sha256Hex(written))
 	}
 
 	expect("other edits", writeSpeakersEdits(t, tmp, "renamed.json", speakersSplitDoc(2,

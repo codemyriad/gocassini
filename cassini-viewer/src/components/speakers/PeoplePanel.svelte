@@ -37,7 +37,7 @@
 
   const dispatch = createEventDispatcher<{ sample: { id: string } & VoiceSample; stopSample: void; reload: void }>();
   const off: Readable<SpeakersState> = readable({
-    status: "off", server: null, shownRevision: null, pending: { labels: {}, merges: {} }, saving: false,
+    status: "off", server: null, shownRevision: null, shownSummary: null, pending: { labels: {}, merges: {} }, saving: false,
     applied: null, reloading: false, error: "", receivedAt: 0, now: 0,
   });
 

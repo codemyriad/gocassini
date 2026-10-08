@@ -9,6 +9,7 @@ import {
   loadPortableMeetingSummary,
   PortableMeetingStore,
   readSpeakerEditsRevision,
+  readSpeakerSummarySha256,
   switchPortableTranscript,
   type LoadedArtifact,
 } from "./loadArtifact";
@@ -902,6 +903,12 @@ describe("switchPortableTranscript", () => {
     expect(readSpeakerEditsRevision(manifest({ "separated-voices": {}, "raw-asr": record(3) }))).toBeUndefined();
     expect(readSpeakerEditsRevision(manifest({ "separated-voices": record("3") }))).toBeUndefined();
     expect(readSpeakerEditsRevision(manifest({}))).toBeUndefined();
+
+    // And which summary: one rewritten for the edits, or the build's own.
+    const summary = (sha256: unknown) => ({ "x-speakerDiarization": { editsRevision: 3, summary: { rewritten: true, sha256 } } });
+    expect(readSpeakerSummarySha256(manifest({ "separated-voices": summary("ab12"), "raw-asr": {} }))).toBe("ab12");
+    expect(readSpeakerSummarySha256(manifest({ "separated-voices": record(3), "raw-asr": summary("ab12") }))).toBeUndefined();
+    expect(readSpeakerSummarySha256(manifest({ "separated-voices": summary(12) }))).toBeUndefined();
   });
 
   it("says which speaker edits a loaded recording was published with", async () => {
@@ -909,14 +916,16 @@ describe("switchPortableTranscript", () => {
       location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-edits", protocol: "http:" },
     } as Window;
     globalThis.fetch = mockFetchReturning(
-      buildDualTranscriptFixture({ "x-speakerDiarization": { editsRevision: 2, splits: [] } }),
+      buildDualTranscriptFixture({ "x-speakerDiarization": { editsRevision: 2, splits: [], summary: { rewritten: true, sha256: "ab12" } } }),
     );
     const artifact = await loadPortableArtifactFromAudioPath("./portable-fixture-edits.opus");
     expect(artifact.speakerEditsRevision).toBe(2);
+    expect(artifact.speakerSummarySha256).toBe("ab12");
 
     globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture());
     const plain = await loadPortableArtifactFromAudioPath("./portable-fixture-edits-none.opus");
     expect(plain.speakerEditsRevision).toBeUndefined();
+    expect(plain.speakerSummarySha256).toBeUndefined();
   });
 
   // An embed has no operator to say what the participants were: the file's

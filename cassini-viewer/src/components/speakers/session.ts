@@ -28,6 +28,10 @@ export interface SpeakersState {
   // the recording (`showing`), never taken from the operator's answer — a
   // copy read earlier in the tab can be older than what the operator applied.
   shownRevision: number | null;
+  // Which summary the recording on screen has, told with `shownRevision`:
+  // the SHA-256 recorded for one rewritten for speaker edits, "" for the
+  // build's own, null while none is loaded.
+  shownSummary: string | null;
   // Names typed and "same person" picks, not yet saved. Kept here rather than
   // in the panel so closing the popover does not throw them away.
   pending: PendingSpeakerEdits;
@@ -67,6 +71,7 @@ const OFF: SpeakersState = {
   status: "off",
   server: null,
   shownRevision: null,
+  shownSummary: null,
   pending: emptyPending(),
   saving: false,
   applied: null,
@@ -136,19 +141,30 @@ export function segmentationBehind(
   return [...voices].some((id) => !shown.has(id));
 }
 
-// Whether the recording on screen has an older summary than the one the
+// Whether the recording on screen has another summary than the one the
 // operator published: names and merges are shown on the recording at once
-// (the overlay), but the summary rewritten for them is only in the
-// republished recording, so it is read again for that too.
-export function summaryBehind({ server, shownRevision }: Pick<SpeakersState, "server" | "shownRevision">): boolean {
+// (the overlay), but the summary rewritten for them, or the build's put back
+// when they are undone, is only in the republished recording, so it is read
+// again for that too. Which summary that is, not what the last apply did: an
+// apply that left the summary alone follows one that rewrote it, and the
+// reader may not have read that one yet.
+export function summaryBehind({
+  server,
+  shownRevision,
+  shownSummary,
+}: Pick<SpeakersState, "server" | "shownRevision"> & Partial<Pick<SpeakersState, "shownSummary">>): boolean {
   if (!server || server.state !== "idle" || shownRevision === null) return false;
-  return server.report?.summary === "regenerated" && server.appliedRevision > shownRevision;
+  if (server.appliedRevision <= shownRevision) return false;
+  const published = server.report?.summarySha256;
+  // An operator older than that says only what its last apply did.
+  if (published === undefined) return server.report?.summary === "regenerated";
+  return published !== (shownSummary ?? "");
 }
 
 // Whether the recording on screen should be read again: separated
 // differently, or its summary rewritten since.
 export function reloadDue(
-  state: Pick<SpeakersState, "server" | "shownRevision">,
+  state: Pick<SpeakersState, "server" | "shownRevision"> & Partial<Pick<SpeakersState, "shownSummary">>,
   shownSpeakers: ReadonlySet<string>,
 ): boolean {
   return segmentationBehind(state, shownSpeakers) || summaryBehind(state);
@@ -253,8 +269,8 @@ export function createSpeakersSession(options: { pollMs?: number; retryMs?: numb
     }
   }
 
-  // Opening keeps `shownRevision`: the recording is loaded beside the
-  // session, and either may come first.
+  // Opening keeps `shownRevision` and `shownSummary`: the recording is
+  // loaded beside the session, and either may come first.
   async function open(loadWith: LoadSpeakerEdits | null, saveWith: SaveSpeakerEdits | null) {
     const current = ++generation;
     clearTimeout(pollTimer);
@@ -262,10 +278,10 @@ export function createSpeakersSession(options: { pollMs?: number; retryMs?: numb
     load = loadWith;
     save = saveWith;
     if (!loadWith || !saveWith) {
-      state.update((s) => ({ ...OFF, shownRevision: s.shownRevision }));
+      state.update((s) => ({ ...OFF, shownRevision: s.shownRevision, shownSummary: s.shownSummary }));
       return;
     }
-    state.update((s) => ({ ...OFF, shownRevision: s.shownRevision, pending: emptyPending(), status: "loading" }));
+    state.update((s) => ({ ...OFF, shownRevision: s.shownRevision, shownSummary: s.shownSummary, pending: emptyPending(), status: "loading" }));
     await firstLoad(current, 0);
   }
 
@@ -278,7 +294,7 @@ export function createSpeakersSession(options: { pollMs?: number; retryMs?: numb
       if (current === generation) receive(server);
     } catch (error) {
       if (current !== generation) return;
-      state.update((s) => ({ ...OFF, shownRevision: s.shownRevision, status: "failed" }));
+      state.update((s) => ({ ...OFF, shownRevision: s.shownRevision, shownSummary: s.shownSummary, status: "failed" }));
       if (error instanceof SpeakerEditsError && error.code === "not-found") return;
       pollTimer = setTimeout(
         () => {
@@ -344,9 +360,10 @@ export function createSpeakersSession(options: { pollMs?: number; retryMs?: numb
       state.update((s) => ({ ...s, error: "" }));
     },
     // A recording was loaded (`revision`: the speaker edits it was published
-    // with, 0 for none) or unloaded (null).
-    showing(revision: number | null) {
-      state.update((s) => ({ ...s, shownRevision: revision }));
+    // with, 0 for none; `summary`: its summary's SHA-256 if they rewrote it)
+    // or unloaded (null).
+    showing(revision: number | null, summary = "") {
+      state.update((s) => ({ ...s, shownRevision: revision, shownSummary: revision === null ? null : summary }));
     },
     // The recording is (or is no longer) being read again on its own.
     reloading(reloading: boolean) {
