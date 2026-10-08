@@ -141,7 +141,7 @@ const ERROR_MESSAGES: Record<SpeakerEditsErrorCode, string> = {
   "revision-conflict": "Someone else changed the voices in this meeting. Their changes are shown now; try again.",
   busy: "This recording is being updated. Try again when it is done.",
   invalid: "Cassini could not accept these changes.",
-  "diarization-unavailable": "Voice separation is not installed on this server.",
+  "diarization-unavailable": "Voice separation is not installed on this server. An administrator can download it in Cassini's Settings.",
   unavailable: "The voices in this recording cannot be changed any more.",
   "not-found": "This meeting is not available to you any more.",
 };
@@ -164,7 +164,7 @@ export const UNAVAILABLE_REASONS: Record<SpeakerEditsUnavailableReason, string> 
   "no-job": "This recording was made before Cassini kept each participant's audio.",
   "no-source-audio": "Each participant's own audio was not kept for this recording.",
   "no-transcript": "This recording has no transcript to separate.",
-  "diarization-unavailable": "Voice separation is not installed on this server.",
+  "diarization-unavailable": "Voice separation is not installed on this server. An administrator can download it in Cassini's Settings.",
 };
 
 // Whether nothing can be saved for this meeting at all. Without the diarizer

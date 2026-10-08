@@ -3,11 +3,15 @@ package transcribe
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+
+	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
 
 	"gocassini/internal/modelstore"
 )
@@ -54,6 +58,69 @@ func InstalledVAD(root string, id ModelID, revision string, _ io.Writer) (string
 	}
 	return filepath.Join(s.Dir(v), v.Files[0].Path), nil
 }
+
+// InstalledDiarizer describes an installed catalogue diarization model. Like
+// InstalledVAD it never acquires files, and it trusts the store's receipt: the
+// SHA-256 is the catalogue's, which the bytes were verified against when they
+// were installed, so nothing rehashes 100 MB per diarization.
+func InstalledDiarizer(root, id, revision string) (DiarizationModel, error) {
+	s := modelstore.New(root)
+	m, err := s.Catalogue.Model(id, revision)
+	if err != nil {
+		return DiarizationModel{}, err
+	}
+	if m.Kind != modelstore.KindDiarization {
+		return DiarizationModel{}, fmt.Errorf("%s is a %s model, not a diarizer", m.ID, m.Kind)
+	}
+	if err := s.Installed(m); err != nil {
+		state := "is not installed"
+		if !errors.Is(err, fs.ErrNotExist) {
+			state = fmt.Sprintf("is not installed intact (%v)", err)
+		}
+		return DiarizationModel{}, fmt.Errorf("%w: the speaker separation model %s %s; %s", ErrDiarizationUnavailable, m.ID, state, DiarizationInstallHint)
+	}
+	a, err := s.Catalogue.Artifact(m.Files[0].Artifact)
+	if err != nil {
+		return DiarizationModel{}, err
+	}
+	path := filepath.Join(s.Dir(m), m.Files[0].Path)
+	return DiarizationModel{Path: path, Name: diarizationModelName(path), SHA256: a.UncompressedSHA256}, nil
+}
+
+// ProbeInstalledDiarizer is the runtime check of a diarization model: the
+// native runtime has Nemotron support, and it loads the installed file and
+// runs it over a second of silence. Diarization always runs on the CPU, and
+// it writes no readiness receipt: `models list` reports a diarizer ready when
+// its bytes are installed and the runtime supports it, which is cheap enough
+// to check every time.
+func ProbeInstalledDiarizer(ctx context.Context, s *modelstore.Store, m modelstore.Model) error {
+	if m.Kind != modelstore.KindDiarization {
+		return fmt.Errorf("%s is not a diarization model", m.ID)
+	}
+	if !HasDiarizationRuntime() {
+		return fmt.Errorf("%w: native runtime %q has no Nemotron support", ErrDiarizationUnavailable, sherpa.GetVersion())
+	}
+	unlock, err := lockModelRuntime(ctx, s.Root)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := s.Complete(m); err != nil {
+		return err
+	}
+	if err := admitModelProbe(ctx, ModelID(m.ID), "cpu"); err != nil {
+		return err
+	}
+	model, err := InstalledDiarizer(s.Root, m.ID, m.Revision)
+	if err != nil {
+		return err
+	}
+	if _, err := diarizeWithSherpa(model, make([]float32, 16000), 16000); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
 func ModelRuntimeFingerprint() string {
 	// Every new executable or native runtime gets a local readiness recheck;
 	// neither affects the identity/path of the weights.

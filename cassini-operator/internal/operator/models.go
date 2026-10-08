@@ -27,6 +27,12 @@ type modelInfo struct {
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
 	Device         string `json:"device"`
+	// Kind is speech or diarization (the CLI never lists the VAD). Settings
+	// shows a diarizer as an optional download, never as a transcription
+	// model.
+	Kind string `json:"kind"`
+	// RuntimeSupported is set for diarizers: whether the runtime can run one.
+	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
 }
 type modelProgress struct {
 	Version   int    `json:"version"`
@@ -224,6 +230,10 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 		m, err := findModel(models, in.Model, in.Revision)
 		if err != nil {
 			writeJSONError(w, 400, err.Error())
+			return
+		}
+		if m.Kind == modelKindDiarization && in.Device != "cpu" {
+			writeJSONError(w, 400, "Speaker separation runs on the CPU; install it with device cpu")
 			return
 		}
 		if in.Device == "cuda" && in.Model != "parakeet-tdt-0.6b-v3" {

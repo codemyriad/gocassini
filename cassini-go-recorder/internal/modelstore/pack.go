@@ -56,13 +56,12 @@ func (s *Store) Pack(ctx context.Context, m Model, dest string) error {
 		defer os.Remove(f.Name())
 		defer f.Close()
 		tw := tar.NewWriter(f)
+		// A model without a VAD dependency packs an empty vad_revision, which
+		// Import checks against the target catalogue like any other identity.
 		v, _ := s.VAD(m)
 		meta := PackManifest{Format: PackFormat, Model: m.ID, Revision: m.Revision, VADRevision: v.Revision}
 		for _, c := range s.Components(m) {
-			prefix := "model/"
-			if c.ID == v.ID {
-				prefix = "vad/"
-			}
+			prefix := packPrefix(c)
 			for _, f := range c.Files {
 				a, _ := s.Catalogue.Artifact(f.Artifact)
 				meta.Files = append(meta.Files, PackFile{prefix + f.Path, a.UncompressedSize, a.UncompressedSHA256})
@@ -81,10 +80,7 @@ func (s *Store) Pack(ctx context.Context, m Model, dest string) error {
 		}
 		var done int64
 		for _, c := range s.Components(m) {
-			prefix := "model/"
-			if c.ID == "silero-vad" {
-				prefix = "vad/"
-			}
+			prefix := packPrefix(c)
 			for _, entry := range c.Files {
 				a, _ := s.Catalogue.Artifact(entry.Artifact)
 				in, err := os.Open(filepath.Join(s.Dir(c), entry.Path))
@@ -123,6 +119,15 @@ func (s *Store) Pack(ctx context.Context, m Model, dest string) error {
 		s.emit("packed", dest, size, size, 0)
 		return nil
 	})
+}
+
+// packPrefix is where a component's files sit in a pack: the dependency VAD
+// under vad/, the model itself under model/.
+func packPrefix(c Model) string {
+	if c.Kind == KindVAD {
+		return "vad/"
+	}
+	return "model/"
 }
 
 // PackIdentity reads only the first, bounded manifest. All identity and payload
@@ -181,7 +186,11 @@ func (s *Store) Import(ctx context.Context, m Model, opts ImportOptions) error {
 				return err
 			}
 		}
-		v, _ := s.VAD(m)
+		v, vadErr := s.VAD(m)
+		needsVAD := vadErr == nil
+		if !needsVAD && opts.VAD != "" {
+			return fmt.Errorf("%s needs no VAD; omit --vad", m.ID)
+		}
 		s.emit("verifying", filepath.Base(opts.From), 0, required, 0)
 		info, err := os.Stat(opts.From)
 		if err != nil {
@@ -221,6 +230,22 @@ func (s *Store) Import(ctx context.Context, m Model, opts ImportOptions) error {
 					return err
 				}
 			}
+		case len(m.Files) == 1 && strings.TrimSuffix(filepath.Base(opts.From), ".zst") == m.Files[0].Path:
+			// One copied model file, as downloaded (.zst) or decompressed: a
+			// single-file model such as the diarizer has no upstream archive.
+			entry := m.Files[0]
+			a, _ := s.Catalogue.Artifact(entry.Artifact)
+			dest := filepath.Join(md, entry.Path)
+			if strings.HasSuffix(opts.From, ".zst") {
+				if err := verifyFile(ctx, opts.From, a.Size, a.SHA256); err != nil {
+					return err
+				}
+				if err := decompress(ctx, opts.From, dest, a); err != nil {
+					return err
+				}
+			} else if err := copyVerified(ctx, opts.From, dest, a.UncompressedSize, a.UncompressedSHA256); err != nil {
+				return err
+			}
 		default:
 			// Original upstream tar.bz2 is supported for manual transfer only. It is
 			// identified by the immutable source digest pinned in the shipped index.
@@ -236,7 +261,7 @@ func (s *Store) Import(ctx context.Context, m Model, opts ImportOptions) error {
 				return err
 			}
 		}
-		if !opts.Pack {
+		if !opts.Pack && needsVAD {
 			if opts.VAD != "" {
 				a, _ := s.Catalogue.Artifact(v.Files[0].Artifact)
 				if strings.HasSuffix(opts.VAD, ".zst") {
@@ -257,7 +282,7 @@ func (s *Store) Import(ctx context.Context, m Model, opts ImportOptions) error {
 		if err := s.Verify(ctx, m, md); err != nil {
 			return err
 		}
-		haveVAD := opts.Pack || opts.VAD != ""
+		haveVAD := needsVAD && (opts.Pack || opts.VAD != "")
 		if haveVAD {
 			if err := s.Verify(ctx, v, vd); err != nil {
 				return err
@@ -281,12 +306,9 @@ func (s *Store) Import(ctx context.Context, m Model, opts ImportOptions) error {
 func (s *Store) unpack(ctx context.Context, m Model, reader io.Reader, stage string, pack bool, limit int64) error {
 	expected := map[string]Artifact{}
 	for _, c := range s.Components(m) {
-		prefix := "model/"
-		if c.ID == "silero-vad" {
-			if !pack {
-				continue
-			}
-			prefix = "vad/"
+		prefix := packPrefix(c)
+		if prefix == "vad/" && !pack {
+			continue
 		}
 		for _, f := range c.Files {
 			a, _ := s.Catalogue.Artifact(f.Artifact)

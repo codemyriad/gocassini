@@ -38,7 +38,8 @@ func newSpeakersFixtureBehind(t *testing.T, front func(next http.Handler) http.H
 	store, workRoot := openSpeakerTestStore(t)
 	t.Setenv(envDiarizationModel, "")
 	rt := &Runtime{store: store, logger: log.New(ioDiscard{}, "", 0)}
-	rt.cfg.CassiniBin = "cassini"
+	rt.cfg.CassiniBin = fakeModelsCLI(t)
+	writeDiarizerInventory(t, rt.cfg.CassiniBin, false, false, true)
 	rt.cfg.WorkRoot = workRoot
 	rt.cfg.ModelCacheRoot = filepath.Join(t.TempDir(), "cache")
 	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
@@ -59,15 +60,13 @@ func newSpeakersFixtureBehind(t *testing.T, front func(next http.Handler) http.H
 	return &speakersFixture{rt: rt, h: mux, nc: nc}
 }
 
+// installModel makes the model inventory list the diarizer ready, as after
+// an installation from Settings. The inventory cache is dropped the way a
+// finished model job drops it.
 func (f *speakersFixture) installModel(t *testing.T) {
 	t.Helper()
-	path := filepath.Join(f.rt.cfg.ModelCacheRoot, "models", "nemotron-3-diarization-int8", "model.int8.onnx")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("onnx"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeDiarizerInventory(t, f.rt.cfg.CassiniBin, true, true, true)
+	f.rt.invalidateModelInventory()
 }
 
 func (f *speakersFixture) get(t *testing.T, id string) speakerEditsResponse {
@@ -120,10 +119,14 @@ func TestSpeakersGetReportsWhyAMeetingCannotBeSplit(t *testing.T) {
 	if resp.Available || resp.Reason != speakerReasonDiarizationUnav || len(resp.Participants) != 2 || resp.Participants[0].ID != speakerTestRoom || resp.Participants[0].Label != "Meeting room laptop" {
 		t.Fatalf("no model: %+v", resp)
 	}
+	// It tells an administrator how to install it.
+	if !strings.Contains(resp.ReasonDetail, "Settings") || !strings.Contains(resp.ReasonDetail, "cassini models install "+defaultDiarizationModel) {
+		t.Fatalf("no model: reasonDetail = %q", resp.ReasonDetail)
+	}
 
 	f.installModel(t)
 	resp = f.get(t, "MEETING1")
-	if !resp.Available || resp.Reason != "" || resp.State != speakerStateIdle || resp.Revision != 0 || resp.AppliedRevision != 0 {
+	if !resp.Available || resp.Reason != "" || resp.ReasonDetail != "" || resp.State != speakerStateIdle || resp.Revision != 0 || resp.AppliedRevision != 0 {
 		t.Fatalf("available: %+v", resp)
 	}
 }
@@ -218,7 +221,7 @@ func TestSpeakersPostRefusesWhatCannotBeApplied(t *testing.T) {
 
 	// No model: a new split cannot run, but naming needs no diarizer.
 	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}]}}`)
-	if rec.Code != http.StatusServiceUnavailable || annTestError(t, rec) != "diarization-unavailable" {
+	if rec.Code != http.StatusServiceUnavailable || annTestError(t, rec) != "diarization-unavailable" || !strings.Contains(rec.Body.String(), "cassini models install "+defaultDiarizationModel) {
 		t.Fatalf("split without a model = %d %s", rec.Code, rec.Body.String())
 	}
 	if _, err := f.rt.store.PutSpeakerSplitTurns(context.Background(), "MEETING1", speakerTestRoom, `{}`, "", "", nowUTCString()); err != nil {

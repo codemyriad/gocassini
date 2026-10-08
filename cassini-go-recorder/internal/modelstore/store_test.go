@@ -28,7 +28,8 @@ func fixture(t *testing.T) (*Store, Model, map[string][]byte) {
 	s := New(t.TempDir())
 	s.Catalogue = Catalogue{SchemaVersion: 2}
 	encoded := map[string][]byte{}
-	for _, id := range []string{"test-model", "silero-vad"} {
+	kinds := map[string]string{"test-model": KindSpeech, "silero-vad": KindVAD, "test-diarizer": KindDiarization}
+	for _, id := range []string{"test-model", "silero-vad", "test-diarizer"} {
 		raw := bytes.Repeat([]byte(id+"-weights "), 1000)
 		encoder, err := zstd.NewWriter(nil)
 		if err != nil {
@@ -41,7 +42,7 @@ func fixture(t *testing.T) (*Store, Model, map[string][]byte) {
 		filename := id + ".onnx"
 		a := Artifact{Key: "models/files/" + hash + "/" + filename + ".zst", URL: "https://dist.gocassini.com/models/files/" + hash + "/" + filename + ".zst", Size: int64(len(data)), SHA256: hash, UncompressedSize: int64(len(raw)), UncompressedSHA256: uh, Encoding: "zstd-seekable"}
 		s.Catalogue.Artifacts = append(s.Catalogue.Artifacts, a)
-		s.Catalogue.Models = append(s.Catalogue.Models, Model{ID: id, Revision: uh, Files: []File{{Path: filename, Artifact: a.Key, Required: true}}})
+		s.Catalogue.Models = append(s.Catalogue.Models, Model{ID: id, Kind: kinds[id], Revision: uh, Files: []File{{Path: filename, Artifact: a.Key, Required: true}}})
 		encoded[a.Key] = data
 	}
 	s.Catalogue.Models[0].VADRevision = s.Catalogue.Models[1].Revision
@@ -58,9 +59,202 @@ func serve(t *testing.T, s *Store, data map[string][]byte, calls *atomic.Int32) 
 	s.URL = func(a Artifact) string { return server.URL + "/" + a.Key }
 	return server
 }
-func TestShippedCatalogue(t *testing.T) {
-	if err := Shipped().Validate(); err != nil {
+
+// fixtureDiarizer is the fixture's diarization model: one file, no VAD.
+func fixtureDiarizer(t *testing.T, s *Store) Model {
+	t.Helper()
+	m, err := s.Catalogue.Model("test-diarizer", "")
+	if err != nil {
 		t.Fatal(err)
+	}
+	return m
+}
+func TestShippedCatalogue(t *testing.T) {
+	c := Shipped()
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, m := range c.Models {
+		kinds[m.ID] = m.Kind
+	}
+	want := map[string]string{
+		"parakeet-tdt-ctc-110m-en-int8": KindSpeech,
+		"parakeet-tdt-0.6b-v3-int8":     KindSpeech,
+		"parakeet-tdt-0.6b-v3":          KindSpeech,
+		"silero-vad":                    KindVAD,
+		"nemotron-3-diarization-int8":   KindDiarization,
+		"nemotron-3-diarization":        KindDiarization,
+	}
+	for id, kind := range want {
+		if kinds[id] != kind {
+			t.Errorf("%s kind = %q, want %q", id, kinds[id], kind)
+		}
+	}
+	// The diarizer Cassini runs by default: the version-2 INT8 export the
+	// Cassini .6 runtime was reviewed with, not the version-1 one the CDN
+	// still serves.
+	m, err := c.Model("nemotron-3-diarization-int8", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Catalogue: c}
+	if got := s.Components(m); len(got) != 1 || got[0].ID != m.ID {
+		t.Fatalf("diarizer components = %+v, want the model alone", got)
+	}
+	a, err := c.Artifact(m.Files[0].Artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Files[0].Path != "model.int8.onnx" || a.UncompressedSHA256 != "47c221ea9b4d4e7f6c108bd098e769bc706cdc986c29f6133c93cae335fe6779" || a.UncompressedSize != 103967426 || a.Size != 64915668 {
+		t.Fatalf("diarizer artifact = %+v", a)
+	}
+	// Every installed model directory gets the embedded notice; each licence
+	// in the catalogue must be in it.
+	for licence, needle := range map[string]string{"CC-BY-4.0": "CC BY 4.0", "MIT": "MIT License", "OpenMDW-1.1": "OpenMDW License Agreement, version 1.1"} {
+		for _, m := range c.Models {
+			if m.License == licence && !strings.Contains(Notices, needle) {
+				t.Errorf("NOTICE.txt lacks the %s licence of %s", licence, m.ID)
+			}
+		}
+	}
+	for _, m := range c.Models {
+		switch m.License {
+		case "CC-BY-4.0", "MIT", "OpenMDW-1.1":
+		default:
+			t.Errorf("%s has licence %q, which this test does not know", m.ID, m.License)
+		}
+	}
+	for _, a := range c.Artifacts {
+		used := false
+		for _, m := range c.Models {
+			for _, f := range m.Files {
+				used = used || f.Artifact == a.Key
+			}
+		}
+		if !used {
+			t.Errorf("artifact %s belongs to no model", a.Key)
+		}
+	}
+}
+
+func TestValidateChecksEachKindsDependencies(t *testing.T) {
+	cases := map[string]func(c *Catalogue){
+		"speech model without VAD": func(c *Catalogue) { c.Models[0].VADRevision = "" },
+		"diarizer pinning a VAD":   func(c *Catalogue) { c.Models[2].VADRevision = c.Models[1].Revision },
+		"model without a kind":     func(c *Catalogue) { c.Models[2].Kind = "" },
+		"unknown kind":             func(c *Catalogue) { c.Models[2].Kind = "embedding" },
+		"VAD under another id":     func(c *Catalogue) { c.Models[2].Kind = KindVAD },
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := fixture(t)
+			if err := s.Catalogue.Validate(); err != nil {
+				t.Fatalf("fixture invalid: %v", err)
+			}
+			breakIt(&s.Catalogue)
+			if err := s.Catalogue.Validate(); err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+}
+
+// A diarizer is installed, packed and imported on its own: no VAD is fetched,
+// packed or required on the target.
+func TestDiarizerNeedsNoVAD(t *testing.T) {
+	s, _, data := fixture(t)
+	m := fixtureDiarizer(t, s)
+	var calls atomic.Int32
+	server := serve(t, s, data, &calls)
+	ctx := context.Background()
+	if err := s.Acquire(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("requests=%d, want the model file only", calls.Load())
+	}
+	if _, err := os.Stat(filepath.Join(s.Root, "vad")); !os.IsNotExist(err) {
+		t.Fatalf("a VAD was installed for a diarizer: %v", err)
+	}
+	if err := s.Complete(m); err != nil {
+		t.Fatal(err)
+	}
+	server.Close()
+
+	pack := filepath.Join(t.TempDir(), "diarizer.tar")
+	if err := s.Pack(ctx, m, pack); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := PackIdentity(pack)
+	if err != nil || identity.Model != m.ID || identity.VADRevision != "" {
+		t.Fatalf("identity = %+v, %v", identity, err)
+	}
+	if raw, _ := os.ReadFile(pack); bytes.Contains(raw, []byte("vad/")) {
+		t.Fatal("pack carries a VAD")
+	}
+	target := New(t.TempDir())
+	target.Catalogue = s.Catalogue
+	target.URL = func(Artifact) string { t.Fatal("offline import constructed network request"); return "" }
+	if err := target.Import(ctx, m, ImportOptions{From: pack, Pack: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Complete(m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target.Root, "vad")); !os.IsNotExist(err) {
+		t.Fatalf("import published a VAD: %v", err)
+	}
+	if err := target.Import(ctx, m, ImportOptions{From: s.Dir(m), VAD: "/dev/null"}); err == nil || !strings.Contains(err.Error(), "omit --vad") {
+		t.Fatalf("--vad for a diarizer: %v", err)
+	}
+}
+
+// A single-file model imports from the one file an administrator copied,
+// compressed or not, and refuses a different file under the right name.
+func TestSingleFileModelImportsFromTheFile(t *testing.T) {
+	s, _, data := fixture(t)
+	m := fixtureDiarizer(t, s)
+	f := m.Files[0]
+	s.URL = func(Artifact) string { t.Fatal("import tried network acquisition"); return "" }
+	ctx := context.Background()
+
+	zst := filepath.Join(t.TempDir(), f.Path+".zst")
+	if err := os.WriteFile(zst, data[f.Artifact], 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Import(ctx, m, ImportOptions{From: zst}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Complete(m); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(s.Dir(m), f.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := New(t.TempDir())
+	target.Catalogue = s.Catalogue
+	plain := filepath.Join(t.TempDir(), f.Path)
+	if err := os.WriteFile(plain, raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Import(ctx, m, ImportOptions{From: plain}); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Complete(m); err != nil {
+		t.Fatal(err)
+	}
+
+	other := New(t.TempDir())
+	other.Catalogue = s.Catalogue
+	wrong := filepath.Join(t.TempDir(), f.Path)
+	if err := os.WriteFile(wrong, append(raw[:len(raw)-1:len(raw)-1], 'X'), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Import(ctx, m, ImportOptions{From: wrong}); err == nil || other.Installed(m) == nil {
+		t.Fatalf("a changed file was imported: %v", err)
 	}
 }
 func TestAcquirePackImportAndReuse(t *testing.T) {

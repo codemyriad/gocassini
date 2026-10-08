@@ -32,6 +32,9 @@ on your own network too.
 
 Transcription is optional and starts off. An explicit installation downloads model
 files and VAD from `dist.gocassini.com`; it sends no recordings or transcripts.
+The voice separation model (Nemotron 3 Diarization, about 62 MiB) is a separate
+optional download in the same Settings section, fetched the same way and only
+when an administrator asks for it.
 The CDN receives ordinary download requests from the server. Installed revisions
 are reused across upgrades. `cassini models import` accepts manually transferred
 files without internet access; `CASSINI_DISALLOW_MODEL_DOWNLOAD=1` prevents model

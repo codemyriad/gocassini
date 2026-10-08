@@ -26,9 +26,20 @@ const (
 	diarizationThreads        = 2
 )
 
-// DiarizationModelEnv points at a decompressed Nemotron v2 ONNX file. This is
-// the proof-of-concept seam until the model is a catalogue entry.
+// DiarizationModelEnv points at a decompressed Nemotron v2 ONNX file. It is a
+// development override: installed systems use the model store.
 const DiarizationModelEnv = "CASSINI_DIARIZATION_MODEL"
+
+// DefaultDiarizationModelID is the catalogue diarizer Settings offers and
+// Cassini for Android runs. The fp32 export is used only when it is the one
+// installed.
+const DefaultDiarizationModelID = "nemotron-3-diarization-int8"
+
+var diarizationModelIDs = []string{DefaultDiarizationModelID, "nemotron-3-diarization"}
+
+// DiarizationInstallHint says how an administrator gets the model. It ends
+// every "not installed" error, and the operator shows it as is.
+const DiarizationInstallHint = "an administrator can download it in Cassini's Settings (Voice separation), or run `cassini models install " + DefaultDiarizationModelID + "` (offline: `cassini models import`)"
 
 // ErrDiarizationUnavailable means the stage cannot run here: no model, or a
 // native runtime without Nemotron. Callers skip the split; they never fail a
@@ -48,19 +59,29 @@ func HasDiarizationRuntime() bool {
 }
 
 // ResolveDiarizationModel finds the Nemotron model: $CASSINI_DIARIZATION_MODEL,
-// else the int8 file under <cacheDir>/models/nemotron-3-diarization-int8/.
+// else the installed catalogue diarizer under the model store rooted at
+// cacheDir (the int8 export first).
 func ResolveDiarizationModel(cacheDir string) (DiarizationModel, error) {
 	if !HasDiarizationRuntime() {
 		return DiarizationModel{}, fmt.Errorf("%w: native runtime %q has no Nemotron support", ErrDiarizationUnavailable, sherpa.GetVersion())
 	}
-	path := strings.TrimSpace(os.Getenv(DiarizationModelEnv))
-	if path == "" && cacheDir != "" {
-		path = filepath.Join(cacheDir, "models", "nemotron-3-diarization-int8", "model.int8.onnx")
+	if path := strings.TrimSpace(os.Getenv(DiarizationModelEnv)); path != "" {
+		return LoadDiarizationModel(path)
 	}
-	if path == "" {
-		return DiarizationModel{}, fmt.Errorf("%w: set %s", ErrDiarizationUnavailable, DiarizationModelEnv)
+	if cacheDir == "" {
+		return DiarizationModel{}, fmt.Errorf("%w: no model store; set %s or CASSINI_CACHE_ROOT", ErrDiarizationUnavailable, DiarizationModelEnv)
 	}
-	return LoadDiarizationModel(path)
+	var first error
+	for _, id := range diarizationModelIDs {
+		model, err := InstalledDiarizer(cacheDir, id, "")
+		if err == nil {
+			return model, nil
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return DiarizationModel{}, first
 }
 
 // LoadDiarizationModel describes the Nemotron model at an explicit path, with
@@ -76,11 +97,15 @@ func LoadDiarizationModel(path string) (DiarizationModel, error) {
 	if err != nil {
 		return DiarizationModel{}, fmt.Errorf("%w: hash model: %v", ErrDiarizationUnavailable, err)
 	}
+	return DiarizationModel{Path: path, Name: diarizationModelName(path), SHA256: sum}, nil
+}
+
+func diarizationModelName(path string) string {
 	name := "nvidia/Nemotron-3-Diarization"
 	if strings.Contains(filepath.Base(path), "int8") {
 		name += " INT8"
 	}
-	return DiarizationModel{Path: path, Name: name, SHA256: sum}, nil
+	return name
 }
 
 // diarizeFn runs the diarizer over 16 kHz mono PCM on the meeting timeline and
