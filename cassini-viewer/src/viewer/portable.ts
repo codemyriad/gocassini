@@ -961,7 +961,10 @@ export function buildReadableTranscriptFromPortable(
   transcript: TranscriptWordsV1,
 ): ReadableTranscriptV1 {
   const provided = asRecord(portable.readableTranscript);
-  const speakers = normalizeSpeakers(portable.speakers || transcript.speakers || []);
+  // The roster first, then what the words transcript adds to it: a device
+  // that the shown original transcript credits after its voices were
+  // separated (withSplitDevices).
+  const speakers = normalizeSpeakers([...(portable.speakers || []), ...(transcript.speakers || [])]);
   const validSpeakerIds = new Set(speakers.map((speaker) => speaker.id));
 
   if (

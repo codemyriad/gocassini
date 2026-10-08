@@ -24,6 +24,7 @@ import {
   canonicalWordsForBlock,
   isLikelyCrosstalkTurn,
   validateDisplayTranscriptV1,
+  validateReadableTranscriptV1,
   validateTranscriptWordsV1,
 } from "../core/transcript";
 
@@ -1102,5 +1103,17 @@ describe("buildTranscriptWordsFromPortable original transcript after separation"
     ];
     const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(renamed) as never));
     expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "spk_room" });
+  });
+
+  // Found on the installed stack: switching to "raw-asr" loaded the words but
+  // failed on "readable segment r_seg_000000 references unknown speaker", as
+  // the readable paragraphs took their speakers from the roster alone.
+  it("builds readable paragraphs that credit the device too", () => {
+    const manifest = original(separatedRoster) as never;
+    const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(manifest));
+    const readable = validateReadableTranscriptV1(buildReadableTranscriptFromPortable(manifest, transcript));
+    expect(readable.segments.map((segment) => segment.speaker)).toEqual(["spk_room", "spk_ben"]);
+    expect(readable.speakers).toContainEqual({ id: "spk_room", label: "Room laptop" });
+    expect(readable.speakers.slice(0, 3)).toEqual(separatedRoster);
   });
 });
