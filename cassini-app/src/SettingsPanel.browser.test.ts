@@ -103,6 +103,8 @@ it("requires prepared transcription before saving deletion", async () => {
   host = document.createElement("div"); document.body.append(host);
   app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
   await page.getByRole("radio", { name: "Nothing", exact: true }).click();
-  await expect.element(page.getByText("Enable a prepared transcription model below before saving source deletion.")).toBeVisible();
+  await expect.element(page.getByText("Set up transcription to keep no recording media")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Go to transcription settings" }).click();
+  await expect.element(page.getByRole("region", { name: "Transcription settings" })).toHaveFocus();
 });

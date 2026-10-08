@@ -85,6 +85,15 @@
   let sourceRetention: "storage-policy" | "delete-after-processing" = "storage-policy";
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
+  let transcriptionSettings: HTMLElement;
+
+  function focusTranscriptionSettings() {
+    transcriptionSettings.focus({ preventScroll: true });
+    transcriptionSettings.scrollIntoView({
+      block: "start",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+    });
+  }
   $: recordingMedia = sourceRetention === "delete-after-processing" ? "nothing" : retainVideo ? "audio-video" : "audio-only";
 
   function selectRecordingMedia(value: "nothing" | "audio-video" | "audio-only") {
@@ -557,7 +566,14 @@
         {#if recordingMedia === "nothing"}
           <p class="set-row-sub">Temporary retries within the initial run remain possible. If transcription permanently fails, there may be no usable transcript. Transcripts, meeting information and diagnostic logs follow their existing retention policies.</p>
           {#if !transcriptionEnabled || !activeModel || !activeRevision}
-            <p class="err-box" role="alert">Enable a prepared transcription model below before saving source deletion.</p>
+            <div class="transcription-setup" role="status">
+              <TriangleAlert size={20} class="transcription-setup-icon" aria-hidden="true" />
+              <div class="transcription-setup-copy">
+                <strong>Set up transcription to keep no recording media</strong>
+                <p>Choose a ready model and enable transcription before saving. This lets Cassini create the transcript before deleting the recording media.</p>
+              </div>
+              <button class="transcription-setup-action" type="button" on:click={focusTranscriptionSettings}>Go to transcription settings</button>
+            </div>
           {/if}
         {:else}
           <p class="set-row-sub">Storage policies control how long recording media is kept. Your publication choice below does not delete the source recording.</p>
@@ -675,7 +691,7 @@
            Each step is its own row under a full rule with extra space above,
            so two independent settings — one of which sends text to a third
            party — do not read as one block, without a card around each. -->
-      <section class="op-tint pipe-step">
+      <section class="op-tint pipe-step scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
         <div class="set-row-main">
           <p id="stt-quality-heading" class="set-row-name op-card-title">Quality</p>
           <p class="set-row-sub">
@@ -929,6 +945,52 @@
   {/if}
 
 <style>
+  .transcription-setup {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    background-color: color-mix(in srgb, var(--color-primary) 9%, var(--color-base-100));
+    border-radius: var(--radius-box, 0.75rem);
+  }
+  .transcription-setup :global(.transcription-setup-icon) {
+    flex: none;
+    color: var(--color-primary);
+  }
+  .transcription-setup-copy {
+    flex: 1 1 240px;
+    min-width: 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--color-base-content);
+  }
+  .transcription-setup-copy strong {
+    font-weight: 650;
+  }
+  .transcription-setup-copy p {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .transcription-setup-action {
+    padding: 9px 12px;
+    cursor: pointer;
+    background-color: var(--color-base-content);
+    color: var(--color-base-100);
+    border: 0;
+    border-radius: var(--radius-field, 0.5rem);
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .transcription-setup-action:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 88%, var(--color-base-100));
+  }
+  .transcription-setup-action:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+  }
   .pipe-body {
     display: grid;
     gap: calc(var(--op-x, 20px) + 8px);
