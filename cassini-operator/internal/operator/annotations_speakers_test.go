@@ -664,3 +664,49 @@ func TestSpeakerMeetingAudioMsFallsBackToTheTranscript(t *testing.T) {
 		t.Fatalf("from manifest = %d", got)
 	}
 }
+
+// markSpeakerRebuildUnpublished makes the job's current meeting the bundle of
+// a rerun whose publish failed: current/ follows the last attempt that built.
+func markSpeakerRebuildUnpublished(t *testing.T, store *Store, workRoot, jobID string) int {
+	t.Helper()
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerun, err := store.QueueRerunAttempt(context.Background(), job, nowUTCString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := rerun.CurrentAttemptNumber
+	if _, err := store.db.Exec(`UPDATE job_attempts SET stage = 'done', state = 'failed', error = 'publish failed' WHERE job_id = ? AND attempt_number = ?`, jobID, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE jobs SET stage = 'done', state = 'failed' WHERE id = ?`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetMeetingBundleRoom(canonicalMeetingPath(workRoot, jobID), "", "", "", jobID, attempt); err != nil {
+		t.Fatal(err)
+	}
+	return attempt
+}
+
+// A rerun whose seal or publish failed left its rebuild — new transcript,
+// re-encoded audio — in current/, while readers still have the recording
+// before it. A speaker edit must not publish that rebuild in its name: the
+// meeting is reported unavailable until a rerun publishes.
+func TestSpeakersRefuseARebuildThatWasNeverPublished(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	if resp := f.get(t, "MEETING1"); !resp.Available {
+		t.Fatalf("before the rerun: %+v", resp)
+	}
+	markSpeakerRebuildUnpublished(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	if resp := f.get(t, "MEETING1"); resp.Available || resp.Reason != speakerReasonUnpublishedRebuild {
+		t.Fatalf("after an unpublished rerun: %+v", resp)
+	}
+	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", `{"expectRevision":0,"doc":{"labels":[{"speakerId":"spk_room","label":"Room"}]}}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), speakerReasonUnpublishedRebuild) {
+		t.Fatalf("POST after an unpublished rerun = %d %s", rec.Code, rec.Body.String())
+	}
+}

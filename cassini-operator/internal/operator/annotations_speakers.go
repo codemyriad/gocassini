@@ -37,12 +37,16 @@ const (
 	speakerReasonNoSourceAudio   = "no-source-audio"
 	speakerReasonNoTranscript    = "no-transcript"
 	speakerReasonDiarizationUnav = "diarization-unavailable"
-	speakerStateIdle             = "idle"
-	speakerStateApplying         = "applying"
-	speakerStateFailed           = "failed"
-	speakerStateUnavailable      = "unavailable"
-	speakerTranscriptRawASR      = "transcript.raw-asr.words.v1.json"
-	speakerTranscriptPrimary     = "transcript.words.v1.json"
+	// speakerReasonUnpublishedRebuild: the job's last rebuild (a rerun) was
+	// never published, so the meeting a refine would copy is not the one
+	// readers have. An administrator's rerun clears it.
+	speakerReasonUnpublishedRebuild = "unpublished-rebuild"
+	speakerStateIdle                = "idle"
+	speakerStateApplying            = "applying"
+	speakerStateFailed              = "failed"
+	speakerStateUnavailable         = "unavailable"
+	speakerTranscriptRawASR         = "transcript.raw-asr.words.v1.json"
+	speakerTranscriptPrimary        = "transcript.words.v1.json"
 )
 
 // speakerEditsResponse is the GET shape, and what a successful POST answers.
@@ -185,7 +189,7 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		s.answerFailure(w, r, "speakers meeting="+meetingID, annotateNotFound(
 			fmt.Errorf("meeting=%s has no operator job (served as 404)", meetingID)))
 		return
-	case speakerReasonNoSourceAudio, speakerReasonNoTranscript:
+	case speakerReasonNoSourceAudio, speakerReasonNoTranscript, speakerReasonUnpublishedRebuild:
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "unavailable", "reason": state.Reason})
 		return
 	}
@@ -337,11 +341,17 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 	if participants, err := readSpeakerParticipants(canonicalMeetingPath(rt.cfg.WorkRoot, jobID)); err == nil {
 		resp.Participants = participants
 	}
+	unpublished, err := rt.speakerMeetingUnpublished(ctx, jobID)
+	if err != nil {
+		return resp, err
+	}
 	switch {
 	case !speakerSourceAudioReady(job):
 		resp.Reason = speakerReasonNoSourceAudio
 	case len(resp.Participants) == 0:
 		resp.Reason = speakerReasonNoTranscript
+	case unpublished:
+		resp.Reason = speakerReasonUnpublishedRebuild
 	default:
 		// Only a new split needs the model; with turns already stored, naming,
 		// merging and undoing still work, so they are not reported unavailable.
@@ -387,6 +397,34 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 		resp.LastError = rec.LastError
 	}
 	return resp, nil
+}
+
+// speakerMeetingUnpublished reports whether current/<job>.meeting, the bundle
+// a refine copies, is a rebuild that was never published: current/ follows
+// the last attempt that BUILT, and a rerun whose seal or publish failed left
+// its new transcript and re-encoded audio there while readers still have the
+// recording before it. A refine copied from it would publish that rebuild
+// under the name of a speaker edit. A refine's own bundle is a copy of one
+// that passed this check, with the same audio, so it never counts. A bundle
+// with no attempt stamp, or an attempt still on its way, says nothing.
+func (rt *Runtime) speakerMeetingUnpublished(ctx context.Context, jobID string) (bool, error) {
+	var stamp struct {
+		AttemptNumber int `json:"attempt_number"`
+	}
+	raw, err := os.ReadFile(filepath.Join(canonicalMeetingPath(rt.cfg.WorkRoot, jobID), "cassini.json"))
+	if err != nil || json.Unmarshal(raw, &stamp) != nil || stamp.AttemptNumber <= 0 {
+		return false, nil
+	}
+	var kind, state string
+	err = rt.store.db.QueryRowContext(ctx, `
+SELECT trigger_kind, state FROM job_attempts WHERE job_id = ? AND attempt_number = ?`, jobID, stamp.AttemptNumber).Scan(&kind, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load the attempt that built %s: %w", jobID, err)
+	}
+	return kind != triggerKindRefine && (state == "failed" || state == "interrupted"), nil
 }
 
 // speakerNow is the speaker edits surface's clock.

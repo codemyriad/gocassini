@@ -261,6 +261,23 @@ func TestRefineDiarizationWaitsForMemoryLikeABuild(t *testing.T) {
 	}
 }
 
+// The refine itself refuses to copy an unpublished rebuild, whatever queued
+// it: with marks the carry would refuse the changed audio, and without marks
+// the rebuild would be published under the name of a speaker edit.
+func TestRefineRefusesARebuildThatWasNeverPublished(t *testing.T) {
+	rt, bin := newSpeakerRuntime(t, "JOB1")
+	markSpeakerRebuildUnpublished(t, rt.store, rt.cfg.WorkRoot, "JOB1")
+	queueSpeakerEdits(t, rt, "JOB1", 0, splitDoc(speakerTestRoom))
+	waitForJobState(t, rt.store, "JOB1", "failed")
+	if calls := speakersCalls(t, bin, "speakers"); len(calls) != 0 {
+		t.Fatalf("speakers commands ran on an unpublished rebuild: %v", calls)
+	}
+	rec, err := rt.store.GetSpeakerEdits(context.Background(), "JOB1")
+	if err != nil || rec.AppliedRevision != 0 || !strings.Contains(rec.LastError, speakerReasonUnpublishedRebuild) {
+		t.Fatalf("edits = %+v, %v", rec, err)
+	}
+}
+
 // A refine queued before an operator restart exists only as a build/queued
 // row. The startup sweep must leave it queued and the requeue dispatcher must
 // run it as a refine, from what the attempt row says.

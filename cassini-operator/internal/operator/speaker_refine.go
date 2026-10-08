@@ -134,6 +134,11 @@ func (rt *Runtime) executeRefineCLI(ctx context.Context, task buildTask, doc spe
 	if _, err := os.Stat(filepath.Join(source, "cassini.json")); err != nil {
 		return meetingPath, fmt.Errorf("refine needs the job's current meeting: %w", err)
 	}
+	if unpublished, err := rt.speakerMeetingUnpublished(ctx, task.JobID); err != nil {
+		return meetingPath, err
+	} else if unpublished {
+		return meetingPath, fmt.Errorf("%s: %s is a rebuild that was never published; a refine republishes only the published meeting", speakerReasonUnpublishedRebuild, source)
+	}
 	fmt.Fprintf(logFile, "refine: speaker edits revision %d applied to a copy of %s\n", doc.Revision, source)
 	if err := copyDirectory(source, meetingPath); err != nil {
 		return meetingPath, fmt.Errorf("copy current meeting: %w", err)
