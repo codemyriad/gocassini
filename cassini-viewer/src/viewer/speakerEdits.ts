@@ -67,6 +67,22 @@ export type SpeakerEditsUnavailableReason =
   | "no-transcript"
   | "diarization-unavailable";
 
+// How far the operator is with the revision it is applying, while `state` is
+// "applying". `elapsedMs` counts from when the attempt was queued, by the
+// operator's clock at the moment it answered; `estimatedMs` is its guess, made
+// once per attempt, of the whole time from queued to republished.
+//
+// "queued": waiting behind another build or a recording; "separating": the
+// diarizer is finding the voices on a device; "updating": rewriting the
+// recording, its summary, and publishing it again.
+export type SpeakerEditsPhase = "queued" | "separating" | "updating";
+
+export interface SpeakerEditsProgress {
+  phase: SpeakerEditsPhase;
+  elapsedMs: number;
+  estimatedMs: number;
+}
+
 // `GET annotations/meetings/<id>/speakers`. `participants` is the ORIGINAL
 // roster — the devices that can be split — never voices.
 export interface SpeakerEditsState {
@@ -79,6 +95,8 @@ export interface SpeakerEditsState {
   doc: SpeakerEditsDoc;
   participants: TranscriptSpeaker[];
   report: SpeakerEditsReport | null;
+  // null unless `state` is "applying"; absent from an operator older than it.
+  progress?: SpeakerEditsProgress | null;
 }
 
 // "unavailable" is the operator's answer to a save on a meeting whose
@@ -252,4 +270,56 @@ export function sameEdits(a: SpeakerEditsDoc, b: SpeakerEditsDoc): boolean {
       doc.labels.map((label) => `${label.speakerId}=${label.label}`).sort(),
     ]);
   return key(a) === key(b);
+}
+
+
+// Where an apply is now, `sinceMs` after the operator said `progress`: the
+// time left on its estimate (below zero once the estimate is overrun) and how
+// much of the estimate has gone, as a whole percentage. The bar never fills
+// before the recording is actually republished, so it stops at 95.
+export const PROGRESS_CAP_PERCENT = 95;
+
+// An attempt is queued the moment it is saved and normally starts a moment
+// later, so the save's own answer, and often the next poll's, say "queued" on
+// an operator with nothing else to do. Only an attempt still queued after this
+// long is waiting behind other work; until then it is "starting", counted
+// down like a running one.
+export const QUEUED_GRACE_MS = 5000;
+
+export type SpeakerEditsPhaseNow = SpeakerEditsPhase | "starting";
+
+export interface SpeakerEditsProgressNow {
+  phase: SpeakerEditsPhaseNow;
+  remainingMs: number;
+  percent: number;
+}
+
+export function progressNow(progress: SpeakerEditsProgress, sinceMs: number): SpeakerEditsProgressNow {
+  const elapsed = Math.max(0, progress.elapsedMs) + Math.max(0, sinceMs);
+  const estimated = Math.max(0, progress.estimatedMs);
+  const share = estimated > 0 ? (elapsed / estimated) * 100 : PROGRESS_CAP_PERCENT;
+  return {
+    phase: progress.phase === "queued" && elapsed < QUEUED_GRACE_MS ? "starting" : progress.phase,
+    remainingMs: estimated - elapsed,
+    percent: Math.round(Math.min(PROGRESS_CAP_PERCENT, Math.max(0, share))),
+  };
+}
+
+// "about 50 s left", "about 2 min left", "almost done". Seconds go in steps of
+// five, rounded up: an estimate said to the second would promise too much.
+export function remainingText(remainingMs: number): string {
+  if (remainingMs <= 0) return "almost done";
+  if (remainingMs <= 55_000) return `about ${Math.ceil(remainingMs / 5000) * 5} s left`;
+  return `about ${Math.max(1, Math.round(remainingMs / 60_000))} min left`;
+}
+
+const PHASE_TEXT: Record<SpeakerEditsPhaseNow, string> = {
+  starting: "Starting…",
+  queued: "Waiting for other recordings…",
+  separating: "Separating voices…",
+  updating: "Updating the recording…",
+};
+
+export function phaseText(phase: SpeakerEditsPhaseNow): string {
+  return PHASE_TEXT[phase] ?? PHASE_TEXT.updating;
 }

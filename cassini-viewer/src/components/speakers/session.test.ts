@@ -2,7 +2,7 @@ import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { emptySpeakerEdits, SpeakerEditsError, type SpeakerEditsState } from "../../viewer/speakerEdits";
-import { createSpeakersSession, recordingBehind } from "./session";
+import { createSpeakersSession, recordingBehind, sinceAnswer } from "./session";
 
 function state(overrides: Partial<SpeakerEditsState> = {}): SpeakerEditsState {
   return {
@@ -82,6 +82,50 @@ describe("speakers session", () => {
     expect(load).toHaveBeenCalledTimes(3);
     session.showing(2);
     expect(recordingBehind(get(session))).toBe(false);
+  });
+
+  it("counts the time since the operator said how far it is, once a second, only while it applies", async () => {
+    const progress = { phase: "separating" as const, elapsedMs: 0, estimatedMs: 70_000 };
+    const load = vi.fn(async () => state({ revision: 2, state: "applying", progress: { ...progress, elapsedMs: 3000 } }));
+    const save = vi.fn(async () => state({ revision: 2, state: "applying", progress }));
+    const session = createSpeakersSession({ pollMs: 3000 });
+    await session.open(async () => state(), save);
+    // Nothing to count while idle.
+    expect(vi.getTimerCount()).toBe(0);
+
+    await session.separate("room", labels);
+    expect(sinceAnswer(get(session))).toBe(0);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sinceAnswer(get(session))).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sinceAnswer(get(session))).toBe(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sinceAnswer(get(session))).toBe(2000);
+
+    // A fresh answer brings the operator's own count, and the local one starts again from it.
+    await session.open(load, save);
+    expect(get(session).server?.progress?.elapsedMs).toBe(3000);
+    expect(sinceAnswer(get(session))).toBe(0);
+    // One ticker, however many answers arrived.
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(2);
+
+    // Applied: the count stops with the polling.
+    load.mockResolvedValueOnce(state({ revision: 2, appliedRevision: 2, progress: null }));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(get(session).server?.state).toBe("idle");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("counts nothing for an operator that does not say how far it is", async () => {
+    const session = createSpeakersSession();
+    await session.open(async () => state(), async () => state({ revision: 2, state: "applying" }));
+    await session.separate("room", labels);
+    // Only the poll is waiting.
+    expect(vi.getTimerCount()).toBe(1);
+    session.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("tells a recording older than what the operator applied by the edits it was published with", () => {

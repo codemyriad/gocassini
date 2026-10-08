@@ -5,10 +5,12 @@ import type { TranscriptSegment, TranscriptSpeaker, TranscriptWordsV1 } from "..
 import type { DataProvider, LoadMeetingOptions } from "../../viewer/dataProvider";
 import type { MeetingCatalogEntry } from "../../viewer/catalog";
 import type { LoadedArtifact } from "../../viewer/loadArtifact";
+import type { SpeakersClock } from "./session";
 import {
   SPEAKER_EDITS_FORMAT,
   SpeakerEditsError,
   type SpeakerEditsDoc,
+  type SpeakerEditsPhase,
   type SpeakerEditsReport,
   type SpeakerEditsState,
 } from "../../viewer/speakerEdits";
@@ -140,12 +142,49 @@ export function silentWav(durationMs = DURATION_MS, rate = 8000): string {
   return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
 }
 
+// A clock the test moves by hand: the panel's countdown and the operator's
+// elapsed time both read it, and nothing waits on real time.
+export function manualClock(start = 1_000_000) {
+  let at = start;
+  const ticks = new Set<{ every: number; due: number; tick: () => void }>();
+  const clock: SpeakersClock = {
+    now: () => at,
+    every(ms, tick) {
+      const entry = { every: ms, due: at + ms, tick };
+      ticks.add(entry);
+      return () => ticks.delete(entry);
+    },
+  };
+  return {
+    clock,
+    advance(ms: number) {
+      at += ms;
+      for (const entry of [...ticks]) {
+        if (entry.due > at) continue;
+        while (entry.due <= at) entry.due += entry.every;
+        entry.tick();
+      }
+    },
+    ticking: () => ticks.size,
+  };
+}
+
 // A controlled operator, not a second implementation of it: the test decides
 // when an apply finishes and what the republished recording holds. Like the
 // app's provider, it keeps the copy of the recording it read first for the
 // rest of the tab, and reads the published one again only when asked to.
-export function speakersFixture(options: { available?: boolean; reason?: SpeakerEditsState["reason"] } = {}) {
+//
+// With `estimateMs` it is an operator that says how far an apply is: the attempt
+// is queued at the save, by `time`, in the phase the test last set (separating
+// unless told otherwise), and the test moves it through the others.
+// Without, it is an operator older than that, which says nothing.
+export function speakersFixture(
+  options: { available?: boolean; reason?: SpeakerEditsState["reason"]; estimateMs?: number } = {},
+) {
   const audioSrc = silentWav();
+  const time = manualClock();
+  let phase: SpeakerEditsPhase = "separating";
+  let queuedAt = 0;
   let published = original(audioSrc);
   let cached: LoadedArtifact | null = null;
   let available = options.available ?? true;
@@ -157,9 +196,15 @@ export function speakersFixture(options: { available?: boolean; reason?: Speaker
   let doc: SpeakerEditsDoc = { format: SPEAKER_EDITS_FORMAT, revision: 0, splits: [], merges: [], labels: [] };
   let report: SpeakerEditsReport | null = null;
 
+  const progress = () =>
+    options.estimateMs === undefined
+      ? undefined
+      : state === "applying"
+        ? { phase, elapsedMs: time.clock.now() - queuedAt, estimatedMs: options.estimateMs }
+        : null;
   const snapshot = (): SpeakerEditsState => structuredClone({
     available, reason, revision, appliedRevision, state, lastError,
-    doc, participants: [{ id: ROOM, label: ROOM_LABEL }, ben], report,
+    doc, participants: [{ id: ROOM, label: ROOM_LABEL }, ben], report, progress: progress(),
   });
   const load = vi.fn(async (_entry: MeetingCatalogEntry) => snapshot());
   const save = vi.fn(async (_entry: MeetingCatalogEntry, expectRevision: number, body: SpeakerEditsDoc) => {
@@ -169,6 +214,7 @@ export function speakersFixture(options: { available?: boolean; reason?: Speaker
     doc = { ...structuredClone(body), format: SPEAKER_EDITS_FORMAT, revision };
     state = "applying";
     lastError = "";
+    queuedAt = time.clock.now();
     return snapshot();
   });
   const loadMeeting = vi.fn(async (_entry: MeetingCatalogEntry, options?: LoadMeetingOptions) => {
@@ -188,7 +234,11 @@ export function speakersFixture(options: { available?: boolean; reason?: Speaker
   };
 
   return {
-    provider, load, save, loadMeeting, audioSrc,
+    provider, load, save, loadMeeting, audioSrc, time,
+    // Where the operator's apply is now.
+    phase(next: SpeakerEditsPhase) {
+      phase = next;
+    },
     // The operator republished the recording with the saved revision.
     applied(next: (audio: string) => LoadedArtifact, nextReport: SpeakerEditsReport | null = report) {
       published = next(audioSrc);

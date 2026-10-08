@@ -27,7 +27,7 @@
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
-  import { createSpeakersSession, SPEAKER_POLL_MS } from "./speakers/session";
+  import { createSpeakersSession, SPEAKER_POLL_MS, systemClock, type SpeakersClock } from "./speakers/session";
   import { groupSpeakers, voiceSamples, withoutSplitDevices } from "../core/speakers";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
@@ -139,7 +139,9 @@
   // never on an embed, which is a page on the open web and changes nothing
   // (D-775) — and then only from the People list in the meeting details.
   export let speakerEditsPollMs = SPEAKER_POLL_MS;
-  const speakerSession = createSpeakersSession({ pollMs: speakerEditsPollMs });
+  // The clock the time left on an apply counts down by; tests move it by hand.
+  export let speakerEditsClock: SpeakersClock = systemClock;
+  const speakerSession = createSpeakersSession({ pollMs: speakerEditsPollMs, clock: speakerEditsClock });
   let openedSpeakersFor: string | null = null;
   $: speakerEditsOffered =
     surface === "app" &&

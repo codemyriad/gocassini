@@ -42,7 +42,10 @@ afterEach(async () => {
 function mountView(surface: "app" | "embed" = "app", provider = fixture.provider, bundled = false) {
   view = mount(MeetingView, {
     target: root,
-    props: { dataProvider: provider, meeting, surface, bundled, isDesktop: true, speakerEditsPollMs: 20 },
+    props: {
+      dataProvider: provider, meeting, surface, bundled, isDesktop: true,
+      speakerEditsPollMs: 20, speakerEditsClock: fixture.time.clock,
+    },
   });
 }
 
@@ -59,16 +62,17 @@ const people = () => details().getByText(/^\d+ (participants?|voices? on \d+ dev
 const nameField = (label: string) => details().getByRole("textbox", { name: `Name for ${label}` });
 const voice = (n: number) => `Meeting room laptop · Speaker ${n}`;
 const shot = (name: string) => page.screenshot({ element: details(), path: `${SHOTS}/${name}.png` });
+const status = () => details().getByRole("status").filter({ hasText: /Saving|Starting|Separating|Updating|Waiting|Voices updated|Couldn't update/ });
+const bar = () => details().getByRole("progressbar");
 
 async function separateRoom() {
   await openPeople();
   await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
-  await page.getByRole("menuitem", { name: "Several people used this device…" }).click();
+  await page.getByRole("menuitem", { name: "Separate voices" }).click();
 }
 
 async function separateAndReload(next = separated) {
   await separateRoom();
-  await details().getByRole("button", { name: "Separate voices" }).click();
   await expect.element(details().getByText("Separating voices…")).toBeVisible();
   fixture.applied(next, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
   await details().getByRole("button", { name: "Reload" }).click();
@@ -84,19 +88,22 @@ describe("separating the voices on a shared device", () => {
     await expect.element(details().getByText("Meeting room laptop")).toBeVisible();
     await shot("01-participants-before-split");
 
-    await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
-    await page.getByRole("menuitem", { name: "Several people used this device…" }).click();
-    const confirm = details().getByRole("group", { name: "Separate the voices on Meeting room laptop" });
-    await expect.element(confirm).toHaveTextContent(
-      "Cassini will separate the voices in Meeting room laptop's audio. Nothing is re-transcribed; tags and marks are kept. " +
-        "Names you enter are saved in the recording and visible to everyone who can open it.",
-    );
-    await shot("02-separate-confirm");
-    expect(fixture.save).not.toHaveBeenCalled();
+    // Names are said to travel with the recording only once there are voices to name.
+    await expect.element(details().getByText(/^Names are saved in the recording/)).not.toBeInTheDocument();
 
-    await confirm.getByRole("button", { name: "Separate voices" }).click();
-    await expect.element(details().getByText("Separating voices…")).toBeVisible();
+    // Separating is the device's own action, done at once: no confirmation.
+    await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
+    const item = page.getByRole("menuitem", { name: "Separate voices", exact: true });
+    await expect.element(item).toHaveAccessibleDescription("Several people used this device");
+    await page.screenshot({ path: `${SHOTS}/02-separate-menu.png` });
+    expect(fixture.save).not.toHaveBeenCalled();
+    await item.click();
     expect(fixture.save).toHaveBeenCalledExactlyOnceWith(meeting, 0, { splits: [{ speakerId: ROOM }], merges: [], labels: [] });
+    await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
+    await expect.element(details().getByRole("group", { name: /Separate the voices/ })).not.toBeInTheDocument();
+    // An operator that does not say how far it is gets today's words, and no bar.
+    await expect.element(status()).toHaveTextContent(/^Separating voices…$/);
+    await expect.element(bar()).not.toBeInTheDocument();
     await shot("03-separating-status");
     // Nothing else can be started while the recording is being updated.
     await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
@@ -122,6 +129,9 @@ describe("separating the voices on a shared device", () => {
     expect(fixture.loadMeeting).toHaveBeenLastCalledWith(meeting, { fresh: true });
     for (const n of [1, 2, 3]) await expect.element(nameField(voice(n))).toBeVisible();
     await expect.element(details().getByText("Voices updated ·")).not.toBeInTheDocument();
+    await expect
+      .element(details().getByText("Names are saved in the recording and visible to everyone who can open it."))
+      .toBeVisible();
     // The republished file is at the same address but its bytes moved: the
     // player is a new one, opened on the new file.
     expect(root.querySelector("audio")).not.toBeNull();
@@ -130,6 +140,69 @@ describe("separating the voices on a shared device", () => {
     expect(root.querySelectorAll(".pp-hint")).toHaveLength(2);
     // The transcript's turns now carry the voices.
     await expect.element(page.getByText(voice(2)).first()).toBeVisible();
+  });
+
+  it("says how long is left, phase by phase, counting down between the operator's answers", async () => {
+    fixture = speakersFixture({ estimateMs: 75_000 });
+    // The screenshots show the bar where it is, not part way through its glide.
+    const still = document.createElement("style");
+    still.textContent = ".pp-progress-fill { transition: none !important; }";
+    root.append(still);
+    mountView();
+    // The save's answer is always a queued attempt: the build worker takes it
+    // a moment later. Until it has waited a while, it is starting, with the
+    // whole estimate to count down from the click.
+    fixture.phase("queued");
+    await separateRoom();
+    await expect.element(status()).toHaveTextContent(/^Starting…\s*about 1 min left$/);
+    await expect.element(bar()).toHaveAttribute("aria-valuenow", "0");
+    await shot("eta-00-starting");
+
+    // Still queued five seconds on: the operator is busy with another
+    // recording. Nothing has started, so no countdown and no bar.
+    fixture.time.advance(5000);
+    await expect.element(status()).toHaveTextContent(/^Waiting for other recordings…$/);
+    await expect.element(bar()).not.toBeInTheDocument();
+    await shot("eta-01-queued");
+
+    // The diarizer starts on the room's track.
+    fixture.phase("separating");
+    await expect.element(status()).toHaveTextContent(/^Separating voices…\s*about 1 min left$/);
+    await expect.element(bar()).toHaveAttribute("aria-valuenow", "7");
+    await expect.element(bar()).toHaveAttribute("aria-valuetext", "about 1 min left");
+
+    // The time left counts down by itself while the operator's next answer is
+    // still on its way.
+    let release!: () => void;
+    const answer = fixture.load.getMockImplementation()!;
+    fixture.load.mockImplementationOnce((...args) => new Promise((resolve) => (release = () => resolve(answer(...args)))));
+    await expect.poll(() => release).toBeTypeOf("function");
+    const asked = fixture.load.mock.calls.length;
+    fixture.time.advance(25_000);
+    await expect.element(status()).toHaveTextContent(/^Separating voices…\s*about 45 s left$/);
+    await expect.element(bar()).toHaveAttribute("aria-valuenow", "40");
+    expect(fixture.load.mock.calls.length).toBe(asked);
+    await shot("eta-02-separating");
+    release();
+
+    // The voices are found; the recording and its summary are rewritten.
+    fixture.phase("updating");
+    fixture.time.advance(35_000);
+    await expect.element(status()).toHaveTextContent(/^Updating the recording…\s*about 10 s left$/);
+    await expect.element(bar()).toHaveAttribute("aria-valuenow", "87");
+    await shot("eta-03-updating");
+
+    // Past the estimate: no negative time, and the bar waits short of full.
+    fixture.time.advance(15_000);
+    await expect.element(status()).toHaveTextContent(/^Updating the recording…\s*almost done$/);
+    await expect.element(bar()).toHaveAttribute("aria-valuenow", "95");
+    await shot("eta-04-almost-done");
+
+    fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
+    await expect.element(details().getByText("Voices updated ·")).toBeVisible();
+    await expect.element(bar()).not.toBeInTheDocument();
+    // Nothing is left counting.
+    expect(fixture.time.ticking()).toBe(0);
   });
 
   it("plays a voice's longest stretch through the meeting's player and stops by itself", async () => {
@@ -178,7 +251,6 @@ describe("separating the voices on a shared device", () => {
     fixture = speakersFixture();
     mountView();
     await separateRoom();
-    await details().getByRole("button", { name: "Separate voices" }).click();
     await expect.element(details().getByText("Separating voices…")).toBeVisible();
     // The reader opens another meeting; the apply finishes meanwhile.
     await unmount(view!);
@@ -255,7 +327,6 @@ describe("separating the voices on a shared device", () => {
     fixture = speakersFixture();
     mountView();
     await separateRoom();
-    await details().getByRole("button", { name: "Separate voices" }).click();
     fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`]));
     fixture.loadMeeting.mockRejectedValueOnce(new Error("Could not load m1.opus."));
     await details().getByRole("button", { name: "Reload" }).click();
@@ -280,7 +351,6 @@ describe("separating the voices on a shared device", () => {
     fixture = speakersFixture();
     mountView();
     await separateRoom();
-    await details().getByRole("button", { name: "Separate voices" }).click();
     // One voice is no split: the operator republishes the recording unchanged.
     fixture.applied(original, splitReport([`${ROOM}~1`]));
     await expect
@@ -294,7 +364,6 @@ describe("separating the voices on a shared device", () => {
     fixture = speakersFixture();
     mountView();
     await separateRoom();
-    await details().getByRole("button", { name: "Separate voices" }).click();
     fixture.applied(separated, { ...splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]), summary: "stale" });
     await expect
       .element(details().getByText("The summary was written before these speaker changes."))
@@ -343,7 +412,6 @@ describe("separating the voices on a shared device", () => {
     fixture = speakersFixture();
     mountView();
     await separateRoom();
-    await details().getByRole("button", { name: "Separate voices" }).click();
     fixture.failed("diarize: exit status 1");
     await expect.element(details().getByText("Couldn't update voices")).toBeVisible();
     fixture.save.mockClear();
@@ -358,7 +426,7 @@ describe("separating the voices on a shared device", () => {
     mountView();
     await openPeople();
     await details().getByRole("button", { name: "Actions for Ben Ortiz" }).click();
-    await expect.element(page.getByRole("menuitem", { name: "Several people used this device…" })).toBeDisabled();
+    await expect.element(page.getByRole("menuitem", { name: "Separate voices" })).toBeDisabled();
     await expect.element(page.getByText("Each participant's own audio was not kept for this recording.")).toBeVisible();
   });
 

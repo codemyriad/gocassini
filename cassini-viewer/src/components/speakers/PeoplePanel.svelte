@@ -9,13 +9,16 @@
     applyPending,
     isSplit,
     labelProblem,
+    phaseText,
+    progressNow,
+    remainingText,
     sameEdits,
     speakerEditsLocked,
     UNAVAILABLE_REASONS,
     MAX_SPEAKER_LABEL_LENGTH,
   } from "../../viewer/speakerEdits";
   import { popover, stepIndex } from "../tags/popover";
-  import { recordingBehind, type SpeakersSession, type SpeakersState } from "./session";
+  import { recordingBehind, sinceAnswer, type SpeakersSession, type SpeakersState } from "./session";
 
   // The People section of the meeting details popover: every participant's
   // device, with the voices separated from a shared one listed beneath it.
@@ -35,11 +38,11 @@
   const dispatch = createEventDispatcher<{ sample: { id: string } & VoiceSample; stopSample: void; reload: void }>();
   const off: Readable<SpeakersState> = readable({
     status: "off", server: null, shownRevision: null, pending: { labels: {}, merges: {} }, saving: false, error: "",
+    receivedAt: 0, now: 0,
   });
 
   let menu: { group: SpeakerGroup; anchor: HTMLElement } | null = null;
   let sameAs: { voice: TranscriptSpeaker; anchor: HTMLElement } | null = null;
-  let confirming: string | null = null;
   let menuEl: HTMLElement;
 
   $: store = session ?? off;
@@ -82,6 +85,16 @@
         !server?.report?.inconclusive.includes(split.speakerId),
     ),
   );
+  // How far the apply is, from an operator that says so: its phase, the time
+  // left on its estimate counted down since it answered, and the bar.
+  $: progress =
+    server?.state === "applying" && server.progress ? progressNow(server.progress, sinceAnswer($store)) : null;
+  $: applyingText = progress ? phaseText(progress.phase) : separating ? "Separating voices…" : "Updating the recording…";
+  // The time left changes every few seconds: shown, but left out of the live
+  // status so a screen reader is not interrupted by it; the bar carries it.
+  $: timeLeft = progress && progress.phase !== "queued" ? remainingText(progress.remainingMs) : "";
+  // Names travel with the recording: said wherever voices can be named.
+  $: nameable = editable && !locked && groups.some((group) => group.voices.length > 0);
   $: summaryStale = server?.report?.summary === "stale";
   $: inconclusive = (server?.report?.inconclusive ?? []).filter(
     (id) => doc && isSplit(doc, id) && !groups.some((group) => group.device.id === id && group.voices.length > 0),
@@ -146,14 +159,9 @@
     menu = menu?.anchor === anchor ? null : { group, anchor };
   }
 
-  function chooseSeparate(group: SpeakerGroup) {
+  function separate(group: SpeakerGroup) {
     menu = null;
-    confirming = group.device.id;
-  }
-
-  async function separate(group: SpeakerGroup) {
-    if (!session) return;
-    if (await session.separate(group.device.id, shownLabels)) confirming = null;
+    void session?.separate(group.device.id, shownLabels);
   }
 
   function unsplit(group: SpeakerGroup) {
@@ -208,20 +216,6 @@
             </button>
           {/if}
         </li>
-        {#if editable && confirming === group.device.id}
-          <li class="pp-confirm" role="group" aria-label={`Separate the voices on ${group.device.label}`}>
-            <p>
-              Cassini will separate the voices in {group.device.label}'s audio. Nothing is re-transcribed; tags and
-              marks are kept. Names you enter are saved in the recording and visible to everyone who can open it.
-            </p>
-            <div class="pp-actions">
-              <button type="button" class="btn btn-ghost btn-xs" on:click={() => (confirming = null)}>Cancel</button>
-              <button type="button" class="btn btn-neutral btn-xs" disabled={busy} on:click={() => separate(group)}>
-                Separate voices
-              </button>
-            </div>
-          </li>
-        {/if}
         {#each group.voices as voice (voice.id)}
           {@const label = labelOf(voice.id)}
           {@const into = mergeOf(voice.id)}
@@ -313,6 +307,9 @@
         {/each}
       {/each}
     </ul>
+    {#if nameable}
+      <p class="pp-privacy">Names are saved in the recording and visible to everyone who can open it.</p>
+    {/if}
 
     {#if editable && server}
       {@const stale = recordingBehind($store)}
@@ -339,8 +336,8 @@
               {#if $store.saving}
                 <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>Saving…
               {:else if server.state === "applying"}
-                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>
-                {separating ? "Separating voices…" : "Updating the recording…"}
+                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>{applyingText}
+                {#if timeLeft}<span aria-hidden="true">{timeLeft}</span>{/if}
               {:else if server.state === "failed"}
                 <span title={server.lastError || undefined}>Couldn't update voices</span> ·
                 <button type="button" class="link" on:click={() => session?.retry()}>Retry</button>
@@ -364,6 +361,19 @@
               </div>
             {/if}
           </div>
+          {#if progress && timeLeft && !$store.saving}
+            <div
+              class="pp-progress"
+              role="progressbar"
+              aria-label={phaseText(progress.phase).replace("…", "")}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress.percent}
+              aria-valuetext={timeLeft}
+            >
+              <span class="pp-progress-fill" style:width={`${progress.percent}%`}></span>
+            </div>
+          {/if}
         </div>
       {/if}
     {/if}
@@ -389,11 +399,14 @@
         <button
           type="button"
           role="menuitem"
-          class="pp-item"
+          class="pp-item pp-item-two"
+          aria-label="Separate voices"
+          aria-describedby="pp-separate-why"
           disabled={busy || !server?.available}
-          on:click={() => chooseSeparate(group)}
+          on:click={() => separate(group)}
         >
-          Several people used this device…
+          <span>Separate voices</span>
+          <span id="pp-separate-why" class="pp-item-sub">Several people used this device</span>
         </button>
       {/if}
       <!-- Without the diarizer a separated device can still be made one
@@ -602,15 +615,13 @@
     color: var(--color-primary);
   }
 
-  .pp-confirm {
-    display: grid;
-    gap: 8px;
-    padding: 10px;
-    border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-box, 0.5rem);
-    background-color: var(--color-base-100);
-    font-size: 12.5px;
-    line-height: 1.45;
+  .pp-privacy {
+    flex: none;
+    margin-top: -4px;
+    padding: 0 12px 8px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--mf-muted);
   }
   .pp-actions {
     display: flex;
@@ -651,6 +662,27 @@
     height: 12px;
     border-width: 2px;
   }
+  /* A slim bar under the status: how much of the operator's estimate has
+     gone. It moves once a second, so a linear glide makes it read as steady. */
+  .pp-progress {
+    height: 3px;
+    margin-top: -2px;
+    overflow: hidden;
+    border-radius: 999px;
+    background-color: var(--mf-tint);
+  }
+  .pp-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background-color: var(--color-primary);
+    transition: width 1s linear;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pp-progress-fill {
+      transition: none;
+    }
+  }
 
   .pp-item {
     padding: 6px 10px;
@@ -664,6 +696,14 @@
   .pp-item:focus-visible {
     background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
     outline: none;
+  }
+  .pp-item-two {
+    display: grid;
+    gap: 1px;
+  }
+  .pp-item-sub {
+    font-size: 11.5px;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
   .pp-item:disabled {
     opacity: 0.4;

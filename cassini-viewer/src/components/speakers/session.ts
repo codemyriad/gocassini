@@ -32,7 +32,29 @@ export interface SpeakersState {
   pending: PendingSpeakerEdits;
   saving: boolean;
   error: string;
+  // When the operator's last answer arrived and what time it is now, by the
+  // session's clock. `now` moves once a second while an apply with progress
+  // runs, so the time left counts down between polls.
+  receivedAt: number;
+  now: number;
 }
+
+// Time as the session sees it, so tests can move it by hand.
+export interface SpeakersClock {
+  now(): number;
+  // Calls `tick` every `ms` until the returned function is called.
+  every(ms: number, tick: () => void): () => void;
+}
+
+export const systemClock: SpeakersClock = {
+  now: () => Date.now(),
+  every(ms, tick) {
+    const timer = setInterval(tick, ms);
+    return () => clearInterval(timer);
+  },
+};
+
+export const PROGRESS_TICK_MS = 1000;
 
 const OFF: SpeakersState = {
   status: "off",
@@ -41,7 +63,14 @@ const OFF: SpeakersState = {
   pending: emptyPending(),
   saving: false,
   error: "",
+  receivedAt: 0,
+  now: 0,
 };
+
+// How long ago, by the session's clock, the operator said how far it was.
+export function sinceAnswer({ receivedAt, now }: Pick<SpeakersState, "receivedAt" | "now">): number {
+  return Math.max(0, now - receivedAt);
+}
 
 export const SPEAKER_POLL_MS = 3000;
 // The longest wait between attempts to read a meeting's speaker edits after
@@ -69,17 +98,37 @@ export function recordingBehind({ server, shownRevision }: Pick<SpeakersState, "
 // is the whole desired document with the revision it was made from, so there is
 // no queue to reconcile: a conflict means someone else saved first, and the
 // answer is to show what they saved.
-export function createSpeakersSession(options: { pollMs?: number } = {}) {
+export function createSpeakersSession(options: { pollMs?: number; clock?: SpeakersClock } = {}) {
   const pollMs = options.pollMs ?? SPEAKER_POLL_MS;
+  const clock = options.clock ?? systemClock;
   const state = writable<SpeakersState>(OFF);
   let load: LoadSpeakerEdits | null = null;
   let save: SaveSpeakerEdits | null = null;
   let generation = 0;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let stopTicking: (() => void) | null = null;
 
   function receive(server: SpeakerEditsState) {
-    state.update((s) => ({ ...s, status: "ready", server }));
+    const at = clock.now();
+    state.update((s) => ({ ...s, status: "ready", server, receivedAt: at, now: at }));
     schedulePoll();
+    tickWhileApplying();
+  }
+
+  // The clock ticks only while there is a time left to count down.
+  function tickWhileApplying() {
+    const server = get(state).server;
+    const counting = server?.state === "applying" && Boolean(server.progress);
+    if (counting && !stopTicking) {
+      stopTicking = clock.every(PROGRESS_TICK_MS, () => state.update((s) => ({ ...s, now: clock.now() })));
+    } else if (!counting) {
+      stopTick();
+    }
+  }
+
+  function stopTick() {
+    stopTicking?.();
+    stopTicking = null;
   }
 
   function schedulePoll() {
@@ -108,6 +157,7 @@ export function createSpeakersSession(options: { pollMs?: number } = {}) {
   async function open(loadWith: LoadSpeakerEdits | null, saveWith: SaveSpeakerEdits | null) {
     const current = ++generation;
     clearTimeout(pollTimer);
+    stopTick();
     load = loadWith;
     save = saveWith;
     if (!loadWith || !saveWith) {
@@ -161,7 +211,7 @@ export function createSpeakersSession(options: { pollMs?: number } = {}) {
     subscribe: state.subscribe,
     open,
     refresh,
-    // "Several people used this device": the split, plus anything typed so far.
+    // "Separate voices": the split, plus anything typed so far.
     separate: (speakerId: string, currentLabels: ReadonlyMap<string, string>) =>
       write((doc) => withSplit(applyPending(doc, get(state).pending, currentLabels), speakerId), true),
     // "Treat as one person again".
@@ -198,6 +248,7 @@ export function createSpeakersSession(options: { pollMs?: number } = {}) {
     close() {
       generation++;
       clearTimeout(pollTimer);
+      stopTick();
       state.set(OFF);
     },
   };
