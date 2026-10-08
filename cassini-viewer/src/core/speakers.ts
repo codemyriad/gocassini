@@ -39,12 +39,15 @@ export interface SpeakerGroup {
 //
 // `roster` is the loaded transcript's speakers, where a split device's voices
 // stand in for it. `participants` is the original roster when the operator
-// says what it was; otherwise a split device's name is read back out of a
-// voice's default label, and only when every voice has been renamed does the
-// device go by a generic name.
+// says what it was. `deviceNames` names split devices where nothing else
+// does: the file's own record of them (a voice's "x-device" hint), for a
+// reader with no operator behind it. Failing both, a split device's name is
+// read back out of a voice's default label, and only when every voice has
+// been renamed does the device go by a generic name.
 export function groupSpeakers(
   roster: readonly TranscriptSpeaker[],
   participants: readonly TranscriptSpeaker[] = [],
+  deviceNames: readonly TranscriptSpeaker[] = [],
 ): SpeakerGroup[] {
   const groups = new Map<string, SpeakerGroup>();
   const groupFor = (deviceId: string): SpeakerGroup => {
@@ -69,8 +72,10 @@ export function groupSpeakers(
     group.device.label ||= speaker.label;
   }
   const listed = [...groups.values()].filter((group) => group.speaks || group.voices.length > 0);
+  const named = new Map(deviceNames.map((device) => [device.id, device.label]));
   for (const group of listed) {
     group.voices.sort((a, b) => voiceNumber(a.id) - voiceNumber(b.id));
+    group.device.label ||= named.get(group.device.id) ?? "";
     if (!group.device.label) {
       const named = group.voices.map((voice) => DEFAULT_VOICE_LABEL.exec(voice.label)?.[1]).find(Boolean);
       group.device.label = named ?? "Shared device";
@@ -79,20 +84,14 @@ export function groupSpeakers(
   return listed;
 }
 
-// speakersWhoSpeak keeps the roster entries that have words in this
-// transcript, in roster order. One roster serves every transcript in a file:
-// on the original transcript of a separated meeting it still lists the voices
-// that only the separated transcript credits, and counting those would count
-// the device's people twice. A transcript with no words keeps its roster.
-export function speakersWhoSpeak(
-  transcript: Pick<TranscriptWordsV1, "speakers" | "segments">,
-): TranscriptSpeaker[] {
-  const speaking = new Set<string>();
-  for (const segment of transcript.segments) {
-    if (segment.speaker && segment.words.length > 0) speaking.add(segment.speaker);
-  }
-  if (speaking.size === 0) return [...transcript.speakers];
-  return transcript.speakers.filter((speaker) => speaking.has(speaker.id));
+// The meeting's people, whichever transcript is shown: the roster with each
+// split device left out wherever its voices are listed. On the original
+// transcript of a separated meeting the roster names the device too (its
+// words are credited to it there), but the people who used it are its voices,
+// and they are who can be named, compared and listened to.
+export function withoutSplitDevices(roster: readonly TranscriptSpeaker[]): TranscriptSpeaker[] {
+  const split = new Set(roster.map((speaker) => voiceParent(speaker.id)).filter(Boolean));
+  return roster.filter((speaker) => !split.has(speaker.id));
 }
 
 // How many people the groups add up to, counting a device whose words all went

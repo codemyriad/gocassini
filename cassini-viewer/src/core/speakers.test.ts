@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { countPeople, groupSpeakers, isVoiceId, speakersWhoSpeak, voiceNumber, voiceParent, voiceSamples } from "./speakers";
+import {
+  countPeople,
+  groupSpeakers,
+  isVoiceId,
+  speakersWhoSpeak,
+  voiceNumber,
+  voiceParent,
+  voiceSamples,
+  withoutSplitDevices,
+} from "./speakers";
 import type { TranscriptSegment } from "./types";
 
 describe("voice ids", () => {
@@ -131,32 +140,50 @@ describe("voiceSamples", () => {
   });
 });
 
-describe("speakersWhoSpeak", () => {
-  const word = (id: string) => [{ id, text: "w", startMs: 0, endMs: 1 }];
-  it("leaves out roster entries the transcript never credits", () => {
-    // The original transcript of a separated meeting: the roster still lists
-    // the voices, but only the device speaks here.
-    const transcript = {
-      speakers: [
-        { id: "room~1", label: "Mira" },
-        { id: "room~2", label: "Leo" },
-        { id: "ben", label: "Ben" },
-        { id: "room", label: "Meeting room" },
-      ],
-      segments: [
-        { id: "s0", speaker: "room", startMs: 0, endMs: 1, text: "w", words: word("s0:w_0") },
-        { id: "s1", speaker: "ben", startMs: 2, endMs: 3, text: "w", words: word("s1:w_0") },
-      ],
-    };
-    expect(speakersWhoSpeak(transcript)).toEqual([
-      { id: "ben", label: "Ben" },
+describe("withoutSplitDevices", () => {
+  it("leaves out a device wherever its voices are listed, and keeps the voices", () => {
+    // The original transcript of a separated meeting names the device too.
+    const roster = [
+      { id: "ana", label: "Ana" },
       { id: "room", label: "Meeting room" },
+      { id: "room~1", label: "Mira" },
+      { id: "room~2", label: "Leo" },
+      { id: "ben", label: "Ben" },
+    ];
+    expect(withoutSplitDevices(roster).map((speaker) => speaker.id)).toEqual(["ana", "room~1", "room~2", "ben"]);
+    const groups = groupSpeakers(withoutSplitDevices(roster));
+    expect(groups.map((group) => [group.device.id, group.speaks, group.voices.length])).toEqual([
+      ["ana", true, 0],
+      ["room", false, 2],
+      ["ben", true, 0],
     ]);
-    expect(countPeople(groupSpeakers(speakersWhoSpeak(transcript))).voices).toBe(2);
+    expect(countPeople(groups)).toEqual({ voices: 4, devices: 3, split: true });
   });
 
-  it("keeps the whole roster of a transcript without words", () => {
-    const speakers = [{ id: "a", label: "A" }, { id: "b", label: "B" }];
-    expect(speakersWhoSpeak({ speakers, segments: [] })).toEqual(speakers);
+  it("changes nothing where no device was split", () => {
+    const roster = [{ id: "ana", label: "Ana" }, { id: "ben", label: "Ben" }];
+    expect(withoutSplitDevices(roster)).toEqual(roster);
+  });
+});
+
+describe("groupSpeakers device names", () => {
+  const named = [
+    { id: "room~1", label: "Mira" },
+    { id: "room~2", label: "Leo" },
+  ];
+  it("names a split device from the file's record of it when no participant list says", () => {
+    expect(groupSpeakers(named)[0].device.label).toBe("Shared device");
+    expect(groupSpeakers(named, [], [{ id: "room", label: "Meeting room" }])[0].device.label).toBe("Meeting room");
+  });
+
+  it("prefers the operator's participant list to the file's record", () => {
+    const groups = groupSpeakers(named, [{ id: "room", label: "Room 2" }], [{ id: "room", label: "Meeting room" }]);
+    expect(groups[0].device.label).toBe("Room 2");
+  });
+
+  it("lists no group for a named device that has neither words nor voices", () => {
+    expect(groupSpeakers([{ id: "ben", label: "Ben" }], [], [{ id: "room", label: "Meeting room" }])).toEqual([
+      { device: { id: "ben", label: "Ben" }, speaks: true, voices: [] },
+    ]);
   });
 });

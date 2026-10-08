@@ -14,6 +14,7 @@ import {
   pickDisplayForTranscript,
   readPortableAnnotations,
   readPortableSummaryMarkdown,
+  readSplitDevices,
   sha256HexFallback,
   type PortableMeetingManifest,
   type PortablePayloadRef,
@@ -1091,8 +1092,34 @@ describe("buildTranscriptWordsFromPortable original transcript after separation"
     const transcript = validateTranscriptWordsV1(
       buildTranscriptWordsFromPortable(original(separatedRoster) as never),
     );
-    expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "Room laptop" });
-    expect(transcript.speakers.slice(0, 3)).toEqual(separatedRoster);
+    // The device goes just before its voices, not after everyone else.
+    expect(transcript.speakers).toEqual([
+      { id: "spk_room", label: "Room laptop" },
+      ...separatedRoster,
+    ]);
+  });
+
+  it("puts the device before its first voice wherever that is in the roster", () => {
+    const roster = [
+      { id: "spk_ana", label: "Ana" },
+      { id: "spk_room~2", label: "Room laptop · Speaker 2" },
+      { id: "spk_ben", label: "Ben" },
+      { id: "spk_room~1", label: "Room laptop · Speaker 1" },
+    ];
+    const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(roster) as never));
+    expect(transcript.speakers.map((speaker) => speaker.id)).toEqual([
+      "spk_ana", "spk_room", "spk_room~2", "spk_ben", "spk_room~1",
+    ]);
+  });
+
+  it("still appends a speaker that is neither in the roster nor a split device", () => {
+    const transcript = validateTranscriptWordsV1(
+      buildTranscriptWordsFromPortable(original([{ id: "spk_ben", label: "Ben" }]) as never),
+    );
+    expect(transcript.speakers).toEqual([
+      { id: "spk_ben", label: "Ben" },
+      { id: "spk_room", label: "spk_room" },
+    ]);
   });
 
   it("takes the device's name from the voices' x-device hint", () => {
@@ -1103,6 +1130,7 @@ describe("buildTranscriptWordsFromPortable original transcript after separation"
     ];
     const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(renamed) as never));
     expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "Meeting room laptop" });
+    expect(readSplitDevices(renamed)).toEqual([{ id: "spk_room", label: "Meeting room laptop" }]);
   });
 
   it("falls back to the device id when every voice has been renamed", () => {
@@ -1123,8 +1151,7 @@ describe("buildTranscriptWordsFromPortable original transcript after separation"
     const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(manifest));
     const readable = validateReadableTranscriptV1(buildReadableTranscriptFromPortable(manifest, transcript));
     expect(readable.segments.map((segment) => segment.speaker)).toEqual(["spk_room", "spk_ben"]);
-    expect(readable.speakers).toContainEqual({ id: "spk_room", label: "Room laptop" });
-    expect(readable.speakers.slice(0, 3)).toEqual(separatedRoster);
+    expect(readable.speakers).toEqual([{ id: "spk_room", label: "Room laptop" }, ...separatedRoster]);
   });
 });
 

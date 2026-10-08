@@ -28,7 +28,7 @@
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
   import { createSpeakersSession, SPEAKER_POLL_MS } from "./speakers/session";
-  import { groupSpeakers, speakersWhoSpeak, voiceSamples } from "../core/speakers";
+  import { groupSpeakers, voiceSamples, withoutSplitDevices } from "../core/speakers";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
   import type { AnnotationResult, MeetingTag, VocabularyTag } from "../viewer/annotations";
@@ -52,6 +52,8 @@
     DisplayTranscriptV1,
     ReadableTranscriptV1,
     TranscriptIndex,
+    TranscriptSpeaker,
+    TranscriptWordsV1,
   } from "../core/types";
   import type {
     ArtifactMetadata,
@@ -202,6 +204,13 @@
   let availableTranscripts: PortableTranscriptDescriptor[] = [];
   let currentTranscriptId = "";
   let defaultTranscriptId = "";
+  // The transcript the meeting opened on (its default), kept across switches:
+  // it says who the meeting's people are, and where each one can be heard,
+  // whichever transcript is shown. The original transcript of a separated
+  // meeting credits the shared device, not the voices people name.
+  let openedTranscript: TranscriptWordsV1 | null = null;
+  // Split devices as the file names them (LoadedArtifact.splitDevices).
+  let splitDevices: TranscriptSpeaker[] = [];
   let transcriptSwitchPending = false;
   // Inline error for transcript-switch failures (e.g. SHA mismatch on an
   // alternate body). Kept separate from `errorMessage` so it shows next to the
@@ -317,6 +326,8 @@
     playing = false;
     currentTimeMs = 0;
     transcriptIndex = artifact.index;
+    openedTranscript = artifact.transcript;
+    splitDevices = artifact.splitDevices ?? [];
     transcriptionStatus = artifact.transcriptionStatus;
     displayTranscript = artifact.displayTranscript;
     readableTranscript = artifact.readableTranscript;
@@ -383,6 +394,8 @@
     availableTranscripts = [];
     currentTranscriptId = "";
     defaultTranscriptId = "";
+    openedTranscript = null;
+    splitDevices = [];
     transcriptSwitchPending = false;
     transcriptSwitchError = "";
     durationMs = 0;
@@ -1122,7 +1135,6 @@
   }
 
   $: summaryHtml = renderSummaryHtml(summaryMarkdown);
-  $: speakers = transcriptIndex ? speakersWhoSpeak(transcriptIndex.transcript) : [];
   // Reading order, then EFFECTIVE timings, then overlap. The order matters:
   // the producer appends wordless segments last so the array cannot be trusted
   // to be sorted, and the overlap analysis has to see repaired spans or it
@@ -1196,8 +1208,13 @@
   $: clampedDurationMs = Math.max(0, safeDurationMs);
   $: clampedCurrentTimeMs = Math.min(Math.max(0, asFiniteMilliseconds(currentTimeMs)), clampedDurationMs || 0);
   $: remainingMs = Math.max(0, clampedDurationMs - clampedCurrentTimeMs);
-  $: speakerGroups = groupSpeakers(speakers, $speakerSession.server?.participants ?? []);
-  $: speakerSamples = speakerEditsOffered && transcriptIndex ? voiceSamples(transcriptIndex.transcript) : new Map();
+  $: participants = $speakerSession.server?.participants ?? [];
+  // The People panel lists the meeting's people: every device, with the
+  // voices separated from a shared one beneath it, whichever transcript is
+  // shown, so they can be named and listened to from either.
+  $: peopleTranscript = openedTranscript ?? transcriptIndex?.transcript ?? null;
+  $: speakerGroups = groupSpeakers(withoutSplitDevices(peopleTranscript?.speakers ?? []), participants, splitDevices);
+  $: speakerSamples = speakerEditsOffered && peopleTranscript ? voiceSamples(peopleTranscript) : new Map();
   $: hasSummaryTab = Boolean(summaryHtml) || linkedInsights.length > 0;
   $: shownTab = hasSummaryTab ? activeTab : ("transcript" as MeetingTab);
   $: overlayShown = Boolean(transcriptIndex) && (hasSummaryTab || displaySegments.length > 0);

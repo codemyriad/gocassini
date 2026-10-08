@@ -29,6 +29,8 @@
   let panel: HTMLDivElement;
 
   $: dated = hasMeetingDate(dateLabel);
+  // The meeting's people are the same whichever transcript is shown, so the
+  // header counts what the People panel lists.
   $: people = countPeople(speakerGroups);
   $: hasAny = dated || Boolean(room) || durationMs > 0 || people.voices > 0;
   $: peopleTitle = people.split

@@ -728,7 +728,10 @@ describe("switchPortableTranscript", () => {
     vi.restoreAllMocks();
   });
 
-  function buildDualTranscriptFixture(canaryProvenance: Record<string, unknown> = {}) {
+  function buildDualTranscriptFixture(
+    canaryProvenance: Record<string, unknown> = {},
+    roster: Array<Record<string, unknown>> = [{ id: "spk_1", label: "Alice" }],
+  ) {
     const parakeetBody = {
       version: "transcript.words.v1",
       media: { src: "meeting.opus", durationMs: 3000, sha256: "abc" },
@@ -763,7 +766,7 @@ describe("switchPortableTranscript", () => {
       version: 1,
       meeting: { durationMs: 3000 },
       integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
-      speakers: [{ id: "spk_1", label: "Alice" }],
+      speakers: roster,
       transcripts: [
         {
           id: "parakeet",
@@ -914,6 +917,31 @@ describe("switchPortableTranscript", () => {
     globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture());
     const plain = await loadPortableArtifactFromAudioPath("./portable-fixture-edits-none.opus");
     expect(plain.speakerEditsRevision).toBeUndefined();
+  });
+
+  // An embed has no operator to say what the participants were: the file's
+  // own record of a split device's name is all there is once every voice is
+  // named.
+  it("carries the split devices' names from the voices' x-device hint, on every transcript", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-devices", protocol: "http:" },
+    } as Window;
+    const device = { id: "spk_1", label: "Meeting room laptop" };
+    globalThis.fetch = mockFetchReturning(
+      buildDualTranscriptFixture({}, [
+        { id: "spk_1~1", label: "Mira", "x-device": device },
+        { id: "spk_1~2", label: "Leo", "x-device": device },
+      ]),
+    );
+    const store = new PortableMeetingStore();
+    const artifact = await loadPortableArtifactFromAudioPath("./portable-fixture-devices.opus", store);
+    expect(artifact.splitDevices).toEqual([device]);
+    const switched = await switchPortableTranscript("./portable-fixture-devices.opus", "parakeet", store);
+    expect(switched.splitDevices).toEqual([device]);
+
+    globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture());
+    const plain = await loadPortableArtifactFromAudioPath("./portable-fixture-devices-none.opus");
+    expect(plain.splitDevices).toEqual([]);
   });
 
   it("throws for an unknown transcript id", async () => {

@@ -74,12 +74,37 @@ const ben = { id: BEN, label: "Ben Ortiz" };
 // The recording as published before anyone separated anything.
 export const original = (audioSrc: string) =>
   artifact(transcript(() => ROOM, [{ id: ROOM, label: ROOM_LABEL }, ben]), audioSrc);
+// The file names the device its voices came from (each voice's "x-device").
+const splitDevices = [{ id: ROOM, label: ROOM_LABEL }];
 // …after the room's voices were separated.
-export const separated = (audioSrc: string) =>
-  artifact(transcript((n) => `${ROOM}~${n}`, [voice(1), ben, voice(2), voice(3)]), audioSrc);
+export const separated = (audioSrc: string): LoadedArtifact => ({
+  ...artifact(transcript((n) => `${ROOM}~${n}`, [voice(1), ben, voice(2), voice(3)]), audioSrc),
+  splitDevices,
+});
 // …after voice 3 was found to be voice 1, and both people named.
-export const named = (audioSrc: string) =>
-  artifact(transcript((n) => `${ROOM}~${n === 3 ? 1 : n}`, [voice(1, "Mira"), ben, voice(2, "Leo")]), audioSrc);
+export const named = (audioSrc: string): LoadedArtifact => ({
+  ...artifact(transcript((n) => `${ROOM}~${n === 3 ? 1 : n}`, [voice(1, "Mira"), ben, voice(2, "Leo")]), audioSrc),
+  splitDevices,
+});
+
+// A separated recording also keeps its original transcript, which the reader
+// can switch to. It credits the room's device, which the roster names just
+// before its voices (as the portable reader does).
+const TRANSCRIPTS = [
+  { id: "separated-voices", label: "Separated voices", description: "", isDefault: true },
+  { id: "raw-asr", label: "Original", description: "", isDefault: false },
+];
+export const separatedWithOriginal = (audioSrc: string): LoadedArtifact => ({
+  ...separated(audioSrc),
+  availableTranscripts: TRANSCRIPTS,
+  currentTranscriptId: "separated-voices",
+});
+export const originalOfSeparated = (audioSrc: string): LoadedArtifact => ({
+  ...artifact(transcript(() => ROOM, [{ id: ROOM, label: ROOM_LABEL }, voice(1), ben, voice(2), voice(3)]), audioSrc),
+  splitDevices,
+  availableTranscripts: TRANSCRIPTS,
+  currentTranscriptId: "raw-asr",
+});
 
 export const meeting: MeetingCatalogEntry = {
   id: "m1", title: "Lantern festival planning", dateLabel: "2026-09-28", audioPath: "m1.opus",
@@ -156,7 +181,8 @@ export function speakersFixture(options: { available?: boolean; reason?: Speaker
     loadMeetingForEntry: loadMeeting,
     loadMeetingSummary: async () => null,
     loadBundledArtifact: async () => published,
-    switchTranscript: async () => published,
+    switchTranscript: async (_entry: MeetingCatalogEntry, id: string) =>
+      id === "raw-asr" ? originalOfSeparated(audioSrc) : published,
     loadSpeakerEdits: load,
     saveSpeakerEdits: save,
   };

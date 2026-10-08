@@ -4,7 +4,16 @@ import { page } from "vitest/browser";
 
 import MeetingView from "../MeetingView.svelte";
 import "../../app.css";
-import { ROOM, meeting, named, original, separated, speakersFixture, splitReport } from "./speakers.fixture";
+import {
+  ROOM,
+  meeting,
+  named,
+  original,
+  separated,
+  separatedWithOriginal,
+  speakersFixture,
+  splitReport,
+} from "./speakers.fixture";
 
 // Screenshots for the product review land under __screenshots__ beside this
 // file (git-ignored by vitest's cache directory setting) and are copied out by
@@ -57,11 +66,11 @@ async function separateRoom() {
   await page.getByRole("menuitem", { name: "Several people used this device…" }).click();
 }
 
-async function separateAndReload() {
+async function separateAndReload(next = separated) {
   await separateRoom();
   await details().getByRole("button", { name: "Separate voices" }).click();
   await expect.element(details().getByText("Separating voices…")).toBeVisible();
-  fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
+  fixture.applied(next, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
   await details().getByRole("button", { name: "Reload" }).click();
   await expect.element(nameField(voice(1))).toBeVisible();
 }
@@ -292,6 +301,44 @@ describe("separating the voices on a shared device", () => {
       .toBeVisible();
   });
 
+  // The People panel and the header count the meeting's people whichever
+  // transcript is shown.
+  it("keeps the voices nameable on the original transcript of a separated meeting", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateAndReload(separatedWithOriginal);
+    const chip = page.getByRole("button", { name: "Meeting details" });
+    await expect.element(chip.getByTitle("4 voices on 2 devices")).toHaveTextContent("4");
+
+    await page.getByRole("button", { name: "Original", exact: true }).click();
+    await expect.element(page.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    // The original transcript credits the room's device, but the meeting
+    // still had the same people: no device counted on top of its voices.
+    await expect.element(chip.getByTitle("4 voices on 2 devices")).toHaveTextContent("4");
+
+    // The click outside closed the details; open them again.
+    await expect.element(details()).not.toBeInTheDocument();
+    await openPeople();
+    await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
+    for (const n of [1, 2, 3]) await expect.element(nameField(voice(n))).toBeEnabled();
+    await expect.element(details().getByRole("button", { name: `Play a sample of ${voice(1)}` })).toBeEnabled();
+    await expect.element(details().getByRole("button", { name: `${voice(2)} is the same person as…` })).toBeEnabled();
+    await expect.element(details().getByText("Separating voices…")).not.toBeInTheDocument();
+    await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
+    await expect.element(page.getByRole("menuitem", { name: "Treat as one person again" })).toBeEnabled();
+    await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
+    await expect.element(page.getByRole("menuitem", { name: "Treat as one person again" })).not.toBeInTheDocument();
+
+    fixture.save.mockClear();
+    await nameField(voice(1)).fill("Mira");
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    expect(fixture.save).toHaveBeenCalledExactlyOnceWith(meeting, 1, {
+      splits: [{ speakerId: ROOM }],
+      merges: [],
+      labels: [{ speakerId: `${ROOM}~1`, label: "Mira" }],
+    });
+  });
+
   it("offers to retry when the recording could not be updated", async () => {
     fixture = speakersFixture();
     mountView();
@@ -357,6 +404,17 @@ describe("where speakers cannot be changed", () => {
     await expect.element(details().getByText(voice(2))).toBeVisible();
     expect(details().element().querySelectorAll('[aria-label^="Actions for"], [aria-label^="Play a sample"], input')).toHaveLength(0);
     expect(fixture.load).not.toHaveBeenCalled();
+  });
+
+  // An embed has no operator to say what the participants were.
+  it("names a device whose voices all have names from the file itself", async () => {
+    fixture = speakersFixture();
+    fixture.applied(named, splitReport([`${ROOM}~1`, `${ROOM}~2`]));
+    mountView("embed");
+    await openPeople();
+    await expect.element(people()).toHaveTextContent("3 voices on 2 devices");
+    await expect.element(details().getByText("Meeting room laptop", { exact: true })).toBeVisible();
+    await expect.element(details().getByText("Shared device")).not.toBeInTheDocument();
   });
 
   it("offers nothing in the single-meeting view, even from a provider that could save", async () => {

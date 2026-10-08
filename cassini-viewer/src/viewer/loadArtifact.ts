@@ -8,12 +8,14 @@ import type {
   DisplayTranscriptV1,
   ReadableTranscriptV1,
   TranscriptIndex,
+  TranscriptSpeaker,
   TranscriptWordsV1,
 } from "../core/types";
 import {
   buildDisplayTranscriptFromArtifacts,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  readSplitDevices,
   describeTranscript,
   extractPortableManifestFromArrayBuffer,
   getDefaultTranscriptId,
@@ -66,6 +68,14 @@ export interface LoadedArtifact {
    * operator has applied, to say when the copy on screen is the older one.
    */
   speakerEditsRevision?: number;
+  /**
+   * The devices whose voices were separated, with the names the file gives
+   * them (each voice's `x-device` hint in a portable `.opus`). Where no
+   * operator says what the participants were (an embed, a static export),
+   * the People panel names a split device from here, so a device whose
+   * voices are all named still goes by its own name.
+   */
+  splitDevices?: TranscriptSpeaker[];
 }
 
 export type ArtifactTimingPrecisionLevel = "word" | "mixed" | "segment";
@@ -382,6 +392,7 @@ function buildPortableLoadedArtifact({
     availableTranscripts,
     currentTranscriptId,
     speakerEditsRevision: readSpeakerEditsRevision(manifest),
+    splitDevices: readSplitDevices(manifest.speakers),
   };
 }
 
