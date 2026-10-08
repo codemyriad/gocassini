@@ -79,10 +79,19 @@ export interface ArtifactMetadataSection {
   rows: ArtifactMetadataRow[];
 }
 
+export interface ArtifactRecordingFacts {
+  processedAtUtc: string | null;
+  model: string | null;
+  words: number | null;
+  passages: number | null;
+  meetingId: string | null;
+}
+
 export interface ArtifactMetadata {
   sourceKind: string;
   sections: ArtifactMetadataSection[];
   rawJson: string;
+  recording: ArtifactRecordingFacts;
 }
 
 export interface PortableMeetingSummary {
@@ -673,6 +682,23 @@ function buildArtifactMetadata(
     sourceKind,
     sections,
     rawJson: JSON.stringify(normalized, null, 2),
+    recording: buildRecordingFacts(normalized),
+  };
+}
+
+function buildRecordingFacts(raw: Record<string, unknown>): ArtifactRecordingFacts {
+  const meeting = asMaybeObject(raw.meeting);
+  const stats = asMaybeObject(raw.stats);
+  const speechToText = asMaybeObject(asMaybeObject(raw.provenance)?.speechToText);
+  return {
+    processedAtUtc:
+      asNonEmptyString(meeting?.processedAtUtc) ??
+      asNonEmptyString(meeting?.processedAtUTC) ??
+      asNonEmptyString(raw.generatedAt),
+    model: asNonEmptyString(speechToText?.model),
+    words: asFiniteNumber(stats?.words),
+    passages: asFiniteNumber(stats?.passages),
+    meetingId: asNonEmptyString(meeting?.id),
   };
 }
 

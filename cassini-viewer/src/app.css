@@ -366,8 +366,8 @@
  * an "on" state a solid edge in the text colour, and hover the accent wash the
  * list's rows use. */
 :host([data-nc-theme*="highcontrast"]) .cassini-root :is(
+  .mf-chip,
   .mv-card,
-  .mv-speaker,
   .mv-speaker-name,
   .mv-interjection:not(.border-warning),
   .st-card,
@@ -380,9 +380,8 @@
   border: 1px solid var(--color-border-maxcontrast);
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root :is(
-  .mv-facts,
-  .mv-speaker,
-  .mv-speaker-count,
+  .mf-chip,
+  .mf-panel,
   .mv-speaker-name,
   .tt-count,
   .tt-step,
@@ -395,7 +394,7 @@
 ) {
   color: var(--color-main-text);
 }
-:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.mv-rule, .insight-meta .rule) {
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.insight-meta .rule) {
   background-color: var(--color-border-maxcontrast);
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root :is(
@@ -734,6 +733,19 @@ span[data-word-id] {
 [data-tag-color] {
   --tag-bg: color-mix(in oklab, var(--tag) var(--tag-tint-mix), var(--color-base-100));
   --tag-border: color-mix(in oklab, var(--tag) var(--tag-edge-mix), var(--color-base-100));
+}
+
+.btn.btn-quiet {
+  --btn-bg: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  --btn-border: var(--color-base-300);
+  --btn-fg: var(--color-base-content);
+  --btn-shadow: none;
+  --btn-inset: none;
+  text-shadow: none;
+}
+.btn.btn-quiet:hover,
+.btn.btn-quiet[aria-expanded="true"] {
+  --btn-bg: color-mix(in oklch, var(--color-base-content) 14%, transparent);
 }
 
 /* The surface of every tag popover: the picker, the swatches, the icons, the manager's menu. */

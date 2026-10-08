@@ -14,8 +14,18 @@
     line-height: 1.4;
   }
   .cassini-kbd.kbd-sm {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    box-sizing: border-box;
+    height: 22px;
+    min-height: 0;
+    padding-block: 0;
     padding-inline: 6px;
+    border-width: 1px;
     font-size: 12px;
+    line-height: 1;
   }
   /* In a button, a tint of the button's own ink, so it sits as well on a
      coloured fill as on a plain one. */
