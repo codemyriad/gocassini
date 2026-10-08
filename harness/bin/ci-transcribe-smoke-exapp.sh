@@ -111,6 +111,9 @@ assert all(not m['installed'] and not m['ready'] for m in models), models
 # Three speech tiers, and the optional speaker separation model.
 assert len([m for m in models if m['kind']=='speech'])==3, models
 assert any(m['id']=='nemotron-3-diarization-int8' and m['kind']=='diarization' for m in models), models
+# Every image ships the Cassini runtime with Nemotron: a stock library would
+# list the diarizer and never run it (Settings: "runtime cannot run it").
+assert all(m.get('runtime_supported') is True for m in models if m['kind']=='diarization'), models
 CHECK
 docker exec -e CASSINI_TRANSCRIPTION=off "${CONTAINER_NAME}" /usr/local/bin/cassini doctor --target build > "${LOG_DIR}/doctor.log" 2>&1
 if [[ "${MODELS_ONLY}" == "1" ]]; then
