@@ -27,8 +27,23 @@
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
-  import { createSpeakersSession, SPEAKER_POLL_MS, systemClock, type SpeakersClock } from "./speakers/session";
-  import { groupSpeakers, voiceSamples, withoutSplitDevices } from "../core/speakers";
+  import {
+    createSpeakersSession,
+    segmentationBehind,
+    SPEAKER_POLL_MS,
+    speakerOverlayFor,
+    systemClock,
+    type SpeakersClock,
+  } from "./speakers/session";
+  import {
+    applySpeakerOverlay,
+    groupSpeakers,
+    type SpeakerOverlay,
+    speakerOverlayFromKey,
+    speakerOverlayKey,
+    voiceSamples,
+    withoutSplitDevices,
+  } from "../core/speakers";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
   import type { AnnotationResult, MeetingTag, VocabularyTag } from "../viewer/annotations";
@@ -458,6 +473,15 @@
     }
   }
 
+  function withSpeakerOverlay(
+    transcript: TranscriptWordsV1 | null,
+    overlay: SpeakerOverlay | null,
+  ): TranscriptWordsV1 | null {
+    if (!transcript || !overlay) return transcript;
+    const { speakers, segments } = applySpeakerOverlay(transcript.speakers, transcript.segments, overlay);
+    return { ...transcript, speakers: [...speakers], segments: [...segments] };
+  }
+
   function mergeMeetingRuntimeSummary(
     entry: MeetingCatalogEntry,
     artifact: LoadedArtifact,
@@ -493,32 +517,49 @@
     }
   }
 
-  // "Voices updated · Reload": the operator republished this recording with
-  // its speakers changed, and what is on screen is the copy read before.
+  // The operator republished this recording with its voices separated
+  // differently, and what is on screen is the copy read before: read again on
+  // its own when nothing is playing, or on "Voices updated · Reload".
   //
   // The meeting on screen stays until the new copy has arrived, rather than
-  // blanking to a loading state for what is the same meeting with new names.
-  async function reloadForSpeakers() {
+  // blanking to a loading state for what is the same meeting with new voices,
+  // and the reader keeps their place in it. Read on its own (`unlessPlaying`),
+  // it is not put on screen if the reader started listening while it was being
+  // read: a large recording takes a while, and the new copy replaces the
+  // player. "Voices updated · Reload" is offered instead.
+  let reloadingForSpeakers = false;
+  async function reloadForSpeakers(unlessPlaying = false) {
     const entry = meeting;
-    if (!entry) {
+    if (!entry || reloadingForSpeakers) {
       return;
     }
+    reloadingForSpeakers = true;
+    speakerSession.reloading(true);
     try {
       const artifact = await dataProvider.loadMeetingForEntry(entry, { fresh: true });
-      if (meeting?.id !== entry.id) {
+      if (meeting?.id !== entry.id || (unlessPlaying && playing)) {
         return;
       }
       // The republished file is at the same address, so the player would
       // keep the one it opened: its byte offsets moved with the speakers in
       // the file's header, and range requests against them would read the
       // wrong bytes. A new element opens the new file.
+      const at = currentTimeMs;
       audioGeneration += 1;
       applyArtifact(artifact);
+      if (at > 0) {
+        // The new player takes the seek once it has read the file's header.
+        pendingSeekMs = at;
+        currentTimeMs = at;
+      }
       dispatch("enriched", mergeMeetingRuntimeSummary(entry, artifact));
     } catch (error) {
       speakerSession.reportError(
         `Couldn't reload the recording: ${error instanceof Error ? error.message : String(error)}`,
       );
+    } finally {
+      reloadingForSpeakers = false;
+      speakerSession.reloading(false);
     }
   }
 
@@ -1160,7 +1201,7 @@
     transcriptQuery = initialQuery;
   }
 
-  $: displaySegments = transcriptIndex
+  $: derivedSegments = transcriptIndex
     ? displaySegmentsForArtifact({
         index: transcriptIndex,
         readableTranscript,
@@ -1168,6 +1209,19 @@
         wordEndsBoundedByAudio,
       })
     : [];
+  // Names and "same person" merges saved since this copy of the recording was
+  // published are shown on it at once: on its turns, in Copy and Download, in
+  // the People panel and the header. The operator writes them into the
+  // default transcript only, so another transcript is shown as it is. Keyed
+  // by a string so the transcript is recomputed when the overlay changes, not
+  // at every answer from the operator.
+  $: shownOverlayKey = speakerOverlayKey(speakerOverlayFor($speakerSession));
+  $: speakerOverlay = speakerOverlayFromKey(shownOverlayKey);
+  $: displaySegments = applySpeakerOverlay(
+    transcriptIndex?.transcript.speakers ?? [],
+    derivedSegments,
+    currentTranscriptId === defaultTranscriptId ? speakerOverlay : null,
+  ).segments as DisplaySegment[];
   // The seam this was always for. The filter lives in core/transcript.ts
   // because the interesting half is the mapping from matched canonical segments
   // to rendered blocks, and that deserves a test that does not need a DOM.
@@ -1214,9 +1268,24 @@
   // The People panel lists the meeting's people: every device, with the
   // voices separated from a shared one beneath it, whichever transcript is
   // shown, so they can be named and listened to from either.
-  $: peopleTranscript = openedTranscript ?? transcriptIndex?.transcript ?? null;
+  $: peopleTranscript = withSpeakerOverlay(openedTranscript ?? transcriptIndex?.transcript ?? null, speakerOverlay);
   $: speakerGroups = groupSpeakers(withoutSplitDevices(peopleTranscript?.speakers ?? []), participants, splitDevices);
   $: speakerSamples = speakerEditsOffered && peopleTranscript ? voiceSamples(peopleTranscript) : new Map();
+  // A recording separated differently from the one the operator published
+  // is read again, once per apply, unless the reader is listening: a reload
+  // replaces the player, so then "Voices updated · Reload" waits for them.
+  $: speakersReloadDue = segmentationBehind(
+    $speakerSession,
+    new Set((openedTranscript?.speakers ?? []).map((speaker) => speaker.id)),
+  );
+  let autoReloadedFor = "";
+  $: if (speakersReloadDue && meeting) {
+    const key = `${meeting.id}:${$speakerSession.server?.appliedRevision}`;
+    if (key !== autoReloadedFor) {
+      autoReloadedFor = key;
+      if (!playing) void reloadForSpeakers(true);
+    }
+  }
   $: hasSummaryTab = Boolean(summaryHtml) || linkedInsights.length > 0;
   $: shownTab = hasSummaryTab ? activeTab : ("transcript" as MeetingTab);
   $: overlayShown = Boolean(transcriptIndex) && (hasSummaryTab || displaySegments.length > 0);
@@ -1335,7 +1404,7 @@
             {playingSampleId}
             on:sample={(event) => playSample(event.detail.id, event.detail.startMs, event.detail.endMs)}
             on:stopSample={stopSample}
-            on:reload={reloadForSpeakers}
+            on:reload={() => reloadForSpeakers()}
             recording={artifactMetadata?.recording ?? null}
             timing={timingPrecision}
           />

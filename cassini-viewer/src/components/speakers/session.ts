@@ -12,6 +12,7 @@ import {
   type SpeakerEditsDoc,
   type SpeakerEditsState,
 } from "../../viewer/speakerEdits";
+import { isVoiceId, voiceParent, type SpeakerOverlay } from "../../core/speakers";
 
 export type LoadSpeakerEdits = () => Promise<SpeakerEditsState>;
 export type SaveSpeakerEdits = (expectRevision: number, doc: SpeakerEditsDoc) => Promise<SpeakerEditsState>;
@@ -31,6 +32,12 @@ export interface SpeakersState {
   // in the panel so closing the popover does not throw them away.
   pending: PendingSpeakerEdits;
   saving: boolean;
+  // The last revision the operator said it had applied, with its document:
+  // what the published recording says once a later save has failed.
+  applied: { revision: number; doc: SpeakerEditsDoc } | null;
+  // The recording is being read again because its speakers were separated
+  // differently ("Voices updated" without the reader asking).
+  reloading: boolean;
   error: string;
   // When the operator's last answer arrived and what time it is now, by the
   // session's clock. `now` moves once a second while an apply with progress
@@ -62,6 +69,8 @@ const OFF: SpeakersState = {
   shownRevision: null,
   pending: emptyPending(),
   saving: false,
+  applied: null,
+  reloading: false,
   error: "",
   receivedAt: 0,
   now: 0,
@@ -72,13 +81,17 @@ export function sinceAnswer({ receivedAt, now }: Pick<SpeakersState, "receivedAt
   return Math.max(0, now - receivedAt);
 }
 
-export const SPEAKER_POLL_MS = 3000;
-// The longest wait between attempts to read a meeting's speaker edits after
-// the first read failed.
+// How often the operator is asked how far it is while it applies a saved
+// revision. A rename is republished in a few seconds, so a slower cadence
+// would leave the reader waiting on the poll rather than on the operator.
+export const SPEAKER_POLL_MS = 1000;
+// The first wait before reading a meeting's speaker edits again after the
+// first read failed, doubled at every failure up to the longest.
+export const SPEAKER_RETRY_MS = 3000;
 const LOAD_RETRY_MAX_MS = 60_000;
 
-// Whether the recording on screen is older than what the operator applied,
-// so "Voices updated · Reload" is due.
+// Whether the recording on screen is older than what the operator applied.
+// Only a different split makes that worth reading again (segmentationBehind).
 //
 // A recording published with edits says which revision; one without says
 // nothing, and is behind only if the last apply separated some voice: an
@@ -93,13 +106,67 @@ export function recordingBehind({ server, shownRevision }: Pick<SpeakersState, "
   );
 }
 
+// Whether the recording on screen is separated differently from the one the
+// operator published: a device split or made one person again since, or a
+// voice said to be a different person again. Names and merges never make it
+// so — the overlay shows them on the recording on screen — but a different
+// split cuts the words differently, and a voice merged in the recording on
+// screen cannot be cut back out of the one it joined: only the republished
+// recording has them. `shownSpeakers` are the ids of the speakers the
+// recording on screen has.
+export function segmentationBehind(
+  state: Pick<SpeakersState, "server" | "shownRevision">,
+  shownSpeakers: ReadonlySet<string>,
+): boolean {
+  if (!recordingBehind(state)) return false;
+  const server = state.server!;
+  const splits = (server.report?.splits ?? []).filter((split) => !split.inconclusive && split.voices.length > 1);
+  const published = new Set(splits.map((split) => split.speakerId));
+  const shownVoices = [...shownSpeakers].filter(isVoiceId);
+  const shownSplits = new Set(shownVoices.map(voiceParent));
+  if (published.size !== shownSplits.size || [...published].some((id) => !shownSplits.has(id))) return true;
+  // The voices the published recording has: the ones found, less those merged
+  // into another found voice by the edits it was published with. Only the
+  // applied document says which those are.
+  if (server.revision !== server.appliedRevision) return false;
+  const found = new Set(splits.flatMap((split) => split.voices));
+  const voices = new Set(found);
+  for (const { from, into } of server.doc.merges) if (found.has(from) && found.has(into)) voices.delete(from);
+  const shown = new Set(shownVoices);
+  return [...voices].some((id) => !shown.has(id));
+}
+
+// The saved names and merges the recording on screen does not have yet, to be
+// shown on it (applySpeakerOverlay) until a recording published with them is
+// loaded: the revision being applied, or the one applied, when it is newer
+// than the recording's own. A failed apply saved nothing new into the
+// recording, so it falls back to the last revision the operator applied, or
+// to nothing: the page never shows names the recording will not have.
+export function speakerOverlayFor({
+  server,
+  shownRevision,
+  applied,
+}: Pick<SpeakersState, "server" | "shownRevision" | "applied">): SpeakerOverlay | null {
+  if (!server || shownRevision === null) return null;
+  const saved =
+    server.state === "applying" || server.revision === server.appliedRevision
+      ? { revision: server.revision, doc: server.doc }
+      : applied;
+  if (!saved || saved.revision <= shownRevision) return null;
+  // A name taken away goes back to its default, which the original roster
+  // says: the recording on screen may still carry the name.
+  const base = (server.participants ?? []).map(({ id, label }) => ({ speakerId: id, label }));
+  return { labels: saved.doc.labels, merges: saved.doc.merges, base };
+}
+
 // One meeting's speaker edits: the operator's state, the reader's unsaved
 // edits, and polling while the operator applies a saved revision. Every write
 // is the whole desired document with the revision it was made from, so there is
 // no queue to reconcile: a conflict means someone else saved first, and the
 // answer is to show what they saved.
-export function createSpeakersSession(options: { pollMs?: number; clock?: SpeakersClock } = {}) {
+export function createSpeakersSession(options: { pollMs?: number; retryMs?: number; clock?: SpeakersClock } = {}) {
   const pollMs = options.pollMs ?? SPEAKER_POLL_MS;
+  const retryMs = options.retryMs ?? SPEAKER_RETRY_MS;
   const clock = options.clock ?? systemClock;
   const state = writable<SpeakersState>(OFF);
   let load: LoadSpeakerEdits | null = null;
@@ -110,7 +177,11 @@ export function createSpeakersSession(options: { pollMs?: number; clock?: Speake
 
   function receive(server: SpeakerEditsState) {
     const at = clock.now();
-    state.update((s) => ({ ...s, status: "ready", server, receivedAt: at, now: at }));
+    const applied =
+      server.state !== "applying" && server.state !== "failed" && server.appliedRevision === server.revision
+        ? { revision: server.revision, doc: server.doc }
+        : null;
+    state.update((s) => ({ ...s, status: "ready", server, applied: applied ?? s.applied, receivedAt: at, now: at }));
     schedulePoll();
     tickWhileApplying();
   }
@@ -183,7 +254,7 @@ export function createSpeakersSession(options: { pollMs?: number; clock?: Speake
         () => {
           if (current === generation) void firstLoad(current, attempt + 1);
         },
-        Math.min(pollMs * 2 ** attempt, LOAD_RETRY_MAX_MS),
+        Math.min(retryMs * 2 ** attempt, LOAD_RETRY_MAX_MS),
       );
     }
   }
@@ -244,6 +315,10 @@ export function createSpeakersSession(options: { pollMs?: number; clock?: Speake
     // with, 0 for none) or unloaded (null).
     showing(revision: number | null) {
       state.update((s) => ({ ...s, shownRevision: revision }));
+    },
+    // The recording is (or is no longer) being read again on its own.
+    reloading(reloading: boolean) {
+      state.update((s) => ({ ...s, reloading }));
     },
     close() {
       generation++;

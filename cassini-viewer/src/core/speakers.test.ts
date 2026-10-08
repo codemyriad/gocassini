@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applySpeakerOverlay,
   countPeople,
   groupSpeakers,
   isVoiceId,
-  speakersWhoSpeak,
+  speakerOverlayFromKey,
+  speakerOverlayKey,
+  splitDevicesIn,
   voiceNumber,
   voiceParent,
   voiceSamples,
@@ -185,5 +188,122 @@ describe("groupSpeakers device names", () => {
     expect(groupSpeakers([{ id: "ben", label: "Ben" }], [], [{ id: "room", label: "Meeting room" }])).toEqual([
       { device: { id: "ben", label: "Ben" }, speaks: true, voices: [] },
     ]);
+  });
+});
+
+describe("applySpeakerOverlay", () => {
+  // A meeting room laptop split into three voices, and Ben on his own device,
+  // as derived from the recording: blocks carry their own copy of the label.
+  const speakers = [
+    { id: "room~1", label: "Room · Speaker 1" },
+    { id: "ben", label: "Ben audio" },
+    { id: "room~2", label: "Room · Speaker 2" },
+    { id: "room~3", label: "Room · Speaker 3" },
+  ];
+  const block = (id: string, speaker: string, speakerLabel: string) => ({ id, speaker, speakerLabel, text: id });
+  const blocks = [
+    block("b1", "room~1", "Room · Speaker 1"),
+    block("b2", "ben", "Ben"),
+    block("b3", "room~3", "Room · Speaker 3"),
+    block("b4", "room~2", "Room · Speaker 2"),
+  ];
+
+  it("gives the blocks and the roster the saved names, and copies only what changes", () => {
+    const overlay = { labels: [{ speakerId: "room~1", label: "Mira audio" }, { speakerId: "nobody", label: "X" }], merges: [] };
+    const result = applySpeakerOverlay(speakers, blocks, overlay);
+    expect(result.speakers.map((speaker) => speaker.label)).toEqual([
+      "Mira audio", "Ben audio", "Room · Speaker 2", "Room · Speaker 3",
+    ]);
+    // Labels on blocks are normalized as the derivation does it.
+    expect(result.segments.map((segment) => segment.speakerLabel)).toEqual([
+      "Mira", "Ben", "Room · Speaker 3", "Room · Speaker 2",
+    ]);
+    expect(result.segments[1]).toBe(blocks[1]);
+    expect(result.speakers[1]).toBe(speakers[1]);
+  });
+
+  it("moves a merged voice's words to the voice it is the same person as, so its turns join", () => {
+    const overlay = { labels: [{ speakerId: "room~1", label: "Mira" }], merges: [{ from: "room~3", into: "room~1" }] };
+    const result = applySpeakerOverlay(speakers, blocks, overlay);
+    expect(result.segments.map((segment) => [segment.speaker, segment.speakerLabel])).toEqual([
+      ["room~1", "Mira"], ["ben", "Ben"], ["room~1", "Mira"], ["room~2", "Room · Speaker 2"],
+    ]);
+    // The merged voice is nobody of its own any more.
+    expect(result.speakers.map((speaker) => speaker.id)).toEqual(["room~1", "ben", "room~2"]);
+    // Without a name, the merged words take the target's own label.
+    const unnamed = applySpeakerOverlay(speakers, blocks, { labels: [], merges: [{ from: "room~3", into: "room~2" }] });
+    expect(unnamed.segments[2]).toEqual(block("b3", "room~2", "Room · Speaker 2"));
+  });
+
+  it("ignores a merge across devices, into a voice that is not here, or into a merged voice", () => {
+    const merges = [
+      { from: "room~2", into: "ben" },
+      { from: "room~3", into: "room~9" },
+      { from: "other~1", into: "room~1" },
+    ];
+    const result = applySpeakerOverlay(speakers, blocks, { labels: [], merges });
+    expect(result.segments).toEqual(blocks);
+    expect(result.speakers).toEqual(speakers);
+    // A chain is refused as the operator refuses it.
+    const chained = applySpeakerOverlay(speakers, blocks, {
+      labels: [], merges: [{ from: "room~3", into: "room~2" }, { from: "room~2", into: "room~1" }],
+    });
+    expect(chained.segments.map((segment) => segment.speaker)).toEqual(["room~1", "ben", "room~3", "room~1"]);
+  });
+
+  it("reassigns segments that carry no label of their own", () => {
+    const segments = [{ speaker: "room~3", startMs: 0 }, { speaker: "room~1", startMs: 1 }];
+    const result = applySpeakerOverlay(speakers, segments, { labels: [], merges: [{ from: "room~3", into: "room~1" }] });
+    expect(result.segments).toEqual([{ speaker: "room~1", startMs: 0 }, { speaker: "room~1", startMs: 1 }]);
+    expect("speakerLabel" in result.segments[0]!).toBe(false);
+  });
+
+  it("puts a name that is no longer saved back to its default, as the operator will", () => {
+    // The recording on screen was published with voice 1 named Mira and Ben
+    // renamed; the saved edits name neither any more.
+    const shown = [
+      { id: "room~1", label: "Mira" },
+      { id: "ben", label: "Benjamin" },
+      { id: "room~2", label: "Room · Speaker 2" },
+      { id: "other~4", label: "Kim" },
+    ];
+    const shownBlocks = [block("b1", "room~1", "Mira"), block("b2", "ben", "Benjamin"), block("b3", "other~4", "Kim")];
+    const base = [{ speakerId: "room", label: "Room" }, { speakerId: "ben", label: "Ben audio" }];
+    const result = applySpeakerOverlay(shown, shownBlocks, { labels: [], merges: [], base });
+    expect(result.speakers.map((speaker) => speaker.label)).toEqual([
+      "Room · Speaker 1", "Ben audio", "Room · Speaker 2", "other · Speaker 4",
+    ]);
+    expect(result.segments.map((segment) => segment.speakerLabel)).toEqual(["Room · Speaker 1", "Ben", "other · Speaker 4"]);
+    // Unchanged speakers are the very same objects.
+    expect(result.speakers[2]).toBe(shown[2]);
+    // A saved name still wins over the default.
+    const named = applySpeakerOverlay(shown, shownBlocks, { labels: [{ speakerId: "room~1", label: "Mira" }], merges: [], base });
+    expect(named.segments[0]).toBe(shownBlocks[0]);
+    // Without a base nothing is known about defaults, and nothing is changed.
+    const unknown = applySpeakerOverlay(shown, shownBlocks, { labels: [], merges: [], base: [] });
+    expect(unknown.segments).toBe(shownBlocks);
+    expect(speakerOverlayKey({ labels: [], merges: [], base })).not.toBe("");
+  });
+
+  it("hands back the very arrays when there is nothing to show", () => {
+    expect(applySpeakerOverlay(speakers, blocks, null).segments).toBe(blocks);
+    const empty = applySpeakerOverlay(speakers, blocks, { labels: [], merges: [] });
+    expect(empty.segments).toBe(blocks);
+    expect(empty.speakers).toBe(speakers);
+  });
+
+  it("keys an overlay by what it says, not by its order", () => {
+    const a = { labels: [{ speakerId: "b", label: "B" }, { speakerId: "a", label: "A" }], merges: [] };
+    const b = { labels: [{ speakerId: "a", label: "A" }, { speakerId: "b", label: "B" }], merges: [] };
+    expect(speakerOverlayKey(a)).toBe(speakerOverlayKey(b));
+    expect(speakerOverlayKey({ labels: [], merges: [] })).toBe("");
+    expect(speakerOverlayKey(null)).toBe("");
+    expect(speakerOverlayFromKey(speakerOverlayKey(a))).toEqual(b);
+    expect(speakerOverlayFromKey("")).toBeNull();
+  });
+
+  it("finds the devices a roster has voices for", () => {
+    expect([...splitDevicesIn(speakers)]).toEqual(["room"]);
+    expect(splitDevicesIn([{ id: "room", label: "Room" }]).size).toBe(0);
   });
 });

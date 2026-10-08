@@ -9,6 +9,7 @@ import {
   meeting,
   named,
   original,
+  renamed,
   separated,
   separatedWithOriginal,
   speakersFixture,
@@ -62,7 +63,12 @@ const people = () => details().getByText(/^\d+ (participants?|voices? on \d+ dev
 const nameField = (label: string) => details().getByRole("textbox", { name: `Name for ${label}` });
 const voice = (n: number) => `Meeting room laptop · Speaker ${n}`;
 const shot = (name: string) => page.screenshot({ element: details(), path: `${SHOTS}/${name}.png` });
-const status = () => details().getByRole("status").filter({ hasText: /Saving|Starting|Separating|Updating|Waiting|Voices updated|Couldn't update/ });
+const status = () => details().getByRole("status").filter({ hasText: /Saving|Starting|Separating|Updating|Waiting|Loading|Voices updated|Couldn't update/ });
+const transcript = () => page.getByRole("log", { name: "Transcript" });
+// The speaker named on each turn of the transcript, in order.
+const turnNames = () => [...root.querySelectorAll('[role="log"] article .mv-speaker-name:not(.mv-speaker-inline)')].map((badge) => badge.textContent?.trim());
+const freshLoads = () => fixture.loadMeeting.mock.calls.filter(([, options]) => options?.fresh).length;
+const player = () => root.querySelector("audio")!;
 const bar = () => details().getByRole("progressbar");
 
 async function separateRoom() {
@@ -71,16 +77,17 @@ async function separateRoom() {
   await page.getByRole("menuitem", { name: "Separate voices" }).click();
 }
 
+// Separating a device changes how the words are cut, so the republished
+// recording is read again on its own once the operator has applied it.
 async function separateAndReload(next = separated) {
   await separateRoom();
   await expect.element(details().getByText("Separating voices…")).toBeVisible();
   fixture.applied(next, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
-  await details().getByRole("button", { name: "Reload" }).click();
   await expect.element(nameField(voice(1))).toBeVisible();
 }
 
 describe("separating the voices on a shared device", () => {
-  it("separates a device, then shows its voices once the recording is reloaded", async () => {
+  it("separates a device, then reads the republished recording again on its own", async () => {
     fixture = speakersFixture();
     mountView();
     await openPeople();
@@ -109,20 +116,21 @@ describe("separating the voices on a shared device", () => {
     await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
     await expect.element(page.getByRole("menuitem", { name: "Treat as one person again" })).toBeDisabled();
 
-    fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
-    await expect.element(details().getByText("Voices updated ·")).toBeVisible();
-    // The recording on screen is the old one until the reader asks for the new.
-    await expect.element(people()).toHaveTextContent("2 participants");
     const playerBefore = root.querySelector("audio");
     expect(playerBefore).not.toBeNull();
     let release!: () => void;
     const held = fixture.loadMeeting.getMockImplementation()!;
     fixture.loadMeeting.mockImplementationOnce((...args) => new Promise((resolve) => (release = () => resolve(held(...args)))));
-    await details().getByRole("button", { name: "Reload" }).click();
-    // It stays readable while the new copy arrives, rather than blanking.
+    fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
+    // Nothing is playing, so the new recording is read at once, without a
+    // Reload to press. It stays readable while the new copy arrives, rather
+    // than blanking.
     await expect.poll(() => release).toBeTypeOf("function");
+    await expect.element(status()).toHaveTextContent(/^Loading the updated recording…$/);
+    await expect.element(details().getByRole("button", { name: "Reload" })).not.toBeInTheDocument();
     await expect.element(page.getByText("Loading meeting…")).not.toBeInTheDocument();
     await expect.element(people()).toHaveTextContent("2 participants");
+    await page.screenshot({ element: details(), path: `${SHOTS}/immediacy-03-split-loading.png` });
     release();
 
     await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
@@ -199,7 +207,7 @@ describe("separating the voices on a shared device", () => {
     await shot("eta-04-almost-done");
 
     fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
-    await expect.element(details().getByText("Voices updated ·")).toBeVisible();
+    await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
     await expect.element(bar()).not.toBeInTheDocument();
     // Nothing is left counting.
     expect(fixture.time.ticking()).toBe(0);
@@ -247,7 +255,7 @@ describe("separating the voices on a shared device", () => {
     expect(audio.currentTime).toBeLessThan(20.6);
   });
 
-  it("offers the new recording to a reader who comes back after it was updated", async () => {
+  it("reads the new recording for a reader who comes back after it was updated", async () => {
     fixture = speakersFixture();
     mountView();
     await separateRoom();
@@ -258,10 +266,10 @@ describe("separating the voices on a shared device", () => {
     fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
 
     mountView();
+    // The tab still has the copy it read before; the operator says a newer
+    // one, separated differently, exists, and it is read.
+    await expect.poll(freshLoads).toBe(1);
     await openPeople();
-    // The tab still has the copy it read before, and says a newer one exists.
-    await expect.element(people()).toHaveTextContent("2 participants");
-    await details().getByRole("button", { name: "Reload" }).click();
     await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
     await expect.element(details().getByText("Voices updated ·")).not.toBeInTheDocument();
 
@@ -270,6 +278,7 @@ describe("separating the voices on a shared device", () => {
     await openPeople();
     await expect.element(nameField(voice(1))).toBeVisible();
     await expect.element(details().getByText("Voices updated ·")).not.toBeInTheDocument();
+    expect(freshLoads()).toBe(1);
   });
 
   it("saves names and a same-person pick as one request", async () => {
@@ -296,9 +305,15 @@ describe("separating the voices on a shared device", () => {
     await expect.element(details().getByText("Updating the recording…")).toBeVisible();
     // The saved names stay in their fields while the recording catches up.
     await expect.element(nameField("Mira")).toHaveValue("Mira");
+    // …and the People list counts the merged voices as one at once.
+    await expect.element(people()).toHaveTextContent("3 voices on 2 devices");
 
+    const loads = fixture.loadMeeting.mock.calls.length;
     fixture.applied(named);
-    await details().getByRole("button", { name: "Reload" }).click();
+    await expect.element(details().getByText("Updating the recording…")).not.toBeInTheDocument();
+    // Names and merges need nothing read again: what is on screen already says it.
+    await expect.element(details().getByRole("button", { name: "Reload" })).not.toBeInTheDocument();
+    expect(fixture.loadMeeting.mock.calls.length).toBe(loads);
     await expect.element(people()).toHaveTextContent("3 voices on 2 devices");
     await expect.element(details().getByText("Includes Speaker 3")).toBeVisible();
     // Mira already has Speaker 3 merged into her, and merges do not chain.
@@ -327,12 +342,16 @@ describe("separating the voices on a shared device", () => {
     fixture = speakersFixture();
     mountView();
     await separateRoom();
-    fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`]));
     fixture.loadMeeting.mockRejectedValueOnce(new Error("Could not load m1.opus."));
-    await details().getByRole("button", { name: "Reload" }).click();
+    fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`]));
     await expect.element(details().getByRole("alert")).toHaveTextContent("Couldn't reload the recording: Could not load m1.opus.");
-    // Still offered, since the recording is still the old one.
+    // Offered by hand, since the recording is still the old one; read again
+    // on its own only once per apply.
     await expect.element(details().getByRole("button", { name: "Reload" })).toBeVisible();
+    expect(freshLoads()).toBe(1);
+    await details().getByRole("button", { name: "Reload" }).click();
+    await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
+    expect(freshLoads()).toBe(2);
   });
 
   it("treats a separated device as one person again", async () => {
@@ -345,6 +364,12 @@ describe("separating the voices on a shared device", () => {
     await page.getByRole("menuitem", { name: "Treat as one person again" }).click();
     expect(fixture.save).toHaveBeenCalledExactlyOnceWith(meeting, 1, { splits: [], merges: [], labels: [] });
     await expect.element(details().getByText("Updating the recording…")).toBeVisible();
+
+    // The words are cut differently again, so the recording is read again.
+    fixture.applied(original, { splits: [], inconclusive: [] });
+    await expect.element(people()).toHaveTextContent("2 participants");
+    expect(freshLoads()).toBe(2);
+    await expect.element(details().getByText("Voices updated ·")).not.toBeInTheDocument();
   });
 
   it("says when only one voice was found on a device", async () => {
@@ -459,6 +484,223 @@ describe("separating the voices on a shared device", () => {
     await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
     await expect.element(page.getByRole("menuitem", { name: "Treat as one person again" })).toBeEnabled();
     await expect.element(page.getByText("Voice separation is not installed on this server.")).not.toBeInTheDocument();
+  });
+});
+
+describe("changes shown as soon as they are saved", () => {
+  const immediacyShot = (name: string, element?: ReturnType<typeof details>) =>
+    page.screenshot({ ...(element ? { element } : {}), path: `${SHOTS}/immediacy-${name}.png` });
+
+  it("puts saved names on the transcript at once, and never asks for a reload", async () => {
+    fixture = speakersFixture({ estimateMs: 15_000 });
+    mountView();
+    await separateAndReload();
+    const loads = fixture.loadMeeting.mock.calls.length;
+    expect(turnNames()).toContain(voice(1));
+
+    await nameField(voice(1)).fill("Mira");
+    await nameField(voice(2)).fill("Leo");
+    fixture.phase("updating");
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(status()).toHaveTextContent(/^Updating the recording…\s*about 15 s left$/);
+
+    // The turns carry the new names straight from the save's answer, while
+    // the operator is still rewriting the recording.
+    await expect.poll(turnNames).toEqual(["Mira", "Ben Ortiz", "Leo", "Mira", voice(3), "Leo", "Ben Ortiz"]);
+    await expect.element(details().getByRole("button", { name: "Reload" })).not.toBeInTheDocument();
+    expect(fixture.loadMeeting.mock.calls.length).toBe(loads);
+    await immediacyShot("01a-panel-while-updating", details());
+    await page.getByRole("button", { name: "Meeting details" }).click();
+    await expect.element(details()).not.toBeInTheDocument();
+    await immediacyShot("01b-transcript-while-updating");
+
+    // Copy takes the names too.
+    let copied = "";
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => void (copied = text) },
+    });
+    await page.getByRole("button", { name: "Export" }).click();
+    await page.getByRole("menuitem", { name: "Copy transcript" }).click();
+    await expect.poll(() => copied).toContain("**Mira**");
+    expect(copied).toContain("**Leo**");
+    expect(copied).not.toContain("Speaker 1");
+
+    // Applied: nothing to reload, nothing read again; the names stay.
+    fixture.applied(renamed);
+    await openPeople();
+    await expect.element(details().getByText("Updating the recording…")).not.toBeInTheDocument();
+    await expect.element(details().getByRole("button", { name: "Reload" })).not.toBeInTheDocument();
+    await expect.element(details().getByText("Voices updated ·")).not.toBeInTheDocument();
+    expect(fixture.loadMeeting.mock.calls.length).toBe(loads);
+    expect(turnNames()).toEqual(["Mira", "Ben Ortiz", "Leo", "Mira", voice(3), "Leo", "Ben Ortiz"]);
+    await immediacyShot("02-names-applied", details());
+
+    // Opened again later in the tab, from the copy read before: still named.
+    await reopen();
+    await expect.poll(turnNames).toEqual(["Mira", "Ben Ortiz", "Leo", "Mira", voice(3), "Leo", "Ben Ortiz"]);
+    expect(freshLoads()).toBe(1);
+  });
+
+  it("joins a merged voice's turns into the other voice's at once", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateAndReload();
+    const loads = fixture.loadMeeting.mock.calls.length;
+    expect(turnNames()).toEqual([voice(1), "Ben Ortiz", voice(2), voice(1), voice(3), voice(2), "Ben Ortiz"]);
+
+    await details().getByRole("button", { name: `${voice(3)} is the same person as…` }).click();
+    await page.getByRole("menuitem", { name: "Speaker 1" }).click();
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(details().getByText("Updating the recording…")).toBeVisible();
+
+    // Voice 3's one turn follows voice 1's, so the two are one turn now: its
+    // words go on under voice 1's name, with no name of their own.
+    await expect.poll(turnNames).toEqual([voice(1), "Ben Ortiz", voice(2), voice(1), voice(2), "Ben Ortiz"]);
+    await expect.element(people()).toHaveTextContent("3 voices on 2 devices");
+    await expect.element(details().getByText("Includes Speaker 3")).toBeVisible();
+    expect(fixture.loadMeeting.mock.calls.length).toBe(loads);
+    await immediacyShot("05-merge-at-once");
+  });
+
+  it("puts a failed save's names back and says it failed", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateAndReload();
+    await nameField(voice(1)).fill("Mira");
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    await expect.poll(turnNames).toContain("Mira");
+
+    fixture.failed("apply: exit status 1");
+    await expect.element(details().getByText("Couldn't update voices")).toBeVisible();
+    await expect.poll(turnNames).toEqual([voice(1), "Ben Ortiz", voice(2), voice(1), voice(3), voice(2), "Ben Ortiz"]);
+  });
+
+  it("leaves a new split for the reader to load while they are listening", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateRoom();
+    await expect.element(details().getByText("Separating voices…")).toBeVisible();
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect.poll(() => player().paused).toBe(false);
+    const listening = player();
+
+    fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
+    // Pressing Play closed the details; open them again.
+    await openPeople();
+    await expect.element(details().getByText("Voices updated ·")).toBeVisible();
+    // The player is not interrupted.
+    expect(player()).toBe(listening);
+    expect(listening.paused).toBe(false);
+    expect(freshLoads()).toBe(0);
+    await immediacyShot("04-split-while-playing", details());
+
+    // Pausing does not read it after all: the reader asks for it.
+    listening.pause();
+    await expect.poll(() => player().paused).toBe(true);
+    await expect.element(details().getByText("Voices updated ·")).toBeVisible();
+    expect(freshLoads()).toBe(0);
+    await details().getByRole("button", { name: "Reload" }).click();
+    await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
+  });
+
+  it("does not replace the player when the reader starts listening while the recording is read", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateRoom();
+    await expect.element(details().getByText("Separating voices…")).toBeVisible();
+    let release!: () => void;
+    const held = fixture.loadMeeting.getMockImplementation()!;
+    fixture.loadMeeting.mockImplementationOnce((...args) => new Promise((resolve) => (release = () => resolve(held(...args)))));
+    fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
+    // Nothing was playing, so the new recording is being read on its own…
+    await expect.poll(() => release).toBeTypeOf("function");
+
+    // …when the reader presses Play.
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect.poll(() => player().paused).toBe(false);
+    await expect.element(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+    const listening = player();
+    release();
+
+    await openPeople();
+    await expect.element(details().getByText("Voices updated ·")).toBeVisible();
+    expect(player()).toBe(listening);
+    expect(listening.paused).toBe(false);
+    await expect.element(people()).toHaveTextContent("2 participants");
+    await details().getByRole("button", { name: "Reload" }).click();
+    await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
+  });
+
+  it("keeps the reader's place in the recording when it is read again", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateRoom();
+    await expect.poll(() => player().readyState).toBeGreaterThan(0);
+    const before = player();
+    before.currentTime = 12;
+    await expect.poll(() => before.currentTime).toBe(12);
+    before.dispatchEvent(new Event("timeupdate"));
+
+    fixture.applied(separated, splitReport([`${ROOM}~1`, `${ROOM}~2`, `${ROOM}~3`]));
+    await expect.element(people()).toHaveTextContent("4 voices on 2 devices");
+    expect(player()).not.toBe(before);
+    await expect.poll(() => player().currentTime).toBe(12);
+  });
+});
+
+describe("taking a saved change back", () => {
+  it("puts a voice's default name back at once when its name is cleared", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateAndReload();
+    await nameField(voice(1)).fill("Mira");
+    await nameField(voice(2)).fill("Leo");
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    fixture.applied(renamed);
+
+    // Opened later in a new tab: the recording on screen carries the names.
+    fixture.forget();
+    await reopen();
+    await expect.poll(turnNames).toEqual(["Mira", "Ben Ortiz", "Leo", "Mira", voice(3), "Leo", "Ben Ortiz"]);
+    await openPeople();
+    await nameField("Mira").fill("");
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    expect(fixture.save).toHaveBeenLastCalledWith(meeting, 2, {
+      splits: [{ speakerId: ROOM }],
+      merges: [],
+      labels: [{ speakerId: `${ROOM}~2`, label: "Leo" }],
+    });
+    // Voice 1 is called what the operator will call it, before it has.
+    await expect.poll(turnNames).toEqual([voice(1), "Ben Ortiz", "Leo", voice(1), voice(3), "Leo", "Ben Ortiz"]);
+  });
+
+  it("reads the recording again when a merged voice is said to be a different person", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await separateAndReload();
+    await nameField(voice(1)).fill("Mira");
+    await nameField(voice(2)).fill("Leo");
+    await details().getByRole("button", { name: `${voice(3)} is the same person as…` }).click();
+    await page.getByRole("menuitem", { name: "Mira" }).click();
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    fixture.applied(named);
+
+    // Opened later in a new tab: voice 3's words are Mira's in the recording.
+    fixture.forget();
+    await reopen();
+    await expect.poll(turnNames).toEqual(["Mira", "Ben Ortiz", "Leo", "Mira", "Leo", "Ben Ortiz"]);
+    expect(freshLoads()).toBe(1);
+    await openPeople();
+    await details().getByRole("button", { name: "Not the same person" }).click();
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(details().getByText("Updating the recording…")).toBeVisible();
+
+    // Only the republished recording has voice 3's words on their own again.
+    fixture.applied(renamed);
+    await expect.poll(freshLoads).toBe(2);
+    await expect.poll(turnNames).toEqual(["Mira", "Ben Ortiz", "Leo", "Mira", voice(3), "Leo", "Ben Ortiz"]);
+    await expect.element(details().getByText("Voices updated ·")).not.toBeInTheDocument();
   });
 });
 

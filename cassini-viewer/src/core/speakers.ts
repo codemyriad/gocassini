@@ -1,4 +1,5 @@
 import type { TranscriptSpeaker, TranscriptWordsV1 } from "./types";
+import { normalizeSpeakerLabel } from "./transcript";
 
 // Voices separated from one participant's device are speakers like any other,
 // with ids of the form "<device id>~<n>" (SubSpeakerID in
@@ -164,4 +165,119 @@ export function voiceSamples(
     sample.endMs = Math.min(stretch.endMs, stretch.startMs + maxMs);
   }
   return samples;
+}
+
+// Saved names and "same person" merges, as the operator will apply them
+// (cassini.speaker-edits.v1, its `labels` and `merges`).
+export interface SpeakerOverlay {
+  labels: readonly { speakerId: string; label: string }[];
+  merges: readonly { from: string; into: string }[];
+  // The original roster (the operator's `participants`): what a speaker the
+  // edits do not name is called. With it, a name the edits no longer give is
+  // put back to that default, as the operator will, rather than left as the
+  // recording on screen had it.
+  base?: readonly { speakerId: string; label: string }[];
+}
+
+// A speaker's label once edits are applied, as the operator's labelFor does it:
+// the saved name, else the original roster's label, else for a voice
+// "<device label> · Speaker n". Undefined without a base to say what the
+// defaults are.
+function overlayLabelFor(
+  id: string,
+  labels: ReadonlyMap<string, string>,
+  base: ReadonlyMap<string, string>,
+): string | undefined {
+  const named = labels.get(id);
+  if (named !== undefined || base.size === 0) return named;
+  const original = base.get(id);
+  if (original !== undefined) return original;
+  const device = voiceParent(id);
+  return device ? `${base.get(device) ?? device} · Speaker ${voiceNumber(id)}` : undefined;
+}
+
+function overlayIsEmpty(overlay: SpeakerOverlay): boolean {
+  return overlay.labels.length === 0 && overlay.merges.length === 0 && !overlay.base?.length;
+}
+
+// applySpeakerOverlay shows saved names and merges on a recording published
+// before them, the way the operator's apply will write them
+// (ApplySpeakerEdits in cassini-go-recorder/internal/transcribe/speaker_edits.go),
+// so a reader sees what they saved at once rather than after the recording is
+// republished and read again.
+//
+// `speakers` and `segments` are what was derived from the recording: its
+// roster, and its segments or display blocks, which carry their own copy of
+// the speaker's label. A merge moves the words of one voice to another voice
+// of the same device, as long as that voice speaks here and is not itself
+// merged; the merged voice leaves the roster. A label renames whoever it
+// names, and changes nothing for a speaker who is not here; with a `base`, a
+// speaker it does not name gets its default label back. Only the items that
+// change are copied; with no overlay the very arrays come back.
+export function applySpeakerOverlay<S extends { speaker?: string; speakerLabel?: string }>(
+  speakers: readonly TranscriptSpeaker[],
+  segments: readonly S[],
+  overlay: SpeakerOverlay | null,
+): { speakers: readonly TranscriptSpeaker[]; segments: readonly S[] } {
+  if (!overlay || overlayIsEmpty(overlay)) return { speakers, segments };
+  const present = new Set(speakers.map((speaker) => speaker.id));
+  for (const segment of segments) if (segment.speaker) present.add(segment.speaker);
+  const mergedAway = new Set(overlay.merges.map((merge) => merge.from));
+  const into = new Map<string, string>();
+  for (const { from, into: target } of overlay.merges) {
+    const device = voiceParent(from);
+    if (device && from !== target && voiceParent(target) === device && present.has(target) && !mergedAway.has(target)) {
+      into.set(from, target);
+    }
+  }
+  const labels = new Map(overlay.labels.map((entry) => [entry.speakerId, entry.label]));
+  const base = new Map((overlay.base ?? []).map((entry) => [entry.speakerId, entry.label]));
+  const shownAs = new Map<string, string>();
+  for (const segment of segments) {
+    if (segment.speaker && typeof segment.speakerLabel === "string" && !shownAs.has(segment.speaker)) {
+      shownAs.set(segment.speaker, segment.speakerLabel);
+    }
+  }
+  for (const speaker of speakers) shownAs.set(speaker.id, normalizeSpeakerLabel(speaker.label));
+  const nextSpeakers = speakers
+    .filter((speaker) => !into.has(speaker.id))
+    .map((speaker) => {
+      const label = overlayLabelFor(speaker.id, labels, base);
+      return label === undefined || label === speaker.label ? speaker : { ...speaker, label };
+    });
+  const nextSegments = segments.map((segment) => {
+    if (!segment.speaker) return segment;
+    const speaker = into.get(segment.speaker) ?? segment.speaker;
+    const named = overlayLabelFor(speaker, labels, base);
+    if (speaker === segment.speaker && named === undefined) return segment;
+    const label = named !== undefined ? normalizeSpeakerLabel(named) : shownAs.get(speaker);
+    if (speaker === segment.speaker && label === segment.speakerLabel) return segment;
+    if (typeof segment.speakerLabel !== "string" || label === undefined) return { ...segment, speaker };
+    return { ...segment, speaker, speakerLabel: label };
+  });
+  return { speakers: nextSpeakers, segments: nextSegments };
+}
+
+// The overlay as a string that is equal whenever the overlay is, and "" for
+// none: a component recomputes what depends on it only when it changes, not
+// on every answer from the operator that says the same thing.
+export function speakerOverlayKey(overlay: SpeakerOverlay | null): string {
+  if (!overlay || overlayIsEmpty(overlay)) return "";
+  const labels = overlay.labels
+    .map(({ speakerId, label }) => ({ speakerId, label }))
+    .sort((a, b) => (a.speakerId < b.speakerId ? -1 : a.speakerId > b.speakerId ? 1 : 0));
+  const merges = overlay.merges
+    .map(({ from, into }) => ({ from, into }))
+    .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const base = (overlay.base ?? []).map(({ speakerId, label }) => ({ speakerId, label }));
+  return JSON.stringify(base.length > 0 ? { labels, merges, base } : { labels, merges });
+}
+
+export function speakerOverlayFromKey(key: string): SpeakerOverlay | null {
+  return key ? (JSON.parse(key) as SpeakerOverlay) : null;
+}
+
+// The devices a roster has voices for: the ones separated in that recording.
+export function splitDevicesIn(speakers: readonly TranscriptSpeaker[]): Set<string> {
+  return new Set(speakers.map((speaker) => voiceParent(speaker.id)).filter(Boolean));
 }

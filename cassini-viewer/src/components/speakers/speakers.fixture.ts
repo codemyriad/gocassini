@@ -83,6 +83,11 @@ export const separated = (audioSrc: string): LoadedArtifact => ({
   ...artifact(transcript((n) => `${ROOM}~${n}`, [voice(1), ben, voice(2), voice(3)]), audioSrc),
   splitDevices,
 });
+// …after two of the voices were named, and nothing else changed.
+export const renamed = (audioSrc: string): LoadedArtifact => ({
+  ...artifact(transcript((n) => `${ROOM}~${n}`, [voice(1, "Mira"), ben, voice(2, "Leo"), voice(3)]), audioSrc),
+  splitDevices,
+});
 // …after voice 3 was found to be voice 1, and both people named.
 export const named = (audioSrc: string): LoadedArtifact => ({
   ...artifact(transcript((n) => `${ROOM}~${n === 3 ? 1 : n}`, [voice(1, "Mira"), ben, voice(2, "Leo")]), audioSrc),
@@ -256,6 +261,11 @@ export function speakersFixture(
       available = nowAvailable;
       reason = why;
       if (state === "idle" || state === "unavailable") state = available ? "idle" : "unavailable";
+    },
+    // The reader opens the meeting in a new tab: the copy read before is gone,
+    // and the next read is of the published recording.
+    forget() {
+      cached = null;
     },
     failed(error: string) {
       state = "failed";

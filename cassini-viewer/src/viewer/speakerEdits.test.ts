@@ -113,7 +113,11 @@ describe("an apply's progress", () => {
   it("calls a just-saved attempt starting, and only one still queued after the grace waiting", () => {
     // The save's own answer: queued a moment ago on an operator with nothing else to do.
     const queued = { phase: "queued" as const, elapsedMs: 40, estimatedMs: 75_000 };
-    expect(progressNow(queued, 0)).toEqual({ phase: "starting", remainingMs: 74_960, percent: 0 });
+    expect(progressNow(queued, 0)).toEqual({ phase: "starting", remainingMs: 75_000, percent: 0 });
+    // The wait is not work: none of the estimate is used up until the
+    // attempt starts, when the operator counts its elapsed time from zero.
+    expect(progressNow({ ...queued, elapsedMs: 4000 }, 900)).toEqual({ phase: "starting", remainingMs: 75_000, percent: 0 });
+    expect(progressNow({ ...queued, phase: "updating", elapsedMs: 100 }, 0).remainingMs).toBe(74_900);
     expect(progressNow(queued, QUEUED_GRACE_MS - 41).phase).toBe("starting");
     expect(progressNow(queued, QUEUED_GRACE_MS - 40).phase).toBe("queued");
     expect(progressNow({ ...queued, elapsedMs: 12_000 }, 0).phase).toBe("queued");

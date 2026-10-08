@@ -68,9 +68,11 @@ export type SpeakerEditsUnavailableReason =
   | "diarization-unavailable";
 
 // How far the operator is with the revision it is applying, while `state` is
-// "applying". `elapsedMs` counts from when the attempt was queued, by the
-// operator's clock at the moment it answered; `estimatedMs` is its guess, made
-// once per attempt, of the whole time from queued to republished.
+// "applying". `estimatedMs` is its guess, made once per attempt, of the time
+// from the attempt's start to republished: the work, not the wait in the
+// queue. `elapsedMs`, by the operator's clock at the moment it answered, is
+// how long the attempt has waited while "queued", and how long it has run
+// once it started.
 //
 // "queued": waiting behind another build or a recording; "separating": the
 // diarizer is finding the voices on a device; "updating": rewriting the
@@ -282,8 +284,10 @@ export const PROGRESS_CAP_PERCENT = 95;
 // An attempt is queued the moment it is saved and normally starts a moment
 // later, so the save's own answer, and often the next poll's, say "queued" on
 // an operator with nothing else to do. Only an attempt still queued after this
-// long is waiting behind other work; until then it is "starting", counted
-// down like a running one.
+// long is waiting behind other work; until then it is "starting". While
+// queued none of the estimate is used up: the time waited is not work, and
+// the operator counts from the start once the attempt runs, so counting the
+// wait down here would make the time left jump back up at the start.
 export const QUEUED_GRACE_MS = 5000;
 
 export type SpeakerEditsPhaseNow = SpeakerEditsPhase | "starting";
@@ -296,11 +300,12 @@ export interface SpeakerEditsProgressNow {
 
 export function progressNow(progress: SpeakerEditsProgress, sinceMs: number): SpeakerEditsProgressNow {
   const elapsed = Math.max(0, progress.elapsedMs) + Math.max(0, sinceMs);
+  const worked = progress.phase === "queued" ? 0 : elapsed;
   const estimated = Math.max(0, progress.estimatedMs);
-  const share = estimated > 0 ? (elapsed / estimated) * 100 : PROGRESS_CAP_PERCENT;
+  const share = estimated > 0 ? (worked / estimated) * 100 : PROGRESS_CAP_PERCENT;
   return {
     phase: progress.phase === "queued" && elapsed < QUEUED_GRACE_MS ? "starting" : progress.phase,
-    remainingMs: estimated - elapsed,
+    remainingMs: estimated - worked,
     percent: Math.round(Math.min(PROGRESS_CAP_PERCENT, Math.max(0, share))),
   };
 }

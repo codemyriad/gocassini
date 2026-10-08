@@ -18,7 +18,7 @@
     MAX_SPEAKER_LABEL_LENGTH,
   } from "../../viewer/speakerEdits";
   import { popover, stepIndex } from "../tags/popover";
-  import { recordingBehind, sinceAnswer, type SpeakersSession, type SpeakersState } from "./session";
+  import { segmentationBehind, sinceAnswer, type SpeakersSession, type SpeakersState } from "./session";
 
   // The People section of the meeting details popover: every participant's
   // device, with the voices separated from a shared one listed beneath it.
@@ -37,8 +37,8 @@
 
   const dispatch = createEventDispatcher<{ sample: { id: string } & VoiceSample; stopSample: void; reload: void }>();
   const off: Readable<SpeakersState> = readable({
-    status: "off", server: null, shownRevision: null, pending: { labels: {}, merges: {} }, saving: false, error: "",
-    receivedAt: 0, now: 0,
+    status: "off", server: null, shownRevision: null, pending: { labels: {}, merges: {} }, saving: false,
+    applied: null, reloading: false, error: "", receivedAt: 0, now: 0,
   });
 
   let menu: { group: SpeakerGroup; anchor: HTMLElement } | null = null;
@@ -94,6 +94,12 @@
   // status so a screen reader is not interrupted by it; the bar carries it.
   $: timeLeft = progress && progress.phase !== "queued" ? remainingText(progress.remainingMs) : "";
   // Names travel with the recording: said wherever voices can be named.
+  // The voices the recording on screen has. Names and merges are shown on it
+  // as soon as they are saved; only a different split, or a voice that is a
+  // different person again, needs the republished recording ("Voices updated ·
+  // Reload").
+  $: shownVoices = new Set(groups.flatMap((group) => group.voices.map((voice) => voice.id)));
+  $: stale = segmentationBehind($store, shownVoices);
   $: nameable = editable && !locked && groups.some((group) => group.voices.length > 0);
   $: summaryStale = server?.report?.summary === "stale";
   $: inconclusive = (server?.report?.inconclusive ?? []).filter(
@@ -312,8 +318,7 @@
     {/if}
 
     {#if editable && server}
-      {@const stale = recordingBehind($store)}
-      {#if $store.error || problem || inconclusive.length > 0 || summaryStale || $store.saving || server.state !== "idle" || stale || changed}
+      {#if $store.error || problem || inconclusive.length > 0 || summaryStale || $store.saving || server.state !== "idle" || $store.reloading || stale || changed}
         <div class="pp-footer">
           {#if summaryStale}
             <p class="pp-note" role="status">The summary was written before these speaker changes.</p>
@@ -341,6 +346,8 @@
               {:else if server.state === "failed"}
                 <span title={server.lastError || undefined}>Couldn't update voices</span> ·
                 <button type="button" class="link" on:click={() => session?.retry()}>Retry</button>
+              {:else if $store.reloading}
+                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>Loading the updated recording…
               {:else if stale}
                 Voices updated ·
                 <button type="button" class="link" on:click={() => dispatch("reload")}>Reload</button>
