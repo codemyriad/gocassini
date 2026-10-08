@@ -14,6 +14,62 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.2.0-beta.8] - 2026-10-06
+
+### Added
+- The recording checks now show their state in colour: green for a check that passed, red for one that is blocking recording, and grey for one nothing has verified yet. The heading takes the colour of the worst news, so the panel can be read at a glance.
+- Configure optional transcription in Settings with visible model download progress, cancellation, retry, and explicit activation.
+- Model downloads resume on their own after a dropped connection or a stalled transfer.
+- Prepare transferable models with `cassini models pack` and install manually copied packages or files on air-gapped systems with `cassini models import`.
+- A **Doctor** section in the operator answers "is recording going to work?" in one place. It reports the recording volume and temporary space, Nextcloud storage, Talk's High Performance Backend and its credential, the Talk connection, a test recording, and how much of your archive search can read. Checks run once when Cassini starts and then only when you ask — with **Run all checks**, or a single row's own button, which re-runs only the probe behind that row.
+- Cassini says when Talk has no High Performance Backend, which stops recording entirely. It reads Talk's own signaling mode, so this appears even before a recording credential exists; it used to be discoverable only through a connection check that never got that far. The row is on the checklist whatever the outcome, including before anything has been established, so the one check that decides whether recording can work is never simply absent.
+- Archive search coverage reports how many meetings search can actually read, so a partial answer is visible instead of looking like no matches. Where meetings were never indexed, a **Re-index now** button does it for you. A shortfall nobody can act on — a recording where nobody spoke, or an older meeting search cannot index at all — is reported without being counted against coverage.
+- `cassini doctor --json` emits its checks as structured data, each with a stable id. Running `cassini doctor` by hand prints exactly what it printed before.
+- Copy or download a meeting transcript as Markdown (`.md`) and download its audio from the meeting view or Prepare. Multiple selected meeting files download together in one ZIP.
+- The `<cassini-meeting>` embed takes `layout="inline"` for pages that already show the recording's name and details, and `--cassini-color-*` / `--cassini-font-sans` custom properties to match the page's colours and type.
+- The `<cassini-meeting>` embed dispatches a `playbackerror` event when the browser cannot play the recording, and follows its `theme` attribute when the page changes it.
+- Scheduled upstream compatibility checks and real-browser coverage of the embedded Cassini transcript and recording playback.
+
+### Changed
+- Share each recording with its Talk room audience through Nextcloud Files, without requiring Team Folders or Everyone Group apps.
+- Show only recordings in the caller's current Nextcloud shares and check each file read as that caller.
+- Replace the two recording access choices with one participant-based model; public meeting participants may reshare when Nextcloud permits it.
+- Rewrote the App Store summary and description to match the README and docs site, and pointed the user documentation link at gocassini.com/docs.
+- Brought the App Store description up to date: Nextcloud 33.0.9 to 35, transcription off until a model is installed (and the model download from `dist.gocassini.com`), the Doctor checklist, and transcript and audio downloads.
+- Rewrote the landing page copy: a new hero, a feature list that leads with the App Store install and Talk's Record button, an AI providers section in place of the summaries one, and reworked CPU and GPU cards.
+- Corrected the supported Nextcloud versions to 32 to 35, said that insights as well as summaries send transcript text to a configured endpoint, and linked the meeting file specification.
+- Renamed GoCassini to Cassini in page titles, link previews and support links.
+- Transcription defaults to off. Recordings remain playable with participant metadata when transcription is disabled, unavailable, or fails.
+- A recording waits, as it does for memory, when its model cannot be checked yet (GPU not visible, not enough free RAM or VRAM). It is published as audio only when the model is missing or the wait runs out.
+- CPU and CUDA images no longer bundle Parakeet or VAD. Models download from `dist.gocassini.com` into persistent revision directories and survive application upgrades without downloading unchanged weights.
+- A check that depends on another one says what it is waiting for rather than asking for attention itself, and offers no buttons of its own. With no High Performance Backend, the credential and the connection checks no longer each report a problem: the backend is the one row to act on, and fixing it is what makes the others checkable.
+- Testing a recording no longer asks you to supply a Talk room. Cassini makes the conversation for you, in your name so that you can moderate it — Talk only lets a conversation's moderators start a recording — and you join the call and press Talk's own record button, while the row reports what happened until you confirm you could play the audio back. The check appears only once everything it depends on has been checked and passed, so it is never offered as a test that cannot succeed.
+- Checks explain in words, with no shell commands to copy and no questions about how Nextcloud was installed. Where Cassini can fix something it offers a button; where it cannot, it points at Nextcloud's own settings and documentation. An instruction assembled from a guess about your deployment is worse than a reference.
+- Checks no longer re-run themselves every five seconds. A reading is taken when Cassini starts and whenever you ask for one, so the panel stops disabling its own buttons twelve times a minute, and a check costs a probe only when somebody wants it. A test recording still being worked on is followed until it publishes, because that is the one thing that moves on its own.
+- The signaling credential is reported by the High Performance Backend check rather than by a row of its own: it is that server's credential, and that check is what accepts or rejects it. One row now says whether a backend exists, whether Cassini has its secret, and whether the secret works. It says plainly that the value is not a Nextcloud setting and where on the signaling server to read it, it does not ask for the secret where no backend exists, and the form stays reachable once the check passes so the secret can be rotated.
+- The Nextcloud storage check says what it established: Cassini's account exists, its recordings folder is writable, and the sharing API answers. It used to report that a "preflight passed", which named an internal routine and no fact.
+- The operator's readiness endpoint is now `GET /operator/health`, because it reports on more than recording readiness. An installed app picks the new route up when it updates to a release carrying it.
+- Require Nextcloud 33.0.9–35 for new installations; retire Nextcloud 32 support in this release.
+- Require successful installed-app compatibility evidence for every advertised Nextcloud major before publishing a release, with exact tested versions and artifacts attached to the release.
+- Cache compatibility Go tools, report scenario phase timings, share GPU smoke transcription across assertions, and separate registry maintenance from release qualification.
+
+### Removed
+- The "Cassini is ready to record" first-run dialog and its per-install acknowledgement, left over from the two permission models. A fresh install records as soon as its checks pass; creating the `cassini` account, when Nextcloud refuses it to the app, stays in Operator › Publish pipeline.
+
+### Fixed
+- A failed refresh no longer erases the checks. It used to rewrite every row to "could not refresh", so one failed request hid whatever was actually wrong; the last findings stay on screen and the failure is reported once, on its own.
+- A check that was passing no longer turns into "not verified" five minutes later. It keeps what it found and says how long ago, so an idle panel stops looking like a problem — and a check that has never run says so, rather than being reported like one whose result merely aged.
+- A connection check that ran and could not reach Nextcloud or the signaling server now reports a problem instead of "not verified". It tried and failed, which is a finding about the deployment.
+- When Cassini's Talk backend URL override points at Cassini's own app proxy, the check says so and names the setting to clear, instead of blaming connectivity and TLS.
+- Buttons that read "Configure" and opened a panel about an unrelated fault are gone. Every action a check offers is named for what it does, and one the app cannot name offers no button at all.
+- The operator panels can be scrolled to the bottom again. Whenever a check needed attention, the banner saying so pushed the panels down without shortening them, so their last few centimetres sat below the window with no way to reach them.
+- Meeting tags now stay in click order while changes are confirmed or retried: selection and meeting counts update immediately without bouncing, and tag choices remain alphabetically ordered.
+- An embedded recording no longer takes the Space key on the whole page. Space plays and pauses only when pressed inside the viewer.
+- Following playback in an embedded recording scrolls only the transcript, never the page around it.
+- A narrow embedded recording no longer shows a back arrow that led nowhere.
+- An embedded recording no longer reads or rewrites the host page's URL fragment, so switching transcripts no longer replaces the page's `#anchor`.
+- Meeting tags and transcript annotations now appear immediately while saves run in the background. Editing stays available, pending changes survive closing and reopening the meeting, and failed saves can be retried without duplicating marks.
+
 ## [0.2.0-beta.7] - 2026-09-20
 
 ### Added

@@ -121,5 +121,6 @@ then read the repo-level harness docs next:
 
 ## See also
 
+- [Production data capture and harness seeding](../../harness/README.md#95-seeding-published-recordings)
 - [Quick start](../quick-start.md)
 - [Running the local developer stack](../local-developer-stack.md)

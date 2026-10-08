@@ -58,7 +58,7 @@ What Cassini writes is described in [docs/portable-meeting-format.md](docs/porta
 
 ## Requirements
 
-- Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
+- Nextcloud 33.0.9 to 35 with AppAPI and a HaRP deploy daemon.
 - Talk with the High-performance backend (standalone signalling). Cassini joins
    calls as an internal signalling client, so it needs the signalling server's
    `internalsecret`. This is the one value you have to supply by hand.

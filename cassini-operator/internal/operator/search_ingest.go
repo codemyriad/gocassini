@@ -56,7 +56,13 @@ const (
 	searchIngestReasonNoCatalogEntry = "no-catalog-entry"
 	searchIngestReasonNoTranscript   = "no-transcript"
 	searchIngestReasonUnreadable     = "transcript-unreadable"
-	searchIngestReasonNoSegments     = "transcript-has-no-segments"
+	// The old no-segments reason has no provenance. It must remain unknown:
+	// after optional transcription, empty words also mean disabled or failed.
+	searchIngestReasonNoSegments        = "transcript-has-no-segments"
+	searchIngestReasonCompletedEmpty    = "transcription-completed-no-words"
+	searchIngestReasonDisabled          = "transcription-disabled"
+	searchIngestReasonModelUnavailable  = "transcription-model-unavailable"
+	searchIngestReasonTranscriptionFail = "transcription-failed"
 )
 
 // searchIngestBundleTranscript is the shape ingest needs out of the bundle's
@@ -111,10 +117,10 @@ func (rt *Runtime) indexPublishedMeeting(ctx context.Context, task publishTask, 
 
 	rows := searchRowsFromSegments(bundleTranscriptSegments(transcript))
 	if len(rows) == 0 {
-		// A transcript that parsed but yielded nothing indexable is a real
-		// state, not an error: a silent recording has no words. Recorded as
-		// unavailable so it is not counted as searched.
-		if err := rt.searchStore.MarkUnavailable(ctx, opusName, searchIngestReasonNoSegments); err != nil {
+		// Empty words alone do not establish silence. Optional transcription
+		// writes the same empty transcript when disabled, unavailable or failed;
+		// the attempt manifest is the producer's record of which happened.
+		if err := rt.searchStore.MarkUnavailable(ctx, opusName, emptyBundleTranscriptReason(bundleDir)); err != nil {
 			return fmt.Errorf("record empty transcript: %w", err)
 		}
 		return nil
@@ -131,6 +137,41 @@ func (rt *Runtime) indexPublishedMeeting(ctx context.Context, task publishTask, 
 	rt.logger.Printf("search index updated id=%s attempt=%d opus=%s rows=%d source=%s",
 		task.JobID, task.AttemptNumber, opusName, len(rows), searchRowSourceSegments)
 	return nil
+}
+
+// emptyBundleTranscriptReason classifies an empty transcript only when the
+// matching bundle manifest says what the producer did. Older manifests (and
+// unreadable ones) are left unclassified rather than called silent.
+func emptyBundleTranscriptReason(bundleDir string) string {
+	raw, err := os.ReadFile(filepath.Join(bundleDir, "manifest.json"))
+	if err != nil {
+		return searchIngestReasonNoSegments
+	}
+	var manifest struct {
+		Processing *struct {
+			Transcription *struct {
+				Status string `json:"status"`
+				Reason string `json:"reason"`
+			} `json:"transcription"`
+		} `json:"processing"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Processing == nil || manifest.Processing.Transcription == nil {
+		return searchIngestReasonNoSegments
+	}
+	status := strings.TrimSpace(manifest.Processing.Transcription.Status)
+	reason := strings.TrimSpace(manifest.Processing.Transcription.Reason)
+	switch {
+	case status == "completed" && reason == "":
+		return searchIngestReasonCompletedEmpty
+	case status == "skipped" && reason == "disabled":
+		return searchIngestReasonDisabled
+	case status == "skipped" && reason == "model_unavailable":
+		return searchIngestReasonModelUnavailable
+	case status == "failed" && reason == "transcription_failed":
+		return searchIngestReasonTranscriptionFail
+	default:
+		return searchIngestReasonNoSegments
+	}
 }
 
 // deliveredOpusName reads the join key out of the attempt site's catalog.

@@ -100,7 +100,9 @@ type Runtime struct {
 	store    *Store
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
-	searchStore *searchStore
+	searchStore     *searchStore
+	searchRepair    searchRepairState
+	archiveCoverage archiveCoverageState
 	// meetingMetadata is a disposable description index. Visibility always
 	// comes from the caller's current Nextcloud shares, never from these rows.
 	meetingMetadata *meetingMetadataStore
@@ -383,6 +385,20 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer listener.Close()
+	// One baseline check when the container boots. NOT a timer, and not the
+	// panel triggering work on load — both of those are still refused.
+	//
+	// Removed earlier on the reading that checks should only run when asked, and
+	// restored because a cold operator cannot answer the question the panel
+	// exists for. Measured on the local harness after a restart: talk.hpb was
+	// absent entirely, so the one fault that stops recording outright was
+	// invisible, and talk.authentication reported the signaling secret as
+	// REQUIRED — because "not needed, there is no backend" is derived from the
+	// probe result, and there was none. A first look was not merely uninformative
+	// but wrong.
+	//
+	// Provisioning is separate and always ran: preflightOnRestart above owns the
+	// restart-convergence path (D-541/D-669).
 	if exappCfg.Active {
 		runtime.workerWG.Add(1)
 		go func() { defer runtime.workerWG.Done(); runtime.checkRecordingReadiness(runtime.ctx) }()
@@ -917,8 +933,12 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// the other. These are the three ADMIN routes the AppAPI manifest
 		// declares, and an existing registration needs its metadata refreshed
 		// before they resolve.
-		{"/readiness", http.HandlerFunc(rt.readinessHandler)},
-		{"/readiness/check", http.HandlerFunc(rt.readinessHandler)},
+		// Named for what it returns. It carried host, recording and archive
+		// checks from D-798 V2, at which point "readiness" described a third of
+		// it. Renamed while it was days old and had one caller (D-798).
+		{"/health", http.HandlerFunc(rt.readinessHandler)},
+		{"/health/check", http.HandlerFunc(rt.readinessHandler)},
+		{"/health/repair", http.HandlerFunc(rt.readinessHandler)},
 		{"/talk/setup", http.HandlerFunc(rt.recordingSetupHandler)},
 	}
 }

@@ -108,3 +108,38 @@ func TestProbeDiscoversMissingHPBBeforeAskingForItsSecret(t *testing.T) {
 		t.Fatalf("checks=%+v", checks)
 	}
 }
+
+// A probe that RAN and could not reach Nextcloud has a finding, not an absence.
+//
+// D-798's state model: "tried, could not reach it -> warn — we did try." It
+// reported not_verified, which the panel renders neutral, so a deployment that
+// genuinely could not read Talk's settings flagged nothing at all.
+func TestProbeReportsAnUnreachableNextcloudAsAWarningNotAnAbsence(t *testing.T) {
+	t.Setenv(talkSignalingInternalSecretEnv, "")
+	// Nothing listening: the request is made and fails, which is the point.
+	closed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	unreachable := closed.URL
+	closed.Close()
+
+	checks := ProbeConnection(context.Background(), config.Config{
+		CallURL:             unreachable + "/call/testroom",
+		TalkAuthMode:        config.TalkAuthModeHPBInternal,
+		TalkRecordingSecret: "recording",
+	})
+	if len(checks) == 0 {
+		t.Fatal("an unreachable Nextcloud produced no finding at all")
+	}
+	found := false
+	for _, c := range checks {
+		if c.Code != "nextcloud_unreachable" {
+			continue
+		}
+		found = true
+		if c.State != "warn" {
+			t.Fatalf("nextcloud_unreachable = %q; a probe that tried and failed must warn", c.State)
+		}
+	}
+	if !found {
+		t.Fatalf("no nextcloud_unreachable finding: %+v", checks)
+	}
+}

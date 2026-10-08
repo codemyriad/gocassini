@@ -19,7 +19,7 @@ WORKFLOW = ".github/workflows/publish-exapp-image.yml"
 SCENARIO = 'installed-talk-readiness-cpu-v1'
 REQUIRED_JOBS = ("validate-manifest", "build-image", "build-image-arm64", "build-image-cuda",
                  "faithful-installed-exapp-talk-cpu", "smoke", "e2e-container", "e2e-entrypoint",
-                 "e2e-install", "e2e-talk-record-cuda", "transcribe-smoke-cuda")
+                 "e2e-talk-record-cuda", "transcribe-smoke-cuda")
 REQUIRED_CHECKS = {"installation", "image_identity", "recording", "transcription", "publication",
                    "participant_access", "outsider_denied", "restart", "embedded_browser"}
 

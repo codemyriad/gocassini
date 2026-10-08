@@ -186,6 +186,9 @@ read into a local static archive. The archive contains `catalog.json` and
 `meetings/<id>.opus`. Treat it as confidential: it can include audio, transcripts,
 and summaries. See [CLI reference](./cli.md) for filters and usage.
 
+For the complete production-to-harness workflow, see [pulling Nextcloud Files,
+capturing the operator volume, and seeding the harness](../harness/README.md#95-seeding-published-recordings).
+
 The harness creates new recordings through Talk. Imported archives are not used
 for permission testing because their Nextcloud shares cannot be transferred to
 test accounts.
