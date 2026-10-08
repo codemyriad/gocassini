@@ -121,13 +121,20 @@ func DiarizeSpeaker(ctx context.Context, mkvPath, speakerID string, model Diariz
 		if err != nil {
 			return SpeakerTurnSet{}, err
 		}
+		used = append(used, s.Index)
+		if mix == nil {
+			// The usual case, one stream: diarize its own buffer. A copy would
+			// hold the whole decoded track twice while the model runs, since
+			// the native call allocates nothing the Go collector sees.
+			mix = samples
+			continue
+		}
 		if len(samples) > len(mix) {
 			mix = append(mix, make([]float32, len(samples)-len(mix))...)
 		}
 		for i, v := range samples {
 			mix[i] += v
 		}
-		used = append(used, s.Index)
 	}
 	if len(used) == 0 {
 		return SpeakerTurnSet{}, fmt.Errorf("%w: %s", ErrSpeakerNotFound, speakerID)

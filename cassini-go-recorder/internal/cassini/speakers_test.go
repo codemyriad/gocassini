@@ -756,6 +756,8 @@ func TestSpeakersApplyFailsIfTheAudioChanges(t *testing.T) {
 
 func fakeSpeakersDiarization(t *testing.T, model func(string) (transcribe.DiarizationModel, error), diarize func(context.Context, string, string, transcribe.DiarizationModel) (transcribe.SpeakerTurnSet, error)) {
 	t.Helper()
+	// The inference lock lives in the model store; keep it out of $HOME.
+	t.Setenv("CASSINI_CACHE_ROOT", t.TempDir())
 	prevResolve, prevLoad, prevDiarize := resolveDiarizationModelFn, loadDiarizationModelFn, diarizeSpeakerFn
 	t.Cleanup(func() {
 		resolveDiarizationModelFn, loadDiarizationModelFn, diarizeSpeakerFn = prevResolve, prevLoad, prevDiarize
@@ -805,6 +807,36 @@ func TestSpeakersDiarizeWritesTheTurns(t *testing.T) {
 	if want := fmt.Sprintf("speaker-turns -> %s (2 turns, 2 voices, 42 ms)\n", out); stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
+}
+
+// Diarizing is inference, so it takes the model store's inference lock, the
+// one builds and model checks take: a model check started from a terminal
+// must not run beside it. Held elsewhere, diarize waits; it never starts.
+func TestSpeakersDiarizeWaitsForTheModelRuntimeLock(t *testing.T) {
+	model := transcribe.DiarizationModel{Path: "/models/m.onnx", Name: "m", SHA256: strings.Repeat("d", 64)}
+	fakeSpeakersDiarization(t,
+		func(string) (transcribe.DiarizationModel, error) { return model, nil },
+		func(context.Context, string, string, transcribe.DiarizationModel) (transcribe.SpeakerTurnSet, error) {
+			t.Error("diarized while another inference held the model runtime lock")
+			return transcribe.SpeakerTurnSet{}, nil
+		})
+	unlock, err := transcribe.LockModelRuntime(context.Background(), os.Getenv("CASSINI_CACHE_ROOT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	// Given up while it waits: what an operator restart does to a waiting refine.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	out := filepath.Join(t.TempDir(), "turns.json")
+
+	code := Run(ctx, []string{"speakers", "diarize", speakersDummyMKV(t), "--speaker", speakersRoomID, "--out", out}, &stdout, &stderr)
+
+	if code != speakersExitRuntime || !strings.Contains(stderr.String(), "model runtime lock") {
+		t.Errorf("exit %d stderr %q, want a runtime failure waiting for the lock", code, stderr.String())
+	}
+	assertNotExist(t, out)
 }
 
 func TestSpeakersDiarizeWithoutAModelIsUnavailable(t *testing.T) {

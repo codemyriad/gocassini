@@ -13,6 +13,13 @@ import (
 	"time"
 )
 
+// LockModelRuntime takes the model store's inference lock for work that runs
+// a model outside this package, such as `cassini speakers diarize`: the same
+// lock builds and model probes take, so two inferences never overlap.
+func LockModelRuntime(ctx context.Context, root string) (func(), error) {
+	return lockModelRuntime(ctx, root)
+}
+
 // The file lock also serializes terminal imports/probes with operator builds.
 // Downloading and audio-only processing never take this inference lock.
 func lockModelRuntime(ctx context.Context, root string) (func(), error) {

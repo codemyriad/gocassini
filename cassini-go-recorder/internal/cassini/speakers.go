@@ -61,6 +61,7 @@ var (
 	diarizeSpeakerFn          = transcribe.DiarizeSpeaker
 	resolveDiarizationModelFn = transcribe.ResolveDiarizationModel
 	loadDiarizationModelFn    = transcribe.LoadDiarizationModel
+	lockModelRuntimeFn        = transcribe.LockModelRuntime
 	// speakersBeforeAudioCheck runs between apply's writes and its audio
 	// check; tests use it to change the audio underneath.
 	speakersBeforeAudioCheck = func(string) {}
@@ -177,6 +178,14 @@ func runSpeakersDiarize(ctx context.Context, args []string, stdout, stderr io.Wr
 		fmt.Fprintf(stderr, "cassini speakers diarize: %v\n", err)
 		return speakersExitRuntime
 	}
+	// Diarizing is inference: it waits for a build or a model check using the
+	// same store to finish, and they wait for it, as they do for each other.
+	unlock, err := lockModelRuntimeFn(ctx, defaultCassiniCacheRoot())
+	if err != nil {
+		fmt.Fprintf(stderr, "cassini speakers diarize: model runtime lock: %v\n", err)
+		return speakersExitRuntime
+	}
+	defer unlock()
 	set, err := diarizeSpeakerFn(ctx, input.RecordingPath, *speaker, model)
 	switch {
 	case errors.Is(err, transcribe.ErrSpeakerNotFound):
