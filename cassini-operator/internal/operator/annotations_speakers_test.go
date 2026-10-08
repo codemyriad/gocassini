@@ -710,3 +710,43 @@ func TestSpeakersRefuseARebuildThatWasNeverPublished(t *testing.T) {
 		t.Fatalf("POST after an unpublished rerun = %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A build that kept only the audio (transcription skipped or failed) still
+// lists every participant in its transcript, with no words. There is nothing
+// to separate or name: splitting one diarized a whole track and then reported
+// "only one voice found".
+func TestSpeakersAudioOnlyMeetingHasNoTranscriptToSplit(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	manifest := `{"version":"cassini.meeting-artifact.v1","processing":{"transcription":{"status":"skipped","reason":"model_unavailable"}}}`
+	if err := os.WriteFile(filepath.Join(canonicalMeetingPath(f.rt.cfg.WorkRoot, "MEETING1"), "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.get(t, "MEETING1"); resp.Available || resp.Reason != speakerReasonNoTranscript {
+		t.Fatalf("audio-only meeting: %+v", resp)
+	}
+	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}]}}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), speakerReasonNoTranscript) {
+		t.Fatalf("POST on an audio-only meeting = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// "merged" is the mixed track a thin per-participant transcription falls
+// back to. It is nobody's own audio, so it is not a device that can be split.
+func TestSpeakersMixedTrackIsNotADevice(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	transcript := `{"version":"transcript.words.v1","speakers":[{"id":"spk_room","label":"Meeting room laptop"},{"id":"merged","label":"Everyone"}]}`
+	if err := os.WriteFile(filepath.Join(canonicalMeetingPath(f.rt.cfg.WorkRoot, "MEETING1"), "transcript.words.v1.json"), []byte(transcript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.get(t, "MEETING1"); len(resp.Participants) != 1 || resp.Participants[0].ID != speakerTestRoom {
+		t.Fatalf("participants = %+v, want the room only", resp.Participants)
+	}
+	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", `{"expectRevision":0,"doc":{"splits":[{"speakerId":"merged"}]}}`)
+	if rec.Code != http.StatusBadRequest || annTestError(t, rec) != "invalid" {
+		t.Fatalf("split of the mixed track = %d %s", rec.Code, rec.Body.String())
+	}
+}

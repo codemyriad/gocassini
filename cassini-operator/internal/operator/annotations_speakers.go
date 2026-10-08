@@ -338,7 +338,8 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 	resp.Revision, resp.AppliedRevision, resp.Doc = rec.Revision, rec.AppliedRevision, rec.Doc
 	resp.Report = rec.LastReport
 
-	if participants, err := readSpeakerParticipants(canonicalMeetingPath(rt.cfg.WorkRoot, jobID)); err == nil {
+	meetingPath := canonicalMeetingPath(rt.cfg.WorkRoot, jobID)
+	if participants, err := readSpeakerParticipants(meetingPath); err == nil {
 		resp.Participants = participants
 	}
 	unpublished, err := rt.speakerMeetingUnpublished(ctx, jobID)
@@ -348,7 +349,9 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 	switch {
 	case !speakerSourceAudioReady(job):
 		resp.Reason = speakerReasonNoSourceAudio
-	case len(resp.Participants) == 0:
+	case len(resp.Participants) == 0 || speakerMeetingUntranscribed(meetingPath):
+		// A build that kept only the audio still lists every participant,
+		// with no words to separate or name.
 		resp.Reason = speakerReasonNoTranscript
 	case unpublished:
 		resp.Reason = speakerReasonUnpublishedRebuild
@@ -397,6 +400,25 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 		resp.LastError = rec.LastError
 	}
 	return resp, nil
+}
+
+// speakerMeetingUntranscribed reports whether the meeting bundle was built
+// without a transcript (transcription skipped or failed), as its manifest
+// says. A manifest that says nothing is from a build that always transcribed.
+func speakerMeetingUntranscribed(meetingPath string) bool {
+	var manifest struct {
+		Processing *struct {
+			Transcription struct {
+				Status string `json:"status"`
+			} `json:"transcription"`
+		} `json:"processing"`
+	}
+	raw, err := os.ReadFile(filepath.Join(meetingPath, "manifest.json"))
+	if err != nil || json.Unmarshal(raw, &manifest) != nil || manifest.Processing == nil {
+		return false
+	}
+	status := manifest.Processing.Transcription.Status
+	return status != "" && status != "completed"
 }
 
 // speakerMeetingUnpublished reports whether current/<job>.meeting, the bundle
@@ -603,7 +625,9 @@ func readSpeakerParticipants(meetingPath string) ([]speakerParticipant, error) {
 	}
 	participants := make([]speakerParticipant, 0, len(transcript.Speakers))
 	for _, p := range transcript.Speakers {
-		if p.ID == "" || isSpeakerVoiceID(p.ID) {
+		// "merged" is the mixed track a thin per-participant pass falls back
+		// to: no participant's own audio, so nothing a split can diarize.
+		if p.ID == "" || isSpeakerVoiceID(p.ID) || strings.EqualFold(p.ID, "merged") {
 			continue
 		}
 		participants = append(participants, p)
