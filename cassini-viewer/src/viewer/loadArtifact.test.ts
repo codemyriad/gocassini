@@ -7,6 +7,8 @@ import {
   loadBundledArtifact,
   loadPortableArtifactFromAudioPath,
   loadPortableMeetingSummary,
+  PortableMeetingStore,
+  readSpeakerEditsRevision,
   switchPortableTranscript,
   type LoadedArtifact,
 } from "./loadArtifact";
@@ -15,6 +17,7 @@ import {
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
   extractPortableManifestFromArrayBuffer,
+  type PortableMeetingManifest,
 } from "./portable";
 import { canonicalWordsForBlock, isLikelyCrosstalkTurn } from "../core/transcript";
 import {
@@ -725,7 +728,7 @@ describe("switchPortableTranscript", () => {
     vi.restoreAllMocks();
   });
 
-  function buildDualTranscriptFixture() {
+  function buildDualTranscriptFixture(canaryProvenance: Record<string, unknown> = {}) {
     const parakeetBody = {
       version: "transcript.words.v1",
       media: { src: "meeting.opus", durationMs: 3000, sha256: "abc" },
@@ -794,7 +797,7 @@ describe("switchPortableTranscript", () => {
       provenance: {
         speechToText: {
           parakeet: { engine: "Parakeet" },
-          canary: { engine: "Canary" },
+          canary: { engine: "Canary", ...canaryProvenance },
         },
       },
     };
@@ -856,6 +859,61 @@ describe("switchPortableTranscript", () => {
     expect(back.currentTranscriptId).toBe("canary");
     expect(back.transcript.segments[0]?.text).toBe("canary");
     expect(back.displayTranscript?.blocks[0]?.text).toBe("Canary display.");
+  });
+
+  it("reads a republished file again, past every cache, only when asked to", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-fresh", protocol: "http:" },
+    } as Window;
+    const fetchMock = mockFetchReturning(buildDualTranscriptFixture());
+    globalThis.fetch = fetchMock;
+    const calls = () => (fetchMock as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls;
+    const store = new PortableMeetingStore();
+
+    await loadPortableArtifactFromAudioPath("./portable-fixture-fresh.opus", store);
+    await loadPortableArtifactFromAudioPath("./portable-fixture-fresh.opus", store);
+    expect(calls()).toHaveLength(1);
+    expect(calls()[0][1]?.cache).toBeUndefined();
+
+    await loadPortableArtifactFromAudioPath("./portable-fixture-fresh.opus", store, { fresh: true });
+    expect(calls()).toHaveLength(2);
+    // "reload" rather than "no-store": the new bytes replace the browser's
+    // copy, so the player's own range requests read the republished file.
+    expect(calls()[1][1]?.cache).toBe("reload");
+    expect(new Headers(calls()[1][1]?.headers).get("Range")).toMatch(/^bytes=0-/);
+  });
+
+  it("reads which speaker edits a recording was published with, from its default transcript", () => {
+    const manifest = (speechToText: Record<string, unknown>) =>
+      ({
+        transcripts: [
+          { id: "separated-voices", default: true, format: "transcript.words.v1" },
+          { id: "raw-asr", format: "transcript.words.v1" },
+        ],
+        provenance: { speechToText },
+      }) as unknown as PortableMeetingManifest;
+    const record = (editsRevision: unknown) => ({ engine: "sherpa-onnx", "x-speakerDiarization": { editsRevision } });
+
+    expect(readSpeakerEditsRevision(manifest({ "separated-voices": record(3), "raw-asr": {} }))).toBe(3);
+    // Only the default transcript's step counts.
+    expect(readSpeakerEditsRevision(manifest({ "separated-voices": {}, "raw-asr": record(3) }))).toBeUndefined();
+    expect(readSpeakerEditsRevision(manifest({ "separated-voices": record("3") }))).toBeUndefined();
+    expect(readSpeakerEditsRevision(manifest({}))).toBeUndefined();
+  });
+
+  it("says which speaker edits a loaded recording was published with", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-edits", protocol: "http:" },
+    } as Window;
+    globalThis.fetch = mockFetchReturning(
+      buildDualTranscriptFixture({ "x-speakerDiarization": { editsRevision: 2, splits: [] } }),
+    );
+    const artifact = await loadPortableArtifactFromAudioPath("./portable-fixture-edits.opus");
+    expect(artifact.speakerEditsRevision).toBe(2);
+
+    globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture());
+    const plain = await loadPortableArtifactFromAudioPath("./portable-fixture-edits-none.opus");
+    expect(plain.speakerEditsRevision).toBeUndefined();
   });
 
   it("throws for an unknown transcript id", async () => {

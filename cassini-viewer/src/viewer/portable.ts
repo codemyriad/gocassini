@@ -856,9 +856,40 @@ export function buildTranscriptWordsFromPortable(
       durationMs: safeToInt(portable.meeting?.durationMs, 0),
       sha256: safeToString(portable.integrity?.opusAudioSha256) || undefined,
     },
-    speakers,
+    speakers: withSplitDevices(speakers, segments),
     segments,
   };
+}
+
+// One roster serves every transcript in the file, and it is the default
+// transcript's. After a shared device is separated into voices the roster
+// lists the voices ("<device>~n"), while the original transcript kept beside
+// it still credits the device itself. Name such a device from its voices'
+// default labels ("Room laptop · Speaker 2" → "Room laptop"), or by its id,
+// so switching to the original transcript works instead of failing on an
+// unknown speaker.
+function withSplitDevices(
+  speakers: TranscriptSpeaker[],
+  segments: Array<{ speaker?: string }>,
+): TranscriptSpeaker[] {
+  const known = new Set(speakers.map((speaker) => speaker.id));
+  const added: TranscriptSpeaker[] = [];
+  for (const segment of segments) {
+    const id = segment.speaker;
+    if (!id || known.has(id)) continue;
+    known.add(id);
+    let label = id;
+    for (const voice of speakers) {
+      if (!voice.id.startsWith(`${id}~`)) continue;
+      const match = /^(.*) · Speaker \d+$/u.exec(voice.label);
+      if (match && match[1]) {
+        label = match[1];
+        break;
+      }
+    }
+    added.push({ id, label });
+  }
+  return added.length === 0 ? speakers : [...speakers, ...added];
 }
 
 function extractPortableReadableWords(

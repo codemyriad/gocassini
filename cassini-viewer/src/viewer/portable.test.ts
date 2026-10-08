@@ -1065,3 +1065,42 @@ describe("display judgement over the JSON-directory artifacts", () => {
     ]);
   });
 });
+
+// After a shared device is separated, the file's one roster lists its voices
+// while the original transcript kept beside the separated one still credits
+// the device. Switching to the original must not fail on an unknown speaker.
+describe("buildTranscriptWordsFromPortable original transcript after separation", () => {
+  const separatedRoster = [
+    { id: "spk_room~1", label: "Room laptop · Speaker 1" },
+    { id: "spk_room~2", label: "Mira" },
+    { id: "spk_ben", label: "Ben" },
+  ];
+  const original = (speakers: Array<{ id: string; label: string }>) => ({
+    meeting: { durationMs: 5000 },
+    speakers,
+    transcript: {
+      items: [
+        { speaker: "spk_room", startMs: 0, endMs: 400, text: "hello" },
+        { speaker: "spk_ben", startMs: 900, endMs: 1300, text: "hi" },
+      ],
+    },
+  });
+
+  it("names the device from its voices' default labels", () => {
+    const transcript = validateTranscriptWordsV1(
+      buildTranscriptWordsFromPortable(original(separatedRoster) as never),
+    );
+    expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "Room laptop" });
+    expect(transcript.speakers.slice(0, 3)).toEqual(separatedRoster);
+  });
+
+  it("falls back to the device id when every voice has been renamed", () => {
+    const renamed = [
+      { id: "spk_room~1", label: "Leo" },
+      { id: "spk_room~2", label: "Mira" },
+      { id: "spk_ben", label: "Ben" },
+    ];
+    const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(renamed) as never));
+    expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "spk_room" });
+  });
+});

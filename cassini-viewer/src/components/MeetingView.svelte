@@ -27,6 +27,8 @@
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
+  import { createSpeakersSession, SPEAKER_POLL_MS } from "./speakers/session";
+  import { groupSpeakers, voiceSamples } from "../core/speakers";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
   import type { AnnotationResult, MeetingTag, VocabularyTag } from "../viewer/annotations";
@@ -129,6 +131,32 @@
     playbackerror: string;
   }>();
   const localMarks = createMarksSession((result) => dispatch("tagsChanged", result));
+
+  // Separating the voices on a shared device, and naming them. Offered only to
+  // a reader in the app whose provider can both read and save speaker edits —
+  // never on an embed, which is a page on the open web and changes nothing
+  // (D-775) — and then only from the People list in the meeting details.
+  export let speakerEditsPollMs = SPEAKER_POLL_MS;
+  const speakerSession = createSpeakersSession({ pollMs: speakerEditsPollMs });
+  let openedSpeakersFor: string | null = null;
+  $: speakerEditsOffered =
+    surface === "app" &&
+    !bundled &&
+    typeof dataProvider.loadSpeakerEdits === "function" &&
+    typeof dataProvider.saveSpeakerEdits === "function";
+  $: speakersFor = speakerEditsOffered && meeting ? meeting.id : null;
+  $: if (speakersFor !== openedSpeakersFor) {
+    openedSpeakersFor = speakersFor;
+    void speakerSession.open(
+      speakersFor ? () => dataProvider.loadSpeakerEdits!(meeting!) : null,
+      speakersFor ? (expectRevision, doc) => dataProvider.saveSpeakerEdits!(meeting!, expectRevision, doc) : null,
+    );
+  }
+  onDestroy(() => speakerSession.close());
+  // A voice sample plays through the meeting's own player and stops itself:
+  // `sampleStopMs` is where, and any other seek or pause cancels it.
+  let sampleStopMs: number | null = null;
+  let playingSampleId: string | null = null;
   $: marks = marksSession ?? localMarks;
   let openedMarksFor: string | null = null;
   let tabsHeight = 0;
@@ -158,6 +186,8 @@
   let readableTranscript: ReadableTranscriptV1 | null = null;
   let summaryMarkdown: string | null = null;
   let audioSrc = "";
+  // Bumped when the file at `audioSrc` was republished, to replace the player.
+  let audioGeneration = 0;
   let captionsSrc: string | null = null;
   let chaptersSrc: string | null = null;
   let timingPrecision: ArtifactTimingPrecision | null = null;
@@ -305,6 +335,7 @@
     errorMessage = "";
     manualScrollLock = false;
     lastAutoScrollRowKey = "";
+    speakerSession.showing(artifact.speakerEditsRevision ?? 0);
   }
 
   function applySwitchedTranscript(artifact: LoadedArtifact) {
@@ -357,6 +388,7 @@
     durationMs = 0;
     manualScrollLock = false;
     lastAutoScrollRowKey = "";
+    speakerSession.showing(null);
   }
 
   function exportStem(): string {
@@ -443,6 +475,35 @@
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
+    }
+  }
+
+  // "Voices updated · Reload": the operator republished this recording with
+  // its speakers changed, and what is on screen is the copy read before.
+  //
+  // The meeting on screen stays until the new copy has arrived, rather than
+  // blanking to a loading state for what is the same meeting with new names.
+  async function reloadForSpeakers() {
+    const entry = meeting;
+    if (!entry) {
+      return;
+    }
+    try {
+      const artifact = await dataProvider.loadMeetingForEntry(entry, { fresh: true });
+      if (meeting?.id !== entry.id) {
+        return;
+      }
+      // The republished file is at the same address, so the player would
+      // keep the one it opened: its byte offsets moved with the speakers in
+      // the file's header, and range requests against them would read the
+      // wrong bytes. A new element opens the new file.
+      audioGeneration += 1;
+      applyArtifact(artifact);
+      dispatch("enriched", mergeMeetingRuntimeSummary(entry, artifact));
+    } catch (error) {
+      speakerSession.reportError(
+        `Couldn't reload the recording: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -552,6 +613,33 @@
    */
   function syncPlaybackTime() {
     currentTimeMs = asFiniteMilliseconds(Math.round((audioEl?.currentTime ?? 0) * 1000));
+    if (sampleStopMs !== null && currentTimeMs >= sampleStopMs) {
+      stopSample();
+    }
+  }
+
+  function playSample(id: string, startMs: number, endMs: number) {
+    if (!audioEl) {
+      return;
+    }
+    seekTo(startMs);
+    sampleStopMs = endMs;
+    playingSampleId = id;
+    if (audioEl.paused) {
+      void audioEl.play().catch(() => {
+        stopSample();
+        dispatch("playbackerror", "Playback could not start. Try again or download the audio file.");
+      });
+    }
+  }
+
+  function stopSample() {
+    const wasSampling = sampleStopMs !== null;
+    sampleStopMs = null;
+    playingSampleId = null;
+    if (wasSampling && audioEl && !audioEl.paused) {
+      audioEl.pause();
+    }
   }
 
   function advancePlaybackClock() {
@@ -576,7 +664,9 @@
   function handleLoadedMetadata() {
     syncDurationFromMedia();
     if (pendingSeekMs !== null) {
-      seekTo(pendingSeekMs);
+      // Completes a seek asked for before the media could take it, so it is
+      // the same seek and keeps a sample that started it.
+      seekAudio(pendingSeekMs);
       pendingSeekMs = null;
     }
   }
@@ -591,6 +681,8 @@
   }
 
   function handlePause() {
+    sampleStopMs = null;
+    playingSampleId = null;
     playing = false;
     stopPlaybackClock();
     syncPlaybackTime();
@@ -614,6 +706,14 @@
   }
 
   function seekTo(ms: number) {
+    // Any seek, a sample's own included, ends the sample in progress;
+    // playSample sets the next one after seeking.
+    sampleStopMs = null;
+    playingSampleId = null;
+    seekAudio(ms);
+  }
+
+  function seekAudio(ms: number) {
     const nextTimeMs = Math.min(Math.max(0, ms), clampedDurationMs || ms);
     currentTimeMs = nextTimeMs;
     if (!audioEl) {
@@ -1096,7 +1196,8 @@
   $: clampedDurationMs = Math.max(0, safeDurationMs);
   $: clampedCurrentTimeMs = Math.min(Math.max(0, asFiniteMilliseconds(currentTimeMs)), clampedDurationMs || 0);
   $: remainingMs = Math.max(0, clampedDurationMs - clampedCurrentTimeMs);
-  $: speakerNames = speakers.map((s) => s.label || s.id).filter(Boolean);
+  $: speakerGroups = groupSpeakers(speakers, $speakerSession.server?.participants ?? []);
+  $: speakerSamples = speakerEditsOffered && transcriptIndex ? voiceSamples(transcriptIndex.transcript) : new Map();
   $: hasSummaryTab = Boolean(summaryHtml) || linkedInsights.length > 0;
   $: shownTab = hasSummaryTab ? activeTab : ("transcript" as MeetingTab);
   $: overlayShown = Boolean(transcriptIndex) && (hasSummaryTab || displaySegments.length > 0);
@@ -1209,7 +1310,13 @@
             dateLabel={meeting.dateLabel}
             room={hasRoom(meeting) ? roomLabelOf(meeting) : null}
             durationMs={transcriptIndex ? clampedDurationMs : 0}
-            {speakerNames}
+            {speakerGroups}
+            speakerSession={speakerEditsOffered ? speakerSession : null}
+            voiceSamples={speakerSamples}
+            {playingSampleId}
+            on:sample={(event) => playSample(event.detail.id, event.detail.startMs, event.detail.endMs)}
+            on:stopSample={stopSample}
+            on:reload={reloadForSpeakers}
             recording={artifactMetadata?.recording ?? null}
             timing={timingPrecision}
           />
@@ -1560,7 +1667,7 @@
     <div class="mv-fade-blur mv-fade-blur-bottom" aria-hidden="true">{#each [1, 2, 4, 8, 16] as radius, layer (radius)}<div style:--blur="{radius}px" style:--layer={layer}></div>{/each}</div>
     <div class="mv-player-bar card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
       {#if audioSrc}
-        {#key audioSrc}
+        {#key `${audioGeneration}:${audioSrc}`}
           <audio
             bind:this={audioEl}
             class="sr-only"

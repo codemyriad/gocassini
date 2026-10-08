@@ -1,9 +1,13 @@
 import {
   StaticCatalogProvider,
   OperatorListProvider,
+  SpeakerEditsError,
   resolvePublishedUrl,
   type InsightRecord,
   type MeetingCatalogEntry,
+  type SpeakerEditsDoc,
+  type SpeakerEditsErrorCode,
+  type SpeakerEditsState,
 } from "cassini-viewer/dataProvider";
 import {
   AnnotationError,
@@ -141,6 +145,17 @@ export class AppDataProvider extends StaticCatalogProvider {
     return (await requestAnnotations<{ job: TagJob | null }>("tags/job")).job;
   }
 
+  // The speakers route: people's edits to one meeting's speakers, beside its
+  // marks and under the same caller check. A save answers the state it left
+  // the meeting in, which is `applying` until the operator has republished it.
+  loadSpeakerEdits(entry: MeetingCatalogEntry): Promise<SpeakerEditsState> {
+    return requestAnnotations(speakersPath(entry), undefined, readSpeakerEditsError);
+  }
+
+  saveSpeakerEdits(entry: MeetingCatalogEntry, expectRevision: number, doc: SpeakerEditsDoc): Promise<SpeakerEditsState> {
+    return requestAnnotations(speakersPath(entry), { expectRevision, doc }, readSpeakerEditsError);
+  }
+
   // POST insights/<id>/retry (D-749). The run record comes back as the
   // operator now holds it — `queued`, attempt incremented — and the viewer
   // puts it in the list in place of the failed one. A 409 arrives as the
@@ -153,10 +168,15 @@ export class AppDataProvider extends StaticCatalogProvider {
 
 const meetingPath = (entry: MeetingCatalogEntry) => `meetings/${encodeURIComponent(entry.id)}`;
 const tagPath = (tagId: string) => `tags/${encodeURIComponent(tagId)}`;
+const speakersPath = (entry: MeetingCatalogEntry) => `${meetingPath(entry)}/speakers`;
 
 // A sibling of the published archive, as the insight routes are. A body makes
 // it a POST.
-async function requestAnnotations<T>(path: string, body?: object): Promise<T> {
+async function requestAnnotations<T>(
+  path: string,
+  body?: object,
+  readError: (response: Response) => Promise<Error> = readAnnotationError,
+): Promise<T> {
   const url = new URL(`../annotations/${path}`, resolvePublishedUrl("")).toString();
   const init: RequestInit =
     body === undefined
@@ -169,19 +189,45 @@ async function requestAnnotations<T>(path: string, body?: object): Promise<T> {
   // no-store: AppAPI caches a proxied GET for an hour.
   const response = await fetch(url, { ...init, cache: "no-store" });
   if (!response.ok) {
-    throw await readAnnotationError(response);
+    throw await readError(response);
   }
   return (await response.json()) as T;
 }
 
-async function readAnnotationError(response: Response): Promise<AnnotationError> {
-  let payload: unknown = null;
+async function readErrorBody(response: Response): Promise<Record<string, unknown>> {
   try {
-    payload = JSON.parse(await response.text());
+    const payload: unknown = JSON.parse(await response.text());
+    return typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
   } catch {
     // Not JSON: the status is all there is.
+    return {};
   }
-  const body = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+}
+
+const SPEAKER_EDITS_CODES: readonly string[] = [
+  "revision-conflict",
+  "busy",
+  "invalid",
+  "diarization-unavailable",
+  "unavailable",
+  "not-found",
+] satisfies SpeakerEditsErrorCode[];
+
+// The speakers route's refusals. A 404 is "not-found" whatever its body says:
+// an unknown meeting, one this caller may not read, and an operator older than
+// the route all answer it, and none of them has anything to offer here.
+async function readSpeakerEditsError(response: Response): Promise<SpeakerEditsError> {
+  const body = await readErrorBody(response);
+  const served = typeof body.error === "string" && SPEAKER_EDITS_CODES.includes(body.error) ? (body.error as SpeakerEditsErrorCode) : "";
+  return new SpeakerEditsError(response.status, response.status === 404 ? "not-found" : served, {
+    revision: typeof body.revision === "number" ? body.revision : undefined,
+    detail: typeof body.message === "string" ? body.message : undefined,
+    reason: typeof body.reason === "string" ? body.reason : undefined,
+  });
+}
+
+async function readAnnotationError(response: Response): Promise<AnnotationError> {
+  const body = await readErrorBody(response);
   return new AnnotationError(
     response.status,
     typeof body.error === "string" ? body.error : "",

@@ -57,6 +57,15 @@ export interface LoadedArtifact {
   wordEndsBoundedByAudio: boolean;
   availableTranscripts: PortableTranscriptDescriptor[];
   currentTranscriptId: string;
+  /**
+   * The revision of people's speaker edits this recording was published with
+   * (`x-speakerDiarization.editsRevision` on its default transcript's
+   * speech-to-text step). Absent when it carries none: nobody separated any
+   * voices, or the edits applied changed nothing and the operator published
+   * the original speakers. The People panel compares it with what the
+   * operator has applied, to say when the copy on screen is the older one.
+   */
+  speakerEditsRevision?: number;
 }
 
 export type ArtifactTimingPrecisionLevel = "word" | "mixed" | "segment";
@@ -125,10 +134,19 @@ export class PortableMeetingStore {
   // A → B → A without re-fetching or re-decompressing payloads.
   private readonly bodyCache = new Map<string, Map<string, unknown>>();
 
-  async loadManifest(audioUrl: string): Promise<ExtractedPortableManifest> {
+  // `fresh` drops what is cached for this file and reads it from the server:
+  // the recording at this path was republished (its speakers changed), and
+  // both the parsed copy here and the browser's copy are the old one. The
+  // read replaces the browser's copy ("reload", not "no-store"), so what reads
+  // the file next — the player's range requests included — gets the new bytes.
+  async loadManifest(audioUrl: string, options: { fresh?: boolean } = {}): Promise<ExtractedPortableManifest> {
+    if (options.fresh) {
+      this.manifestCache.delete(audioUrl);
+      this.bodyCache.delete(audioUrl);
+    }
     let manifestPromise = this.manifestCache.get(audioUrl);
     if (!manifestPromise) {
-      manifestPromise = fetchPortableManifest(audioUrl);
+      manifestPromise = fetchPortableManifest(audioUrl, options.fresh ? { cache: "reload" } : {});
       this.manifestCache.set(audioUrl, manifestPromise);
     }
     try {
@@ -219,9 +237,10 @@ export async function loadArtifactFromDirectory(basePath: string): Promise<Loade
 export async function loadPortableArtifactFromAudioPath(
   audioPath: string,
   store: PortableMeetingStore = defaultPortableStore,
+  options: { fresh?: boolean } = {},
 ): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const { manifest } = await store.loadManifest(resolvedAudioPath);
+  const { manifest } = await store.loadManifest(resolvedAudioPath, options);
   const availableTranscripts = listAvailableTranscripts(manifest);
   const currentTranscriptId = getDefaultTranscriptId(manifest);
   store.primeBodies(resolvedAudioPath, manifest, currentTranscriptId);
@@ -362,6 +381,7 @@ function buildPortableLoadedArtifact({
     wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest.provenance),
     availableTranscripts,
     currentTranscriptId,
+    speakerEditsRevision: readSpeakerEditsRevision(manifest),
   };
 }
 
@@ -501,8 +521,9 @@ function resolveDocumentAssetUrl(assetPath: string): string {
   return new URL(assetPath, window.location.href).toString();
 }
 
-async function fetchPortableManifest(audioUrl: string): Promise<ExtractedPortableManifest> {
+async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): Promise<ExtractedPortableManifest> {
   const partialResponse = await fetch(audioUrl, {
+    ...init,
     headers: {
       Range: `bytes=0-${PORTABLE_METADATA_RANGE_END}`,
     },
@@ -520,7 +541,7 @@ async function fetchPortableManifest(audioUrl: string): Promise<ExtractedPortabl
     }
   }
 
-  const fullResponse = await fetch(audioUrl);
+  const fullResponse = await fetch(audioUrl, init);
   if (!fullResponse.ok) {
     throw new Error(`Could not load ${audioUrl}.`);
   }
@@ -586,6 +607,20 @@ async function probeOptionalText(assetPath: string): Promise<string | null> {
 export function readWordEndsBoundedByAudio(provenance: unknown): boolean {
   const wordTimings = asMaybeObject(asMaybeObject(provenance)?.wordTimings);
   return wordTimings?.endsBoundedByAudio === true;
+}
+
+/**
+ * The speaker-edits revision a published recording carries, or undefined.
+ *
+ * Read from the DEFAULT transcript's step whatever transcript is shown: the
+ * separated voices are the default one, and the record says which edits the
+ * file was published with, not which transcript the reader picked.
+ */
+export function readSpeakerEditsRevision(manifest: PortableMeetingManifest): number | undefined {
+  const speechToText = asMaybeObject(asMaybeObject(manifest.provenance)?.speechToText);
+  const step = asMaybeObject(speechToText?.[getDefaultTranscriptId(manifest)]);
+  const revision = asMaybeObject(step?.["x-speakerDiarization"])?.editsRevision;
+  return typeof revision === "number" && Number.isInteger(revision) && revision > 0 ? revision : undefined;
 }
 
 function asLooseObject(input: unknown): Record<string, unknown> {

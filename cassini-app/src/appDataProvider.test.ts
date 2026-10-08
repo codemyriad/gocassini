@@ -289,6 +289,66 @@ describe("AppDataProvider annotations", () => {
   });
 });
 
+describe("AppDataProvider speaker edits", () => {
+  const answer = {
+    available: true, reason: "", revision: 4, appliedRevision: 3, state: "applying", lastError: "",
+    doc: { format: "cassini.speaker-edits.v1", revision: 4, splits: [{ speakerId: "spk_room" }], merges: [], labels: [] },
+    participants: [{ id: "spk_room", label: "Meeting room laptop" }], report: null,
+  };
+  const calls = (fetchMock: ReturnType<typeof respondWith>) =>
+    (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(([url, init]) => ({
+      path: url.replace(PROXY_BASE, ""),
+      method: init.method ?? "GET",
+      body: init.body,
+      cache: init.cache,
+    }));
+
+  it("reads and saves a meeting's speakers beside its marks, past the proxy's cache", async () => {
+    const fetchMock = respondWith(JSON.stringify(answer));
+    const provider = new AppDataProvider();
+    const doc = { splits: [{ speakerId: "spk_room" }], merges: [], labels: [] };
+
+    await expect(provider.loadSpeakerEdits(entry("m 1"))).resolves.toEqual(answer);
+    await expect(provider.saveSpeakerEdits(entry("m 1"), 3, doc)).resolves.toEqual(answer);
+
+    expect(calls(fetchMock)).toEqual([
+      { path: "annotations/meetings/m%201/speakers", method: "GET", body: undefined, cache: "no-store" },
+      {
+        path: "annotations/meetings/m%201/speakers",
+        method: "POST",
+        body: JSON.stringify({ expectRevision: 3, doc }),
+        cache: "no-store",
+      },
+    ]);
+  });
+
+  it.each([
+    [409, { error: "revision-conflict", revision: 7 }, { code: "revision-conflict", revision: 7 }],
+    [409, { error: "busy" }, { code: "busy" }],
+    [400, { error: "invalid", message: "label too long" }, { code: "invalid", detail: "label too long" }],
+    [503, { error: "diarization-unavailable" }, { code: "diarization-unavailable" }],
+    // A split meeting whose participant audio has gone since.
+    [409, { error: "unavailable", reason: "no-source-audio" }, { code: "unavailable", reason: "no-source-audio" }],
+    [404, { error: "meeting not found" }, { code: "not-found" }],
+    [500, { error: "database is locked" }, { code: "" }],
+  ])("reports a %i refusal as its typed code", async (status, body, expected) => {
+    respondWith(JSON.stringify(body), { status });
+
+    await expect(
+      new AppDataProvider().saveSpeakerEdits(entry("m1"), 1, { splits: [], merges: [], labels: [] }),
+    ).rejects.toMatchObject({ name: "SpeakerEditsError", status, ...expected });
+  });
+
+  it("calls an older operator that has no speakers route not found", async () => {
+    respondWith("404 page not found\n", { status: 404 });
+
+    await expect(new AppDataProvider().loadSpeakerEdits(entry("m1"))).rejects.toMatchObject({
+      name: "SpeakerEditsError",
+      code: "not-found",
+    });
+  });
+});
+
 describe("AppDataProvider.retryInsight", () => {
   it("posts to the run's own retry path and returns the run the operator answered with", async () => {
     // The viewer puts this record in the list in place of the failed one, so
