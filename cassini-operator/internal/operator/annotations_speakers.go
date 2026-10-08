@@ -63,9 +63,13 @@ type speakerEditsResponse struct {
 }
 
 // speakerEditsProgress tells the page what an applying edit is waiting for.
-// EstimatedMs is the expected time from queue to republished and stays the
-// same for the whole attempt, so the page counts down against ElapsedMs on its
-// own clock between polls.
+// EstimatedMs is the expected time from the attempt's start to republished:
+// the work only, never the wait behind other builds or a recording, and it
+// stays the same for the whole attempt. ElapsedMs is measured from when the
+// attempt was queued while Phase is queued (how long it has waited), and from
+// when it started once it has (build_started_at), so the page counts down
+// EstimatedMs-ElapsedMs on its own clock between polls only once the work
+// runs, and a long queue never eats the countdown.
 type speakerEditsProgress struct {
 	Phase       string `json:"phase"`
 	ElapsedMs   int64  `json:"elapsedMs"`
@@ -82,10 +86,14 @@ const (
 	// speakerPhaseUpdating: apply, summary, seal and publish.
 	speakerPhaseUpdating = "updating"
 
-	// speakerRefineFixedMs is everything but diarization: apply with its
-	// summary rewrite, seal and publish (14 s measured on a 64-minute meeting).
-	speakerRefineFixedMs = 15000
-	speakerRefineMinMs   = 5000
+	// Everything but diarization — apply with its summary rewrite, seal and
+	// publish — is speakerRefineBaseMs plus speakerRefineFixedRate per audio
+	// millisecond: measured about 3.5 s on a 3-minute meeting and 14 s on a
+	// 64-minute one. The base is also the floor: an edit of a meeting whose
+	// length is unknown is estimated at 3 s, no more, so a short meeting's
+	// countdown does not promise twice its real time.
+	speakerRefineBaseMs    = 3000
+	speakerRefineFixedRate = 0.003
 	// Diarization time per audio millisecond, decoding included. The default
 	// is what a CPU operator measured before it has run any of its own.
 	speakerDiarizeRateDefault = 0.016
@@ -386,7 +394,8 @@ func (rt *Runtime) speakerNow() time.Time {
 // its estimate. The estimate depends only on what was known when the attempt
 // was queued — which splits had no turns then, the meeting's length, and the
 // turn sets stored before it — so it does not move while the attempt runs,
-// not even when its own diarization stores a new turn set.
+// not even when its own diarization stores a new turn set. Elapsed time
+// counts from the queue while the attempt waits and from its start after.
 func (rt *Runtime) speakerRefineProgress(ctx context.Context, jobID string, attempt speakerEditsAttempt) (*speakerEditsProgress, error) {
 	queuedAt, queuedKnown := time.Time{}, false
 	if at, err := parseInsightTime(attempt.QueuedAt); err == nil {
@@ -396,17 +405,25 @@ func (rt *Runtime) speakerRefineProgress(ctx context.Context, jobID string, atte
 	if err != nil {
 		return nil, err
 	}
-	missingNow, diarizes := false, false
+	// Every split without turns at queue time is diarized, one after another,
+	// each over its own full-length track.
+	missingNow, diarizes := false, 0
+	counted := map[string]bool{}
 	for _, split := range attempt.Doc.Splits {
+		if counted[split.SpeakerID] {
+			continue
+		}
+		counted[split.SpeakerID] = true
 		at, ok := stored[split.SpeakerID]
 		if !ok {
-			missingNow, diarizes = true, true
+			missingNow = true
+			diarizes++
 			continue
 		}
 		// Stored since the attempt was queued: by this attempt, which had to
 		// diarize when it was queued.
 		if t, err := parseInsightTime(at); err == nil && queuedKnown && !t.Before(queuedAt) {
-			diarizes = true
+			diarizes++
 		}
 	}
 
@@ -417,21 +434,26 @@ func (rt *Runtime) speakerRefineProgress(ctx context.Context, jobID string, atte
 	case missingNow:
 		progress.Phase = speakerPhaseSeparating
 	}
-	if queuedKnown {
-		progress.ElapsedMs = max(rt.speakerNow().Sub(queuedAt).Milliseconds(), 0)
+	since, sinceKnown := queuedAt, queuedKnown
+	if progress.Phase != speakerPhaseQueued {
+		if at, err := parseInsightTime(attempt.StartedAt); err == nil {
+			since, sinceKnown = at, true
+		}
+	}
+	if sinceKnown {
+		progress.ElapsedMs = max(rt.speakerNow().Sub(since).Milliseconds(), 0)
 	}
 
-	var audioMs int64
+	audioMs := readSpeakerMeetingAudioMs(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
 	rate := 0.0
-	if diarizes {
-		audioMs = readSpeakerMeetingAudioMs(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
+	if diarizes > 0 {
 		runs, err := rt.store.SpeakerDiarizationRuns(ctx)
 		if err != nil {
 			return nil, err
 		}
 		rate = learnedSpeakerDiarizeRate(runs, queuedAt, queuedKnown)
 	}
-	progress.EstimatedMs = speakerRefineEstimateMs(audioMs, rate, diarizes, speakerRefineFixedMs)
+	progress.EstimatedMs = speakerRefineEstimateMs(audioMs, rate, diarizes)
 	return progress, nil
 }
 
@@ -461,15 +483,21 @@ func learnedSpeakerDiarizeRate(runs []speakerDiarizationRun, before time.Time, b
 	return min(max(median*speakerDiarizeDecodeFactor, speakerDiarizeRateMin), speakerDiarizeRateMax)
 }
 
-// speakerRefineEstimateMs is the expected time from queue to republished:
-// the diarization when the attempt has to run one, plus fixedMs, never less
-// than speakerRefineMinMs.
-func speakerRefineEstimateMs(audioMs int64, rate float64, diarizes bool, fixedMs int64) int64 {
-	estimate := fixedMs
-	if diarizes && audioMs > 0 {
-		estimate += int64(float64(audioMs)*rate + 0.5)
+// speakerRefineFixedMs is the part of a refine that is not diarization:
+// apply with its summary rewrite, seal and publish, for a meeting of audioMs.
+func speakerRefineFixedMs(audioMs int64) int64 {
+	return speakerRefineBaseMs + int64(float64(max(audioMs, 0))*speakerRefineFixedRate+0.5)
+}
+
+// speakerRefineEstimateMs is the expected time from the attempt's start to
+// republished: one diarization of the meeting's length for each of the
+// diarizes splits it has to separate, at rate, plus the fixed part.
+func speakerRefineEstimateMs(audioMs int64, rate float64, diarizes int) int64 {
+	estimate := speakerRefineFixedMs(audioMs)
+	if diarizes > 0 && audioMs > 0 {
+		estimate += int64(float64(diarizes)*float64(audioMs)*rate + 0.5)
 	}
-	return max(estimate, speakerRefineMinMs)
+	return estimate
 }
 
 // readSpeakerMeetingAudioMs is the meeting's length: the bundle manifest's

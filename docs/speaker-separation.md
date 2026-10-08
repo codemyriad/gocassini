@@ -207,21 +207,32 @@ is checked the same way as for marks: a meeting the caller cannot open answers
     or a recording, `separating` while it runs and a split it applies has no
     stored turns yet (the diarizer is working), and `updating` for the rest
     (apply with the summary rewrite, seal, publish);
-  - `elapsedMs` is the operator's time now minus when the attempt was queued;
-  - `estimatedMs` is the expected time from queued to republished: the
-    meeting's length (`durationMs` of `current/<job>.meeting`, from its
-    manifest or else its transcript) times this operator's diarization pace,
-    when a split had no stored turns at queue time, plus 15 s for apply,
-    summary, seal and publish; never under 5 s. The pace is the median
-    `elapsedMs / durationMs` of the turn sets this operator has stored, ×1.15
-    for decoding, kept between 0.005 and 0.1, or 0.016 before it has any. It
-    uses only what was known when the attempt was queued, so it stays the
-    same for the whole attempt and the page counts down on its own between
-    polls. A rename, merge or undo over stored turns is estimated at 15 s.
+  - `elapsedMs` is the operator's time now minus when the attempt was queued
+    while `phase` is `queued` — how long it has waited — and minus when it
+    started (`build_started_at`) once it has. A resource deferral that sends
+    the attempt back to the queue reports the wait from the original queue
+    time again, and the next start resets it;
+  - `estimatedMs` is the expected time from the attempt's start to
+    republished — the work only, never the queue wait, so a long wait does
+    not eat the countdown. It is 3 s plus 0.003 × the meeting's length for
+    apply, summary, seal and publish, plus, for each split that had no
+    stored turns at queue time, the meeting's length times this operator's
+    diarization pace (each split diarizes its own full-length track, one
+    after another). The length is `durationMs` of `current/<job>.meeting`,
+    from its manifest or else its transcript; when neither says, the
+    estimate is the 3 s base, which is also its floor. The pace is the
+    median `elapsedMs / durationMs` of the turn sets this operator has
+    stored, ×1.15 for decoding, kept between 0.005 and 0.1, or 0.016 before
+    it has any. It uses only what was known when the attempt was queued, so
+    it stays the same for the whole attempt and the page counts down
+    `estimatedMs − elapsedMs` on its own between polls once `phase` is past
+    `queued`. A rename, merge or undo over stored turns is estimated at
+    about 3.5 s for a 3-minute meeting and 14.5 s for a 64-minute one.
 
   Measured on a CPU operator: a 64-minute meeting took 74 s from save to
   republished (61 s decoding and diarizing, 9 s apply with the summary
-  rewrite, 5 s seal and publish); 3-minute meetings take 4–7 s.
+  rewrite, 5 s seal and publish); the part that is not diarization took
+  3–4 s on 3-minute meetings and about 14 s on the 64-minute one.
 - `POST {expectRevision, doc}` stores the next revision and queues a `refine`
   attempt in one transaction. It answers 200 with the `GET` shape, or:
   - 409 `{"error":"revision-conflict","revision":n}`;

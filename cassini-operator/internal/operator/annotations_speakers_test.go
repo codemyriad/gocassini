@@ -339,6 +339,24 @@ func setSpeakerAttemptStage(t *testing.T, f *speakersFixture, attempt int, stage
 	}
 }
 
+// startSpeakerAttempt claims a queued attempt the way the build worker does:
+// running, with build_started_at at.
+func startSpeakerAttempt(t *testing.T, f *speakersFixture, attempt int, at time.Time) {
+	t.Helper()
+	if _, err := f.rt.store.db.Exec(`UPDATE job_attempts SET stage = 'build', state = 'running', build_started_at = ? WHERE job_id = 'MEETING1' AND attempt_number = ?`, formatUTCString(at), attempt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// deferSpeakerAttempt sends a running attempt back to the queue the way a
+// resource deferral does: build_queued_at kept, build_started_at cleared.
+func deferSpeakerAttempt(t *testing.T, f *speakersFixture, attempt int) {
+	t.Helper()
+	if _, err := f.rt.store.db.Exec(`UPDATE job_attempts SET stage = 'build', state = 'queued', build_started_at = NULL WHERE job_id = 'MEETING1' AND attempt_number = ?`, attempt); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func putSpeakerTurnSet(t *testing.T, store *Store, jobID, speakerID string, elapsedMs, durationMs int64, storedAt time.Time) {
 	t.Helper()
 	turns := fmt.Sprintf(`{"format":"cassini.speaker-turns.v1","speakerId":%q,"durationMs":%d,"elapsedMs":%d,"turns":[]}`, speakerID, durationMs, elapsedMs)
@@ -395,8 +413,9 @@ func TestSpeakersProgressIsNullUnlessApplying(t *testing.T) {
 // One split, nothing learned yet: queued, then separating while the
 // diarizer runs, then updating once the turns are stored, and gone once the
 // recording carries the edits. The estimate is the default pace over the
-// meeting's length plus the fixed tail, and does not move while it runs —
-// not even when the attempt stores a turn set of its own.
+// meeting's length plus the fixed part, and does not move while it runs —
+// not even when the attempt stores a turn set of its own. Once the attempt
+// starts, elapsed counts from its start: the 3 s it waited are not work.
 func TestSpeakersProgressFollowsASplitThroughItsPhases(t *testing.T) {
 	f := newSpeakersFixture(t)
 	f.installModel(t)
@@ -404,29 +423,30 @@ func TestSpeakersProgressFollowsASplitThroughItsPhases(t *testing.T) {
 	setSpeakerMeetingAudioMs(t, f.rt.cfg.WorkRoot, "MEETING1", 3_840_000)
 	clock := f.useClock(speakerProgressT0)
 
-	const estimate = 3_840_000*16/1000 + speakerRefineFixedMs // 61 440 + 15 000
+	const estimate = 3_840_000*16/1000 + 3_000 + 3_840_000*3/1000 // 61 440 diarizing + 14 520 fixed
 	resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}]}}`)
 	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, ElapsedMs: 0, EstimatedMs: estimate})
 
 	clock.advance(3 * time.Second)
 	wantSpeakerProgress(t, "still queued", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseQueued, ElapsedMs: 3000, EstimatedMs: estimate})
 
-	setSpeakerAttemptStage(t, f, 2, "build", "running")
+	startSpeakerAttempt(t, f, 2, clock.now)
 	clock.advance(40 * time.Second)
-	wantSpeakerProgress(t, "separating", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseSeparating, ElapsedMs: 43_000, EstimatedMs: estimate})
+	wantSpeakerProgress(t, "separating", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseSeparating, ElapsedMs: 40_000, EstimatedMs: estimate})
 
 	// The diarizer finishes, at a pace that would change a learned rate.
 	clock.advance(20 * time.Second)
 	putSpeakerTurnSet(t, f.rt.store, "MEETING1", speakerTestRoom, 55_903, 3_850_492, clock.now)
-	wantSpeakerProgress(t, "applying", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 63_000, EstimatedMs: estimate})
+	wantSpeakerProgress(t, "applying", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 60_000, EstimatedMs: estimate})
 
+	// Seal and publish keep the build's start.
 	setSpeakerAttemptStage(t, f, 2, "publish", "queued")
 	clock.advance(10 * time.Second)
-	wantSpeakerProgress(t, "publishing", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 73_000, EstimatedMs: estimate})
+	wantSpeakerProgress(t, "publishing", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 70_000, EstimatedMs: estimate})
 
 	// Running past the estimate is reported as it is.
 	clock.advance(time.Minute)
-	wantSpeakerProgress(t, "late", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 133_000, EstimatedMs: estimate})
+	wantSpeakerProgress(t, "late", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 130_000, EstimatedMs: estimate})
 
 	if _, err := f.rt.store.db.Exec(`UPDATE speaker_edits SET applied_revision = 1 WHERE job_id = 'MEETING1'`); err != nil {
 		t.Fatal(err)
@@ -457,7 +477,7 @@ func TestSpeakersProgressLearnsThePaceFromStoredTurnSets(t *testing.T) {
 	clock := f.useClock(speakerProgressT0)
 
 	// median 0.02 × 1.15 = 0.023 per audio ms.
-	const estimate = 3_840_000*23/1000 + speakerRefineFixedMs // 88 320 + 15 000
+	const estimate = 3_840_000*23/1000 + 14_520 // 88 320 diarizing + the fixed part
 	resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}]}}`)
 	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, EstimatedMs: estimate})
 
@@ -470,20 +490,103 @@ func TestSpeakersProgressLearnsThePaceFromStoredTurnSets(t *testing.T) {
 }
 
 // Naming, merging or undoing over turns that are already stored runs no
-// diarizer: the estimate is the fixed tail and the attempt never separates.
+// diarizer: the estimate is the fixed part alone, which grows with the
+// meeting — 14.5 s for 64 minutes, 3.5 s for 3 — and the attempt never
+// separates.
 func TestSpeakersProgressOfAnEditThatNeedsNoDiarizer(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		audioMs  int64
+		estimate int64
+	}{
+		{"64 minutes", 3_840_000, 14_520},
+		{"3 minutes", 180_000, 3_540},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSpeakersFixture(t)
+			f.installModel(t)
+			seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+			setSpeakerMeetingAudioMs(t, f.rt.cfg.WorkRoot, "MEETING1", tc.audioMs)
+			putSpeakerTurnSet(t, f.rt.store, "MEETING1", speakerTestRoom, 55_903, 3_850_492, speakerProgressT0.Add(-time.Hour))
+			clock := f.useClock(speakerProgressT0)
+
+			resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}],"labels":[{"speakerId":"spk_room~1","label":"Ann"}]}}`)
+			wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, EstimatedMs: tc.estimate})
+			startSpeakerAttempt(t, f, 2, clock.now)
+			clock.advance(400 * time.Millisecond)
+			wantSpeakerProgress(t, "running", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 400, EstimatedMs: tc.estimate})
+		})
+	}
+}
+
+// Each split that has no turns yet is diarized over its own full-length
+// track, one after another: two new splits take twice the diarizing; a split
+// whose turns are already stored adds nothing.
+func TestSpeakersProgressCountsEverySplitToDiarize(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	setSpeakerMeetingAudioMs(t, f.rt.cfg.WorkRoot, "MEETING1", 3_840_000)
+	clock := f.useClock(speakerProgressT0)
+
+	const estimate = 2*3_840_000*16/1000 + 14_520 // 2 × 61 440 diarizing + the fixed part
+	resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"},{"speakerId":"spk_remote"}]}}`)
+	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, EstimatedMs: estimate})
+
+	// The first split's turns land: the attempt still separates the second,
+	// and the estimate it was queued with stands.
+	startSpeakerAttempt(t, f, 2, clock.now)
+	clock.advance(70 * time.Second)
+	putSpeakerTurnSet(t, f.rt.store, "MEETING1", speakerTestRoom, 55_903, 3_850_492, clock.now)
+	wantSpeakerProgress(t, "second split", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseSeparating, ElapsedMs: 70_000, EstimatedMs: estimate})
+}
+
+// One split already has turns and one has none: only the second counts.
+func TestSpeakersProgressSkipsSplitsWithStoredTurns(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	setSpeakerMeetingAudioMs(t, f.rt.cfg.WorkRoot, "MEETING1", 3_840_000)
+	// Its pace, ×1.15 for decoding, is the default 0.016 per audio ms.
+	putSpeakerTurnSet(t, f.rt.store, "MEETING1", speakerTestRoom, 16_000, 1_150_000, speakerProgressT0.Add(-time.Hour))
+	f.useClock(speakerProgressT0)
+
+	const estimate = 3_840_000*16/1000 + 14_520 // only spk_remote is diarized
+	resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"},{"speakerId":"spk_remote"}]}}`)
+	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, EstimatedMs: estimate})
+}
+
+// A long wait in the queue does not eat the countdown: while queued, elapsed
+// is the wait so far; once the attempt starts it counts from the start, and
+// a resource deferral that sends it back to the queue reports the wait from
+// the original queue time again until it restarts.
+func TestSpeakersProgressCountsDownFromTheStartNotTheQueue(t *testing.T) {
 	f := newSpeakersFixture(t)
 	f.installModel(t)
 	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
 	setSpeakerMeetingAudioMs(t, f.rt.cfg.WorkRoot, "MEETING1", 3_840_000)
 	putSpeakerTurnSet(t, f.rt.store, "MEETING1", speakerTestRoom, 55_903, 3_850_492, speakerProgressT0.Add(-time.Hour))
 	clock := f.useClock(speakerProgressT0)
+	const estimate = 14_520
 
 	resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}],"labels":[{"speakerId":"spk_room~1","label":"Ann"}]}}`)
-	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, EstimatedMs: speakerRefineFixedMs})
-	setSpeakerAttemptStage(t, f, 2, "build", "running")
-	clock.advance(400 * time.Millisecond)
-	wantSpeakerProgress(t, "running", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 400, EstimatedMs: speakerRefineFixedMs})
+	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, EstimatedMs: estimate})
+
+	// Five minutes behind another build: longer than the whole estimate.
+	clock.advance(5 * time.Minute)
+	wantSpeakerProgress(t, "waiting", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseQueued, ElapsedMs: 300_000, EstimatedMs: estimate})
+
+	startSpeakerAttempt(t, f, 2, clock.now)
+	clock.advance(2 * time.Second)
+	wantSpeakerProgress(t, "started", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 2_000, EstimatedMs: estimate})
+
+	deferSpeakerAttempt(t, f, 2)
+	clock.advance(time.Second)
+	wantSpeakerProgress(t, "deferred", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseQueued, ElapsedMs: 303_000, EstimatedMs: estimate})
+
+	startSpeakerAttempt(t, f, 2, clock.now)
+	clock.advance(500 * time.Millisecond)
+	wantSpeakerProgress(t, "restarted", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 500, EstimatedMs: estimate})
 }
 
 func TestSpeakerDiarizeRateIsClampedAndDefaulted(t *testing.T) {
@@ -511,19 +614,28 @@ func TestSpeakerDiarizeRateIsClampedAndDefaulted(t *testing.T) {
 	}
 }
 
-func TestSpeakerRefineEstimateHasAFloor(t *testing.T) {
-	if got := speakerRefineEstimateMs(0, 0, false, 0); got != speakerRefineMinMs {
-		t.Fatalf("estimate with nothing to do = %d, want the %d ms floor", got, speakerRefineMinMs)
+func TestSpeakerRefineEstimateScalesWithTheMeeting(t *testing.T) {
+	cases := []struct {
+		name     string
+		audioMs  int64
+		diarizes int
+		wantMs   int64
+	}{
+		// Unknown length: only the base is known, and it is the floor.
+		{"unknown length", 0, 0, speakerRefineBaseMs},
+		{"unknown length, splits to diarize", 0, 2, speakerRefineBaseMs},
+		// Calibrated against measured runs: 3–4 s for 3 minutes, 14 s for 64.
+		{"3 minutes", 180_000, 0, 3_540},
+		{"64 minutes", 3_840_000, 0, 14_520},
+		{"3 minutes, one split", 180_000, 1, 3_540 + 2_880},
+		{"64 minutes, three splits", 3_840_000, 3, 14_520 + 3*61_440},
 	}
-	if got := speakerRefineEstimateMs(100_000, 0.016, true, 1_000); got != speakerRefineMinMs {
-		t.Fatalf("short estimate = %d, want the floor", got)
-	}
-	if got := speakerRefineEstimateMs(1_000_000, 0.016, false, speakerRefineFixedMs); got != speakerRefineFixedMs {
-		t.Fatalf("no diarization = %d, want the fixed tail", got)
-	}
-	// Unknown length: only the fixed tail is known.
-	if got := speakerRefineEstimateMs(0, 0.016, true, speakerRefineFixedMs); got != speakerRefineFixedMs {
-		t.Fatalf("unknown length = %d", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := speakerRefineEstimateMs(tc.audioMs, 0.016, tc.diarizes); got != tc.wantMs {
+				t.Fatalf("estimate = %d, want %d", got, tc.wantMs)
+			}
+		})
 	}
 }
 

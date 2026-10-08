@@ -207,6 +207,10 @@ type speakerEditsAttempt struct {
 	// QueuedAt is when the attempt was queued: build_queued_at, which a
 	// resource deferral keeps, or created_at for a row without one.
 	QueuedAt string
+	// StartedAt is build_started_at: when a build worker claimed the attempt,
+	// kept through seal and publish. Empty while it waits, and cleared again
+	// by a resource deferral that sends it back to the queue.
+	StartedAt string
 }
 
 // GetSpeakerEdits returns the job's edits, or the empty document at revision 0.
@@ -240,11 +244,11 @@ func (s *Store) LatestSpeakerEditsAttempt(ctx context.Context, jobID string) (sp
 	var snapshot string
 	var attemptError sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-SELECT attempt_number, stage, state, error, speaker_edits_json, COALESCE(build_queued_at, created_at)
+SELECT attempt_number, stage, state, error, speaker_edits_json, COALESCE(build_queued_at, created_at), COALESCE(build_started_at, '')
 FROM job_attempts
 WHERE job_id = ? AND speaker_edits_json IS NOT NULL
 ORDER BY attempt_number DESC
-LIMIT 1`, jobID).Scan(&a.AttemptNumber, &a.Stage, &a.State, &attemptError, &snapshot, &a.QueuedAt)
+LIMIT 1`, jobID).Scan(&a.AttemptNumber, &a.Stage, &a.State, &attemptError, &snapshot, &a.QueuedAt, &a.StartedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, false, nil
 	}
