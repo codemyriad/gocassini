@@ -40,7 +40,9 @@ const (
 // speakerDiarizeMemMB is the RAM one diarization needs on top of the host's
 // headroom: the model, plus the participant's track decoded to 16 kHz
 // float32 (64 bytes per audio millisecond, about 230 MB an hour), which it
-// holds whole while the model runs.
+// holds whole while the model runs. One track whatever the participant's
+// streams: the CLI decodes each reconnection straight into the first's
+// buffer, so a rejoin adds a read chunk, not a second meeting-length track.
 func speakerDiarizeMemMB(audioMs int64) int {
 	return speakerDiarizeModelMB + int((max(audioMs, 0)*64+(1<<20)-1)>>20)
 }

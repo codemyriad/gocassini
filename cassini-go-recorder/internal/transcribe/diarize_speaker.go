@@ -124,13 +124,15 @@ func WriteSpeakerTurnSet(path string, set SpeakerTurnSet) error {
 	return writeJSON(path, set)
 }
 
-// extractSpeakerFloatsFn decodes one stream; tests replace it.
-var extractSpeakerFloatsFn = ExtractSpeakerFloats
+// addSpeakerFloatsFn decodes one stream into a mix; tests replace it.
+var addSpeakerFloatsFn = AddSpeakerFloats
 
 // DiarizeSpeaker diarizes one participant's own audio in a recording. A
 // participant who rejoined has several streams; they are summed on the
 // meeting timeline (each decode is already timeline-aligned), so the voices
-// keep one numbering across the whole meeting.
+// keep one numbering across the whole meeting. Each later stream is decoded
+// straight into the running mix: however often someone reconnected, the
+// diarizer holds one meeting-length buffer, never one per stream.
 func DiarizeSpeaker(ctx context.Context, mkvPath, speakerID string, model DiarizationModel) (SpeakerTurnSet, error) {
 	streams, _, err := ProbeMKV(mkvPath)
 	if err != nil {
@@ -148,24 +150,10 @@ func DiarizeSpeaker(ctx context.Context, mkvPath, speakerID string, model Diariz
 		if err := ctx.Err(); err != nil {
 			return SpeakerTurnSet{}, err
 		}
-		samples, err := extractSpeakerFloatsFn(mkvPath, s)
-		if err != nil {
+		if mix, err = addSpeakerFloatsFn(mkvPath, s, mix); err != nil {
 			return SpeakerTurnSet{}, err
 		}
 		used = append(used, s.Index)
-		if mix == nil {
-			// The usual case, one stream: diarize its own buffer. A copy would
-			// hold the whole decoded track twice while the model runs, since
-			// the native call allocates nothing the Go collector sees.
-			mix = samples
-			continue
-		}
-		if len(samples) > len(mix) {
-			mix = append(mix, make([]float32, len(samples)-len(mix))...)
-		}
-		for i, v := range samples {
-			mix[i] += v
-		}
 	}
 	if len(used) == 0 {
 		return SpeakerTurnSet{}, fmt.Errorf("%w: %s", ErrSpeakerNotFound, speakerID)

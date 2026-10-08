@@ -263,6 +263,29 @@ func TestRefineDiarizationWaitsForMemoryLikeABuild(t *testing.T) {
 	}
 }
 
+// A participant who reconnected has a stream per connection, and the CLI
+// sums them for the diarizer. It decodes each later stream into the running
+// mix, so the peak is one meeting-length track however often they rejoined —
+// the budget admission waits for. An eight-hour meeting needs 1,758 MiB per
+// track: one track must fit in 3,300 MiB free with the 1,024 MiB headroom,
+// where two (3,516 MiB of audio) would not.
+func TestSpeakerDiarizeBudgetIsOneTrackForAReconnectingParticipant(t *testing.T) {
+	const eightHours = int64(8 * 60 * 60 * 1000)
+	const trackMB = (eightHours*16*4 + 1<<20 - 1) >> 20 // 16 samples/ms of float32
+	if got, want := speakerDiarizeMemMB(eightHours), speakerDiarizeModelMB+int(trackMB); got != want {
+		t.Fatalf("speakerDiarizeMemMB(8h) = %d, want the model and one %d MiB track = %d", got, trackMB, want)
+	}
+	t.Setenv("CASSINI_BUILD_MEM_WAIT_SECS", "0")
+	t.Setenv("CASSINI_BUILD_CPU_MEM_HEADROOM_MB", "1024")
+	orig := probeAvailableMem
+	t.Cleanup(func() { probeAvailableMem = orig })
+	probeAvailableMem = func() int { return 3300 }
+	limits := resourceLimitsFromEnv()
+	if err := limits.waitForMemory(context.Background(), speakerDiarizeMemMB(eightHours)+limits.cpuMemHeadroomMB, func(string, ...any) {}); err != nil {
+		t.Fatalf("an eight-hour diarization was refused with 3,300 MiB free: %v", err)
+	}
+}
+
 // The refine itself refuses to copy an unpublished rebuild, whatever queued
 // it: with marks the carry would refuse the changed audio, and without marks
 // the rebuild would be published under the name of a speaker edit.
