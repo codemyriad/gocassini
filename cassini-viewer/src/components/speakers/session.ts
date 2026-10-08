@@ -159,6 +159,18 @@ export function speakerOverlayFor({
   return { labels: saved.doc.labels, merges: saved.doc.merges, base };
 }
 
+// The pending edits left once `submitted` is saved: every entry typed or
+// changed since it was sent.
+function withoutSubmitted(pending: PendingSpeakerEdits, submitted: PendingSpeakerEdits): PendingSpeakerEdits {
+  const labels = Object.fromEntries(
+    Object.entries(pending.labels).filter(([id, label]) => !(id in submitted.labels) || submitted.labels[id] !== label),
+  );
+  const merges = Object.fromEntries(
+    Object.entries(pending.merges).filter(([id, into]) => !(id in submitted.merges) || submitted.merges[id] !== into),
+  );
+  return { labels, merges };
+}
+
 // One meeting's speaker edits: the operator's state, the reader's unsaved
 // edits, and polling while the operator applies a saved revision. Every write
 // is the whole desired document with the revision it was made from, so there is
@@ -260,14 +272,16 @@ export function createSpeakersSession(options: { pollMs?: number; retryMs?: numb
   }
 
   async function write(next: (doc: SpeakerEditsDoc) => SpeakerEditsDoc, clearPending: boolean) {
-    const { server, saving } = get(state);
+    const { server, saving, pending: submitted } = get(state);
     if (!save || !server || saving) return false;
     const current = generation;
     state.update((s) => ({ ...s, saving: true, error: "" }));
     try {
       const answer = await save(server.revision, speakerEditsBody(next(server.doc)));
       if (current !== generation) return false;
-      state.update((s) => ({ ...s, saving: false, pending: clearPending ? emptyPending() : s.pending }));
+      // Only what was sent is saved: a name typed while the save was on its
+      // way stays pending.
+      state.update((s) => ({ ...s, saving: false, pending: clearPending ? withoutSubmitted(s.pending, submitted) : s.pending }));
       receive(answer);
       return true;
     } catch (error) {

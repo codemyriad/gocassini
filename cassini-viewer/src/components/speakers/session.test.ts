@@ -174,6 +174,29 @@ describe("speakers session", () => {
     session.close();
   });
 
+  it("keeps a name typed while the save was on its way", async () => {
+    let answer!: (value: SpeakerEditsState) => void;
+    const save = vi.fn(() => new Promise<SpeakerEditsState>((resolve) => { answer = resolve; }));
+    const session = createSpeakersSession();
+    await session.open(async () => state(), save);
+    session.setLabel("room~1", "Mira");
+    session.setLabel("room~2", "Leo");
+
+    const saving = session.saveEdits(labels);
+    // Typed after Save was pressed: not in the document sent.
+    session.setLabel("room~1", "Mirabel");
+    session.setMerge("room~3", "room~2");
+    answer(state({ revision: 2, state: "applying" }));
+    expect(await saving).toBe(true);
+
+    expect(save.mock.calls[0][1].labels).toEqual([
+      { speakerId: "room~1", label: "Mira" },
+      { speakerId: "room~2", label: "Leo" },
+    ]);
+    expect(get(session).pending).toEqual({ labels: { "room~1": "Mirabel" }, merges: { "room~3": "room~2" } });
+    session.close();
+  });
+
   it("retries a failed apply by saving the same document again", async () => {
     const doc = { ...emptySpeakerEdits(), revision: 2, splits: [{ speakerId: "room" }] };
     const save = vi.fn(async () => state({ revision: 3, state: "applying" }));
