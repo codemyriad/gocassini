@@ -201,6 +201,14 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		writeSpeakerEditsInvalid(w, err.Error())
 		return
 	}
+	// The edits the recording already carries, sent again: nothing to apply,
+	// so nothing is queued — no republish, no summary model call. A failed
+	// revision is not applied, so sending it again is still a retry.
+	if expectRevision == state.Revision && state.Revision == state.AppliedRevision &&
+		state.State != speakerStateApplying && state.State != speakerStateFailed && sameSpeakerEdits(doc, state.Doc) {
+		writeJSON(w, http.StatusOK, state)
+		return
+	}
 	missing, err := s.rt.store.MissingSpeakerSplitTurns(ctx, jobID, doc)
 	if err != nil {
 		s.logf("annotations: speakers meeting=%s: %v", meetingID, err)
@@ -400,6 +408,26 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 		resp.LastError = rec.LastError
 	}
 	return resp, nil
+}
+
+// sameSpeakerEdits reports whether two documents ask for the same thing,
+// whatever their order and stamps.
+func sameSpeakerEdits(a, b speakerEditsDoc) bool {
+	key := func(d speakerEditsDoc) string {
+		var parts []string
+		for _, s := range d.Splits {
+			parts = append(parts, "s\x00"+s.SpeakerID)
+		}
+		for _, m := range d.Merges {
+			parts = append(parts, "m\x00"+m.From+"\x00"+m.Into)
+		}
+		for _, l := range d.Labels {
+			parts = append(parts, "l\x00"+l.SpeakerID+"\x00"+l.Label)
+		}
+		sort.Strings(parts)
+		return strings.Join(parts, "\x01")
+	}
+	return key(a) == key(b)
 }
 
 // speakerMeetingUntranscribed reports whether the meeting bundle was built

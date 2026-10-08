@@ -750,3 +750,47 @@ func TestSpeakersMixedTrackIsNotADevice(t *testing.T) {
 		t.Fatalf("split of the mixed track = %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Saving the edits the recording already carries changes nothing, so it
+// queues nothing: no republish and no summary model call each time someone
+// presses Save again. A different document, or a revision that failed, is
+// queued as before.
+func TestSpeakersPostOfTheAppliedEditsQueuesNothing(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	applied := `{"format":"cassini.speaker-edits.v1","revision":1,"splits":[{"speakerId":"spk_room"}],"merges":[],"labels":[{"speakerId":"spk_room~1","label":"Ann"},{"speakerId":"spk_room~2","label":"Bea"}]}`
+	if _, err := f.rt.store.db.Exec(`INSERT INTO speaker_edits (job_id, revision, doc_json, applied_revision, applied_doc_json, updated_at) VALUES ('MEETING1', 1, ?, 1, ?, ?)`, applied, applied, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	attempts := func() int {
+		t.Helper()
+		var n int
+		if err := f.rt.store.db.QueryRow(`SELECT COUNT(*) FROM job_attempts WHERE job_id = 'MEETING1'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := attempts()
+
+	same := `{"expectRevision":1,"doc":{"splits":[{"speakerId":"spk_room"}],"labels":[{"speakerId":"spk_room~2","label":"Bea "},{"speakerId":"spk_room~1","label":"Ann"}]}}`
+	resp := f.post(t, same)
+	if resp.Revision != 1 || resp.AppliedRevision != 1 || resp.State != speakerStateIdle || attempts() != before {
+		t.Fatalf("the applied edits again: %+v, %d attempts (was %d); want nothing queued", resp, attempts(), before)
+	}
+
+	// Another name is an edit.
+	resp = f.post(t, `{"expectRevision":1,"doc":{"splits":[{"speakerId":"spk_room"}],"labels":[{"speakerId":"spk_room~1","label":"Ann"},{"speakerId":"spk_room~2","label":"Bo"}]}}`)
+	if resp.Revision != 2 || resp.State != speakerStateApplying || attempts() != before+1 {
+		t.Fatalf("a new name: %+v, %d attempts", resp, attempts())
+	}
+	// That revision fails: sending it again is a retry, and is queued.
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET stage = 'done', state = 'failed' WHERE id = 'MEETING1'`); err != nil {
+		t.Fatal(err)
+	}
+	setSpeakerAttemptStage(t, f, before+1, "done", "failed")
+	resp = f.post(t, `{"expectRevision":2,"doc":{"splits":[{"speakerId":"spk_room"}],"labels":[{"speakerId":"spk_room~1","label":"Ann"},{"speakerId":"spk_room~2","label":"Bo"}]}}`)
+	if resp.Revision != 3 || resp.State != speakerStateApplying || attempts() != before+2 {
+		t.Fatalf("a retry of a failed revision: %+v, %d attempts", resp, attempts())
+	}
+}
