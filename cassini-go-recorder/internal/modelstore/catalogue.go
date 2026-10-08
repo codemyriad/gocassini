@@ -24,8 +24,20 @@ type File struct {
 	Artifact string `json:"artifact"`
 	Required bool   `json:"required"`
 }
+
+// Model kinds. The catalogue says what each model is for, so nothing has to
+// guess it from an id: a speech model transcribes and needs its pinned VAD,
+// the VAD is that dependency, and a diarization model separates the voices
+// on one participant's track (docs/speaker-separation.md) and needs neither.
+const (
+	KindSpeech      = "speech"
+	KindVAD         = "vad"
+	KindDiarization = "diarization"
+)
+
 type Model struct {
 	ID          string `json:"id"`
+	Kind        string `json:"kind"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	License     string `json:"license"`
@@ -82,13 +94,30 @@ func (c Catalogue) Validate() error {
 		if !safeName(m.ID) || !digest(m.Revision) || seen[key] || len(m.Files) == 0 {
 			return fmt.Errorf("invalid catalogue model %q", m.ID)
 		}
-		if m.ID != "silero-vad" {
+		switch m.Kind {
+		case KindSpeech:
 			if !digest(m.VADRevision) {
 				return fmt.Errorf("missing pinned VAD revision for %s", m.ID)
 			}
-			if _, e := c.Model("silero-vad", m.VADRevision); e != nil {
+			v, e := c.Model(VADModelID, m.VADRevision)
+			if e != nil {
 				return e
 			}
+			if v.Kind != KindVAD {
+				return fmt.Errorf("%s pins %s, which is not a VAD model", m.ID, VADModelID)
+			}
+		case KindVAD:
+			if m.ID != VADModelID || m.VADRevision != "" {
+				return fmt.Errorf("invalid VAD model %q", m.ID)
+			}
+		case KindDiarization:
+			// Diarization runs on its own; a VAD pin would be installed and
+			// packed for nothing.
+			if m.VADRevision != "" {
+				return fmt.Errorf("diarization model %s pins a VAD revision", m.ID)
+			}
+		default:
+			return fmt.Errorf("catalogue model %s has unknown kind %q", m.ID, m.Kind)
 		}
 		seen[key] = true
 		paths := map[string]bool{}
@@ -106,9 +135,13 @@ func (c Catalogue) Validate() error {
 			paths[f.Path] = true
 		}
 	}
-	_, err := c.Model("silero-vad", "")
+	_, err := c.Model(VADModelID, "")
 	return err
 }
+
+// VADModelID is the voice activity detector every speech model pins.
+const VADModelID = "silero-vad"
+
 func digest(s string) bool {
 	b, e := hex.DecodeString(s)
 	return e == nil && len(b) == sha256.Size && s == strings.ToLower(s)

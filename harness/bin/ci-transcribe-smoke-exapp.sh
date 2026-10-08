@@ -107,7 +107,10 @@ docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models list --json --cach
 python3 - "${LOG_DIR}/models.json" <<'CHECK'
 import json,sys
 models=json.load(open(sys.argv[1]))
-assert len(models)==3 and all(not m['installed'] and not m['ready'] for m in models)
+assert all(not m['installed'] and not m['ready'] for m in models), models
+# Three speech tiers, and the optional speaker separation model.
+assert len([m for m in models if m['kind']=='speech'])==3, models
+assert any(m['id']=='nemotron-3-diarization-int8' and m['kind']=='diarization' for m in models), models
 CHECK
 docker exec -e CASSINI_TRANSCRIPTION=off "${CONTAINER_NAME}" /usr/local/bin/cassini doctor --target build > "${LOG_DIR}/doctor.log" 2>&1
 if [[ "${MODELS_ONLY}" == "1" ]]; then

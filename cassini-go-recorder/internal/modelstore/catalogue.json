@@ -1,10 +1,11 @@
 {
   "schema_version": 2,
-  "published_at": "2026-09-21",
+  "published_at": "2026-10-08",
   "base_url": "https://dist.gocassini.com",
   "models": [
     {
       "id": "parakeet-tdt-ctc-110m-en-int8",
+      "kind": "speech",
       "name": "Parakeet TDT-CTC 110M \u2014 int8",
       "description": "Fast, English speech recognition",
       "license": "CC-BY-4.0",
@@ -26,6 +27,7 @@
     },
     {
       "id": "parakeet-tdt-0.6b-v3-int8",
+      "kind": "speech",
       "name": "Parakeet TDT 0.6B v3 \u2014 int8",
       "description": "Multilingual speech recognition, quantized weights",
       "license": "CC-BY-4.0",
@@ -57,6 +59,7 @@
     },
     {
       "id": "parakeet-tdt-0.6b-v3",
+      "kind": "speech",
       "name": "Parakeet TDT 0.6B v3 \u2014 fp32",
       "description": "Multilingual speech recognition, full precision weights",
       "license": "CC-BY-4.0",
@@ -98,6 +101,7 @@
     },
     {
       "id": "silero-vad",
+      "kind": "vad",
       "name": "Silero VAD",
       "description": "Voice activity detection",
       "license": "MIT",
@@ -107,6 +111,38 @@
         {
           "path": "silero_vad.onnx",
           "artifact": "models/files/dad26acf8515705fed5510d847c69366cb2710681ec4f87484a2de65ca855a3c/silero_vad.onnx.zst",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "nemotron-3-diarization-int8",
+      "kind": "diarization",
+      "name": "Nemotron 3 Diarization \u2014 int8",
+      "description": "Speaker diarization for up to 8 speakers, quantized weights (ONNX interface v2; Cassini runtime v1.13.7-cassini.6)",
+      "license": "OpenMDW-1.1",
+      "source_url": "https://huggingface.co/nvidia/Nemotron-3-Diarization/blob/f667ed73aee57d40cc39428eb768b4fd87a0a29e/model.safetensors",
+      "source_sha256": "c074d86335b3b794f8fa5edc25594558f128bdb3914d27806a3a5a2e44963cb6",
+      "files": [
+        {
+          "path": "model.int8.onnx",
+          "artifact": "models/files/794720a59892189484d38a186d2b350018b4194cae55292f501b2849d6313290/model.int8.onnx.zst",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "nemotron-3-diarization",
+      "kind": "diarization",
+      "name": "Nemotron 3 Diarization \u2014 fp32",
+      "description": "Speaker diarization for up to 8 speakers, full precision weights (ONNX interface v2; Cassini runtime v1.13.7-cassini.6)",
+      "license": "OpenMDW-1.1",
+      "source_url": "https://huggingface.co/nvidia/Nemotron-3-Diarization/blob/f667ed73aee57d40cc39428eb768b4fd87a0a29e/model.safetensors",
+      "source_sha256": "c074d86335b3b794f8fa5edc25594558f128bdb3914d27806a3a5a2e44963cb6",
+      "files": [
+        {
+          "path": "model.onnx",
+          "artifact": "models/files/e0bdaac848f5f10f283886079cd36424ba045c27e614e18db452e74bceef94f1/model.onnx.zst",
           "required": true
         }
       ]
@@ -325,6 +361,42 @@
       "frame_size": 262144,
       "frame_count": 3,
       "seek_table_size": 41,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
+    {
+      "id": "794720a59892189484d38a186d2b350018b4194cae55292f501b2849d6313290",
+      "key": "models/files/794720a59892189484d38a186d2b350018b4194cae55292f501b2849d6313290/model.int8.onnx.zst",
+      "filename": "model.int8.onnx.zst",
+      "name": "model.int8.onnx",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/794720a59892189484d38a186d2b350018b4194cae55292f501b2849d6313290/model.int8.onnx.zst",
+      "size": 64915668,
+      "sha256": "794720a59892189484d38a186d2b350018b4194cae55292f501b2849d6313290",
+      "uncompressed_size": 103967426,
+      "uncompressed_sha256": "47c221ea9b4d4e7f6c108bd098e769bc706cdc986c29f6133c93cae335fe6779",
+      "frame_size": 262144,
+      "frame_count": 397,
+      "seek_table_size": 3193,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
+    {
+      "id": "e0bdaac848f5f10f283886079cd36424ba045c27e614e18db452e74bceef94f1",
+      "key": "models/files/e0bdaac848f5f10f283886079cd36424ba045c27e614e18db452e74bceef94f1/model.onnx.zst",
+      "filename": "model.onnx.zst",
+      "name": "model.onnx",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/e0bdaac848f5f10f283886079cd36424ba045c27e614e18db452e74bceef94f1/model.onnx.zst",
+      "size": 170835347,
+      "sha256": "e0bdaac848f5f10f283886079cd36424ba045c27e614e18db452e74bceef94f1",
+      "uncompressed_size": 397866222,
+      "uncompressed_sha256": "bf001d7945ee5dd9e542baf1014ebc1d6f13ea9168207a5358423ec44f0a195f",
+      "frame_size": 262144,
+      "frame_count": 1518,
+      "seek_table_size": 12161,
       "compression_level": 6,
       "encoding": "zstd-seekable",
       "format_version": "0.1.0"
