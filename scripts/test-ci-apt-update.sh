@@ -152,3 +152,4 @@ fi
 
 echo "[test] ci-apt-update.sh source pruning OK"
 python3 "$SCRIPT_DIR/test_ci_apt_recovery.py"
+python3 "$SCRIPT_DIR/test_ci_apt_package_cache.py"

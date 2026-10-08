@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - master
+      # Temporary: seed a branch-scoped cache for the package-cache A/B test.
+      - 'cache-test/**'
     # Pure docs/planning changes touch no code, tests, or image — skip the
     # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
     # outside this list the workflow still runs, so a real code change is
@@ -170,6 +172,10 @@ jobs:
       - name: Install Go dependencies
         working-directory: ${{ matrix.module }}
         run: go mod download
+      - name: Restore shared media packages
+        id: media-cache
+        if: matrix.module == 'cassini-go-recorder' || matrix.module == 'cassini-operator'
+        uses: ./.github/actions/restore-apt-packages
       - name: Install media tools
         # The operator needs them too: its CLI byte-parity test
         # (TestMeetingsContextBytesMatchTheCLIOverTheSameIDs) packs a real
@@ -181,6 +187,32 @@ jobs:
           # source that is not the Ubuntu archive first — see the note there.
           sudo ./scripts/ci-apt-update.sh
           sudo apt-get install -y ffmpeg
+      # One writer per run. Temporary cache-test branches and their same-repo
+      # PRs can seed caches too; ordinary PRs remain restore-only.
+      - name: Trim obsolete package downloads before saving
+        if: >-
+          ((github.event_name == 'push' &&
+            (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/cache-test/'))) ||
+           (github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            startsWith(github.head_ref, 'cache-test/'))) &&
+          matrix.module == 'cassini-go-recorder' &&
+          steps.media-cache.outputs.cache-hit != 'true'
+        run: sudo apt-get autoclean
+      - name: Save shared media packages
+        if: >-
+          ((github.event_name == 'push' &&
+            (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/cache-test/'))) ||
+           (github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            startsWith(github.head_ref, 'cache-test/'))) &&
+          matrix.module == 'cassini-go-recorder' &&
+          steps.media-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: ${{ steps.media-cache.outputs.path }}
+          key: ${{ steps.media-cache.outputs.key }}
       # gofmt lives in lint.yml, with shellcheck and actionlint — see the note
       # there. It was here only while Lint was advisory.
       - name: Vet
@@ -278,6 +310,8 @@ jobs:
           cache-dependency-path: |
             cassini-go-recorder/go.sum
             harness/go-talk-rotator/go.sum
+      - name: Restore shared media packages
+        uses: ./.github/actions/restore-apt-packages
       - name: Install runtime tools
         run: |
           # A vendor apt source we never install from can fail `apt-get update`
@@ -318,6 +352,8 @@ jobs:
           cache-dependency-path: |
             cassini-go-recorder/go.sum
             harness/go-talk-rotator/go.sum
+      - name: Restore shared media packages
+        uses: ./.github/actions/restore-apt-packages
       - name: Install runtime tools
         run: |
           # A vendor apt source we never install from can fail `apt-get update`

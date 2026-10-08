@@ -14,6 +14,7 @@ runs:
         node-version: 22
         cache: npm
         cache-dependency-path: package-lock.json
+    - uses: ./.github/actions/restore-apt-packages
     - name: Install host validation tools
       shell: bash
       run: |
