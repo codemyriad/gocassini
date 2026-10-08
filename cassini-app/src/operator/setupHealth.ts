@@ -111,7 +111,7 @@ export function buildSetupNotice(options: {
   const failing = verdict.state !== "unknown";
   const summary = failing
     ? "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed."
-    : "Recordings that are already here still open, but new ones will fail until this check runs.";
+    : "You can still browse recordings, but new ones will fail until this check runs.";
   const base: SetupNotice = {
     tone: failing ? "warning" : "neutral",
     title: failing ? "Cassini can't save recordings right now" : "Cassini hasn't checked that it can save recordings",
