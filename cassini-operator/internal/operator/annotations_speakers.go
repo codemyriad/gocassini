@@ -47,8 +47,11 @@ const (
 
 // speakerEditsResponse is the GET shape, and what a successful POST answers.
 type speakerEditsResponse struct {
-	Available       bool                 `json:"available"`
-	Reason          string               `json:"reason"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason"`
+	// ReasonDetail says, for diarization-unavailable, why and how an
+	// administrator installs the model. Empty otherwise.
+	ReasonDetail    string               `json:"reasonDetail,omitempty"`
 	Revision        int                  `json:"revision"`
 	AppliedRevision int                  `json:"appliedRevision"`
 	State           string               `json:"state"`
@@ -192,9 +195,11 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusInternalServerError, "speaker edits unavailable")
 		return
 	}
-	if len(missing) > 0 && !s.rt.diarizationModelInstalled() {
-		writeJSONError(w, http.StatusServiceUnavailable, speakerReasonDiarizationUnav)
-		return
+	if len(missing) > 0 {
+		if ok, detail := s.rt.diarizationAvailability(ctx); !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": speakerReasonDiarizationUnav, "detail": detail})
+			return
+		}
 	}
 
 	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, formatUTCString(s.rt.speakerNow()))
@@ -336,8 +341,10 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 		if err != nil {
 			return resp, err
 		}
-		if !hasTurns && !rt.diarizationModelInstalled() {
-			resp.Reason = speakerReasonDiarizationUnav
+		if !hasTurns {
+			if ok, detail := rt.diarizationAvailability(ctx); !ok {
+				resp.Reason, resp.ReasonDetail = speakerReasonDiarizationUnav, detail
+			}
 		}
 	}
 	resp.Available = resp.Reason == ""

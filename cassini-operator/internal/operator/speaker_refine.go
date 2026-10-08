@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -254,44 +253,51 @@ func firstLine(s string) string {
 	return strings.TrimSpace(line)
 }
 
-// diarizationModelInstalled is the operator's best guess at whether a refine
-// could diarize a new participant: the model file the CLI would resolve is
-// there. It cannot see whether the native runtime supports Nemotron; a refine
-// that finds it does not fails with the CLI's own reason.
-func (rt *Runtime) diarizationModelInstalled() bool {
-	env := rt.childEnv()
-	path := childEnvValue(env, envDiarizationModel)
-	if path == "" {
-		root := childEnvValue(env, envCacheRoot)
-		if root == "" {
-			root = defaultCLICacheRoot()
+// The catalogue kind of a speaker separation model in `cassini models list`,
+// and the one Settings installs.
+const (
+	modelKindDiarization     = "diarization"
+	defaultDiarizationModel  = "nemotron-3-diarization-int8"
+	diarizationInstallAdvice = "An administrator can download Voice separation in Cassini's Settings, or run `cassini models install " + defaultDiarizationModel + "` (offline: `cassini models import`)."
+)
+
+// diarizationAvailability says whether a refine could diarize a new
+// participant, and if not, why and what an administrator can do about it. It
+// asks the CLI the refine will run, through the same model inventory as the
+// Settings page: a diarizer is ready when it is installed in the operator's
+// model store and the native runtime can run it. CASSINI_DIARIZATION_MODEL,
+// the development override the CLI honours first, is checked as a file.
+func (rt *Runtime) diarizationAvailability(ctx context.Context) (bool, string) {
+	if path := childEnvValue(rt.childEnv(), envDiarizationModel); path != "" {
+		if info, err := os.Stat(path); err != nil || info.IsDir() {
+			return false, fmt.Sprintf("%s names %s, which is not a model file.", envDiarizationModel, path)
 		}
-		path = filepath.Join(root, "models", "nemotron-3-diarization-int8", "model.int8.onnx")
+		return true, ""
 	}
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-// cliHomeDir is the home directory the cassini CLI falls back to; a seam for
-// tests.
-var cliHomeDir = func() string {
-	if u, err := user.Current(); err == nil && u.HomeDir != "" {
-		return u.HomeDir
+	models, err := rt.cachedModelInventory(ctx, "cpu")
+	if err != nil {
+		return false, fmt.Sprintf("Cassini could not read its installed models: %v", err)
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return home
+	known, unsupported := false, false
+	for _, m := range models {
+		if m.Kind != modelKindDiarization {
+			continue
+		}
+		known = true
+		if m.Ready {
+			return true, ""
+		}
+		if m.RuntimeSupported != nil && !*m.RuntimeSupported {
+			unsupported = true
+		}
 	}
-	return ""
-}
-
-// defaultCLICacheRoot is the cache root the cassini CLI uses when nothing sets
-// CASSINI_CACHE_ROOT (defaultCassiniCacheRoot in the recorder): outside the
-// ExApp the operator must look where the CLI it runs will look.
-func defaultCLICacheRoot() string {
-	if home := cliHomeDir(); home != "" {
-		return filepath.Join(home, ".cache", "cassini")
+	switch {
+	case !known:
+		return false, "This Cassini version has no speaker separation model."
+	case unsupported:
+		return false, "This server's Cassini runtime cannot run speaker separation (it needs the Linux build with Nemotron support)."
 	}
-	return filepath.Join(".", ".cache", "cassini")
+	return false, "The speaker separation model is not installed. " + diarizationInstallAdvice
 }
 
 func childEnvValue(env []string, key string) string {

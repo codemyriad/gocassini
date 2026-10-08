@@ -400,46 +400,89 @@ func TestNewRuntimeRunsARefineWithoutBuilding(t *testing.T) {
 	}
 }
 
-func TestDiarizationModelInstalledLooksWhereTheCLILooks(t *testing.T) {
-	rt := &Runtime{logger: log.New(ioDiscard{}, "", 0)}
-	t.Setenv(envCacheRoot, "")
+// fakeModelsCLI answers `cassini models list` from <bin>.inventory.json, the
+// way the operator's Settings page and speaker availability both read it.
+func fakeModelsCLI(t *testing.T) string {
+	t.Helper()
+	return writeFakeCassini(t, `echo "$*" >> "$0.calls"
+[ "$1 $2" = "models list" ] || { echo "unexpected command: $*" >&2; exit 1; }
+[ -f "$0.list-fails" ] && { echo "catalogue broken" >&2; exit 1; }
+cat "$0.inventory.json"
+`)
+}
+
+// writeDiarizerInventory makes the fake CLI list a speech model and the
+// default diarizer in the given state.
+func writeDiarizerInventory(t *testing.T, bin string, installed, ready, runtimeSupported bool) {
+	t.Helper()
+	supported := runtimeSupported
+	models := []modelInfo{
+		{ID: modelParakeet110M, Kind: "speech", Revision: strings.Repeat("a", 64), Installed: true, Ready: true, Device: "cpu"},
+		{ID: defaultDiarizationModel, Kind: modelKindDiarization, Revision: strings.Repeat("c", 64), Installed: installed, Ready: ready, Device: "cpu", RuntimeSupported: &supported},
+	}
+	b, _ := json.Marshal(models)
+	if err := os.WriteFile(bin+".inventory.json", b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiarizationAvailabilityAsksTheModelInventory(t *testing.T) {
 	t.Setenv(envDiarizationModel, "")
-	home := t.TempDir()
-	previous := cliHomeDir
-	cliHomeDir = func() string { return home }
-	t.Cleanup(func() { cliHomeDir = previous })
-	install := func(path string) {
+	bin := fakeModelsCLI(t)
+	rt := &Runtime{logger: log.New(ioDiscard{}, "", 0)}
+	rt.cfg.CassiniBin = bin
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	ctx := context.Background()
+	check := func(wantOK bool, wantDetail string) {
 		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("onnx"), 0o644); err != nil {
-			t.Fatal(err)
+		rt.invalidateModelInventory()
+		ok, detail := rt.diarizationAvailability(ctx)
+		if ok != wantOK || !strings.Contains(detail, wantDetail) || (ok && detail != "") {
+			t.Fatalf("availability = %v %q, want %v with %q", ok, detail, wantOK, wantDetail)
 		}
 	}
 
-	if rt.diarizationModelInstalled() {
-		t.Fatal("no model anywhere reported installed")
+	// The proof of concept's loose file is not an installed model any more.
+	loose := filepath.Join(rt.cfg.ModelCacheRoot, "models", defaultDiarizationModel, "model.int8.onnx")
+	if err := os.MkdirAll(filepath.Dir(loose), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// Nothing sets a cache root: the CLI's own default, under the home.
-	install(filepath.Join(home, ".cache", "cassini", "models", "nemotron-3-diarization-int8", "model.int8.onnx"))
-	if !rt.diarizationModelInstalled() {
-		t.Fatal("a model in the CLI's default cache reported missing")
+	if err := os.WriteFile(loose, []byte("onnx"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	// An explicit model wins over the cache, as it does for the CLI.
-	explicit := filepath.Join(home, "elsewhere", "nemotron.onnx")
+	writeDiarizerInventory(t, bin, false, false, true)
+	check(false, "cassini models install "+defaultDiarizationModel)
+	check(false, "Settings")
+
+	writeDiarizerInventory(t, bin, true, false, false)
+	check(false, "cannot run speaker separation")
+
+	writeDiarizerInventory(t, bin, true, true, true)
+	check(true, "")
+	if calls := speakersCalls(t, bin, "models list"); len(calls) == 0 || !strings.Contains(calls[0], "--cache-root "+rt.cfg.ModelCacheRoot) || !strings.Contains(calls[0], "--device cpu") {
+		t.Fatalf("inventory calls = %v, want the operator's store on the CPU", calls)
+	}
+
+	// A binary that lists no diarizer, or cannot list at all.
+	if err := os.WriteFile(bin+".inventory.json", []byte(`[]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check(false, "no speaker separation model")
+	if err := os.WriteFile(bin+".list-fails", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check(false, "catalogue broken")
+
+	// The development override wins, as it does for the CLI.
+	explicit := filepath.Join(t.TempDir(), "nemotron.onnx")
 	t.Setenv(envDiarizationModel, explicit)
-	if rt.diarizationModelInstalled() {
-		t.Fatal("a missing CASSINI_DIARIZATION_MODEL fell back to the cache")
+	check(false, envDiarizationModel)
+	if err := os.WriteFile(explicit, []byte("onnx"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	install(explicit)
-	if !rt.diarizationModelInstalled() {
-		t.Fatal("the CASSINI_DIARIZATION_MODEL file reported missing")
-	}
+	check(true, "")
 	t.Setenv(envDiarizationModel, filepath.Dir(explicit))
-	if rt.diarizationModelInstalled() {
-		t.Fatal("a directory reported as the model")
-	}
+	check(false, "not a model file")
 }
 
 func TestRerunWithoutSpeakerEditsRunsNoSpeakersCommand(t *testing.T) {
