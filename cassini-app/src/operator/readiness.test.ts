@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, rowActions, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, describeRefreshFailure, formatAge, hpbGuideURL, labelParts, repairLabel, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -175,7 +175,7 @@ describe("the warning tone, now that something can produce it", () => {
   });
 
   it("renders amber for a row that is impaired but working", () => {
-    expect(toneClasses[checkTone(check())]).toBe("text-warning");
+    expect(toneClasses[checkTone(check())]).toBe("text-warning-strong");
   });
 });
 
@@ -241,7 +241,7 @@ describe("where to send an administrator", () => {
 // better than a wrong one but still means a row with no way forward.
 describe("every action the backend can send has a button", () => {
   const emitted = ["recheck", "configure_talk", "connect_talk", "setup_storage",
-    "setup_hpb", "test_recording", "repair_configuration"];
+    "test_recording", "repair_configuration"];
 
   it("names each one", () => {
     for (const action of emitted) {
@@ -257,6 +257,12 @@ describe("every action the backend can send has a button", () => {
   // Rather than a "Configure" that opens whichever drawer the panel falls
   // through to. That fall-through showed the "restore recording-setup.json"
   // text for faults with nothing to do with that file.
+  it("turns setup_hpb into the setup guide rather than a button", () => {
+    const row = { id: "talk.hpb", state: "needs_action", code: "hpb_missing", message: "", action: "setup_hpb" } as ReadinessCheck;
+    expect(rowActions(row)).toEqual([]);
+    expect(rowGuide(row)).toEqual({ href: hpbGuideURL, label: "How to set up a High Performance Backend" });
+  });
+
   it("offers nothing for an action it cannot name", () => {
     const row = { id: "storage", state: "needs_action", code: "x", message: "", action: "invent_a_backend" } as unknown as ReadinessCheck;
     expect(rowActions(row)).toEqual([]);
@@ -313,11 +319,191 @@ describe("a blocked row offers nothing", () => {
     expect(rowActions(live).map(a => a.action)).toContain("connect_talk");
   });
 
+  it("offers no Connect Talk while Cassini has no secret to give Talk", () => {
+    const missing = { id: "talk.handoff", state: "needs_action", code: "recording_secret_missing", message: "" } as ReadinessCheck;
+    expect(rowActions(missing).map(a => a.action)).not.toContain("connect_talk");
+  });
+
   // The test room is Cassini's to create. This button asked a reader to paste a
   // room URL, and the tool behind it refused to run until they did — which is
   // why nobody could ever run it.
   it("no longer asks for a test room to be chosen", () => {
     const live = { id: "talk.discovery", state: "passed", code: "talk_reachable", message: "" } as ReadinessCheck;
     expect(rowActions(live).map(a => a.action)).not.toContain("test_room");
+  });
+});
+
+describe("the guide a row offers", () => {
+  const row = (over: Partial<ReadinessCheck> = {}): ReadinessCheck =>
+    ({ id: "talk.hpb", state: "needs_action", code: "hpb_disabled", message: "", ...over });
+
+  it("uses the docs the operator sends", () => {
+    expect(rowGuide(row({ docs: "https://example.invalid/guide" })))
+      .toEqual({ href: "https://example.invalid/guide", label: "How to set up a High Performance Backend" });
+  });
+
+  it("names a guide on another row generically", () => {
+    expect(rowGuide(row({ id: "storage", docs: "https://example.invalid/guide" }))?.label).toBe("Read Nextcloud's guide");
+  });
+
+  it("offers nothing without docs or a setup action", () => {
+    expect(rowGuide(row())).toBeNull();
+  });
+
+  it("offers nothing on a row waiting for another check", () => {
+    expect(rowGuide(row({ code: "check_blocked", docs: "https://example.invalid/guide" }))).toBeNull();
+  });
+});
+
+describe("the time a run of checks shares", () => {
+  const at = (id: string, checked_at?: string, code = "x"): ReadinessCheck =>
+    ({ id, state: "passed", code, message: "", checked_at });
+
+  it("treats checks stamped seconds apart as one run, and reports its oldest time", () => {
+    const shared = sharedCheckTime([at("host.workdir", "2026-10-06T10:00:01Z"), at("storage", "2026-10-06T10:00:00Z"), at("talk.hpb", "2026-10-06T10:00:09Z")]);
+    expect(shared?.checkedAt).toBe("2026-10-06T10:00:00Z");
+    expect([...shared?.ids ?? []].sort()).toEqual(["host.workdir", "storage", "talk.hpb"]);
+  });
+
+  it("leaves out a row checked on its own later", () => {
+    const shared = sharedCheckTime([at("host.workdir", "2026-10-06T10:00:00Z"), at("storage", "2026-10-06T10:00:02Z"), at("talk.hpb", "2026-10-06T10:20:00Z")]);
+    expect(shared?.ids.has("talk.hpb")).toBe(false);
+    expect(shared?.ids.size).toBe(2);
+  });
+
+  it("leaves out the test row, whose time is a person's playback", () => {
+    const shared = sharedCheckTime([at("storage", "2026-10-06T10:00:00Z"), at("test", "2026-10-06T10:00:00Z", "test_playback")]);
+    expect(shared?.ids.has("test")).toBe(false);
+  });
+
+  it("prefers the later run when two are the same size", () => {
+    expect(sharedCheckTime([at("a", "2026-10-04T10:00:00Z"), at("b", "2026-10-06T10:00:00Z")])?.checkedAt).toBe("2026-10-06T10:00:00Z");
+  });
+
+  it("has nothing to share when nothing was checked", () => {
+    expect(sharedCheckTime([at("storage"), at("talk.hpb", "not a time")])).toBeNull();
+  });
+});
+
+describe("names quoted in a step", () => {
+  it("renders backticked names as code and keeps the prose around them", () => {
+    expect(labelParts("the `internalsecret` under `[clients]` in its file")).toEqual([
+      { text: "the ", code: false },
+      { text: "internalsecret", code: true },
+      { text: " under ", code: false },
+      { text: "[clients]", code: true },
+      { text: " in its file", code: false },
+    ]);
+  });
+
+  it("leaves a label without backticks as one run of text", () => {
+    expect(labelParts("Paste it unchanged")).toEqual([{ text: "Paste it unchanged", code: false }]);
+  });
+});
+
+describe("the credential action on the backend row", () => {
+  const row = (state: ReadinessCheck["state"]): ReadinessCheck =>
+    ({ id: "talk.hpb", state, code: "x", message: "", action: "configure_talk" });
+
+  it("offers to change a secret that is saved and working", () => {
+    expect(rowActions(row("passed")).map(a => a.label)).toEqual(["Change secret"]);
+  });
+
+  it("asks for one while it is missing or refused", () => {
+    expect(rowActions(row("needs_action")).map(a => a.label)).toEqual(["Set credential"]);
+  });
+});
+
+describe("the test row while a test is under way", () => {
+  it("offers its steps rather than asking for another test", () => {
+    for (const code of ["test_in_progress", "test_awaiting_playback", "test_failed"]) {
+      const row = { id: "test", state: "not_verified", code, message: "", action: "test_recording" } as ReadinessCheck;
+      expect(rowActions(row).map(a => a.label)).toEqual(["Show steps"]);
+    }
+  });
+});
+
+describe("the verdict while a test is unfinished", () => {
+  const now = new Date("2026-10-07T10:10:00Z");
+  const withTest = (test: Partial<RecordingReadiness["test"]>): RecordingReadiness =>
+    ({ state: "passed", recording_state: "passed", checks: [], test: { state: "", published: false, ...test } } as unknown as RecordingReadiness);
+
+  it("says what is left while the test waits for Talk", () => {
+    expect(testFollowUp(withTest({ state: "waiting_for_talk", started_at: "2026-10-07T10:05:00Z" }), now)).toBe("your test recording is waiting for you in Talk");
+  });
+
+  it("asks for playback once the recording is published", () => {
+    expect(testFollowUp(withTest({ state: "succeeded", published: true, viewer_url: "https://x.invalid/r", started_at: "2026-10-07T10:00:00Z" }), now)).toBe("play your test recording to finish it");
+  });
+
+  it("says the test did not finish when it failed, however long ago", () => {
+    expect(testFollowUp(withTest({ state: "failed", started_at: "2026-10-01T10:00:00Z" }), now)).toBe("your test recording did not finish");
+  });
+
+  it("says nothing once playback is confirmed, or for a test abandoned long ago", () => {
+    expect(testFollowUp(withTest({ published: true, viewer_url: "https://x.invalid/r", playback_verified_at: "2026-10-07T10:09:00Z" }), now)).toBe("");
+    expect(testFollowUp(withTest({ state: "waiting_for_talk", started_at: "2026-10-06T10:00:00Z" }), now)).toBe("");
+  });
+});
+
+describe("the verdict while a repair is running", () => {
+  const archive = (running: boolean): RecordingReadiness => ({
+    state: "warn", recording_state: "passed",
+    checks: [{ id: "archive.search", state: "warn", code: "search_coverage_partial", message: "", running }],
+  } as unknown as RecordingReadiness);
+
+  it("says the archive is re-indexing, in the recording verdict's own tone", () => {
+    expect(readinessTitle(archive(true))).toBe("Recording ready; archive search is re-indexing");
+    expect(reportTone(archive(true))).toBe("success");
+  });
+
+  it("still asks for attention when the gap is not being worked on", () => {
+    expect(readinessTitle(archive(false))).toBe("Recording ready; archive search needs attention");
+    expect(reportTone(archive(false))).toBe("warning");
+  });
+});
+
+describe("a repair that failed", () => {
+  const row = { id: "archive.search", state: "warn", code: "search_coverage_partial", message: "", repair: "backfill_search", repair_failed: true } as ReadinessCheck;
+
+  it("says so in the row's status", () => {
+    expect(checkStateLabel(row)).toBe("Re-index failed");
+    expect(checkTone(row)).toBe("warning");
+  });
+
+  it("keeps saying what failed when there is no retry to offer", () => {
+    expect(checkStateLabel({ ...row, repair: undefined })).toBe("Re-index failed");
+    expect(repairLabel({ ...row, repair: undefined })).toBe("");
+  });
+
+  it("offers to try again rather than to start fresh", () => {
+    expect(repairLabel(row)).toBe("Try re-indexing again");
+    expect(repairLabel({ ...row, repair_failed: false })).toBe("Re-index now");
+  });
+
+  it("says so in the verdict", () => {
+    const report = { state: "warn", recording_state: "passed", checks: [row] } as unknown as RecordingReadiness;
+    expect(readinessTitle(report)).toBe("Recording ready; archive search re-index failed");
+  });
+});
+
+describe("a refresh that failed", () => {
+  const http = (status: number) => Object.assign(new Error(`${status}`), { status });
+
+  it("sends an expired session to sign in again", () => {
+    expect(describeRefreshFailure(http(401))).toMatch(/^Your Nextcloud session may have expired/);
+    expect(describeRefreshFailure(http(403))).toMatch(/Reload the page and sign in again/);
+  });
+
+  it("reads a gateway error as Cassini not responding", () => {
+    for (const status of [502, 503, 504]) expect(describeRefreshFailure(http(status))).toMatch(/^Cassini is not responding/);
+  });
+
+  it("reads a fetch that never answered as the connection", () => {
+    expect(describeRefreshFailure(new TypeError("Failed to fetch"))).toMatch(/^Your browser could not reach Nextcloud/);
+  });
+
+  it("passes on what Cassini said for anything else", () => {
+    expect(describeRefreshFailure(http(500))).toBe("Cassini answered with an error: 500");
   });
 });

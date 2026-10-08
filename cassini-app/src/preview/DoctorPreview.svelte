@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import RecordingSetup from "../RecordingSetup.svelte";
   import { createPreviewClient, doctorScenarios } from "./doctorScenarios";
+  import { notifySetupChanged } from "../operator/setupSignal";
 
   export let scenario = "";
   const selected = doctorScenarios.find(item => item.id === scenario);
@@ -11,10 +12,40 @@
   // see, and the gallery cannot resize the window.
   let width = "";
   const fallbackTheme = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "saturn-dark" : "saturn-light";
+  const nextcloudThemes: Record<string, { daisy: string; vars: Record<string, string> }> = {
+    "nextcloud-light": {
+      daisy: "saturn-light",
+      vars: {
+        "--color-primary": "#00679e",
+        "--color-primary-content": "#ffffff",
+        "--color-base-100": "#f5f5f5",
+        "--color-base-200": "#ffffff",
+        "--color-base-300": "#dbdbdb",
+        "--color-base-content": "#222222",
+      },
+    },
+    "nextcloud-dark": {
+      daisy: "saturn-dark",
+      vars: {
+        "--color-primary": "#0091f2",
+        "--color-primary-content": "#000000",
+        "--color-base-100": "#292929",
+        "--color-base-200": "#171717",
+        "--color-base-300": "#3b3b3b",
+        "--color-base-content": "#ebebeb",
+        "color-scheme": "dark",
+      },
+    },
+  };
   let theme = "page";
   let root: HTMLDivElement;
   let themeHost: HTMLElement | null = null;
   let pageTheme: string | undefined;
+  onMount(() => {
+    if (selected?.id !== "refresh-error") return;
+    const failingRead = setTimeout(notifySetupChanged, 400);
+    return () => clearTimeout(failingRead);
+  });
   onMount(() => {
     const tree = root.getRootNode();
     if (!(tree instanceof ShadowRoot) || !(tree.host instanceof HTMLElement)) return;
@@ -40,7 +71,9 @@
 
 </script>
 
-<div bind:this={root} class="cassini-root h-full overflow-auto bg-base-200 text-base-content" data-theme={theme === "page" ? fallbackTheme : theme}>
+<div bind:this={root} class="cassini-root h-full overflow-auto text-base-content" data-theme={nextcloudThemes[theme]?.daisy ?? (theme === "page" ? fallbackTheme : theme)}
+  style={nextcloudThemes[theme] ? Object.entries(nextcloudThemes[theme].vars).map(([name, value]) => `${name}: ${value}`).join("; ") : null}>
+  <div class="min-h-full bg-base-200">
   <main class="mx-auto max-w-5xl space-y-5 p-4 md:p-8">
     <header class="rounded-box border border-info bg-base-100 p-4">
       <h1 class="text-xl font-semibold">Doctor usability previews</h1>
@@ -57,7 +90,7 @@
         </label>
         <label class="text-sm">Theme
           <select class="select select-sm ml-2" aria-label="Preview theme" bind:value={theme} on:change={changeTheme}>
-            <option value="page">Page theme</option><option value="saturn-light">Cassini light</option><option value="saturn-dark">Cassini dark</option>
+            <option value="page">Page theme</option><option value="saturn-light">Cassini light</option><option value="saturn-dark">Cassini dark</option><option value="nextcloud-light">Nextcloud light</option><option value="nextcloud-dark">Nextcloud dark</option>
           </select>
         </label>
         <!-- Narrow is the layout most likely to be wrong and least likely to be
@@ -75,8 +108,8 @@
         <h2 class="text-lg font-semibold">{selected.title}</h2>
         <p class="mt-1 text-sm text-base-content/70">{selected.description}</p>
       </div>
-      <div style:max-width={width || null} class={width ? "rounded-box border border-dashed border-base-300 p-2" : ""}>
-        <RecordingSetup {operatorClient} provisioningBase="https://preview.invalid/operator" on:openStorage={() => { notice = "This would open Publish pipeline in the live app. Server configuration is unavailable in this preview."; }} />
+      <div style:max-width={width || null} class="op-settings {width ? 'rounded-box border border-dashed border-base-300 p-2' : ''}">
+        <RecordingSetup {operatorClient} provisioningBase="https://preview.invalid/index.php/apps/app_api/proxy/gocassini/operator/" on:openStorage={() => { notice = "This would open Publish pipeline in the live app. Server configuration is unavailable in this preview."; }} on:openRun={(event) => { notice = `This would open run ${event.detail} on the Recordings page in the live app, with the stage it stopped at, the stop reason and its logs. Recordings are unavailable in this preview.`; }} />
       </div>
       {#if notice}<p class="rounded-box bg-base-100 p-4 text-sm" role="status">{notice}</p>{/if}
     {:else}
@@ -91,4 +124,5 @@
       </ul>
     {/if}
   </main>
+  </div>
 </div>
