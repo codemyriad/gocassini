@@ -22,7 +22,7 @@ const nextcloudAddressStep = "Cassini reaches Nextcloud at `NEXTCLOUD_URL`, or a
 
 var nextcloudTestStep = ConnectionStep{
 	Label:    "To test the address, run this on the Nextcloud host. It should print an HTTP status such as 200, not an error:",
-	Commands: []string{`docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\n" "$NEXTCLOUD_URL/status.php"'`},
+	Commands: []string{`docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\n" "${CASSINI_TALK_BACKEND_URL:-$NEXTCLOUD_URL}/status.php"'`},
 }
 
 func classifyUnreachable(err error) unreachableFinding {

@@ -178,7 +178,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     case "connection-unreachable":
       set({ id: "talk.discovery", state: "warn", code: "nextcloud_host_not_found", message: "Cassini could not find Nextcloud at the address it was given: the name does not resolve from Cassini's container.", action: "recheck", checked_at, steps: [
         { label: "Cassini reaches Nextcloud at `NEXTCLOUD_URL`, or at `CASSINI_TALK_BACKEND_URL` when that is set. The address has to work from inside Cassini's container, not only from your browser" },
-        { label: "To test the address, run this on the Nextcloud host. It should print an HTTP status such as 200, not an error:", commands: [`docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\\n" "$NEXTCLOUD_URL/status.php"'`] },
+        { label: "To test the address, run this on the Nextcloud host. It should print an HTTP status such as 200, not an error:", commands: [`docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\\n" "\${CASSINI_TALK_BACKEND_URL:-$NEXTCLOUD_URL}/status.php"'`] },
       ] });
       set(blocked("talk.hpb", "Talk connection"));
       set(blocked("test", "Talk connection"));
