@@ -69,6 +69,7 @@
   // meeting or insight sheet, Prepare, Manage tags, the operator's own section
   // drawer. The tabs are this component's, so only it can cover them.
   let overlayOpen = false;
+  let viewerApp: { closeOverlay: () => void } | null = null;
 
   // setupNotice is non-null when this deployment's recordings substrate is not
   // proven (D-585). Where it renders depends on whether the archive can still be
@@ -469,6 +470,15 @@
 {/if}
 {#if operatorAvailable}
   <div class="cassini-shell">
+    {#if overlayOpen}
+      <button
+        type="button"
+        class="cassini-shell-nav-close"
+        tabindex="-1"
+        aria-label="Close"
+        on:click={() => viewerApp?.closeOverlay()}
+      ></button>
+    {/if}
     <nav
       class="cassini-shell-nav"
       class:cassini-shell-nav-covered={overlayOpen}
@@ -536,7 +546,7 @@
            hidden while an admin surface is active; those mount only when active
            so the operator's SSE stream + polling don't run in the background. -->
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-        <ViewerApp {ncMode} {dataProvider} {audience} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
+        <ViewerApp {ncMode} {dataProvider} {audience} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
           <!-- Its opposite, driven by the same bit (D-700): the readiness card
                says a question cannot be asked here, this one asks it. The Prepare
@@ -683,10 +693,26 @@
       transition: none;
     }
   }
+  .cassini-shell-nav-close {
+    display: none;
+  }
   @media (max-width: 720px) {
     .cassini-shell-nav-covered {
       filter: blur(3px) brightness(0.45);
       pointer-events: none;
+    }
+    .cassini-shell-nav-close {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 1;
+      height: 34px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
     }
   }
   .cassini-shell-nav {

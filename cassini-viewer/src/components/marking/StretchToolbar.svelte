@@ -4,18 +4,16 @@
   import { formatPreciseTime } from "../../core/marking";
   import type { TagPick, VocabularyTag } from "../../viewer/annotations";
   import TagChip from "../tags/TagChip.svelte";
-  import TagIcon from "../tags/TagIcon.svelte";
   import TagPicker from "../tags/TagPicker.svelte";
   import ActionButton from "../ui/ActionButton.svelte";
-  import { pickColor, type PlacedMark } from "./session";
+  import type { PlacedMark } from "./session";
 
   export let startMs: number;
   export let endMs: number;
   // The mark being moved, when the stretch is one already made.
   export let mark: PlacedMark | null = null;
   export let moved = false;
-  // The tag last used here, to put on this section in one click.
-  export let recent: TagPick | null = null;
+  export let locked = false;
   export let vocabulary: readonly VocabularyTag[] = [];
   export let busy = false;
   // Why the last write from here failed.
@@ -24,8 +22,11 @@
   // where the screen is too narrow for a column; no key hints there, where
   // there are no keys.
   export let row = false;
+  export let copied = false;
 
-  const dispatch = createEventDispatcher<{ tag: TagPick; save: void; remove: void; clear: void }>();
+  const copyKey = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘C" : "Ctrl C";
+
+  const dispatch = createEventDispatcher<{ tag: TagPick; save: void; remove: void; clear: void; copy: void; edit: void }>();
   let tagButton: HTMLButtonElement | undefined;
   let picking = false;
 
@@ -90,6 +91,12 @@
     {/if}
     <!-- Once an edge has moved, saving is the thing to do: it takes the
          strongest button, the one "Tag selection" has, above the rest. -->
+    {#if locked}
+      <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid grid-flow-col auto-cols-fr gap-1"}>
+        <ActionButton tone="plain" compact disabled={busy} on:click={() => dispatch("edit")}>Edit</ActionButton>
+        <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>Done</ActionButton>
+      </div>
+    {:else}
     <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid gap-1.5"}>
       {#if moved}
         <ActionButton tone="ink" block={!row} key={row ? "" : "↵"} disabled={busy} on:click={confirm}>Save changes</ActionButton>
@@ -101,28 +108,14 @@
         <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>{moved ? "Cancel" : "Done"}</ActionButton>
       </div>
     </div>
+    {/if}
   {:else}
-    {@render times(row ? "" : "px-0.5")}
     <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid gap-1.5"}>
       <ActionButton bind:element={tagButton} tone="ink" block={!row} key={row ? "" : "↵"} disabled={busy} aria-haspopup="dialog" aria-expanded={picking} on:click={confirm}>
         Tag selection
       </ActionButton>
-      <!-- The last tag used, once more: its own colour, so it reads as that
-           tag rather than as a second way to pick one. -->
-      {#if recent}
-        <ActionButton
-          tone="tag"
-          block={!row}
-          data-tag-color={pickColor(recent, vocabulary)}
-          disabled={busy}
-          title={`Tag as ${recent.label}`}
-          aria-label={`Tag as ${recent.label}`}
-          on:click={() => recent && dispatch("tag", recent)}
-        >
-          <TagIcon size={8} /><span class="truncate">{recent.label}</span>
-        </ActionButton>
-      {/if}
-      <ActionButton tone="plain" block={!row} key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>Clear</ActionButton>
+      <ActionButton tone="plain" block={!row} key={row ? "" : copyKey} on:click={() => dispatch("copy")}>{#if copied}<span class="text-success">Copied</span>{:else}Copy text{/if}</ActionButton>
+      <ActionButton tone="plain" block={!row} key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>Cancel</ActionButton>
     </div>
   {/if}
   {#if error}
