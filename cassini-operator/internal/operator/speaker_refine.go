@@ -31,7 +31,19 @@ const (
 	speakersExitTurnsMissing           = 5
 
 	maxSpeakersCLIStderr = 2048
+
+	// speakerDiarizeModelMB is what the native diarizer holds whatever the
+	// meeting's length: measured flat at 260-280 MB, with a margin.
+	speakerDiarizeModelMB = 384
 )
+
+// speakerDiarizeMemMB is the RAM one diarization needs on top of the host's
+// headroom: the model, plus the participant's track decoded to 16 kHz
+// float32 (64 bytes per audio millisecond, about 230 MB an hour), which it
+// holds whole while the model runs.
+func speakerDiarizeMemMB(audioMs int64) int {
+	return speakerDiarizeModelMB + int((max(audioMs, 0)*64+(1<<20)-1)>>20)
+}
 
 // withSpeakerEdits wraps the build stage. A refine attempt runs no build at
 // all: it applies its edits to a copy of the meeting the job already
@@ -85,7 +97,9 @@ func (rt *Runtime) speakerEditsResult(ctx context.Context, task buildTask, built
 	if err == nil {
 		return builtPath, nil
 	}
-	if ctx.Err() != nil {
+	// Nor is a wait for memory: the attempt goes back to the queue like a
+	// build that waits, and nothing about the edits failed.
+	if ctx.Err() != nil || transientResourceError(err) {
 		return builtPath, err
 	}
 	if storeErr := rt.store.SetSpeakerEditsError(context.Background(), task.JobID, err.Error()); storeErr != nil {
@@ -157,6 +171,14 @@ func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetin
 			return err
 		}
 		if !ok {
+			// Diarizing decodes the participant's whole track and runs a model,
+			// next to Nextcloud and Talk: it waits for the memory it needs as a
+			// build does, and defers the attempt when that does not come.
+			limits := resourceLimitsFromEnv()
+			need := speakerDiarizeMemMB(readSpeakerMeetingAudioMs(meetingPath)) + limits.cpuMemHeadroomMB
+			if err := limits.waitForMemory(ctx, need, rt.logger.Printf); err != nil {
+				return err
+			}
 			if turns, err = rt.diarizeSpeaker(ctx, task, split.SpeakerID, workDir, env, logFile); err != nil {
 				return err
 			}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeSpeakersCLI stands in for `cassini speakers diarize|apply`. Every call is
@@ -214,6 +215,45 @@ func TestRefineReportsDiarizationUnavailableWithTheCLIReason(t *testing.T) {
 	}
 	if len(speakersCalls(t, bin, "speakers apply")) != 0 {
 		t.Fatal("apply ran without the split's turns")
+	}
+}
+
+// Diarizing decodes a participant's whole track and runs a model on a host
+// shared with Nextcloud and Talk. With too little memory free it must not
+// start: the attempt goes back to the queue, as a build that waits does, and
+// nothing is reported as failed.
+func TestRefineDiarizationWaitsForMemoryLikeABuild(t *testing.T) {
+	rt, bin := newSpeakerRuntime(t, "JOB1")
+	setSpeakerMeetingAudioMs(t, rt.cfg.WorkRoot, "JOB1", 2*60*60*1000)
+	t.Setenv("CASSINI_BUILD_MEM_WAIT_SECS", "0")
+	t.Setenv("CASSINI_BUILD_CPU_MEM_HEADROOM_MB", "1024")
+	orig := probeAvailableMem
+	t.Cleanup(func() { probeAvailableMem = orig })
+	// Enough for an audio-only build (1024 MiB), not for diarizing two hours.
+	probeAvailableMem = func() int { return 1600 }
+
+	queueSpeakerEdits(t, rt, "JOB1", 0, splitDoc(speakerTestRoom))
+	deadline := time.Now().Add(testWaitTimeout)
+	var job Job
+	for time.Now().Before(deadline) {
+		var err error
+		if job, err = rt.store.GetJob(context.Background(), "JOB1"); err == nil && (job.BuildDeferralCount > 0 || job.Stage == "done") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if job.BuildDeferralCount == 0 || job.Stage != "build" || job.State != "queued" || !strings.Contains(jobErrorText(job), "host memory") {
+		t.Fatalf("job = %s/%s deferrals %d error %q; want the refine deferred for memory", job.Stage, job.State, job.BuildDeferralCount, jobErrorText(job))
+	}
+	if calls := speakersCalls(t, bin, "speakers"); len(calls) != 0 {
+		t.Fatalf("speakers commands ran without the memory to diarize: %v", calls)
+	}
+	rec, err := rt.store.GetSpeakerEdits(context.Background(), "JOB1")
+	if err != nil || rec.LastError != "" {
+		t.Fatalf("edits after a memory wait = %+v, %v; a wait is not a failure", rec, err)
+	}
+	if got, want := speakerDiarizeMemMB(2*60*60*1000), speakerDiarizeModelMB+440; got != want {
+		t.Fatalf("speakerDiarizeMemMB(2h) = %d, want %d", got, want)
 	}
 }
 
