@@ -1092,6 +1092,48 @@ func TestSpeakersShowOnABundle(t *testing.T) {
 	}
 }
 
+// The originals a speaker edit keeps are the only copies of the build's
+// transcript and summary once the edited ones replace them. Each is flushed,
+// with its directory entry, while the file it preserves is still the build's:
+// after a power loss the edited file is never on disk without its original.
+func TestSpeakersApplyMakesTheOriginalsDurableBeforeReplacingThem(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	writeSpeakersSummary(t, bundle, []byte("# The build's summary\n"))
+	stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) { return "# Rewritten\n", "m", nil })
+	primary := filepath.Join(bundle, speakersDefaultTranscript)
+	summary := filepath.Join(bundle, speakersSummaryFile)
+	originalTranscript, err := os.ReadFile(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type flush struct {
+		name                          string
+		transcriptBuilt, summaryBuilt bool
+	}
+	var flushes []flush
+	prev := durableSync
+	t.Cleanup(func() { durableSync = prev })
+	durableSync = func(f *os.File) error {
+		transcript, _ := os.ReadFile(primary)
+		summaryNow, _ := os.ReadFile(summary)
+		flushes = append(flushes, flush{f.Name(), bytes.Equal(transcript, originalTranscript), string(summaryNow) == "# The build's summary\n"})
+		return prev(f)
+	}
+
+	speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "edits.json", speakersSplitDoc(1, speakersNoMergesNoLabels)), writeSpeakersTurns(t, tmp, false))
+
+	rawASR := filepath.Join(bundle, speakersRawASRTranscript)
+	baseSummary := filepath.Join(bundle, speakersBaseSummary)
+	want := []flush{
+		{rawASR + ".tmp", true, true}, {bundle, true, true},
+		{baseSummary + ".tmp", false, true}, {bundle, false, true},
+	}
+	if !reflect.DeepEqual(flushes, want) {
+		t.Fatalf("flushes = %+v\nwant      %+v", flushes, want)
+	}
+}
+
 // stubSummarize replaces the summary model for one test and counts its calls.
 func stubSummarize(t *testing.T, fn func(transcribe.TranscriptSpeakers) (string, string, error)) *int {
 	t.Helper()

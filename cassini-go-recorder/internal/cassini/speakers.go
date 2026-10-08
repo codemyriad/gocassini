@@ -548,8 +548,10 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 		report.Summary = summary.status
 		record.Summary = summary.record
 		if !applied {
-			// Kept byte for byte: this is the base of every later apply.
-			if err := writeFileAtomic(rawASRPath, baseRaw, 0o644); err != nil {
+			// Kept byte for byte: this is the base of every later apply, and
+			// the only copy of it once the primary transcript is replaced, so
+			// it is on disk before that happens.
+			if err := writeFileDurable(rawASRPath, baseRaw, 0o644); err != nil {
 				return speakersApplyReport{}, fmt.Errorf("keep original transcript: %w", err)
 			}
 		}
@@ -798,7 +800,7 @@ func writeSpeakerSummary(root string, plan speakerSummaryPlan) error {
 		if err != nil {
 			return fmt.Errorf("read summary: %w", err)
 		}
-		if err := writeFileAtomic(basePath, original, 0o644); err != nil {
+		if err := writeFileDurable(basePath, original, 0o644); err != nil {
 			return fmt.Errorf("keep original summary: %w", err)
 		}
 	}
