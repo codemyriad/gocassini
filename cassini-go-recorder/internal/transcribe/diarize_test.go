@@ -190,3 +190,21 @@ func TestSplitSpeakerSegmentsWithoutTurnsLeavesTranscriptAlone(t *testing.T) {
 		t.Fatalf("absent speaker: got %+v %+v", got, res)
 	}
 }
+
+func TestSplitSpeakerVoiceNumbersDependOnlyOnTheTurns(t *testing.T) {
+	// Voice 1 speaks first in the audio but ASR found no words in its first
+	// turn. Numbering by first word would call the later voice "1"; numbering
+	// by first turn keeps the ids — and the names attached to them — stable
+	// when the words are re-transcribed.
+	turns := []SpeakerTurn{{0, 1000, 5}, {2000, 3000, 2}, {4000, 5000, 5}}
+	first := []Segment{{SpeakerID: "p", Words: []Word{diarWord(2100, 2500), diarWord(4100, 4500)}}}
+	_, a := SplitSpeakerSegments(first, "p", turns)
+	if want := []string{"p~1", "p~2"}; !reflect.DeepEqual(a.SubSpeakerIDs, []string{"p~1", "p~2"}) {
+		t.Fatalf("got %v want %v", a.SubSpeakerIDs, want)
+	}
+	rerun := []Segment{{SpeakerID: "p", Words: []Word{diarWord(2200, 2600)}}}
+	got, b := SplitSpeakerSegments(rerun, "p", turns)
+	if !reflect.DeepEqual(b.SubSpeakerIDs, []string{"p~2"}) || got[0].SpeakerID != "p~2" {
+		t.Fatalf("voice without words must keep its number: %+v", b)
+	}
+}

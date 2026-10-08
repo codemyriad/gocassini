@@ -158,19 +158,40 @@ func turnGap(w Word, t SpeakerTurn) int64 {
 }
 
 // SubSpeakerID names the n-th (1-based) voice found on a shared device's
-// stream. It is derived from the parent id and the voice's position, so
-// re-applying the same split to the same audio reproduces the same ids and a
-// name given to one survives the rebuild.
+// stream. n is the voice's rank by its first turn in the diarizer output, so
+// it depends only on the stored turns: re-applying a split after the words
+// were re-transcribed, or after the split was undone, reproduces the same ids
+// and a name given to one stays with the same voice. Participant ids never
+// contain "~" (speakerIDFromLabel), so the parent is always recoverable.
 func SubSpeakerID(parentID string, n int) string {
 	return fmt.Sprintf("%s~%d", parentID, n)
+}
+
+// voiceOrdinals ranks diarizer speakers by their first turn (start, end,
+// speaker), 1-based.
+func voiceOrdinals(turns []SpeakerTurn) map[int]int {
+	sorted := append([]SpeakerTurn(nil), turns...)
+	sortTurns(sorted)
+	ordinal := map[int]int{}
+	for _, t := range sorted {
+		if t.StartMS < 0 || t.EndMS <= t.StartMS || t.Speaker < 0 {
+			continue
+		}
+		if _, ok := ordinal[t.Speaker]; !ok {
+			ordinal[t.Speaker] = len(ordinal) + 1
+		}
+	}
+	return ordinal
 }
 
 // SplitResult describes one stream split into voices.
 type SplitResult struct {
 	ParentID string
-	// SubSpeakerIDs lists the new ids in order of first spoken word.
+	// SubSpeakerIDs lists the ids that received words, by voice number. A
+	// voice the diarizer found but no word landed on keeps its number and is
+	// left out.
 	SubSpeakerIDs []string
-	// WordsPerSpeaker counts words per new id, aligned with SubSpeakerIDs.
+	// WordsPerSpeaker counts words per id, aligned with SubSpeakerIDs.
 	WordsPerSpeaker []int
 	// TurnCount and SpeakerCount describe the diarizer output used.
 	TurnCount    int
@@ -178,11 +199,10 @@ type SplitResult struct {
 }
 
 // SplitSpeakerSegments reassigns every word of parentID to a voice found by
-// the diarizer, numbering voices by first spoken word, and rebuilds the
-// segments so each voice change starts a new turn. Words of every other
-// speaker, and every word's text, timing and attribution fields, are kept
-// exactly. With no usable turns or no words for parentID the input is returned
-// unchanged and the result lists no sub-speakers.
+// the diarizer and rebuilds the segments so each voice change starts a new
+// turn. Words of every other speaker, and every word's text, timing and
+// attribution fields, are kept exactly. With no usable turns or no words for
+// parentID the input is returned unchanged and the result lists no voices.
 func SplitSpeakerSegments(segments []Segment, parentID string, turns []SpeakerTurn) ([]Segment, SplitResult) {
 	result := SplitResult{ParentID: parentID, TurnCount: len(turns), SpeakerCount: countTurnSpeakers(turns)}
 	var parentWords []Word
@@ -205,21 +225,20 @@ func SplitSpeakerSegments(segments []Segment, parentID string, turns []SpeakerTu
 		return segments, result
 	}
 
-	ordinal := map[int]int{}
+	ordinal := voiceOrdinals(turns)
 	perVoice := map[int][]Word{}
 	for i, speaker := range assigned {
-		if _, ok := ordinal[speaker]; !ok {
-			ordinal[speaker] = len(ordinal) + 1
-			result.SubSpeakerIDs = append(result.SubSpeakerIDs, SubSpeakerID(parentID, ordinal[speaker]))
-			result.WordsPerSpeaker = append(result.WordsPerSpeaker, 0)
-		}
 		n := ordinal[speaker]
 		perVoice[n] = append(perVoice[n], parentWords[i])
-		result.WordsPerSpeaker[n-1]++
 	}
-
 	for n := 1; n <= len(ordinal); n++ {
-		perSpeaker = append(perSpeaker, []Segment{{SpeakerID: SubSpeakerID(parentID, n), Words: perVoice[n]}})
+		if len(perVoice[n]) == 0 {
+			continue
+		}
+		id := SubSpeakerID(parentID, n)
+		result.SubSpeakerIDs = append(result.SubSpeakerIDs, id)
+		result.WordsPerSpeaker = append(result.WordsPerSpeaker, len(perVoice[n]))
+		perSpeaker = append(perSpeaker, []Segment{{SpeakerID: id, Words: perVoice[n]}})
 	}
 	return MergeAndSortSegments(perSpeaker), result
 }
