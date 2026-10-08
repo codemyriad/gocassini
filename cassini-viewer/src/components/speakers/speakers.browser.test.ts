@@ -458,7 +458,7 @@ describe("separating the voices on a shared device", () => {
     await expect.element(nameField(voice(1))).toBeEnabled();
     await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
     await expect.element(page.getByRole("menuitem", { name: "Treat as one person again" })).toBeEnabled();
-    await expect.element(page.getByText("Voice separation is not installed on this server.")).not.toBeInTheDocument();
+    await expect.element(page.getByText(/Voice separation is not installed on this server/)).not.toBeInTheDocument();
   });
 });
 

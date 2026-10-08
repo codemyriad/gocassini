@@ -78,6 +78,8 @@ describe("speaker edits documents", () => {
     expect(describeSpeakerEditsError(new SpeakerEditsError(409, "busy"))).toMatch(/being updated/);
     expect(describeSpeakerEditsError(new SpeakerEditsError(400, "invalid", { detail: "label too long" }))).toMatch(/label too long$/);
     expect(describeSpeakerEditsError(new SpeakerEditsError(500, ""))).toBe("HTTP 500");
+    // Missing voice separation says who can fix it, and where.
+    expect(describeSpeakerEditsError(new SpeakerEditsError(503, "diarization-unavailable"))).toMatch(/administrator can download it in Cassini's Settings/);
     // The operator's refusal for a meeting whose participant audio has gone.
     expect(describeSpeakerEditsError(new SpeakerEditsError(409, "unavailable", { reason: "no-source-audio" }))).toBe(
       "Each participant's own audio was not kept for this recording.",
