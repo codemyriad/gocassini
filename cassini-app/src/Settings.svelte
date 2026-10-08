@@ -16,7 +16,7 @@
   import RecordingSetup from "./RecordingSetup.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
-  import type { OperatorPanel } from "./surfaceRouting";
+  import { applyJob, applyPanel, type OperatorPanel } from "./surfaceRouting";
 
   export let panel: OperatorPanel = "endpoints";
 
@@ -25,6 +25,14 @@
   // here: this host does not own which panel is showing, and a second way to
   // change it would be a second answer to the one the URL holds.
   const dispatch = createEventDispatcher<{ panel: OperatorPanel }>();
+
+  function openRun(jobId: string): void {
+    if (!jobId) return;
+    const url = new URL(window.location.href);
+    url.hash = applyJob(applyPanel(window.location.hash, "recordings"), jobId).replace(/^#/, "");
+    window.history.pushState({}, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
 
   let operatorClient: OperatorClient | null = null;
   let configError = "";
@@ -44,7 +52,7 @@
          pipeline because that is where recording setup was configured, which
          made the one screen that answers "is this working" the hardest one to
          find. -->
-    <RecordingSetup {operatorClient} on:openStorage={() => dispatch("panel", "pipeline")} />
+    <RecordingSetup {operatorClient} on:openStorage={() => dispatch("panel", "pipeline")} on:openRun={(event) => openRun(event.detail)} />
   {:else if panel === "endpoints"}
     <LLMSettingsPanel {operatorClient} />
   {:else if panel === "pipeline"}

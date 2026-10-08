@@ -312,7 +312,7 @@ describe("MeetingList tag filter over insights", () => {
   it("names tags in the box only where there are tags to find", () => {
     // An install with no tags would otherwise promise something that cannot
     // match — the same empty promise searchOffered avoids.
-    expect(meetingListSource).toContain("tagsSearchable = meetingTags.size > 0");
+    expect(meetingListSource).toContain("tagsSearchable = tags === null ? rememberedTagsSearchable : meetingTags.size > 0");
     expect(meetingListSource).toContain("their tags and what was said in them");
     expect(meetingListSource).toContain("by name, date or tag");
   });

@@ -34,7 +34,7 @@ func TestSearchCoverageRemediesOnlyBackfillIndexAndBundleGaps(t *testing.T) {
 	if len(steps) != 1 {
 		t.Fatalf("index gaps need one commandless remedy: %+v", steps)
 	}
-	if !strings.Contains(steps[0].Label, "3 recording(s)") {
+	if !strings.Contains(steps[0].Label, "3 recordings") {
 		t.Fatalf("remedy did not name what it would re-index: %+v", steps[0])
 	}
 	if steps := searchCoverageSteps(searchCoverage{Silent: 1, Disabled: 1}, true); len(steps) != 0 {
@@ -110,7 +110,7 @@ func TestArchiveCoverageIsTakenByACheckAndReportedByAPoll(t *testing.T) {
 	if c.State != "warn" || c.Code != "search_coverage_partial" {
 		t.Fatalf("after a check = %+v; the unindexed archive meeting should show", c)
 	}
-	if !strings.Contains(c.Message, "1 archive Opus recordings without index rows") {
+	if !strings.Contains(c.Message, "1 is in the archive but not indexed yet") {
 		t.Fatalf("coverage did not name the gap: %q", c.Message)
 	}
 	if c.Repair != "" {
@@ -160,5 +160,25 @@ func TestLocalArchiveDoesNotOfferOrStartUnsupportedRepair(t *testing.T) {
 	rt.describeSearchBackfill(&check, searchCoverage{Untracked: 1})
 	if check.Repair != repairBackfillSearch {
 		t.Fatalf("supported Nextcloud archive gap offered no repair: %+v", check)
+	}
+}
+
+func TestSearchCoverageReadsAsPlainSentences(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		c    searchCoverage
+		want string
+	}{
+		{"all searchable", searchCoverage{Indexed: 12}, "12 meetings are searchable."},
+		{"one searchable", searchCoverage{Indexed: 1}, "1 meeting is searchable."},
+		{"some left out", searchCoverage{Indexed: 9, Untracked: 3, Silent: 1}, "9 meetings are searchable. Of the others, 1 was silent and 3 are in the archive but not indexed yet."},
+		{"nothing searchable", searchCoverage{Untracked: 2}, "No meetings are searchable yet: 2 are in the archive but not indexed yet."},
+		{"nothing at all", searchCoverage{}, "No meetings are searchable yet."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := describeSearchCoverage(tc.c); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

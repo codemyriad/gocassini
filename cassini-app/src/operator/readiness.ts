@@ -5,14 +5,16 @@ export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
 // One thing to do about a check that is not ok. Mirrors SetupNoticeStep, which
 // already renders this shape for storage faults: commands behind a disclosure,
 // so an administrator who just wants the button never reads a command line.
-// A remedy in words. No commands: this panel is ADMIN-only and the operator can
-// do the work, so where a repair is possible the row carries `repair` and the
-// panel renders a button (review 2026-09-25). Printing a shell line asked a
-// reader to find a terminal and the right container to trigger something the
-// process showing them the message could simply do — and how `occ` is invoked
-// varies by deployment, so the instruction was a guess as often as not.
+// Where the operator can do the work, the row carries `repair` and the panel
+// renders a button instead (review 2026-09-25). `commands` is only for what
+// Cassini cannot read or run for itself, each labelled with where it applies.
 export interface ReadinessStep {
   label: string;
+  commands?: string[];
+}
+
+export function labelParts(label: string): { text: string; code: boolean }[] {
+  return label.split("`").map((text, index) => ({ text, code: index % 2 === 1 })).filter(part => part.text !== "");
 }
 
 export interface ReadinessCheck {
@@ -25,6 +27,8 @@ export interface ReadinessCheck {
   // `action`: plenty of remedies are not a place to navigate to, but a command
   // to run on a host this app cannot reach.
   steps?: ReadinessStep[];
+  running?: boolean;
+  repair_failed?: boolean;
   // Something the operator can do about this check itself, rendered as a
   // button. Replaces printing a command for an administrator to go and run:
   // this panel is ADMIN-only and the operator can already do the work.
@@ -80,6 +84,30 @@ export function testInFlight(report: RecordingReadiness | null, now: Date = new 
   return now.getTime() - started < 30 * 60 * 1000;
 }
 
+export function testFollowUp(report: RecordingReadiness, now: Date = new Date()): string {
+  const test = report.test;
+  if (!test || test.playback_verified_at) return "";
+  if (test.state === "failed") return "your test recording did not finish";
+  if (test.published && test.viewer_url) return "play your test recording to finish it";
+  if (!testInFlight(report, now)) return "";
+  return test.state === "waiting_for_talk" ? "your test recording is waiting for you in Talk" : "your test recording is still in progress";
+}
+
+export function describeRefreshFailure(error: unknown): string {
+  const status = (error as { status?: unknown } | null)?.status;
+  if (status === 401 || status === 403) {
+    return "Your Nextcloud session may have expired, or this account is no longer an administrator. Reload the page and sign in again.";
+  }
+  if (status === 502 || status === 503 || status === 504) {
+    return "Cassini is not responding. It may be restarting, so wait a moment and try again. If it keeps happening, check that Cassini is enabled under Nextcloud's apps.";
+  }
+  if (error instanceof TypeError) {
+    return "Your browser could not reach Nextcloud. Check the connection, then try again.";
+  }
+  const message = error instanceof Error ? error.message.trim() : String(error ?? "").trim();
+  return message ? `Cassini answered with an error: ${message}` : "Something went wrong. Try again.";
+}
+
 export interface RecordingSetupUpdate {
   internal_secret?: string;
   test_room_url?: string;
@@ -91,6 +119,13 @@ export interface RecordingSetupUpdate {
 export const repairLabels: Record<string, string> = {
   backfill_search: "Re-index now",
 };
+
+const retryLabels: Record<string, string> = { backfill_search: "Try re-indexing again" };
+
+export function repairLabel(check: ReadinessCheck): string {
+  const repair = check.repair ?? "";
+  return (check.repair_failed && retryLabels[repair]) || repairLabels[repair] || "";
+}
 
 export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
@@ -130,9 +165,12 @@ export function readinessTitle(report: RecordingReadiness): string {
   const verdict = report.recording_state ?? report.state;
   // Archive coverage is excluded from the recording verdict, so a shortfall
   // there would otherwise be invisible in the heading.
-  const archive = report.checks.some(c => c.id.startsWith("archive.") && (c.state === "warn" || c.state === "needs_action"))
-    ? "archive search needs attention"
-    : "";
+  const archiveRows = report.checks.filter(c => c.id.startsWith("archive.") && (c.state === "warn" || c.state === "needs_action"));
+  const archive = archiveRows.some(c => c.repair_failed && !c.running)
+    ? "archive search re-index failed"
+    : archiveRows.some(c => !c.running)
+      ? "archive search needs attention"
+      : archiveRows.length > 0 ? "archive search is re-indexing" : "";
   if (verdict === "needs_action") {
     const count = report.checks.filter(c => c.state === "needs_action").length;
     return count === 1 ? "One recording check needs attention" : `${count} recording checks need attention`;
@@ -162,6 +200,19 @@ export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
   return [...report.checks];
 }
 
+export const hpbGuideURL = "https://nextcloud-talk.readthedocs.io/en/stable/quick-install/";
+
+const guideLabels: Record<string, string> = {
+  "talk.hpb": "How to set up a High Performance Backend",
+};
+
+export function rowGuide(check: ReadinessCheck): { href: string; label: string } | null {
+  if (check.code === "check_blocked") return null;
+  const href = check.docs ?? (check.action === "setup_hpb" ? hpbGuideURL : undefined);
+  if (!href) return null;
+  return { href, label: guideLabels[check.id] ?? "Read Nextcloud's guide" };
+}
+
 export function rowActions(check: ReadinessCheck): { action: string; label: string }[] {
   // A row waiting on another check offers nothing. Its remedy belongs to the
   // prerequisite, and the operator already strips its action — but the standing
@@ -180,9 +231,8 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
     configure_talk: "Set credential",
     connect_talk: "Connect Talk",
     test_recording: "Record a test",
-    recheck: "Check again",
+    recheck: "Check",
     setup_storage: "Set up storage",
-    setup_hpb: "How to set this up",
     repair_configuration: "How to repair this",
   };
   const actions = check.action ? [check.action] : [];
@@ -193,12 +243,21 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   // talk.discovery no longer keeps a "Test room" button: the room is Cassini's
   // to create, so there is no longer anything for a reader to choose.
   const persistent: Record<string,string> = { "talk.handoff":"connect_talk" };
-  if (persistent[check.id] && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
+  if (persistent[check.id] && check.code !== "recording_secret_missing" && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
   // An action this build cannot name gets no button, rather than a "Configure"
   // whose effect the panel cannot describe and whose drawer it does not have.
   // Same rule as the repair buttons: offering a control the panel cannot
   // explain is how a reader ends up reading an instruction for another fault.
-  return actions.filter(action => labels[action]).map(action => ({ action, label: labels[action] }));
+  const passedLabels: Record<string, string> = { configure_talk: "Change secret" };
+  const codeLabels: Record<string, Record<string, string>> = {
+    test_in_progress: { test_recording: "Show steps" },
+    test_awaiting_playback: { test_recording: "Show steps" },
+    test_failed: { test_recording: "Show steps" },
+  };
+  return actions.filter(action => labels[action]).map(action => ({
+    action,
+    label: codeLabels[check.code]?.[action] ?? (check.state === "passed" && passedLabels[action] ? passedLabels[action] : labels[action]),
+  }));
 }
 
 // How loudly a check should read. Colour is redundant with the label text
@@ -231,10 +290,10 @@ export function checkTone(check: ReadinessCheck): CheckTone {
 }
 
 export const toneClasses: Record<CheckTone, string> = {
-  success: "text-success",
-  warning: "text-warning",
-  error: "text-error",
-  neutral: "text-base-content/60",
+  success: "text-success-strong",
+  warning: "text-warning-strong",
+  error: "text-error-strong",
+  neutral: "text-base-content/65",
 };
 
 // The instance's worst news, for the header.
@@ -246,7 +305,10 @@ export const toneClasses: Record<CheckTone, string> = {
 // beside it: the operator excludes a test nobody ran from its verdict, and a
 // panel counting that row would paint a fully passing install grey.
 export function reportTone(report: RecordingReadiness): CheckTone {
-  return checkTone({ id: "", state: report.state, code: "", message: "" });
+  const outstanding = report.checks.filter(c => (c.state === "warn" || c.state === "needs_action") && !c.running);
+  const onlyRunning = outstanding.length === 0 && report.checks.some(c => c.running);
+  const state = onlyRunning ? (report.recording_state ?? report.state) : report.state;
+  return checkTone({ id: "", state, code: "", message: "" });
 }
 
 // How long ago a check established what it established.
@@ -259,6 +321,24 @@ export function reportTone(report: RecordingReadiness): CheckTone {
 // This carries the freshness that used to be smuggled into the state itself:
 // an aged check keeps its verdict and says how old it is, rather than decaying
 // into "not verified" and making an idle panel look broken (D-798).
+const sameRunWindowMs = 60_000;
+
+export function sharedCheckTime(checks: ReadinessCheck[]): { checkedAt: string; ids: Set<string> } | null {
+  const timed = checks
+    .filter(check => check.code !== "test_playback" && check.checked_at && !Number.isNaN(Date.parse(check.checked_at)))
+    .map(check => ({ id: check.id, raw: check.checked_at as string, at: Date.parse(check.checked_at as string) }))
+    .sort((a, b) => a.at - b.at);
+  if (timed.length === 0) return null;
+  const runs: (typeof timed)[] = [];
+  for (const item of timed) {
+    const run = runs[runs.length - 1];
+    if (run && item.at - run[run.length - 1].at <= sameRunWindowMs) run.push(item);
+    else runs.push([item]);
+  }
+  const largest = runs.reduce((best, run) => run.length >= best.length ? run : best);
+  return { checkedAt: largest[0].raw, ids: new Set(largest.map(item => item.id)) };
+}
+
 export function formatAge(checkedAt: string, now: Date = new Date()): string {
   const at = new Date(checkedAt);
   if (Number.isNaN(at.getTime())) {
@@ -282,7 +362,10 @@ export function formatAge(checkedAt: string, now: Date = new Date()): string {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+const failedRepairNouns: Record<string, string> = { "archive.search": "Re-index" };
+
 export function checkStateLabel(check: ReadinessCheck): string {
+  if (check.repair_failed) return `${failedRepairNouns[check.id] ?? "Repair"} failed`;
   if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
   return stateLabels[check.state];
 }

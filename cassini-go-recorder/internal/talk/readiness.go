@@ -13,11 +13,17 @@ import (
 // ConnectionCheck contains only stable codes and safe messages. Never return
 // upstream error bodies: they may contain credentials or private room details.
 type ConnectionCheck struct {
-	ID      string `json:"id"`
-	State   string `json:"state"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Action  string `json:"action,omitempty"`
+	ID      string           `json:"id"`
+	State   string           `json:"state"`
+	Code    string           `json:"code"`
+	Message string           `json:"message"`
+	Action  string           `json:"action,omitempty"`
+	Steps   []ConnectionStep `json:"steps,omitempty"`
+}
+
+type ConnectionStep struct {
+	Label    string   `json:"label"`
+	Commands []string `json:"commands,omitempty"`
 }
 
 // ProbeConnection authenticates exactly as the recorder does, but never joins
@@ -27,7 +33,7 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 	r.resolveProcessScopedTalkConfig()
 	checks := []ConnectionCheck{}
 	add := func(id, state, code, message, action string) {
-		checks = append(checks, ConnectionCheck{id, state, code, message, action})
+		checks = append(checks, ConnectionCheck{ID: id, State: state, Code: code, Message: message, Action: action})
 	}
 	if err := r.resolveTalkTarget(); err != nil {
 		// The room is Cassini's own, created by the operator, so a reader is
@@ -49,7 +55,7 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 	if err != nil {
 		var ocsErr *nextcloud.OCSError
 		if errors.As(err, &ocsErr) && (ocsErr.HTTPStatus == 401 || ocsErr.HTTPStatus == 403) {
-			add("talk.discovery", "needs_action", "recording_auth_rejected", "The Talk settings request was denied. Check the recording credential, access rules and recording-backend configuration.", "connect_talk")
+			add("talk.discovery", "needs_action", "recording_auth_rejected", "Talk refused Cassini. Cassini is not set up as Talk's recording backend yet, or the recording secret Talk has does not match Cassini's.", "connect_talk")
 		} else if errors.As(err, &ocsErr) && ocsErr.HTTPStatus == 404 {
 			add("talk.discovery", "needs_action", "talk_or_room_unavailable", "Talk's recording settings are unavailable: either the Talk app is not enabled, or the conversation Cassini checks with is gone. Check the Talk app, then run this check again — Cassini will make a new conversation if it needs one.", "recheck")
 		} else {
@@ -57,7 +63,8 @@ func ProbeConnection(ctx context.Context, cfg config.Config) []ConnectionCheck {
 			// Nextcloud. That is a finding about the deployment, and reporting
 			// it as an absence left a real fault rendering as a neutral "not
 			// verified" row that flagged nothing (D-798).
-			add("talk.discovery", "warn", "nextcloud_unreachable", "Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.", "recheck")
+			finding := classifyUnreachable(err)
+			checks = append(checks, ConnectionCheck{ID: "talk.discovery", State: "warn", Code: finding.code, Message: finding.message, Action: "recheck", Steps: finding.steps})
 		}
 		return checks
 	}

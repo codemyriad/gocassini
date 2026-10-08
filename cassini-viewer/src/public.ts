@@ -112,8 +112,7 @@ export const EMBED_CSS = `
    these rules beat Tailwind's layered utilities. The !important overrides
    the inline right: the player sets to clear the scrollbar. */
 .cassini-embed[data-layout="inline"] .mv-title,
-.cassini-embed[data-layout="inline"] .mv-meta,
-.cassini-embed[data-layout="inline"] .mv-details { display: none; }
+.cassini-embed[data-layout="inline"] .mv-meta { display: none; }
 .cassini-embed[data-layout="inline"] .mv-scroll { padding-bottom: 0; }
 .cassini-embed[data-layout="inline"] .mv-player {
   position: relative;

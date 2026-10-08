@@ -19,7 +19,7 @@ var readinessPrerequisites = map[string][]string{
 	// The credential used to sit between these two as a row of its own. It is
 	// part of the backend row now — same server, same fact — so the chain is
 	// one link shorter.
-	"talk.discovery": {"talk.hpb"},
+	"talk.discovery": {"talk.hpb", "talk.handoff"},
 	// A test recording exercises every link at once: Talk hands the call over
 	// (handoff), the recorder joins through the backend (hpb, authentication,
 	// discovery), and the result is published to Nextcloud (storage). Listing
@@ -80,6 +80,31 @@ var independentReadinessCodes = map[string]bool{
 	"talk_backend_url_invalid": true,
 }
 
+var nextcloudUnreachableCodes = map[string]bool{
+	"nextcloud_unreachable":         true,
+	"nextcloud_host_not_found":      true,
+	"nextcloud_connection_refused":  true,
+	"nextcloud_timeout":             true,
+	"nextcloud_tls_untrusted":       true,
+	"nextcloud_server_error":        true,
+	"nextcloud_unexpected_response": true,
+}
+
+var probeStoppedBeforeBackendCodes = map[string]bool{
+	"recording_auth_rejected":  true,
+	"talk_or_room_unavailable": true,
+	"test_room_invalid":        true,
+}
+
+var backendAwaitingProbeCodes = map[string]bool{
+	"signaling_mode_unknown":  true,
+	"hpb_declared_unverified": true,
+}
+
+func provenReadinessRow(row *readinessCheck) bool {
+	return row != nil && (row.State == "passed" || row.State == "warn")
+}
+
 // suppressBlockedRows rewrites, in place, any row whose prerequisite is unmet.
 //
 // A prerequisite is unmet when it demands action, or when it is itself blocked.
@@ -91,32 +116,61 @@ func suppressBlockedRows(checks []readinessCheck) {
 	for i := range checks {
 		byID[checks[i].ID] = &checks[i]
 	}
+	rootCauses := map[string]bool{}
+	if discovery, hpb := byID["talk.discovery"], byID["talk.hpb"]; discovery != nil && hpb != nil && backendAwaitingProbeCodes[hpb.Code] {
+		root := ""
+		if handoff := byID["talk.handoff"]; discovery.Code == "recording_secret_missing" && handoff != nil && handoff.State == "needs_action" {
+			root = "talk.handoff"
+		} else if nextcloudUnreachableCodes[discovery.Code] || probeStoppedBeforeBackendCodes[discovery.Code] {
+			root = "talk.discovery"
+		}
+		if root != "" {
+			name := readinessRowNames[root]
+			blockRow(hpb, name, false)
+			if root == "talk.discovery" {
+				rootCauses[root] = true
+			} else {
+				blockRow(discovery, name, false)
+			}
+			if test := byID["test"]; test != nil && !blockedReadinessCodes[test.Code] && provenReadinessRow(byID["storage"]) {
+				blockRow(test, name, false)
+			}
+		}
+	}
+	if archive, storage := byID["archive.search"], byID["storage"]; archive != nil && storage != nil &&
+		archive.Code == "search_reindex_archive_unreadable" && storage.State == "needs_action" {
+		blockRow(archive, readinessRowNames["storage"], false)
+	}
 	// In declared order, so a blocked prerequisite propagates down the chain in
 	// one pass: no backend blocks the credential, which blocks the connection.
 	for _, id := range readinessRowOrder {
 		row, ok := byID[id]
-		if !ok || blockedReadinessCodes[row.Code] || independentReadinessCodes[row.Code] {
+		if !ok || rootCauses[id] || blockedReadinessCodes[row.Code] || independentReadinessCodes[row.Code] {
 			continue
 		}
 		blocked := false
+		failedID, unprovenID := "", ""
 		for _, prereqID := range readinessProvenPrerequisites[id] {
 			prereq, present := byID[prereqID]
-			if present && (prereq.State == "passed" || prereq.State == "warn") {
-				continue
+			if present && prereq.State == "needs_action" && failedID == "" {
+				failedID = prereqID
 			}
-			name := readinessRowNames[prereqID]
+			if !provenReadinessRow(prereq) && unprovenID == "" {
+				unprovenID = prereqID
+			}
+		}
+		// Two different facts, said differently: a check that FAILED is
+		// somebody's to fix, a check nobody has run is somebody's to run.
+		if blocker := failedID; blocker != "" || unprovenID != "" {
+			if blocker == "" {
+				blocker = unprovenID
+			}
+			name := readinessRowNames[blocker]
 			if name == "" {
-				name = prereqID
+				name = blocker
 			}
-			// Two different facts, said differently: a check that FAILED is
-			// somebody's to fix, a check nobody has run is somebody's to run.
-			if present && prereq.State == "needs_action" {
-				blockRow(row, name, false)
-			} else {
-				blockRow(row, name, true)
-			}
+			blockRow(row, name, failedID == "")
 			blocked = true
-			break
 		}
 		if blocked {
 			continue
@@ -153,4 +207,6 @@ func blockRow(row *readinessCheck, blocker string, unchecked bool) {
 	row.Action = ""
 	row.Steps = nil
 	row.Repair = ""
+	row.Running = false
+	row.RepairFailed = false
 }

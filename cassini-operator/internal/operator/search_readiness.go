@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 
 	if !known {
 		check.State, check.Code = "not_verified", "search_coverage_scope_unknown"
-		check.Message = describeSearchCoverage(coverage) + " The archive has not been listed, so older recordings may be missing from this index."
+		check.Message = describeSearchCoverage(coverage) + " Cassini has not listed the archive yet, so older recordings may not be counted."
 		if coverage.TotalKnown() == 0 {
 			check.Code = "search_coverage_empty"
 			check.Message = "No meetings have been recorded yet, so search has nothing to index."
@@ -55,7 +56,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 			check.State, check.Code = "warn", "search_coverage_partial"
 		}
 		check.Action = "recheck"
-		check.Steps = append([]readinessStep{{Label: "Check storage again to list the archive before judging search coverage"}}, searchCoverageSteps(coverage, rt.canBackfillSearch())...)
+		check.Steps = append([]readinessStep{{Label: "Check Recording storage again so Cassini can list the archive, then check search again"}}, searchCoverageSteps(coverage, rt.canBackfillSearch())...)
 		rt.describeSearchBackfill(&check, coverage)
 		return check
 	}
@@ -68,15 +69,14 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 		check.Message = "No meetings have been recorded yet, so search has nothing to index."
 	} else if coverage.NeedsAttention() > 0 {
 		check.State, check.Code = "warn", "search_coverage_partial"
-		check.Message += " The checked archive has recordings outside search coverage."
 		check.Action = "recheck"
 		check.Steps = searchCoverageSteps(coverage, rt.canBackfillSearch())
 	} else if coverage.TotalKnown() == 0 {
 		check.State, check.Code = "passed", "search_archive_empty"
-		check.Message = "The checked recordings archive is empty. Search has no meetings to index."
+		check.Message = "The recordings archive is empty, so search has nothing to index."
 	} else {
 		check.State, check.Code = "passed", "search_archive_files_accounted_for"
-		check.Message += " Every Opus file in the checked archive listing has an index outcome."
+		check.Message += " Every recording in the archive is accounted for."
 	}
 	if coverage.NeedsAttention() > 0 && check.State == "not_verified" {
 		check.State, check.Code = "warn", "search_coverage_partial"
@@ -108,13 +108,59 @@ func (rt *Runtime) describeSearchRepair(check *readinessCheck) {
 	switch {
 	case running:
 		check.Repair = ""
+		check.Running = true
+		check.Steps = nil
 		check.Message += " Re-indexing is running now."
 		return
 	case err != nil:
-		check.Message += " The last re-index did not finish: " + err.Error()
+		check.RepairFailed = true
+		describeSearchRepairFailure(check, err)
 	case ran && !finished.IsZero():
-		check.Message += fmt.Sprintf(" Last re-index: %d indexed, %d unchanged, %d not searchable, %d failed.",
+		check.Message += fmt.Sprintf(" The last re-index added %d, left %d unchanged, found %d not searchable and failed on %d.",
 			report.Indexed, report.Unchanged, report.Unavailable, report.Failed)
+	}
+}
+
+var searchRepairLogStep = readinessStep{
+	Label:    "The full error is in Cassini's log. On the Docker host:",
+	Commands: []string{"docker logs nc_app_gocassini 2>&1 | grep 'search backfill'"},
+}
+
+func describeSearchRepairFailure(check *readinessCheck, err error) {
+	var failure *searchRepairError
+	kind := ""
+	if errors.As(err, &failure) {
+		kind = failure.kind
+	}
+	switch kind {
+	case searchRepairArchiveUnreadable:
+		check.Code = "search_reindex_archive_unreadable"
+		check.Message += " The last re-index could not list the recordings archive in Nextcloud."
+		check.Steps = []readinessStep{
+			{Label: "Recording storage uses the same access to the archive. If it needs attention, fix that first"},
+			{Label: "If it passes, Nextcloud was probably busy or restarting, so try re-indexing again"},
+			searchRepairLogStep,
+		}
+	case searchRepairIndexUnavailable:
+		check.Code = "search_reindex_index_unavailable"
+		check.Repair = ""
+		check.Message += " The last re-index could not use the search index, so trying again would fail the same way."
+		check.Steps = []readinessStep{
+			{Label: "Check that Cassini's data volume is mounted and writable: the search index is kept on it"},
+			{Label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps"},
+			searchRepairLogStep,
+		}
+	case searchRepairEnvironment:
+		check.Code = "search_reindex_environment"
+		check.Repair = ""
+		check.Message += " The last re-index could not read the settings AppAPI gives Cassini, so trying again would fail the same way."
+		check.Steps = []readinessStep{
+			{Label: "Cassini is running without its AppAPI settings (`NEXTCLOUD_URL`, `APP_SECRET`, `APP_ID`). Deploy it through AppAPI rather than starting its container by hand"},
+			searchRepairLogStep,
+		}
+	default:
+		check.Message += " The last re-index did not finish: " + err.Error()
+		check.Steps = append(check.Steps, searchRepairLogStep)
 	}
 }
 
@@ -125,17 +171,19 @@ func searchCoverageSteps(c searchCoverage, canBackfill bool) []readinessStep {
 	if candidates := c.Untracked + c.BackfillCandidates; candidates > 0 {
 		// No command here on purpose. The row carries Repair instead, and the
 		// panel offers a button that runs it in this process.
-		label := "Inspect the affected recording bundles and their search index entries"
-		if canBackfill {
-			label = fmt.Sprintf("Re-index the %d recording(s) with no index row or an unverified bundle", candidates)
+		label := "Check the affected recordings and their entries in the search index"
+		if canBackfill && candidates == 1 {
+			label = "Re-index now adds the 1 recording that is not in search yet"
+		} else if canBackfill {
+			label = fmt.Sprintf("Re-index now adds the %d recordings that are not in search yet", candidates)
 		}
 		steps = append(steps, readinessStep{Label: label})
 	}
 	if c.ModelUnavailable+c.TranscriptionFailed > 0 {
-		steps = append(steps, readinessStep{Label: "Check transcription settings and model readiness. Rebuilding the search index cannot add words to already published audio"})
+		steps = append(steps, readinessStep{Label: "Check transcription settings and that the model is ready. Indexing again cannot add words to recordings that were never transcribed"})
 	}
 	if c.MissingTranscript+c.UnreadableTranscript+c.UnknownEmpty+c.OtherUnavailable > 0 {
-		steps = append(steps, readinessStep{Label: "Inspect the affected recording bundles and their transcription outcomes; a missing transcript needs investigation before indexing can help"})
+		steps = append(steps, readinessStep{Label: "Check the affected recordings' transcripts. A missing or unreadable transcript has to be fixed before indexing can help"})
 	}
 	return steps
 }
@@ -144,27 +192,50 @@ func searchCoverageSteps(c searchCoverage, canBackfill bool) []readinessStep {
 // caller chooses whether these numbers describe the whole observed archive or
 // only the sidecar's current rows.
 func describeSearchCoverage(c searchCoverage) string {
-	parts := []string{fmt.Sprintf("%d indexed meeting(s)", c.Indexed)}
+	var rest []string
 	for _, item := range []struct {
-		count int
-		label string
+		count     int
+		one, many string
 	}{
-		{c.Silent, "silent after completed transcription"},
-		{c.Disabled, "intentionally without transcription"},
-		{c.ModelUnavailable, "without transcription because a model was unavailable"},
-		{c.TranscriptionFailed, "with failed transcription"},
-		{c.UnknownEmpty, "with empty transcripts of unknown cause"},
-		{c.MissingTranscript, "with missing transcripts"},
-		{c.UnreadableTranscript, "with unreadable transcripts"},
-		{c.BackfillCandidates, "awaiting archive or bundle verification"},
-		{c.OtherUnavailable, "with other indexing problems"},
-		{c.Untracked, "archive Opus recordings without index rows"},
+		{c.Silent, "was silent", "were silent"},
+		{c.Disabled, "was recorded with transcription off", "were recorded with transcription off"},
+		{c.ModelUnavailable, "was not transcribed because a model was unavailable", "were not transcribed because a model was unavailable"},
+		{c.TranscriptionFailed, "failed to transcribe", "failed to transcribe"},
+		{c.UnknownEmpty, "has an empty transcript for an unknown reason", "have empty transcripts for an unknown reason"},
+		{c.MissingTranscript, "is missing its transcript", "are missing their transcripts"},
+		{c.UnreadableTranscript, "has an unreadable transcript", "have unreadable transcripts"},
+		{c.BackfillCandidates, "is waiting to be verified for search", "are waiting to be verified for search"},
+		{c.OtherUnavailable, "could not be indexed for another reason", "could not be indexed for other reasons"},
+		{c.Untracked, "is in the archive but not indexed yet", "are in the archive but not indexed yet"},
 	} {
-		if item.count > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", item.count, item.label))
+		switch {
+		case item.count == 1:
+			rest = append(rest, "1 "+item.one)
+		case item.count > 1:
+			rest = append(rest, fmt.Sprintf("%d %s", item.count, item.many))
 		}
 	}
-	return "The search index records " + strings.Join(parts, "; ") + "."
+	switch {
+	case c.Indexed == 0 && len(rest) == 0:
+		return "No meetings are searchable yet."
+	case c.Indexed == 0:
+		return "No meetings are searchable yet: " + plainList(rest) + "."
+	}
+	searchable := fmt.Sprintf("%d meetings are searchable.", c.Indexed)
+	if c.Indexed == 1 {
+		searchable = "1 meeting is searchable."
+	}
+	if len(rest) == 0 {
+		return searchable
+	}
+	return searchable + " Of the others, " + plainList(rest) + "."
+}
+
+func plainList(items []string) string {
+	if len(items) < 2 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 }
 
 // archiveCoverageState holds what the last archive check found.

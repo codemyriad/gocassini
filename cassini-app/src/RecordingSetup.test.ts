@@ -23,10 +23,10 @@ describe("the panel never checks on its own", () => {
     expect(timerBody.slice(0, 200)).not.toContain("load(true");
   });
 
-  it("only follows a recording that is already under way", () => {
+  it("only follows a recording or a re-index that is already under way", () => {
     // The timer's whole body: a guarded, quiet read. It stops on its own when
     // the test reaches a state only a person can move on from.
-    expect(panelSource).toContain("if (testInFlight(report)) void refreshQuietly()");
+    expect(panelSource).toContain("if (testInFlight(report) || report?.checks.some(check => check.running)) void refreshQuietly()");
   });
 
   it("follows quietly, so no control flickers", () => {

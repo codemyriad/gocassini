@@ -43,7 +43,9 @@ type readinessCheck struct {
 	// Repair names something the operator can do about this check ITSELF, which
 	// the panel renders as a button, instead of printing a shell line for an
 	// administrator to go and run.
-	Repair string `json:"repair,omitempty"`
+	Repair       string `json:"repair,omitempty"`
+	Running      bool   `json:"running,omitempty"`
+	RepairFailed bool   `json:"repair_failed,omitempty"`
 	// Checkable says a probe establishes THIS row, so it can be re-checked on
 	// its own. Sent rather than worked out again in the panel: the mapping from
 	// row to probe is readinessScopeFor's, and a second copy in TypeScript
@@ -63,7 +65,8 @@ type readinessCheck struct {
 // that shape for storage faults, with the commands behind a disclosure so an
 // administrator who just wants the button never reads a command line.
 type readinessStep struct {
-	Label string `json:"label"`
+	Label    string   `json:"label"`
+	Commands []string `json:"commands,omitempty"`
 }
 
 type recordingSetupState struct {
@@ -652,7 +655,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// Safe because this panel reports rather than authorises: admission is
 		// decided separately by ncAccessSubstrate.recordingRefusal(), checked
 		// above and not bounded by this TTL.
-		add("storage", "not_verified", "storage_not_checked", "Nextcloud storage has not been checked yet. Check again to run it.", "recheck")
+		add("storage", "not_verified", "storage_not_checked", "Nextcloud storage has not been checked yet.", "recheck")
 	} else if access.OK {
 		// Says what was established, in the reader's terms. "The Nextcloud
 		// storage preflight passed" named an internal routine and no fact: the
@@ -672,7 +675,11 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "Cassini cannot store or share recordings in Nextcloud yet. The storage details name the step that failed.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
-		add("talk.handoff", "needs_action", "recording_secret_missing", "Cassini could not provision its recording credential. Check its persistent storage.", "connect_talk")
+		addWithSteps("talk.handoff", "needs_action", "recording_secret_missing",
+			"Cassini has no recording secret. It creates one when it starts and keeps it on its data volume, and that did not succeed.", "",
+			readinessStep{Label: "Check that Cassini's data volume is mounted and writable: the secret is saved next to its database"},
+			readinessStep{Label: "Then restart Cassini by disabling and re-enabling it in Nextcloud's apps, which creates the secret again"},
+			readinessStep{Label: "Or set one yourself in `CASSINI_TALK_RECORDING_SECRET`, in Cassini's deploy options. A secret set there always wins"})
 	}
 	if refusal := rt.talkBackendMisconfigured(); refusal != "" {
 		// Ahead of the room check: no room can make this work, and "choose a
@@ -684,7 +691,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// are different facts: no probe result at all is an absence, whereas an
 		// aged one is a finding that happens to be old. Probe results are
 		// in-memory only, so a restart genuinely leaves nothing established.
-		add("talk.discovery", "not_verified", "connection_not_checked", "The Talk connection has not been checked yet. Check again to run it.", "recheck")
+		add("talk.discovery", "not_verified", "connection_not_checked", "The Talk connection has not been checked yet.", "recheck")
 	} else {
 		// Stamped with when the probe ran, so its age travels with the verdict
 		// instead of replacing it.
@@ -710,7 +717,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	// there to wait for.
 	if !hasReadinessRow(resp.Checks, "talk.hpb") {
 		add("talk.hpb", "not_verified", "hpb_not_checked",
-			"Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one. Check again to run it.",
+			"Whether Talk has a High Performance Backend has not been established yet, and Cassini can only record through one.",
 			"recheck")
 	}
 	// The credential belongs to that same row. It used to have one of its own,
