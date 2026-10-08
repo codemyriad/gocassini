@@ -118,8 +118,9 @@ Separate the voices of people who shared one device.
 
 diarize finds who spoke when on one participant's own audio and writes the
 turns (times and voice numbers only, no voice data). The model is --model,
-else $CASSINI_DIARIZATION_MODEL, else the cache's
-models/nemotron-3-diarization-int8/model.int8.onnx.
+else $CASSINI_DIARIZATION_MODEL, else the speaker separation model installed
+in the model store (Settings, or cassini models install
+nemotron-3-diarization-int8).
 
 apply rewrites a .meeting bundle in place from its original transcript, the
 edits document (cassini.speaker-edits.v1) and <turns-dir>/<speakerId>.json for
@@ -141,7 +142,7 @@ func runSpeakersDiarize(ctx context.Context, args []string, stdout, stderr io.Wr
 	fs.SetOutput(stderr)
 	speaker := fs.String("speaker", "", "participant id whose audio to diarize")
 	out := fs.String("out", "", "where to write the speaker turns (JSON)")
-	modelPath := fs.String("model", "", "Nemotron diarization ONNX model (default: $CASSINI_DIARIZATION_MODEL or the model cache)")
+	modelPath := fs.String("model", "", "Nemotron diarization ONNX model (default: $CASSINI_DIARIZATION_MODEL or the installed model)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini speakers diarize ./runs/meeting.run --speaker spk_... --out ./turns/spk_....json [--model ./model.int8.onnx]

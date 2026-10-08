@@ -50,6 +50,10 @@ func probeMemoryFloor(model ModelID, device string) int {
 		return 1536
 	case ModelParakeet06BV3Int8:
 		return 2816
+	case "nemotron-3-diarization-int8":
+		return 1024
+	case "nemotron-3-diarization":
+		return 1536
 	default:
 		return 4608
 	}
