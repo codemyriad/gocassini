@@ -200,7 +200,9 @@ is checked the same way as for marks: a meeting the caller cannot open answers
   original roster: the devices that can be split. `state` is `idle`,
   `applying`, `failed` or `unavailable`. When `available` is false, `reason`
   is one of `no-job` (a meeting with no operator job), `no-source-audio`,
-  `no-transcript` or `diarization-unavailable`.
+  `no-transcript` or `diarization-unavailable`; for the last,
+  `reasonDetail` says why (not installed, a runtime without Nemotron, or an
+  unreadable model inventory) and how to install the model.
 - `progress` is `null` unless `state` is `applying`. Then it is
   `{phase, elapsedMs, estimatedMs}`:
   - `phase` is `queued` while the refine attempt waits behind another build
@@ -229,8 +231,8 @@ is checked the same way as for marks: a meeting the caller cannot open answers
   - 409 `{"error":"unavailable","reason":…}`, for a meeting that cannot be
     edited at all;
   - 400 `{"error":"invalid","message":…}`;
-  - 503 `diarization-unavailable`, when a new split needs a model this
-    operator does not have.
+  - 503 `{"error":"diarization-unavailable","detail":…}`, when a new split
+    needs a model this operator does not have.
 
 A `refine` attempt runs no transcription. It copies `current/<job>.meeting`,
 diarizes each newly split participant once from `current/<job>.run` (the
@@ -244,24 +246,55 @@ resolve against the new file. If they do not, the publish fails and the
 published recording is left as it was. A rerun re-encodes the audio and
 keeps the existing rerun rule.
 
-## Installing the model for the proof of concept
+## Installing the model
 
-The model is not yet in the model catalogue, so `cassini models install` does
-not fetch it. Diarization needs:
+The diarizer is an optional model in the model store, like the speech models
+(see the [model operator guide](proposals/optional-transcription-model-storage/implementation.md)).
+Nothing is installed by default, and nothing downloads it on its own.
 
-- the Cassini sherpa-onnx runtime with Nemotron support (`v1.13.7-cassini.6`
-  or later; the version string contains `.nemotron-diarization-v2`). Linux
-  amd64 builds have it; stock libraries on macOS, Windows and Linux arm32 do
-  not, and diarize exits 3 there;
-- the decompressed version-2 Nemotron 3 Diarization INT8 ONNX export, in one
-  of these places, checked in this order:
-  1. `--model <path>` on `cassini speakers diarize`;
-  2. `CASSINI_DIARIZATION_MODEL=<path>`;
-  3. `<cache root>/models/nemotron-3-diarization-int8/model.int8.onnx`, where
-     the cache root is `CASSINI_CACHE_ROOT` or `~/.cache/cassini`.
+- **Settings.** The speech models section lists **Voice separation
+  (optional)**: Nemotron 3 Diarization int8, a 61.9 MiB download, 99.2 MiB
+  installed. **Download voice separation** installs it, verifies it and loads
+  it once over a second of silence. It never becomes the transcription model.
+- **Terminal.** `cassini models install nemotron-3-diarization-int8 --cache-root
+  <store>`. `cassini models list` shows it with kind `diarization`.
+- **Air-gapped.** `cassini models pack nemotron-3-diarization-int8 --out
+  diarizer.tar` on a connected machine, then `cassini models import --from
+  diarizer.tar` on the server. `import` also takes the one model file itself,
+  `model.int8.onnx` or the CDN's `model.int8.onnx.zst`, with `--model` and
+  `--revision`.
 
-The model's SHA-256 is recorded with every turn set and in
+The diarizer has no VAD and runs on the CPU only: `--device cuda` is refused.
+It lands in `models/nemotron-3-diarization-int8/<source-sha256>/model.int8.onnx`
+under the store root. The catalogue also carries the fp32 export,
+`nemotron-3-diarization` (163 MiB download); Settings does not offer it, and
+diarize uses it only when the int8 export is not installed.
+
+Diarization also needs the Cassini sherpa-onnx runtime with Nemotron support
+(`v1.13.7-cassini.6` or later; the version string contains
+`.nemotron-diarization-v2`). Linux amd64 and arm64 builds have it; stock libraries on macOS,
+Windows and Linux arm32 do not. There `models list` reports
+`"runtime_supported": false`, Settings says the runtime cannot run it, and
+diarize exits 3.
+
+`cassini speakers diarize` takes the model from, in this order:
+
+1. `--model <path>`;
+2. `CASSINI_DIARIZATION_MODEL=<path>`, a development override;
+3. the installed catalogue diarizer in the model store (`CASSINI_CACHE_ROOT`,
+   else `~/.cache/cassini`): the int8 export, else the fp32 one.
+
+The loose `models/nemotron-3-diarization-int8/model.int8.onnx` of the proof of
+concept is no longer read; import that file to keep using it. A store model's
+SHA-256 is the catalogue's, which its bytes were verified against when they
+were installed. The SHA-256 is recorded with every turn set and in
 `x-speakerDiarization`.
+
+The operator decides whether a new split can run the same way Settings does,
+from `cassini models list --json`: a diarizer that is installed and that the
+runtime supports. When none is, it answers `diarization-unavailable` with a
+`reasonDetail` (GET) or `detail` (503) that says why and how an administrator
+installs it.
 
 ## Differences from Cassini for Android
 
