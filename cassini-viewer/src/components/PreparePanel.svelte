@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Copy, Download, FileText, TriangleAlert, X } from "@lucide/svelte";
+  import { FileText, TriangleAlert, X } from "@lucide/svelte";
+  import ExportMenu from "./ExportMenu.svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import type { LoadedArtifact } from "../viewer/loadArtifact";
@@ -119,7 +120,7 @@
     status = { tone: "ok", text: "Preparing transcripts…" };
     const clipboard = navigator.clipboard;
     if (!clipboard?.writeText) {
-      status = { tone: "warn", text: "Clipboard unavailable here — use Download transcripts." };
+      status = { tone: "warn", text: "Clipboard unavailable here — use Export to download." };
       busy = false;
       return;
     }
@@ -196,7 +197,7 @@
     // silently did nothing would look like a bundle that came out empty.
     const clipboard = navigator.clipboard;
     if (!clipboard || typeof clipboard.writeText !== "function") {
-      status = { tone: "warn", text: "Clipboard unavailable here — use Download." };
+      status = { tone: "warn", text: "Clipboard unavailable here — use Export to download." };
       busy = false;
       return;
     }
@@ -245,7 +246,7 @@
       // The bytes are assembled and cached by now, so a second press writes
       // them inside its own gesture — which is exactly what a browser that
       // refused this one is asking for. Download stays the way out.
-      status = { tone: "warn", text: "Clipboard blocked here — press Copy again, or use Download." };
+      status = { tone: "warn", text: "Clipboard blocked here — use Export to copy again or download." };
     } finally {
       busy = false;
     }
@@ -264,6 +265,7 @@
       busy = false;
     }
   }
+
 </script>
 
 <!-- A drawer over the list, like the meeting sheet but narrower: this is a
@@ -272,7 +274,23 @@
 <aside class="prepare-panel" aria-label="Prepare context">
   <header class="prep-head">
     <h2>Prepare context</h2>
-    <CloseButton label="Close Prepare" on:click={() => dispatch("close")} />
+    <div class="prep-head-actions">
+      <ExportMenu
+        includeContext
+        canExportContext={!busy && !blocked}
+        canCopy={!busy && !blocked}
+        canDownloadTranscript={!busy && !blocked}
+        canDownloadAudio={!busy && !blocked}
+        plural={entries.length !== 1}
+        label="Export selected meetings"
+        on:copyContext={handleCopy}
+        on:context={handleDownload}
+        on:copy={handleTranscriptCopy}
+        on:transcript={handleTranscriptDownload}
+        on:audio={handleAudioDownload}
+      />
+      <CloseButton label="Close Prepare" on:click={() => dispatch("close")} />
+    </div>
   </header>
 
   <div class="prep-body">
@@ -339,34 +357,6 @@
       </section>
     {/if}
 
-    <!-- Two equal outputs directly under the set: the same bytes either way,
-         and the way out on a deployment with no model configured at all. -->
-    <section class="prep-section prep-actions">
-      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleCopy}>
-        <Copy size={14} aria-hidden="true" />
-        Copy
-      </button>
-      <button
-        type="button"
-        class="prep-action"
-        disabled={busy || blocked}
-        on:click={handleDownload}
-      >
-        <Download size={14} aria-hidden="true" />
-        Download
-      </button>
-    </section>
-    <section class="prep-section prep-actions" aria-label="Take the selected meetings with you">
-      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleTranscriptCopy}>
-        <Copy size={14} aria-hidden="true" /> Copy {entries.length === 1 ? "transcript" : "transcripts"}
-      </button>
-      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleTranscriptDownload}>
-        <Download size={14} aria-hidden="true" /> Download {entries.length === 1 ? "transcript" : "transcripts"}
-      </button>
-      <button type="button" class="prep-action prep-audio-action" disabled={busy || blocked} on:click={handleAudioDownload}>
-        <Download size={14} aria-hidden="true" /> Download audio
-      </button>
-    </section>
     <p class="prep-status" data-tone={status?.tone ?? "ok"} role="status">
       {status?.text ?? ""}
     </p>
@@ -420,6 +410,12 @@
     gap: 0.75rem;
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--color-base-300);
+  }
+  .prep-head-actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.5rem;
   }
   .prep-head h2 {
     font-size: 0.9375rem;
@@ -556,38 +552,6 @@
   }
   .prep-gap :global(svg) {
     color: var(--color-warning, #b45309);
-  }
-
-  .prep-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-  .prep-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.375rem;
-    padding: 8px 12px;
-    cursor: pointer;
-    background-color: var(--color-base-100);
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
-    border-radius: var(--radius-field, 0.5rem);
-    font-size: 0.8125rem;
-    font-weight: 550;
-    color: var(--color-base-content);
-  }
-  .prep-audio-action {
-    grid-column: 1 / -1;
-  }
-  .prep-action:hover:not(:disabled) {
-    background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
-    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
-  }
-  .prep-action:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
   }
 
   /* Reserved whether or not there is anything to say, so a status line arriving

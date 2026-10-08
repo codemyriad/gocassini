@@ -57,9 +57,9 @@ describe("PreparePanel", () => {
     // would look like a bundle that came out empty, so each case names the way
     // through — and where the bytes are already assembled, that is a second
     // press rather than giving up on Copy.
-    expect(preparePanelSource).toContain("Clipboard unavailable here — use Download.");
+    expect(preparePanelSource).toContain("Clipboard unavailable here — use Export to download.");
     expect(preparePanelSource).toContain(
-      "Clipboard blocked here — press Copy again, or use Download.",
+      "Clipboard blocked here — use Export to copy again or download.",
     );
   });
 
@@ -156,7 +156,9 @@ describe("PreparePanel", () => {
     expect(preparePanelSource).toContain(
       "$: blocked = entries.length === 0 || overCap || entries.some((entry) => lacksPortableAudio(entry));",
     );
-    expect(preparePanelSource.match(/disabled=\{busy \|\| blocked\}/g) ?? []).toHaveLength(5);
+    for (const capability of ["canExportContext", "canCopy", "canDownloadTranscript", "canDownloadAudio"]) {
+      expect(preparePanelSource).toContain(`${capability}={!busy && !blocked}`);
+    }
     expect(preparePanelSource).toContain("{#if !blocked}\n      <slot name=\"generate\" {entries} />");
   });
 });
