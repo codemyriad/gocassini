@@ -174,6 +174,7 @@ API, artifact, component and operational details.
 - [Operator API](./reference/api.md) — HTTP + SSE surface.
 - [Configuration](./reference/configuration.md) — all runtime knobs.
 - [Artifacts and filesystem](./reference/artifacts-and-filesystem.md) — `.run` / `.meeting` / `.site` / `.opus` and operator layout.
+- [Container-local retention and eviction](./container-retention.md) — policies, exact deletion targets, schedule, manual sweeps and duplicate cleanup.
 - [Agent access to meeting recordings](./agent-meeting-access.md) — reading meetings from outside Nextcloud with `cassini meetings`, as a Nextcloud user.
 - [Glossary](./reference/glossary.md) — Cassini + media terms.
 - [Troubleshooting](./reference/troubleshooting.md) — common local-dev and runtime issues.

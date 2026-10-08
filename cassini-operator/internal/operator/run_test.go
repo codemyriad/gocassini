@@ -1694,8 +1694,8 @@ func TestRerunFromPublishFailureRebuildsInsteadOfPublishOnly(t *testing.T) {
 	if failedJob.ArtifactRunPath == nil || !strings.Contains(*failedJob.ArtifactRunPath, filepath.Join("current", createResp.ID+".run")) {
 		t.Fatalf("expected canonical run path on publish failure, got %#v", failedJob.ArtifactRunPath)
 	}
-	if failedJob.ArtifactMeetingPath == nil || !strings.Contains(*failedJob.ArtifactMeetingPath, filepath.Join("current", createResp.ID+".meeting")) {
-		t.Fatalf("expected canonical meeting path on publish failure, got %#v", failedJob.ArtifactMeetingPath)
+	if failedJob.ArtifactMeetingPath != nil {
+		t.Fatalf("unpublished meeting must not become current, got %#v", failedJob.ArtifactMeetingPath)
 	}
 	if buildCalls != 1 || publishCalls != 1 {
 		t.Fatalf("expected one build and one publish before rerun, got build=%d publish=%d", buildCalls, publishCalls)
@@ -2425,8 +2425,8 @@ func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
 	}
 
 	job := waitForJobState(t, rt.store, resp.ID, "failed")
-	if job.ArtifactMeetingPath == nil || !strings.Contains(*job.ArtifactMeetingPath, filepath.Join("current", resp.ID+".meeting")) {
-		t.Fatalf("expected canonical meeting path to remain on publish failure, got %#v", job.ArtifactMeetingPath)
+	if job.ArtifactMeetingPath != nil {
+		t.Fatalf("unpublished meeting must not be current: %v", job.ArtifactMeetingPath)
 	}
 	if job.ArtifactSitePath != nil {
 		t.Fatalf("did not expect shared artifact_site_path on initial publish failure, got %#v", job.ArtifactSitePath)
@@ -2812,7 +2812,13 @@ func waitForJobState(t *testing.T, store *Store, id, wantState string) Job {
 	for time.Now().Before(deadline) {
 		job, err := store.GetJob(context.Background(), id)
 		if err == nil && job.State == wantState {
-			return job
+			// Delivery is persisted before recoverable local archive promotion.
+			unlock := store.lockArtifacts(id)
+			unlock()
+			job, err = store.GetJob(context.Background(), id)
+			if err == nil {
+				return job
+			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
