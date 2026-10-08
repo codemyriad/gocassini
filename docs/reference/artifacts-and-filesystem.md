@@ -66,6 +66,14 @@ Conceptually:
 - input: `.run` or raw `.mkv`
 - output: an intermediate bundle staged for packing into a portable `.opus`
 
+`meeting.webm` is the meeting's only Opus encode; packing copies its packets
+into the `.opus` unchanged. Its bitrate and audio bandwidth follow the sources
+(policy `source-v1`: a 16 kHz phone recording is coded as wideband at a little
+over its own rate, a Talk call at about what its participants sent, never above
+64 kb/s). `manifest.json` records the choice as `audioEncode`; a bundle without
+that record was built with the earlier fixed 64 kb/s encode (`fixed-64k`).
+`cassini build --audio-encode <policy>` rebuilds with a named policy.
+
 The `.meeting` bundle is transient build scratch, not a published format. Its
 `cassini.json` and `manifest.json` are internal staging manifests, not a
 consumer contract, and are scheduled for retirement. Prefer the portable `.opus`
@@ -235,6 +243,7 @@ At the attempt level:
   `runs/<job-id>--attempt-NNN.seal/<job-id>.opus`, and `artifact_opus_sha256` is
   its digest
 - rerun attempts typically reuse the canonical `.run` and create fresh attempt-local `.meeting`, `.seal` and `.site` outputs
+- a rerun rebuilds the audio with the encode policy recorded in `current/<job-id>.meeting` (`fixed-64k` when it records none), so the rebuilt `.opus` has the same audio and the marks made on the published one carry over
 
 The split is the same one every stage uses, and it is what lets a publish deliver
 a specific attempt's artifact rather than whatever is currently canonical:

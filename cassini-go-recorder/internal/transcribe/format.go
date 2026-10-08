@@ -161,8 +161,13 @@ type artifactManifest struct {
 	SpeakerCount     int                  `json:"speakerCount"`
 	SegmentCount     int                  `json:"segmentCount,omitempty"`
 	DigestDurationMS int64                `json:"digestDurationMs,omitempty"`
-	WordCount        int                  `json:"wordCount"`
-	Provenance       *provenanceInfo      `json:"provenance,omitempty"`
+	// AudioEncode records how files.audio was encoded. It sits outside
+	// provenance because an untranscribed build has no provenance but still
+	// has audio, and a rerun reads it to rebuild the same packets. Absent on
+	// bundles built before D-850, which used AudioEncodeFixed64k.
+	AudioEncode *AudioEncode    `json:"audioEncode,omitempty"`
+	WordCount   int             `json:"wordCount"`
+	Provenance  *provenanceInfo `json:"provenance,omitempty"`
 }
 
 type artifactSource struct {
@@ -306,6 +311,7 @@ type ManifestInput struct {
 	SrcBasename      string
 	SrcDurationMS    int64
 	DigestDurationMS int64
+	AudioEncode      *AudioEncode
 	Streams          []AudioStream
 	Segments         []Segment
 
@@ -402,6 +408,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		SpeakerCount:     logicalSpeakerCount(in.Streams),
 		SegmentCount:     len(in.Segments),
 		DigestDurationMS: in.DigestDurationMS,
+		AudioEncode:      in.AudioEncode,
 		WordCount:        wordCount,
 		Provenance:       prov,
 	}
