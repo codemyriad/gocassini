@@ -202,6 +202,11 @@ type speakerEditsAttempt struct {
 	Revision      int
 	Stage, State  string
 	Error         string
+	// Doc is the snapshot the attempt applies.
+	Doc speakerEditsDoc
+	// QueuedAt is when the attempt was queued: build_queued_at, which a
+	// resource deferral keeps, or created_at for a row without one.
+	QueuedAt string
 }
 
 // GetSpeakerEdits returns the job's edits, or the empty document at revision 0.
@@ -235,11 +240,11 @@ func (s *Store) LatestSpeakerEditsAttempt(ctx context.Context, jobID string) (sp
 	var snapshot string
 	var attemptError sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-SELECT attempt_number, stage, state, error, speaker_edits_json
+SELECT attempt_number, stage, state, error, speaker_edits_json, COALESCE(build_queued_at, created_at)
 FROM job_attempts
 WHERE job_id = ? AND speaker_edits_json IS NOT NULL
 ORDER BY attempt_number DESC
-LIMIT 1`, jobID).Scan(&a.AttemptNumber, &a.Stage, &a.State, &attemptError, &snapshot)
+LIMIT 1`, jobID).Scan(&a.AttemptNumber, &a.Stage, &a.State, &attemptError, &snapshot, &a.QueuedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, false, nil
 	}
@@ -250,7 +255,7 @@ LIMIT 1`, jobID).Scan(&a.AttemptNumber, &a.Stage, &a.State, &attemptError, &snap
 	if err != nil {
 		return a, false, err
 	}
-	a.Revision = doc.Revision
+	a.Revision, a.Doc = doc.Revision, doc
 	a.Error = attemptError.String
 	return a, true, nil
 }
@@ -374,6 +379,69 @@ func (s *Store) HasSpeakerSplitTurns(ctx context.Context, jobID string) (bool, e
 		return false, fmt.Errorf("count speaker turns: %w", err)
 	}
 	return n > 0, nil
+}
+
+// SpeakerSplitTurnsStoredAt returns, for each participant of jobID whose turns
+// are stored, when they were stored. A participant missing from the map has
+// none yet: a refine that splits it has to diarize first.
+func (s *Store) SpeakerSplitTurnsStoredAt(ctx context.Context, jobID string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT speaker_id, created_at FROM speaker_split_turns WHERE job_id = ?`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("list speaker turns: %w", err)
+	}
+	defer rows.Close()
+	stored := map[string]string{}
+	for rows.Next() {
+		var speakerID, createdAt string
+		if err := rows.Scan(&speakerID, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan speaker turns: %w", err)
+		}
+		stored[speakerID] = createdAt
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate speaker turns: %w", err)
+	}
+	return stored, nil
+}
+
+// speakerDiarizationRun is how long one stored turn set took to compute
+// (elapsedMs, the model's own time) for how much audio (durationMs), and when
+// it was stored.
+type speakerDiarizationRun struct {
+	ElapsedMs, DurationMs int64
+	StoredAt              string
+}
+
+// SpeakerDiarizationRuns returns every turn set this operator stored, of any
+// job, that says how long it took: what the refine estimate learns its pace
+// from. A set without both numbers, or whose JSON is not readable, says
+// nothing about speed and is left out.
+func (s *Store) SpeakerDiarizationRuns(ctx context.Context) ([]speakerDiarizationRun, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT elapsed_ms, duration_ms, created_at FROM (
+  SELECT CASE WHEN json_valid(turns_json) THEN CAST(json_extract(turns_json, '$.elapsedMs') AS INTEGER) END AS elapsed_ms,
+         CASE WHEN json_valid(turns_json) THEN CAST(json_extract(turns_json, '$.durationMs') AS INTEGER) END AS duration_ms,
+         created_at
+  FROM speaker_split_turns
+)
+WHERE elapsed_ms > 0 AND duration_ms > 0`)
+	if err != nil {
+		return nil, fmt.Errorf("list speaker diarization runs: %w", err)
+	}
+	defer rows.Close()
+	var runs []speakerDiarizationRun
+	for rows.Next() {
+		var run speakerDiarizationRun
+		if err := rows.Scan(&run.ElapsedMs, &run.DurationMs, &run.StoredAt); err != nil {
+			return nil, fmt.Errorf("scan speaker diarization run: %w", err)
+		}
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate speaker diarization runs: %w", err)
+	}
+	return runs, nil
 }
 
 // MissingSpeakerSplitTurns lists the splits of doc that have no stored turns

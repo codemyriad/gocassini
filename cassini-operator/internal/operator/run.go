@@ -192,6 +192,10 @@ type Runtime struct {
 	// readiness cannot drift from the policy used by newly spawned builds.
 	// Tests stub it.
 	computeProbe func(device string) (usable bool, detail string)
+	// speakerClock is what the speaker edits surface takes as now: when a
+	// refine is queued and how long it has been waiting. Nil means time.Now;
+	// tests fix it.
+	speakerClock func() time.Time
 	// referenceFrontendProbe reports whether the active sherpa runtime includes
 	// the Parakeet v3 reference frontend optimization. Tests stub it.
 	referenceFrontendProbe func() (known bool, isReference bool)

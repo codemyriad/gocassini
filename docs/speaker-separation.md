@@ -3,11 +3,12 @@
 Cassini labels speakers by device: each Talk participant records on their own
 audio track, and every word on that track is theirs. When several people sit
 around one laptop, all of them come out as that laptop's participant. Someone
-who can read the meeting can say **"Several people used this device"**. Cassini
-then finds the different voices on that participant's own track and splits its
-words between them, as "Meeting room laptop · Speaker 1", "… · Speaker 2" and so
-on. People can name the voices, say that two of them are the same person, or
-undo the split.
+who can read the meeting can choose **Separate voices** ("Several people used
+this device") in that participant's menu; it starts at once. Cassini then
+finds the different voices on that participant's own track and splits its words
+between them, as "Meeting room laptop · Speaker 1", "… · Speaker 2" and so on.
+People can name the voices, say that two of them are the same person, or undo
+the split.
 
 This is a proof of concept. Nothing runs automatically, and nothing recognises
 a person: the voices are anonymous until someone types a name.
@@ -195,11 +196,32 @@ is checked the same way as for marks: a meeting the caller cannot open answers
 404.
 
 - `GET` returns `{available, reason, revision, appliedRevision, state,
-  lastError, doc, participants, report}`. `participants` is the original
-  roster: the devices that can be split. `state` is `idle`, `applying`,
-  `failed` or `unavailable`. When `available` is false, `reason` is one of
-  `no-job` (a meeting with no operator job), `no-source-audio`,
+  lastError, doc, participants, report, progress}`. `participants` is the
+  original roster: the devices that can be split. `state` is `idle`,
+  `applying`, `failed` or `unavailable`. When `available` is false, `reason`
+  is one of `no-job` (a meeting with no operator job), `no-source-audio`,
   `no-transcript` or `diarization-unavailable`.
+- `progress` is `null` unless `state` is `applying`. Then it is
+  `{phase, elapsedMs, estimatedMs}`:
+  - `phase` is `queued` while the refine attempt waits behind another build
+    or a recording, `separating` while it runs and a split it applies has no
+    stored turns yet (the diarizer is working), and `updating` for the rest
+    (apply with the summary rewrite, seal, publish);
+  - `elapsedMs` is the operator's time now minus when the attempt was queued;
+  - `estimatedMs` is the expected time from queued to republished: the
+    meeting's length (`durationMs` of `current/<job>.meeting`, from its
+    manifest or else its transcript) times this operator's diarization pace,
+    when a split had no stored turns at queue time, plus 15 s for apply,
+    summary, seal and publish; never under 5 s. The pace is the median
+    `elapsedMs / durationMs` of the turn sets this operator has stored, ×1.15
+    for decoding, kept between 0.005 and 0.1, or 0.016 before it has any. It
+    uses only what was known when the attempt was queued, so it stays the
+    same for the whole attempt and the page counts down on its own between
+    polls. A rename, merge or undo over stored turns is estimated at 15 s.
+
+  Measured on a CPU operator: a 64-minute meeting took 74 s from save to
+  republished (61 s decoding and diarizing, 9 s apply with the summary
+  rewrite, 5 s seal and publish); 3-minute meetings take 4–7 s.
 - `POST {expectRevision, doc}` stores the next revision and queues a `refine`
   attempt in one transaction. It answers 200 with the `GET` shape, or:
   - 409 `{"error":"revision-conflict","revision":n}`;

@@ -3,7 +3,9 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // annotations/meetings/<id>/speakers. MEETING1 is alice's to read and is the
@@ -301,5 +304,248 @@ func TestSpeakersRoutes(t *testing.T) {
 	}
 	if got := annTestCall(f.h, http.MethodGet, "MEETING1/speakers", "alice", "").Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q", got)
+	}
+}
+
+// --- progress: where an applying edit is and how long it should take ---
+
+var speakerProgressT0 = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+
+// fakeSpeakerClock fixes the speakers surface's now; advance moves it.
+type fakeSpeakerClock struct{ now time.Time }
+
+func (c *fakeSpeakerClock) advance(d time.Duration) { c.now = c.now.Add(d) }
+
+func (f *speakersFixture) useClock(at time.Time) *fakeSpeakerClock {
+	clock := &fakeSpeakerClock{now: at}
+	f.rt.speakerClock = func() time.Time { return clock.now }
+	return clock
+}
+
+// setSpeakerMeetingAudioMs gives the job's meeting bundle a manifest that
+// says how long the meeting is, the way `cassini build` writes it.
+func setSpeakerMeetingAudioMs(t *testing.T, workRoot, jobID string, ms int64) {
+	t.Helper()
+	manifest := fmt.Sprintf(`{"version":"cassini.meeting-artifact.v1","source":{"basename":"recording.mkv","durationMs":%d}}`, ms)
+	if err := os.WriteFile(filepath.Join(canonicalMeetingPath(workRoot, jobID), "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setSpeakerAttemptStage(t *testing.T, f *speakersFixture, attempt int, stage, state string) {
+	t.Helper()
+	if _, err := f.rt.store.db.Exec(`UPDATE job_attempts SET stage = ?, state = ? WHERE job_id = 'MEETING1' AND attempt_number = ?`, stage, state, attempt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func putSpeakerTurnSet(t *testing.T, store *Store, jobID, speakerID string, elapsedMs, durationMs int64, storedAt time.Time) {
+	t.Helper()
+	turns := fmt.Sprintf(`{"format":"cassini.speaker-turns.v1","speakerId":%q,"durationMs":%d,"elapsedMs":%d,"turns":[]}`, speakerID, durationMs, elapsedMs)
+	if _, err := store.PutSpeakerSplitTurns(context.Background(), jobID, speakerID, turns, "", "", formatUTCString(storedAt)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *speakersFixture) post(t *testing.T, body string) speakerEditsResponse {
+	t.Helper()
+	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST = %d %s", rec.Code, rec.Body.String())
+	}
+	var resp speakerEditsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func wantSpeakerProgress(t *testing.T, step string, resp speakerEditsResponse, want speakerEditsProgress) {
+	t.Helper()
+	if resp.State != speakerStateApplying || resp.Progress == nil || *resp.Progress != want {
+		t.Fatalf("%s: state %q progress %+v, want applying %+v", step, resp.State, resp.Progress, want)
+	}
+}
+
+func TestSpeakersProgressIsNullUnlessApplying(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+
+	rec := annTestCall(f.h, http.MethodGet, "MEETING1/speakers", "alice", "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"progress":null`) {
+		t.Fatalf("idle GET = %d %s, want progress null", rec.Code, rec.Body.String())
+	}
+
+	f.useClock(speakerProgressT0)
+	if resp := f.post(t, `{"expectRevision":0,"doc":{"labels":[{"speakerId":"spk_room","label":"Room"}]}}`); resp.Progress == nil {
+		t.Fatalf("POST = %+v, want progress", resp)
+	}
+	// It failed: nothing is applying any more.
+	setSpeakerAttemptStage(t, f, 2, "build", "failed")
+	if resp := f.get(t, "MEETING1"); resp.State != speakerStateFailed || resp.Progress != nil {
+		t.Fatalf("failed: %+v", resp)
+	}
+	// A meeting nobody can split has no progress either.
+	if resp, err := f.rt.speakerEditsState(context.Background(), "NOJOB"); err != nil || resp.State != speakerStateUnavailable || resp.Progress != nil {
+		t.Fatalf("no job: %+v %v", resp, err)
+	}
+}
+
+// One split, nothing learned yet: queued, then separating while the
+// diarizer runs, then updating once the turns are stored, and gone once the
+// recording carries the edits. The estimate is the default pace over the
+// meeting's length plus the fixed tail, and does not move while it runs —
+// not even when the attempt stores a turn set of its own.
+func TestSpeakersProgressFollowsASplitThroughItsPhases(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	setSpeakerMeetingAudioMs(t, f.rt.cfg.WorkRoot, "MEETING1", 3_840_000)
+	clock := f.useClock(speakerProgressT0)
+
+	const estimate = 3_840_000*16/1000 + speakerRefineFixedMs // 61 440 + 15 000
+	resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}]}}`)
+	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, ElapsedMs: 0, EstimatedMs: estimate})
+
+	clock.advance(3 * time.Second)
+	wantSpeakerProgress(t, "still queued", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseQueued, ElapsedMs: 3000, EstimatedMs: estimate})
+
+	setSpeakerAttemptStage(t, f, 2, "build", "running")
+	clock.advance(40 * time.Second)
+	wantSpeakerProgress(t, "separating", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseSeparating, ElapsedMs: 43_000, EstimatedMs: estimate})
+
+	// The diarizer finishes, at a pace that would change a learned rate.
+	clock.advance(20 * time.Second)
+	putSpeakerTurnSet(t, f.rt.store, "MEETING1", speakerTestRoom, 55_903, 3_850_492, clock.now)
+	wantSpeakerProgress(t, "applying", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 63_000, EstimatedMs: estimate})
+
+	setSpeakerAttemptStage(t, f, 2, "publish", "queued")
+	clock.advance(10 * time.Second)
+	wantSpeakerProgress(t, "publishing", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 73_000, EstimatedMs: estimate})
+
+	// Running past the estimate is reported as it is.
+	clock.advance(time.Minute)
+	wantSpeakerProgress(t, "late", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 133_000, EstimatedMs: estimate})
+
+	if _, err := f.rt.store.db.Exec(`UPDATE speaker_edits SET applied_revision = 1 WHERE job_id = 'MEETING1'`); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.get(t, "MEETING1"); resp.State != speakerStateIdle || resp.Progress != nil {
+		t.Fatalf("published: %+v", resp)
+	}
+}
+
+// The pace is the median of this operator's stored turn sets, of any meeting,
+// plus decoding. Sets stored after the attempt was queued, and sets that say
+// nothing about time, do not count.
+func TestSpeakersProgressLearnsThePaceFromStoredTurnSets(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	setSpeakerMeetingAudioMs(t, f.rt.cfg.WorkRoot, "MEETING1", 3_840_000)
+	before := speakerProgressT0.Add(-time.Hour)
+	putSpeakerTurnSet(t, f.rt.store, "OTHER1", "spk_a", 1_000, 100_000, before)
+	putSpeakerTurnSet(t, f.rt.store, "OTHER2", "spk_b", 2_000, 100_000, before)
+	putSpeakerTurnSet(t, f.rt.store, "OTHER3", "spk_c", 4_000, 100_000, before)
+	if _, err := f.rt.store.PutSpeakerSplitTurns(context.Background(), "OTHER4", "spk_d", `{}`, "", "", formatUTCString(before)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.rt.store.PutSpeakerSplitTurns(context.Background(), "OTHER5", "spk_e", `not json`, "", "", formatUTCString(before)); err != nil {
+		t.Fatal(err)
+	}
+	clock := f.useClock(speakerProgressT0)
+
+	// median 0.02 × 1.15 = 0.023 per audio ms.
+	const estimate = 3_840_000*23/1000 + speakerRefineFixedMs // 88 320 + 15 000
+	resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}]}}`)
+	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, EstimatedMs: estimate})
+
+	// A very slow set stored while the attempt waits would move the median;
+	// the attempt keeps the estimate it was queued with.
+	clock.advance(time.Second)
+	putSpeakerTurnSet(t, f.rt.store, "OTHER6", "spk_f", 9_000, 100_000, clock.now)
+	putSpeakerTurnSet(t, f.rt.store, "OTHER7", "spk_g", 9_000, 100_000, clock.now)
+	wantSpeakerProgress(t, "after other sets", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseQueued, ElapsedMs: 1000, EstimatedMs: estimate})
+}
+
+// Naming, merging or undoing over turns that are already stored runs no
+// diarizer: the estimate is the fixed tail and the attempt never separates.
+func TestSpeakersProgressOfAnEditThatNeedsNoDiarizer(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	setSpeakerMeetingAudioMs(t, f.rt.cfg.WorkRoot, "MEETING1", 3_840_000)
+	putSpeakerTurnSet(t, f.rt.store, "MEETING1", speakerTestRoom, 55_903, 3_850_492, speakerProgressT0.Add(-time.Hour))
+	clock := f.useClock(speakerProgressT0)
+
+	resp := f.post(t, `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}],"labels":[{"speakerId":"spk_room~1","label":"Ann"}]}}`)
+	wantSpeakerProgress(t, "queued", resp, speakerEditsProgress{Phase: speakerPhaseQueued, EstimatedMs: speakerRefineFixedMs})
+	setSpeakerAttemptStage(t, f, 2, "build", "running")
+	clock.advance(400 * time.Millisecond)
+	wantSpeakerProgress(t, "running", f.get(t, "MEETING1"), speakerEditsProgress{Phase: speakerPhaseUpdating, ElapsedMs: 400, EstimatedMs: speakerRefineFixedMs})
+}
+
+func TestSpeakerDiarizeRateIsClampedAndDefaulted(t *testing.T) {
+	at := speakerProgressT0.Add(-time.Hour)
+	run := func(elapsed, duration int64) speakerDiarizationRun {
+		return speakerDiarizationRun{ElapsedMs: elapsed, DurationMs: duration, StoredAt: formatUTCString(at)}
+	}
+	cases := []struct {
+		name string
+		runs []speakerDiarizationRun
+		want float64
+	}{
+		{"none", nil, speakerDiarizeRateDefault},
+		{"only after queue", []speakerDiarizationRun{{ElapsedMs: 1, DurationMs: 2, StoredAt: formatUTCString(speakerProgressT0)}}, speakerDiarizeRateDefault},
+		{"too fast", []speakerDiarizationRun{run(1, 100_000)}, speakerDiarizeRateMin},
+		{"too slow", []speakerDiarizationRun{run(100_000, 100_000)}, speakerDiarizeRateMax},
+		{"even count", []speakerDiarizationRun{run(1_000, 100_000), run(4_000, 100_000), run(2_000, 100_000), run(9_000, 100_000)}, 0.03 * speakerDiarizeDecodeFactor},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := learnedSpeakerDiarizeRate(tc.runs, speakerProgressT0, true); math.Abs(got-tc.want) > 1e-12 {
+				t.Fatalf("rate = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSpeakerRefineEstimateHasAFloor(t *testing.T) {
+	if got := speakerRefineEstimateMs(0, 0, false, 0); got != speakerRefineMinMs {
+		t.Fatalf("estimate with nothing to do = %d, want the %d ms floor", got, speakerRefineMinMs)
+	}
+	if got := speakerRefineEstimateMs(100_000, 0.016, true, 1_000); got != speakerRefineMinMs {
+		t.Fatalf("short estimate = %d, want the floor", got)
+	}
+	if got := speakerRefineEstimateMs(1_000_000, 0.016, false, speakerRefineFixedMs); got != speakerRefineFixedMs {
+		t.Fatalf("no diarization = %d, want the fixed tail", got)
+	}
+	// Unknown length: only the fixed tail is known.
+	if got := speakerRefineEstimateMs(0, 0.016, true, speakerRefineFixedMs); got != speakerRefineFixedMs {
+		t.Fatalf("unknown length = %d", got)
+	}
+}
+
+// Without a manifest that says, the length comes from the transcript's media.
+func TestSpeakerMeetingAudioMsFallsBackToTheTranscript(t *testing.T) {
+	dir := t.TempDir()
+	if got := readSpeakerMeetingAudioMs(dir); got != 0 {
+		t.Fatalf("empty bundle = %d", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(`{"version":"cassini.meeting-artifact.v1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, speakerTranscriptPrimary), []byte(`{"media":{"durationMs":60008}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpeakerMeetingAudioMs(dir); got != 60008 {
+		t.Fatalf("from transcript = %d", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(`{"source":{"durationMs":61000}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpeakerMeetingAudioMs(dir); got != 61000 {
+		t.Fatalf("from manifest = %d", got)
 	}
 }

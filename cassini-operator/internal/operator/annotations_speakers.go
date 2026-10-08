@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -56,7 +57,44 @@ type speakerEditsResponse struct {
 	Participants    []speakerParticipant `json:"participants"`
 	// Report is the CLI's report of the last apply that was published, or null.
 	Report json.RawMessage `json:"report"`
+	// Progress is where the pending refine is and how long it should take
+	// in all; null unless State is applying.
+	Progress *speakerEditsProgress `json:"progress"`
 }
+
+// speakerEditsProgress tells the page what an applying edit is waiting for.
+// EstimatedMs is the expected time from queue to republished and stays the
+// same for the whole attempt, so the page counts down against ElapsedMs on its
+// own clock between polls.
+type speakerEditsProgress struct {
+	Phase       string `json:"phase"`
+	ElapsedMs   int64  `json:"elapsedMs"`
+	EstimatedMs int64  `json:"estimatedMs"`
+}
+
+const (
+	// speakerPhaseQueued: the refine attempt has not started; it waits behind
+	// another build or a recording.
+	speakerPhaseQueued = "queued"
+	// speakerPhaseSeparating: the attempt runs and a split it applies has no
+	// stored turns yet, so the diarizer is working.
+	speakerPhaseSeparating = "separating"
+	// speakerPhaseUpdating: apply, summary, seal and publish.
+	speakerPhaseUpdating = "updating"
+
+	// speakerRefineFixedMs is everything but diarization: apply with its
+	// summary rewrite, seal and publish (14 s measured on a 64-minute meeting).
+	speakerRefineFixedMs = 15000
+	speakerRefineMinMs   = 5000
+	// Diarization time per audio millisecond, decoding included. The default
+	// is what a CPU operator measured before it has run any of its own.
+	speakerDiarizeRateDefault = 0.016
+	speakerDiarizeRateMin     = 0.005
+	speakerDiarizeRateMax     = 0.1
+	// speakerDiarizeDecodeFactor turns a stored set's elapsedMs, the model's
+	// own time, into the whole step's: decoding the track adds about 15%.
+	speakerDiarizeDecodeFactor = 1.15
+)
 
 // speakerParticipant is one device of the original transcript: what can be
 // split. Never a voice.
@@ -159,7 +197,7 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, nowUTCString())
+	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, formatUTCString(s.rt.speakerNow()))
 	switch {
 	case errors.Is(err, errSpeakerEditsRevisionConflict):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "revision-conflict", "revision": revision})
@@ -315,6 +353,9 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 	switch {
 	case ok && attempt.Revision > rec.AppliedRevision && (attempt.State == "queued" || attempt.State == "running"):
 		resp.State = speakerStateApplying
+		if resp.Progress, err = rt.speakerRefineProgress(ctx, jobID, attempt); err != nil {
+			return resp, err
+		}
 	case ok && attempt.Revision > rec.AppliedRevision && (attempt.State == "failed" || attempt.State == "interrupted" || attempt.State == "blocked"):
 		resp.State = speakerStateFailed
 		resp.LastError = rec.LastError
@@ -331,6 +372,129 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 		resp.LastError = rec.LastError
 	}
 	return resp, nil
+}
+
+// speakerNow is the speaker edits surface's clock.
+func (rt *Runtime) speakerNow() time.Time {
+	if rt.speakerClock != nil {
+		return rt.speakerClock()
+	}
+	return time.Now()
+}
+
+// speakerRefineProgress reports the phase of the pending refine attempt and
+// its estimate. The estimate depends only on what was known when the attempt
+// was queued — which splits had no turns then, the meeting's length, and the
+// turn sets stored before it — so it does not move while the attempt runs,
+// not even when its own diarization stores a new turn set.
+func (rt *Runtime) speakerRefineProgress(ctx context.Context, jobID string, attempt speakerEditsAttempt) (*speakerEditsProgress, error) {
+	queuedAt, queuedKnown := time.Time{}, false
+	if at, err := parseInsightTime(attempt.QueuedAt); err == nil {
+		queuedAt, queuedKnown = at, true
+	}
+	stored, err := rt.store.SpeakerSplitTurnsStoredAt(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	missingNow, diarizes := false, false
+	for _, split := range attempt.Doc.Splits {
+		at, ok := stored[split.SpeakerID]
+		if !ok {
+			missingNow, diarizes = true, true
+			continue
+		}
+		// Stored since the attempt was queued: by this attempt, which had to
+		// diarize when it was queued.
+		if t, err := parseInsightTime(at); err == nil && queuedKnown && !t.Before(queuedAt) {
+			diarizes = true
+		}
+	}
+
+	progress := &speakerEditsProgress{Phase: speakerPhaseUpdating}
+	switch {
+	case attempt.Stage == "build" && attempt.State == "queued":
+		progress.Phase = speakerPhaseQueued
+	case missingNow:
+		progress.Phase = speakerPhaseSeparating
+	}
+	if queuedKnown {
+		progress.ElapsedMs = max(rt.speakerNow().Sub(queuedAt).Milliseconds(), 0)
+	}
+
+	var audioMs int64
+	rate := 0.0
+	if diarizes {
+		audioMs = readSpeakerMeetingAudioMs(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
+		runs, err := rt.store.SpeakerDiarizationRuns(ctx)
+		if err != nil {
+			return nil, err
+		}
+		rate = learnedSpeakerDiarizeRate(runs, queuedAt, queuedKnown)
+	}
+	progress.EstimatedMs = speakerRefineEstimateMs(audioMs, rate, diarizes, speakerRefineFixedMs)
+	return progress, nil
+}
+
+// learnedSpeakerDiarizeRate is this operator's diarization time per audio
+// millisecond: the median of its stored turn sets' elapsedMs/durationMs, plus
+// decoding, within bounds that keep one odd run from promising seconds or
+// hours. Only sets stored before the attempt was queued count.
+func learnedSpeakerDiarizeRate(runs []speakerDiarizationRun, before time.Time, beforeKnown bool) float64 {
+	ratios := make([]float64, 0, len(runs))
+	for _, run := range runs {
+		if run.ElapsedMs <= 0 || run.DurationMs <= 0 {
+			continue
+		}
+		if at, err := parseInsightTime(run.StoredAt); err == nil && beforeKnown && !at.Before(before) {
+			continue
+		}
+		ratios = append(ratios, float64(run.ElapsedMs)/float64(run.DurationMs))
+	}
+	if len(ratios) == 0 {
+		return speakerDiarizeRateDefault
+	}
+	sort.Float64s(ratios)
+	median := ratios[len(ratios)/2]
+	if len(ratios)%2 == 0 {
+		median = (ratios[len(ratios)/2-1] + ratios[len(ratios)/2]) / 2
+	}
+	return min(max(median*speakerDiarizeDecodeFactor, speakerDiarizeRateMin), speakerDiarizeRateMax)
+}
+
+// speakerRefineEstimateMs is the expected time from queue to republished:
+// the diarization when the attempt has to run one, plus fixedMs, never less
+// than speakerRefineMinMs.
+func speakerRefineEstimateMs(audioMs int64, rate float64, diarizes bool, fixedMs int64) int64 {
+	estimate := fixedMs
+	if diarizes && audioMs > 0 {
+		estimate += int64(float64(audioMs)*rate + 0.5)
+	}
+	return max(estimate, speakerRefineMinMs)
+}
+
+// readSpeakerMeetingAudioMs is the meeting's length: the bundle manifest's
+// source durationMs, or else its transcript's media.durationMs. Zero when
+// neither says.
+func readSpeakerMeetingAudioMs(meetingPath string) int64 {
+	var manifest struct {
+		Source struct {
+			DurationMs int64 `json:"durationMs"`
+		} `json:"source"`
+	}
+	if raw, err := os.ReadFile(filepath.Join(meetingPath, "manifest.json")); err == nil && json.Unmarshal(raw, &manifest) == nil && manifest.Source.DurationMs > 0 {
+		return manifest.Source.DurationMs
+	}
+	for _, name := range []string{speakerTranscriptRawASR, speakerTranscriptPrimary} {
+		var transcript struct {
+			Media struct {
+				DurationMs int64 `json:"durationMs"`
+			} `json:"media"`
+		}
+		if raw, err := os.ReadFile(filepath.Join(meetingPath, name)); err == nil && json.Unmarshal(raw, &transcript) == nil && transcript.Media.DurationMs > 0 {
+			return transcript.Media.DurationMs
+		}
+	}
+	return 0
 }
 
 func (r speakerEditsResponse) unavailable(reason string) speakerEditsResponse {
