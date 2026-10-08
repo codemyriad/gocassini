@@ -2,7 +2,9 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -78,6 +80,14 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 		return "", err
 	}
 	item := upload{local: local, remote: remote, size: info.Size()}
+	// Only a refine re-seals the same meeting.webm, so only a refine can be
+	// sure the audio identity is unchanged. A rerun replaying speaker edits
+	// re-encodes the audio like any rerun, and keeps today's rerun rule.
+	if kind, edits, err := s.rt.store.AttemptSpeakerEdits(ctx, d.JobID, d.AttemptNumber); err == nil && edits != nil && kind == triggerKindRefine {
+		item.keepMarks = true
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
 	var carried *annotateResult
 	if before.Exists && s.carriesMarks(item) {
 		carried, err = s.putOverDeliveredCopy(ctx, item, before)

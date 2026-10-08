@@ -83,6 +83,18 @@ func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.routeTags(w, r, caller, id)
+	case resource == "meetings" && strings.HasSuffix(id, "/speakers") && !strings.Contains(strings.TrimSuffix(id, "/speakers"), "/"):
+		// Who spoke, as people corrected it (docs/speaker-separation.md).
+		meetingID := strings.TrimSuffix(id, "/speakers")
+		if !isPlainMeetingID(meetingID) {
+			writeJSONError(w, http.StatusBadRequest, "that is not a meeting id")
+			return
+		}
+		caller, ok := s.caller(w, r)
+		if !ok {
+			return
+		}
+		s.routeSpeakers(w, r, caller, meetingID)
 	case resource == "meetings" && id != "" && !strings.Contains(id, "/"):
 		if !isPlainMeetingID(id) {
 			// A statement about the id, not about what exists.

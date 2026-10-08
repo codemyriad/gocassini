@@ -804,7 +804,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
-	rt.buildJobFn = rt.executeBuildCLI
+	rt.buildJobFn = rt.withSpeakerEdits(rt.executeBuildCLI)
 	rt.sealJobFn = rt.executeSealCLIWithTimeout
 	rt.publishJobFn = rt.executePublishCLIWithTimeout
 	// The publish sink is deliberately NOT constructed here.

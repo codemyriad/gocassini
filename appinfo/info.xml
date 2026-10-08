@@ -33,7 +33,7 @@ Recordings and transcripts never leave your hardware. When an administrator inst
 **Cassini is in beta.** We run it daily on our own Nextcloud, but expect rough edges. Read the changelog before you update and open an issue if something breaks.
 
 Documentation: https://gocassini.com/docs]]></description>
-  <version>0.2.0-beta.8</version>
+  <version>0.2.0-beta.9</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
@@ -67,7 +67,7 @@ Documentation: https://gocassini.com/docs]]></description>
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.8</image-tag>
+      <image-tag>0.2.0-beta.9</image-tag>
     </docker-install>
 
     <!--
@@ -362,6 +362,15 @@ Documentation: https://gocassini.com/docs]]></description>
       </route>
       <route>
         <url>^annotations\/meetings\/[^\/]+\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- USER: who spoke, as people corrected it — "several people used this
+           device", voice names and merges (docs/speaker-separation.md). Same
+           visibility check as the marks beside it; a POST queues a refine of
+           the meeting the caller can read. -->
+      <route>
+        <url>^annotations\/meetings\/[^\/]+\/speakers\/?$</url>
         <verb>GET,POST</verb>
         <access_level>USER</access_level>
       </route>

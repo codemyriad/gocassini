@@ -1,0 +1,375 @@
+package operator
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// GET and POST annotations/meetings/<id>/speakers — who spoke, as people
+// corrected it (docs/speaker-separation.md).
+//
+// Same caller resolution, visibility and status discipline as the marks next
+// to it: anyone who can read a meeting can say a device was shared and name
+// the voices, and a meeting outside the caller's readable set is a 404
+// identical to one that does not exist. The edits document lives in the
+// operator's job store, keyed by the job the meeting was published from; a
+// POST stores the next revision and queues the refine attempt that applies it,
+// in one transaction, and answers before any of it runs.
+
+const (
+	maxSpeakerEditsBodyBytes = 64 << 10
+	speakerEditsReadTimeout  = 30 * time.Second
+)
+
+const (
+	speakerReasonNoJob           = "no-job"
+	speakerReasonNoSourceAudio   = "no-source-audio"
+	speakerReasonNoTranscript    = "no-transcript"
+	speakerReasonDiarizationUnav = "diarization-unavailable"
+	speakerStateIdle             = "idle"
+	speakerStateApplying         = "applying"
+	speakerStateFailed           = "failed"
+	speakerStateUnavailable      = "unavailable"
+	speakerTranscriptRawASR      = "transcript.raw-asr.words.v1.json"
+	speakerTranscriptPrimary     = "transcript.words.v1.json"
+)
+
+// speakerEditsResponse is the GET shape, and what a successful POST answers.
+type speakerEditsResponse struct {
+	Available       bool                 `json:"available"`
+	Reason          string               `json:"reason"`
+	Revision        int                  `json:"revision"`
+	AppliedRevision int                  `json:"appliedRevision"`
+	State           string               `json:"state"`
+	LastError       string               `json:"lastError"`
+	Doc             speakerEditsDoc      `json:"doc"`
+	Participants    []speakerParticipant `json:"participants"`
+	// Report is the CLI's report of the last apply that was published, or null.
+	Report json.RawMessage `json:"report"`
+}
+
+// speakerParticipant is one device of the original transcript: what can be
+// split. Never a voice.
+type speakerParticipant struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// speakerEditsRequest is the POST body. The doc's own format and revision are
+// the server's to set, so they are accepted and ignored.
+type speakerEditsRequest struct {
+	ExpectRevision *int `json:"expectRevision"`
+	Doc            *struct {
+		Format   string              `json:"format"`
+		Revision int                 `json:"revision"`
+		Splits   []speakerEditsSplit `json:"splits"`
+		Merges   []speakerEditsMerge `json:"merges"`
+		Labels   []speakerEditsLabel `json:"labels"`
+	} `json:"doc"`
+}
+
+func (s *annotationService) routeSpeakers(w http.ResponseWriter, r *http.Request, caller, meetingID string) {
+	if s.rt == nil || s.rt.store == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "speaker edits unavailable")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s.readSpeakers(w, r, caller, meetingID)
+	case http.MethodPost:
+		s.writeSpeakers(w, r, caller, meetingID)
+	default:
+		writeMethodNotAllowed(w, "GET, POST")
+	}
+}
+
+func (s *annotationService) readSpeakers(w http.ResponseWriter, r *http.Request, caller, meetingID string) {
+	ctx, cancel := context.WithTimeout(r.Context(), speakerEditsReadTimeout)
+	defer cancel()
+	opusName, ok := s.authorizedSpeakersRecording(ctx, w, r, caller, meetingID)
+	if !ok {
+		return
+	}
+	state, err := s.rt.speakerEditsState(ctx, speakerJobID(opusName))
+	if err != nil {
+		s.logf("annotations: speakers meeting=%s: %v", meetingID, err)
+		writeJSONError(w, http.StatusInternalServerError, "speaker edits unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
+func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request, caller, meetingID string) {
+	expectRevision, doc, refusal := readSpeakerEditsRequest(w, r)
+	if refusal != "" {
+		writeSpeakerEditsInvalid(w, refusal)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), speakerEditsReadTimeout)
+	defer cancel()
+	opusName, ok := s.authorizedSpeakersRecording(ctx, w, r, caller, meetingID)
+	if !ok {
+		return
+	}
+	jobID := speakerJobID(opusName)
+	state, err := s.rt.speakerEditsState(ctx, jobID)
+	if err != nil {
+		s.logf("annotations: speakers meeting=%s: %v", meetingID, err)
+		writeJSONError(w, http.StatusInternalServerError, "speaker edits unavailable")
+		return
+	}
+	switch state.Reason {
+	case speakerReasonNoJob:
+		// A recording with no job cannot be split, and saying so here would
+		// be a statement about the archive's internals; it is a meeting this
+		// surface does not know.
+		s.answerFailure(w, r, "speakers meeting="+meetingID, annotateNotFound(
+			fmt.Errorf("meeting=%s has no operator job (served as 404)", meetingID)))
+		return
+	case speakerReasonNoSourceAudio, speakerReasonNoTranscript:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "unavailable", "reason": state.Reason})
+		return
+	}
+	participants := map[string]bool{}
+	for _, p := range state.Participants {
+		participants[p.ID] = true
+	}
+	if err := doc.validate(participants); err != nil {
+		writeSpeakerEditsInvalid(w, err.Error())
+		return
+	}
+	missing, err := s.rt.store.MissingSpeakerSplitTurns(ctx, jobID, doc)
+	if err != nil {
+		s.logf("annotations: speakers meeting=%s: %v", meetingID, err)
+		writeJSONError(w, http.StatusInternalServerError, "speaker edits unavailable")
+		return
+	}
+	if len(missing) > 0 && !s.rt.diarizationModelInstalled() {
+		writeJSONError(w, http.StatusServiceUnavailable, speakerReasonDiarizationUnav)
+		return
+	}
+
+	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, nowUTCString())
+	switch {
+	case errors.Is(err, errSpeakerEditsRevisionConflict):
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "revision-conflict", "revision": revision})
+		return
+	case errors.Is(err, errSpeakerEditsBusy):
+		writeJSONError(w, http.StatusConflict, "busy")
+		return
+	case errors.Is(err, sql.ErrNoRows):
+		http.NotFound(w, r)
+		return
+	case err != nil:
+		s.logf("annotations: speakers meeting=%s: %v", meetingID, err)
+		writeJSONError(w, http.StatusInternalServerError, "speaker edits unavailable")
+		return
+	}
+	s.rt.dispatchQueuedRefine(jobID)
+	s.logf("annotations: speakers meeting=%s revision=%d queued by %s", meetingID, revision, caller)
+
+	state, err = s.rt.speakerEditsState(ctx, jobID)
+	if err != nil {
+		s.logf("annotations: speakers meeting=%s: %v", meetingID, err)
+		writeJSONError(w, http.StatusInternalServerError, "speaker edits unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
+// authorizedSpeakersRecording resolves meetingID to the caller's recording
+// the way marks do: in their readable set, and readable by them in Nextcloud
+// right now. A POST republishes the recording for every reader with the
+// caller's names in it, so a share Nextcloud stopped honouring must not do
+// here what it cannot do to a mark.
+func (s *annotationService) authorizedSpeakersRecording(ctx context.Context, w http.ResponseWriter, r *http.Request, caller, meetingID string) (string, bool) {
+	_, opusName, _, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
+	if !ok {
+		return "", false
+	}
+	if _, err := s.authorizeRecording(ctx, caller, opusName); err != nil {
+		s.answerFailure(w, r, "speakers meeting="+meetingID, err)
+		return "", false
+	}
+	return opusName, true
+}
+
+// dispatchQueuedRefine hands the job's freshly queued attempt to a build
+// worker without blocking the request; the requeue dispatcher delivers it
+// otherwise, as it does every rerun (D-367).
+func (rt *Runtime) dispatchQueuedRefine(jobID string) {
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil || job.ArtifactRunPath == nil {
+		rt.kickRequeueScan()
+		return
+	}
+	task := buildTask{JobID: job.ID, AttemptNumber: job.CurrentAttemptNumber, ArtifactRunPath: *job.ArtifactRunPath}
+	select {
+	case rt.buildQueue <- task:
+	default:
+		rt.kickRequeueScan()
+	}
+}
+
+func writeSpeakerEditsInvalid(w http.ResponseWriter, message string) {
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid", "message": message})
+}
+
+// readSpeakerEditsRequest parses the body strictly. The returned message is
+// about the caller's own body, so it is safe to return.
+func readSpeakerEditsRequest(w http.ResponseWriter, r *http.Request) (int, speakerEditsDoc, string) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSpeakerEditsBodyBytes))
+	if err != nil {
+		return 0, speakerEditsDoc{}, "the request body could not be read"
+	}
+	var request speakerEditsRequest
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&request); err != nil {
+		return 0, speakerEditsDoc{}, `the request body must be {"expectRevision":n,"doc":{"splits":[…],"merges":[…],"labels":[…]}}`
+	}
+	if request.ExpectRevision == nil || *request.ExpectRevision < 0 {
+		return 0, speakerEditsDoc{}, "expectRevision is required"
+	}
+	if request.Doc == nil {
+		return 0, speakerEditsDoc{}, "doc is required"
+	}
+	doc := speakerEditsDoc{
+		Format: speakerEditsFormat,
+		Splits: request.Doc.Splits,
+		Merges: request.Doc.Merges,
+		Labels: request.Doc.Labels,
+	}.normalized()
+	return *request.ExpectRevision, doc, ""
+}
+
+// speakerJobID is the job a visible recording was published from: the direct
+// shares sink delivers exactly meetings/<jobID>.opus.
+func speakerJobID(opusName string) string {
+	jobID := strings.TrimSuffix(opusName, ".opus")
+	if !isPlainMeetingID(jobID) {
+		return ""
+	}
+	return jobID
+}
+
+// speakerEditsState is what the page is told about one job's speakers.
+func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speakerEditsResponse, error) {
+	resp := speakerEditsResponse{Doc: emptySpeakerEditsDoc(), Participants: []speakerParticipant{}}
+	if jobID == "" {
+		return resp.unavailable(speakerReasonNoJob), nil
+	}
+	job, err := rt.store.GetJob(ctx, jobID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return resp.unavailable(speakerReasonNoJob), nil
+	}
+	if err != nil {
+		return resp, err
+	}
+	rec, err := rt.store.GetSpeakerEdits(ctx, jobID)
+	if err != nil {
+		return resp, err
+	}
+	resp.Revision, resp.AppliedRevision, resp.Doc = rec.Revision, rec.AppliedRevision, rec.Doc
+	resp.Report = rec.LastReport
+
+	if participants, err := readSpeakerParticipants(canonicalMeetingPath(rt.cfg.WorkRoot, jobID)); err == nil {
+		resp.Participants = participants
+	}
+	switch {
+	case !speakerSourceAudioReady(job):
+		resp.Reason = speakerReasonNoSourceAudio
+	case len(resp.Participants) == 0:
+		resp.Reason = speakerReasonNoTranscript
+	default:
+		// Only a new split needs the model; with turns already stored, naming,
+		// merging and undoing still work, so they are not reported unavailable.
+		hasTurns, err := rt.store.HasSpeakerSplitTurns(ctx, jobID)
+		if err != nil {
+			return resp, err
+		}
+		if !hasTurns && !rt.diarizationModelInstalled() {
+			resp.Reason = speakerReasonDiarizationUnav
+		}
+	}
+	resp.Available = resp.Reason == ""
+
+	resp.State = speakerStateIdle
+	if !resp.Available {
+		resp.State = speakerStateUnavailable
+	}
+	attempt, ok, err := rt.store.LatestSpeakerEditsAttempt(ctx, jobID)
+	if err != nil {
+		return resp, err
+	}
+	switch {
+	case ok && attempt.Revision > rec.AppliedRevision && (attempt.State == "queued" || attempt.State == "running"):
+		resp.State = speakerStateApplying
+	case ok && attempt.Revision > rec.AppliedRevision && (attempt.State == "failed" || attempt.State == "interrupted" || attempt.State == "blocked"):
+		resp.State = speakerStateFailed
+		resp.LastError = rec.LastError
+		if resp.LastError == "" {
+			resp.LastError = attempt.Error
+		}
+		if resp.LastError == "" {
+			resp.LastError = "the recording could not be updated (" + attempt.State + ")"
+		}
+	case rec.Revision > rec.AppliedRevision && rec.LastError != "":
+		// A newer revision failed, and a rerun since replayed the one the
+		// recording carries: the failure still stands.
+		resp.State = speakerStateFailed
+		resp.LastError = rec.LastError
+	}
+	return resp, nil
+}
+
+func (r speakerEditsResponse) unavailable(reason string) speakerEditsResponse {
+	r.Available, r.Reason, r.State = false, reason, speakerStateUnavailable
+	return r
+}
+
+// speakerSourceAudioReady reports whether the job still has the capture a
+// split diarizes: its ready current/<job>.run.
+func speakerSourceAudioReady(job Job) bool {
+	if job.ArtifactRunPath == nil || strings.TrimSpace(*job.ArtifactRunPath) == "" {
+		return false
+	}
+	manifest, err := readRunManifest(filepath.Join(*job.ArtifactRunPath, "cassini.json"))
+	return err == nil && manifest.State == bundleStateReady && manifest.Stage == "ready"
+}
+
+// readSpeakerParticipants reads the original roster of a meeting bundle: the
+// raw-ASR transcript once a split exists, the primary one before.
+func readSpeakerParticipants(meetingPath string) ([]speakerParticipant, error) {
+	raw, err := os.ReadFile(filepath.Join(meetingPath, speakerTranscriptRawASR))
+	if errors.Is(err, os.ErrNotExist) {
+		raw, err = os.ReadFile(filepath.Join(meetingPath, speakerTranscriptPrimary))
+	}
+	if err != nil {
+		return nil, err
+	}
+	var transcript struct {
+		Speakers []speakerParticipant `json:"speakers"`
+	}
+	if err := json.Unmarshal(raw, &transcript); err != nil {
+		return nil, err
+	}
+	participants := make([]speakerParticipant, 0, len(transcript.Speakers))
+	for _, p := range transcript.Speakers {
+		if p.ID == "" || isSpeakerVoiceID(p.ID) {
+			continue
+		}
+		participants = append(participants, p)
+	}
+	return participants, nil
+}

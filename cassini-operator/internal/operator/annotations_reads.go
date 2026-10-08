@@ -14,33 +14,9 @@ func (s *annotationService) readDocument(ctx context.Context, caller, meetingID,
 	if store == nil {
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: fmt.Errorf("annotations store unavailable")}
 	}
-	currentPath, err := s.exapp.currentRecordingPath(ctx, s.client, caller, opusName, s.exapp.meetingMetadata)
-	if errors.Is(err, errRecordingNotShared) {
-		return annotateResult{}, annotateNotFound(fmt.Errorf("recording is no longer shared with caller"))
-	}
+	relPath, err := s.authorizeRecording(ctx, caller, opusName)
 	if err != nil {
-		return annotateResult{}, annotateUnavailable(err)
-	}
-	// The caller may have renamed the share since this request first listed it.
-	// The fresh OCS path is the one Nextcloud will authorize now.
-	relPath = currentPath
-	// Check the current leaf permission without downloading its media bytes.
-	identity := caller
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, s.exapp.davFileURL(identity, relPath), nil)
-	if err != nil {
-		return annotateResult{}, annotateUnavailable(err)
-	}
-	s.exapp.setAppAPIDAVHeadersForUser(req, identity)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return annotateResult{}, annotateUnavailable(err)
-	}
-	drainClose(resp.Body)
-	if deniedOrAbsent(resp.StatusCode) {
-		return annotateResult{}, annotateNotFound(fmt.Errorf("annotation access denied: %d", resp.StatusCode))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return annotateResult{}, annotateUnavailable(fmt.Errorf("annotation access check: %d", resp.StatusCode))
+		return annotateResult{}, err
 	}
 	result, err := store.document(ctx, opusName)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -55,6 +31,40 @@ func (s *annotationService) readDocument(ctx context.Context, caller, meetingID,
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: err}
 	}
 	return result, nil
+}
+
+// authorizeRecording checks, as the caller and right now, that Nextcloud still
+// lets them read the recording: the share list a request starts from can name
+// a share Nextcloud has since stopped honouring (expired, user disabled, a
+// file-level denial). It returns the recording's current path for the caller,
+// which may differ from the listed one if they renamed the share since.
+func (s *annotationService) authorizeRecording(ctx context.Context, caller, opusName string) (string, error) {
+	currentPath, err := s.exapp.currentRecordingPath(ctx, s.client, caller, opusName, s.exapp.meetingMetadata)
+	if errors.Is(err, errRecordingNotShared) {
+		return "", annotateNotFound(fmt.Errorf("recording is no longer shared with caller"))
+	}
+	if err != nil {
+		return "", annotateUnavailable(err)
+	}
+	// Check the current leaf permission without downloading its media bytes.
+	identity := caller
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, s.exapp.davFileURL(identity, currentPath), nil)
+	if err != nil {
+		return "", annotateUnavailable(err)
+	}
+	s.exapp.setAppAPIDAVHeadersForUser(req, identity)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", annotateUnavailable(err)
+	}
+	drainClose(resp.Body)
+	if deniedOrAbsent(resp.StatusCode) {
+		return "", annotateNotFound(fmt.Errorf("annotation access denied: %d", resp.StatusCode))
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", annotateUnavailable(fmt.Errorf("annotation access check: %d", resp.StatusCode))
+	}
+	return currentPath, nil
 }
 
 var annotationImportSlots = make(chan struct{}, 2)

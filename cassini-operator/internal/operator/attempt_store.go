@@ -123,6 +123,30 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// A rerun rebuilds from the capture, which knows nothing of the speaker
+	// edits people made since. Replaying them is part of the rerun, frozen
+	// here in the same transaction, or the next rerun would silently undo
+	// every split and name.
+	snapshot, err := speakerEditsReplaySnapshotTx(ctx, tx, job.ID)
+	if err != nil {
+		return Job{}, err
+	}
+	nextAttemptNumber, err := queueAttemptTx(ctx, tx, job.ID, triggerKindRerun, snapshot, queuedAt)
+	if err != nil {
+		return Job{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, fmt.Errorf("commit rerun attempt: %w", err)
+	}
+	s.emitStateChange(ctx, "job.updated", job.ID, nextAttemptNumber)
+	return s.GetJob(ctx, job.ID)
+}
+
+// queueAttemptTx inserts the next attempt of jobID at build/queued and points
+// the job at it. Every attempt kind after the first enters here: the build
+// worker, its claim and the requeue dispatcher all key on build/queued with a
+// run path, so a kind that skips this would never be dispatched.
+func queueAttemptTx(ctx context.Context, tx *sql.Tx, jobID, kind string, speakerEdits *string, queuedAt string) (int, error) {
 	var state string
 	var requestJSON string
 	var currentAttemptNumber int
@@ -130,23 +154,23 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 	if err := tx.QueryRowContext(ctx, `
 SELECT state, request_json, current_attempt_number, artifact_run_path
 FROM jobs
-WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifactRunPath); err != nil {
+WHERE id = ?`, jobID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifactRunPath); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Job{}, err
+			return 0, err
 		}
-		return Job{}, fmt.Errorf("load job for rerun: %w", err)
+		return 0, fmt.Errorf("load job for %s: %w", kind, err)
 	}
 	if state != "failed" && state != "succeeded" && state != "interrupted" && state != "blocked" {
-		return Job{}, ErrJobNotEligibleForRerun
+		return 0, ErrJobNotEligibleForRerun
 	}
 
 	readyRunPath := strings.TrimSpace(artifactRunPath.String)
 	if readyRunPath == "" {
-		return Job{}, ErrJobNotEligibleForRerun
+		return 0, ErrJobNotEligibleForRerun
 	}
 	manifest, err := readRunManifest(filepath.Join(readyRunPath, "cassini.json"))
 	if err != nil || manifest.State != bundleStateReady || manifest.Stage != "ready" {
-		return Job{}, ErrJobNotEligibleForRerun
+		return 0, ErrJobNotEligibleForRerun
 	}
 
 	nextAttemptNumber := currentAttemptNumber + 1
@@ -154,21 +178,22 @@ WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifa
 INSERT INTO job_attempts (
   job_id, attempt_number, trigger_kind, request_json,
   stage, state,
-  artifact_run_path,
+  artifact_run_path, speaker_edits_json,
   created_at, updated_at, build_queued_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		job.ID,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID,
 		nextAttemptNumber,
-		"rerun",
+		kind,
 		requestJSON,
 		"build",
 		"queued",
 		readyRunPath,
+		speakerEdits,
 		queuedAt,
 		queuedAt,
 		queuedAt,
 	); err != nil {
-		return Job{}, fmt.Errorf("insert rerun attempt: %w", err)
+		return 0, fmt.Errorf("insert %s attempt: %w", kind, err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -188,16 +213,11 @@ WHERE id = ?`,
 		readyRunPath,
 		queuedAt,
 		queuedAt,
-		job.ID,
+		jobID,
 	); err != nil {
-		return Job{}, fmt.Errorf("update job summary for rerun: %w", err)
+		return 0, fmt.Errorf("update job summary for %s: %w", kind, err)
 	}
-
-	if err := tx.Commit(); err != nil {
-		return Job{}, fmt.Errorf("commit rerun attempt: %w", err)
-	}
-	s.emitStateChange(ctx, "job.updated", job.ID, nextAttemptNumber)
-	return s.GetJob(ctx, job.ID)
+	return nextAttemptNumber, nil
 }
 
 func (s *Store) ListJobAttempts(ctx context.Context, jobID string) ([]JobAttempt, error) {

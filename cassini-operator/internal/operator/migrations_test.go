@@ -1,19 +1,58 @@
 package operator
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestMigrationsRunContiguouslyThroughModelInstallJobs(t *testing.T) {
+func TestMigrationsRunContiguouslyThroughSpeakerEdits(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
 	last := migrations[len(migrations)-1]
-	if last.Version != 13 || last.Name != "model_install_jobs" {
-		t.Fatalf("last migration = %04d_%s, want 0013_model_install_jobs", last.Version, last.Name)
+	if last.Version != 14 || last.Name != "speaker_edits" {
+		t.Fatalf("last migration = %04d_%s, want 0014_speaker_edits", last.Version, last.Name)
+	}
+}
+
+// TestMigrateDownRemovesSpeakerEditsAndUpRestoresThem: a rollback to the last
+// release must leave job_attempts as that release reads it, and the speaker
+// edits must come back on re-upgrade.
+func TestMigrateDownRemovesSpeakerEditsAndUpRestoresThem(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	seedJobRow(t, store.db, seededJobRow{ID: "kept", Stage: "done", State: "succeeded", CreatedAt: "2026-10-01T10:00:00Z"})
+
+	if err := store.migrateDownTo(13); err != nil {
+		t.Fatalf("migrateDownTo(13) error = %v", err)
+	}
+	for _, table := range []string{"speaker_edits", "speaker_split_turns"} {
+		if sqliteTableExists(t, store.db, table) {
+			t.Fatalf("%s survived the down migration", table)
+		}
+	}
+	if _, err := store.db.Exec(`SELECT speaker_edits_json FROM job_attempts`); err == nil {
+		t.Fatal("job_attempts.speaker_edits_json survived the down migration")
+	}
+	if _, err := store.GetJob(context.Background(), "kept"); err != nil {
+		t.Fatalf("the down migration lost a job: %v", err)
+	}
+
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	if _, err := store.GetSpeakerEdits(context.Background(), "kept"); err != nil {
+		t.Fatalf("speaker edits did not come back on re-upgrade: %v", err)
+	}
+	if _, _, err := store.AttemptSpeakerEdits(context.Background(), "kept", 1); err != nil {
+		t.Fatalf("attempt speaker edits did not come back on re-upgrade: %v", err)
 	}
 }
 
