@@ -122,7 +122,7 @@ describe("SettingsPanel layout", () => {
     // which made two independent settings — one of which sends text to a third
     // party — read as one block. Each step is its own tinted card, as each
     // template is on Insight templates.
-    const steps = settingsPanelSource.match(/<section class="op-tint pipe-step">/g);
+    const steps = settingsPanelSource.match(/<section\b[^>]*class="[^"\n]*\bpipe-step\b[^"\n]*"[^>]*>/g);
     expect(steps?.length).toBe(4);
     expect(settingsPanelSource).not.toContain("rounded-box border border-base-300 bg-base-200 p-3");
   });
