@@ -153,6 +153,12 @@ type ProcessingStep struct {
 	// would be written by the build and then silently dropped at pack time,
 	// which is worse than not recording it at all.
 	Hints *HintsProvenance `json:"hints,omitempty"`
+	// SpeakerDiarization is set on the transcript whose speakers were split
+	// into voices after someone said several people shared one device. It is
+	// kept as raw JSON, like Annotations: the packer carries the producer's
+	// record (counts, ids and model hashes only, never voice data) without
+	// this package owning its shape.
+	SpeakerDiarization json.RawMessage `json:"x-speakerDiarization,omitempty"`
 }
 
 // HintsProvenance says what decoder biasing a speech-to-text pass actually

@@ -2,6 +2,7 @@ package portable
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -251,5 +252,58 @@ func TestProcessingStepCarriesUnappliedHints(t *testing.T) {
 	}
 	if !strings.Contains(string(round), `"applied":false`) || !strings.Contains(string(round), "no bpe.vocab") {
 		t.Errorf("the unapplied reason was lost: %s", round)
+	}
+}
+
+// A transcript whose shared device was split into voices records how. The
+// record is written by the build, so the packer must carry it into the
+// published file and a reader must get it back on the default step.
+func TestProcessingStepCarriesSpeakerDiarizationThroughTheWire(t *testing.T) {
+	record := `{"editsRevision":2,"splits":[{"speakerId":"spk_room","voices":["spk_room~1","spk_room~2"]}]}`
+	var entry struct {
+		Provenance *ProcessingStep `json:"provenance"`
+	}
+	if err := json.Unmarshal([]byte(`{"provenance":{"backend":"sherpa-onnx","x-speakerDiarization":`+record+`}}`), &entry); err != nil {
+		t.Fatalf("decode build manifest entry: %v", err)
+	}
+	if entry.Provenance == nil || len(entry.Provenance.SpeakerDiarization) == 0 {
+		t.Fatal("x-speakerDiarization was dropped decoding the build manifest")
+	}
+
+	manifest := basePublishedManifest()
+	manifest.Speakers = []Speaker{{ID: "spk_room~1", Label: "Room · Speaker 1"}, {ID: "spk_room~2", Label: "Room · Speaker 2"}}
+	encoded, err := EncodePublishedManifest(manifest, []TranscriptInput{
+		{ID: "separated-voices", Default: true, Body: sampleBody("spk_room~1", "hello"), Provenance: entry.Provenance},
+		{ID: DefaultWordsTranscriptID, Body: sampleBody("spk_room", "hello"), Provenance: &ProcessingStep{Backend: "sherpa-onnx"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("EncodePublishedManifest: %v", err)
+	}
+	decoded, err := DecodePublishedManifest(encoded.Main.JSON)
+	if err != nil {
+		t.Fatalf("DecodePublishedManifest: %v", err)
+	}
+	if decoded.Provenance == nil || decoded.Provenance.SpeechToText == nil {
+		t.Fatal("no default speech-to-text step after the round trip")
+	}
+	var got, want any
+	if err := json.Unmarshal(decoded.Provenance.SpeechToText.SpeakerDiarization, &got); err != nil {
+		t.Fatalf("decode carried record: %v", err)
+	}
+	_ = json.Unmarshal([]byte(record), &want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("x-speakerDiarization = %s, want %s", decoded.Provenance.SpeechToText.SpeakerDiarization, record)
+	}
+	if decoded.Speakers[0].ID != "spk_room~1" {
+		t.Errorf("voice ids must be accepted as speaker ids, got %+v", decoded.Speakers)
+	}
+
+	// A step without the record keeps omitting the key.
+	plain, err := json.Marshal(ProcessingStep{Backend: "sherpa-onnx"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "x-speakerDiarization") {
+		t.Errorf("a step without a split emits the key: %s", plain)
 	}
 }

@@ -60,6 +60,15 @@ func ResolveDiarizationModel(cacheDir string) (DiarizationModel, error) {
 	if path == "" {
 		return DiarizationModel{}, fmt.Errorf("%w: set %s", ErrDiarizationUnavailable, DiarizationModelEnv)
 	}
+	return LoadDiarizationModel(path)
+}
+
+// LoadDiarizationModel describes the Nemotron model at an explicit path, with
+// the same runtime and file checks as ResolveDiarizationModel.
+func LoadDiarizationModel(path string) (DiarizationModel, error) {
+	if !HasDiarizationRuntime() {
+		return DiarizationModel{}, fmt.Errorf("%w: native runtime %q has no Nemotron support", ErrDiarizationUnavailable, sherpa.GetVersion())
+	}
 	if _, err := os.Stat(path); err != nil {
 		return DiarizationModel{}, fmt.Errorf("%w: %v", ErrDiarizationUnavailable, err)
 	}

@@ -18,6 +18,7 @@ until you configure an LLM endpoint, and both send text, never audio.
 | Recording the call             | Local (the Cassini container)                             | No                               |
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
 | Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
+| Separating voices on a shared device | Local, only when someone asks for one participant (Nemotron diarization) | No                   |
 | Meeting summary                | LLM endpoint — **only if one is configured**              | **Only if the endpoint is external** |
 | Insight (a workflow run over selected meetings) | LLM endpoint — **only if one is configured**, and only when somebody asks | **Only if the endpoint is external** |
 | Publishing the archive         | Nextcloud Files, on your servers                          | No                               |
@@ -47,6 +48,12 @@ artifacts:
   `.opus`.
 - **Transcripts** — a timestamped word-level transcript when transcription is enabled and succeeds. Audio-only files carry an empty compatibility transcript and an explicit skipped/failed status.
 - **Captions** — a `captions.vtt` subtitle track when transcription succeeds.
+- **Separated voices** — only when someone who can read a meeting says several
+  people shared one device: that participant's speaker turns (start and end
+  times with a voice number, no audio and no voice embedding), the edits people
+  made (which device was separated, which voices are the same person, and the
+  names they typed), and the original transcript kept beside the separated one.
+  See [Separating voices on a shared device](./speaker-separation.md).
 - **Summaries** — an optional `summary.md`, produced only when the LLM step is
   enabled.
 - **Insight runs** — one row per insight requested over a set of meetings: who asked,
@@ -224,8 +231,16 @@ could not use.
 - **Transcription is 100% local.** Speech-to-text runs in-process using local
   Parakeet models and Silero VAD (ONNX Runtime). No audio and no transcript
   leaves your infrastructure for transcription.
-- **Speaker labels are not inferred from audio.** They come from Talk's signaling
-  server (participant join events), so no diarization or voice analysis is done.
+- **Speaker labels come from Talk, not from audio.** Each participant's label
+  comes from Talk's signaling server (participant join events). Cassini never
+  analyses voices on its own initiative and builds no voiceprints.
+- **Voice separation is on demand, local, and keeps no voice data.** When
+  somebody says several people shared one participant's device, Cassini runs a
+  local diarization model over that one participant's own audio track, on the
+  Cassini server. It stores only the resulting turn timestamps, never audio
+  features or embeddings, so it cannot recognise a voice in another meeting.
+  Names typed for the separated voices are saved in the recording's speaker
+  list, where everyone who can open the recording sees them.
 - **No telemetry or analytics.** Cassini does not phone home — it reports nothing
   about you or your meetings.
 
