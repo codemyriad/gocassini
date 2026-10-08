@@ -20,11 +20,11 @@ describe("direct share setup status", () => {
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unknown" }, access: null, isAdmin: true, appUrl: "" });
     expect(notice?.tone).toBe("neutral");
   });
-  it("says recordings still open when the check fails, since only publishing stops (D-849)", () => {
+  it("says browsing still works when the check fails, since only publishing stops (D-849)", () => {
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "" });
     expect(notice?.tone).toBe("warning");
     expect(notice?.title).toBe("Cassini can't save recordings right now");
-    expect(notice?.summary).toMatch(/^Recordings that are already here still open\./);
+    expect(notice?.summary).toMatch(/^You can still browse recordings\./);
     expect(notice).not.toHaveProperty("blocking");
   });
 });

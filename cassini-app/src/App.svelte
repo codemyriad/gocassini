@@ -74,8 +74,8 @@
   // setupNotice is non-null when this deployment cannot prove it can save new
   // recordings (D-585). It is always a strip above the meeting list, never a
   // replacement for it: with direct shares (#334) every reader opens their own
-  // Nextcloud shares, so nothing about the setup check stops published
-  // recordings from opening. Only publishing is refused (D-849). An
+  // Nextcloud shares, and reading never consults the setup check. Only
+  // publishing is refused (D-849); a read that fails says so in the list. An
   // administrator also keeps the operator surface — the one place they can act.
   // Null (the normal case, and every case where the check itself could not be
   // made) leaves the shell exactly as it was.
@@ -733,11 +733,15 @@
     display: none;
   }
 
-  /* The advisory strip: fixed chrome, like the nav, so the viewer below keeps a
+  /* The setup strip: fixed chrome, like the nav, so the viewer below keeps a
      bounded flex height. flex:none is what stops it stretching or being squeezed
-     when the meeting list grows. */
+     when the meeting list grows. Its administrator details can be long, so it
+     scrolls itself past 40% of the shell rather than squeezing the meeting list
+     (or the operator surface) out of view on a small screen (D-849). */
   .cassini-shell-banner {
     flex: none;
+    max-height: 40%;
+    overflow-y: auto;
     background: var(--color-main-background, var(--color-base-100, #ffffff));
   }
 </style>

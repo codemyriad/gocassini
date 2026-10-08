@@ -171,19 +171,34 @@ describe("the shell after the Setup tab", () => {
 });
 
 describe("the setup notice in the shell", () => {
+  // The markup after <script>/<style>, split at the shell's top-level branches.
+  const markup = appSource.slice(appSource.indexOf("</script>"), appSource.indexOf("<style"));
+  const branches = markup.split(/\n\{:else(?: if [^}]*)?\}\n/);
+
   it("never takes the meeting list's place (D-849)", () => {
-    // A failed recordings check refuses publishing; it does not stop anyone
-    // opening their own Nextcloud shares. The notice used to replace the
-    // browse slot (and, with no operator tab, the whole app) whenever the check
-    // failed, which hid every published recording behind a message about
-    // future ones.
+    // A failed recordings check refuses publishing; reading never consults it.
+    // The notice used to replace the browse slot (and, with no operator tab,
+    // the whole app) whenever the check failed, which hid every published
+    // recording behind a message about future ones.
     expect(appSource).not.toContain("blocking");
     expect(appSource).not.toContain("cassini-setup-surface");
-    // Every branch that draws the notice also mounts the viewer: one with the
-    // operator tab, one without.
-    const notices = appSource.match(/<SetupNotice\b/g) ?? [];
-    expect(notices).toHaveLength(2);
-    const viewers = appSource.match(/<ViewerApp\b/g) ?? [];
-    expect(viewers).toHaveLength(3);
+    // Every top-level branch that draws the notice also mounts the viewer.
+    const withNotice = branches.filter((branch) => /<SetupNotice\b/.test(branch));
+    expect(withNotice).toHaveLength(2);
+    for (const branch of withNotice) {
+      expect(branch).toMatch(/<ViewerApp\b/);
+      // ...and draws the notice only as the strip above it.
+      expect(branch.match(/<SetupNotice\b/g)).toHaveLength(1);
+      expect(branch.indexOf("cassini-shell-banner")).toBeLessThan(branch.indexOf("<SetupNotice"));
+      expect(branch.indexOf("<SetupNotice")).toBeLessThan(branch.indexOf("<ViewerApp"));
+    }
+  });
+
+  it("keeps the strip from squeezing the meeting list out of view", () => {
+    // Expanded administrator details on a phone used to leave the viewer a
+    // few pixels tall. The strip scrolls itself instead.
+    const rule = appSource.match(/\.cassini-shell-banner \{[^}]*\}/)?.[0] ?? "";
+    expect(rule).toContain("max-height: 40%;");
+    expect(rule).toContain("overflow-y: auto;");
   });
 });

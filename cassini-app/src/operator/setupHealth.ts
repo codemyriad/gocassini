@@ -104,13 +104,13 @@ export function buildSetupNotice(options: {
   const { health, access, isAdmin, appUrl } = options;
   const verdict = health ?? access;
   if (!verdict || verdict.ok) return null;
-  // The provisioning check gates new publishing only. Readers open their own
-  // Nextcloud shares, so neither a failed nor an unverified check hides a
-  // recording that is already published (D-849): the notice never replaces the
-  // meeting list, and it says so.
+  // The provisioning check gates new publishing only. Reading never consults
+  // it, so the notice never replaces the meeting list (D-849). It promises
+  // browsing, not that every read succeeds: a Nextcloud outage that fails this
+  // check can fail a reader's share scan too, and the list reports that itself.
   const failing = verdict.state !== "unknown";
   const summary = failing
-    ? "Recordings that are already here still open. Calls will still run, but their recordings will fail until this is fixed."
+    ? "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed."
     : "Recordings that are already here still open, but new ones will fail until this check runs.";
   const base: SetupNotice = {
     tone: failing ? "warning" : "neutral",

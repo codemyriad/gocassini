@@ -405,7 +405,8 @@ type setupFeatures struct {
 //
 // Deliberately 200 even when OK is false. /status answers 503 because a monitor
 // asking "is this healthy" wants the code; here the caller is a browser asking
-// "should I show the archive or an explanation", and it has to read the body to
+// "should I warn that new recordings will fail" — above the archive, which it
+// shows either way (D-849) — and it has to read the body to
 // tell "Cassini is not set up" from "the ExApp is down" — which is exactly what
 // a 503 from the proxy in front of it looks like.
 func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
