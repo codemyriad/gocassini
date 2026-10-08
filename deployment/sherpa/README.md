@@ -20,12 +20,19 @@ sample-variance normalization. Other model frontends retain upstream behavior.
 The Cassini release reports `+cassini-parakeet-v3-reference-v1`; libraries
 without that marker use the standard decode policy instead of preventing startup.
 
-Since `v1.13.7-cassini.5` the native library also carries NVIDIA
+With `v1.13.7-cassini.6` the native library also carries NVIDIA
 Nemotron-3-Diarization (end-to-end speaker diarization for up to 8 speakers).
 The stock Go wrapper reaches it through `OfflineSpeakerDiarization`: pass the
 model as `Segmentation.Pyannote.Model`; no embedding model or clustering is
-needed. The version gains `.nemotron-diarization-v1`, so the frontend marker
-check above is unaffected. The model is published on dist.gocassini.com.
+needed. The version gains `.nemotron-diarization-v2`, so the frontend marker
+check above is unaffected. The [distribution manifest](https://dist.gocassini.com/manifest.json) selects
+interface-version-2 models with an explicit valid-frame count and padding
+masked before the output convolution. Use this runtime with those exports.
+The old immutable version-1 model URLs remain available for `.5` clients.
+Parakeet and Silero model files are unchanged. No application feature uses
+diarization yet. Linux amd64/arm64 provide this capability; stock macOS, Windows
+and arm32 packages do not. The native source is retained by the
+[`v1.13.7-cassini-nemotron-v2` tag](https://github.com/codemyriad/sherpa-onnx/tree/v1.13.7-cassini-nemotron-v2).
 
 ```sh
 # CPU: Go and a C compiler
