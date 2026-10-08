@@ -160,7 +160,11 @@ more person. Instead each voice names its device in an optional hint,
 transcript's own speakers. A reader that shows a non-default transcript
 accepts speaker ids it does not find in the list, names such a device from
 that hint (or, in older files, from a voice's default label without
-` · Speaker n`), and lists it where its first voice is. The viewer counts and
+` · Speaker n`), and lists it where its first voice is. A reader older than
+this change does not: it opens the default `separated-voices` transcript of a
+separated meeting, and refuses the `raw-asr` variant ("references unknown
+speaker"). That includes the embed already published and app versions before
+this one. The viewer counts and
 lists the meeting's people the same way whichever transcript is shown: each
 voice is a person, and a split device is not counted on top of its voices.
 
@@ -203,12 +207,25 @@ is checked the same way as for marks: a meeting the caller cannot open answers
 
 - `GET` returns `{available, reason, revision, appliedRevision, state,
   lastError, doc, participants, report, progress}`. `participants` is the
-  original roster: the devices that can be split. `state` is `idle`,
-  `applying`, `failed` or `unavailable`. When `available` is false, `reason`
-  is one of `no-job` (a meeting with no operator job), `no-source-audio`,
-  `no-transcript` or `diarization-unavailable`; for the last,
-  `reasonDetail` says why (not installed, a runtime without Nemotron, or an
-  unreadable model inventory) and how to install the model.
+  original roster: the devices that can be split (never the synthetic
+  `merged` speaker of the mixed-track fallback, which is nobody's own audio).
+  `state` is `idle`, `applying`, `failed` or `unavailable`. When `available`
+  is false, `reason` is one of `no-job` (a meeting with no operator job),
+  `no-source-audio`, `no-transcript` (also an audio-only build, whose
+  manifest says transcription was skipped or failed), `unpublished-rebuild`
+  (the job's last rerun built but was never published, so `current/` holds a
+  meeting readers do not have; a rerun that publishes clears it) or
+  `diarization-unavailable`; for the last, `reasonDetail` says why (not
+  installed, a runtime without Nemotron, or an unreadable model inventory)
+  and how to install the model.
+- `state` is `failed` whenever the saved revision is newer than the applied
+  one and nothing is applying it: its attempt failed at any stage, was
+  interrupted or blocked, or a rerun since replayed the applied revision.
+  `lastError` is then a sentence for readers (separation unavailable, the
+  participant's audio missing, turns of another recording, marks that would
+  be lost, an unpublished rebuild, or "The recording could not be
+  updated."); the cause, with the operator's paths and the CLI's output,
+  stays in the operator's log and database.
 - `progress` is `null` unless `state` is `applying`. Then it is
   `{phase, elapsedMs, estimatedMs}`:
   - `phase` is `queued` while the refine attempt waits behind another build
@@ -244,17 +261,31 @@ is checked the same way as for marks: a meeting the caller cannot open answers
 - `POST {expectRevision, doc}` stores the next revision and queues a `refine`
   attempt in one transaction. It answers 200 with the `GET` shape, or:
   - 409 `{"error":"revision-conflict","revision":n}`;
-  - 409 `busy`, while the job is still building, sealing or publishing;
+  - 409 `busy`, while the job is still building, sealing or publishing (a
+    job whose rerun is blocked for want of resources is not busy: a refine
+    needs none of them);
   - 409 `{"error":"unavailable","reason":…}`, for a meeting that cannot be
     edited at all;
   - 400 `{"error":"invalid","message":…}`;
   - 503 `{"error":"diarization-unavailable","detail":…}`, when a new split
     needs a model this operator does not have.
 
-A `refine` attempt runs no transcription. It copies `current/<job>.meeting`,
-diarizes each newly split participant once from `current/<job>.run` (the
-turns are stored write-once in the operator database and reused forever),
-runs `cassini speakers apply`, then seals and publishes like any build.
+  A document that asks for what the recording already carries (the applied
+  revision, nothing applying or failed; order and stray spaces in labels do
+  not count) is not a new revision: the POST answers the current state and
+  queues nothing.
+
+A `refine` attempt runs no transcription. It copies `current/<job>.meeting`
+(refusing one built by a rerun that was never published), diarizes each newly
+split participant once from `current/<job>.run` (the turns are stored
+write-once in the operator database and reused forever), runs
+`cassini speakers apply --recording current/<job>.run`, then seals and
+publishes like any build. Before diarizing it waits, as a build does, until
+the host has free the model's working set (about 384 MiB), the decoded track
+(64 bytes per audio millisecond, about 230 MiB an hour) and the usual CPU
+headroom; when that does not come it goes back to the queue rather than fail.
+`cassini speakers diarize` takes the model store's inference lock, so it never
+runs beside a build or a model check of the same store.
 `applied_revision` moves in the same transaction that records the publish.
 A normal rerun replays the last applied edits after `cassini build`.
 
