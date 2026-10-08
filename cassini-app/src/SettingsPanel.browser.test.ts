@@ -55,7 +55,7 @@ it("saves the publication format through settings and restores it on reload", as
 });
 
 it("keeps publication separate from source retention and explicitly opts into deletion", async () => {
-  let saved = { quality: "balanced", meeting_format: "json", source_retention: "storage-policy", retain_video: true, transcription_enabled: true, active_model: "prepared", active_revision: "r1" };
+  let saved = { quality: "balanced", meeting_format: "opus", source_retention: "storage-policy", retain_video: true, transcription_enabled: true, active_model: "prepared", active_revision: "r1" };
   const writes: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -72,20 +72,22 @@ it("keeps publication separate from source retention and explicitly opts into de
   host = document.createElement("div"); document.body.append(host);
   const open = () => app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
   open();
-  const retention = page.getByRole("combobox", { name: "Source media after processing" });
-  await expect.element(retention).toHaveValue("storage-policy");
-  await expect.element(page.getByRole("checkbox", { name: "Capture video", exact: true })).toBeChecked();
+  const nothing = page.getByRole("radio", { name: "Nothing", exact: true });
+  await expect.element(page.getByRole("radio", { name: "Full audio + video", exact: true })).toBeChecked();
   expect(writes).toHaveLength(0);
-  await retention.selectOptions("delete-after-processing");
+  await nothing.click();
+  await expect.element(page.getByRole("combobox", { name: "Published meeting" })).toHaveValue("json");
+  expect(writes).toHaveLength(0);
   await expect.element(page.getByText(/Processing cannot be rerun/)).toBeVisible();
-  await expect.element(page.getByRole("checkbox", { name: "Capture video", exact: true })).not.toBeChecked();
-  await expect.element(page.getByRole("checkbox", { name: "Capture video", exact: true })).toBeDisabled();
+  await expect.element(page.getByRole("radio", { name: "Full audio + video", exact: true })).not.toBeChecked();
+  expect((host.querySelector('option[value="opus"]') as HTMLOptionElement).disabled).toBe(true);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => saved.source_retention).toBe("delete-after-processing");
   expect(writes[0]).toMatchObject({ meeting_format: "json", source_retention: "delete-after-processing", retain_video: false, transcription_enabled: true });
   await unmount(app!); app = undefined; open();
-  await expect.element(retention).toHaveValue("delete-after-processing");
-  await retention.selectOptions("storage-policy");
+  await expect.element(nothing).toBeChecked();
+  await page.getByRole("radio", { name: "Audio-only", exact: true }).click();
+  expect((host.querySelector('option[value="opus"]') as HTMLOptionElement).disabled).toBe(false);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => saved.source_retention).toBe("storage-policy");
   expect(saved.meeting_format).toBe("json");
@@ -100,7 +102,7 @@ it("requires prepared transcription before saving deletion", async () => {
   }));
   host = document.createElement("div"); document.body.append(host);
   app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
-  await page.getByRole("combobox", { name: "Source media after processing" }).selectOptions("delete-after-processing");
+  await page.getByRole("radio", { name: "Nothing", exact: true }).click();
   await expect.element(page.getByText("Enable a prepared transcription model below before saving source deletion.")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
 });

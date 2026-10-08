@@ -37,7 +37,6 @@
   // same reason "Who can see recordings" does: it is a page's worth of state
   // that applies to the pipeline below it, and it is admin-only, which this
   // panel already is.
-  import CaptureVideoField from "./CaptureVideoField.svelte";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
@@ -86,6 +85,13 @@
   let sourceRetention: "storage-policy" | "delete-after-processing" = "storage-policy";
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
+  $: recordingMedia = sourceRetention === "delete-after-processing" ? "nothing" : retainVideo ? "audio-video" : "audio-only";
+
+  function selectRecordingMedia(value: "nothing" | "audio-video" | "audio-only") {
+    sourceRetention = value === "nothing" ? "delete-after-processing" : "storage-policy";
+    retainVideo = value === "audio-video";
+    if (value === "nothing") meetingFormat = "json";
+  }
   let activeModel = "";
   let activeRevision = "";
   let savedTranscription = "";
@@ -511,10 +517,6 @@
     </div>
   </header>
 
-{#if operatorClient}
-  {#if settings}<CaptureVideoField bind:retainVideo deleteSource={sourceRetention === "delete-after-processing"} disabled={loading || saving || sourceRetention === "delete-after-processing"} />{/if}
-{/if}
-
 <!-- The readiness checks offer a "Set up storage" action that scrolls here,
      which is what the removed Setup page's own anchor used to do. Keeping the
      id on a wrapper rather than inside RecordingAccessPanel leaves that
@@ -532,37 +534,54 @@
     <p class="op-state">Settings aren't available.</p>
   {:else}
     <div class="pipe-body">
-      <section class="op-tint p-4">
+      <section class="op-tint p-4 grid gap-4" aria-labelledby="recording-publication-heading">
+        <div>
+          <h2 id="recording-publication-heading" class="set-row-name op-card-title">Recording media and publication</h2>
+          <p class="set-row-sub">Choose which recording media stays on the server after processing, then choose what people receive.</p>
+        </div>
+        <fieldset class="grid gap-3" disabled={saving}>
+          <legend class="op-field-label mb-2">Keep after each recording</legend>
+          <label class="flex items-start gap-3">
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
+            <span><strong>Nothing</strong><span id="keep-nothing-help" class="set-row-sub block">Keep no audio, video or raw packet logs. Audio is captured temporarily for a single processing run, then deleted after publication succeeds or processing permanently fails. Transcription artifacts, including the published JSON, are kept. Processing cannot be rerun.</span></span>
+          </label>
+          <label class="flex items-start gap-3">
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-video" aria-label="Full audio + video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
+            <span><strong>Full audio + video</strong><span id="keep-video-help" class="set-row-sub block">Capture and keep audio, available camera video and associated recording files on the server. Uses more storage. Transcription can be rerun while the source recording remains.</span></span>
+          </label>
+          <label class="flex items-start gap-3">
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-only" aria-label="Audio-only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} aria-describedby="keep-audio-help" />
+            <span><strong>Audio-only</strong><span id="keep-audio-help" class="set-row-sub block">Capture and keep audio and associated recording files, without camera video. Transcription can be rerun while the source recording remains.</span></span>
+          </label>
+        </fieldset>
+        {#if recordingMedia === "nothing"}
+          <p class="set-row-sub">Temporary retries within the initial run remain possible. If transcription permanently fails, there may be no usable transcript. Transcripts, meeting information and diagnostic logs follow their existing retention policies.</p>
+          {#if !transcriptionEnabled || !activeModel || !activeRevision}
+            <p class="err-box" role="alert">Enable a prepared transcription model below before saving source deletion.</p>
+          {/if}
+        {:else}
+          <p class="set-row-sub">Storage policies control how long recording media is kept. Your publication choice below does not delete the source recording.</p>
+        {/if}
         <label class="op-field" for="meeting-format">
           <span class="op-field-label">Published meeting</span>
-          <select id="meeting-format" class="op-input" bind:value={meetingFormat} on:change={() => { if (meetingFormat === "opus") sourceRetention = "storage-policy"; }} disabled={saving}>
-            <option value="opus">Include audio (.opus)</option>
+          <select id="meeting-format" class="op-input" bind:value={meetingFormat} disabled={saving} aria-describedby="publication-help">
+            <option value="opus" disabled={recordingMedia === "nothing"}>Include audio (.opus)</option>
             <option value="json">Transcription only (.json)</option>
           </select>
         </label>
-        <p class="set-row-sub">Transcription-only files keep speaker blocks, summaries, metadata, tags and annotations, without audio playback. Applies to new meetings; reruns keep their original format. Choose separately whether to keep source media for processing reruns.</p>
-        {#if meetingFormat === "json"}
-          <label class="op-field" for="source-retention">
-            <span class="op-field-label">Source media after processing</span>
-            <select id="source-retention" class="op-input" bind:value={sourceRetention} disabled={saving}
-              on:change={() => { if (sourceRetention === "delete-after-processing") retainVideo = false; }}>
-              <option value="storage-policy">Keep under Storage policies — allow reruns</option>
-              <option value="delete-after-processing">Delete when processing finishes or fails</option>
-            </select>
-          </label>
-          {#if sourceRetention === "delete-after-processing"}
-            <p class="set-row-sub">Uses audio-only capture. Audio is stored temporarily to produce the transcript, then source media and temporary audio are deleted after publication succeeds or processing permanently fails. Processing cannot be rerun. If transcription fails, there may be no usable transcript. Temporary retries during the initial job remain possible.</p>
-            <p class="set-row-sub">The transcript, meeting information and diagnostic logs remain under their existing retention policies. Applies only to recordings accepted after Save; existing and active recordings keep their saved policy.</p>
-            {#if !transcriptionEnabled || !activeModel || !activeRevision}
-              <p class="err-box" role="alert">Enable a prepared transcription model below before saving source deletion.</p>
-            {/if}
+        <p id="publication-help" class="set-row-sub">
+          {#if recordingMedia === "nothing"}
+            Keeping no recording media publishes transcription-only JSON. Audio publication is unavailable with this choice.
+          {:else if meetingFormat === "opus"}
+            Publish playable audio together with the transcript and meeting information. Captured video stays on the server and is not included in the published file.
           {:else}
-            <p class="set-row-sub">Published meetings have no audio playback. Source media stays on the server under Storage policies, so processing can be rerun while the source exists.</p>
+            Publish the transcript, speaker blocks, summaries, metadata, tags and annotations without audio playback. Retained recording media remains available on the server for reruns.
           {/if}
-        {/if}
+        </p>
         {#if meetingFormat === "json" && !transcriptionEnabled}
           <p class="set-row-sub">Transcription is off. Enable it below to include a transcript; otherwise new meetings will contain neither a transcript nor playable audio.</p>
         {/if}
+        <p class="set-row-sub">Changes apply to recordings accepted after Save. Existing and active recordings keep their saved policy. Reruns keep their original publication format.</p>
       </section>
       <!-- What the operator found, and — the part the tier alone does not
            answer — what the next build will actually do with it. The device is

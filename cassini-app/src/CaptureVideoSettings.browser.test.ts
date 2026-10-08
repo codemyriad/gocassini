@@ -42,11 +42,11 @@ afterEach(async () => {
 describe("later video settings", () => {
   it("reads saved consent, protects failed edits and saves with transcription disabled", async () => {
     component = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
-    const video = page.getByRole("checkbox", { name: "Capture video", exact: true });
+    const video = page.getByRole("radio", { name: "Full audio + video", exact: true });
     await expect.element(video).toBeChecked();
     const save = page.getByRole("button", { name: "Save", exact: true });
     await expect.element(save).not.toBeInTheDocument();
-    await video.click();
+    await page.getByRole("radio", { name: "Audio-only", exact: true }).click();
     await expect.element(save).toBeEnabled();
     failSave = true;
     await save.click();

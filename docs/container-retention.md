@@ -433,10 +433,11 @@ container policies; the publication setting does not change those policies.
 
 ### Explicit deletion after processing
 
-**Settings → Publish pipeline → Source media after processing** can override
+**Settings → Publish pipeline → Recording media and publication** can override
 normal media retention for newly admitted transcription-only publications.
-**Keep under Storage policies** preserves the existing behavior, including
-source-based reruns. **Delete when processing finishes or fails** requires
+Under **Keep after each recording**, **Full audio + video** and **Audio-only**
+retain source media under Storage policies, including source-based reruns.
+**Nothing** selects transcription-only publication and requires
 JSON publication, audio-only capture and prepared transcription. It removes
 source recordings and media intermediates after successful publication or any
 terminal failure, even if Storage says Keep forever. It does not delete the

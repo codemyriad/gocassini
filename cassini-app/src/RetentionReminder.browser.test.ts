@@ -205,7 +205,7 @@ describe("retention reminder in the app", () => {
 
   it("saves video opt-in independently while retention remains unconfirmed", async () => {
     await open("#surface=operator&panel=pipeline");
-    const video = page.getByRole("checkbox", { name: "Capture video", exact: true });
+    const video = page.getByRole("radio", { name: "Full audio + video", exact: true });
     await expect.element(video).not.toBeChecked();
     await expect.element(reminder()).toBeVisible();
     await video.click();

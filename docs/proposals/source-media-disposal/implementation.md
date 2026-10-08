@@ -74,8 +74,10 @@ to finish before acting on that job's remaining output/log files.
 
 ## Operator surface
 
-Settings expose the retention choice below JSON publication. Selecting disposal
-turns video capture off and disables it until retention is changed back. Model
+The Recording media and publication section first offers Nothing, Full audio +
+video, or Audio-only, followed by the publication format. Nothing selects JSON
+publication, disables Opus publication and turns video capture off. Choosing either
+retained-media option allows both publication formats. Model
 readiness is validated server-side; the form also prevents saving without a
 selected enabled model. The settings update is atomic.
 
