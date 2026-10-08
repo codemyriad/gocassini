@@ -18,7 +18,13 @@ describe("direct share setup status", () => {
   });
   it("keeps existing reads visible while setup is unverified", () => {
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unknown" }, access: null, isAdmin: true, appUrl: "" });
-    expect(notice?.blocking).toBe(false);
     expect(notice?.tone).toBe("neutral");
+  });
+  it("says recordings still open when the check fails, since only publishing stops (D-849)", () => {
+    const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "" });
+    expect(notice?.tone).toBe("warning");
+    expect(notice?.title).toBe("Cassini can't save recordings right now");
+    expect(notice?.summary).toMatch(/^Recordings that are already here still open\./);
+    expect(notice).not.toHaveProperty("blocking");
   });
 });

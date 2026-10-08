@@ -169,3 +169,21 @@ describe("the shell after the Setup tab", () => {
     expect(appSource).toMatch(/function openRecordingSetup\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
   });
 });
+
+describe("the setup notice in the shell", () => {
+  it("never takes the meeting list's place (D-849)", () => {
+    // A failed recordings check refuses publishing; it does not stop anyone
+    // opening their own Nextcloud shares. The notice used to replace the
+    // browse slot (and, with no operator tab, the whole app) whenever the check
+    // failed, which hid every published recording behind a message about
+    // future ones.
+    expect(appSource).not.toContain("blocking");
+    expect(appSource).not.toContain("cassini-setup-surface");
+    // Every branch that draws the notice also mounts the viewer: one with the
+    // operator tab, one without.
+    const notices = appSource.match(/<SetupNotice\b/g) ?? [];
+    expect(notices).toHaveLength(2);
+    const viewers = appSource.match(/<ViewerApp\b/g) ?? [];
+    expect(viewers).toHaveLength(3);
+  });
+});

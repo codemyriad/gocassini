@@ -24,7 +24,6 @@ export interface SetupNoticeStep {
 }
 export type SetupNoticeTone = "warning" | "neutral";
 export interface SetupNotice {
-  blocking: boolean;
   tone: SetupNoticeTone;
   title: string;
   summary: string;
@@ -105,15 +104,17 @@ export function buildSetupNotice(options: {
   const { health, access, isAdmin, appUrl } = options;
   const verdict = health ?? access;
   if (!verdict || verdict.ok) return null;
-  // The provisioning check gates new publishing. An unverified check after a
-  // restart does not revoke current Nextcloud shares, so reads remain visible.
-  const blocking = verdict.state !== "unknown";
-  const summary = blocking
-    ? "Calls will still run, but their recordings will fail until this is fixed."
+  // The provisioning check gates new publishing only. Readers open their own
+  // Nextcloud shares, so neither a failed nor an unverified check hides a
+  // recording that is already published (D-849): the notice never replaces the
+  // meeting list, and it says so.
+  const failing = verdict.state !== "unknown";
+  const summary = failing
+    ? "Recordings that are already here still open. Calls will still run, but their recordings will fail until this is fixed."
     : "Recordings that are already here still open, but new ones will fail until this check runs.";
   const base: SetupNotice = {
-    blocking, tone: blocking ? "warning" : "neutral",
-    title: blocking ? "Cassini can't save recordings right now" : "Cassini hasn't checked that it can save recordings",
+    tone: failing ? "warning" : "neutral",
+    title: failing ? "Cassini can't save recordings right now" : "Cassini hasn't checked that it can save recordings",
     summary, cause: "", steps: [], detail: "", note: "", shareLabel: "", shareUrl: "", reference: "",
   };
   if (!isAdmin) {
