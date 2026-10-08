@@ -794,3 +794,45 @@ func TestSpeakersPostOfTheAppliedEditsQueuesNothing(t *testing.T) {
 		t.Fatalf("a retry of a failed revision: %+v, %d attempts", resp, attempts())
 	}
 }
+
+// A refine that failed after its build — at seal or publish, where nothing in
+// the speaker-edits path records an error — followed by any rerun (which
+// replays the applied revision) must still be reported failed: the saved
+// revision never reached the recording. And what the page is told is a
+// sentence, not the publish sink's error with the archive's paths in it.
+func TestSpeakersRefineThatFailedAfterItsBuildStaysFailedAcrossARerun(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	applied := `{"format":"cassini.speaker-edits.v1","revision":1,"splits":[],"merges":[],"labels":[{"speakerId":"spk_remote","label":"Remote Ann"}]}`
+	if _, err := f.rt.store.db.Exec(`INSERT INTO speaker_edits (job_id, revision, doc_json, applied_revision, applied_doc_json, updated_at) VALUES ('MEETING1', 1, ?, 1, ?, ?)`, applied, applied, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.post(t, `{"expectRevision":1,"doc":{"labels":[{"speakerId":"spk_remote","label":"Remote Bea"}]}}`)
+	refine := 2
+	if resp.Revision != 2 {
+		t.Fatalf("POST = %+v", resp)
+	}
+	if _, err := f.rt.store.db.Exec(`UPDATE job_attempts SET stage = 'done', state = 'failed', error = 'nc files: cassini/CassiniRecordings/meetings/MEETING1.opus: ETag mismatch' WHERE job_id = 'MEETING1' AND attempt_number = ?`, refine); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET stage = 'done', state = 'failed' WHERE id = 'MEETING1'`); err != nil {
+		t.Fatal(err)
+	}
+	job, err := f.rt.store.GetJob(context.Background(), "MEETING1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.rt.store.QueueRerunAttempt(context.Background(), job, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	setSpeakerAttemptStage(t, f, refine+1, "done", "succeeded")
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET stage = 'done', state = 'succeeded' WHERE id = 'MEETING1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	resp = f.get(t, "MEETING1")
+	if resp.State != speakerStateFailed || resp.Revision != 2 || resp.AppliedRevision != 1 || resp.LastError != "The recording could not be updated." {
+		t.Fatalf("after the rerun: %+v; want revision 2 reported failed, in plain words", resp)
+	}
+}

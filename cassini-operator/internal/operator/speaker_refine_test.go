@@ -185,7 +185,9 @@ func TestRefineFailureIsReportedAndLeavesThePublishedMeeting(t *testing.T) {
 		t.Fatalf("edits after failure = %+v, %v", rec, err)
 	}
 	state, err := rt.speakerEditsState(context.Background(), "JOB1")
-	if err != nil || state.State != speakerStateFailed || !strings.Contains(state.LastError, "apply exploded") {
+	// Every reader of the meeting sees the state: the CLI's own words, with
+	// the operator's paths in them, stay in the record and the log.
+	if err != nil || state.State != speakerStateFailed || state.LastError != "The recording could not be updated." {
 		t.Fatalf("state after failure = %+v, %v", state, err)
 	}
 	if _, err := os.Stat(filepath.Join(canonicalMeetingPath(rt.cfg.WorkRoot, "JOB1"), "speaker-edits.json")); !errors.Is(err, os.ErrNotExist) {
@@ -390,13 +392,14 @@ func TestRerunAfterASplitThatNeverAppliedStillSucceeds(t *testing.T) {
 		t.Fatalf("the rerun replayed %s, want the applied revision 1", replayed)
 	}
 	state, err := rt.speakerEditsState(ctx, "JOB1")
-	if err != nil || state.State != speakerStateFailed || state.Revision != 2 || state.AppliedRevision != 1 || !strings.Contains(state.LastError, "diarization-unavailable") {
+	if err != nil || state.State != speakerStateFailed || state.Revision != 2 || state.AppliedRevision != 1 || state.LastError != "Voice separation is not available on this server." {
 		t.Fatalf("state after the rerun = %+v, %v; want revision 2 still reported failed", state, err)
 	}
 }
 
-// A refine whose publish fails reports the publish's reason: nothing in the
-// speaker-edits path saw that failure, so it comes from the attempt.
+// A refine whose publish fails is reported failed: nothing in the
+// speaker-edits path saw that failure, so it comes from the attempt, and the
+// publish's own words (remote paths, Nextcloud's answer) are not repeated.
 func TestRefinePublishFailureIsReported(t *testing.T) {
 	rt, _ := newSpeakerRuntime(t, "JOB1")
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
@@ -405,7 +408,7 @@ func TestRefinePublishFailureIsReported(t *testing.T) {
 	queueSpeakerEdits(t, rt, "JOB1", 0, splitDoc(speakerTestRoom))
 	waitForJobState(t, rt.store, "JOB1", "failed")
 	state, err := rt.speakerEditsState(context.Background(), "JOB1")
-	if err != nil || state.State != speakerStateFailed || state.AppliedRevision != 0 || !strings.Contains(state.LastError, "publish exploded") {
+	if err != nil || state.State != speakerStateFailed || state.AppliedRevision != 0 || state.LastError != "The recording could not be updated." {
 		t.Fatalf("state after a failed publish = %+v, %v", state, err)
 	}
 }

@@ -392,22 +392,39 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 		if resp.Progress, err = rt.speakerRefineProgress(ctx, jobID, attempt); err != nil {
 			return resp, err
 		}
-	case ok && attempt.Revision > rec.AppliedRevision && (attempt.State == "failed" || attempt.State == "interrupted" || attempt.State == "blocked"):
+	case rec.Revision > rec.AppliedRevision:
+		// Saved and not being applied, so its attempt ended without
+		// publishing it: failed at any stage, interrupted, blocked, or
+		// followed by a rerun that replayed the revision the recording
+		// carries. The failure stands until a new revision applies.
 		resp.State = speakerStateFailed
-		resp.LastError = rec.LastError
-		if resp.LastError == "" {
-			resp.LastError = attempt.Error
+		cause := rec.LastError
+		if cause == "" && ok && attempt.Revision > rec.AppliedRevision {
+			cause = attempt.Error
 		}
-		if resp.LastError == "" {
-			resp.LastError = "the recording could not be updated (" + attempt.State + ")"
-		}
-	case rec.Revision > rec.AppliedRevision && rec.LastError != "":
-		// A newer revision failed, and a rerun since replayed the one the
-		// recording carries: the failure still stands.
-		resp.State = speakerStateFailed
-		resp.LastError = rec.LastError
+		resp.LastError = publicSpeakerEditsError(cause)
 	}
 	return resp, nil
+}
+
+// publicSpeakerEditsError is what a reader is told about an apply that
+// failed. The cause — CLI output naming the operator's paths, a Nextcloud
+// answer — is for the operator's log and the attempt row, never for every
+// reader of the meeting.
+func publicSpeakerEditsError(cause string) string {
+	switch {
+	case strings.Contains(cause, "diarization-unavailable"):
+		return "Voice separation is not available on this server."
+	case strings.Contains(cause, "speaker-not-found"):
+		return "This participant's own audio is not in the recording."
+	case strings.Contains(cause, "turns-source-mismatch"):
+		return "The voices found earlier were found in a different recording."
+	case strings.Contains(cause, "audio identity changed under a speaker edit"):
+		return "Updating the recording would have lost its marks, so it was left as it was."
+	case strings.Contains(cause, speakerReasonUnpublishedRebuild):
+		return "The recording was processed again and not published; an administrator can rerun it."
+	}
+	return "The recording could not be updated."
 }
 
 // sameSpeakerEdits reports whether two documents ask for the same thing,
