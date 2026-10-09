@@ -783,6 +783,80 @@ func TestSpeakersPostIsAdmittedLikeARerun(t *testing.T) {
 	}
 }
 
+// speakerTestRerunTranscript is what a rerun that heard a third participant
+// built: the two devices of speakerTestTranscript and a late joiner.
+const speakerTestRerunTranscript = `{"version":"transcript.words.v1","speakers":[` +
+	`{"id":"spk_room","label":"Meeting room laptop"},{"id":"spk_remote","label":"Remote"},{"id":"spk_late","label":"Late joiner"}],"segments":[]}`
+
+// publishUnpromotedRerun leaves jobID the way a publish does between marking
+// its attempt succeeded and promoting it: attempt 1 is what current/ holds,
+// and attempt 2, a rerun with a third participant, is published from its own
+// bundle and not copied into current/ yet.
+func publishUnpromotedRerun(t *testing.T, store *Store, workRoot, jobID string) {
+	t.Helper()
+	at := nowUTCString()
+	if _, err := store.db.Exec(`UPDATE job_attempts SET publish_finished_at = ? WHERE job_id = ? AND attempt_number = 1`, at, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO artifact_availability (job_id, published_attempt, output) VALUES (?, 1, 'present')`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	current := canonicalMeetingPath(workRoot, jobID)
+	if err := SetMeetingBundleRoom(current, "", "", "", jobID, 1); err != nil {
+		t.Fatal(err)
+	}
+	run := canonicalRunPath(workRoot, jobID)
+	if _, err := store.db.Exec(`
+INSERT INTO job_attempts (job_id, attempt_number, trigger_kind, request_json, stage, state, artifact_run_path, created_at, updated_at, publish_finished_at, completed_at)
+VALUES (?, 2, 'rerun', '{}', 'done', 'succeeded', ?, ?, ?, ?, ?)`, jobID, run, at, at, at, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE jobs SET current_attempt_number = 2, stage = 'done', state = 'succeeded' WHERE id = ?`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	rerun := attemptMeetingPath(workRoot, jobID, 2)
+	writeSpeakerMeetingFixture(t, rerun, run)
+	if err := os.WriteFile(filepath.Join(rerun, speakerTranscriptPrimary), []byte(speakerTestRerunTranscript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetMeetingBundleRoom(rerun, "", "", "", jobID, 2); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A publish marks its attempt succeeded, and the edits it carries applied,
+// before it copies the attempt's bundle into current/. A GET in that window
+// describes the meeting readers have, not the one current/ still holds.
+func TestSpeakersGetReadsThePublishedMeetingBeforeItIsPromoted(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	publishUnpromotedRerun(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	resp := f.get(t, "MEETING1")
+	if !resp.Available || len(resp.Participants) != 3 || resp.Participants[2].ID != "spk_late" {
+		t.Fatalf("GET before the promotion: %+v, want the published rerun's three participants", resp)
+	}
+
+	// The promotion lands and prunes the attempt's bundle: the same meeting.
+	current := canonicalMeetingPath(f.rt.cfg.WorkRoot, "MEETING1")
+	rerun := attemptMeetingPath(f.rt.cfg.WorkRoot, "MEETING1", 2)
+	if err := os.RemoveAll(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyDirectory(rerun, current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.rt.store.db.Exec(`UPDATE artifact_availability SET published_attempt = 2 WHERE job_id = 'MEETING1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(rerun); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.get(t, "MEETING1"); !resp.Available || len(resp.Participants) != 3 {
+		t.Fatalf("GET after the promotion: %+v", resp)
+	}
+}
+
 // A build that kept only the audio (transcription skipped or failed) still
 // lists every participant in its transcript, with no words. There is nothing
 // to separate or name: splitting one diarized a whole track and then reported

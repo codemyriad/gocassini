@@ -353,6 +353,25 @@ func TestRefineRefusesARebuildThatWasNeverPublished(t *testing.T) {
 	}
 }
 
+// A refine copies the meeting readers have. Between a publish and its
+// promotion, or after a promotion that failed, that is the published
+// attempt's own bundle, not current/.
+func TestRefineCopiesThePublishedMeetingBeforeItIsPromoted(t *testing.T) {
+	rt, bin := newSpeakerRuntime(t, "JOB1")
+	publishUnpromotedRerun(t, rt.store, rt.cfg.WorkRoot, "JOB1")
+	named := emptySpeakerEditsDoc()
+	named.Labels = []speakerEditsLabel{{SpeakerID: "spk_late", Label: "Late Ann"}}
+	queueSpeakerEdits(t, rt, "JOB1", 0, named)
+	waitForSpeakerEdits(t, rt.store, "JOB1", func(r speakerEditsRecord) bool { return r.AppliedRevision == 1 })
+	waitForPublishedAttempt(t, rt, "JOB1", 3)
+	if apply := speakersCalls(t, bin, "speakers apply"); len(apply) != 1 {
+		t.Fatalf("apply calls = %v", apply)
+	}
+	if got := annTestRead(t, filepath.Join(canonicalMeetingPath(rt.cfg.WorkRoot, "JOB1"), speakerTranscriptPrimary)); got != speakerTestRerunTranscript {
+		t.Fatalf("the refine republished %s, want a copy of the published rerun", got)
+	}
+}
+
 // A refine queued before an operator restart exists only as a build/queued
 // row. The startup sweep must leave it queued and the requeue dispatcher must
 // run it as a refine, from what the attempt row says.

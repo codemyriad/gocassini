@@ -151,11 +151,16 @@ func (rt *Runtime) executeRefineCLI(ctx context.Context, task buildTask, doc spe
 	if err := rt.store.SetAttemptStageLogPath(context.Background(), task.JobID, task.AttemptNumber, "build", logPath); err != nil {
 		return meetingPath, err
 	}
-	source := canonicalMeetingPath(rt.cfg.WorkRoot, task.JobID)
-	if _, err := os.Stat(filepath.Join(source, "cassini.json")); err != nil {
-		return meetingPath, fmt.Errorf("refine needs the job's current meeting: %w", err)
+	// The meeting readers have. The worker holds the job's artifact lock, so
+	// no promotion or prune of this job runs while it is copied.
+	source, _, err := rt.publishedSpeakerMeetingPath(ctx, task.JobID)
+	if err != nil {
+		return meetingPath, err
 	}
-	if unpublished, err := rt.speakerMeetingUnpublished(ctx, task.JobID); err != nil {
+	if _, err := os.Stat(filepath.Join(source, "cassini.json")); err != nil {
+		return meetingPath, fmt.Errorf("refine needs the job's published meeting: %w", err)
+	}
+	if unpublished, err := rt.speakerBuildUnpublished(ctx, task.JobID, readSpeakerMeeting(source).builtBy); err != nil {
 		return meetingPath, err
 	} else if unpublished {
 		return meetingPath, fmt.Errorf("%s: %s is a rebuild that was never published; a refine republishes only the published meeting", speakerReasonUnpublishedRebuild, source)
