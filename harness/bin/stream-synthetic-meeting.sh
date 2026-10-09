@@ -46,6 +46,11 @@ while [[ $# -gt 0 ]]; do
       PREPARE=0
       shift
       ;;
+    --all-audible)
+      # stream-video.sh reads it from the environment.
+      export ROTATOR_ALL_AUDIBLE=1
+      shift
+      ;;
     *)
       echo "unknown argument: $1" >&2
       exit 2
