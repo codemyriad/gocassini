@@ -8,8 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/pion/rtp"
+	"github.com/pion/webrtc/v4/pkg/media/oggwriter"
 )
 
 // The fixed-64k policy exists so meetings published before D-850 rebuild to
@@ -145,6 +149,137 @@ func TestSpeechBitrateFromHistogramIgnoresSilence(t *testing.T) {
 				t.Fatalf("speech bitrate = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+// ffprobe's packet listing as probeSpeechBitrates requests it. Each packet line
+// is "stream_index,duration_time,size,data" and, with -show_data, is followed
+// by a hex dump whose first byte is the Opus TOC byte: 0xfc is a stereo
+// 20 ms fullband frame, 0xf8 the same frame coded mono.
+func TestPacketRateHistogramsCountsStereoPacketsPerChannel(t *testing.T) {
+	listing := strings.Join([]string{
+		`0,N/A,19,"`, // priming packet: no duration, no rate
+		`00000000: fcff fe                                ...`,
+		`"`,
+		`0,0.020000,163,"`, // 65.2 kb/s coded stereo: 32.6 kb/s per channel
+		`00000000: fcdf 5119 6775 1acc 5fb0 04c1 0cc9 4625  ..Q.gu.._.....F%`,
+		`00000010: 52f7 179d 9cc0 b942 1c69 351c beb7 c3a5  R,,....B.i5.....`,
+		`00000020: 8bc9                                     .."`,
+		`1,0.020000,75,"`, // 30 kb/s coded mono, in a container that says stereo
+		`00000000: f8a1 0203 0405 0607 0809 0a0b 0c0d 0e0f  ................"`,
+		`2,0.020000,0,""`, // an empty packet has no TOC byte: its stream's fallback
+		`3,0.020000,160`,  // no dump (a mixed recording): its stream's fallback
+	}, "\n") + "\n"
+	hists, err := packetRateHistograms(strings.NewReader(listing), map[int]int{0: 1, 1: 1, 2: 1, 3: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[int]map[int]int{
+		0: {32600: 1},
+		1: {30000: 1},
+		2: {0: 1},
+		3: {32000: 1},
+	}
+	if !reflect.DeepEqual(hists, want) {
+		t.Fatalf("per-channel packet rates = %v, want %v", hists, want)
+	}
+}
+
+// The shape of nearly every recorded Talk call: one participant's client
+// sends stereo at about 64 kb/s, the others mono at about 30, and the
+// recording's container says two channels for every track (WebRTC always
+// names Opus opus/48000/2, and the recorder writes that). The meeting mix is
+// mono, so the stereo sender needs about what a 32 kb/s mono sender does; it
+// must not size the whole meeting at 64 kb/s.
+func TestMatchSourceCountsAStereoSenderPerChannel(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	stereo := filepath.Join(dir, "stereo.ogg")
+	runFFmpegForTest(t, "-f", "lavfi", "-i", "anoisesrc=d=4:c=pink:seed=1", "-f", "lavfi", "-i", "anoisesrc=d=4:c=pink:seed=2",
+		"-filter_complex", "[0][1]amerge=inputs=2", "-c:a", "libopus", "-b:a", "64k", "-ac", "2", stereo)
+	inputs := []string{"-i", stereo}
+	for i, seed := range []string{"3", "4"} {
+		mono := filepath.Join(dir, "mono"+strconv.Itoa(i)+".ogg")
+		runFFmpegForTest(t, "-f", "lavfi", "-i", "anoisesrc=d=4:c=pink:seed="+seed, "-c:a", "libopus", "-b:a", "30k", "-ac", "1", mono)
+		talk := filepath.Join(dir, "talk"+strconv.Itoa(i)+".ogg")
+		rewriteOpusAsTalkTrack(t, mono, talk)
+		inputs = append(inputs, "-i", talk)
+	}
+	mkv := filepath.Join(dir, "recording.mkv")
+	args := append([]string{}, inputs...)
+	for i := range 3 {
+		args = append(args, "-map", strconv.Itoa(i)+":a")
+	}
+	runFFmpegForTest(t, append(args, "-c", "copy", mkv)...)
+
+	streams, _, err := ProbeMKV(mkv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range streams {
+		if s.Channels != 2 {
+			t.Fatalf("stream %d says %d channels; the fixture must look like a Talk recording (2 for every track)", s.Index, s.Channels)
+		}
+	}
+	rates, err := probeSpeechBitrates(mkv, streams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range streams {
+		if r := rates[s.Index]; r < 24000 || r > 40000 {
+			t.Fatalf("stream %d reads %d bps per channel, want about 30 kb/s (rates %v)", s.Index, r, rates)
+		}
+	}
+	enc, err := ChooseMeetingAudioEncode(mkv, streams, AudioEncodeMatchSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enc.BitrateBps > 48000 {
+		t.Fatalf("encode = %+v; the stereo sender set the mono mix's rate from both of its channels", enc)
+	}
+}
+
+// rewriteOpusAsTalkTrack copies a mono Opus file's packets into an Ogg file
+// whose header says two channels, the way the recorder writes Talk tracks.
+func rewriteOpusAsTalkTrack(t *testing.T, src, dst string) {
+	t.Helper()
+	sizes, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "packet=size", "-of", "csv=p=0", src).Output()
+	if err != nil {
+		t.Fatalf("list packets of %s: %v", src, err)
+	}
+	payload, err := exec.Command("ffmpeg", "-v", "error", "-i", src, "-map", "0:a:0", "-c", "copy", "-f", "data", "-").Output()
+	if err != nil {
+		t.Fatalf("read packets of %s: %v", src, err)
+	}
+	w, err := oggwriter.New(dst, 48000, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Fields(string(sizes)) {
+		field, _, _ := strings.Cut(line, ",") // a packet with side data gets an empty extra field
+		n, err := strconv.Atoi(field)
+		if err != nil || n > len(payload) {
+			t.Fatalf("packet %d size %q of %s does not fit the remaining %d bytes", i, field, src, len(payload))
+		}
+		pkt := &rtp.Packet{Header: rtp.Header{SequenceNumber: uint16(i), Timestamp: uint32(i * 960)}, Payload: payload[:n]}
+		if err := w.WriteRTP(pkt); err != nil {
+			t.Fatal(err)
+		}
+		payload = payload[n:]
+	}
+	if len(payload) != 0 {
+		t.Fatalf("%d bytes of %s left after its listed packets", len(payload), src)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runFFmpegForTest(t *testing.T, args ...string) {
+	t.Helper()
+	out, err := exec.Command("ffmpeg", append([]string{"-v", "error", "-y"}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffmpeg %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
 

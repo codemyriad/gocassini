@@ -73,8 +73,12 @@ The default, `match-source`, sizes the encode from the recording's tracks:
 - audio bandwidth (the highest frequency kept) stops where the widest track
   stops: a 16 kHz phone recording holds nothing above 8 kHz, so the mix is
   coded up to 8 kHz; Talk tracks count as full range (up to 20 kHz);
-- bitrate is a third over what the highest-rate track spent while someone was
-  speaking, never above 64 kb/s.
+- bitrate is a third over what the highest-rate track spent per channel while
+  someone was speaking, never above 64 kb/s. Per channel because the mix is
+  mono (one channel): a participant sending stereo (two channels) at 64 kb/s
+  counts as 32 kb/s, about what their voice needs once the two are mixed into
+  one. The channel count is read from each Opus packet, since a Talk track's
+  header says stereo whether or not the sender codes it.
 
 `manifest.json` records the choice as `audioEncode`. A bundle without that
 record was built with the earlier encode, policy `fixed-64k` (64 kb/s whatever

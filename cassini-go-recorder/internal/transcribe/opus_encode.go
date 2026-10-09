@@ -3,6 +3,7 @@ package transcribe
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"math"
 	"os/exec"
 	"sort"
@@ -53,7 +54,8 @@ type AudioEncode struct {
 	Application string `json:"application"`
 	// SourceBandwidthHz and SourceSpeechBitrateBps are the measurements the
 	// choice was made from (zero when the policy does not look at sources, or
-	// a measurement was unavailable). Provenance only.
+	// a measurement was unavailable). SourceSpeechBitrateBps is per coded
+	// channel (see SourceAudio). Provenance only.
 	SourceBandwidthHz      int `json:"sourceBandwidthHz,omitempty"`
 	SourceSpeechBitrateBps int `json:"sourceSpeechBitrateBps,omitempty"`
 }
@@ -90,8 +92,12 @@ func (e AudioEncode) libopusArgs() []string {
 type SourceAudio struct {
 	Codec      string
 	SampleRate int
-	// SpeechBitrateBps is the rate the source spent while there was something
-	// to code (see speechBitrateFromHistogram); 0 when unknown.
+	// SpeechBitrateBps is the rate the source spent per coded channel while
+	// there was something to code (see probeSpeechBitrates and
+	// speechBitrateFromHistogram); 0 when unknown. Per channel because the mix
+	// is mono: a participant whose client sends stereo at 64 kb/s spends about
+	// half of it on a second channel the downmix folds away, so their voice
+	// needs about what a 32 kb/s mono sender's does.
 	SpeechBitrateBps int
 }
 
@@ -149,8 +155,9 @@ func ChooseAudioEncode(policy string, sources []SourceAudio) (AudioEncode, error
 //     to stop there (a 16 kHz phone recording is coded as wideband, not
 //     fullband). Opus sources count as fullband (see fullbandHz).
 //   - Bitrate: the mix carries roughly one speaker at a time, so it needs
-//     about what the highest-rate single source spent on speech, plus
-//     headroom for the re-encode, clamped to the band's floor and ceiling. A
+//     about what the highest-rate single source spent on speech per channel
+//     (the mix is mono; see SourceAudio.SpeechBitrateBps), plus headroom for
+//     the re-encode, clamped to the band's floor and ceiling. A
 //     source with no usable measurement (lossless, PCM, too short) gets the
 //     ceiling, which for fullband is the old fixed 64k, so nothing gets worse
 //     than before.
@@ -164,7 +171,7 @@ func chooseMatchSourceEncode(sources []SourceAudio) AudioEncode {
 	measured := len(sources) > 0
 	for _, s := range sources {
 		bw := fullbandHz
-		if !strings.EqualFold(strings.TrimSpace(s.Codec), "opus") && s.SampleRate > 0 {
+		if !isOpusCodec(s.Codec) && s.SampleRate > 0 {
 			bw = s.SampleRate / 2
 		}
 		bandwidthHz = max(bandwidthHz, bw)
@@ -208,7 +215,7 @@ func ChooseMeetingAudioEncode(mkv string, streams []AudioStream, policy string) 
 	default:
 		return ChooseAudioEncode(policy, nil)
 	}
-	rates, err := probeSpeechBitrates(mkv)
+	rates, err := probeSpeechBitrates(mkv, streams)
 	if err != nil {
 		return AudioEncode{}, err
 	}
@@ -224,18 +231,37 @@ func ChooseMeetingAudioEncode(mkv string, streams []AudioStream, policy string) 
 const minSpeechPackets = 50
 
 // probeSpeechBitrates returns, per audio stream index, the bitrate the source
-// spent while coding sound, from packet sizes alone (one demux pass, no
-// decode). A whole-recording average would be meaningless for Talk tracks,
-// which are mostly silence between a participant's turns; see
+// spent per coded channel while coding sound, from packet sizes alone (one
+// demux pass, no decode). A whole-recording average would be meaningless for
+// Talk tracks, which are mostly silence between a participant's turns; see
 // speechBitrateFromHistogram.
-func probeSpeechBitrates(mkv string) (map[int]int, error) {
-	cmd := exec.Command("ffprobe",
-		"-v", "error",
-		"-select_streams", "a",
-		"-show_entries", "packet=stream_index,size,duration_time",
-		"-of", "csv=p=0",
-		mkv,
-	)
+//
+// The channel count comes from each packet where it can. A Talk track's
+// container always says two channels: WebRTC names Opus "opus/48000/2"
+// whether or not the sender codes stereo, and the recorder writes that header
+// (depacket's Ogg writer). What the sender actually coded is in the first
+// byte of every Opus packet (its TOC byte, bit 2 set for stereo; RFC 6716
+// 3.1), so when every stream is Opus the probe also asks ffprobe for packet
+// data and reads that bit. Otherwise the stream's channel count is used,
+// except for Opus, whose header count cannot be trusted and counts as one.
+func probeSpeechBitrates(mkv string, streams []AudioStream) (map[int]int, error) {
+	readTOC := len(streams) > 0
+	fallbackChannels := make(map[int]int, len(streams))
+	for _, s := range streams {
+		if isOpusCodec(s.Codec) {
+			fallbackChannels[s.Index] = 1
+		} else {
+			readTOC = false
+			fallbackChannels[s.Index] = max(s.Channels, 1)
+		}
+	}
+	args := []string{"-v", "error", "-select_streams", "a"}
+	if readTOC {
+		args = append(args, "-show_entries", "packet=stream_index,size,duration_time,data", "-show_data")
+	} else {
+		args = append(args, "-show_entries", "packet=stream_index,size,duration_time")
+	}
+	cmd := exec.Command("ffprobe", append(args, "-of", "csv=p=0", mkv)...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open packet probe: %w", err)
@@ -245,27 +271,11 @@ func probeSpeechBitrates(mkv string) (map[int]int, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start packet probe: %w", err)
 	}
-	hists := map[int]map[int]int{}
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		// ffprobe writes a section's fields in its own fixed order, not the
-		// order -show_entries names them in: stream_index, duration_time, size.
-		fields := strings.Split(strings.TrimSpace(scanner.Text()), ",")
-		if len(fields) < 3 {
-			continue
-		}
-		index, err1 := strconv.Atoi(fields[0])
-		duration, err2 := strconv.ParseFloat(fields[1], 64)
-		size, err3 := strconv.Atoi(fields[2])
-		if err1 != nil || err2 != nil || err3 != nil || duration <= 0 || size < 0 {
-			continue // N/A durations (a codec's priming packet) carry no rate
-		}
-		if hists[index] == nil {
-			hists[index] = map[int]int{}
-		}
-		hists[index][int(math.Round(float64(size)*8/duration))]++
+	hists, scanErr := packetRateHistograms(stdout, fallbackChannels)
+	if scanErr != nil {
+		// Drain so ffprobe is not blocked on a full pipe before Wait.
+		_, _ = io.Copy(io.Discard, stdout)
 	}
-	scanErr := scanner.Err()
 	if err := cmd.Wait(); err != nil {
 		return nil, fmt.Errorf("ffprobe packets: %w\n%s", err, truncate(stderr.String(), 800))
 	}
@@ -277,6 +287,70 @@ func probeSpeechBitrates(mkv string) (map[int]int, error) {
 		rates[index] = speechBitrateFromHistogram(hist)
 	}
 	return rates, nil
+}
+
+func isOpusCodec(codec string) bool {
+	return strings.EqualFold(strings.TrimSpace(codec), "opus")
+}
+
+// packetRateHistograms reads ffprobe's csv packet listing (one
+// "stream_index,duration_time,size[,data]" line per packet: ffprobe writes a
+// section's fields in its own fixed order, not the order -show_entries names
+// them in) into per-stream histograms of per-channel packet bitrates (bps ->
+// packet count). With -show_data each packet line is followed by a hex dump
+// of the packet whose first line starts "00000000: "; its first byte is the
+// Opus TOC byte. Every other dump line is ignored. A packet without a dump
+// counts at its stream's fallbackChannels (one when missing).
+func packetRateHistograms(r io.Reader, fallbackChannels map[int]int) (map[int]map[int]int, error) {
+	hists := map[int]map[int]int{}
+	type packet struct {
+		index    int
+		bps      float64
+		channels int
+	}
+	var pending *packet
+	flush := func() {
+		if pending == nil {
+			return
+		}
+		if hists[pending.index] == nil {
+			hists[pending.index] = map[int]int{}
+		}
+		hists[pending.index][int(math.Round(pending.bps/float64(pending.channels)))]++
+		pending = nil
+	}
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if toc, ok := strings.CutPrefix(line, "00000000: "); ok {
+			if pending != nil && len(toc) >= 2 {
+				if b, err := strconv.ParseUint(toc[:2], 16, 8); err == nil {
+					pending.channels = 1
+					if b&0x04 != 0 {
+						pending.channels = 2
+					}
+				}
+			}
+			continue
+		}
+		fields := strings.Split(line, ",")
+		if len(fields) < 3 {
+			continue
+		}
+		index, err1 := strconv.Atoi(fields[0])
+		if err1 != nil {
+			continue // a hex dump line past the first
+		}
+		flush()
+		duration, err2 := strconv.ParseFloat(fields[1], 64)
+		size, err3 := strconv.Atoi(fields[2])
+		if err2 != nil || err3 != nil || duration <= 0 || size < 0 {
+			continue // N/A durations (a codec's priming packet) carry no rate
+		}
+		pending = &packet{index: index, bps: float64(size) * 8 / duration, channels: max(fallbackChannels[index], 1)}
+	}
+	flush()
+	return hists, scanner.Err()
 }
 
 // speechBitrateFromHistogram estimates the rate a track's encoder spent on
