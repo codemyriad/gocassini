@@ -19,12 +19,15 @@ import (
 const storageUsageRebuildInterval = 5 * time.Minute
 
 type detailedStorageUsageResponse struct {
-	Categories    []storageUsageCategory     `json:"categories"`
-	CategoryError string                     `json:"category_error,omitempty"`
-	MeasuredAt    string                     `json:"measured_at"`
-	DurationMS    float64                    `json:"duration_ms"`
-	Published     []storageUsageSource       `json:"published"`
-	Directories   []artifactStorageUsageRoot `json:"directories"`
+	PublishedCategory      *storageUsageCategory `json:"published_category,omitempty"`
+	PublishedCategoryError string                `json:"published_category_error,omitempty"`
+	publishedEntries       []davSizeEntry
+	Categories             []storageUsageCategory     `json:"categories"`
+	CategoryError          string                     `json:"category_error,omitempty"`
+	MeasuredAt             string                     `json:"measured_at"`
+	DurationMS             float64                    `json:"duration_ms"`
+	Published              []storageUsageSource       `json:"published"`
+	Directories            []artifactStorageUsageRoot `json:"directories"`
 }
 
 type artifactStorageUsageRoot struct {
@@ -83,9 +86,14 @@ func (rt *Runtime) cachedDetailedStorageUsage() detailedStorageUsageResponse {
 func (rt *Runtime) refreshDetailedStorageUsage(ctx context.Context, c ExAppConfig) detailedStorageUsageResponse {
 	rt.detailedStorageUsageRefreshMu.Lock()
 	defer rt.detailedStorageUsageRefreshMu.Unlock()
+	started := time.Now()
 	index, err := rt.storageCategoryIndex(ctx)
 	result := c.scanDetailedStorageUsage(ctx, rt.cfg.WorkRoot, index.add)
 	result.Categories = index.result()
+	result.PublishedCategory, result.PublishedCategoryError = rt.publishedStorageCategory(ctx, c, result.publishedEntries)
+	result.publishedEntries = nil
+	result.DurationMS = elapsedMilliseconds(started)
+	result.MeasuredAt = nowUTCString()
 	if err != nil {
 		result.CategoryError = "Could not read retention lifecycle records: " + err.Error()
 	}
@@ -135,7 +143,13 @@ func (c ExAppConfig) scanDetailedStorageUsage(ctx context.Context, workRoot stri
 		if strings.TrimSpace(c.NextcloudURL) == "" {
 			source.Error = "Nextcloud Files is not configured"
 		} else {
-			source.Bytes, source.Error = c.ncArchiveLogicalBytes(ctx, root.path)
+			var entries []davSizeEntry
+			source.Bytes, source.Files, source.Collections, source.Requests, source.Error = c.ncArchiveLogicalBytesDetailed(ctx, root.path, func(entry davSizeEntry) { entries = append(entries, entry) })
+			// A failed root has no reliable total. Exclude its incomplete walk
+			// from the chart too; the source error marks the snapshot partial.
+			if source.Error == "" {
+				result.publishedEntries = append(result.publishedEntries, entries...)
+			}
 		}
 		result.Published = append(result.Published, source)
 	}

@@ -236,6 +236,8 @@ type Runtime struct {
 	detailedStorageUsageMu        sync.RWMutex
 	detailedStorageUsageRefreshMu sync.Mutex
 	detailedStorageUsage          detailedStorageUsageResponse
+	// Protected by detailedStorageUsageRefreshMu; replaced on every rebuild.
+	publishedStorageDates map[storageDateKey]string
 }
 
 type TriggerRequest struct {

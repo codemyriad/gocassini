@@ -9,7 +9,7 @@
   import { categoryPresentation, displayStorageCategories } from "./operator/storageCharts";
   let splitHistory = false;
   let expanded: Record<string, boolean> = {};
-  $: categories = usage ? displayStorageCategories(usage.categories, splitHistory) : [];
+  $: categories = usage ? [...(usage.categories.length ? displayStorageCategories(usage.categories, splitHistory) : []), ...(usage.published_category ? [usage.published_category] : [])] : [];
   $: localTotal = usage ? usage.categories.reduce((sum, category) => sum + category.bytes, 0) : 0;
   $: partial = !!usage && (!!usage.category_error || usage.directories.some(directory => !!directory.error));
   $: largest = Math.max(0, ...categories.map(category => category.bytes));
@@ -27,6 +27,7 @@
   let lastActionWasRecalculation = false;
 
   $: publishedTotal = usage ? storageUsageTotal(usage.published) : null;
+  $: publishedPartial = !!usage && (publishedTotal === null || !!usage.published_category_error);
   // Show the cached state immediately, then rebuild without making the first
   // paint wait for a recursive filesystem and WebDAV scan.
   onMount(() => void loadThenRebuild());
@@ -101,17 +102,21 @@
     </div>
     <p class="scope-note">File sizes in the recording and build folders, including each retained copy. These totals do not measure free disk space.</p>
     {#if partial}<p class="alert alert-warning" role="status">Some local data could not be measured or classified. Values below are partial; recalculate to retry.</p>{/if}
-    {#if publishedTotal === null || partial}
+    {#if publishedPartial}<p class="alert alert-warning" role="status">The Nextcloud breakdown is incomplete. Unmeasured roots are excluded; files whose dates could not be read are included as undated. Recalculate to retry.</p>{/if}
+    {#if !usage.published_category}<p class="report-state">Nextcloud date data is not available yet. Recalculate after updating the operator.</p>{/if}
+    {#if publishedPartial || partial}
       <details class="measurement-errors"><summary>Measurement details</summary>
         {#if usage.category_error}<p>{usage.category_error}</p>{/if}
+        {#if usage.published_category_error}<p>{usage.published_category_error}</p>{/if}
         {#each [...usage.published, ...usage.directories].filter(source => source.error) as source}<p>{source.label}: {source.error}</p>{/each}
       </details>
     {/if}
     {#if usage.categories.length === 0}
       <p class="report-state">Category data is not available yet. Recalculate after updating the operator.</p>
-    {:else}
+    {/if}
+    {#if categories.length > 0}
       <section class="report-card op-tint" aria-labelledby="category-comparison-title">
-        <header class="section-head"><div><h2 id="category-comparison-title">Usage by retention category</h2><p>Compare all retained bytes. Select a category to explore its dates.</p></div>
+        <header class="section-head"><div><h2 id="category-comparison-title">Usage by storage category</h2><p>Compare all retained bytes. Select a category to explore its dates.</p></div>
           <label class="history-toggle"><input type="checkbox" bind:checked={splitHistory} />Split attempt history</label>
         </header>
         <div class="comparison">
@@ -120,19 +125,20 @@
             <button type="button" class="comparison-row" on:click={() => openCategory(category.id)} aria-label={`Explore ${info.label}: ${formatStorageBytes(category.bytes)}`}>
               <span class="category-label">{info.label}</span>
               <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? category.bytes / largest * 100 : 0}%`} style:background={info.color}></span></span>
-              <strong>{formatStorageBytes(category.bytes)}</strong>
+              <strong>{category.id === "published" && publishedPartial ? "Partial · " : ""}{formatStorageBytes(category.bytes)}</strong>
             </button>
           {/each}
         </div>
       </section>
-      <div class="dates-heading"><h2>Explore retained storage by date</h2><p>Bytes that are still retained, grouped by the UTC lifecycle dates used for retention. This is not a history of past disk usage. Chart controls do not change retention policies.</p></div>
+      <div class="dates-heading"><h2>Explore retained storage by date</h2><p>Bytes that are still retained, grouped by lifecycle dates or recording metadata. This is not a history of past disk usage. Chart controls do not change retention policies.</p></div>
       <div class="category-list">
         {#each categories as category (category.id)}
           {@const info = presentation(category.id)}
           <details class="category-card op-tint" id={`category-${category.id}`} bind:open={expanded[category.id]}>
             <summary><span class="category-dot" style:background={info.color}></span><span class="category-name">{info.label}<small>{category.files.toLocaleString()} file{category.files === 1 ? "" : "s"}</small></span><strong>{formatStorageBytes(category.bytes)}</strong></summary>
             <p class="category-description">{info.description}</p>
-            <StorageCategoryChart {category} measuredAt={usage.measured_at} label={info.label} color={info.color} />
+            {#if category.id === "published" && publishedPartial}<p class="category-description" role="status">Partial result: some files could not be measured or dated.</p>{/if}
+            <StorageCategoryChart {category} measuredAt={usage.measured_at} label={info.label} color={info.color} dateLabel={category.id === "published" ? "publication or recording date" : "UTC lifecycle date"} />
           </details>
         {/each}
       </div>
