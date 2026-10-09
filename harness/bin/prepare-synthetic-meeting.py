@@ -430,7 +430,7 @@ def main() -> None:
     if (
         not args.force
         and manifest_path.is_file()
-        and cached_manifest_is_complete(manifest_path)
+        and cached_manifest_is_complete(manifest_path, args.backend)
     ):
         print(manifest_path)
         return
@@ -516,6 +516,16 @@ def main() -> None:
         _, scheduled_start = scheduled[(turn.speaker, turn.start_seconds)]
         max_end = max(max_end, scheduled_start + actual_duration + 0.6)
     total_samples = int(math.ceil(max_end * sample_rate))
+
+    # Everything above only computes; from here on files are replaced one
+    # participant at a time and the manifest is written last. Remove the
+    # previous manifest and reference first, so a run that stops partway
+    # leaves no manifest describing media the directory no longer holds. The
+    # committed showcase fixture once shipped that mix: Kokoro speech for two
+    # participants and mock-backend tones for the other four, under a
+    # manifest that said "mock".
+    for stale in (manifest_path, output_dir / "reference.txt"):
+        stale.unlink(missing_ok=True)
 
     for participant in participants:
         track = np.zeros(total_samples, dtype=np.float32)
@@ -617,11 +627,20 @@ def resample_linear(
     return resampled.astype(np.float32)
 
 
-def cached_manifest_is_complete(manifest_path: Path) -> bool:
+def cached_manifest_is_complete(manifest_path: Path, backend: str) -> bool:
+    """Whether a previous run's output can be reused as is.
+
+    Only output from the requested backend counts: a kokoro request must not
+    be answered with mock-backend tones. Paths in the manifest are relative to
+    its directory (see main), so they are checked there, not in the cwd.
+    """
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
+    if manifest.get("backend") != backend:
+        return False
+    base_dir = manifest_path.parent
     participants = manifest.get("participants") or []
     if not isinstance(participants, list) or not participants:
         return False
@@ -639,7 +658,7 @@ def cached_manifest_is_complete(manifest_path: Path) -> bool:
             paths.get("wav_source"),
         ]
         for raw_path in required:
-            if not raw_path or not Path(raw_path).is_file():
+            if not raw_path or not (base_dir / raw_path).is_file():
                 return False
     return True
 

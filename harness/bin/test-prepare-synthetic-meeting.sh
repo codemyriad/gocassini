@@ -15,7 +15,11 @@
 #     slide note;
 #   - `--scenario /dev/stdin` fed from a pipe works — the invocation used to
 #     probe this script in review; it used to fail because the path was
-#     resolve()d into a dead /proc/<pid>/fd/pipe:[...] target before reading.
+#     resolve()d into a dead /proc/<pid>/fd/pipe:[...] target before reading;
+#   - a run that fails partway leaves no stale manifest or reference behind;
+#   - cached output is reused only for the backend that produced it;
+#   - every committed fixture manifest under harness/media/processed was
+#     generated with kokoro, not the mock backend's tones.
 #
 # Coverage given up: ffmpeg and ffprobe are STUBS, so rendering the mp4/ivf/ogg
 # assets is not exercised — only the schedule, the WAV mix, and the manifest/
@@ -229,6 +233,77 @@ if manifest["duration_seconds"] != 12.0:
         f"FAIL: clean scenario duration changed: {manifest['duration_seconds']}"
     )
 print("clean scenario untouched")
+PY
+
+# A run that stops partway must not leave the previous run's manifest behind
+# to describe media it no longer matches. Rerun the clean scenario with an
+# ffmpeg that fails on the second participant: the first participant's media
+# is already replaced by then, so the old manifest has to be gone.
+mkdir -p "$TMP_DIR/failing-stub"
+cat > "$TMP_DIR/failing-stub/ffmpeg" <<'STUB'
+#!/usr/bin/env bash
+out=""
+for arg in "$@"; do out="$arg"; done
+case "$out" in
+  */ben.*) echo "stub ffmpeg: refusing $out" >&2; exit 1 ;;
+esac
+printf 'stub' > "$out"
+STUB
+chmod +x "$TMP_DIR/failing-stub/ffmpeg"
+[[ -f "$CLEAN_DIR/manifest.json" ]] || fail "clean run left no manifest to go stale"
+if PATH="$TMP_DIR/failing-stub:$PATH" python3 "$GEN" --scenario "$TMP_DIR/clean.json" \
+    --output-dir "$CLEAN_DIR" --backend mock --force >/dev/null 2>&1; then
+  fail "generator succeeded although ffmpeg failed"
+fi
+[[ ! -e "$CLEAN_DIR/manifest.json" ]] \
+  || fail "a partial run left the previous manifest describing replaced media"
+[[ ! -e "$CLEAN_DIR/reference.txt" ]] \
+  || fail "a partial run left the previous reference.txt behind"
+
+# Reuse of earlier output: only a complete run from the SAME backend counts,
+# and the manifest's relative paths resolve against its own directory, not
+# the caller's cwd.
+python3 - "$GEN" "$PROBE_DIR" <<'PY' || exit 1
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("generator", sys.argv[1])
+generator = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = generator  # dataclasses look their module up here
+spec.loader.exec_module(generator)
+manifest_path = Path(sys.argv[2]) / "manifest.json"
+
+os.chdir("/")
+if not generator.cached_manifest_is_complete(manifest_path, "mock"):
+    raise SystemExit("FAIL: complete mock output not reusable from another cwd")
+if generator.cached_manifest_is_complete(manifest_path, "kokoro"):
+    raise SystemExit("FAIL: mock-backend output accepted for a kokoro request")
+print("cache reuse is backend- and cwd-safe")
+PY
+
+# The committed fixtures are what the harness streams and transcribes; tones
+# from the mock backend there transcribe to nothing (four of six showcase
+# voices did). Their manifests are plain git files, readable without LFS.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+python3 - "$REPO_ROOT" <<'PY' || exit 1
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+manifests = sorted((root / "harness" / "media" / "processed").glob("*/manifest.json"))
+if not manifests:
+    raise SystemExit("FAIL: no committed fixture manifests found")
+for path in manifests:
+    backend = json.loads(path.read_text(encoding="utf-8")).get("backend")
+    if backend != "kokoro":
+        raise SystemExit(
+            f"FAIL: {path.relative_to(root)} was generated with backend {backend!r}; "
+            "committed fixtures must be real speech (--backend kokoro)"
+        )
+print(f"{len(manifests)} committed fixture manifest(s) use kokoro")
 PY
 
 echo "PASS: prepare-synthetic-meeting.py slide keeps ground truth honest"
