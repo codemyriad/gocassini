@@ -36,6 +36,9 @@ const (
 var (
 	errSpeakerEditsRevisionConflict = errors.New("speaker edits revision conflict")
 	errSpeakerEditsBusy             = errors.New("job is busy")
+	// errSpeakerEditsSourceExpired: retention removed the capture a split
+	// diarizes and every apply is checked against.
+	errSpeakerEditsSourceExpired = errors.New("source audio expired")
 )
 
 // speakerIDPattern is what a participant id may be when it is used as a file
@@ -288,7 +291,25 @@ FROM job_attempts WHERE job_id = ? AND attempt_number = ?`, jobID, attemptNumber
 // QueueSpeakerEdits stores doc as the job's next revision and queues the
 // refine attempt that applies it, in one transaction: an accepted edit is
 // always on its way to the published recording, across any restart.
+//
+// It is admitted the way a rerun is (QueueRerunAttempt), under the job's
+// artifact lock: not while an archive operation is pending, and not once the
+// capture has expired. The lock is only tried: a worker holds it for a whole
+// build, seal or publish, and a person saving names must not wait on one.
+// A job whose lock is taken is busy.
 func (s *Store) QueueSpeakerEdits(ctx context.Context, jobID string, expectRevision int, doc speakerEditsDoc, updatedBy, queuedAt string) (int, error) {
+	unlock, ok := s.tryLockArtifacts(jobID)
+	if !ok {
+		return 0, errSpeakerEditsBusy
+	}
+	defer unlock()
+	pending, expired := s.artifactAdmission(ctx, jobID)
+	switch {
+	case pending:
+		return 0, errSpeakerEditsBusy
+	case expired:
+		return 0, errSpeakerEditsSourceExpired
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin speaker edits: %w", err)

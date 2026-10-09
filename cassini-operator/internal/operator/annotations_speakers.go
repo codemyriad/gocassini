@@ -230,6 +230,9 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 	case errors.Is(err, errSpeakerEditsBusy):
 		writeJSONError(w, http.StatusConflict, "busy")
 		return
+	case errors.Is(err, errSpeakerEditsSourceExpired):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "unavailable", "reason": speakerReasonNoSourceAudio})
+		return
 	case errors.Is(err, sql.ErrNoRows):
 		http.NotFound(w, r)
 		return
@@ -355,7 +358,9 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 		return resp, err
 	}
 	switch {
-	case !speakerSourceAudioReady(job):
+	case !speakerSourceAudioReady(job) || rt.store.artifactSourceExpired(ctx, jobID):
+		// Retention records an expired capture as such: the same reason,
+		// whatever the job row still names.
 		resp.Reason = speakerReasonNoSourceAudio
 	case len(resp.Participants) == 0 || speakerMeetingUntranscribed(meetingPath):
 		// A build that kept only the audio still lists every participant,

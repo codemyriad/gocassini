@@ -92,8 +92,14 @@ func newSpeakerRuntime(t *testing.T, jobID string) (*Runtime, string) {
 	return rt, bin
 }
 
+// queueSpeakerEdits saves doc the way a person does once the page shows the
+// last edit applied or failed. A worker that recorded that state may still
+// hold the job's artifacts (a publish promotes and prunes after it marks
+// the attempt succeeded) and a save then answers busy, so this first waits
+// for the worker to let go: taking the lock blocks until it does.
 func queueSpeakerEdits(t *testing.T, rt *Runtime, jobID string, expect int, doc speakerEditsDoc) {
 	t.Helper()
+	rt.store.lockArtifacts(jobID)()
 	if _, err := rt.store.QueueSpeakerEdits(context.Background(), jobID, expect, doc, "alice", nowUTCString()); err != nil {
 		t.Fatalf("QueueSpeakerEdits() error = %v", err)
 	}

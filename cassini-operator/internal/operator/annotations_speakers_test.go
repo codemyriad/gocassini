@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -708,6 +709,77 @@ func TestSpeakersRefuseARebuildThatWasNeverPublished(t *testing.T) {
 	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", `{"expectRevision":0,"doc":{"labels":[{"speakerId":"spk_room","label":"Room"}]}}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), speakerReasonUnpublishedRebuild) {
 		t.Fatalf("POST after an unpublished rerun = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A save queues an attempt, so it is admitted the way a rerun is: under the
+// job's artifact lock, never while an archive operation is pending, and
+// never once retention removed the capture. The lock is only tried, so a
+// worker holding it answers busy at once instead of holding the request.
+func TestSpeakersPostIsAdmittedLikeARerun(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	const body = `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}]}}`
+	queuedNothing := func(step string) {
+		t.Helper()
+		rec, err := f.rt.store.GetSpeakerEdits(context.Background(), "MEETING1")
+		job, jobErr := f.rt.store.GetJob(context.Background(), "MEETING1")
+		if err != nil || jobErr != nil || rec.Revision != 0 || job.CurrentAttemptNumber != 1 {
+			t.Fatalf("%s: revision %d attempt %d (%v %v), want nothing stored or queued", step, rec.Revision, job.CurrentAttemptNumber, err, jobErr)
+		}
+	}
+
+	// A build, seal, publish or expiry of the job holds its lock.
+	unlock := f.rt.store.lockArtifacts("MEETING1")
+	answered := make(chan *httptest.ResponseRecorder, 1)
+	go func() { answered <- annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body) }()
+	select {
+	case rec := <-answered:
+		if rec.Code != http.StatusConflict || annTestError(t, rec) != "busy" {
+			t.Fatalf("POST while the artifacts are locked = %d %s", rec.Code, rec.Body.String())
+		}
+	case <-time.After(testWaitTimeout):
+		unlock()
+		t.Fatal("POST waited on the job's artifact lock")
+	}
+	unlock()
+	queuedNothing("locked")
+
+	// A promotion or expiry journalled and not finished.
+	if _, err := f.rt.store.db.Exec(`INSERT INTO artifact_operations (job_id, operation) VALUES ('MEETING1', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body); rec.Code != http.StatusConflict || annTestError(t, rec) != "busy" {
+		t.Fatalf("POST with an archive operation pending = %d %s", rec.Code, rec.Body.String())
+	}
+	queuedNothing("pending operation")
+	if _, err := f.rt.store.db.Exec(`DELETE FROM artifact_operations`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Retention removed the capture.
+	if _, err := f.rt.store.db.Exec(`INSERT INTO artifact_availability (job_id, source) VALUES ('MEETING1', 'expired')`); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.get(t, "MEETING1"); resp.Available || resp.Reason != speakerReasonNoSourceAudio {
+		t.Fatalf("GET with the capture expired: %+v", resp)
+	}
+	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body)
+	if rec.Code != http.StatusConflict || annTestError(t, rec) != "unavailable" || !strings.Contains(rec.Body.String(), speakerReasonNoSourceAudio) {
+		t.Fatalf("POST with the capture expired = %d %s", rec.Code, rec.Body.String())
+	}
+	queuedNothing("source expired")
+	// The store refuses it too, whatever answered the page before.
+	if _, err := f.rt.store.QueueSpeakerEdits(context.Background(), "MEETING1", 0, splitDoc(speakerTestRoom), "alice", nowUTCString()); !errors.Is(err, errSpeakerEditsSourceExpired) {
+		t.Fatalf("QueueSpeakerEdits with the capture expired = %v", err)
+	}
+
+	if _, err := f.rt.store.db.Exec(`DELETE FROM artifact_availability`); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.post(t, body); resp.State != speakerStateApplying || resp.Revision != 1 {
+		t.Fatalf("POST once nothing stands in the way: %+v", resp)
 	}
 }
 
