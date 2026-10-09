@@ -222,7 +222,18 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, formatUTCString(s.rt.speakerNow()))
+	now := s.rt.speakerNow()
+	release, retryAfter, allowed := s.speakerEdits.reserve(caller, now)
+	if !allowed {
+		s.logf("annotations: speakers meeting=%s refused for %s: too many saves (retry in %s)", meetingID, caller, retryAfter.Round(time.Second))
+		writeSpeakerEditsRateLimited(w, retryAfter)
+		return
+	}
+	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, formatUTCString(now))
+	if err != nil {
+		// Nothing was queued, so the save does not count.
+		release()
+	}
 	switch {
 	case errors.Is(err, errSpeakerEditsRevisionConflict):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "revision-conflict", "revision": revision})

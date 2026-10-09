@@ -29,6 +29,8 @@ type annotationService struct {
 	backgroundMu sync.Mutex
 	backgroundWG sync.WaitGroup
 	stopping     bool
+	// speakerEdits limits how many speaker edits one person saves an hour.
+	speakerEdits *speakerEditLimiter
 }
 
 // newAnnotationService returns nil where no mark can be served, as
@@ -49,8 +51,9 @@ func newAnnotationService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *a
 		exapp: exapp,
 		bin:   rt.cfg.CassiniBin,
 		// As the read proxy: recordings stream, so the request context governs.
-		client: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
-		logger: logger,
+		client:       &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
+		logger:       logger,
+		speakerEdits: speakerEditLimiterFromEnv(),
 	}
 }
 
