@@ -123,7 +123,7 @@
               <button type="button" class="comparison-row" aria-expanded={splitHistory} on:click={() => splitHistory = !splitHistory} aria-label={`${info.label}: ${formatStorageBytes(category.bytes)}`}>
                 <span class="category-label">{info.label} <span class="expand-sign" aria-hidden="true">{splitHistory ? "−" : "+"}</span></span>
                 <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? category.bytes / largest * 100 : 0}%`} style:background={info.color}></span></span>
-                <strong>{category.id === "published" && publishedPartial ? "Partial · " : ""}{formatStorageBytes(category.bytes)}</strong>
+                <strong>{formatStorageBytes(category.bytes)}</strong>
               </button>
               {#if splitHistory}
                 {#each kinds as kind (kind.id)}
