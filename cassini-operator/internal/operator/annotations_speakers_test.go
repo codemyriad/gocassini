@@ -884,6 +884,63 @@ func TestSpeakersGetReadsThePublishedMeetingBeforeItIsPromoted(t *testing.T) {
 	}
 }
 
+// A GET picks the published attempt's own bundle and then reads it. If that
+// attempt's promotion, or a later attempt's, is recorded in between and the
+// bundle is pruned, the GET reads current/ instead: it must not report the
+// meeting as having no transcript.
+func TestSpeakersGetRereadsCurrentWhenThePromotionPrunesUnderIt(t *testing.T) {
+	const laterTranscript = `{"version":"transcript.words.v1","speakers":[` +
+		`{"id":"spk_room","label":"Meeting room laptop"},{"id":"spk_remote","label":"Remote"},{"id":"spk_late","label":"Late joiner"},{"id":"spk_later","label":"Later still"}],"segments":[]}`
+	for _, c := range []struct {
+		name     string
+		promoted int
+		want     int
+	}{
+		{"its own promotion", 2, 3},
+		{"a later attempt's promotion", 3, 4},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newSpeakersFixture(t)
+			f.installModel(t)
+			seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+			publishUnpromotedRerun(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+			current := canonicalMeetingPath(f.rt.cfg.WorkRoot, "MEETING1")
+			rerun := attemptMeetingPath(f.rt.cfg.WorkRoot, "MEETING1", 2)
+			pruned := false
+			f.rt.speakerMeetingReading = func(path string) {
+				if path != rerun || pruned {
+					return
+				}
+				pruned = true
+				if err := os.RemoveAll(current); err != nil {
+					t.Fatal(err)
+				}
+				if err := copyDirectory(rerun, current); err != nil {
+					t.Fatal(err)
+				}
+				if c.promoted == 3 {
+					if err := os.WriteFile(filepath.Join(current, speakerTranscriptPrimary), []byte(laterTranscript), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := f.rt.store.db.Exec(`UPDATE artifact_availability SET published_attempt = ? WHERE job_id = 'MEETING1'`, c.promoted); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.RemoveAll(rerun); err != nil {
+					t.Fatal(err)
+				}
+			}
+			resp := f.get(t, "MEETING1")
+			if !pruned {
+				t.Fatal("the GET never read the rerun's own bundle")
+			}
+			if !resp.Available || len(resp.Participants) != c.want {
+				t.Fatalf("GET with the bundle pruned under it: %+v, want %d participants from current/", resp, c.want)
+			}
+		})
+	}
+}
+
 // A build that kept only the audio (transcription skipped or failed) still
 // lists every participant in its transcript, with no words. There is nothing
 // to separate or name: splitting one diarized a whole track and then reported

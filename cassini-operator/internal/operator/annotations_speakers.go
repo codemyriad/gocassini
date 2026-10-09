@@ -551,18 +551,22 @@ func (rt *Runtime) promotedAttempt(ctx context.Context, jobID string) int {
 }
 
 // readPublishedSpeakerMeeting reads the bundle publishedSpeakerMeetingPath
-// names. An attempt's bundle is pruned once its promotion is recorded, which
-// can happen while it is being read; current/ is then the same bundle, so it
-// is read again from there. A promotion still not recorded after the read
-// had not started pruning when the read finished.
+// names. An attempt's bundle is pruned once its promotion, or the promotion
+// of a later attempt, is recorded, which can happen while it is being read;
+// current/ then holds that attempt's meeting or a newer one, so it is read
+// again from there. A promotion still not recorded after the read had not
+// started pruning when the read finished.
 func (rt *Runtime) readPublishedSpeakerMeeting(ctx context.Context, jobID string) (speakerMeeting, error) {
 	path, attempt, err := rt.publishedSpeakerMeetingPath(ctx, jobID)
 	if err != nil {
 		return speakerMeeting{}, err
 	}
+	if rt.speakerMeetingReading != nil {
+		rt.speakerMeetingReading(path)
+	}
 	m := readSpeakerMeeting(path)
 	canonical := canonicalMeetingPath(rt.cfg.WorkRoot, jobID)
-	if path != canonical && rt.promotedAttempt(ctx, jobID) == attempt {
+	if path != canonical && rt.promotedAttempt(ctx, jobID) >= attempt {
 		m = readSpeakerMeeting(canonical)
 	}
 	return m, nil

@@ -197,6 +197,10 @@ type Runtime struct {
 	// refine is queued and how long it has been waiting. Nil means time.Now;
 	// tests fix it.
 	speakerClock func() time.Time
+	// speakerMeetingReading, when set, is called with the meeting bundle the
+	// speakers surface is about to read. Tests use it to promote and prune
+	// that bundle under the read.
+	speakerMeetingReading func(path string)
 	// referenceFrontendProbe reports whether the active sherpa runtime includes
 	// the Parakeet v3 reference frontend optimization. Tests stub it.
 	referenceFrontendProbe func() (known bool, isReference bool)
