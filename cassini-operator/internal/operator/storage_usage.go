@@ -188,7 +188,7 @@ func (c ExAppConfig) ncArchiveLogicalBytes(ctx context.Context, root string) (in
 	return bytes, err
 }
 
-func (c ExAppConfig) ncArchiveLogicalBytesDetailed(ctx context.Context, root string) (int64, int, int, int, string) {
+func (c ExAppConfig) ncArchiveLogicalBytesDetailed(ctx context.Context, root string, visit ...func(davSizeEntry)) (int64, int, int, int, string) {
 	client := &http.Client{Timeout: storageUsageTimeout}
 	pending := []string{strings.Trim(root, "/")}
 	seen := make(map[string]bool)
@@ -222,6 +222,9 @@ func (c ExAppConfig) ncArchiveLogicalBytesDetailed(ctx context.Context, root str
 			}
 			total += entry.size
 			files++
+			for _, callback := range visit {
+				callback(entry)
+			}
 		}
 	}
 	return total, files, collections, requests, ""
@@ -231,11 +234,13 @@ type davSizeEntry struct {
 	relPath    string
 	size       int64
 	collection bool
+	fileID     int64
+	etag       string
 }
 
 func (c ExAppConfig) davListSizes(ctx context.Context, client *http.Client, userID, relDir string) ([]davSizeEntry, bool, error) {
 	body := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
-		`<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>`)
+		`<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><d:resourcetype/><d:getcontentlength/><oc:fileid/><d:getetag/></d:prop></d:propfind>`)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relDir), bytes.NewReader(body))
 	if err != nil {
 		return nil, false, err
@@ -266,6 +271,9 @@ func (c ExAppConfig) davListSizes(ctx context.Context, client *http.Client, user
 		Responses []struct {
 			Href     string `xml:"href"`
 			Propstat []struct {
+				Status     string    `xml:"status"`
+				FileID     int64     `xml:"prop>fileid"`
+				ETag       string    `xml:"prop>getetag"`
 				Length     string    `xml:"prop>getcontentlength"`
 				Collection *struct{} `xml:"prop>resourcetype>collection"`
 			} `xml:"propstat"`
@@ -276,21 +284,40 @@ func (c ExAppConfig) davListSizes(ctx context.Context, client *http.Client, user
 	}
 
 	entries := make([]davSizeEntry, 0, len(multistatus.Responses))
+	seen := map[string]bool{}
 	for _, response := range multistatus.Responses {
 		relPath, err := davRelativePath(userID, response.Href)
 		if err != nil || relPath == "" || relPath == strings.Trim(relDir, "/") {
 			continue // the queried collection itself, or a malformed child
 		}
+		if path.Dir(relPath) != strings.Trim(relDir, "/") || seen[relPath] {
+			continue
+		}
+		seen[relPath] = true
 		entry := davSizeEntry{relPath: relPath}
+		hasLength := false
 		for _, propstat := range response.Propstat {
+			if propstat.Status != "" && !strings.Contains(propstat.Status, " 200 ") {
+				continue
+			}
+			if propstat.FileID > 0 {
+				entry.fileID = propstat.FileID
+			}
+			if propstat.ETag != "" {
+				entry.etag = propstat.ETag
+			}
 			if propstat.Collection != nil {
 				entry.collection = true
 			}
 			if propstat.Length != "" {
+				hasLength = true
 				if _, err := fmt.Sscan(propstat.Length, &entry.size); err != nil || entry.size < 0 {
 					return nil, false, fmt.Errorf("invalid content length for %s", relPath)
 				}
 			}
+		}
+		if !entry.collection && !hasLength {
+			return nil, false, fmt.Errorf("missing content length for %s", relPath)
 		}
 		entries = append(entries, entry)
 	}

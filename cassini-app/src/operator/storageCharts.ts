@@ -2,6 +2,7 @@ import type { StorageUsageCategory } from "./types";
 import { retentionDayPresets } from "./retention";
 
 export const categoryPresentation: Record<string, { label: string; description: string; color: string }> = {
+  published: { label: "In Nextcloud Files", description: "Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup.", color: "#6279b8" },
   recordings: { label: "Recordings", description: "Audio, video and supporting files, dated when recording finished.", color: "#527eac" },
   current: { label: "Published meetings (on this server)", description: "This server's copy of the latest published meeting, dated when it was published.", color: "#588c75" },
   history: { label: "Previous attempts", description: "Failed recordings, failed processing, replaced output and failed publishing.", color: "#aa7840" },
