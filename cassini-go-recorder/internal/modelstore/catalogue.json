@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "published_at": "2026-10-08",
+  "published_at": "2026-10-09",
   "base_url": "https://dist.gocassini.com",
   "models": [
     {
@@ -122,7 +122,7 @@
       "description": "Speaker diarization for up to 8 speakers, quantized weights (ONNX interface v2; Cassini runtime v1.13.7-cassini.6)",
       "license": "OpenMDW-1.1",
       "source_url": "https://huggingface.co/nvidia/Nemotron-3-Diarization/blob/f667ed73aee57d40cc39428eb768b4fd87a0a29e/model.safetensors",
-      "source_sha256": "c074d86335b3b794f8fa5edc25594558f128bdb3914d27806a3a5a2e44963cb6",
+      "source_sha256": "47c221ea9b4d4e7f6c108bd098e769bc706cdc986c29f6133c93cae335fe6779",
       "files": [
         {
           "path": "model.int8.onnx",
@@ -138,7 +138,7 @@
       "description": "Speaker diarization for up to 8 speakers, full precision weights (ONNX interface v2; Cassini runtime v1.13.7-cassini.6)",
       "license": "OpenMDW-1.1",
       "source_url": "https://huggingface.co/nvidia/Nemotron-3-Diarization/blob/f667ed73aee57d40cc39428eb768b4fd87a0a29e/model.safetensors",
-      "source_sha256": "c074d86335b3b794f8fa5edc25594558f128bdb3914d27806a3a5a2e44963cb6",
+      "source_sha256": "bf001d7945ee5dd9e542baf1014ebc1d6f13ea9168207a5358423ec44f0a195f",
       "files": [
         {
           "path": "model.onnx",

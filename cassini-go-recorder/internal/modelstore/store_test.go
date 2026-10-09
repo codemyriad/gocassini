@@ -109,6 +109,23 @@ func TestShippedCatalogue(t *testing.T) {
 	if m.Files[0].Path != "model.int8.onnx" || a.UncompressedSHA256 != "47c221ea9b4d4e7f6c108bd098e769bc706cdc986c29f6133c93cae335fe6779" || a.UncompressedSize != 103967426 || a.Size != 64915668 {
 		t.Fatalf("diarizer artifact = %+v", a)
 	}
+	// An install is (id, revision), so each export needs its own revision: a
+	// re-export under the old one would look like a damaged install. The
+	// Nemotron exports share NVIDIA's weights, so their revision is the
+	// exported file's own hash, not the weights'.
+	owner := map[string]string{}
+	for _, m := range c.Models {
+		if other, ok := owner[m.Revision]; ok {
+			t.Errorf("%s and %s share revision %s", other, m.ID, m.Revision)
+		}
+		owner[m.Revision] = m.ID
+		if m.Kind == KindDiarization {
+			f, err := c.Artifact(m.Files[0].Artifact)
+			if err != nil || len(m.Files) != 1 || m.Revision != f.UncompressedSHA256 {
+				t.Errorf("%s revision %s is not its exported file's sha256", m.ID, m.Revision)
+			}
+		}
+	}
 	// Every installed model directory gets the embedded notice; each licence
 	// in the catalogue must be in it.
 	for licence, needle := range map[string]string{"CC-BY-4.0": "CC BY 4.0", "MIT": "MIT License", "OpenMDW-1.1": "OpenMDW License Agreement, version 1.1"} {
