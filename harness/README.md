@@ -84,12 +84,10 @@ Common combinations:
 | Docker Desktop for Mac installed-ExApp dev | `lan-http` | `full` | `installed-exapp` | `installed-exapp` | See [Docker Desktop for Mac](#52-docker-desktop-for-mac) for the required LAN signaling flags. |
 | Remote browser / macOS browser through HTTPS proxy | `remote-https` | `full-remote` | optional | matching backend | `./bin/cassini dev stack up --public-mode remote-https --services full-remote ...` |
 
-> **macOS note:** the full local stack works with Docker Desktop 4.34 or newer
-> when **Enable host networking** is on and Talk signaling uses the Mac's LAN IP.
-> The default Linux bridge-gateway signaling address is not browser-reachable on
-> macOS. Follow the [Docker Desktop for Mac guide](#52-docker-desktop-for-mac),
-> or use the [remote HTTPS guide](#6-guide-remote-https-dev-setup) when Docker
-> Desktop host networking is unavailable.
+> **macOS note:** use the Mac's LAN IP for signaling, as described in the
+> [Docker Desktop for Mac guide](#52-docker-desktop-for-mac). The stack uses
+> published ports and does not require Docker Desktop host networking.
+> This topology has been tested on Linux; macOS validation is pending.
 
 ---
 
@@ -159,7 +157,8 @@ Remote mode derived values:
 
 Validation rules worth remembering:
 
-- `full-remote` requires `remote-https`.
+- `full-remote` requires `remote-https`. `full` also includes the HTTPS helper
+  when used with `remote-https`.
 - `direct-operator` and `installed-exapp` recording backends require `full`,
   `full-remote`, or `legacy-default` services because they need media services.
 - `--cassini installed-exapp` requires `appapi`, `full`, `full-remote`, or
@@ -514,11 +513,9 @@ This is the production-shaped local development path: Nextcloud installs Cassini
 as a real AppAPI ExApp through HaRP, Talk points its recording backend at the
 AppAPI proxy, and the ExApp records through HPB-internal signaling auth.
 
-Supported hosts are Linux with Docker Engine + Compose v2, and macOS with Docker
-Desktop 4.34 or newer plus host networking enabled. Installed-ExApp status
-verification also requires `jq`; stack startup checks for it before creating
-resources. The macOS command differs because one signaling address must be
-reachable from both the Nextcloud container and the browser.
+Use Docker Engine + Compose 2.17+ on Linux, or Docker Desktop on macOS (validation
+pending). Installed-ExApp status verification also requires `jq`. On macOS,
+configure a LAN signaling address reachable from both Nextcloud and the browser.
 
 ### 5.1 Start the full installed-ExApp stack
 
@@ -573,7 +570,7 @@ and media use the explicitly configured Mac LAN address:
 ```text
 Browser ── http://127.0.0.1:28080 ──> Nextcloud container
    │
-   └────── http://<MAC_LAN_IP>:28082 ──> Docker Desktop host network
+   └────── http://<MAC_LAN_IP>:28082 ──> published port of the shared proxy/signaling namespace
                                                 │
 Nextcloud container ─────────────────────────────┤
                                                 v
@@ -584,14 +581,12 @@ Cassini ExApp ── http://reverse-proxy ──> Nextcloud/Talk callbacks
 
 #### Step 1: prepare Docker Desktop and the checkout
 
-1. Install Docker Desktop 4.34 or newer.
-2. Open Docker Desktop → **Settings** → **Resources** → **Network**.
-3. Enable **Enable host networking**, then apply and restart Docker Desktop.
-4. Install Go (`brew install go`); `bin/cassini` builds the CLI on every run.
-5. Keep the checkout outside `~/Documents`, or grant Docker access to that
+1. Install Docker Desktop.
+2. Install Go (`brew install go`); `bin/cassini` builds the CLI on every run.
+3. Keep the checkout outside `~/Documents`, or grant Docker access to that
    directory. macOS TCC can otherwise reject Compose bind mounts with
    `operation not permitted`.
-6. Allow incoming connections for Docker Desktop if the macOS firewall prompts.
+4. Allow incoming connections for Docker Desktop if the macOS firewall prompts.
 
 Confirm the command-line prerequisites:
 
@@ -737,7 +732,7 @@ Two independent configuration mistakes otherwise produce the same Talk symptom:
 | Symptom | Action |
 |---|---|
 | Plan rejects LAN configuration | Supply every required value from the configuration table; do not substitute loopback for media or signaling. |
-| Host signaling preflight fails | Confirm Docker Desktop host networking is enabled, the LAN IP has not changed, the firewall permits Docker, and `curl http://$LAN_IP:28082/api/v1/welcome` works. |
+| Host signaling preflight fails | Confirm the LAN IP has not changed, the firewall permits Docker, and `curl http://$LAN_IP:28082/api/v1/welcome` works. |
 | Bind mount reports `operation not permitted` | Move the checkout outside `~/Documents` or grant Docker Desktop access to the directory. |
 | ExApp build times out fetching base-image metadata | Pre-pull the four build images below, then rerun the same command. |
 | Python reports `No module named expat`, a missing `_XML_*` symbol, or fails while parsing `appinfo/info.xml` | The selected interpreter's native `pyexpat` extension is incompatible with its runtime Expat library. Pin the harness to Python 3.12, reload direnv, and run the import check below before retrying. |
@@ -1004,10 +999,18 @@ Remote mode renders:
 
 - signaling backend allowlist entries for local, host, and public Nextcloud URLs
 - Janus `nat_1_1_mapping` using `CASSINI_HARNESS_MEDIA_HOST`
-- Coturn `external-ip` / `relay-ip` using `CASSINI_HARNESS_MEDIA_HOST`
+- Coturn `external-ip` using `CASSINI_HARNESS_MEDIA_HOST`
 - a Docker-network HTTPS helper (`signaling-public-proxy`) for Nextcloud's
-  server-side HPB notification checks on hosts where containers cannot hairpin
-  to host ports
+  server-side HPB notification checks and signaling's Nextcloud callbacks on
+  hosts where containers cannot reach host listeners. Remote `full` mode also
+  includes this helper. Signaling trusts its generated certificate and resolves
+  the public hostname through Docker DNS; backend TLS verification stays enabled.
+
+Remote media mode uses port 443 for the public Nextcloud HTTPS origin; custom
+Nextcloud HTTPS ports are not supported by the internal helper. Its private
+certificate is reused across renders and lasts 825 days. To change the public
+hostname or renew an expiring certificate, use `stack down` then `stack up --resume`
+with the same topology flags so signaling and the helper reload it together.
 
 The browser still connects to the real host signaling service through the HTTPS
 proxy (`https://$TS_FQDN:8443`).
@@ -1686,11 +1689,38 @@ Do not delete source database rows or the manifest to bypass these checks.
 |---|---:|
 | Nextcloud HTTP | `28080` |
 | Standalone signaling HTTP | `28082` |
-| Janus WebSocket (signaling -> Janus) | `28188` on loopback |
-| NATS | `14222` on loopback |
 | TURN | `13479` |
-| Janus RTP range | `20000-20100` |
-| Coturn relay range | `49160-49200` |
+| Janus RTP range | `20000-20100` (UDP) |
+| Coturn relay range | `49160-49200` (UDP) |
+
+The media services use the Compose network. Signaling reaches NATS (`4222`)
+and Janus's WebSocket (`28188`) through Docker DNS; neither control port is
+published on the host.
+
+Signaling shares the existing `reverse-proxy` service's network namespace.
+Nginx listens on `127.0.0.1:${NEXTCLOUD_HOST_PORT:-28080}` there and forwards
+Nextcloud callbacks to `nextcloud:80`, preserving the browser's localhost URL.
+Its existing port-80 AppAPI routes stay available at `http://reverse-proxy`.
+No additional proxy service or custom image is needed. Signaling waits for the
+localhost callback listener to pass its own health check before starting;
+Nextcloud initialization is still checked separately during bootstrap.
+Compose-driven proxy restarts also restart signaling. After a proxy restart
+outside Compose (including a Docker automatic restart), restart signaling with
+`docker compose -f harness/compose.yml -p <project> --profile full restart signaling`
+so it rejoins the current namespace.
+
+For stopped stacks created before this change, run `cassini dev stack down`
+followed by `cassini dev stack up --resume`, using the same topology flags.
+This recreates containers while keeping data volumes. A proxy configuration
+hash check rejects `--resume` of incompatible stopped containers.
+
+Docker requires shared-namespace ports to be published by the owning service,
+so `reverse-proxy` publishes signaling's port `28082`. This port is therefore
+also reserved in `appapi` mode, even though signaling is absent. `core` mode
+starts only Nextcloud and the database and does not reserve it.
+
+Running multiple stacks on one host still requires separate published ports and
+project-specific container and ExApp volume names.
 
 ### 10.3 Runtime outputs
 
