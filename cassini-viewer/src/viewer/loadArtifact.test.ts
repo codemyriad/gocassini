@@ -896,7 +896,7 @@ describe("switchPortableTranscript", () => {
         ],
         provenance: { speechToText },
       }) as unknown as PortableMeetingManifest;
-    const record = (editsRevision: unknown) => ({ engine: "sherpa-onnx", "x-speakerDiarization": { editsRevision } });
+    const record = (editsRevision: unknown) => ({ engine: "sherpa-onnx", "x-speakerEdits": { editsRevision } });
 
     expect(readSpeakerEditsRevision(manifest({ "separated-voices": record(3), "raw-asr": {} }))).toBe(3);
     // Only the default transcript's step counts.
@@ -905,7 +905,7 @@ describe("switchPortableTranscript", () => {
     expect(readSpeakerEditsRevision(manifest({}))).toBeUndefined();
 
     // And which summary: one rewritten for the edits, or the build's own.
-    const summary = (sha256: unknown) => ({ "x-speakerDiarization": { editsRevision: 3, summary: { rewritten: true, sha256 } } });
+    const summary = (sha256: unknown) => ({ "x-speakerEdits": { editsRevision: 3, summary: { rewritten: true, sha256 } } });
     expect(readSpeakerSummarySha256(manifest({ "separated-voices": summary("ab12"), "raw-asr": {} }))).toBe("ab12");
     expect(readSpeakerSummarySha256(manifest({ "separated-voices": record(3), "raw-asr": summary("ab12") }))).toBeUndefined();
     expect(readSpeakerSummarySha256(manifest({ "separated-voices": summary(12) }))).toBeUndefined();
@@ -916,7 +916,7 @@ describe("switchPortableTranscript", () => {
       location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-edits", protocol: "http:" },
     } as Window;
     globalThis.fetch = mockFetchReturning(
-      buildDualTranscriptFixture({ "x-speakerDiarization": { editsRevision: 2, splits: [], summary: { rewritten: true, sha256: "ab12" } } }),
+      buildDualTranscriptFixture({ "x-speakerEdits": { editsRevision: 2, summary: { rewritten: true, sha256: "ab12" } } }),
     );
     const artifact = await loadPortableArtifactFromAudioPath("./portable-fixture-edits.opus");
     expect(artifact.speakerEditsRevision).toBe(2);
@@ -931,20 +931,24 @@ describe("switchPortableTranscript", () => {
   // An embed has no operator to say what the participants were: the file's
   // own record of a split device's name is all there is once every voice is
   // named.
-  it("carries the split devices' names from the voices' x-device hint, on every transcript", async () => {
+  it("carries the split devices' names from the roster's x-separatedInto entries, on every transcript", async () => {
     globalThis.window = {
       location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-devices", protocol: "http:" },
     } as Window;
     const device = { id: "spk_1", label: "Meeting room laptop" };
     globalThis.fetch = mockFetchReturning(
       buildDualTranscriptFixture({}, [
-        { id: "spk_1~1", label: "Mira", "x-device": device },
-        { id: "spk_1~2", label: "Leo", "x-device": device },
+        { ...device, "x-separatedInto": ["spk_1~1", "spk_1~2"] },
+        { id: "spk_1~1", label: "Mira" },
+        { id: "spk_1~2", label: "Leo" },
       ]),
     );
     const store = new PortableMeetingStore();
     const artifact = await loadPortableArtifactFromAudioPath("./portable-fixture-devices.opus", store);
     expect(artifact.splitDevices).toEqual([device]);
+    // The facts list people: the voices, not their device as well.
+    const speakerRows = (artifact.metadata?.sections ?? []).flatMap((section) => section.rows).filter((row) => row.label.startsWith("Speaker"));
+    expect(speakerRows).toEqual([{ label: "Speakers", values: ["Mira", "Leo"] }]);
     const switched = await switchPortableTranscript("./portable-fixture-devices.opus", "parakeet", store);
     expect(switched.splitDevices).toEqual([device]);
 

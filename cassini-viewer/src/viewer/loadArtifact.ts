@@ -31,6 +31,7 @@ import {
   type PortableTranscriptEntry,
 } from "./portable";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
+import { withoutSplitDevices } from "../core/speakers";
 
 export interface LoadedArtifact {
   transcriptionStatus?: { status: "completed" | "skipped" | "failed"; reason?: string };
@@ -61,16 +62,17 @@ export interface LoadedArtifact {
   currentTranscriptId: string;
   /**
    * The revision of people's speaker edits this recording was published with
-   * (`x-speakerDiarization.editsRevision` on its default transcript's
-   * speech-to-text step). Absent when it carries none: nobody separated any
-   * voices, or the edits applied changed nothing and the operator published
-   * the original speakers. The People panel compares it with what the
-   * operator has applied, to say when the copy on screen is the older one.
+   * (`x-speakerEdits.editsRevision` on its default transcript's
+   * speech-to-text step), whether they renamed a speaker or separated voices.
+   * Absent when it carries none: nobody edited the speakers, or the edits
+   * applied changed nothing and the operator published the original
+   * speakers. The People panel compares it with what the operator has
+   * applied, to say when the copy on screen is the older one.
    */
   speakerEditsRevision?: number;
   /**
    * Which summary this recording has: the SHA-256 of one rewritten for
-   * people's speaker edits (`x-speakerDiarization.summary.sha256`, beside
+   * people's speaker edits (`x-speakerEdits.summary.sha256`, beside
    * `editsRevision`), absent for the build's own. The People panel compares
    * it with the one the operator last published, which an apply that leaves
    * the summary alone still names.
@@ -78,7 +80,8 @@ export interface LoadedArtifact {
   speakerSummarySha256?: string;
   /**
    * The devices whose voices were separated, with the names the file gives
-   * them (each voice's `x-device` hint in a portable `.opus`). Where no
+   * them (the roster entries marked `x-separatedInto` in a portable `.opus`).
+   * Where no
    * operator says what the participants were (an embed, a static export),
    * the People panel names a split device from here, so a device whose
    * voices are all named still goes by its own name.
@@ -639,7 +642,7 @@ export function readWordEndsBoundedByAudio(provenance: unknown): boolean {
 export function readSpeakerEditsRevision(manifest: PortableMeetingManifest): number | undefined {
   const speechToText = asMaybeObject(asMaybeObject(manifest.provenance)?.speechToText);
   const step = asMaybeObject(speechToText?.[getDefaultTranscriptId(manifest)]);
-  const revision = asMaybeObject(step?.["x-speakerDiarization"])?.editsRevision;
+  const revision = asMaybeObject(step?.["x-speakerEdits"])?.editsRevision;
   return typeof revision === "number" && Number.isInteger(revision) && revision > 0 ? revision : undefined;
 }
 
@@ -650,7 +653,7 @@ export function readSpeakerEditsRevision(manifest: PortableMeetingManifest): num
 export function readSpeakerSummarySha256(manifest: PortableMeetingManifest): string | undefined {
   const speechToText = asMaybeObject(asMaybeObject(manifest.provenance)?.speechToText);
   const step = asMaybeObject(speechToText?.[getDefaultTranscriptId(manifest)]);
-  const sha256 = asMaybeObject(asMaybeObject(step?.["x-speakerDiarization"])?.summary)?.sha256;
+  const sha256 = asMaybeObject(asMaybeObject(step?.["x-speakerEdits"])?.summary)?.sha256;
   return typeof sha256 === "string" && sha256 !== "" ? sha256 : undefined;
 }
 
@@ -670,12 +673,15 @@ function buildPortableMetadataRaw(
 ): Record<string, unknown> {
   const provenance = asMaybeObject(portable.provenance);
   const displayId = pickDisplayForTranscript(portable, currentTranscriptId)?.id;
+  const splitDeviceIds = new Set(readSplitDevices(portable.speakers).map((device) => device.id));
   return {
     meeting: portable.meeting ?? {},
     audio: portable.audio ?? {},
     integrity: (portable as Record<string, unknown>).integrity ?? {},
     stats: {
-      speakers: transcript.speakers.length,
+      // People, whichever transcript is shown: on the original one a device
+      // separated into voices is a speaker too, but its voices are who spoke.
+      speakers: withoutSplitDevices(transcript.speakers).length,
       passages: displayTranscript?.blocks.length ?? transcript.segments.length,
       words: transcript.segments.reduce((count, segment) => count + segment.words.length, 0),
       sourceTranscriptVersion: displayTranscript?.sourceTranscriptVersion ?? "transcript.words.v1",
@@ -692,7 +698,11 @@ function buildPortableMetadataRaw(
           displayTranscript: processingStepForId(provenance.displayTranscript, displayId),
         }
       : {},
-    speakers: Array.isArray(portable.speakers) ? portable.speakers : [],
+    // The roster less any device separated into voices: those voices are
+    // listed in its place.
+    speakers: Array.isArray(portable.speakers)
+      ? portable.speakers.filter((speaker) => !splitDeviceIds.has(asMaybeObject(speaker)?.id as string))
+      : [],
   };
 }
 

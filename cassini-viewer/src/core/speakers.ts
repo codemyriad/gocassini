@@ -41,10 +41,10 @@ export interface SpeakerGroup {
 // `roster` is the loaded transcript's speakers, where a split device's voices
 // stand in for it. `participants` is the original roster when the operator
 // says what it was. `deviceNames` names split devices where nothing else
-// does: the file's own record of them (a voice's "x-device" hint), for a
-// reader with no operator behind it. Failing both, a split device's name is
-// read back out of a voice's default label, and only when every voice has
-// been renamed does the device go by a generic name.
+// does: the file's own record of them (the roster entry marked
+// "x-separatedInto"), for a reader with no operator behind it. Failing both,
+// a split device's name is read back out of a voice's default label, and only
+// when every voice has been renamed does the device go by a generic name.
 export function groupSpeakers(
   roster: readonly TranscriptSpeaker[],
   participants: readonly TranscriptSpeaker[] = [],

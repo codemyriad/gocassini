@@ -488,7 +488,7 @@
   ): MeetingCatalogEntry {
     return {
       ...entry,
-      speakerCount: artifact.transcript.speakers.length,
+      speakerCount: withoutSplitDevices(artifact.transcript.speakers).length,
       segmentCount: artifact.transcript.segments.length,
       digestDurationMs: artifact.transcript.media.durationMs,
     };

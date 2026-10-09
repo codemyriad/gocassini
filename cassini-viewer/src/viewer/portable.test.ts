@@ -1122,15 +1122,32 @@ describe("buildTranscriptWordsFromPortable original transcript after separation"
     ]);
   });
 
-  it("takes the device's name from the voices' x-device hint", () => {
-    const renamed = [
-      { id: "spk_room~1", label: "Leo", "x-device": { id: "spk_room", label: "Meeting room laptop" } },
-      { id: "spk_room~2", label: "Mira", "x-device": { id: "spk_room", label: "Meeting room laptop" } },
+  // The producer keeps the device in the roster, marked with the voices that
+  // replace it, so readers before this change still find every speaker.
+  const keptRoster = [
+    { id: "spk_room", label: "Meeting room laptop", "x-separatedInto": ["spk_room~1", "spk_room~2"] },
+    { id: "spk_room~1", label: "Leo" },
+    { id: "spk_room~2", label: "Mira" },
+    { id: "spk_ben", label: "Ben" },
+  ];
+
+  it("lists the device the roster keeps only on the transcript that credits it", () => {
+    const originalTranscript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(keptRoster) as never));
+    expect(originalTranscript.speakers).toEqual([
+      { id: "spk_room", label: "Meeting room laptop" },
+      { id: "spk_room~1", label: "Leo" },
+      { id: "spk_room~2", label: "Mira" },
       { id: "spk_ben", label: "Ben" },
-    ];
-    const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(renamed) as never));
-    expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "Meeting room laptop" });
-    expect(readSplitDevices(renamed)).toEqual([{ id: "spk_room", label: "Meeting room laptop" }]);
+    ]);
+    const separatedTranscript = validateTranscriptWordsV1(
+      buildTranscriptWordsFromPortable({
+        ...original(keptRoster),
+        transcript: { items: [{ speaker: "spk_room~1", startMs: 0, endMs: 400, text: "hello" }] },
+      } as never),
+    );
+    expect(separatedTranscript.speakers.map((speaker) => speaker.id)).toEqual(["spk_room~1", "spk_room~2", "spk_ben"]);
+    expect(readSplitDevices(keptRoster)).toEqual([{ id: "spk_room", label: "Meeting room laptop" }]);
+    expect(readSplitDevices(separatedRoster)).toEqual([]);
   });
 
   it("falls back to the device id when every voice has been renamed", () => {

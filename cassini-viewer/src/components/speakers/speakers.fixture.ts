@@ -76,7 +76,8 @@ const ben = { id: BEN, label: "Ben Ortiz" };
 // The recording as published before anyone separated anything.
 export const original = (audioSrc: string) =>
   artifact(transcript(() => ROOM, [{ id: ROOM, label: ROOM_LABEL }, ben]), audioSrc);
-// The file names the device its voices came from (each voice's "x-device").
+// The file names the device its voices came from (its roster entry marked
+// "x-separatedInto").
 const splitDevices = [{ id: ROOM, label: ROOM_LABEL }];
 // …after the room's voices were separated.
 export const separated = (audioSrc: string): LoadedArtifact => ({
