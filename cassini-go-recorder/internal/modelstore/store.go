@@ -52,18 +52,27 @@ func (s *Store) emit(phase, file string, done, total, reused int64) {
 	}
 }
 func (s *Store) Dir(m Model) string {
-	if m.ID == "silero-vad" {
+	if m.Kind == KindVAD {
 		return filepath.Join(s.Root, "vad", m.Revision)
 	}
 	return filepath.Join(s.Root, "models", m.ID, m.Revision)
 }
-func (s *Store) VAD(m Model) (Model, error) { return s.Catalogue.Model("silero-vad", m.VADRevision) }
-func (s *Store) Components(m Model) []Model {
-	v, _ := s.VAD(m)
-	if m.ID == v.ID {
-		return []Model{m}
+
+// VAD is the voice activity detector a speech model pins. Other kinds have none.
+func (s *Store) VAD(m Model) (Model, error) {
+	if m.Kind != KindSpeech {
+		return Model{}, fmt.Errorf("%s model %s has no VAD dependency", m.Kind, m.ID)
 	}
-	return []Model{m, v}
+	return s.Catalogue.Model(VADModelID, m.VADRevision)
+}
+
+// Components is what installing m puts in the store: a speech model with its
+// pinned VAD, anything else on its own.
+func (s *Store) Components(m Model) []Model {
+	if v, err := s.VAD(m); err == nil {
+		return []Model{m, v}
+	}
+	return []Model{m}
 }
 
 // Installed checks the verified publication receipt and file metadata. All bytes

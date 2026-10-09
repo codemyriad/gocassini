@@ -598,7 +598,7 @@ func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscr
 		"CASSINI_DECODE_HINT":         DecodeHint,
 		"CASSINI_MEETING_ID":          manifest.Meeting.ID,
 		"CASSINI_CREATED_AT":          manifest.Meeting.CreatedAtUTC,
-		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(manifest.Speakers)),
+		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(People(manifest.Speakers))),
 	}
 	applyAudioIntegrityTags(tags, manifest.Integrity)
 	if manifest.Meeting.RecordedAtLocal != "" {

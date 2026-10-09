@@ -713,6 +713,11 @@ jobs:
             /usr/local/bin/cassini doctor
           "
 
+      - name: Materialize the two showcase voices (selective LFS pull)
+        # About 1 MB: the voice separation smoke mixes these two tracks onto
+        # one participant's track and expects two voices back.
+        run: git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ogg,harness/media/processed/showcase-lantern-festival-v1/leo.ogg"
+
       - name: Install Parakeet and smoke-transcribe on ARM64
         env:
           IMAGE_REF: gocassini:arm64-smoke
@@ -970,6 +975,14 @@ jobs:
           pr-source: registry
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Materialize the showcase voices (selective LFS pull)
+        # Fetch only the two sources the smokes use (about 1 MB), not the
+        # complete private/showcase media set: mira.ogg for the D-50 pad-tail
+        # guard, mira.ogg and leo.ogg for the voice separation smoke. git-lfs
+        # was installed before checkout above because this self-hosted runner
+        # has no sudo.
+        run: git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ogg,harness/media/processed/showcase-lantern-festival-v1/leo.ogg"
+
       - name: Run CUDA transcribe smoke and transcript quality
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
@@ -977,12 +990,6 @@ jobs:
           # The 0.50 floor catches empty/gibberish output; it is not a WER SLA.
           MIN_LEVENSHTEIN: "0.50"
         run: ./harness/bin/ci-transcribe-smoke-exapp.sh
-
-      - name: Materialize short-clip fixture (selective LFS pull)
-        # Fetch only the ~630 KB source used by the D-50 pad-tail guard, not
-        # the complete private/showcase media set. git-lfs was installed before
-        # checkout above because this self-hosted runner has no sudo.
-        run: git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
 
       - name: Run short-clip ASR regression on CUDA (decoder pad-tail guard)
         # Clean 6-9s clips with abrupt endings must retain final tokens emitted

@@ -134,6 +134,19 @@ To keep the internal working artifacts visible, run the stages yourself:
 See [Artifacts and filesystem](./reference/artifacts-and-filesystem.md) for what
 each artifact holds.
 
+When several people shared one participant's device, separate their voices in
+a built bundle. `diarize` measures one participant's own track (it needs the
+Nemotron diarization model, see
+[Separating voices on a shared device](./speaker-separation.md)); `apply`
+rewrites the bundle from its original transcript and runs no model:
+
+```bash
+./bin/cassini speakers show ./meetings/weekly-sync.meeting
+./bin/cassini speakers diarize ./runs/weekly-sync.run --speaker spk_... --out ./turns/spk_....json
+./bin/cassini speakers apply ./meetings/weekly-sync.meeting --edits ./edits.json --turns-dir ./turns
+./bin/cassini pack ./meetings/weekly-sync.meeting --out "./Weekly Sync.opus"
+```
+
 ## The harness
 
 The local Talk lab and the showcase/demo flows live under `cassini dev`:
@@ -188,6 +201,7 @@ cassini publish    Publish one or more meeting bundles as a static site
 cassini record     Record a meeting into one portable artifact
 cassini retag      Rewrite a packed .opus file's room and job fields without re-encoding it
 cassini serve      Serve a static Cassini site locally
+cassini speakers   Separate the voices of people who shared one device
 ```
 
 `cassini meetings` reads published recordings out of Nextcloud as a given

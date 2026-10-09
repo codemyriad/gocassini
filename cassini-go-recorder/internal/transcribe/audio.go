@@ -234,10 +234,6 @@ func probeFirstDecodedFrameTimeMS(mkv string, streamIndex int) (int64, error) {
 	return 0, nil // An empty/entirely pre-skipped participant track is legal.
 }
 
-// ExtractSpeakerFloats extracts one audio stream as []float32 (16 kHz mono,
-// normalised to [-1, 1]) by streaming raw PCM from ffmpeg. The return type
-// necessarily owns four bytes per sample; decoding incrementally avoids the
-// former additional two-byte-per-sample, full-duration raw buffer.
 // sourceTimeBaseFromTags parses the wall-clock anchor the remux writes into
 // each audio stream. All three tags must be present and parseable: a partial
 // base cannot map anything, and silently treating a missing one as zero would
@@ -257,7 +253,20 @@ func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate string
 	}
 }
 
+// ExtractSpeakerFloats extracts one audio stream as []float32 (16 kHz mono,
+// normalised to [-1, 1]) by streaming raw PCM from ffmpeg. The return type
+// necessarily owns four bytes per sample; decoding incrementally avoids the
+// former additional two-byte-per-sample, full-duration raw buffer.
 func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
+	return AddSpeakerFloats(mkv, stream, nil)
+}
+
+// AddSpeakerFloats decodes one audio stream as ExtractSpeakerFloats does and
+// adds it sample by sample into mix, returned grown to the longer of the two.
+// The decode streams straight into mix, so summing a participant's later
+// streams costs one read chunk each, never a second whole-track buffer. A nil
+// mix allocates the one buffer, sized for the timeline.
+func AddSpeakerFloats(mkv string, stream AudioStream, mix []float32) ([]float32, error) {
 	durationMS := stream.TimelineDurationMS
 	if durationMS <= 0 {
 		// Preserve the memory bound for direct callers that construct AudioStream
@@ -281,7 +290,7 @@ func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
 		"pipe:1",
 	)
 	cmd := exec.Command("ffmpeg", args...)
-	samples, err := runPCM16LECommand(cmd, expectedPCMSamples(durationMS, 16000))
+	samples, err := addPCM16LECommand(cmd, mix, expectedPCMSamples(durationMS, 16000))
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg extract speaker %d: %w", stream.Index, err)
 	}
@@ -319,6 +328,11 @@ const pcmReadChunkBytes = 64 * 1024
 // stdout is consumed in fixed chunks and repeated decoder diagnostics cannot
 // grow stderr without limit on malformed media.
 func runPCM16LECommand(cmd *exec.Cmd, expectedSamples int) ([]float32, error) {
+	return addPCM16LECommand(cmd, nil, expectedSamples)
+}
+
+// addPCM16LECommand is runPCM16LECommand adding the PCM into mix.
+func addPCM16LECommand(cmd *exec.Cmd, mix []float32, expectedSamples int) ([]float32, error) {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open PCM pipe: %w", err)
@@ -330,7 +344,7 @@ func runPCM16LECommand(cmd *exec.Cmd, expectedSamples int) ([]float32, error) {
 		return nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
-	samples, readErr := readPCM16LEFloats(stdout, expectedSamples)
+	samples, readErr := addPCM16LEFloats(stdout, mix, expectedSamples)
 	if readErr != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
@@ -367,41 +381,51 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 // reads. expectedSamples is a capacity hint only; callers still get every
 // decoded sample if container metadata under-reports the duration.
 func readPCM16LEFloats(r io.Reader, expectedSamples int) ([]float32, error) {
-	if expectedSamples < 0 {
-		expectedSamples = 0
+	return addPCM16LEFloats(r, nil, expectedSamples)
+}
+
+// addPCM16LEFloats is readPCM16LEFloats adding each sample into mix, from its
+// first, instead of into a buffer of its own. A nil mix is allocated from
+// expectedSamples; a given one is reused, and grows only where this PCM runs
+// past its end.
+func addPCM16LEFloats(r io.Reader, mix []float32, expectedSamples int) ([]float32, error) {
+	if mix == nil {
+		mix = make([]float32, 0, max(expectedSamples, 0))
 	}
-	samples := make([]float32, 0, expectedSamples)
 	raw := make([]byte, pcmReadChunkBytes)
+	pos := 0
 	for {
 		n, err := io.ReadFull(r, raw)
 		if n%2 != 0 {
 			return nil, fmt.Errorf("decoded PCM has odd byte count")
 		}
 		if n > 0 {
-			oldLen := len(samples)
 			sampleCount := n / 2
-			newLen := oldLen + sampleCount
-			if newLen <= cap(samples) {
-				samples = samples[:newLen]
-			} else {
-				// The duration hint can be absent or slightly low. Growth is only a
-				// fallback; normal probed recordings stay within the exact initial
-				// allocation plus the one-second allowance below.
-				samples = append(samples, make([]float32, sampleCount)...)
+			if oldLen, newLen := len(mix), pos+sampleCount; newLen > oldLen {
+				if newLen <= cap(mix) {
+					mix = mix[:newLen]
+					clear(mix[oldLen:])
+				} else {
+					// The duration hint can be absent or slightly low. Growth is only a
+					// fallback; normal probed recordings stay within the exact initial
+					// allocation plus the one-second allowance below.
+					mix = append(mix, make([]float32, newLen-oldLen)...)
+				}
 			}
 			for i := 0; i < sampleCount; i++ {
 				lo := raw[i*2]
 				hi := raw[i*2+1]
 				s16 := int16(uint16(lo) | uint16(hi)<<8)
-				samples[oldLen+i] = float32(s16) / 32768.0
+				mix[pos+i] += float32(s16) / 32768.0
 			}
+			pos += sampleCount
 		}
 
 		switch err {
 		case nil:
 			continue
 		case io.EOF, io.ErrUnexpectedEOF:
-			return samples, nil
+			return mix, nil
 		default:
 			return nil, fmt.Errorf("read decoded PCM: %w", err)
 		}

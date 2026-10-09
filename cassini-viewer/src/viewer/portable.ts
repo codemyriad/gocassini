@@ -628,7 +628,17 @@ function isNonEmptyAnnotationString(value: unknown): value is string {
   return typeof value === "string" && value !== "";
 }
 
+// Transcript ids the producer itself writes, named for a reader. A separated
+// meeting holds its original transcript as "raw-asr"; "Raw Asr" means nothing
+// to someone choosing between the two.
+const KNOWN_TRANSCRIPT_LABELS: Record<string, string> = {
+  "separated-voices": "Separated voices",
+  "raw-asr": "Original",
+};
+
 function humanizeTranscriptId(value: string): string {
+  const known = KNOWN_TRANSCRIPT_LABELS[value];
+  if (known) return known;
   return value
     .replace(/[_-]+/g, " ")
     .trim()
@@ -824,7 +834,6 @@ export function buildTranscriptWordsFromPortable(
   portable: PortableMeetingManifest,
   mediaSrc = "meeting.opus",
 ): TranscriptWordsV1 {
-  const speakers = normalizeSpeakers(portable.speakers || []);
   const items = Array.isArray(portable.transcript?.items) ? portable.transcript.items : [];
   const segments = items.map((item, index) => {
     const segment = asRecord(item);
@@ -875,9 +884,69 @@ export function buildTranscriptWordsFromPortable(
       durationMs: safeToInt(portable.meeting?.durationMs, 0),
       sha256: safeToString(portable.integrity?.opusAudioSha256) || undefined,
     },
-    speakers,
+    speakers: transcriptSpeakers(portable.speakers, segments),
     segments,
   };
+}
+
+// One roster serves every transcript in the file. After a shared device was
+// separated into voices ("<device>~n"), the roster lists the voices and, just
+// before them, the device itself, marked "x-separatedInto": the original
+// transcript kept beside the separated one still credits the device. A
+// transcript's speakers are the roster less any such device that its own
+// words do not credit, so the separated transcript has the voices alone and
+// the original has the device too, before its voices.
+//
+// A speaker the transcript credits that the roster does not name at all
+// (a file written before the device was kept in it) is added rather than
+// failing: named from its voices' default labels ("Room laptop · Speaker 2" →
+// "Room laptop"), else by its id, and placed just before its first voice.
+function transcriptSpeakers(rawRoster: unknown, segments: Array<{ speaker?: string }>): TranscriptSpeaker[] {
+  const credited = new Set(segments.map((segment) => segment.speaker).filter(Boolean));
+  const separated = new Set(readSplitDevices(rawRoster).map((device) => device.id));
+  const speakers = normalizeSpeakers(rawRoster).filter((speaker) => !separated.has(speaker.id) || credited.has(speaker.id));
+  const known = new Set(speakers.map((speaker) => speaker.id));
+  const added: TranscriptSpeaker[] = [];
+  for (const segment of segments) {
+    const id = segment.speaker;
+    if (!id || known.has(id)) continue;
+    known.add(id);
+    let label = id;
+    for (const voice of speakers) {
+      if (!voice.id.startsWith(`${id}~`)) continue;
+      const match = /^(.*) · Speaker \d+$/u.exec(voice.label);
+      if (match && match[1]) {
+        label = match[1];
+        break;
+      }
+    }
+    added.push({ id, label });
+  }
+  if (added.length === 0) return speakers;
+  const result = [...speakers];
+  for (const device of added) {
+    const first = result.findIndex((speaker) => speaker.id.startsWith(`${device.id}~`));
+    if (first < 0) result.push(device);
+    else result.splice(first, 0, device);
+  }
+  return result;
+}
+
+// The devices a file's voices were separated from, as the roster names them:
+// the entries marked "x-separatedInto" (the producer's hint), in roster
+// order. Once every voice has a person's name this is the only place the
+// device's own name survives; a reader with no operator behind it names the
+// device from here.
+export function readSplitDevices(rawRoster: unknown): TranscriptSpeaker[] {
+  const devices = new Map<string, string>();
+  for (const entry of Array.isArray(rawRoster) ? rawRoster : []) {
+    const record = asRecord(entry);
+    const voices = record["x-separatedInto"];
+    const id = safeToString(record.id);
+    const label = safeToString(record.label).trim();
+    if (id && Array.isArray(voices) && voices.length > 0 && !devices.has(id)) devices.set(id, label || id);
+  }
+  return [...devices].map(([id, label]) => ({ id, label }));
 }
 
 function extractPortableReadableWords(
@@ -949,7 +1018,12 @@ export function buildReadableTranscriptFromPortable(
   transcript: TranscriptWordsV1,
 ): ReadableTranscriptV1 {
   const provided = asRecord(portable.readableTranscript);
-  const speakers = normalizeSpeakers(portable.speakers || transcript.speakers || []);
+  // The words transcript's speakers (transcriptSpeakers: a device separated
+  // into voices only where this transcript credits it). The rest of the
+  // roster after it, for safety, less those devices.
+  const separated = new Set(readSplitDevices(portable.speakers).map((device) => device.id));
+  const roster = normalizeSpeakers(portable.speakers || []).filter((speaker) => !separated.has(speaker.id));
+  const speakers = normalizeSpeakers([...(transcript.speakers || []), ...roster]);
   const validSpeakerIds = new Set(speakers.map((speaker) => speaker.id));
 
   if (

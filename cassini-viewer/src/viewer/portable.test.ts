@@ -14,6 +14,7 @@ import {
   pickDisplayForTranscript,
   readPortableAnnotations,
   readPortableSummaryMarkdown,
+  readSplitDevices,
   sha256HexFallback,
   type PortableMeetingManifest,
   type PortablePayloadRef,
@@ -24,6 +25,7 @@ import {
   canonicalWordsForBlock,
   isLikelyCrosstalkTurn,
   validateDisplayTranscriptV1,
+  validateReadableTranscriptV1,
   validateTranscriptWordsV1,
 } from "../core/transcript";
 
@@ -1063,5 +1065,117 @@ describe("display judgement over the JSON-directory artifacts", () => {
       { speaker: "spk_ana", words: 3, crosstalk: false },
       { speaker: "spk_ben", words: 2, crosstalk: true },
     ]);
+  });
+});
+
+// After a shared device is separated, the file's one roster lists its voices
+// while the original transcript kept beside the separated one still credits
+// the device. Switching to the original must not fail on an unknown speaker.
+describe("buildTranscriptWordsFromPortable original transcript after separation", () => {
+  const separatedRoster = [
+    { id: "spk_room~1", label: "Room laptop · Speaker 1" },
+    { id: "spk_room~2", label: "Mira" },
+    { id: "spk_ben", label: "Ben" },
+  ];
+  const original = (speakers: Array<Record<string, unknown>>) => ({
+    meeting: { durationMs: 5000 },
+    speakers,
+    transcript: {
+      items: [
+        { speaker: "spk_room", startMs: 0, endMs: 400, text: "hello" },
+        { speaker: "spk_ben", startMs: 900, endMs: 1300, text: "hi" },
+      ],
+    },
+  });
+
+  it("names the device from its voices' default labels", () => {
+    const transcript = validateTranscriptWordsV1(
+      buildTranscriptWordsFromPortable(original(separatedRoster) as never),
+    );
+    // The device goes just before its voices, not after everyone else.
+    expect(transcript.speakers).toEqual([
+      { id: "spk_room", label: "Room laptop" },
+      ...separatedRoster,
+    ]);
+  });
+
+  it("puts the device before its first voice wherever that is in the roster", () => {
+    const roster = [
+      { id: "spk_ana", label: "Ana" },
+      { id: "spk_room~2", label: "Room laptop · Speaker 2" },
+      { id: "spk_ben", label: "Ben" },
+      { id: "spk_room~1", label: "Room laptop · Speaker 1" },
+    ];
+    const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(roster) as never));
+    expect(transcript.speakers.map((speaker) => speaker.id)).toEqual([
+      "spk_ana", "spk_room", "spk_room~2", "spk_ben", "spk_room~1",
+    ]);
+  });
+
+  it("still appends a speaker that is neither in the roster nor a split device", () => {
+    const transcript = validateTranscriptWordsV1(
+      buildTranscriptWordsFromPortable(original([{ id: "spk_ben", label: "Ben" }]) as never),
+    );
+    expect(transcript.speakers).toEqual([
+      { id: "spk_ben", label: "Ben" },
+      { id: "spk_room", label: "spk_room" },
+    ]);
+  });
+
+  // The producer keeps the device in the roster, marked with the voices that
+  // replace it, so readers before this change still find every speaker.
+  const keptRoster = [
+    { id: "spk_room", label: "Meeting room laptop", "x-separatedInto": ["spk_room~1", "spk_room~2"] },
+    { id: "spk_room~1", label: "Leo" },
+    { id: "spk_room~2", label: "Mira" },
+    { id: "spk_ben", label: "Ben" },
+  ];
+
+  it("lists the device the roster keeps only on the transcript that credits it", () => {
+    const originalTranscript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(keptRoster) as never));
+    expect(originalTranscript.speakers).toEqual([
+      { id: "spk_room", label: "Meeting room laptop" },
+      { id: "spk_room~1", label: "Leo" },
+      { id: "spk_room~2", label: "Mira" },
+      { id: "spk_ben", label: "Ben" },
+    ]);
+    const separatedTranscript = validateTranscriptWordsV1(
+      buildTranscriptWordsFromPortable({
+        ...original(keptRoster),
+        transcript: { items: [{ speaker: "spk_room~1", startMs: 0, endMs: 400, text: "hello" }] },
+      } as never),
+    );
+    expect(separatedTranscript.speakers.map((speaker) => speaker.id)).toEqual(["spk_room~1", "spk_room~2", "spk_ben"]);
+    expect(readSplitDevices(keptRoster)).toEqual([{ id: "spk_room", label: "Meeting room laptop" }]);
+    expect(readSplitDevices(separatedRoster)).toEqual([]);
+  });
+
+  it("falls back to the device id when every voice has been renamed", () => {
+    const renamed = [
+      { id: "spk_room~1", label: "Leo" },
+      { id: "spk_room~2", label: "Mira" },
+      { id: "spk_ben", label: "Ben" },
+    ];
+    const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(original(renamed) as never));
+    expect(transcript.speakers).toContainEqual({ id: "spk_room", label: "spk_room" });
+  });
+
+  // Found on the installed stack: switching to "raw-asr" loaded the words but
+  // failed on "readable segment r_seg_000000 references unknown speaker", as
+  // the readable paragraphs took their speakers from the roster alone.
+  it("builds readable paragraphs that credit the device too", () => {
+    const manifest = original(separatedRoster) as never;
+    const transcript = validateTranscriptWordsV1(buildTranscriptWordsFromPortable(manifest));
+    const readable = validateReadableTranscriptV1(buildReadableTranscriptFromPortable(manifest, transcript));
+    expect(readable.segments.map((segment) => segment.speaker)).toEqual(["spk_room", "spk_ben"]);
+    expect(readable.speakers).toEqual([{ id: "spk_room", label: "Room laptop" }, ...separatedRoster]);
+  });
+});
+
+describe("transcript switcher labels", () => {
+  it("names the separated and original transcripts for a reader", () => {
+    const manifest = { version: 1 } as PortableMeetingManifest;
+    expect(describeTranscript(makeTranscriptEntry({ id: "separated-voices" }), manifest, true).label).toBe("Separated voices");
+    expect(describeTranscript(makeTranscriptEntry({ id: "raw-asr" }), manifest, false).label).toBe("Original");
   });
 });

@@ -14,6 +14,7 @@ import (
 
 	inspectpkg "gocassini/internal/inspect"
 	"gocassini/internal/meetingcontext"
+	"gocassini/internal/portable"
 )
 
 // The cassini.meetings.context.v1 contract lives in internal/meetingcontext so
@@ -522,7 +523,9 @@ func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting, 
 		Speakers:               make([]meetingcontext.Speaker, 0, len(meeting.Manifest.Speakers)),
 		Segments:               make([]meetingcontext.Segment, 0, len(segments)),
 	}
-	for _, speaker := range meeting.Manifest.Speakers {
+	// People, not participants: a participant whose voices were separated is
+	// listed as those voices, which is who speaks in the default transcript.
+	for _, speaker := range portable.People(meeting.Manifest.Speakers) {
 		input.Speakers = append(input.Speakers, meetingcontext.Speaker{
 			ID:    speaker.ID,
 			Label: speakerLabel(speaker.ID, labels),

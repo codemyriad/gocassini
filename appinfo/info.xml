@@ -396,6 +396,15 @@ Documentation: https://gocassini.com/docs]]></description>
         <verb>GET,POST</verb>
         <access_level>USER</access_level>
       </route>
+      <!-- USER: who spoke, as people corrected it — "several people used this
+           device", voice names and merges (docs/speaker-separation.md). Same
+           visibility check as the marks beside it; a POST queues a refine of
+           the meeting the caller can read. -->
+      <route>
+        <url>^annotations\/meetings\/[^\/]+\/speakers\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
 
       <route>
         <url>^annotations\/batch\/?$</url>

@@ -27,6 +27,23 @@
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
+  import {
+    createSpeakersSession,
+    reloadDue,
+    SPEAKER_POLL_MS,
+    speakerOverlayFor,
+    systemClock,
+    type SpeakersClock,
+  } from "./speakers/session";
+  import {
+    applySpeakerOverlay,
+    groupSpeakers,
+    type SpeakerOverlay,
+    speakerOverlayFromKey,
+    speakerOverlayKey,
+    voiceSamples,
+    withoutSplitDevices,
+  } from "../core/speakers";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
   import type { AnnotationResult, MeetingTag, VocabularyTag } from "../viewer/annotations";
@@ -50,6 +67,8 @@
     DisplayTranscriptV1,
     ReadableTranscriptV1,
     TranscriptIndex,
+    TranscriptSpeaker,
+    TranscriptWordsV1,
   } from "../core/types";
   import type {
     ArtifactMetadata,
@@ -129,6 +148,34 @@
     playbackerror: string;
   }>();
   const localMarks = createMarksSession((result) => dispatch("tagsChanged", result));
+
+  // Separating the voices on a shared device, and naming them. Offered only to
+  // a reader in the app whose provider can both read and save speaker edits —
+  // never on an embed, which is a page on the open web and changes nothing
+  // (D-775) — and then only from the People list in the meeting details.
+  export let speakerEditsPollMs = SPEAKER_POLL_MS;
+  // The clock the time left on an apply counts down by; tests move it by hand.
+  export let speakerEditsClock: SpeakersClock = systemClock;
+  const speakerSession = createSpeakersSession({ pollMs: speakerEditsPollMs, clock: speakerEditsClock });
+  let openedSpeakersFor: string | null = null;
+  $: speakerEditsOffered =
+    surface === "app" &&
+    !bundled &&
+    typeof dataProvider.loadSpeakerEdits === "function" &&
+    typeof dataProvider.saveSpeakerEdits === "function";
+  $: speakersFor = speakerEditsOffered && meeting ? meeting.id : null;
+  $: if (speakersFor !== openedSpeakersFor) {
+    openedSpeakersFor = speakersFor;
+    void speakerSession.open(
+      speakersFor ? () => dataProvider.loadSpeakerEdits!(meeting!) : null,
+      speakersFor ? (expectRevision, doc) => dataProvider.saveSpeakerEdits!(meeting!, expectRevision, doc) : null,
+    );
+  }
+  onDestroy(() => speakerSession.close());
+  // A voice sample plays through the meeting's own player and stops itself:
+  // `sampleStopMs` is where, and any other seek or pause cancels it.
+  let sampleStopMs: number | null = null;
+  let playingSampleId: string | null = null;
   $: marks = marksSession ?? localMarks;
   let openedMarksFor: string | null = null;
   let tabsHeight = 0;
@@ -158,6 +205,8 @@
   let readableTranscript: ReadableTranscriptV1 | null = null;
   let summaryMarkdown: string | null = null;
   let audioSrc = "";
+  // Bumped when the file at `audioSrc` was republished, to replace the player.
+  let audioGeneration = 0;
   let transcriptionOnly = false;
   let captionsSrc: string | null = null;
   let chaptersSrc: string | null = null;
@@ -173,6 +222,13 @@
   let availableTranscripts: PortableTranscriptDescriptor[] = [];
   let currentTranscriptId = "";
   let defaultTranscriptId = "";
+  // The transcript the meeting opened on (its default), kept across switches:
+  // it says who the meeting's people are, and where each one can be heard,
+  // whichever transcript is shown. The original transcript of a separated
+  // meeting credits the shared device, not the voices people name.
+  let openedTranscript: TranscriptWordsV1 | null = null;
+  // Split devices as the file names them (LoadedArtifact.splitDevices).
+  let splitDevices: TranscriptSpeaker[] = [];
   let transcriptSwitchPending = false;
   // Inline error for transcript-switch failures (e.g. SHA mismatch on an
   // alternate body). Kept separate from `errorMessage` so it shows next to the
@@ -288,6 +344,8 @@
     playing = false;
     currentTimeMs = 0;
     transcriptIndex = artifact.index;
+    openedTranscript = artifact.transcript;
+    splitDevices = artifact.splitDevices ?? [];
     transcriptionStatus = artifact.transcriptionStatus;
     displayTranscript = artifact.displayTranscript;
     readableTranscript = artifact.readableTranscript;
@@ -307,6 +365,7 @@
     errorMessage = "";
     manualScrollLock = false;
     lastAutoScrollRowKey = "";
+    speakerSession.showing(artifact.speakerEditsRevision ?? 0, artifact.speakerSummarySha256 ?? "");
   }
 
   function applySwitchedTranscript(artifact: LoadedArtifact) {
@@ -355,11 +414,14 @@
     availableTranscripts = [];
     currentTranscriptId = "";
     defaultTranscriptId = "";
+    openedTranscript = null;
+    splitDevices = [];
     transcriptSwitchPending = false;
     transcriptSwitchError = "";
     durationMs = 0;
     manualScrollLock = false;
     lastAutoScrollRowKey = "";
+    speakerSession.showing(null);
   }
 
   function exportStem(): string {
@@ -414,13 +476,22 @@
     }
   }
 
+  function withSpeakerOverlay(
+    transcript: TranscriptWordsV1 | null,
+    overlay: SpeakerOverlay | null,
+  ): TranscriptWordsV1 | null {
+    if (!transcript || !overlay) return transcript;
+    const { speakers, segments } = applySpeakerOverlay(transcript.speakers, transcript.segments, overlay);
+    return { ...transcript, speakers: [...speakers], segments: [...segments] };
+  }
+
   function mergeMeetingRuntimeSummary(
     entry: MeetingCatalogEntry,
     artifact: LoadedArtifact,
   ): MeetingCatalogEntry {
     return {
       ...entry,
-      speakerCount: artifact.transcript.speakers.length,
+      speakerCount: withoutSplitDevices(artifact.transcript.speakers).length,
       segmentCount: artifact.transcript.segments.length,
       digestDurationMs: artifact.transcript.media.durationMs,
     };
@@ -446,6 +517,52 @@
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
+    }
+  }
+
+  // The operator republished this recording with its voices separated
+  // differently, and what is on screen is the copy read before: read again on
+  // its own when nothing is playing, or on "Voices updated · Reload".
+  //
+  // The meeting on screen stays until the new copy has arrived, rather than
+  // blanking to a loading state for what is the same meeting with new voices,
+  // and the reader keeps their place in it. Read on its own (`unlessPlaying`),
+  // it is not put on screen if the reader started listening while it was being
+  // read: a large recording takes a while, and the new copy replaces the
+  // player. "Voices updated · Reload" is offered instead.
+  let reloadingForSpeakers = false;
+  async function reloadForSpeakers(unlessPlaying = false) {
+    const entry = meeting;
+    if (!entry || reloadingForSpeakers) {
+      return;
+    }
+    reloadingForSpeakers = true;
+    speakerSession.reloading(true);
+    try {
+      const artifact = await dataProvider.loadMeetingForEntry(entry, { fresh: true });
+      if (meeting?.id !== entry.id || (unlessPlaying && playing)) {
+        return;
+      }
+      // The republished file is at the same address, so the player would
+      // keep the one it opened: its byte offsets moved with the speakers in
+      // the file's header, and range requests against them would read the
+      // wrong bytes. A new element opens the new file.
+      const at = currentTimeMs;
+      audioGeneration += 1;
+      applyArtifact(artifact);
+      if (at > 0) {
+        // The new player takes the seek once it has read the file's header.
+        pendingSeekMs = at;
+        currentTimeMs = at;
+      }
+      dispatch("enriched", mergeMeetingRuntimeSummary(entry, artifact));
+    } catch (error) {
+      speakerSession.reportError(
+        `Couldn't reload the recording: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      reloadingForSpeakers = false;
+      speakerSession.reloading(false);
     }
   }
 
@@ -555,6 +672,33 @@
    */
   function syncPlaybackTime() {
     currentTimeMs = asFiniteMilliseconds(Math.round((audioEl?.currentTime ?? 0) * 1000));
+    if (sampleStopMs !== null && currentTimeMs >= sampleStopMs) {
+      stopSample();
+    }
+  }
+
+  function playSample(id: string, startMs: number, endMs: number) {
+    if (!audioEl) {
+      return;
+    }
+    seekTo(startMs);
+    sampleStopMs = endMs;
+    playingSampleId = id;
+    if (audioEl.paused) {
+      void audioEl.play().catch(() => {
+        stopSample();
+        dispatch("playbackerror", "Playback could not start. Try again or download the audio file.");
+      });
+    }
+  }
+
+  function stopSample() {
+    const wasSampling = sampleStopMs !== null;
+    sampleStopMs = null;
+    playingSampleId = null;
+    if (wasSampling && audioEl && !audioEl.paused) {
+      audioEl.pause();
+    }
   }
 
   function advancePlaybackClock() {
@@ -579,7 +723,9 @@
   function handleLoadedMetadata() {
     syncDurationFromMedia();
     if (pendingSeekMs !== null) {
-      seekTo(pendingSeekMs);
+      // Completes a seek asked for before the media could take it, so it is
+      // the same seek and keeps a sample that started it.
+      seekAudio(pendingSeekMs);
       pendingSeekMs = null;
     }
   }
@@ -594,6 +740,8 @@
   }
 
   function handlePause() {
+    sampleStopMs = null;
+    playingSampleId = null;
     playing = false;
     stopPlaybackClock();
     syncPlaybackTime();
@@ -617,6 +765,14 @@
   }
 
   function seekTo(ms: number) {
+    // Any seek, a sample's own included, ends the sample in progress;
+    // playSample sets the next one after seeking.
+    sampleStopMs = null;
+    playingSampleId = null;
+    seekAudio(ms);
+  }
+
+  function seekAudio(ms: number) {
     const nextTimeMs = Math.min(Math.max(0, ms), clampedDurationMs || ms);
     currentTimeMs = nextTimeMs;
     if (!audioEl) {
@@ -1025,7 +1181,6 @@
   }
 
   $: summaryHtml = renderSummaryHtml(summaryMarkdown);
-  $: speakers = transcriptIndex?.transcript.speakers ?? [];
   // Reading order, then EFFECTIVE timings, then overlap. The order matters:
   // the producer appends wordless segments last so the array cannot be trusted
   // to be sorted, and the overlap analysis has to see repaired spans or it
@@ -1049,7 +1204,7 @@
     transcriptQuery = initialQuery;
   }
 
-  $: displaySegments = transcriptIndex
+  $: derivedSegments = transcriptIndex
     ? displaySegmentsForArtifact({
         index: transcriptIndex,
         readableTranscript,
@@ -1057,6 +1212,19 @@
         wordEndsBoundedByAudio,
       })
     : [];
+  // Names and "same person" merges saved since this copy of the recording was
+  // published are shown on it at once: on its turns, in Copy and Download, in
+  // the People panel and the header. The operator writes them into the
+  // default transcript only, so another transcript is shown as it is. Keyed
+  // by a string so the transcript is recomputed when the overlay changes, not
+  // at every answer from the operator.
+  $: shownOverlayKey = speakerOverlayKey(speakerOverlayFor($speakerSession));
+  $: speakerOverlay = speakerOverlayFromKey(shownOverlayKey);
+  $: displaySegments = applySpeakerOverlay(
+    transcriptIndex?.transcript.speakers ?? [],
+    derivedSegments,
+    currentTranscriptId === defaultTranscriptId ? speakerOverlay : null,
+  ).segments as DisplaySegment[];
   // The seam this was always for. The filter lives in core/transcript.ts
   // because the interesting half is the mapping from matched canonical segments
   // to rendered blocks, and that deserves a test that does not need a DOM.
@@ -1099,7 +1267,29 @@
   $: clampedDurationMs = Math.max(0, safeDurationMs);
   $: clampedCurrentTimeMs = Math.min(Math.max(0, asFiniteMilliseconds(currentTimeMs)), clampedDurationMs || 0);
   $: remainingMs = Math.max(0, clampedDurationMs - clampedCurrentTimeMs);
-  $: speakerNames = speakers.map((s) => s.label || s.id).filter(Boolean);
+  $: participants = $speakerSession.server?.participants ?? [];
+  // The People panel lists the meeting's people: every device, with the
+  // voices separated from a shared one beneath it, whichever transcript is
+  // shown, so they can be named and listened to from either.
+  $: peopleTranscript = withSpeakerOverlay(openedTranscript ?? transcriptIndex?.transcript ?? null, speakerOverlay);
+  $: speakerGroups = groupSpeakers(withoutSplitDevices(peopleTranscript?.speakers ?? []), participants, splitDevices);
+  $: speakerSamples = speakerEditsOffered && peopleTranscript ? voiceSamples(peopleTranscript) : new Map();
+  // A recording separated differently from the one the operator published,
+  // or with another summary, is read again, once per apply, unless the
+  // reader is listening: a reload replaces the player, so then "Voices
+  // updated · Reload" waits for them.
+  $: speakersReloadDue = reloadDue(
+    $speakerSession,
+    new Set((openedTranscript?.speakers ?? []).map((speaker) => speaker.id)),
+  );
+  let autoReloadedFor = "";
+  $: if (speakersReloadDue && meeting) {
+    const key = `${meeting.id}:${$speakerSession.server?.appliedRevision}`;
+    if (key !== autoReloadedFor) {
+      autoReloadedFor = key;
+      if (!playing) void reloadForSpeakers(true);
+    }
+  }
   $: hasSummaryTab = Boolean(summaryHtml) || linkedInsights.length > 0;
   $: shownTab = hasSummaryTab ? activeTab : ("transcript" as MeetingTab);
   $: overlayShown = Boolean(transcriptIndex) && (hasSummaryTab || displaySegments.length > 0);
@@ -1213,7 +1403,13 @@
             dateLabel={meeting.dateLabel}
             room={hasRoom(meeting) ? roomLabelOf(meeting) : null}
             durationMs={transcriptIndex ? clampedDurationMs : 0}
-            {speakerNames}
+            {speakerGroups}
+            speakerSession={speakerEditsOffered ? speakerSession : null}
+            voiceSamples={speakerSamples}
+            {playingSampleId}
+            on:sample={(event) => playSample(event.detail.id, event.detail.startMs, event.detail.endMs)}
+            on:stopSample={stopSample}
+            on:reload={() => reloadForSpeakers()}
             recording={artifactMetadata?.recording ?? null}
             timing={timingPrecision}
           />
@@ -1567,7 +1763,7 @@
     <div class="mv-fade-blur mv-fade-blur-bottom" aria-hidden="true">{#each [1, 2, 4, 8, 16] as radius, layer (radius)}<div style:--blur="{radius}px" style:--layer={layer}></div>{/each}</div>
     <div class="mv-player-bar card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
       {#if audioSrc}
-        {#key audioSrc}
+        {#key `${audioGeneration}:${audioSrc}`}
           <audio
             bind:this={audioEl}
             class="sr-only"

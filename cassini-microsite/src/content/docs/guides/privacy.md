@@ -2,267 +2,326 @@
 title: Privacy and data processing
 description: What Cassini stores, where it lives, what leaves your infrastructure and when, and what happens on deletion.
 source: docs/privacy.md
-copied: "2026-09-17"
+copied: "2026-10-09"
 ---
 
-Recording and transcription run on your own hardware. No audio and no transcript
-leaves the host for those steps.
+This page is the single reference for an administrator deciding whether Cassini
+is acceptable for their instance: what data Cassini stores, where it lives,
+what (if anything) leaves your infrastructure, and what happens on deletion.
 
-If you configure a language model, transcript text goes to it in two cases:
-automatically, to summarise each meeting, and on request, when someone asks a
-question about meetings they have access to.
-
-There is no telemetry.
-
-This page is the detail behind those three sentences, for an administrator
-deciding whether Cassini is acceptable on their instance: what Cassini stores,
-where it lives, what leaves your infrastructure and when, and what happens on
-deletion. Both language-model steps are optional, both are off until you
-configure an endpoint, and both send text, never audio.
+Cassini records Nextcloud Talk meetings, transcribes them, optionally summarizes
+them, and publishes a readable archive. Recording and transcription happen
+entirely within your own infrastructure. The only steps that send data to a third
+party are the ones that call a language model — the automatic meeting summary,
+the same summary written again after somebody edits a meeting's speakers, and an
+insight somebody asks for in the app. All are optional, all are off until you
+configure an LLM endpoint, and all send text, never audio.
 
 ## Summary
 
-| Step | Where it runs | Data leaves your infrastructure? |
-| --- | --- | --- |
-| Recording the call | Local (the Cassini container) | No |
-| Transcription (speech-to-text) | Local (Parakeet / Silero VAD models) | No |
-| Speaker labels | Local (from Talk signalling, not audio analysis) | No |
-| Meeting summary | A language-model endpoint — **only if one is configured** | **Only if the endpoint is external** |
-| Insight (a question asked of selected meetings) | A language-model endpoint — **only if one is configured**, and only when somebody asks | **Only if the endpoint is external** |
-| Publishing the archive | Nextcloud Files, on your servers | No |
+| Step                           | Where it runs                                             | Data leaves your infrastructure? |
+| ------------------------------ | --------------------------------------------------------- | -------------------------------- |
+| Recording the call             | Local (the Cassini container)                             | No                               |
+| Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
+| Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
+| Separating voices on a shared device | Local, only when someone asks for one participant (Nemotron diarization) | No                   |
+| Meeting summary                | LLM endpoint — **only if one is configured**              | **Only if the endpoint is external** |
+| Summary rewritten after a speaker edit (separating, merging or naming voices) | LLM endpoint — **only if one is configured**, and only when somebody saves an edit | **Only if the endpoint is external** |
+| Insight (a workflow run over selected meetings) | LLM endpoint — **only if one is configured**, and only when somebody asks | **Only if the endpoint is external** |
+| Publishing the archive         | Nextcloud Files, on your servers                          | No                               |
 
-**Without an endpoint configured, nothing leaves your infrastructure.** The
-local transcript is still produced and published; the summary is skipped, and
-the app offers no way to run an insight. A self-hosted endpoint keeps both on
-your own network too.
+**Without an LLM endpoint: nothing leaves your infrastructure.** The local
+transcript is still produced and published; the summary is skipped, and the app
+offers no way to run an insight. A self-hosted endpoint keeps both
+on your own network too.
+
+## Video capture consent
+
+Cassini records audio only by default. An administrator can explicitly enable
+**Capture video** in **Operator → Publish pipeline**. Reviewing or dismissing the
+retention reminder does not change this choice. Saving capture settings applies
+to subsequent recordings; a recording already admitted keeps its original
+capture policy.
+
+With the default, the recorder requests audio without video, declines video in
+each negotiated answer, and rejects video at the capture writer. Audio control
+traffic (RTCP, ICE and DTLS) still flows. With **Capture video** enabled, camera
+video is retained in the source session and multitrack `recording.mkv` on the
+Cassini server. Published `.opus` meeting files still contain audio only. Source
+retention controls how long that retained video stays on the server; capture
+consent and retention are independent settings.
+
+Upgrades with no saved capture choice default to audio only. Changing this
+setting does not remove video from existing source recordings. Older recordings
+without capture provenance display an unknown capture mode. Rebuilding an
+existing source reuses that media; it does not record the call again or strip
+historical video.
+
+## Speech-model downloads
+
+Transcription is optional and starts off. An explicit installation downloads model
+files and VAD from `dist.gocassini.com`; it sends no recordings or transcripts.
+The voice separation model (Nemotron 3 Diarization, about 62 MiB) is a separate
+optional download in the same Settings section, fetched the same way and only
+when an administrator asks for it.
+The CDN receives ordinary download requests from the server. Installed revisions
+are reused across upgrades. `cassini models import` accepts manually transferred
+files without internet access; `CASSINI_DISALLOW_MODEL_DOWNLOAD=1` prevents model
+network acquisition. See the [model operator guide](https://github.com/codemyriad/gocassini/blob/main/docs/proposals/optional-transcription-model-storage/implementation.md).
 
 ## What Cassini stores
 
-A recorded meeting moves through capture → build → publish, and each stage
-writes artifacts:
+A recorded meeting moves through capture → build → publish, and each stage writes
+artifacts:
 
 - **Recordings** — the raw multitrack capture of the call (`recording.mkv`), one
-  audio track per participant.
+  audio track per participant, plus video only when an administrator explicitly
+  enables **Capture video**.
 - **Audio** — the processed meeting audio, ultimately the portable single-file
   `.opus`.
-- **Transcripts** — a timestamped word-level transcript.
-- **Captions** — a `captions.vtt` subtitle track.
-- **Summaries** — an optional `summary.md`, produced only when the language-model
-  step is enabled.
-- **Insight runs** — one row per insight requested over a set of meetings: who
-  asked, which meetings, which workflow, **the question text itself** where one
-  was typed, the status, the failure message where one failed, and where the
-  answer was written. The answer itself is an ordinary file in the asker's
-  Nextcloud Files, not an artifact on the app volume; the row, question included,
-  stays on the app volume until that volume is deleted.
-- **Manifests** — internal bundle descriptors recording each artifact's kind,
-  state, and integrity hashes.
-- **Logs** — per-attempt operator logs.
-- **Operator database** — job and attempt history plus insight-run records,
-  including any typed question. It does not store recording audio, transcripts,
-  summaries, or insight answer bodies.
+- **Transcripts** — a timestamped word-level transcript when transcription is enabled and succeeds. Audio-only files carry an empty compatibility transcript and an explicit skipped/failed status.
+- **Captions** — a `captions.vtt` subtitle track when transcription succeeds.
+- **Speaker edits and separated voices** — only when someone who can read a
+  meeting names a speaker or says several people shared one device: the edits
+  people made (which device was separated, which voices are the same person,
+  and the names they typed), the original transcript, kept beside the edited
+  one so every edit can be undone, and for a separated device that
+  participant's speaker turns (start and end times with a voice number, no
+  audio and no voice embedding). The operator database keeps the current
+  edits, the edits the published recording carries and who saved the last
+  revision, and every saved revision stays as a snapshot in that meeting's
+  attempt history, so a name typed and later removed is still there. Each
+  attempt's log directory keeps the edits it applied and the turns it used.
+  Renaming a participant whose voices were not separated replaces the name
+  Talk gave them in the published file's transcript and captions; the file
+  holds only the renamed transcript, and the original, with Talk's name, stays
+  in the working copy on the app volume. The summary is rewritten with the new
+  name only when a summary model is set up and the call succeeds; until then
+  the published summary still uses Talk's name. Once a device's voices are separated, the published file also
+  carries the original transcript byte for byte, and keeps that participant,
+  under Talk's name, in its speaker list next to the voices.
+  See [Separating voices on a shared device](https://github.com/codemyriad/gocassini/blob/main/docs/speaker-separation.md).
+- **Summaries** — an optional `summary.md`, produced only when the LLM step is
+  enabled.
+- **Insight runs** — one row per insight requested over a set of meetings: who asked,
+  which meetings, which workflow, **the question text itself** where one was
+  typed, the status, the failure message where one failed, and where the answer
+  was written. The answer itself is an ordinary file in the asker's Nextcloud
+  Files, not an artifact on the app volume; the row, question included, stays on
+  the app volume until that volume is deleted.
+- **Manifests** — internal bundle descriptors (`cassini.json`, `manifest.json`)
+  recording each artifact's kind, state, and integrity hashes.
+- **Logs** — per-attempt operator logs (`record.log`, `build.log`, `seal.log`,
+  `publish.log`), and for a speaker edit its `speakers/` directory (the edits
+  document and the speaker turns it applied).
+- **Room audience** — for each Talk recording, the accounts, groups and teams
+  that had access to the conversation while it was being recorded, captured when
+  the recording starts and again when it stops. It is what lets Cassini later
+  explicitly narrow an already-published recording from Operator settings to its
+  captured audience rather than whoever is in the room today. This stored roster
+  is frozen; initial participant-mode publication separately resolves the room’s
+  audience at publish time. Guests, email invitees and federated participants are not recorded: they have no local
+  account to grant, so there is nothing to keep. It lives on the job row, which
+  outlives the recording itself — job history is kept after artifacts are pruned.
+- **Operator database** — job and attempt history, the room audience above,
+  insight-run records including any typed question, and speaker edits (the
+  names people typed, who saved them, a snapshot per saved revision, and the
+  separated voices' turn times). It does not store recording audio,
+  transcripts, summaries, or insight answer bodies.
 
 ## Where it is stored
 
-**Working artifacts and the operator database** live on the app's own AppAPI
-persistent volume, under the operator work root. They are not exposed to
-Nextcloud users and are not covered by Nextcloud's file access controls — they
-are internal to the Cassini container.
-
-**Published recordings** are written to **Nextcloud Files**, into a dedicated
-`cassini` service account's Files. Which path depends on who can see recordings,
-and the two are different places with different audiences:
-
-```text
-  anyone with a           CassiniNoACL/Recordings/
-  Nextcloud account
-                          the `cassini` account's own directory. Nothing is
-                          mounted there and no other account has a mount of it,
-                          so it appears in nobody else's Files; Cassini reads it
-                          as that account and serves it through the app to
-                          everyone who can open the app.
-
-  meeting participants    Cassini/Recordings/
-                          inside the `Cassini` Team folder, which every account
-                          has a read mount of. What each account may actually
-                          open is decided per recording by Nextcloud's advanced
-                          file access controls.
-```
-
-One root holds the archive and the other is empty, except while a switch is
-copying between them.
+- **Working artifacts and the operator database** live on the app's own
+  **AppAPI persistent volume** (`APP_PERSISTENT_STORAGE`), under the operator
+  work root. They are not exposed to Nextcloud users and are not covered by
+  Nextcloud's file access controls — they are internal to the Cassini container.
+- **Published recordings** are written to the private
+  `cassini/CassiniRecordings/meetings` folder in Nextcloud Files. Cassini creates
+  file shares for the local people, groups and Teams captured from the Talk
+  room. This includes invited people who did not join the call. Guests without
+  a Nextcloud account receive no share.
 
 ### Who can read a published recording
 
-**One setting decides it**, in the app under **Operator › Settings › Who can see
-recordings**. The full model is in
-[Who can see a recording](/docs/guides/who-can-see-a-recording); the summary
-matters here.
+Nextcloud's **current file shares** determine who can see a meeting. Cassini
+builds the meeting list from the caller's shares and reads each recording as
+that caller, so Nextcloud checks each read. A local metadata index supplies
+card details but cannot grant access. For public Talk rooms, participants may
+share onward when the instance permits it; Cassini does not create a public
+link. Nextcloud's behavior for downstream reshares applies.
 
-**Everyone with a Nextcloud account.** Every recording is readable by every
-signed-in account that can open Cassini (never anonymously). Recordings live in
-the `cassini` service account's own directory — one no other account has a mount
-of — and Cassini serves them as that account, so there is no per-recording
-permission to enforce, and none is claimed. It needs no extra Nextcloud apps,
-which is why it is what a new install records.
-
-**Meeting participants.** Each private recording is readable **only by the people
-who had access to the Talk room when it was published** — its attendee list,
-which includes people who were invited but never joined, not only those present
-on the call. This is enforced by Nextcloud's own advanced file access controls,
-not by Cassini keeping a separate copy or its own permission list. Recordings of
-**public** Talk rooms are readable by every signed-in account, never anonymously.
-
-**Switching to meeting participants does not retroactively restrict anything.**
-Recordings that already existed are copied into the Team folder readable by every
-signed-in account: Cassini does not guess who was in a past meeting. Narrowing
-them is a deliberate act: use the restriction action in Operator Settings for
-recordings with a captured room audience, or edit individual permissions in Files. Switching the other
-way carries every recording into the private tree with no access rules at all, so
-afterwards everyone who can open Cassini can read every recording, including the
-ones that had been restricted to a call's participants.
-
-**A switch copies first and deletes afterwards.** Recordings are copied into the
-destination, checked as complete, and only then is the old root emptied — so at
-no point does the mode Cassini reports name a place the archive is not. Nothing
-is exposed early either: while recordings are being copied into the Team folder,
-that folder is held readable by the service account alone, and is opened up again
-only once every recording inside it states its own audience.
-
-**An upgrade never widens an existing archive.** When the app is enabled, Cassini
-reads the two roots and keeps the audience the recordings already have. Only an
-install with no participant-only archive to protect starts on "everyone with a
-Nextcloud account", and an empty archive has nobody to expose. Widening an
-existing archive is an administrator's deliberate act, and the confirmation says
-how many recordings it is about to make visible to everyone.
-
-**Recordings migrated from an older version are owner-only.** Installations that
-published before recordings moved into Nextcloud Files migrate them with a script
-run once by hand. The audience a recording had when it was published cannot be
-recovered afterwards, so migrated recordings are readable only by the `cassini`
-service account, and access is granted from the Files app. That script's
-`--public` flag instead makes **every** migrated recording readable by every
-signed-in account — a deliberate, irreversible widening.
-
-Because published recordings live in Nextcloud Files, they follow **Nextcloud's**
-retention, backup and deletion, not Cassini's. Deleting a recording from
-Nextcloud Files deletes that copy.
+An older archive is not migrated automatically. See
+[Recording access and cutover](https://github.com/codemyriad/gocassini/blob/main/docs/direct-shares-cutover.md) for the manual steps.
+Deleting the private recording from Nextcloud Files removes that copy under
+Nextcloud's retention and backup policies.
 
 ## What leaves your infrastructure, and when
 
-Two steps can transmit data off your infrastructure. Both are the same act — one
-call to the configured endpoint — and neither happens unless an endpoint is
+Three steps can transmit data off your infrastructure. All are the same act — one
+call to the configured LLM endpoint — and none happens unless an endpoint is
 configured. Nothing is configured by default.
 
-**1. The meeting summary**, produced automatically after a meeting is transcribed
-locally. The transcript text is sent to the configured endpoint, and the summary
-comes back and is sealed into the published meeting. Nobody asks for it; it is
-part of the pipeline, and it is skipped when there is no endpoint or when the
-summary step is switched off.
+**1. The meeting summary**, produced automatically after a meeting is
+transcribed locally. The transcript text is sent to the configured endpoint —
+OpenRouter (`https://openrouter.ai/api/v1`) by default, or whatever
+`LLM_BASE_URL` points at — and the summary comes back and is sealed into the
+published meeting. Nobody asks for it; it is part of the pipeline, and it is
+skipped when there is no endpoint or when the summary step is switched off.
 
-**2. An insight**, when somebody in the app picks meetings and asks a question of
-them. This is the first thing in Cassini that sends transcripts to a model on a
-person's command, from inside the app, and it is worth stating plainly:
+**2. The summary, written again after a speaker edit.** When somebody who can
+open a meeting separates the voices on a shared device, says two voices are the
+same person, or names a voice, the operator republishes the recording and asks
+the summary endpoint for a new summary, so its action items name the people the
+transcript now names. **Any reader of the meeting triggers it**, not an
+administrator, and what is sent is the meeting's whole transcript **with the
+names that reader typed**. Like the build's summary, it uses the summary step's
+endpoint and the instance's key, so the provider sees this deployment, not the
+person; Cassini records who saved the edit. It is skipped when there is no
+endpoint or the summary step is switched off (the recording is republished with
+its old summary). Saving edits that change nobody's words or name sends nothing.
+Typed names are personal data about the people named: your notices to meeting
+participants should cover them.
 
-- **What is sent** is the transcript and summary text of the meetings they
-  picked, in order, plus the question they typed. It is assembled **as them** — a
+**3. An insight**, when somebody in the Cassini app picks meetings and asks a
+question of them. This sends transcripts to a model **on a person's command,
+from inside the app**, for a question they choose, and it is worth stating
+plainly rather than leaving to be discovered:
+
+- **What is sent** is the same bundle the app's Prepare panel would hand that
+  person to copy: the transcript and summary text of the meetings they picked,
+  in order, plus the question they typed. It is assembled **as them** — a
   meeting they cannot open in Nextcloud is not in the bundle and cannot be asked
   about — so an insight can never widen what somebody may read.
-- **Which endpoint it reaches.** The asker chooses, from the endpoints an
-  administrator has registered; they cannot reach one that is not on that list,
-  and the list they are shown carries only each endpoint's name. Choosing none
-  runs it on the deployment's configured endpoint. A retry re-runs the endpoint
-  that was chosen, so a run cannot quietly move to a different third party
-  between the ask and the retry.
+- **Which endpoint it reaches.** The asker chooses, in Prepare, from the
+  endpoints an administrator has registered — they cannot reach one that is not
+  on that list, and the list they are shown carries only each endpoint's name.
+  Choosing none runs it on the deployment's configured endpoint. A retry re-runs
+  the endpoint that was chosen, so a run cannot quietly move to a different
+  third party between the ask and the retry; the one exception is an endpoint
+  removed in the meantime, which falls back to the configured one.
 - **Who it is attributable to.** The call uses the endpoint and API key
   configured for the **instance**, not credentials belonging to the asker. At
-  your provider the request therefore arrives as this deployment, and the
+  your LLM provider the request therefore arrives as this deployment, and the
   provider cannot distinguish which of your people asked it. Cassini's own
   records do: each run stores who created it. If your provider's terms or your
   own policy require per-person attribution to a third party, this feature does
   not give it to you.
 - **Where the answer lands.** The document is written into the asker's **own**
   Nextcloud Files, under their account, and follows Nextcloud's access controls
-  from there. It is not written beside the recordings, and it is not shared with
+  from there. It is not written beside the recordings — that folder is read-only
+  to everyone but the `cassini` service account — and it is not shared with
   anyone by Cassini.
 
 If the endpoint is external, its operator processes what it receives under its
 own terms; review them before configuring it. Call audio and the recording itself
-are **never** sent off your infrastructure for either step: only text, and only
+are **never** sent off your infrastructure for any of these steps: only text, and only
 the text of meetings the request is entitled to.
 
-### Controls
+Controls:
 
-- **Configure no endpoint** — no external calls at all, from either step.
-  Transcripts are still produced and published locally; summaries are skipped and
-  the app offers no way to ask a question.
+- **Configure no LLM endpoint** — no external calls at all, from any step.
+  Transcripts are still produced and published locally; summaries are skipped
+  and the app offers no way to ask a question.
 - **`LLM_BASE_URL`** — point summaries and insights at a self-hosted or
-  alternative OpenAI-compatible endpoint. A keyless self-hosted endpoint is
-  enough; a key is needed only when the endpoint requires one.
-- **Which endpoints exist**, in the app's AI providers settings. Registering a
-  provider is the act that says this deployment may talk to that endpoint, and it
-  is the whole of what an insight needs. *Every endpoint you register is one an
-  insight may reach.* There is no switch that turns insights off while an
-  endpoint is registered; removing the endpoints is how they are turned off.
+  alternative OpenAI-compatible endpoint instead of OpenRouter. A keyless
+  self-hosted endpoint is enough; `OPENROUTER_API_KEY` is needed only when the
+  endpoint requires one.
+- **Which endpoints exist, in the app's AI providers settings.** Registering a
+  provider is the act that says this deployment may talk to that endpoint, and
+  it is what an insight needs — the whole of it. Whoever creates an insight
+  chooses which registered endpoint answers it; a run that chooses none falls
+  back to the endpoint the insight step names, then the summary step's, then any
+  registered provider. Either way the rule to hold on to is the same: *every
+  endpoint you register is one an insight may reach.* There is no switch that
+  turns insights off while an endpoint is registered; removing the endpoint is
+  how they are turned off.
 - **Registering your first endpoint switches summarising on**, pointed at it.
   That is deliberate: an install that has just configured an endpoint and still
-  publishes meetings without summaries has done the work and not got the feature.
-  It happens **once in the deployment's life**, so turning summarising off keeps
-  it off. A deployment that wants a model only for questions people ask by hand
-  can therefore register an endpoint and switch summarising off. What leaves it
-  then is each insight somebody asks for.
+  publishes meetings without summaries has done the work and not got the
+  feature. It happens **once in the deployment's life**: on the first save that
+  takes it from having no endpoint to having one, and the operator records that
+  it has happened. Adding a second endpoint, any later save, and even removing
+  every endpoint and registering one again never switch it back on, so turning
+  it off in Publish pipeline stays turned off. (A deployment whose first
+  endpoint came from the install environment counts as having had that save.)
+  A deployment that wants a model for questions people ask by hand and nothing
+  else can therefore register an endpoint and switch summarising off. What
+  leaves it then is each insight somebody asks for: the question they typed
+  **and the transcripts and summaries of the meetings they selected**, sent to
+  the endpoint together. Switching summarising off stops the automatic send at
+  publish; it does not make an insight send less.
 - **A local model for insights, a hosted one for summaries (or the reverse).**
-  Each step resolves its own endpoint, so one can be pointed at a local model
-  without the other. See
-  [AI providers, summaries and insights](/docs/guides/ai-providers).
+  The summary step and the insight step each resolve their own endpoint, so one
+  can be pointed at a local model without the other. Which endpoint an insight
+  will actually reach is reported by `GET <cassini>/operator/settings/llm` as
+  `effective.insight`, with `inherited = true` whenever it is not the insight
+  step's own — which is how an administrator checks it rather than inferring it.
 - **`CASSINI_SUMMARY_DISABLED`** — keep the endpoint configured but stop
-  summarising meetings. It does not disable insights; leave the endpoint unset if
-  the intent is that nothing calls a model at all.
+  summarising meetings. It means "publish meetings without a summary" and so
+  does not disable insights; leave the endpoint unset if the intent is that
+  nothing calls a model at all.
+
+See [Summarisation & the privacy caveat](https://github.com/codemyriad/gocassini/blob/main/docs/README.md#summarisation--the-privacy-caveat)
+and the [env-var reference](https://github.com/codemyriad/gocassini/blob/main/docs/exapp-talk-env-vars.md) for the full set of knobs.
 
 ### Checking it, without being an administrator
 
-"No transcript is sent to a language model unless an endpoint is configured" is a
-claim the people whose meetings are being recorded should be able to check, and
-the AI settings are administrator-only, as they must be, because they carry the
-endpoint and any key.
+"No transcript is sent to an LLM unless an endpoint is configured" is a claim
+the people whose meetings are being recorded should be able to check, and until
+now only an administrator could: the AI settings are ADMIN-only, as they must be,
+because they carry the endpoint and any optional key.
 
-So `GET /operator/setup`, which any logged-in Nextcloud account may read, answers
-it directly:
+So `GET <cassini>/setup`, which any logged-in Nextcloud user may read, answers it
+directly:
 
 ```json
 { "ok": true, "state": "provisioned", "features": { "summaries": false, "insights": false } }
 ```
 
 - `features.summaries` — a recorded meeting will be summarised, so its transcript
-  is sent to the configured endpoint. `false` means no transcript is sent for a
-  summary, whoever recorded the meeting.
-- `features.insights` — a question asked of selected meetings will reach a
-  configured endpoint. `false` means no endpoint is configured, or none is
-  switched on for a step to use.
+  is sent to the configured endpoint, and summarised again after a speaker
+  edit. `false` means no transcript is sent for a summary, whoever recorded the
+  meeting or edited its speakers.
+- `features.insights` — an insight workflow run over selected meetings will reach
+  a configured endpoint, so that is possible on this deployment. `false` means
+  no endpoint is configured, or none is switched on for a step to use.
 
-Both are one bit. Neither reports the endpoint, the model or the key, and no
-other AI setting is readable without being an administrator.
+Both are one bit. Neither reports the endpoint, the model, or the key, and no
+other AI setting is readable without being an administrator. The Cassini app uses
+these same two bits to explain itself rather than offering a control the reader
+could not use.
 
-## What is not sent anywhere
+## What is _not_ sent anywhere
 
-- **Transcription is entirely local.** Speech-to-text runs in-process using local
-  Parakeet models and Silero VAD. No audio and no transcript leaves your
-  infrastructure for transcription.
-- **Speaker labels are not inferred from audio.** They come from Talk's
-  signalling server, on participant join events, so no voice analysis is done.
+- **Transcription is 100% local.** Speech-to-text runs in-process using local
+  Parakeet models and Silero VAD (ONNX Runtime). No audio and no transcript
+  leaves your infrastructure for transcription.
+- **Speaker labels come from Talk, not from audio.** Each participant's label
+  comes from Talk's signaling server (participant join events). Cassini never
+  analyses voices on its own initiative and builds no voiceprints.
+- **Voice separation is on demand, local, and keeps no voice data.** When
+  somebody says several people shared one participant's device, Cassini runs a
+  local diarization model over that one participant's own audio track, on the
+  Cassini server. It stores only the resulting turn timestamps, never audio
+  features or embeddings, so it cannot recognise a voice in another meeting.
+  Names typed for the separated voices are saved in the recording's speaker
+  list, where everyone who can open the recording sees them, and reach the
+  summary endpoint when the summary is written again (see above).
 - **No telemetry or analytics.** Cassini does not phone home — it reports nothing
   about you or your meetings.
 
-## Deletion and uninstall
+## Deletion & uninstall
 
 - **Recording media can be deleted after processing.** Select **Nothing** under
   **Keep after each recording** to delete audio, video and raw packet logs after
   successful publication or terminal failure. Transcription artifacts, including
   the published JSON, remain. Audio is stored temporarily, and processing cannot
   be rerun. See [Recording media and publication](/docs/guides/recording-media).
-- **Other container artifacts follow Storage policies.** Recordings, attempt
-  history, current output and stage logs have separate policies, defaulting to
-  keep forever. Nextcloud whole-meeting retention is configured separately.
+- **Container-local artefacts expire only under configured policies.** Operator
+  → Storage separately controls recordings, attempt history, current output and
+  stage logs. The default is keep forever. Expiring source audio prevents reruns;
+  job/attempt database rows remain. The delivered Nextcloud copy is independent.
+  See [Retention](https://github.com/codemyriad/gocassini/blob/main/docs/reference/artifacts-and-filesystem.md#retention).
 - **A delivered attempt's staging copy is removed once Nextcloud accepts it**, so
   the full recording does not linger on the app volume outside the Nextcloud
   access model.
@@ -270,21 +329,38 @@ other AI setting is readable without being an administrator.
   for them. Deleting one deletes the answer; the run row on the app volume
   remains — with the question text on it — until the volume is deleted.
 - **Published recordings persist in Nextcloud Files** independently of Cassini.
-  Removing or disabling the app does not delete them; they are managed as
+  Removing or disabling the Cassini app does not delete them; they are managed as
   ordinary Nextcloud files.
 - **Uninstalling the app keeps its data by default.**
-  `occ app_api:app:unregister gocassini` removes the container but **keeps** its
-  persistent volume. Adding `--rm-data` also deletes that volume, discarding the
-  operator database and every working artifact on it. Either way, recordings
+  `occ app_api:app:unregister gocassini` removes the Cassini container but
+  **keeps** its persistent volume. The operator database and any un-pruned
+  working artifacts stay until the volume is deleted. Adding **`--rm-data`** also
+  deletes that volume, discarding the operator database and every working
+  artifact on it (raw recordings and job history included). Either way, recordings
   already published to Nextcloud Files are unaffected.
 
-## Related
+## See also
 
-- [Who can see a recording](/docs/guides/who-can-see-a-recording) — the
+- [Recording permissions](/docs/guides/who-can-see-a-recording) — the
   per-recording access-control model in detail.
-- [AI providers, summaries and insights](/docs/guides/ai-providers) — what to
-  configure and what each step then sends.
-- [`docs/exapp-talk-env-vars.md`](https://github.com/codemyriad/gocassini/blob/main/docs/exapp-talk-env-vars.md)
-  — every variable, including the language-model knobs.
-- [`docs/reference/artifacts-and-filesystem.md`](https://github.com/codemyriad/gocassini/blob/main/docs/reference/artifacts-and-filesystem.md)
-  — artifact types, the operator layout, and retention.
+- [Env-var reference](https://github.com/codemyriad/gocassini/blob/main/docs/exapp-talk-env-vars.md) — every variable, including the
+  LLM knobs.
+- [Artifacts and filesystem](https://github.com/codemyriad/gocassini/blob/main/docs/reference/artifacts-and-filesystem.md) — artifact
+  types, the operator layout, and retention.
+
+## Transcription-only publication and source deletion
+
+Publishing a transcription-only JSON does not by itself delete captured audio.
+By default source media remains under Storage policies and can support reruns.
+Administrators may explicitly select **Nothing** under **Keep after each recording**
+for future transcription-only recordings. This uses audio-only capture, keeps
+media temporarily through initial processing, and deletes it after publication
+succeeds or processing permanently fails. Failure may leave no usable transcript.
+The operator shows actual cleanup progress and errors; a missing viewer player
+is not evidence of completed source deletion. Processing cannot be rerun in this
+mode, including while deletion is pending. The saved recording policy survives
+in job metadata and the published JSON provenance.
+
+Published transcripts, summaries, metadata and logs remain under their respective
+policies. This is deletion of Cassini-managed media, not a promise that audio
+never touches disk or that external backups/snapshots are erased.

@@ -2,6 +2,8 @@
   import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModel, SpeechModelInventory } from "./operator/types";
+  import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
+  import { jobRunning, mebibytes, modelJob, transcriptionModelId, voiceSeparationModel } from "./speechModels";
   export let client: OperatorClient | null;
   export let quality = "balanced";
   export let device = "cpu";
@@ -45,22 +47,26 @@
     inventory = null;
     void refresh();
   }
-  $: modelID = device === "cuda" || quality === "best" ? "parakeet-tdt-0.6b-v3" : quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-tdt-0.6b-v3-int8";
+  $: modelID = transcriptionModelId(quality, device);
   $: model = inventory?.models.find((m) => m.id === modelID);
-  $: job = inventory?.jobs.find((j) => j.model === modelID && j.device === device && j.revision === model?.revision);
-  $: running = job && !["ready", "failed", "cancelled"].includes(job.state);
+  $: job = modelJob(inventory, model, device);
+  $: running = jobRunning(job);
   $: selected = enabled && activeModel === model?.id && activeRevision === model?.revision;
-  function size(n: number) { return `${(n / 1024 / 1024).toFixed(1)} MiB`; }
-  async function action(kind: "install" | "cancel" | "retry") {
-    if (!client || !model || busy) return;
+  // Voice separation is installed and run on the CPU whatever transcribes.
+  $: separation = voiceSeparationModel(inventory);
+  $: separationJob = modelJob(inventory, separation, "cpu");
+  const size = mebibytes;
+  async function action(kind: "install" | "cancel" | "retry", target = model, targetJob = job, targetDevice = device) {
+    if (!client || !target || busy) return;
     busy = true;
     try {
-      if (kind === "install") await client.installSpeechModel(model.id, model.revision, device);
-      else if (job) await client.speechModelJobAction(job.id, kind);
+      if (kind === "install") await client.installSpeechModel(target.id, target.revision, targetDevice);
+      else if (targetJob) await client.speechModelJobAction(targetJob.id, kind);
       await refresh();
     } catch (e) { error = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
   }
+  function separationAction(kind: "install" | "cancel" | "retry") { return action(kind, separation, separationJob, "cpu"); }
 </script>
 
 <div class="speech-models">
@@ -92,6 +98,10 @@
       {:else if model.installed || inventory?.downloads_allowed}
         <button type="button" class="op-button" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? "Check model" : job ? "Retry download" : "Download model"}</button>
       {/if}
+    {/if}
+    {#if separation}
+      <VoiceSeparationModel model={separation} job={separationJob} downloadsAllowed={!!inventory?.downloads_allowed} {busy}
+        on:install={() => separationAction("install")} on:cancel={() => separationAction("cancel")} on:retry={() => separationAction("retry")} />
     {/if}
     {#if !inventory?.downloads_allowed}
       <p class="set-row-sub">Downloads are disabled. Prepare a package with <code>cassini models pack</code> on a connected machine, copy it here, and run <code>cassini models import</code> inside this server's Cassini runtime. Imported models appear here automatically.</p>

@@ -148,6 +148,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runAnnotate(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "serve":
 		return runServe(ctx, args[1:], stdout, stderr)
+	case "speakers":
+		return runSpeakers(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
 		printRootUsage(stderr)
@@ -429,6 +431,8 @@ Usage:
   cassini annotate show ./Meeting.opus
   cassini annotate apply ./Meeting.opus --ops ./ops.json --actor-id alice
   cassini serve ./site
+  cassini speakers diarize ./runs/meeting.run --speaker spk_... --out ./turns/spk_....json
+  cassini speakers apply ./meetings/meeting.meeting --edits ./edits.json --turns-dir ./turns
 
 Commands:
   annotate Read and write the tags and marks a packed .opus file carries
@@ -445,6 +449,7 @@ Commands:
   record   Record a meeting into one portable artifact
   retag    Rewrite a packed .opus file's room and job fields without re-encoding it
   serve    Serve a static Cassini site locally
+  speakers Separate the voices of people who shared one device
 
 Paths:
   Output paths are resolved from the current working directory.

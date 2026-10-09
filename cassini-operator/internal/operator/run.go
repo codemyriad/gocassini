@@ -195,6 +195,14 @@ type Runtime struct {
 	// readiness cannot drift from the policy used by newly spawned builds.
 	// Tests stub it.
 	computeProbe func(device string) (usable bool, detail string)
+	// speakerClock is what the speaker edits surface takes as now: when a
+	// refine is queued and how long it has been waiting. Nil means time.Now;
+	// tests fix it.
+	speakerClock func() time.Time
+	// speakerMeetingReading, when set, is called with the meeting bundle the
+	// speakers surface is about to read. Tests use it to promote and prune
+	// that bundle under the read.
+	speakerMeetingReading func(path string)
 	// referenceFrontendProbe reports whether the active sherpa runtime includes
 	// the Parakeet v3 reference frontend optimization. Tests stub it.
 	referenceFrontendProbe func() (known bool, isReference bool)
@@ -840,7 +848,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
-	rt.buildJobFn = rt.executeBuildCLI
+	rt.buildJobFn = rt.withSpeakerEdits(rt.executeBuildCLI)
 	rt.sealJobFn = rt.executeSealCLIWithTimeout
 	rt.publishJobFn = rt.executePublishCLIWithTimeout
 	// The publish sink is deliberately NOT constructed here.
@@ -1427,6 +1435,10 @@ type Store struct {
 	artifactJobs         sync.Map
 	db                   *sql.DB
 	stateChangePublisher stateChangePublisher
+	// lockWaitBlocked, when set, is called once by a bounded wait for a
+	// job's artifact lock (lockArtifactsWithin) that found the lock taken.
+	// Tests use it to let go of the lock only once the wait has begun.
+	lockWaitBlocked func(jobID string)
 }
 
 func OpenStore(path string) (*Store, error) {

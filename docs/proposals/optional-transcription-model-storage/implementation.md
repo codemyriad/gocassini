@@ -23,7 +23,13 @@ The AppAPI default root is `$APP_PERSISTENT_STORAGE/operator/models`. The standa
 
 Keep this directory on a mounted persistent volume and preserve it when replacing the container. Also retain the operator database (installation intent/progress) and `settings.json` (Off/On and the active revision). CPU and CUDA images contain native runtimes but no weights or VAD.
 
-Models live at `models/<model-id>/<source-sha256>/`, with VAD at `vad/<vad-sha256>/`. The shipped catalogue pins both the model files and each model's VAD dependency. App versions never occur in weight paths. A new binary, native library change, or host reboot invalidates its small runtime-check receipt and rechecks local bytes without downloading them. Keep old catalogue entries when introducing a new revision; the active revision is explicitly pinned. There is no automatic model update or deletion.
+Models live at `models/<model-id>/<source-sha256>/`, with VAD at `vad/<vad-sha256>/`. The shipped catalogue pins both the model files and each speech model's VAD dependency. App versions never occur in weight paths. A new binary, native library change, or host reboot invalidates its small runtime-check receipt and rechecks local bytes without downloading them. Keep old catalogue entries when introducing a new revision; the active revision is explicitly pinned. There is no automatic model update or deletion.
+
+## Model kinds and the voice separation model
+
+Each catalogue model has a `kind`: `speech` (transcribes; installed with its pinned VAD), `vad` (that dependency; never selected on its own) or `diarization` (separates the voices on one participant's track, see [Separating voices on a shared device](../../speaker-separation.md)). The published `dist.gocassini.com/manifest.json` carries neither `kind` nor `vad_revision`: the catalogue embedded in `cassini-go-recorder/internal/modelstore/catalogue.json` is that manifest plus those two fields, and only the artifacts its models reference. `Validate` refuses a model without a known kind, a speech model without a VAD pin, and a diarizer with one.
+
+A diarization model has no VAD: install, pack and import handle it alone, and `--vad` is refused. It runs on the CPU only, so `--device cuda` is refused for it. `models list` reports it with `"device": "cpu"` and `runtime_supported`; it is `ready` when installed on a runtime with Nemotron support, without a readiness receipt, so a reboot or upgrade does not require a recheck. Its runtime check (install without `--no-probe`, or `models probe`) loads the model and runs it over one second of silence. Settings lists `nemotron-3-diarization-int8` as **Voice separation (optional)**; it can never be the transcription model.
 
 ## Terminal installation
 
@@ -77,7 +83,7 @@ For a fully offline deployment, set `CASSINI_DISALLOW_MODEL_DOWNLOAD=1` in the o
 
 ### Import manually copied files
 
-Instead of a pack, transfer a supported original `tar.bz2` or an extracted model directory, plus Silero VAD:
+Instead of a pack, transfer a supported original `tar.bz2` or an extracted model directory, plus Silero VAD (speech models), or the one file of a single-file model such as the diarizer:
 
 ```bash
 cassini models import \
@@ -88,7 +94,15 @@ cassini models import \
   --cache-root /persistent/model-store --device cpu
 ```
 
-The directory may contain the exact decompressed filenames or their official CDN `.zst` files. `--vad` also accepts the official `.zst` file. It may be omitted only if the exact pinned VAD is already verified locally. The fp32 revision requires `encoder.weights` and its listed vocabulary; the published v3 int8 revision does not contain a vocabulary. Import rejects missing files, unexpected package payloads, unsafe paths/links, unsupported revisions, and checksum mismatches without network fallback.
+```bash
+cassini models import \
+  --model nemotron-3-diarization-int8 \
+  --revision 47c221ea9b4d4e7f6c108bd098e769bc706cdc986c29f6133c93cae335fe6779 \
+  --from /mnt/transfer/model.int8.onnx.zst \
+  --cache-root /persistent/model-store
+```
+
+The directory may contain the exact decompressed filenames or their official CDN `.zst` files. A single file must keep its catalogue name (`model.int8.onnx`, or `model.int8.onnx.zst`). `--vad` also accepts the official `.zst` file. It may be omitted only if the exact pinned VAD is already verified locally. The fp32 revision requires `encoder.weights` and its listed vocabulary; the published v3 int8 revision does not contain a vocabulary. Import rejects missing files, unexpected package payloads, unsafe paths/links, unsupported revisions, and checksum mismatches without network fallback.
 
 Repeating an import revalidates the source locally and preserves valid published directories. After interruption, retry with the same source. A damaged existing revision is reported with its path and must be moved aside explicitly before reinstalling; the installer never overwrites an active immutable directory.
 
