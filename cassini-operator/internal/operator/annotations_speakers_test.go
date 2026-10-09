@@ -714,8 +714,9 @@ func TestSpeakersRefuseARebuildThatWasNeverPublished(t *testing.T) {
 
 // A save queues an attempt, so it is admitted the way a rerun is: under the
 // job's artifact lock, never while an archive operation is pending, and
-// never once retention removed the capture. The lock is only tried, so a
-// worker holding it answers busy at once instead of holding the request.
+// never once retention removed the capture. The lock is waited for only
+// briefly, so a worker holding it for a whole build answers busy instead of
+// holding the request, and one that lets go in time does not.
 func TestSpeakersPostIsAdmittedLikeARerun(t *testing.T) {
 	f := newSpeakersFixture(t)
 	f.installModel(t)
@@ -745,6 +746,18 @@ func TestSpeakersPostIsAdmittedLikeARerun(t *testing.T) {
 	}
 	unlock()
 	queuedNothing("locked")
+
+	// A lock released while the save waits for it.
+	unlock = f.rt.store.lockArtifacts("MEETING1")
+	go func() { answered <- annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body) }()
+	unlock()
+	if rec := <-answered; rec.Code != http.StatusOK {
+		t.Fatalf("POST once the lock came free = %d %s", rec.Code, rec.Body.String())
+	}
+	// Back to idle at revision 0 for the checks below.
+	if _, err := f.rt.store.db.Exec(`DELETE FROM speaker_edits; DELETE FROM job_attempts WHERE attempt_number > 1; UPDATE jobs SET stage = 'done', state = 'succeeded', current_attempt_number = 1`); err != nil {
+		t.Fatal(err)
+	}
 
 	// A promotion or expiry journalled and not finished.
 	if _, err := f.rt.store.db.Exec(`INSERT INTO artifact_operations (job_id, operation) VALUES ('MEETING1', '{}')`); err != nil {

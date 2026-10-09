@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -294,11 +295,12 @@ FROM job_attempts WHERE job_id = ? AND attempt_number = ?`, jobID, attemptNumber
 //
 // It is admitted the way a rerun is (QueueRerunAttempt), under the job's
 // artifact lock: not while an archive operation is pending, and not once the
-// capture has expired. The lock is only tried: a worker holds it for a whole
-// build, seal or publish, and a person saving names must not wait on one.
-// A job whose lock is taken is busy.
+// capture has expired. The lock is waited for only briefly
+// (speakerEditsLockWait): a worker holds it for a whole build, seal or
+// publish, and a person saving names must not wait on one. A job whose lock
+// stays taken is busy.
 func (s *Store) QueueSpeakerEdits(ctx context.Context, jobID string, expectRevision int, doc speakerEditsDoc, updatedBy, queuedAt string) (int, error) {
-	unlock, ok := s.tryLockArtifacts(jobID)
+	unlock, ok := s.lockArtifactsWithin(ctx, jobID, speakerEditsLockWait)
 	if !ok {
 		return 0, errSpeakerEditsBusy
 	}
@@ -366,6 +368,35 @@ ON CONFLICT(job_id) DO UPDATE SET
 	s.emitStateChange(ctx, "job.updated", jobID, attemptNumber)
 	return doc.Revision, nil
 }
+
+// speakerEditsLockWait is how long a save waits for the job's artifact lock.
+// A retention sweep, or a publish promoting and pruning after it marked its
+// attempt succeeded (when the page has just shown the edit applied), holds it
+// for moments; a build, seal or publish holds it for minutes.
+const speakerEditsLockWait = 2 * time.Second
+
+// lockArtifactsWithin takes the job's artifact lock if it comes free within
+// wait, trying it every speakerEditsLockPoll.
+func (s *Store) lockArtifactsWithin(ctx context.Context, jobID string, wait time.Duration) (func(), bool) {
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	poll := time.NewTicker(speakerEditsLockPoll)
+	defer poll.Stop()
+	for {
+		if unlock, ok := s.tryLockArtifacts(jobID); ok {
+			return unlock, true
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-deadline.C:
+			return nil, false
+		case <-poll.C:
+		}
+	}
+}
+
+const speakerEditsLockPoll = 20 * time.Millisecond
 
 // speakerEditsReplaySnapshotTx is the document a rerun of jobID must replay:
 // the one the published recording carries, or nil when none ever applied. Not
