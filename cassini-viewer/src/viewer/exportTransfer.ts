@@ -41,12 +41,13 @@ function audioExtension(path: string, mime: string): string {
   return Object.entries(AUDIO_EXTENSIONS).find(([, value]) => value === type)?.[0] ?? "opus";
 }
 
-export async function loadAudioFile(entry: Pick<MeetingCatalogEntry, "id" | "title" | "audioPath">): Promise<AudioFile> {
-  if (!entry.audioPath) throw new Error(`${entry.title} has no meeting file to download.`);
-  const response = await fetch(entry.audioPath, { cache: "no-store" });
+export async function loadAudioFile(entry: Pick<MeetingCatalogEntry, "id" | "title" | "audioPath" | "meetingPath">): Promise<AudioFile> {
+  const filePath = entry.meetingPath ?? entry.audioPath;
+  if (!filePath) throw new Error(`${entry.title} has no meeting file to download.`);
+  const response = await fetch(filePath, { cache: "no-store" });
   if (!response.ok) throw new Error(`Couldn't download the meeting file for ${entry.title} (${response.status}).`);
   const blob = await response.blob();
-  const extension = audioExtension(entry.audioPath, blob.type);
+  const extension = filePath.split("?")[0].endsWith(".json") ? "json" : audioExtension(filePath, blob.type);
   return {
     name: `${safeMeetingStem(entry)}.${extension}`,
     blob: blob.type ? blob : new Blob([blob], { type: AUDIO_EXTENSIONS[extension] }),

@@ -29,6 +29,7 @@ func gapBySID(gaps []captureGap, sid string) (captureGap, bool) {
 
 func TestDetectCaptureGapsFlagsInCallZeroAudio(t *testing.T) {
 	r := &Recorder{
+		cfg:              config.Config{RetainVideo: true},
 		inCallEver:       map[string]struct{}{"alice-session": {}},
 		identityByRemote: map[string]participantIdentity{},
 	}
@@ -51,6 +52,7 @@ func TestDetectCaptureGapsZeroAudioButHasVideoIsNotMissing(t *testing.T) {
 	// A muted / camera-only participant is legitimately in the recording.
 	// Flagging them would cry wolf, so audio==0 with video>0 must NOT be a gap.
 	r := &Recorder{
+		cfg:              config.Config{RetainVideo: true},
 		inCallEver:       map[string]struct{}{"cam-session": {}},
 		identityByRemote: map[string]participantIdentity{},
 	}
@@ -67,6 +69,7 @@ func TestDetectCaptureGapsNeverCaptured(t *testing.T) {
 	// In-call but no sessionCapture row at all: the severe case (the track
 	// never fired). The name must fall back to the remembered identity.
 	r := &Recorder{
+		cfg:        config.Config{RetainVideo: true},
 		inCallEver: map[string]struct{}{"bob-session": {}},
 		identityByRemote: map[string]participantIdentity{
 			"bob-session": {DisplayName: "Bob"},
@@ -89,6 +92,7 @@ func TestDetectCaptureGapsNeverCaptured(t *testing.T) {
 
 func TestDetectCaptureGapsHealthyAllAudioNoWarning(t *testing.T) {
 	r := &Recorder{
+		cfg:              config.Config{RetainVideo: true},
 		inCallEver:       map[string]struct{}{"a": {}, "b": {}},
 		identityByRemote: map[string]participantIdentity{},
 	}
@@ -106,6 +110,7 @@ func TestDetectCaptureGapsIgnoresNeverInCall(t *testing.T) {
 	// A zero-audio session that was never recorded as in-call (e.g. a stray
 	// track) is not a candidate: only sessions in inCallEver are reconciled.
 	r := &Recorder{
+		cfg:              config.Config{RetainVideo: true},
 		inCallEver:       map[string]struct{}{"healthy-session": {}},
 		identityByRemote: map[string]participantIdentity{},
 	}
@@ -121,6 +126,7 @@ func TestDetectCaptureGapsIgnoresNeverInCall(t *testing.T) {
 
 func TestDetectCaptureGapsLowAudioAdvisory(t *testing.T) {
 	r := &Recorder{
+		cfg:              config.Config{RetainVideo: true},
 		inCallEver:       map[string]struct{}{"sliver-session": {}, "sliver-with-video": {}},
 		identityByRemote: map[string]participantIdentity{},
 	}
@@ -177,9 +183,9 @@ func TestWriteReportEmitsCaptureGaps(t *testing.T) {
 	tmp := t.TempDir()
 	rec := &Recorder{
 		cfg: config.Config{
-			OutputPath: filepath.Join(tmp, "archive.csr"),
-			CallURL:    "https://example.test/call/room",
-			GuestName:  "recorder-bot",
+			RetainVideo: true, OutputPath: filepath.Join(tmp, "archive.csr"),
+			CallURL:   "https://example.test/call/room",
+			GuestName: "recorder-bot",
 		},
 		baseURL:         "https://example.test",
 		roomToken:       "room",
@@ -229,7 +235,7 @@ func TestWriteReportEmitsCaptureGaps(t *testing.T) {
 func TestWriteReportCaptureGapsEmptyIsNonNullArray(t *testing.T) {
 	tmp := t.TempDir()
 	rec := &Recorder{
-		cfg:             config.Config{OutputPath: filepath.Join(tmp, "a.csr")},
+		cfg:             config.Config{RetainVideo: true, OutputPath: filepath.Join(tmp, "a.csr")},
 		finalOutputPath: filepath.Join(tmp, "final.mkv"),
 		segmentsDir:     filepath.Join(tmp, "segments"),
 		startedAt:       time.Unix(1_700_000_000, 0).UTC(),

@@ -34,6 +34,34 @@ configuration and
 helps you verify a short recording. See [Recording readiness](recording-readiness.md)
 for the guided flow, AIO-specific setup, and restart persistence.
 
+## Capture and storage choices
+
+Cassini can be used immediately with the default retention policy and audio-only
+capture. Administrators can enable **Capture video** in **Operator → Publish
+pipeline** to retain source camera video on the Cassini server. Published meeting files contain audio
+only in either mode.
+
+A nonblocking reminder offers to review retention in **Operator → Storage**.
+Saving retention or choosing **Don't remind again** clears that reminder for the
+whole installation. Neither action changes video capture consent; save that
+choice separately in Operator → Publish pipeline.
+
+```text
+Publish pipeline -> Capture video -> Save -> Future recordings use saved mode
+Storage -> Retention Save ---------------> Reminder cleared installation-wide
+Reminder -> Don't remind again ----------> Same retention values; reminder cleared
+```
+
+Capture changes affect recordings admitted after Save; active recordings keep
+their original policy. Existing retained video is governed by source retention
+and is not removed by turning capture off.
+
+An upgrade without a saved `retain_video` field uses false. Before expecting video
+on an upgraded installation, verify the running version provides this toggle,
+explicitly enable it, save, and check a new job reports **Audio and video**.
+When rolling back to a version predating capture consent, verify that version's
+recording behavior separately; older versions can capture video by default.
+
 ## Prerequisites
 
 - Nextcloud **32 or newer** (the manifest's `min-version`; Cassini targets and

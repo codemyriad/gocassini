@@ -72,24 +72,33 @@ type ffprobeOutput struct {
 	} `json:"streams"`
 	Format struct {
 		DurationStr string `json:"duration"`
+		Tags        struct {
+			RecordedAtLocal string `json:"RECORDED_AT_LOCAL"`
+		} `json:"tags"`
 	} `json:"format"`
 }
 
 // ProbeMKV returns all audio streams and the recording duration in ms.
 func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
+	streams, duration, _, err := probeMKV(mkv)
+	return streams, duration, err
+}
+
+// probeMKV also reads the recording-site timestamp in the same metadata probe.
+func probeMKV(mkv string) ([]AudioStream, int64, string, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration",
+		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration:format_tags=recorded_at_local",
 		"-of", "json",
 		mkv,
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, 0, fmt.Errorf("ffprobe: %w", err)
+		return nil, 0, "", fmt.Errorf("ffprobe: %w", err)
 	}
 	var probe ffprobeOutput
 	if err := json.Unmarshal(out, &probe); err != nil {
-		return nil, 0, fmt.Errorf("parse ffprobe output: %w", err)
+		return nil, 0, "", fmt.Errorf("parse ffprobe output: %w", err)
 	}
 
 	durSec, _ := strconv.ParseFloat(strings.TrimSpace(probe.Format.DurationStr), 64)
@@ -128,21 +137,21 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 		audioIdx++
 	}
 	if len(streams) == 0 {
-		return nil, 0, fmt.Errorf("no audio streams found in %s", mkv)
+		return nil, 0, "", fmt.Errorf("no audio streams found in %s", mkv)
 	}
 	for i := range streams {
 		firstPacketTimeMS, err := probeFirstPacketTimeMS(mkv, streams[i].Index)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, "", err
 		}
 		streams[i].FirstPacketTimeMS = firstPacketTimeMS
 		firstFrameTimeMS, err := probeFirstDecodedFrameTimeMS(mkv, streams[i].Index)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, "", err
 		}
 		streams[i].FirstDecodedFrameTimeMS = firstFrameTimeMS
 	}
-	return streams, durationMs, nil
+	return streams, durationMs, probe.Format.Tags.RecordedAtLocal, nil
 }
 
 // probeFirstPacketTimeMS reads only the first packet selected for one stream.

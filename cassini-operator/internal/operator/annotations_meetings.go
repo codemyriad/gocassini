@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -109,7 +108,7 @@ func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID, 
 	// Every path: the directory holds a whole recording, outside the access model.
 	defer os.RemoveAll(staging)
 
-	local := filepath.Join(staging, "meeting.opus")
+	local := filepath.Join(staging, "meeting"+meetingExtension(relPath))
 	_, status, err := s.exapp.stageRecording(ctx, s.client, caller, relPath, local, maxAnnotateRecordingBytes)
 	if err != nil {
 		if deniedOrAbsent(status) {
@@ -172,7 +171,7 @@ func (s *annotationService) visibleRecording(ctx context.Context, w http.Respons
 		return "", "", nil, false
 	}
 	for _, entry := range entries {
-		if entry.id == meetingID && strings.HasSuffix(entry.opusName, ".opus") {
+		if entry.id == meetingID && isMeetingFile(entry.opusName) {
 			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
 			if err != nil {
 				s.answerFailure(w, r, "meeting="+meetingID, annotateUnavailable(err))

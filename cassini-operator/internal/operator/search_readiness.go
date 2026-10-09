@@ -76,7 +76,7 @@ func (rt *Runtime) searchReadinessCheck(ctx context.Context) readinessCheck {
 		check.Message = "The recordings archive is empty, so search has nothing to index."
 	} else {
 		check.State, check.Code = "passed", "search_archive_files_accounted_for"
-		check.Message += " Every recording in the archive is accounted for."
+		check.Message += " Every meeting file in the archive is accounted for."
 	}
 	if coverage.NeedsAttention() > 0 && check.State == "not_verified" {
 		check.State, check.Code = "warn", "search_coverage_partial"

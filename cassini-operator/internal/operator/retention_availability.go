@@ -29,10 +29,12 @@ func requireReadyRunBundle(path string) (string, error) {
 }
 
 type artifactAvailability struct {
-	Source             string `json:"source"`
-	Output             string `json:"output"`
-	RerunBlockedReason string `json:"rerun_blocked_reason,omitempty"`
-	PublishedAttempt   int    `json:"published_attempt"`
+	MediaCleanup       *mediaCleanupStatus `json:"media_cleanup,omitempty"`
+	SourceRetention    string              `json:"source_retention,omitempty"`
+	Source             string              `json:"source"`
+	Output             string              `json:"output"`
+	RerunBlockedReason string              `json:"rerun_blocked_reason,omitempty"`
+	PublishedAttempt   int                 `json:"published_attempt"`
 }
 
 func (rt *Runtime) artifactAvailability(job Job) artifactAvailability {
@@ -49,7 +51,7 @@ func (rt *Runtime) artifactAvailability(job Job) artifactAvailability {
 	}
 	var source, output string
 	_ = rt.store.db.QueryRow(`SELECT published_attempt,source,output FROM artifact_availability WHERE job_id=?`, job.ID).Scan(&a.PublishedAttempt, &source, &output)
-	if source == "expired" {
+	if source == "expired" || source == "deleted" {
 		a.Source = source
 	}
 	if output == "expired" {
@@ -61,6 +63,16 @@ func (rt *Runtime) artifactAvailability(job Job) artifactAvailability {
 	if rt.pendingArtifactOperation(job.ID) {
 		a.RerunBlockedReason = "Archive operation awaiting recovery"
 		a.Output = "pending"
+	}
+	if policy := processingPolicy(job); policy != nil {
+		a.SourceRetention = policy.SourceRetention
+	}
+	a.MediaCleanup = rt.mediaCleanupStatus(job)
+	if a.MediaCleanup != nil {
+		a.RerunBlockedReason = "This recording deletes source media after processing; processing cannot be rerun."
+		if a.MediaCleanup.Status == "completed" {
+			a.RerunBlockedReason = "Source media was deleted after processing. This job cannot be rerun."
+		}
 	}
 	return a
 }

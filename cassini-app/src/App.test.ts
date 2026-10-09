@@ -79,7 +79,7 @@ describe("the shell's setup features", () => {
     // hint here would put a template picker in front of someone whose request
     // for it 403s.
     expect(appSource).toContain(
-      "operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;",
+      "operatorClient = probe.available ? (operatorClient ?? new OperatorClient(operatorBasePath)) : null;",
     );
     expect(appSource).not.toMatch(/isLikelyAdminHint[^\n]*operatorClient/);
   });
@@ -120,7 +120,7 @@ describe("the shell after the Setup tab", () => {
     expect(appSource).toContain(">\n        Operator\n      </button>");
     expect(appSource).not.toContain('selectSurface("setup")');
     expect(appSource).not.toContain('surface === "setup"');
-    expect(appSource).not.toContain("Setup.svelte");
+    expect(appSource).not.toContain('"./Setup.svelte"');
   });
 
   it("sends the setup notice's own button somewhere that exists", () => {

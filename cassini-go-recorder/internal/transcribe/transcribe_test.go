@@ -146,3 +146,41 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteManifestRecordingTimePrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name, basename, recorded, want string
+		invalid                        bool
+	}{
+		{name: "metadata beats filename", basename: "meeting--20261007T120000.mkv", recorded: "2026-03-10T14:00:00", want: "2026-03-10T14:00:00"},
+		{name: "legacy filename", basename: "meeting--20261007T120000.mkv", want: "2026-10-07T12:00:00"},
+		{name: "unknown stays unknown", basename: "renamed.mkv"},
+		{name: "invalid metadata", recorded: "2026-02-30T12:00:00", invalid: true},
+		{name: "offset not accepted", recorded: "2026-03-10T14:00:00Z", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "manifest.json")
+			err := WriteManifest(path, ManifestInput{SrcBasename: tc.basename, RecordedAtLocal: tc.recorded})
+			if tc.invalid {
+				if err == nil {
+					t.Fatal("accepted invalid capture timestamp")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc artifactManifest
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			if doc.Source.RecordedAtLocal != tc.want {
+				t.Fatalf("got %q, want %q", doc.Source.RecordedAtLocal, tc.want)
+			}
+		})
+	}
+}

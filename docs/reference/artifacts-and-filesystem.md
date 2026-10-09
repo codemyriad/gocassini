@@ -2,6 +2,16 @@
 
 This page describes Cassini’s main artifact types and the operator’s runtime layout.
 
+Transcription-only publication uses portable `.json` instead of `.opus`, including
+the corresponding current, sealed and published paths described below. The
+`artifact_opus_path` API field retains its historical name for both formats.
+JSON publication normally retains source bundles for reruns. With explicit
+`delete-after-processing` retention, successful promotion keeps only JSON;
+terminal success or failure triggers journaled removal of source bundles, Opus
+aliases and attempt media staging. Disposal subprocesses use job-owned
+`runs/<job-id>--attempt-NNN.scratch` temporary directories, also removed by cleanup.
+See [source disposal](../proposals/source-media-disposal/implementation.md).
+
 ## The four artifact shapes to know
 
 | Artifact | Produced by | Purpose |
@@ -49,6 +59,20 @@ Conceptually:
 - output: reusable captured media
 
 Use `.run` when you need to rerun or inspect the build stage.
+
+New live `.run` manifests and source `session.json` indexes include
+`capture_mode`: `audio-only` (default) or `audio-video` (explicit opt-in).
+Operator recording jobs also store this admission snapshot and `retain_video` in
+their request JSON. Missing provenance on an older recording means **unknown**,
+not proof that video was excluded.
+
+Audio-only sessions contain audio RTP logs and audio logical tracks; opted-in
+sessions may also contain video logs and source MKV tracks. Audio RTCP and normal
+transport/signaling are retained in both modes. Capture mode does not change the
+portable `.opus` publication contract. Changing the policy affects new captures;
+existing-source build and publish operations preserve their source. Source
+retention determines when the whole source artifact, including opted-in video,
+is deleted.
 
 ## `.meeting` bundle
 

@@ -6,6 +6,7 @@ export interface MeetingCatalogEntry {
   dateLabel: string;
   artifactPath?: string;
   audioPath?: string;
+  meetingPath?: string;
   speakerCount?: number;
   segmentCount?: number;
   digestDurationMs?: number;
@@ -100,6 +101,7 @@ function materializeCatalog(payload: unknown, responseUrl: string): MeetingCatal
     meetings: sortMeetingCatalogEntries(
       catalog.meetings.map((meeting) => ({
         ...meeting,
+        meetingPath: meeting.meetingPath ? resolveCatalogAssetUrl(meeting.meetingPath, responseUrl) : undefined,
         artifactPath: meeting.artifactPath
           ? resolveCatalogAssetUrl(meeting.artifactPath, responseUrl)
           : undefined,
@@ -224,7 +226,8 @@ function validateMeetingCatalogEntry(
     value.audioPath,
     `catalog entry ${index} audioPath`,
   );
-  if (!artifactPath && !audioPath) {
+  const meetingPath = optionalNonEmptyString(value.meetingPath, `catalog entry ${index} meetingPath`);
+  if (!artifactPath && !audioPath && !meetingPath) {
     throw new Error(
       `catalog entry ${index} must define artifactPath or audioPath`,
     );
@@ -234,6 +237,7 @@ function validateMeetingCatalogEntry(
     id,
     artifactPath,
     audioPath,
+    meetingPath,
     title,
     dateLabel,
     speakerCount: optionalNumber(

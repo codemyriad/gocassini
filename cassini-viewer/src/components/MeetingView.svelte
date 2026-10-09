@@ -207,6 +207,7 @@
   let audioSrc = "";
   // Bumped when the file at `audioSrc` was republished, to replace the player.
   let audioGeneration = 0;
+  let transcriptionOnly = false;
   let captionsSrc: string | null = null;
   let chaptersSrc: string | null = null;
   let timingPrecision: ArtifactTimingPrecision | null = null;
@@ -350,6 +351,7 @@
     readableTranscript = artifact.readableTranscript;
     summaryMarkdown = artifact.summary;
     audioSrc = artifact.audioSrc;
+    transcriptionOnly = artifact.transcriptionOnly === true;
     captionsSrc = artifact.captionsSrc;
     chaptersSrc = artifact.chaptersSrc;
     timingPrecision = artifact.timingPrecision;
@@ -403,6 +405,7 @@
     readableTranscript = null;
     summaryMarkdown = null;
     audioSrc = "";
+    transcriptionOnly = false;
     captionsSrc = null;
     chaptersSrc = null;
     timingPrecision = null;
@@ -452,10 +455,10 @@
   }
 
   async function downloadAudio() {
-    if (!audioSrc || audioExportBusy) return;
+    if (!(meeting?.meetingPath ?? audioSrc) || audioExportBusy) return;
     const requestId = ++exportRequestId;
     const audioId = ++audioRequestId;
-    const source = audioSrc;
+    const source = meeting?.meetingPath ?? audioSrc;
     audioExportBusy = true;
     exportStatus = "Preparing meeting file…";
     try {
@@ -581,7 +584,7 @@
   async function handleTranscriptSwitch(targetId: string) {
     if (
       transcriptSwitchPending ||
-      !meeting?.audioPath ||
+      !(meeting?.meetingPath ?? meeting?.audioPath) ||
       targetId === currentTranscriptId ||
       !availableTranscripts.some((entry) => entry.id === targetId)
     ) {
@@ -632,7 +635,7 @@
 
   async function maybeApplyUrlTranscript(entry: MeetingCatalogEntry) {
     const requested = currentViewerHash().tx;
-    if (!requested || !entry.audioPath) {
+    if (!requested || !(entry.meetingPath ?? entry.audioPath)) {
       return;
     }
     if (!availableTranscripts.some((descriptor) => descriptor.id === requested)) {
@@ -1375,7 +1378,8 @@
         <ExportMenu
           canCopy={!copyExportBusy && displaySegments.length > 0}
           canDownloadTranscript={displaySegments.length > 0}
-          canDownloadAudio={Boolean(audioSrc) && !audioExportBusy}
+          canDownloadAudio={Boolean(meeting?.meetingPath ?? audioSrc) && !audioExportBusy}
+          audioLabel={meeting?.meetingPath ? "Download meeting file" : "Download audio"}
           status={exportStatus}
           on:copy={copyTranscript}
           on:transcript={downloadTranscript}
@@ -1412,6 +1416,9 @@
         </span>
         <MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />
       </div>
+    {/if}
+    {#if transcriptIndex && transcriptionOnly}
+      <p class="mt-2 text-sm text-base-content/70" role="status">This meeting contains a transcript without audio. Playback is unavailable.</p>
     {/if}
   </header>
 

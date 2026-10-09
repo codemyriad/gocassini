@@ -205,6 +205,9 @@ type subscriberPeer struct {
 	// CreateAnswer / answer-send could fail; a failed answer then suppressed
 	// retries forever, silently dropping the participant (D-386).
 	offerReceived        bool
+	noEligibleAudio      bool
+	lastAudioRefresh     time.Time
+	lastSilenceNotice    time.Time
 	currentSID           string
 	requestOfferAttempts int
 	awaitingOfferSince   time.Time
@@ -278,13 +281,13 @@ func (r *Recorder) run(ctx context.Context) error {
 	}
 	r.segmentsDir = segmentsDir
 
-	sessionArtifact, err := newSessionCaptureArtifact(r.finalOutputPath, r.cfg.CallURL, r.roomToken, r.cfg.GuestName)
+	sessionArtifact, err := newSessionCaptureArtifact(r.finalOutputPath, r.cfg.CallURL, r.roomToken, r.cfg.GuestName, r.cfg.RetainVideo)
 	if err != nil {
 		return fmt.Errorf("session artifact init failed: %w", err)
 	}
 	r.sessionArtifact = sessionArtifact
 	r.sessionPath = sessionArtifact.sessionPath
-	log.Printf("session artifact capture enabled: session_id=%s path=%s", sessionArtifact.sessionID, sessionArtifact.sessionDir)
+	log.Printf("session artifact capture enabled: session_id=%s path=%s mode=%s", sessionArtifact.sessionID, sessionArtifact.sessionDir, captureMode(r.cfg.RetainVideo))
 
 	r.ocs = nextcloud.NewOCSClient(r.connectBaseURL, r.cfg.Insecure)
 	if err := r.bootstrap(ctx); err != nil {
@@ -1067,7 +1070,7 @@ func (r *Recorder) requestOfferLoop(ctx context.Context) error {
 // failed) is a deterministic offer failure that a retry cannot fix, and
 // rebuilding it would trade working audio for a speculative recovery; a peer
 // still parked after maxCaptureRebuilds (D-500 edge 2); and a peer that is
-// ICE-connected but silent, which stays with the unchanged 45s floor.
+// ICE-connected with offered-but-silent audio, which is retained in audio-only mode.
 //
 // now is passed in so every decision is deterministically testable.
 func (r *Recorder) reconcileSubscribers(now time.Time) {
@@ -1094,11 +1097,16 @@ func (r *Recorder) reconcileSubscribers(now time.Time) {
 			p.retryPendingAnswer()
 		case actionRebuild:
 			r.rebuildSubscriber(p, now, rebuildReasonFor(now, state))
+		case actionRefreshAudio:
+			r.replaceSubscriber(p, now, "waiting for eligible audio after subscription update", false)
 		case actionRequestOffer:
 			if err := p.requestOffer(); err != nil {
 				log.Printf("requestoffer failed for %s: %v", p.remoteSessionID, err)
 			}
 		case actionNone:
+			if state.audioOnly && state.offerReceived && state.iceConnected && !state.hasPendingAnswer && captured[p.remoteSessionID] == 0 {
+				p.noticeSilence(now, state)
+			}
 			// Healthy capture, or a bounded/parked peer we have deliberately
 			// stopped acting on.
 		}
@@ -1115,6 +1123,7 @@ const (
 	actionRequestOffer
 	actionRetryAnswer
 	actionRebuild
+	actionRefreshAudio
 )
 
 func (a reconcileAction) String() string {
@@ -1125,6 +1134,8 @@ func (a reconcileAction) String() string {
 		return "retryAnswer"
 	case actionRebuild:
 		return "rebuild"
+	case actionRefreshAudio:
+		return "refresh-audio-subscription"
 	default:
 		return "none"
 	}
@@ -1141,6 +1152,9 @@ type peerReconcileState struct {
 	pendingAnswerSince time.Time
 	answerRetransmits  int
 	iceConnected       bool
+	audioOnly          bool
+	noEligibleAudio    bool
+	lastAudioRefresh   time.Time
 }
 
 // reconcileState snapshots the peer for a reconcile tick.
@@ -1170,6 +1184,9 @@ func (p *subscriberPeer) reconcileState() peerReconcileState {
 		pendingAnswerSince: p.pendingAnswerSince,
 		answerRetransmits:  p.answerRetransmits,
 		iceConnected:       iceConnected,
+		audioOnly:          p.owner != nil && !p.owner.cfg.RetainVideo,
+		noEligibleAudio:    p.noEligibleAudio,
+		lastAudioRefresh:   p.lastAudioRefresh,
 	}
 }
 
@@ -1179,6 +1196,22 @@ func (p *subscriberPeer) reconcileState() peerReconcileState {
 func reconcileActionFor(now time.Time, s peerReconcileState, captured int) reconcileAction {
 	if reconcileShouldRetryAnswer(now, s) {
 		return actionRetryAnswer
+	}
+	if s.audioOnly && !s.hasPendingAnswer && s.offerReceived {
+		if s.noEligibleAudio {
+			// Janus multistream configure(update=true) can keep the original
+			// video-only stream set. Try the SID-safe update first, then obtain a
+			// fresh subscription at the slow cadence if audio is still absent.
+			// This is discovery, not a transport failure, and consumes no failure
+			// rebuild budget. Offered audio that is merely silent never takes it.
+			if !s.lastAudioRefresh.IsZero() && now.Sub(s.lastAudioRefresh) >= slowRequestOfferInterval {
+				return actionRefreshAudio
+			}
+			return actionRequestOffer
+		}
+		if s.iceConnected {
+			return actionNone
+		}
 	}
 	if captured > 0 {
 		// GUARD 1 (unchanged for healthy peers): capturing media, incl. a
@@ -1284,6 +1317,10 @@ func (r *Recorder) capturedPacketTotals() map[string]int {
 // peer outside the lock, then swap only if we are not stopping and the old peer
 // is still the registered one.
 func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time, reason string) {
+	r.replaceSubscriber(old, now, reason, true)
+}
+
+func (r *Recorder) replaceSubscriber(old *subscriberPeer, now time.Time, reason string, transportFailure bool) {
 	sid := old.remoteSessionID
 	newPeer, err := r.newSubscriberPeer(sid)
 	if err != nil {
@@ -1291,7 +1328,12 @@ func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time, reason 
 		return
 	}
 	newPeer.createdAt = now
-	newPeer.rebuildCount = old.rebuildCount + 1
+	newPeer.rebuildCount = old.rebuildCount
+	if transportFailure {
+		newPeer.rebuildCount++
+	} else {
+		newPeer.lastAudioRefresh = now
+	}
 
 	r.mu.Lock()
 	if r.stopping {
@@ -1310,7 +1352,11 @@ func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time, reason 
 	r.mu.Unlock()
 
 	_ = old.close()
-	log.Printf("talk recorder: rebuilding subscriber sid=%s (%s, rebuild %d/%d)", sid, reason, newPeer.rebuildCount, maxCaptureRebuilds)
+	if transportFailure {
+		log.Printf("talk recorder: rebuilding subscriber sid=%s (%s, rebuild %d/%d)", sid, reason, newPeer.rebuildCount, maxCaptureRebuilds)
+	} else {
+		log.Printf("talk recorder: refreshing audio subscription sid=%s (%s, transport rebuilds %d/%d)", sid, reason, newPeer.rebuildCount, maxCaptureRebuilds)
+	}
 	if err := newPeer.requestOffer(); err != nil {
 		log.Printf("rebuild requestoffer failed for %s: %v", sid, err)
 	}
@@ -1916,6 +1962,10 @@ func (r *Recorder) sendPLI(remoteSessionID string, ssrc uint32) {
 
 func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver, remoteSessionID string) {
 	kind := strings.ToLower(track.Kind().String())
+	if !allowsCaptureKind(r.cfg.RetainVideo, kind) {
+		log.Printf("capture policy rejected track sid=%s kind=%s mode=%s", remoteSessionID, kind, captureMode(r.cfg.RetainVideo))
+		return
+	}
 
 	session, err := r.ensureSessionCapture(remoteSessionID)
 	if err != nil {
@@ -2158,6 +2208,9 @@ func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
 		return errors.New("session artifact is not available")
 	}
 
+	if r.sessionArtifact != nil && !r.sessionArtifact.hasAudio() {
+		return errors.New("no captured audio: no usable audio packets received")
+	}
 	workDir := filepath.Join(r.segmentsDir, "artifact-remux-work")
 	result, err := coreremux.BuildFromSession(
 		r.sessionPath,
@@ -2219,6 +2272,9 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 		peer.sendLocalICESignal("candidate", map[string]any{"candidate": candidatePayload})
 	})
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		if !allowsCaptureKind(r.cfg.RetainVideo, track.Kind().String()) {
+			return
+		}
 		if !r.addTrackReader() {
 			return
 		}
@@ -2232,7 +2288,7 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 }
 
 func (r *Recorder) sendRequestOffer(remoteSessionID string) error {
-	return r.sendPeerMessage(remoteSessionID, "requestoffer", nil, "")
+	return r.sendPeerMessage(remoteSessionID, "requestoffer", r.captureOfferPayload(), "")
 }
 
 func (r *Recorder) sendPeerMessage(toSession, msgType string, payload map[string]any, sid string) error {
@@ -2271,6 +2327,17 @@ func (r *Recorder) sendPeerMessage(toSession, msgType string, payload map[string
 func (p *subscriberPeer) requestOffer() error {
 	now := time.Now()
 	p.mu.Lock()
+	if !p.owner.cfg.RetainVideo && p.offerReceived && p.noEligibleAudio {
+		if p.pendingAnswer != nil || (!p.lastAudioRefresh.IsZero() && now.Sub(p.lastAudioRefresh) < slowRequestOfferInterval) {
+			p.mu.Unlock()
+			return nil
+		}
+		p.lastAudioRefresh = now
+		sid := p.currentSID
+		p.mu.Unlock()
+		log.Printf("subscriber %s waiting for eligible audio; refreshing subscription", p.remoteSessionID)
+		return p.owner.sendPeerMessage(p.remoteSessionID, "requestoffer", p.owner.captureOfferPayload(), sid)
+	}
 	maxAttempts := p.owner.cfg.MaxRequestOfferAttempts
 	window := requestOfferRetryWindow(p.requestOfferAttempts, maxAttempts)
 	if !p.awaitingOfferSince.IsZero() && now.Sub(p.awaitingOfferSince) < window {
@@ -2582,6 +2649,16 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 			return fmt.Errorf("set remote offer for %s: %w", p.remoteSessionID, err)
 		}
 
+		if err := applyCapturePolicy(p.pc, p.owner.cfg.RetainVideo); err != nil {
+			return err
+		}
+		eligibleAudio, err := offerHasEligibleAudio(remoteDesc)
+		if err != nil {
+			return fmt.Errorf("parse offered audio: %w", err)
+		}
+		p.mu.Lock()
+		p.noEligibleAudio = !eligibleAudio
+		p.mu.Unlock()
 		answer, err := p.pc.CreateAnswer(nil)
 		if err != nil {
 			return fmt.Errorf("create answer for %s: %w", p.remoteSessionID, err)
@@ -2776,6 +2853,8 @@ type captureGap struct {
 // prefixes are stable so log scraping can key on them.
 func (g captureGap) warning() string {
 	switch g.Reason {
+	case "no-audio-observed":
+		return fmt.Sprintf("in-call participant has no observed audio (may be silent or waiting for audio): name=%s sid=%s", g.ParticipantName, g.RemoteSessionID)
 	case "no-media":
 		if !g.CapturedSession {
 			return fmt.Sprintf("in-call participant captured no media at all: name=%s sid=%s", g.ParticipantName, g.RemoteSessionID)
@@ -2877,6 +2956,13 @@ func (r *Recorder) detectCaptureGaps(sessions []sessionCapture) []captureGap {
 		}
 	}
 
+	if !r.cfg.RetainVideo {
+		for i := range gaps {
+			if gaps[i].Reason == "no-media" {
+				gaps[i].Reason = "no-audio-observed"
+			}
+		}
+	}
 	for _, g := range gaps {
 		log.Printf("talk recorder: %s", g.warning())
 	}
@@ -2971,6 +3057,7 @@ func (r *Recorder) writeReport(
 
 	report := map[string]any{
 		"generated_at":     rfc3339Now(),
+		"capture_mode":     captureMode(r.cfg.RetainVideo),
 		"started_at":       r.startedAt.UTC().Format(time.RFC3339Nano),
 		"call_url":         r.cfg.CallURL,
 		"base_url":         r.baseURL,
@@ -3209,4 +3296,66 @@ func extractCandidatePayload(payload map[string]any) map[string]any {
 		}
 		return nil
 	}
+}
+
+func (r *Recorder) captureOfferPayload() map[string]any {
+	if r.cfg.RetainVideo {
+		return nil
+	}
+	return map[string]any{"audio": true, "video": false}
+}
+
+func applyCapturePolicy(pc *webrtc.PeerConnection, retainVideo bool) error {
+	if retainVideo {
+		return nil
+	}
+	for _, transceiver := range pc.GetTransceivers() {
+		if transceiver.Kind() == webrtc.RTPCodecTypeVideo {
+			if err := transceiver.Stop(); err != nil {
+				return fmt.Errorf("stop video transceiver: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func offerHasEligibleAudio(offer webrtc.SessionDescription) (bool, error) {
+	parsed, err := offer.Unmarshal()
+	if err != nil {
+		return false, err
+	}
+	sessionDirection := "sendrecv"
+	for _, attr := range parsed.Attributes {
+		switch attr.Key {
+		case "sendrecv", "sendonly", "recvonly", "inactive":
+			sessionDirection = attr.Key
+		}
+	}
+	for _, media := range parsed.MediaDescriptions {
+		if media.MediaName.Media != "audio" || media.MediaName.Port.Value == 0 {
+			continue
+		}
+		direction := sessionDirection
+		for _, attr := range media.Attributes {
+			switch attr.Key {
+			case "sendrecv", "sendonly", "recvonly", "inactive":
+				direction = attr.Key
+			}
+		}
+		if direction == "sendrecv" || direction == "sendonly" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (p *subscriberPeer) noticeSilence(now time.Time, state peerReconcileState) {
+	p.mu.Lock()
+	if !p.lastSilenceNotice.IsZero() && now.Sub(p.lastSilenceNotice) < slowRequestOfferInterval {
+		p.mu.Unlock()
+		return
+	}
+	p.lastSilenceNotice = now
+	p.mu.Unlock()
+	log.Printf("subscriber %s connected, waiting for audio: mode=audio-only offered_audio=%t ice_connected=%t pending_answer=%t audio_packets=0", p.remoteSessionID, !state.noEligibleAudio, state.iceConnected, state.hasPendingAnswer)
 }

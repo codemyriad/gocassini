@@ -782,7 +782,8 @@ func TestPutSettingsRejectsUnboundedAliases(t *testing.T) {
 	for i := 0; i < maxSearchAliasVariants+2; i++ {
 		huge = append(huge, fmt.Sprintf("variant-%d", i))
 	}
-	body, _ := json.Marshal(settingsUpdate{Quality: sttQualityBalanced, SearchAliases: &[][]string{huge}})
+	quality := sttQualityBalanced
+	body, _ := json.Marshal(settingsUpdate{Quality: &quality, SearchAliases: &[][]string{huge}})
 
 	rec := httptest.NewRecorder()
 	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(string(body))))
@@ -820,5 +821,62 @@ func TestPutSettingsChecksTheModelOnlyWhenTheSelectionChanges(t *testing.T) {
 	rt.setSettings(STTSettings{ActiveModel: modelParakeetV3Int8, ActiveRevision: "r1", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
 	if code := put(`{"quality":"balanced","transcription_enabled":true}`); code != http.StatusConflict {
 		t.Fatalf("enabling an unchecked model = %d, want 409", code)
+	}
+}
+
+func TestMeetingFormatSettingsPersistAndValidate(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	if rt.currentSettings().MeetingFormat != "opus" {
+		t.Fatal("default must retain audio")
+	}
+	put := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		rt.settingsHandler(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+		return rec
+	}
+	for _, format := range []string{"json", "opus"} {
+		rec := put(`{"quality":"balanced","meeting_format":"` + format + `"}`)
+		if rec.Code != 200 {
+			t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+		}
+		loaded, err := LoadOrInitSettings(rt.settingsPath)
+		if err != nil || loaded.MeetingFormat != format || rt.currentSettings().MeetingFormat != format {
+			t.Fatalf("persisted format: %+v %v", loaded, err)
+		}
+		rec = put(`{"quality":"best"}`)
+		if rec.Code != 200 || rt.currentSettings().MeetingFormat != format {
+			t.Fatal("omitted format was not preserved")
+		}
+	}
+	rec := put(`{"quality":"balanced","meeting_format":"mp3"}`)
+	if rec.Code != 400 || rt.currentSettings().MeetingFormat != "opus" {
+		t.Fatal("invalid format changed settings")
+	}
+	rt.settingsPath = filepath.Join(t.TempDir(), "blocked", "settings.json")
+	if err := os.WriteFile(filepath.Dir(rt.settingsPath), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rec = put(`{"quality":"balanced","meeting_format":"json"}`)
+	if rec.Code != 500 || rt.currentSettings().MeetingFormat != "opus" {
+		t.Fatal("failed save changed active format")
+	}
+}
+
+func TestMeetingFormatSurvivesHardwareRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := Save(path, STTSettings{Source: "auto", Quality: "balanced", HardwareFingerprint: "old-host", MeetingFormat: "json"}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadOrInitSettings(path)
+	if err != nil || loaded.MeetingFormat != "json" {
+		t.Fatalf("hardware refresh changed publication: %+v %v", loaded, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"quality":"balanced","source":"user"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = LoadOrInitSettings(path)
+	if err != nil || loaded.MeetingFormat != "opus" {
+		t.Fatalf("legacy settings: %+v %v", loaded, err)
 	}
 }

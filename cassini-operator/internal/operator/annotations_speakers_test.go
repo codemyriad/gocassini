@@ -713,8 +713,9 @@ func TestSpeakersRefuseARebuildThatWasNeverPublished(t *testing.T) {
 }
 
 // A save queues an attempt, so it is admitted the way a rerun is: under the
-// job's artifact lock, never while an archive operation is pending, and
-// never once retention removed the capture. The lock is waited for only
+// job's artifact lock, never while an archive or Nextcloud retention operation
+// is pending, and never once retention removed the capture or the recording's
+// media is set to be deleted after processing. The lock is waited for only
 // briefly, so a worker holding it for a whole build answers busy instead of
 // holding the request, and one that lets go in time does not.
 func TestSpeakersPostIsAdmittedLikeARerun(t *testing.T) {
@@ -805,6 +806,41 @@ func TestSpeakersPostIsAdmittedLikeARerun(t *testing.T) {
 	if _, err := f.rt.store.db.Exec(`DELETE FROM artifact_availability`); err != nil {
 		t.Fatal(err)
 	}
+
+	// A Nextcloud retention operation on the published meeting, not completed.
+	if _, err := f.rt.store.db.Exec(`INSERT INTO remote_retention_operation (name, operation_json, status, updated_at) VALUES ('MEETING1.opus', '{}', 'prepared', ?)`, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	if rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body); rec.Code != http.StatusConflict || annTestError(t, rec) != "busy" {
+		t.Fatalf("POST with a Nextcloud retention operation pending = %d %s", rec.Code, rec.Body.String())
+	}
+	queuedNothing("pending remote retention")
+	if _, err := f.rt.store.db.Exec(`UPDATE remote_retention_operation SET status = 'completed'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// The recording's media is set to be deleted after processing: gone, or
+	// about to be, for a refine as for a rerun.
+	var request string
+	if err := f.rt.store.db.QueryRow(`SELECT request_json FROM jobs WHERE id = 'MEETING1'`).Scan(&request); err != nil {
+		t.Fatal(err)
+	}
+	settings := STTSettings{MeetingFormat: "json", SourceRetention: sourceDeleteAfterProcessing, TranscriptionEnabled: true}
+	disposing, _ := json.Marshal(TriggerRequest{ProcessingPolicy: &recordingProcessingPolicy{MeetingFormat: "json", SourceRetention: sourceDeleteAfterProcessing, Transcription: &settings}})
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET request_json = ? WHERE id = 'MEETING1'`, string(disposing)); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.get(t, "MEETING1"); resp.Available || resp.Reason != speakerReasonNoSourceAudio {
+		t.Fatalf("GET with the media set to be deleted: %+v", resp)
+	}
+	if rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), speakerReasonNoSourceAudio) {
+		t.Fatalf("POST with the media set to be deleted = %d %s", rec.Code, rec.Body.String())
+	}
+	queuedNothing("media set to be deleted")
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET request_json = ? WHERE id = 'MEETING1'`, request); err != nil {
+		t.Fatal(err)
+	}
+
 	if resp := f.post(t, body); resp.State != speakerStateApplying || resp.Revision != 1 {
 		t.Fatalf("POST once nothing stands in the way: %+v", resp)
 	}

@@ -41,7 +41,7 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 	}
 	entry := incoming.Meetings[0]
 	assets, err := catalogEntryAssets(entry)
-	if err != nil || len(assets) != 1 || assets[0] != "meetings/"+d.JobID+".opus" {
+	if err != nil || len(assets) != 1 || (assets[0] != "meetings/"+d.JobID+".opus" && assets[0] != "meetings/"+d.JobID+".json") {
 		return "", fmt.Errorf("attempt site does not describe the sealed recording for %s", d.JobID)
 	}
 	local := filepath.Join(d.AttemptSitePath, assets[0])
@@ -70,6 +70,9 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 		return "", err
 	}
 	defer release()
+	if err := s.cfg.meetingNotRetired(ctx, path.Base(remote)); err != nil {
+		return "", err
+	}
 
 	before, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, remote)
 	if err != nil {

@@ -96,7 +96,7 @@ func TestArchiveCoverageIsTakenByACheckAndReportedByAPoll(t *testing.T) {
 
 	seedSearchable(t, rt.searchStore, "LIVE.opus", seg("s1", "S1", 0, 1000, "words"))
 	if err := os.WriteFile(filepath.Join(rt.cfg.SiteRoot, "catalog.json"),
-		[]byte(`{"meetings":[{"id":"LIVE","audioPath":"./meetings/LIVE.opus"},{"id":"OLD","audioPath":"./meetings/OLD.opus"}]}`), 0o644); err != nil {
+		[]byte(`{"meetings":[{"id":"LIVE","audioPath":"./meetings/LIVE.opus"},{"id":"OLD","meetingPath":"./meetings/OLD.json"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -129,7 +129,7 @@ func TestLocalArchiveDoesNotOfferOrStartUnsupportedRepair(t *testing.T) {
 	if err := os.MkdirAll(rt.cfg.SiteRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(rt.cfg.SiteRoot, "catalog.json"), []byte(`{"meetings":[{"id":"OLD","audioPath":"./meetings/OLD.opus"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(rt.cfg.SiteRoot, "catalog.json"), []byte(`{"meetings":[{"id":"OLD","meetingPath":"./meetings/OLD.json"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	check := rt.searchReadinessCheck(context.Background())

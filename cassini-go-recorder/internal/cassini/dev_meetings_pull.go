@@ -387,7 +387,7 @@ func planSeedPack(catalogURL *url.URL, outDir string, items []meetingsCatalogIte
 		if err != nil {
 			return nil, err
 		}
-		rel, err := packRelativeAsset(item.entry.AudioPath)
+		rel, err := packRelativeAsset(item.entry.filePath())
 		if err != nil {
 			return nil, fmt.Errorf("meeting %q: %w", item.entry.ID, err)
 		}

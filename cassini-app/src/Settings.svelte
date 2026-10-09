@@ -13,6 +13,7 @@
   import { loadConfig } from "./operator/config";
   import { OperatorClient } from "./operator/client";
   import SettingsPanel from "./SettingsPanel.svelte";
+  import StorageUsagePanel from "./StorageUsagePanel.svelte";
   import RetentionPanel from "./RetentionPanel.svelte";
   import RecordingSetup from "./RecordingSetup.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
@@ -63,6 +64,7 @@
       on:openTemplates={() => dispatch("panel", "templates")}
     />
   {:else if panel === "storage"}
+    <StorageUsagePanel {operatorClient} />
     <RetentionPanel {operatorClient} />
   {:else if panel === "templates"}
     <InsightTemplatesPanel

@@ -354,7 +354,10 @@ func mergeSegments(
 		pathByID[seg.Stream.StreamID] = seg.TempPath
 	}
 
-	args := []string{"-y", "-v", "error"}
+	// PlanMerge already subtracts each source's start time. Preserve those
+	// timestamps here so FFmpeg does not subtract it again, which otherwise
+	// adds a second Opus pre-skip offset on FFmpeg 6.
+	args := []string{"-y", "-v", "error", "-copyts"}
 	for _, plan := range streamPlans {
 		if math.Abs(plan.OffsetSeconds) > 1e-6 {
 			args = append(args, "-itsoffset", fmt.Sprintf("%.6f", plan.OffsetSeconds))
@@ -427,11 +430,9 @@ func planSegments(segments []segmentArtifact) []PlannedInput {
 			SourceStart:     sourceStart,
 		})
 	}
-	planned := PlanMerge(inputs)
-	if len(planned) == 1 {
-		planned[0].OffsetSeconds = 0
-	}
-	return planned
+	// A single stream needs the same source-start correction as multiple
+	// streams, so dropping a camera changes only the shared meeting origin.
+	return PlanMerge(inputs)
 }
 
 // firstPacketWallMS converts a packet's monotonic receive time into wall-clock

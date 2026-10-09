@@ -124,6 +124,28 @@ func TestBackfillIndexesAPublishedMeeting(t *testing.T) {
 	}
 }
 
+func TestBackfillIndexesAPublishedJSONMeeting(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
+
+	if err := os.Rename(canonicalOpusPath(f.workRoot, "JOB1"), filepath.Join(currentRoot(f.workRoot), "JOB1.json")); err != nil {
+		t.Fatal(err)
+	}
+	report, err := f.rt.backfillSearchIndex(context.Background(),
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.json"}},
+		deliveredState("sealed-audio-bytes"), nil)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if report.Indexed != 1 || report.Failed != 0 || report.Unavailable != 0 {
+		t.Fatalf("report = %+v, want indexed=1", report)
+	}
+	hits := matches(t, f.rt.searchStore, "acquisition")
+	if len(hits) != 1 || hits[0].SegmentID != "seg_0001" {
+		t.Fatalf("hits = %+v, want the producer's segment", hits)
+	}
+}
+
 func TestBackfillReportsEmptyTranscriptSeparatelyFromReadFailure(t *testing.T) {
 	f := newBackfillFixture(t)
 	archive := func(context.Context, string) (searchArchiveCopy, func(), error) {
@@ -668,5 +690,18 @@ func TestBackfillUpgradesArchiveRowsWhenTheBundleReturns(t *testing.T) {
 	}
 	if source != searchRowSourceSegments {
 		t.Errorf("row_source = %q, want the bundle's segments", source)
+	}
+}
+
+func TestBackfillJSONAfterSourceMediaDeletion(t *testing.T) {
+	f := newBackfillFixture(t)
+	// Neither a .run nor a .meeting exists. The published JSON supplies words.
+	archive, calls := stubArchive(archiveWords, digestOf("json"), nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), []searchBackfillTarget{{JobID: "TEXT", OpusName: "TEXT.json"}}, deliveredState("json"), archive)
+	if err != nil || report.Indexed != 1 || *calls != 1 {
+		t.Fatalf("report=%+v calls=%d err=%v", report, *calls, err)
+	}
+	if hits := matches(t, f.rt.searchStore, "acquisition"); len(hits) != 1 {
+		t.Fatalf("lost transcript search: %+v", hits)
 	}
 }

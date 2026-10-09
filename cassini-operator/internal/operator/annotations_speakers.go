@@ -372,9 +372,10 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 		return resp, err
 	}
 	switch {
-	case !speakerSourceAudioReady(job) || rt.store.artifactSourceExpired(ctx, jobID):
+	case !speakerSourceAudioReady(job) || rt.store.artifactSourceExpired(ctx, jobID) || deletesSourceMedia(job):
 		// Retention records an expired capture as such: the same reason,
-		// whatever the job row still names.
+		// whatever the job row still names. A capture set to be deleted after
+		// processing is gone, or about to be, for a refine as for a rerun.
 		resp.Reason = speakerReasonNoSourceAudio
 	case len(resp.Participants) == 0 || meeting.untranscribed:
 		// A build that kept only the audio still lists every participant,

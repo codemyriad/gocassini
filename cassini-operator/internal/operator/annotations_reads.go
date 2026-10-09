@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 )
 
 func (s *annotationService) readDocument(ctx context.Context, caller, meetingID, opusName, relPath string) (annotateResult, error) {
+	if err := s.exapp.meetingNotRetired(ctx, opusName); err != nil {
+		return annotateResult{}, annotateNotFound(err)
+	}
 	store := s.rt.annotationReads()
 	if store == nil {
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: fmt.Errorf("annotations store unavailable")}
@@ -101,7 +103,7 @@ func (s *annotationService) importListedDocuments(ctx context.Context, caller st
 		return
 	}
 	for _, entry := range entries {
-		if missing[entry.opusName] && strings.HasSuffix(entry.opusName, ".opus") {
+		if missing[entry.opusName] && isMeetingFile(entry.opusName) {
 			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
 			if err != nil {
 				continue
@@ -141,6 +143,9 @@ func (s *annotationService) importDocument(caller, meetingID, opusName, relPath 
 			return
 		}
 		defer unlock()
+		if err := s.exapp.meetingNotRetired(ctx, opusName); err != nil {
+			return
+		}
 		result, err := s.showMeeting(ctx, caller, meetingID, relPath)
 		if err == nil {
 			err = store.Record(ctx, opusName, result)

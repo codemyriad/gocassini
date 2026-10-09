@@ -50,6 +50,7 @@ type meetingsCatalogEntry struct {
 	DateLabel        string `json:"dateLabel"`
 	ArtifactPath     string `json:"artifactPath,omitempty"`
 	AudioPath        string `json:"audioPath,omitempty"`
+	MeetingPath      string `json:"meetingPath,omitempty"`
 	SpeakerCount     int    `json:"speakerCount,omitempty"`
 	SegmentCount     int    `json:"segmentCount,omitempty"`
 	DigestDurationMS int64  `json:"digestDurationMs,omitempty"`
@@ -367,7 +368,7 @@ func (l meetingsListing) find(id string) (meetingsCatalogEntry, error) {
 // make this CLI hand that credential to whatever host the catalog asked for.
 // Nothing legitimate needs that, so it is refused rather than trusted.
 func resolveMeetingAudioURL(catalogURL *url.URL, entry meetingsCatalogEntry) (*url.URL, error) {
-	audioPath := strings.TrimSpace(entry.AudioPath)
+	audioPath := strings.TrimSpace(entry.filePath())
 	if audioPath == "" {
 		if strings.TrimSpace(entry.ArtifactPath) != "" {
 			return nil, fmt.Errorf("meeting %q predates the single-file format: it has only an artifactPath directory, with no portable .opus to fetch", entry.ID)
@@ -511,4 +512,11 @@ func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing, filter mee
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(document)
+}
+
+func (e meetingsCatalogEntry) filePath() string {
+	if e.MeetingPath != "" {
+		return e.MeetingPath
+	}
+	return e.AudioPath
 }

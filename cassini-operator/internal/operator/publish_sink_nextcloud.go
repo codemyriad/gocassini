@@ -77,8 +77,8 @@ func (s *nextcloudFilesPublishSink) putOverDeliveredCopy(ctx context.Context, it
 }
 
 func (s *nextcloudFilesPublishSink) stageDeliveredMarks(ctx context.Context, item upload, dir string) (upload, annotateResult, error) {
-	delivered := filepath.Join(dir, "delivered.opus")
-	staged := filepath.Join(dir, "staged.opus")
+	delivered := filepath.Join(dir, "delivered"+meetingExtension(item.remote))
+	staged := filepath.Join(dir, "staged"+meetingExtension(item.remote))
 	// A retry reuses the directory; nothing read at a stale ETag may leak into it.
 	for _, p := range []string{delivered, staged} {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
@@ -121,7 +121,7 @@ func (s *nextcloudFilesPublishSink) sealedIfDeliveredIsUnreadable(ctx context.Co
 }
 
 func (s *nextcloudFilesPublishSink) carriesMarks(item upload) bool {
-	return strings.HasSuffix(item.remote, ".opus") && strings.TrimSpace(s.cassiniBin) != ""
+	return isMeetingFile(item.remote) && strings.TrimSpace(s.cassiniBin) != ""
 }
 
 func newCarryDir(item upload) (string, func(), error) {
@@ -187,7 +187,7 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 			return err
 		}
 	}
-	if _, _, err := s.cfg.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, item.remote, item.local, ncRecordingsContentType, ifMatch); err != nil {
+	if _, _, err := s.cfg.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, item.remote, item.local, meetingContentType(item.remote), ifMatch); err != nil {
 		return fmt.Errorf("put %s: %w", item.remote, err)
 	}
 
@@ -200,7 +200,7 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 			return err
 		}
 		defer cleanup()
-		verified := filepath.Join(dir, "verified.opus")
+		verified := filepath.Join(dir, "verified"+meetingExtension(item.remote))
 		if _, _, err = s.cfg.stageRecording(ctx, s.client, ncRecordingsOwner, item.remote, verified, maxAnnotateRecordingBytes); err != nil {
 			return err
 		}

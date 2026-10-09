@@ -120,6 +120,13 @@ WHERE job_id = ? AND attempt_number = ?`, column), path, nowUTCString(), jobID, 
 func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string) (Job, error) {
 	unlock := s.lockArtifacts(job.ID)
 	defer unlock()
+	fresh, err := s.GetJob(ctx, job.ID)
+	if err != nil {
+		return Job{}, err
+	}
+	if deletesSourceMedia(fresh) {
+		return Job{}, fmt.Errorf("%w: source media is scheduled for deletion after processing", ErrJobNotEligibleForRerun)
+	}
 	if pending, expired := s.artifactAdmission(ctx, job.ID); pending || expired {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
@@ -149,13 +156,16 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 }
 
 // artifactAdmission says why jobID cannot take a new attempt now: an archive
-// operation (a promotion or an expiry) is journalled and not finished, or
+// operation (a promotion or an expiry) is journalled and not finished, a
+// Nextcloud retention operation on the published meeting is not completed, or
 // retention removed the capture every attempt rebuilds from. A pending check
 // that cannot be read counts as pending. The caller holds the job's artifact
 // lock, so neither can start between this and the attempt it queues.
 func (s *Store) artifactAdmission(ctx context.Context, jobID string) (pending, sourceExpired bool) {
 	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artifact_operations WHERE job_id=?`, jobID).Scan(&n); err != nil || n != 0 {
+	if err := s.db.QueryRowContext(ctx, `SELECT
+ (SELECT count(*) FROM artifact_operations WHERE job_id=?) +
+ (SELECT count(*) FROM remote_retention_operation WHERE name IN (?,?) AND status!='completed')`, jobID, jobID+".opus", jobID+".json").Scan(&n); err != nil || n != 0 {
 		return true, false
 	}
 	return false, s.artifactSourceExpired(ctx, jobID)

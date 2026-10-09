@@ -602,19 +602,24 @@ func TestLoadConfigKeepsStandaloneModelsOnStateVolume(t *testing.T) {
 }
 
 func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
+	// Startup recovery runs before NewRuntime starts the requeue dispatcher.
+	// A live runtime can publish the queued fixture before we inspect it.
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
 
-	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-record", Stage: "record", State: "queued", CreatedAt: "2026-04-29T10:00:00Z"})
-	seedJobRow(t, rt.store.db, seededJobRow{ID: "running-build", Stage: "build", State: "running", CreatedAt: "2026-04-29T10:01:00Z"})
-	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-build", Stage: "build", State: "queued", CreatedAt: "2026-04-29T10:01:30Z"})
-	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-publish", Stage: "publish", State: "queued", CreatedAt: "2026-04-29T10:02:00Z"})
-	seedJobRow(t, rt.store.db, seededJobRow{ID: "blocked-build", Stage: "build", State: "blocked", CreatedAt: "2026-04-29T10:02:30Z"})
-	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-success", Stage: "done", State: "succeeded", CreatedAt: "2026-04-29T10:03:00Z", CompletedAt: strPtr("2026-04-29T10:04:00Z")})
-	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-failed", Stage: "done", State: "failed", CreatedAt: "2026-04-29T10:05:00Z", CompletedAt: strPtr("2026-04-29T10:06:00Z")})
+	seedJobRow(t, store.db, seededJobRow{ID: "queued-record", Stage: "record", State: "queued", CreatedAt: "2026-04-29T10:00:00Z"})
+	seedJobRow(t, store.db, seededJobRow{ID: "running-build", Stage: "build", State: "running", CreatedAt: "2026-04-29T10:01:00Z"})
+	seedJobRow(t, store.db, seededJobRow{ID: "queued-build", Stage: "build", State: "queued", CreatedAt: "2026-04-29T10:01:30Z"})
+	seedJobRow(t, store.db, seededJobRow{ID: "queued-publish", Stage: "publish", State: "queued", CreatedAt: "2026-04-29T10:02:00Z"})
+	seedJobRow(t, store.db, seededJobRow{ID: "blocked-build", Stage: "build", State: "blocked", CreatedAt: "2026-04-29T10:02:30Z"})
+	seedJobRow(t, store.db, seededJobRow{ID: "done-success", Stage: "done", State: "succeeded", CreatedAt: "2026-04-29T10:03:00Z", CompletedAt: strPtr("2026-04-29T10:04:00Z")})
+	seedJobRow(t, store.db, seededJobRow{ID: "done-failed", Stage: "done", State: "failed", CreatedAt: "2026-04-29T10:05:00Z", CompletedAt: strPtr("2026-04-29T10:06:00Z")})
 
 	interruptedAt := "2026-04-29T11:00:00Z"
-	count, err := rt.store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
+	count, err := store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
 	if err != nil {
 		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
 	}
@@ -622,14 +627,14 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 		t.Fatalf("count = %d, want 2", count)
 	}
 
-	queuedRecord := mustGetJob(t, rt.store, "queued-record")
+	queuedRecord := mustGetJob(t, store, "queued-record")
 	if queuedRecord.Stage != "record" || queuedRecord.State != "interrupted" {
 		t.Fatalf("unexpected queued record job = %#v", queuedRecord)
 	}
 	if queuedRecord.InterruptedAt == nil || *queuedRecord.InterruptedAt != interruptedAt {
 		t.Fatalf("unexpected interrupted_at for queued record = %#v", queuedRecord.InterruptedAt)
 	}
-	queuedRecordAttempts, err := rt.store.ListJobAttempts(context.Background(), "queued-record")
+	queuedRecordAttempts, err := store.ListJobAttempts(context.Background(), "queued-record")
 	if err != nil {
 		t.Fatalf("ListJobAttempts() error = %v", err)
 	}
@@ -637,34 +642,34 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 		t.Fatalf("unexpected queued-record attempts = %#v", queuedRecordAttempts)
 	}
 
-	runningBuild := mustGetJob(t, rt.store, "running-build")
+	runningBuild := mustGetJob(t, store, "running-build")
 	if runningBuild.Stage != "build" || runningBuild.State != "interrupted" {
 		t.Fatalf("unexpected running build job = %#v", runningBuild)
 	}
 
 	// Queued build/publish rows survive a restart untouched: their inputs are
 	// durable on disk and the requeue dispatcher re-delivers them (D-367).
-	queuedBuild := mustGetJob(t, rt.store, "queued-build")
+	queuedBuild := mustGetJob(t, store, "queued-build")
 	if queuedBuild.Stage != "build" || queuedBuild.State != "queued" || queuedBuild.InterruptedAt != nil {
 		t.Fatalf("queued build job should stay queued, got %#v", queuedBuild)
 	}
 
-	queuedPublish := mustGetJob(t, rt.store, "queued-publish")
+	queuedPublish := mustGetJob(t, store, "queued-publish")
 	if queuedPublish.Stage != "publish" || queuedPublish.State != "queued" || queuedPublish.InterruptedAt != nil {
 		t.Fatalf("queued publish job should stay queued, got %#v", queuedPublish)
 	}
 
-	blockedBuild := mustGetJob(t, rt.store, "blocked-build")
+	blockedBuild := mustGetJob(t, store, "blocked-build")
 	if blockedBuild.Stage != "build" || blockedBuild.State != "blocked" || blockedBuild.InterruptedAt != nil {
 		t.Fatalf("blocked build job should remain recoverable after restart, got %#v", blockedBuild)
 	}
 
-	doneSuccess := mustGetJob(t, rt.store, "done-success")
+	doneSuccess := mustGetJob(t, store, "done-success")
 	if doneSuccess.State != "succeeded" || doneSuccess.InterruptedAt != nil {
 		t.Fatalf("completed success should be unchanged, got %#v", doneSuccess)
 	}
 
-	doneFailed := mustGetJob(t, rt.store, "done-failed")
+	doneFailed := mustGetJob(t, store, "done-failed")
 	if doneFailed.State != "failed" || doneFailed.InterruptedAt != nil {
 		t.Fatalf("completed failed should be unchanged, got %#v", doneFailed)
 	}
@@ -1033,7 +1038,7 @@ func TestCreateJobAcceptsExplicitTalkTargetWithoutURL(t *testing.T) {
 
 	logText := readFileString(t, logPath)
 	for _, want := range []string{
-		"record --out",
+		"record --retain-video=false --out",
 		"--call https://example.test/call/room-42",
 		"--talk-base-url https://example.test",
 		"--talk-room-token room-42",

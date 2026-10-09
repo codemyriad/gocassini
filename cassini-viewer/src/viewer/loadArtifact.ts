@@ -18,6 +18,7 @@ import {
   readSplitDevices,
   describeTranscript,
   extractPortableManifestFromArrayBuffer,
+  extractTranscriptionDocument,
   getDefaultTranscriptId,
   listAvailableTranscripts,
   loadPortableTranscriptBody,
@@ -34,6 +35,7 @@ import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import { withoutSplitDevices } from "../core/speakers";
 
 export interface LoadedArtifact {
+  transcriptionOnly?: boolean;
   transcriptionStatus?: { status: "completed" | "skipped" | "failed"; reason?: string };
   transcript: TranscriptWordsV1;
   displayTranscript: DisplayTranscriptV1 | null;
@@ -267,7 +269,7 @@ export async function loadPortableArtifactFromAudioPath(
   store.primeBodies(resolvedAudioPath, manifest, currentTranscriptId);
   return buildPortableLoadedArtifact({
     manifest,
-    audioSrc: resolvedAudioPath,
+    audioSrc: manifest.transcriptionOnly ? "" : resolvedAudioPath,
     availableTranscripts,
     currentTranscriptId,
   });
@@ -350,7 +352,7 @@ export async function switchPortableTranscript(
   const availableTranscripts = listAvailableTranscripts(manifest);
   return buildPortableLoadedArtifact({
     manifest: swappedManifest,
-    audioSrc: resolvedAudioPath,
+    audioSrc: manifest.transcriptionOnly ? "" : resolvedAudioPath,
     availableTranscripts,
     currentTranscriptId: transcriptId,
   });
@@ -383,6 +385,7 @@ function buildPortableLoadedArtifact({
     displayTranscript,
     readableTranscript,
     summary: readPortableSummaryMarkdown(manifest),
+    transcriptionOnly: manifest.transcriptionOnly === true,
     index: buildTranscriptIndex(transcript),
     audioSrc,
     captionsSrc: null,
@@ -545,6 +548,13 @@ function resolveDocumentAssetUrl(assetPath: string): string {
 }
 
 async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): Promise<ExtractedPortableManifest> {
+  if (new URL(audioUrl).pathname.toLowerCase().endsWith(".json")) {
+    // no-store already bypasses the HTTP cache, so it also covers a fresh load.
+    const response = await fetch(audioUrl, {...init, cache: "no-store"});
+    if (!response.ok) throw new Error(`Could not load ${audioUrl}.`);
+    return extractTranscriptionDocument(await response.json());
+  }
+
   const partialResponse = await fetch(audioUrl, {
     ...init,
     headers: {

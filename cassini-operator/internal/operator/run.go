@@ -82,11 +82,13 @@ type Config struct {
 }
 
 type Runtime struct {
-	retention        *retentionConfig
-	retentionSweepMu sync.Mutex
-	modelMu          sync.Mutex
-	modelCancel      context.CancelFunc
-	modelJobID       string
+	remoteRetentionMu sync.RWMutex
+	remoteRetention   *annotationService
+	retention         *retentionConfig
+	retentionSweepMu  sync.Mutex
+	modelMu           sync.Mutex
+	modelCancel       context.CancelFunc
+	modelJobID        string
 	// modelInventoryCache holds `cassini models list` results per device;
 	// see cachedModelInventory.
 	modelInventoryMu    sync.Mutex
@@ -229,21 +231,37 @@ type Runtime struct {
 	llmMu           sync.RWMutex
 	llm             LLMSettings
 	llmSettingsPath string
+	// storageUsage is an explicitly refreshed, process-local index. GET reads it
+	// in constant time; only POST /storage/usage performs filesystem and WebDAV
+	// traversal. storageUsageRefreshMu keeps two administrator-triggered scans
+	// from running over the same archive at once.
+	storageUsageMu        sync.RWMutex
+	storageUsageRefreshMu sync.Mutex
+	storageUsage          storageUsageResponse
+	// detailedStorageUsage combines published roots with retention categories,
+	// lifecycle dates and local directory totals. It refreshes independently
+	// from the aggregate report.
+	detailedStorageUsageMu        sync.RWMutex
+	detailedStorageUsageRefreshMu sync.Mutex
+	detailedStorageUsage          detailedStorageUsageResponse
 }
 
 type TriggerRequest struct {
-	Platform              string  `json:"platform"`
-	BaseURL               string  `json:"baseURL,omitempty"`
-	TalkConnectURL        string  `json:"talkConnectURL,omitempty"`
-	RoomToken             string  `json:"roomToken,omitempty"`
-	URL                   string  `json:"url,omitempty"`
-	TalkAuthMode          string  `json:"talkAuthMode"`
-	GuestName             string  `json:"guestName"`
-	DurationSeconds       *int    `json:"duration,omitempty"`
-	StopWhenRoomEmpty     bool    `json:"stopWhenRoomEmpty"`
-	RoomEmptyGraceSeconds float64 `json:"roomEmptyGrace"`
-	StopWhenRoomEmptySet  bool    `json:"-"`
-	RoomEmptyGraceSet     bool    `json:"-"`
+	ProcessingPolicy      *recordingProcessingPolicy `json:"processing_policy,omitempty"`
+	RetainVideo           bool                       `json:"retain_video"`
+	CaptureMode           string                     `json:"capture_mode,omitempty"`
+	Platform              string                     `json:"platform"`
+	BaseURL               string                     `json:"baseURL,omitempty"`
+	TalkConnectURL        string                     `json:"talkConnectURL,omitempty"`
+	RoomToken             string                     `json:"roomToken,omitempty"`
+	URL                   string                     `json:"url,omitempty"`
+	TalkAuthMode          string                     `json:"talkAuthMode"`
+	GuestName             string                     `json:"guestName"`
+	DurationSeconds       *int                       `json:"duration,omitempty"`
+	StopWhenRoomEmpty     bool                       `json:"stopWhenRoomEmpty"`
+	RoomEmptyGraceSeconds float64                    `json:"roomEmptyGrace"`
+	StopWhenRoomEmptySet  bool                       `json:"-"`
+	RoomEmptyGraceSet     bool                       `json:"-"`
 }
 
 type createJobResponse struct {
@@ -325,6 +343,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	exappCfg.meetingMetadata = runtime.meetingMetadata
+	exappCfg.lifecycle = store
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
@@ -388,6 +407,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// silently does not serve published/meetings-context, and one configured
 	// with a relative CASSINI_BIN serves it via a path nothing validated.
 	exappCfg.CassiniBin = cfg.CassiniBin
+	// Keep the full storage index warm on fixed five-minute boundaries. This is
+	// started after the ExApp configuration is complete because the index may
+	// read Nextcloud Files as well as local artifacts.
+	runtime.startDetailedStorageUsageRebuilder(exappCfg)
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{
@@ -789,11 +812,13 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	if searchIndex, err := openSearchStore(searchStorePath(cfg.DBPath), logger); err != nil {
 		logger.Printf("search index unavailable (%v); meetings will publish but not be indexed", err)
 	} else {
+		searchIndex.lifecycle = store
 		rt.searchStore = searchIndex
 	}
 	if metadata, err := openMeetingMetadataStore(meetingMetadataPath(cfg.DBPath), logger); err != nil {
 		logger.Printf("meeting metadata index unavailable (%v); list metadata will need archive recovery", err)
 	} else {
+		metadata.lifecycle = store
 		rt.meetingMetadata = metadata
 	}
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
@@ -867,6 +892,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.workerWG.Add(1)
 	go rt.requeueDispatcher()
 	rt.startRetentionWorker()
+	rt.startMediaCleanupWorker()
 	return rt
 }
 
@@ -947,9 +973,13 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// (D-718).
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
+		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
+		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
 		{"/storage/retention/sweep", http.HandlerFunc(rt.retentionSweepHandler)},
+		{"/storage/retention/preview", http.HandlerFunc(rt.remoteRetentionPreviewHandler)},
+		{"/storage/retention/operations", http.HandlerFunc(rt.remoteRetentionOperationsHandler)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the
 		// old hand-rolled list because main moved route registration into this
@@ -987,7 +1017,16 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	exappCfg.lifecycle = rt.store
 	annotations := newAnnotationService(rt, exappCfg, logger)
+	rt.remoteRetentionMu.Lock()
+	rt.remoteRetention = annotations
+	rt.remoteRetentionMu.Unlock()
+	if annotations != nil {
+		if err := annotations.recoverRemoteRetentionAtStartup(rt.ctx); err != nil {
+			logger.Printf("remote retention recovery: %v", err)
+		}
+	}
 	search := rt.searchDeps()
 	if annotations != nil {
 		search.importAnnotations = annotations.importListedDocuments
@@ -1009,6 +1048,17 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	if annotations != nil {
 		rt.startInitialAnnotationBuild(exappCfg, logger)
 		annotations.register(root)
+		if rt.ctx != nil && rt.retention != nil {
+			rt.workerWG.Add(1)
+			go func() {
+				defer rt.workerWG.Done()
+				rt.retentionSweepMu.Lock()
+				defer rt.retentionSweepMu.Unlock()
+				if err := annotations.runRemoteRetention(rt.ctx, time.Now()); err != nil {
+					logger.Printf("startup remote retention: %v", err)
+				}
+			}()
+		}
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)
@@ -1109,6 +1159,7 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for i := range jobs {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
+			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i])
 		}
 		writeJSON(w, http.StatusOK, jobs)
 	case http.MethodPost:
@@ -1170,9 +1221,10 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 }
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
+	defer rt.recordWG.Done()
 	unlock := rt.store.lockArtifacts(job.ID)
 	defer unlock()
-	defer rt.recordWG.Done()
+	defer rt.cleanupMediaAfterStage(job.ID)
 	// The record slot is freed as soon as the record subprocess exits (the
 	// releaseSlot call below): post-record bookkeeping — Talk delivery with
 	// its retry schedule, the build handoff — must not hold recording
@@ -1275,6 +1327,27 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 		return createJobResponse{}, nil, errRecordBusy
 	}
 
+	// Freeze trusted capture policy at admission; caller JSON is never consent.
+	settings := rt.currentSettings()
+	if err := normalizeSourceRetention(&settings); err != nil {
+		rt.releaseRecordSlot()
+		return createJobResponse{}, nil, fmt.Errorf("%w: %v", errRecordingSetup, err)
+	}
+	req.ProcessingPolicy = &recordingProcessingPolicy{MeetingFormat: settings.MeetingFormat, SourceRetention: settings.SourceRetention}
+	if settings.SourceRetention == sourceDeleteAfterProcessing {
+		req.ProcessingPolicy.Transcription = &settings
+	}
+	req.RetainVideo = settings.RetainVideo
+	req.CaptureMode = "audio-only"
+	if req.RetainVideo {
+		req.CaptureMode = "audio-video"
+	}
+	var err error
+	requestBody, err = encodeTriggerRequest(req)
+	if err != nil {
+		rt.releaseRecordSlot()
+		return createJobResponse{}, nil, err
+	}
 	jobID := ulid.Make().String()
 	now := nowUTCString()
 	job := Job{
@@ -1392,6 +1465,10 @@ func OpenStore(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.ensureMeetingLifecycleSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := store.ensureRetentionSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -1404,16 +1481,17 @@ func (s *Store) Close() error {
 }
 
 type Job struct {
-	SourceExpired        bool    `json:"source_expired,omitempty"`
-	ID                   string  `json:"id"`
-	Provider             string  `json:"provider"`
-	RequestJSON          string  `json:"request_json"`
-	Stage                string  `json:"stage"`
-	State                string  `json:"state"`
-	CurrentAttemptNumber int     `json:"current_attempt_number"`
-	RerunCount           int     `json:"rerun_count"`
-	ArtifactRunPath      *string `json:"artifact_run_path"`
-	ArtifactMeetingPath  *string `json:"artifact_meeting_path"`
+	MediaCleanup         *mediaCleanupStatus `json:"media_cleanup,omitempty"`
+	SourceExpired        bool                `json:"source_expired,omitempty"`
+	ID                   string              `json:"id"`
+	Provider             string              `json:"provider"`
+	RequestJSON          string              `json:"request_json"`
+	Stage                string              `json:"stage"`
+	State                string              `json:"state"`
+	CurrentAttemptNumber int                 `json:"current_attempt_number"`
+	RerunCount           int                 `json:"rerun_count"`
+	ArtifactRunPath      *string             `json:"artifact_run_path"`
+	ArtifactMeetingPath  *string             `json:"artifact_meeting_path"`
 	// ArtifactOpusPath is the canonical portable meeting, current/<id>.opus,
 	// promoted from the attempt the seal stage sealed. ArtifactOpusSHA256 is
 	// that file's digest, which the publish worker re-checks before delivering
@@ -1504,6 +1582,11 @@ INSERT INTO jobs (
 	)
 	if err != nil {
 		return fmt.Errorf("insert job: %w", err)
+	}
+	if deletesSourceMedia(job) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO media_cleanup(job_id) VALUES(?)`, job.ID); err != nil {
+			return err
+		}
 	}
 	if err := insertInitialAttemptTx(tx, job); err != nil {
 		return err
@@ -1954,6 +2037,14 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rt.handleStopJob(w, r, id)
+		return
+	}
+	if action == "cleanup" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleRetryMediaCleanup(w, r, id)
 		return
 	}
 	if action == "rerun" {

@@ -151,7 +151,25 @@ For current Cassini files, the important fields are:
 - `speakers`: rendered as readable speaker chips, not raw JSON
 - `provenance.*`: rendered in the `Processing` section
 
-The recorder writes `source.recordedAtLocal` into `manifest.json`, and portable packing copies it into the embedded portable manifest.
+The recorder captures its local wall-clock start once in `session.json` as
+`recorded_at_local` (`YYYY-MM-DDTHH:MM:SS`, without a timezone). Remuxing preserves
+it in the MKV container and embedded session report. The build reads that metadata
+into `source.recordedAtLocal` in `manifest.json`, including when transcription is
+disabled or fails. Older recordings without the metadata retain filename inference;
+unknown recording times remain absent.
+
+```text
+session.json -> MKV recorded_at_local -> manifest.json source.recordedAtLocal
+                                      -> Opus meeting.recordedAtLocal + tag
+                                      -> transcription JSON source.meeting.recordedAtLocal
+```
+
+Portable packing copies the value into the embedded meeting manifest and
+`CASSINI_RECORDED_AT_LOCAL` tag. Transcription-only packing and audio removal
+preserve both. Rebuilding on a host with a different timezone does not convert the
+saved label. Existing viewer formatting and retention precedence remain unchanged.
+This applies to newly captured recordings; it does not backfill previously published
+files.
 
 ## Static export
 

@@ -475,7 +475,7 @@ func (c *meetingsClient) stageMeetingOpus(ctx context.Context, audioURL *url.URL
 		return "", func() {}, fmt.Errorf("create temp directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(tmpDir) }
-	opusPath := filepath.Join(tmpDir, "meeting.opus")
+	opusPath := filepath.Join(tmpDir, "meeting"+filepath.Ext(audioURL.Path))
 	if _, err := c.downloadMeeting(ctx, audioURL, opusPath); err != nil {
 		cleanup()
 		return "", func() {}, err

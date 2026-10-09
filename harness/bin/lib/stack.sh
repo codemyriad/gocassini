@@ -589,6 +589,10 @@ harness_render_stack_configs() {
     # in the host-network signaling config. Local harness only: accept the
     # shared backend secret for Docker-internal callback origins.
     harness_render_full_profile_configs true
+  else
+    # Local runs can also use a project-specific Nextcloud port. Render the
+    # matching backend allowlist instead of mounting the stock 28080 config.
+    harness_render_full_profile_configs false
   fi
 }
 

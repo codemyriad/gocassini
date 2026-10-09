@@ -1462,6 +1462,8 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
       // portable's createdAtUtc batch-processing timestamp.
       expect(byId.get("daily-meeting-2026-04-08")).toMatchObject({
         dateLabel: "2026-04-08",
+        createdAtUtc: "2026-04-08T07:31:02Z",
+        recordedAtLocal: "",
       });
       // The same remains true when createdAtUtc is absent.
       expect(byId.get("daily-meeting-2026-04-09")).toMatchObject({

@@ -294,19 +294,27 @@ FROM job_attempts WHERE job_id = ? AND attempt_number = ?`, jobID, attemptNumber
 // always on its way to the published recording, across any restart.
 //
 // It is admitted the way a rerun is (QueueRerunAttempt), under the job's
-// artifact lock: not while an archive operation is pending, and not once the
-// capture has expired. The lock is waited for only briefly
-// (speakerEditsLockWait): a worker holds it for a whole build, seal or
-// publish, and a person saving names must not wait on one. A job whose lock
-// stays taken is busy.
+// artifact lock: not while an archive or Nextcloud retention operation is
+// pending, and not once the capture has expired or is set to be deleted after
+// processing. The lock is waited for only briefly (speakerEditsLockWait): a
+// worker holds it for a whole build, seal or publish, and a person saving
+// names must not wait on one. A job whose lock stays taken is busy.
 func (s *Store) QueueSpeakerEdits(ctx context.Context, jobID string, expectRevision int, doc speakerEditsDoc, updatedBy, queuedAt string) (int, error) {
 	unlock, ok := s.lockArtifactsWithin(ctx, jobID, speakerEditsLockWait)
 	if !ok {
 		return 0, errSpeakerEditsBusy
 	}
 	defer unlock()
+	job, err := s.GetJob(ctx, jobID)
+	if err != nil {
+		return 0, err
+	}
 	pending, expired := s.artifactAdmission(ctx, jobID)
 	switch {
+	case deletesSourceMedia(job):
+		// The capture a refine rebuilds from is deleted after processing, as
+		// a rerun's is: the same refusal as an expired one.
+		return 0, errSpeakerEditsSourceExpired
 	case pending:
 		return 0, errSpeakerEditsBusy
 	case expired:

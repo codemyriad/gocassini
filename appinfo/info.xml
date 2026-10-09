@@ -205,7 +205,7 @@ Documentation: https://gocassini.com/docs]]></description>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^operator\/jobs\/[^\/]+\/rerun\/?$</url>
+        <url>^operator\/jobs\/[^\/]+\/(rerun|cleanup)\/?$</url>
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
@@ -228,6 +228,17 @@ Documentation: https://gocassini.com/docs]]></description>
         <verb>GET,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: storage usage summaries and per-category details. -->
+      <route>
+        <url>^operator\/storage\/usage\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/usage\/details\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: recordings storage status. GET reports whether the "cassini"
            service account exists and whether its Files tree and the sharing
            API are ready, with the setup steps still missing; POST
@@ -246,6 +257,16 @@ Documentation: https://gocassini.com/docs]]></description>
       <route>
         <url>^operator\/storage\/retention\/sweep\/?$</url>
         <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/retention\/preview\/?$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/retention\/operations\/?$</url>
+        <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,
