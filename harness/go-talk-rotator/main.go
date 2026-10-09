@@ -564,6 +564,9 @@ type botConfig struct {
 	RecordingPollTimeout time.Duration
 	MediaStartGate       *mediaStartGate
 	CallURLRaw           string
+	// StartAudible: all-audible mode with no mute gate, so nothing will
+	// ever mute this bot once its audio is ready (see connectMuted).
+	StartAudible bool
 }
 
 type muteRotationGate struct {
@@ -768,7 +771,7 @@ func (b *bot) run(parent context.Context) (runErr error) {
 	if err := b.startWebRTC(ctx); err != nil {
 		return err
 	}
-	if err := b.setAudioMuted(true); err != nil {
+	if err := b.setAudioMuted(b.connectMuted()); err != nil {
 		return err
 	}
 	b.markConnected()
@@ -1833,6 +1836,15 @@ func (b *bot) setAudioMuted(muted bool) error {
 	return nil
 }
 
+// connectMuted reports whether the bot mutes its audio as it connects. The
+// rotator unmutes bots by polling, so a bot whose media starts between two
+// polls drops its first packets. A bot in all-audible mode that is ready at
+// once and has no mute gate to wait for would be unmuted by the next poll
+// anyway, so it starts audible instead.
+func (b *bot) connectMuted() bool {
+	return !(b.cfg.StartAudible && b.isAudioReady())
+}
+
 func (b *bot) isAudioMutedFlag() bool {
 	b.muteMu.Lock()
 	defer b.muteMu.Unlock()
@@ -2698,6 +2710,7 @@ func run() error {
 			RecordingPollTimeout: time.Duration(recordingTimeoutSec * float64(time.Second)),
 			MediaStartGate:       mediaGate,
 			CallURLRaw:           callURL,
+			StartAudible:         allAudible && strings.TrimSpace(muteStartFile) == "",
 		})
 	}
 

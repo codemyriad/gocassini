@@ -1177,6 +1177,13 @@ with every participant audible together, pass `--all-audible` or set
 ROTATOR_ALL_AUDIBLE=1 ./harness/bin/stream-video.sh --call-url "$CALL_URL" --users 3
 ```
 
+Expect people talking over each other when the showcase plays this way. Its
+start times were written against guessed line lengths, and the synthesized
+voices (Kokoro, a local text-to-speech engine) speak more slowly: the fixture
+holds 234 s of speech in a 182 s meeting, and 33 of its 36 speaker changes
+start before the previous line has ended, by up to 4.5 s. Each participant's
+own track is clean, so per-speaker transcription is unaffected.
+
 Guest bots also tell every in-call session their name with the same
 `nickChanged` signaling message Talk's web client sends, so the recorder can
 label a guest who joins at the moment the recording starts. Nextcloud's own

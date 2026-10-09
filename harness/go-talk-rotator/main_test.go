@@ -375,3 +375,26 @@ func TestAuthenticatedBotDoesNotAnnounceNick(t *testing.T) {
 		},
 	})
 }
+
+// The rotator unmutes by polling, so a bot that connected muted in all-audible
+// mode could drop the first packets of its media before the next poll. Such a
+// bot starts audible, unless it still has to wait: for a mute gate (no
+// StartAudible) or for its audio-ready delay.
+func TestConnectMutedOnlyWhenSomethingWillUnmuteLater(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  botConfig
+		want bool
+	}{
+		{"rotation", botConfig{}, true},
+		{"all audible", botConfig{StartAudible: true}, false},
+		{"all audible, audio ready later", botConfig{StartAudible: true, AudioReady: 2 * time.Second}, true},
+		{"all audible, audio track added later", botConfig{StartAudible: true, AudioTrackAfter: time.Second}, true},
+	}
+	for _, tc := range cases {
+		cfg := tc.cfg
+		if got := newBot(&cfg).connectMuted(); got != tc.want {
+			t.Errorf("%s: connectMuted()=%v want %v", tc.name, got, tc.want)
+		}
+	}
+}
