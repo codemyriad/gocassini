@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -708,6 +709,235 @@ func TestSpeakersRefuseARebuildThatWasNeverPublished(t *testing.T) {
 	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", `{"expectRevision":0,"doc":{"labels":[{"speakerId":"spk_room","label":"Room"}]}}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), speakerReasonUnpublishedRebuild) {
 		t.Fatalf("POST after an unpublished rerun = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A save queues an attempt, so it is admitted the way a rerun is: under the
+// job's artifact lock, never while an archive operation is pending, and
+// never once retention removed the capture. The lock is waited for only
+// briefly, so a worker holding it for a whole build answers busy instead of
+// holding the request, and one that lets go in time does not.
+func TestSpeakersPostIsAdmittedLikeARerun(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	const body = `{"expectRevision":0,"doc":{"splits":[{"speakerId":"spk_room"}]}}`
+	queuedNothing := func(step string) {
+		t.Helper()
+		rec, err := f.rt.store.GetSpeakerEdits(context.Background(), "MEETING1")
+		job, jobErr := f.rt.store.GetJob(context.Background(), "MEETING1")
+		if err != nil || jobErr != nil || rec.Revision != 0 || job.CurrentAttemptNumber != 1 {
+			t.Fatalf("%s: revision %d attempt %d (%v %v), want nothing stored or queued", step, rec.Revision, job.CurrentAttemptNumber, err, jobErr)
+		}
+	}
+
+	// A build, seal, publish or expiry of the job holds its lock.
+	unlock := f.rt.store.lockArtifacts("MEETING1")
+	answered := make(chan *httptest.ResponseRecorder, 1)
+	go func() { answered <- annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body) }()
+	select {
+	case rec := <-answered:
+		if rec.Code != http.StatusConflict || annTestError(t, rec) != "busy" {
+			t.Fatalf("POST while the artifacts are locked = %d %s", rec.Code, rec.Body.String())
+		}
+	case <-time.After(testWaitTimeout):
+		unlock()
+		t.Fatal("POST waited on the job's artifact lock")
+	}
+	unlock()
+	queuedNothing("locked")
+
+	// A lock released while the save waits for it: let go only once the
+	// save found it taken.
+	waiting := make(chan struct{}, 1)
+	f.rt.store.lockWaitBlocked = func(string) {
+		select {
+		case waiting <- struct{}{}:
+		default:
+		}
+	}
+	unlock = f.rt.store.lockArtifacts("MEETING1")
+	go func() { answered <- annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body) }()
+	select {
+	case <-waiting:
+	case <-time.After(testWaitTimeout):
+		unlock()
+		t.Fatal("POST never waited for the job's artifact lock")
+	}
+	unlock()
+	if rec := <-answered; rec.Code != http.StatusOK {
+		t.Fatalf("POST once the lock came free = %d %s", rec.Code, rec.Body.String())
+	}
+	// Back to idle at revision 0 for the checks below.
+	if _, err := f.rt.store.db.Exec(`DELETE FROM speaker_edits; DELETE FROM job_attempts WHERE attempt_number > 1; UPDATE jobs SET stage = 'done', state = 'succeeded', current_attempt_number = 1`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A promotion or expiry journalled and not finished.
+	if _, err := f.rt.store.db.Exec(`INSERT INTO artifact_operations (job_id, operation) VALUES ('MEETING1', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body); rec.Code != http.StatusConflict || annTestError(t, rec) != "busy" {
+		t.Fatalf("POST with an archive operation pending = %d %s", rec.Code, rec.Body.String())
+	}
+	queuedNothing("pending operation")
+	if _, err := f.rt.store.db.Exec(`DELETE FROM artifact_operations`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Retention removed the capture.
+	if _, err := f.rt.store.db.Exec(`INSERT INTO artifact_availability (job_id, source) VALUES ('MEETING1', 'expired')`); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.get(t, "MEETING1"); resp.Available || resp.Reason != speakerReasonNoSourceAudio {
+		t.Fatalf("GET with the capture expired: %+v", resp)
+	}
+	rec := annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body)
+	if rec.Code != http.StatusConflict || annTestError(t, rec) != "unavailable" || !strings.Contains(rec.Body.String(), speakerReasonNoSourceAudio) {
+		t.Fatalf("POST with the capture expired = %d %s", rec.Code, rec.Body.String())
+	}
+	queuedNothing("source expired")
+	// The store refuses it too, whatever answered the page before.
+	if _, err := f.rt.store.QueueSpeakerEdits(context.Background(), "MEETING1", 0, splitDoc(speakerTestRoom), "alice", nowUTCString()); !errors.Is(err, errSpeakerEditsSourceExpired) {
+		t.Fatalf("QueueSpeakerEdits with the capture expired = %v", err)
+	}
+
+	if _, err := f.rt.store.db.Exec(`DELETE FROM artifact_availability`); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.post(t, body); resp.State != speakerStateApplying || resp.Revision != 1 {
+		t.Fatalf("POST once nothing stands in the way: %+v", resp)
+	}
+}
+
+// speakerTestRerunTranscript is what a rerun that heard a third participant
+// built: the two devices of speakerTestTranscript and a late joiner.
+const speakerTestRerunTranscript = `{"version":"transcript.words.v1","speakers":[` +
+	`{"id":"spk_room","label":"Meeting room laptop"},{"id":"spk_remote","label":"Remote"},{"id":"spk_late","label":"Late joiner"}],"segments":[]}`
+
+// publishUnpromotedRerun leaves jobID the way a publish does between marking
+// its attempt succeeded and promoting it: attempt 1 is what current/ holds,
+// and attempt 2, a rerun with a third participant, is published from its own
+// bundle and not copied into current/ yet.
+func publishUnpromotedRerun(t *testing.T, store *Store, workRoot, jobID string) {
+	t.Helper()
+	at := nowUTCString()
+	if _, err := store.db.Exec(`UPDATE job_attempts SET publish_finished_at = ? WHERE job_id = ? AND attempt_number = 1`, at, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO artifact_availability (job_id, published_attempt, output) VALUES (?, 1, 'present')`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	current := canonicalMeetingPath(workRoot, jobID)
+	if err := SetMeetingBundleRoom(current, "", "", "", jobID, 1); err != nil {
+		t.Fatal(err)
+	}
+	run := canonicalRunPath(workRoot, jobID)
+	if _, err := store.db.Exec(`
+INSERT INTO job_attempts (job_id, attempt_number, trigger_kind, request_json, stage, state, artifact_run_path, created_at, updated_at, publish_finished_at, completed_at)
+VALUES (?, 2, 'rerun', '{}', 'done', 'succeeded', ?, ?, ?, ?, ?)`, jobID, run, at, at, at, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE jobs SET current_attempt_number = 2, stage = 'done', state = 'succeeded' WHERE id = ?`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	rerun := attemptMeetingPath(workRoot, jobID, 2)
+	writeSpeakerMeetingFixture(t, rerun, run)
+	if err := os.WriteFile(filepath.Join(rerun, speakerTranscriptPrimary), []byte(speakerTestRerunTranscript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetMeetingBundleRoom(rerun, "", "", "", jobID, 2); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A publish marks its attempt succeeded, and the edits it carries applied,
+// before it copies the attempt's bundle into current/. A GET in that window
+// describes the meeting readers have, not the one current/ still holds.
+func TestSpeakersGetReadsThePublishedMeetingBeforeItIsPromoted(t *testing.T) {
+	f := newSpeakersFixture(t)
+	f.installModel(t)
+	seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	publishUnpromotedRerun(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+	resp := f.get(t, "MEETING1")
+	if !resp.Available || len(resp.Participants) != 3 || resp.Participants[2].ID != "spk_late" {
+		t.Fatalf("GET before the promotion: %+v, want the published rerun's three participants", resp)
+	}
+
+	// The promotion lands and prunes the attempt's bundle: the same meeting.
+	current := canonicalMeetingPath(f.rt.cfg.WorkRoot, "MEETING1")
+	rerun := attemptMeetingPath(f.rt.cfg.WorkRoot, "MEETING1", 2)
+	if err := os.RemoveAll(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyDirectory(rerun, current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.rt.store.db.Exec(`UPDATE artifact_availability SET published_attempt = 2 WHERE job_id = 'MEETING1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(rerun); err != nil {
+		t.Fatal(err)
+	}
+	if resp := f.get(t, "MEETING1"); !resp.Available || len(resp.Participants) != 3 {
+		t.Fatalf("GET after the promotion: %+v", resp)
+	}
+}
+
+// A GET picks the published attempt's own bundle and then reads it. If that
+// attempt's promotion, or a later attempt's, is recorded in between and the
+// bundle is pruned, the GET reads current/ instead: it must not report the
+// meeting as having no transcript.
+func TestSpeakersGetRereadsCurrentWhenThePromotionPrunesUnderIt(t *testing.T) {
+	const laterTranscript = `{"version":"transcript.words.v1","speakers":[` +
+		`{"id":"spk_room","label":"Meeting room laptop"},{"id":"spk_remote","label":"Remote"},{"id":"spk_late","label":"Late joiner"},{"id":"spk_later","label":"Later still"}],"segments":[]}`
+	for _, c := range []struct {
+		name     string
+		promoted int
+		want     int
+	}{
+		{"its own promotion", 2, 3},
+		{"a later attempt's promotion", 3, 4},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newSpeakersFixture(t)
+			f.installModel(t)
+			seedSpeakerJob(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+			publishUnpromotedRerun(t, f.rt.store, f.rt.cfg.WorkRoot, "MEETING1")
+			current := canonicalMeetingPath(f.rt.cfg.WorkRoot, "MEETING1")
+			rerun := attemptMeetingPath(f.rt.cfg.WorkRoot, "MEETING1", 2)
+			pruned := false
+			f.rt.speakerMeetingReading = func(path string) {
+				if path != rerun || pruned {
+					return
+				}
+				pruned = true
+				if err := os.RemoveAll(current); err != nil {
+					t.Fatal(err)
+				}
+				if err := copyDirectory(rerun, current); err != nil {
+					t.Fatal(err)
+				}
+				if c.promoted == 3 {
+					if err := os.WriteFile(filepath.Join(current, speakerTranscriptPrimary), []byte(laterTranscript), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := f.rt.store.db.Exec(`UPDATE artifact_availability SET published_attempt = ? WHERE job_id = 'MEETING1'`, c.promoted); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.RemoveAll(rerun); err != nil {
+					t.Fatal(err)
+				}
+			}
+			resp := f.get(t, "MEETING1")
+			if !pruned {
+				t.Fatal("the GET never read the rerun's own bundle")
+			}
+			if !resp.Available || len(resp.Participants) != c.want {
+				t.Fatalf("GET with the bundle pruned under it: %+v, want %d participants from current/", resp, c.want)
+			}
+		})
 	}
 }
 

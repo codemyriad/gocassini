@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -24,6 +25,12 @@ import (
 
 const (
 	envDiarizationModel = "CASSINI_DIARIZATION_MODEL"
+	// envDiarizationThreads is the native diarizer's thread count, which
+	// `cassini speakers diarize` reads (1-16) and records in the turn set.
+	envDiarizationThreads = "CASSINI_DIARIZATION_THREADS"
+	// speakerDiarizeThreadsDefault is the CLI's own default, the two threads
+	// Cassini for Android runs the same model with.
+	speakerDiarizeThreadsDefault = 2
 
 	// The cassini CLI's exit codes for `speakers diarize` / `speakers apply`.
 	speakersExitDiarizationUnavailable = 3
@@ -45,6 +52,18 @@ const (
 // buffer, so a rejoin adds a read chunk, not a second meeting-length track.
 func speakerDiarizeMemMB(audioMs int64) int {
 	return speakerDiarizeModelMB + int((max(audioMs, 0)*64+(1<<20)-1)>>20)
+}
+
+// speakerDiarizeThreads is the thread count a diarization may use: the same
+// budget as a CPU transcription, the host's cores minus the reserve left for
+// Nextcloud and Talk, within 1-16. A diarization runs on a build worker, so
+// it never runs beside a transcription that would share the budget. When the
+// cores cannot be counted it keeps the CLI's default.
+func (l resourceLimits) speakerDiarizeThreads() int {
+	if probeOnlineCPUs() < 1 {
+		return speakerDiarizeThreadsDefault
+	}
+	return l.threadBudget()
 }
 
 // withSpeakerEdits wraps the build stage. A refine attempt runs no build at
@@ -132,11 +151,16 @@ func (rt *Runtime) executeRefineCLI(ctx context.Context, task buildTask, doc spe
 	if err := rt.store.SetAttemptStageLogPath(context.Background(), task.JobID, task.AttemptNumber, "build", logPath); err != nil {
 		return meetingPath, err
 	}
-	source := canonicalMeetingPath(rt.cfg.WorkRoot, task.JobID)
-	if _, err := os.Stat(filepath.Join(source, "cassini.json")); err != nil {
-		return meetingPath, fmt.Errorf("refine needs the job's current meeting: %w", err)
+	// The meeting readers have. The worker holds the job's artifact lock, so
+	// no promotion or prune of this job runs while it is copied.
+	source, _, err := rt.publishedSpeakerMeetingPath(ctx, task.JobID)
+	if err != nil {
+		return meetingPath, err
 	}
-	if unpublished, err := rt.speakerMeetingUnpublished(ctx, task.JobID); err != nil {
+	if _, err := os.Stat(filepath.Join(source, "cassini.json")); err != nil {
+		return meetingPath, fmt.Errorf("refine needs the job's published meeting: %w", err)
+	}
+	if unpublished, err := rt.speakerBuildUnpublished(ctx, task.JobID, readSpeakerMeeting(source).builtBy); err != nil {
 		return meetingPath, err
 	} else if unpublished {
 		return meetingPath, fmt.Errorf("%s: %s is a rebuild that was never published; a refine republishes only the published meeting", speakerReasonUnpublishedRebuild, source)
@@ -186,7 +210,8 @@ func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetin
 			if err := limits.waitForMemory(ctx, need, rt.logger.Printf); err != nil {
 				return err
 			}
-			if turns, err = rt.diarizeSpeaker(ctx, task, split.SpeakerID, workDir, env, logFile); err != nil {
+			diarizeEnv := setEnvKey(env, envDiarizationThreads, strconv.Itoa(limits.speakerDiarizeThreads()))
+			if turns, err = rt.diarizeSpeaker(ctx, task, split.SpeakerID, workDir, diarizeEnv, logFile); err != nil {
 				return err
 			}
 		}

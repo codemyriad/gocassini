@@ -120,13 +120,7 @@ WHERE job_id = ? AND attempt_number = ?`, column), path, nowUTCString(), jobID, 
 func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string) (Job, error) {
 	unlock := s.lockArtifacts(job.ID)
 	defer unlock()
-	var pending int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artifact_operations WHERE job_id=?`, job.ID).Scan(&pending); err != nil || pending != 0 {
-		return Job{}, ErrJobNotEligibleForRerun
-	}
-	var source string
-	_ = s.db.QueryRowContext(ctx, `SELECT source FROM artifact_availability WHERE job_id=?`, job.ID).Scan(&source)
-	if source == "expired" {
+	if pending, expired := s.artifactAdmission(ctx, job.ID); pending || expired {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -152,6 +146,26 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 	}
 	s.emitStateChange(ctx, "job.updated", job.ID, nextAttemptNumber)
 	return s.GetJob(ctx, job.ID)
+}
+
+// artifactAdmission says why jobID cannot take a new attempt now: an archive
+// operation (a promotion or an expiry) is journalled and not finished, or
+// retention removed the capture every attempt rebuilds from. A pending check
+// that cannot be read counts as pending. The caller holds the job's artifact
+// lock, so neither can start between this and the attempt it queues.
+func (s *Store) artifactAdmission(ctx context.Context, jobID string) (pending, sourceExpired bool) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM artifact_operations WHERE job_id=?`, jobID).Scan(&n); err != nil || n != 0 {
+		return true, false
+	}
+	return false, s.artifactSourceExpired(ctx, jobID)
+}
+
+// artifactSourceExpired reports whether retention removed jobID's capture.
+func (s *Store) artifactSourceExpired(ctx context.Context, jobID string) bool {
+	var source string
+	_ = s.db.QueryRowContext(ctx, `SELECT source FROM artifact_availability WHERE job_id=?`, jobID).Scan(&source)
+	return source == "expired"
 }
 
 // queueAttemptTx inserts the next attempt of jobID at build/queued and points

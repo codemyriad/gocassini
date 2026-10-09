@@ -19,7 +19,8 @@ import (
 // diarizations ran so far, so a test can tell which run's turns an apply got;
 // apply copies the edits and the turns it was handed into the bundle and
 // prints a report. "$0.diarize-unavailable" and "$0.apply-fails" make the
-// matching command fail the way the real CLI does.
+// matching command fail the way the real CLI does. Each diarize appends the
+// CASSINI_DIARIZATION_THREADS it was given to "$0.threads".
 func fakeSpeakersCLI(t *testing.T) string {
 	t.Helper()
 	return writeFakeCassini(t, `echo "$*" >> "$0.calls"
@@ -37,6 +38,7 @@ while [ $# -gt 0 ]; do
 done
 case "$sub" in
   diarize)
+    echo "${CASSINI_DIARIZATION_THREADS:-unset}" >> "$0.threads"
     if [ -f "$0.diarize-unavailable" ]; then
       echo "diarization-unavailable: no Nemotron model at /models" >&2; exit 3
     fi
@@ -90,8 +92,14 @@ func newSpeakerRuntime(t *testing.T, jobID string) (*Runtime, string) {
 	return rt, bin
 }
 
+// queueSpeakerEdits saves doc the way a person does once the page shows the
+// last edit applied or failed. A worker that recorded that state may still
+// hold the job's artifacts (a publish promotes and prunes after it marks
+// the attempt succeeded) and a save then answers busy, so this first waits
+// for the worker to let go: taking the lock blocks until it does.
 func queueSpeakerEdits(t *testing.T, rt *Runtime, jobID string, expect int, doc speakerEditsDoc) {
 	t.Helper()
+	rt.store.lockArtifacts(jobID)()
 	if _, err := rt.store.QueueSpeakerEdits(context.Background(), jobID, expect, doc, "alice", nowUTCString()); err != nil {
 		t.Fatalf("QueueSpeakerEdits() error = %v", err)
 	}
@@ -265,6 +273,46 @@ func TestRefineDiarizationWaitsForMemoryLikeABuild(t *testing.T) {
 	}
 }
 
+// The diarizer gets the thread budget a CPU transcription gets: the cores
+// minus the reserve left for Nextcloud and Talk. A value the operator's own
+// environment carries does not reach it.
+func TestRefineDiarizesWithTheBuildThreadBudget(t *testing.T) {
+	rt, bin := newSpeakerRuntime(t, "JOB1")
+	t.Setenv("CASSINI_BUILD_CPU_RESERVE", "2")
+	t.Setenv(envDiarizationThreads, "12")
+	orig := probeOnlineCPUs
+	t.Cleanup(func() { probeOnlineCPUs = orig })
+	probeOnlineCPUs = func() int { return 8 }
+
+	queueSpeakerEdits(t, rt, "JOB1", 0, splitDoc(speakerTestRoom))
+	waitForSpeakerEdits(t, rt.store, "JOB1", func(r speakerEditsRecord) bool { return r.AppliedRevision == 1 })
+	if got := strings.TrimSpace(annTestRead(t, bin+".threads")); got != "6" {
+		t.Fatalf("diarize ran with %s=%q, want the build budget 8-2 = 6", envDiarizationThreads, got)
+	}
+}
+
+func TestSpeakerDiarizeThreads(t *testing.T) {
+	orig := probeOnlineCPUs
+	t.Cleanup(func() { probeOnlineCPUs = orig })
+	for _, c := range []struct {
+		name          string
+		cpus, reserve int
+		want          int
+	}{
+		{"budget", 8, 2, 6},
+		{"one core left", 2, 1, 1},
+		{"reserve takes every core", 2, 4, 1},
+		{"capped at 16", 64, 0, 16},
+		{"cores unknown keep the default", 0, 0, speakerDiarizeThreadsDefault},
+	} {
+		probeOnlineCPUs = func() int { return c.cpus }
+		limits := resourceLimits{cpuReserve: c.reserve}
+		if got := limits.speakerDiarizeThreads(); got != c.want {
+			t.Errorf("%s: %d cpus, reserve %d: threads = %d, want %d", c.name, c.cpus, c.reserve, got, c.want)
+		}
+	}
+}
+
 // A participant who reconnected has a stream per connection, and the CLI
 // sums them for the diarizer. It decodes each later stream into the running
 // mix, so the peak is one meeting-length track however often they rejoined —
@@ -302,6 +350,25 @@ func TestRefineRefusesARebuildThatWasNeverPublished(t *testing.T) {
 	rec, err := rt.store.GetSpeakerEdits(context.Background(), "JOB1")
 	if err != nil || rec.AppliedRevision != 0 || !strings.Contains(rec.LastError, speakerReasonUnpublishedRebuild) {
 		t.Fatalf("edits = %+v, %v", rec, err)
+	}
+}
+
+// A refine copies the meeting readers have. Between a publish and its
+// promotion, or after a promotion that failed, that is the published
+// attempt's own bundle, not current/.
+func TestRefineCopiesThePublishedMeetingBeforeItIsPromoted(t *testing.T) {
+	rt, bin := newSpeakerRuntime(t, "JOB1")
+	publishUnpromotedRerun(t, rt.store, rt.cfg.WorkRoot, "JOB1")
+	named := emptySpeakerEditsDoc()
+	named.Labels = []speakerEditsLabel{{SpeakerID: "spk_late", Label: "Late Ann"}}
+	queueSpeakerEdits(t, rt, "JOB1", 0, named)
+	waitForSpeakerEdits(t, rt.store, "JOB1", func(r speakerEditsRecord) bool { return r.AppliedRevision == 1 })
+	waitForPublishedAttempt(t, rt, "JOB1", 3)
+	if apply := speakersCalls(t, bin, "speakers apply"); len(apply) != 1 {
+		t.Fatalf("apply calls = %v", apply)
+	}
+	if got := annTestRead(t, filepath.Join(canonicalMeetingPath(rt.cfg.WorkRoot, "JOB1"), speakerTranscriptPrimary)); got != speakerTestRerunTranscript {
+		t.Fatalf("the refine republished %s, want a copy of the published rerun", got)
 	}
 }
 

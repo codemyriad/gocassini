@@ -222,13 +222,27 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, formatUTCString(s.rt.speakerNow()))
+	now := s.rt.speakerNow()
+	release, retryAfter, allowed := s.speakerEdits.reserve(caller, now)
+	if !allowed {
+		s.logf("annotations: speakers meeting=%s refused for %s: too many saves (retry in %s)", meetingID, caller, retryAfter.Round(time.Second))
+		writeSpeakerEditsRateLimited(w, retryAfter)
+		return
+	}
+	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, formatUTCString(now))
+	if err != nil {
+		// Nothing was queued, so the save does not count.
+		release()
+	}
 	switch {
 	case errors.Is(err, errSpeakerEditsRevisionConflict):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "revision-conflict", "revision": revision})
 		return
 	case errors.Is(err, errSpeakerEditsBusy):
 		writeJSONError(w, http.StatusConflict, "busy")
+		return
+	case errors.Is(err, errSpeakerEditsSourceExpired):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "unavailable", "reason": speakerReasonNoSourceAudio})
 		return
 	case errors.Is(err, sql.ErrNoRows):
 		http.NotFound(w, r)
@@ -346,18 +360,23 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 	resp.Revision, resp.AppliedRevision, resp.Doc = rec.Revision, rec.AppliedRevision, rec.Doc
 	resp.Report = rec.LastReport
 
-	meetingPath := canonicalMeetingPath(rt.cfg.WorkRoot, jobID)
-	if participants, err := readSpeakerParticipants(meetingPath); err == nil {
-		resp.Participants = participants
+	meeting, err := rt.readPublishedSpeakerMeeting(ctx, jobID)
+	if err != nil {
+		return resp, err
 	}
-	unpublished, err := rt.speakerMeetingUnpublished(ctx, jobID)
+	if meeting.participants != nil {
+		resp.Participants = meeting.participants
+	}
+	unpublished, err := rt.speakerBuildUnpublished(ctx, jobID, meeting.builtBy)
 	if err != nil {
 		return resp, err
 	}
 	switch {
-	case !speakerSourceAudioReady(job):
+	case !speakerSourceAudioReady(job) || rt.store.artifactSourceExpired(ctx, jobID):
+		// Retention records an expired capture as such: the same reason,
+		// whatever the job row still names.
 		resp.Reason = speakerReasonNoSourceAudio
-	case len(resp.Participants) == 0 || speakerMeetingUntranscribed(meetingPath):
+	case len(resp.Participants) == 0 || meeting.untranscribed:
 		// A build that kept only the audio still lists every participant,
 		// with no words to separate or name.
 		resp.Reason = speakerReasonNoTranscript
@@ -389,7 +408,7 @@ func (rt *Runtime) speakerEditsState(ctx context.Context, jobID string) (speaker
 	switch {
 	case ok && attempt.Revision > rec.AppliedRevision && (attempt.State == "queued" || attempt.State == "running"):
 		resp.State = speakerStateApplying
-		if resp.Progress, err = rt.speakerRefineProgress(ctx, jobID, attempt); err != nil {
+		if resp.Progress, err = rt.speakerRefineProgress(ctx, jobID, attempt, meeting.audioMs); err != nil {
 			return resp, err
 		}
 	case rec.Revision > rec.AppliedRevision:
@@ -466,25 +485,109 @@ func speakerMeetingUntranscribed(meetingPath string) bool {
 	return status != "" && status != "completed"
 }
 
-// speakerMeetingUnpublished reports whether current/<job>.meeting, the bundle
-// a refine copies, is a rebuild that was never published: current/ follows
-// the last attempt that BUILT, and a rerun whose seal or publish failed left
-// its new transcript and re-encoded audio there while readers still have the
-// recording before it. A refine copied from it would publish that rebuild
-// under the name of a speaker edit. A refine's own bundle is a copy of one
-// that passed this check, with the same audio, so it never counts. A bundle
-// with no attempt stamp, or an attempt still on its way, says nothing.
-func (rt *Runtime) speakerMeetingUnpublished(ctx context.Context, jobID string) (bool, error) {
+// speakerMeeting is what the speakers surface reads from the meeting bundle
+// readers have: its original roster, whether it has a transcript at all, the
+// attempt that built it, and its length.
+type speakerMeeting struct {
+	// participants is nil when the bundle has no readable transcript.
+	participants  []speakerParticipant
+	untranscribed bool
+	// builtBy is the bundle's attempt stamp, 0 when it has none.
+	builtBy int
+	audioMs int64
+}
+
+func readSpeakerMeeting(path string) speakerMeeting {
+	m := speakerMeeting{untranscribed: speakerMeetingUntranscribed(path), audioMs: readSpeakerMeetingAudioMs(path)}
+	if participants, err := readSpeakerParticipants(path); err == nil {
+		m.participants = participants
+	}
 	var stamp struct {
 		AttemptNumber int `json:"attempt_number"`
 	}
-	raw, err := os.ReadFile(filepath.Join(canonicalMeetingPath(rt.cfg.WorkRoot, jobID), "cassini.json"))
-	if err != nil || json.Unmarshal(raw, &stamp) != nil || stamp.AttemptNumber <= 0 {
+	if raw, err := os.ReadFile(filepath.Join(path, "cassini.json")); err == nil && json.Unmarshal(raw, &stamp) == nil && stamp.AttemptNumber > 0 {
+		m.builtBy = stamp.AttemptNumber
+	}
+	return m
+}
+
+// publishedSpeakerMeetingPath is the bundle of the meeting readers have, and
+// the attempt it belongs to (0 when no attempt is recorded as published).
+//
+// That is current/<job>.meeting once the publish is promoted. Before then it
+// is the published attempt's own bundle: a publish marks its attempt
+// succeeded, and the edits it carries applied, before it copies the attempt's
+// bundle into current/, and a promotion that failed leaves current/ on the
+// meeting before it until it is retried. current/ is also the answer for a
+// job with no published attempt, and for one whose attempt bundle is gone.
+func (rt *Runtime) publishedSpeakerMeetingPath(ctx context.Context, jobID string) (string, int, error) {
+	canonical := canonicalMeetingPath(rt.cfg.WorkRoot, jobID)
+	var attempt int
+	err := rt.store.db.QueryRowContext(ctx, `
+SELECT attempt_number FROM job_attempts
+WHERE job_id = ? AND state = 'succeeded' AND publish_finished_at IS NOT NULL
+ORDER BY attempt_number DESC LIMIT 1`, jobID).Scan(&attempt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return canonical, 0, nil
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("load the published attempt of %s: %w", jobID, err)
+	}
+	if rt.promotedAttempt(ctx, jobID) == attempt {
+		return canonical, attempt, nil
+	}
+	path := attemptMeetingPath(rt.cfg.WorkRoot, jobID, attempt)
+	if m, ok, err := LoadMeetingBundleManifest(path); err == nil && ok && m.JobID == jobID && m.AttemptNumber == attempt {
+		return path, attempt, nil
+	}
+	return canonical, attempt, nil
+}
+
+// promotedAttempt is the attempt current/ holds, 0 when none is recorded.
+func (rt *Runtime) promotedAttempt(ctx context.Context, jobID string) int {
+	var promoted int
+	_ = rt.store.db.QueryRowContext(ctx, `SELECT published_attempt FROM artifact_availability WHERE job_id = ?`, jobID).Scan(&promoted)
+	return promoted
+}
+
+// readPublishedSpeakerMeeting reads the bundle publishedSpeakerMeetingPath
+// names. An attempt's bundle is pruned once its promotion, or the promotion
+// of a later attempt, is recorded, which can happen while it is being read;
+// current/ then holds that attempt's meeting or a newer one, so it is read
+// again from there. A promotion still not recorded after the read had not
+// started pruning when the read finished.
+func (rt *Runtime) readPublishedSpeakerMeeting(ctx context.Context, jobID string) (speakerMeeting, error) {
+	path, attempt, err := rt.publishedSpeakerMeetingPath(ctx, jobID)
+	if err != nil {
+		return speakerMeeting{}, err
+	}
+	if rt.speakerMeetingReading != nil {
+		rt.speakerMeetingReading(path)
+	}
+	m := readSpeakerMeeting(path)
+	canonical := canonicalMeetingPath(rt.cfg.WorkRoot, jobID)
+	if path != canonical && rt.promotedAttempt(ctx, jobID) >= attempt {
+		m = readSpeakerMeeting(canonical)
+	}
+	return m, nil
+}
+
+// speakerBuildUnpublished reports whether the bundle a refine would copy,
+// built by attempt builtBy, is a rebuild that was never published. Before
+// current/ followed publication, it followed the last attempt that BUILT, and
+// a rerun whose seal or publish failed left its new transcript and re-encoded
+// audio there while readers still had the recording before it. A refine
+// copied from it would publish that rebuild under the name of a speaker
+// edit. A refine's own bundle is a copy of one that passed this check, with
+// the same audio, so it never counts. A bundle with no attempt stamp, or an
+// attempt still on its way, says nothing.
+func (rt *Runtime) speakerBuildUnpublished(ctx context.Context, jobID string, builtBy int) (bool, error) {
+	if builtBy <= 0 {
 		return false, nil
 	}
 	var kind, state string
-	err = rt.store.db.QueryRowContext(ctx, `
-SELECT trigger_kind, state FROM job_attempts WHERE job_id = ? AND attempt_number = ?`, jobID, stamp.AttemptNumber).Scan(&kind, &state)
+	err := rt.store.db.QueryRowContext(ctx, `
+SELECT trigger_kind, state FROM job_attempts WHERE job_id = ? AND attempt_number = ?`, jobID, builtBy).Scan(&kind, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -503,12 +606,12 @@ func (rt *Runtime) speakerNow() time.Time {
 }
 
 // speakerRefineProgress reports the phase of the pending refine attempt and
-// its estimate. The estimate depends only on what was known when the attempt
+// its estimate, for a published meeting of audioMs. The estimate depends only on what was known when the attempt
 // was queued — which splits had no turns then, the meeting's length, and the
 // turn sets stored before it — so it does not move while the attempt runs,
 // not even when its own diarization stores a new turn set. Elapsed time
 // counts from the queue while the attempt waits and from its start after.
-func (rt *Runtime) speakerRefineProgress(ctx context.Context, jobID string, attempt speakerEditsAttempt) (*speakerEditsProgress, error) {
+func (rt *Runtime) speakerRefineProgress(ctx context.Context, jobID string, attempt speakerEditsAttempt, audioMs int64) (*speakerEditsProgress, error) {
 	queuedAt, queuedKnown := time.Time{}, false
 	if at, err := parseInsightTime(attempt.QueuedAt); err == nil {
 		queuedAt, queuedKnown = at, true
@@ -556,7 +659,6 @@ func (rt *Runtime) speakerRefineProgress(ctx context.Context, jobID string, atte
 		progress.ElapsedMs = max(rt.speakerNow().Sub(since).Milliseconds(), 0)
 	}
 
-	audioMs := readSpeakerMeetingAudioMs(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
 	rate := 0.0
 	if diarizes > 0 {
 		runs, err := rt.store.SpeakerDiarizationRuns(ctx)
