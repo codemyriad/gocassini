@@ -1,6 +1,6 @@
 import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import Settings from "./Settings.svelte";
 import { formatStorageBytes } from "./operator/storageUsage";
 import "./app.css";
@@ -39,6 +39,7 @@ let posts = 0;
 let puts = 0;
 let publishedError = false;
 let oldOperator = false;
+let longHistory = false;
 
 beforeEach(() => {
   fail = false;
@@ -47,6 +48,7 @@ beforeEach(() => {
   puts = 0;
   publishedError = false;
   oldOperator = false;
+  longHistory = false;
   Object.assign(window, { __CASSINI_CONFIG__: { operatorBasePath: "/operator" } });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -61,7 +63,10 @@ beforeEach(() => {
         undated_bytes: 0, undated_files: 0, days: [] })),
     } : fixture;
     return Response.json({ ...report,
-      published_category: oldOperator ? undefined : report.published_category,
+      published_category: oldOperator ? undefined : longHistory ? {
+        ...report.published_category,
+        days: [{ ...report.published_category.days[0], date: "2020-01-01" }, report.published_category.days[1]],
+      } : report.published_category,
       published_category_error: publishedError ? "Could not inspect dates" : "",
     });
   }));
@@ -115,6 +120,38 @@ describe("storage charts in the browser", () => {
     await page.elementLocator(category("published")).screenshot({ path: "../node_modules/.cache/vitest-screenshots/storage-published-desktop.png" });
     await page.viewport(390, 844);
     await page.elementLocator(category("published")).screenshot({ path: "../node_modules/.cache/vitest-screenshots/storage-published-mobile.png" });
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(innerWidth);
+  });
+
+  it("scrolls all retained dates at daily precision beyond the former bar limit", async () => {
+    longHistory = true;
+    app = mount(Settings, { target: host, props: { panel: "storage" } });
+    await expect.element(page.getByRole("button", { name: "Recalculate", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: /Explore Published in Nextcloud:/ }).click();
+    await page.getByLabelText("Published in Nextcloud time range", { exact: true }).selectOptions("custom");
+    await page.getByLabelText("Published in Nextcloud from date").fill("2020-01-01");
+    await page.getByLabelText("Published in Nextcloud through date").fill("2026-09-29");
+    await page.getByLabelText("Published in Nextcloud precision", { exact: true }).selectOptions("1");
+    expect(barCount("published")).toBeGreaterThan(2000);
+    const scroller = category("published").querySelector(".plot-scroll") as HTMLElement;
+    expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+    scroller.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    await expect.poll(() => scroller.scrollLeft).toBeGreaterThan(0);
+    await page.getByRole("button", { name: "Scroll Published in Nextcloud later", exact: true }).click();
+    await expect.poll(() => scroller.scrollLeft).toBeGreaterThan(0);
+    scroller.scrollLeft = scroller.scrollWidth;
+    await expect.element(page.getByRole("button", { name: "Scroll Published in Nextcloud later", exact: true })).toBeDisabled();
+    const last = category("published").querySelectorAll(".bar-target");
+    expect(last[last.length - 1].getAttribute("aria-label")).toContain("2026");
+    await page.getByRole("button", { name: "Scroll Published in Nextcloud earlier", exact: true }).click();
+    await expect.poll(() => scroller.scrollLeft + scroller.clientWidth).toBeLessThan(scroller.scrollWidth - 1);
+    await page.getByLabelText("Published in Nextcloud time range", { exact: true }).selectOptions("all");
+    expect(barCount("published")).toBeGreaterThan(2000);
+    await page.viewport(390, 844);
+    await page.elementLocator(category("published")).screenshot({ path: "../node_modules/.cache/vitest-screenshots/storage-scroll-mobile.png" });
+    expect(posts).toBe(1);
+    expect(puts).toBe(0);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(innerWidth);
   });
 

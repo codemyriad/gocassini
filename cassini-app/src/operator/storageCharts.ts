@@ -58,7 +58,6 @@ export function storageBuckets(category: StorageUsageCategory, from: string, to:
   if (end < start) return { buckets: [], error: "The end date must be on or after the start date." };
   if (!Number.isInteger(precision) || precision < 1 || precision > 9999) return { buckets: [], error: "Precision must be a whole number from 1 to 9999 days." };
   const count = Math.floor((end - start) / (DAY * precision)) + 1;
-  if (count > 180) return { buckets: [], error: "This range needs more than 180 bars. Choose a shorter range or a larger number of days per bar." };
   const buckets = Array.from({length: count}, (_,i) => ({ from: iso(start+i*precision*DAY), to: iso(Math.min(end,start+((i+1)*precision-1)*DAY)), bytes: 0, files: 0 }));
   for (const day of category.days) {
     const date = utcDay(day.date);

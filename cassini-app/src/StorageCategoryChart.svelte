@@ -15,11 +15,30 @@
   let precision = [1, ...retentionDayPresets].includes(initialPrecision) ? String(initialPrecision) : "custom";
   let customPrecision = initialPrecision;
   let selected = -1;
+  let scroller: HTMLDivElement;
+  let canScrollEarlier = false, canScrollLater = false;
+  function trackScroll(node: HTMLDivElement) {
+    scroller = node;
+    const update = () => {
+      canScrollEarlier = node.scrollLeft > 1;
+      canScrollLater = node.scrollLeft + node.clientWidth < node.scrollWidth - 1;
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    observer.observe(node.firstElementChild!);
+    node.addEventListener("scroll", update);
+    update();
+    return { destroy() { observer.disconnect(); node.removeEventListener("scroll", update); } };
+  }
+  function scrollTimeline(direction: number) {
+    scroller.scrollBy({ left: direction * scroller.clientWidth * 0.8,
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  }
   $: extent = storageDateExtent(category, measuredAt);
   $: window = storageRange(range, extent, from, to);
   $: days = precision === "custom" ? customPrecision : Number(precision);
   $: result = storageBuckets(category, window.from, window.to, days);
-  $: maximum = Math.max(0, ...result.buckets.map(b => b.bytes));
+  $: maximum = result.buckets.reduce((largest, bucket) => Math.max(largest, bucket.bytes), 0);
   $: rangeBytes = result.buckets.reduce((sum, b) => sum + b.bytes, 0);
   $: active = result.buckets[selected];
   $: if (result) selected = -1;
@@ -60,9 +79,17 @@
   {:else}
     <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>in selected range</span></strong><span>{days === 1 ? "Daily" : `${days} days per bar`} · {dateLabel}s</span></div>
     {#if rangeBytes === 0}<p class="chart-message">No retained bytes in this date range. Try a wider range.</p>{/if}
+    {#if canScrollEarlier || canScrollLater}
+      <div class="timeline-navigation">
+        <button class="op-btn" type="button" aria-label={`Scroll ${label} earlier`} disabled={!canScrollEarlier} on:click={() => scrollTimeline(-1)}>← Earlier</button>
+        <span>Scroll left or right to explore all {result.buckets.length.toLocaleString()} bars.</span>
+        <button class="op-btn" type="button" aria-label={`Scroll ${label} later`} disabled={!canScrollLater} on:click={() => scrollTimeline(1)}>Later →</button>
+      </div>
+    {/if}
     <div class="plot">
       <div class="y-axis" aria-hidden="true"><span>{formatStorageBytes(maximum)}</span><span>{formatStorageBytes(maximum / 2)}</span><span>0 B</span></div>
-      <div class="plot-scroll" role="region" aria-label={`${label} usage by date`}>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (The scroll region needs keyboard focus for native arrow-key scrolling.) -->
+      <div class="plot-scroll" use:trackScroll role="region" tabindex="0" aria-label={`${label} usage by date`}>
         <div class="timeline" style:min-width={`${Math.max(240,result.buckets.length*14)}px`}>
         <div class="bars">
           {#each result.buckets as bucket, index (bucket.from)}
@@ -98,6 +125,9 @@
   .chart-summary span, .bar-detail, .x-axis, .y-axis { color:color-mix(in oklch,var(--color-base-content) 65%,transparent); }
   .chart-summary strong span { font-weight:400; font-size:12px; }
   .plot { display:flex; gap:10px; }
+  .timeline-navigation { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; font-size:11px; }
+  .timeline-navigation span { text-align:center; }
+  .timeline-navigation button { flex:none; }
   .y-axis { width:58px; flex:none; display:flex; flex-direction:column; justify-content:space-between; font-size:10px; text-align:right; padding-bottom:3px; height:164px; }
   .plot-scroll { flex:1; min-width:0; overflow-x:auto; padding-top:4px; }
   .timeline { display:block; width:100%; }

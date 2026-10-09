@@ -30,8 +30,9 @@ Each chart has independent controls:
   the category's date span. Buckets start at the selected range's start date;
   the final bucket ends at the selected end date.
 - **Exact values:** hover, focus or tap a bar, or open **View chart data** for
-  dates, raw bytes and file counts. Wide charts scroll inside the card. Ranges
-  requiring more than 180 bars ask for a shorter range or coarser precision.
+  dates, raw bytes and file counts. Wide charts scroll inside the card. Use the scrollbar, keyboard, or Earlier/Later buttons to move through long
+  timelines. All retained dates also supports daily precision; the chart keeps
+  every bucket instead of requiring a shorter range.
 
 Chart controls do not save settings, delete files or trigger filesystem scans.
 Changing the time range does not change the all-dates comparison total.
