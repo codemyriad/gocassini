@@ -1358,6 +1358,10 @@ type Store struct {
 	artifactJobs         sync.Map
 	db                   *sql.DB
 	stateChangePublisher stateChangePublisher
+	// lockWaitBlocked, when set, is called once by a bounded wait for a
+	// job's artifact lock (lockArtifactsWithin) that found the lock taken.
+	// Tests use it to let go of the lock only once the wait has begun.
+	lockWaitBlocked func(jobID string)
 }
 
 func OpenStore(path string) (*Store, error) {

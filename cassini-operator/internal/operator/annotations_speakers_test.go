@@ -747,9 +747,23 @@ func TestSpeakersPostIsAdmittedLikeARerun(t *testing.T) {
 	unlock()
 	queuedNothing("locked")
 
-	// A lock released while the save waits for it.
+	// A lock released while the save waits for it: let go only once the
+	// save found it taken.
+	waiting := make(chan struct{}, 1)
+	f.rt.store.lockWaitBlocked = func(string) {
+		select {
+		case waiting <- struct{}{}:
+		default:
+		}
+	}
 	unlock = f.rt.store.lockArtifacts("MEETING1")
 	go func() { answered <- annTestCall(f.h, http.MethodPost, "MEETING1/speakers", "alice", body) }()
+	select {
+	case <-waiting:
+	case <-time.After(testWaitTimeout):
+		unlock()
+		t.Fatal("POST never waited for the job's artifact lock")
+	}
 	unlock()
 	if rec := <-answered; rec.Code != http.StatusOK {
 		t.Fatalf("POST once the lock came free = %d %s", rec.Code, rec.Body.String())

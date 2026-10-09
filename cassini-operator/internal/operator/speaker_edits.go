@@ -382,9 +382,12 @@ func (s *Store) lockArtifactsWithin(ctx context.Context, jobID string, wait time
 	defer deadline.Stop()
 	poll := time.NewTicker(speakerEditsLockPoll)
 	defer poll.Stop()
-	for {
+	for blocked := false; ; blocked = true {
 		if unlock, ok := s.tryLockArtifacts(jobID); ok {
 			return unlock, true
+		}
+		if !blocked && s.lockWaitBlocked != nil {
+			s.lockWaitBlocked(jobID)
 		}
 		select {
 		case <-ctx.Done():
