@@ -489,7 +489,6 @@ func speakerMeetingUntranscribed(meetingPath string) bool {
 // readers have: its original roster, whether it has a transcript at all, the
 // attempt that built it, and its length.
 type speakerMeeting struct {
-	path string
 	// participants is nil when the bundle has no readable transcript.
 	participants  []speakerParticipant
 	untranscribed bool
@@ -499,7 +498,7 @@ type speakerMeeting struct {
 }
 
 func readSpeakerMeeting(path string) speakerMeeting {
-	m := speakerMeeting{path: path, untranscribed: speakerMeetingUntranscribed(path), audioMs: readSpeakerMeetingAudioMs(path)}
+	m := speakerMeeting{untranscribed: speakerMeetingUntranscribed(path), audioMs: readSpeakerMeetingAudioMs(path)}
 	if participants, err := readSpeakerParticipants(path); err == nil {
 		m.participants = participants
 	}
