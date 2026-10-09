@@ -2,6 +2,7 @@ import type { StorageUsageCategory } from "./types";
 import { retentionDayPresets } from "./retention";
 
 export const categoryPresentation: Record<string, { label: string; description: string; color: string }> = {
+  published: { label: "Published in Nextcloud", description: "Files currently present in Nextcloud, including legacy archives, grouped by publication date. Files without a job use their recording’s local calendar date, then their creation date in UTC. Local retention does not delete these files.", color: "#6279b8" },
   recordings: { label: "Source recordings", description: "Original captured audio, video and supporting files, dated when recording finished.", color: "#527eac" },
   current: { label: "Current output archive", description: "The latest published output retained locally, dated when it was published.", color: "#588c75" },
   history: { label: "Attempt history", description: "Failed recordings, failed builds, superseded output and failed publish staging.", color: "#aa7840" },

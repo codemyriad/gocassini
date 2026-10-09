@@ -7,6 +7,7 @@
   export let measuredAt: string;
   export let label: string;
   export let color: string;
+  export let dateLabel = "UTC lifecycle date";
   const initialExtent = storageDateExtent(category, measuredAt);
   const initialPrecision = defaultStoragePrecision(initialExtent.from, initialExtent.to);
   let range = "all";
@@ -50,14 +51,14 @@
     {/if}
   </div>
   {#if category.undated_files > 0}
-    <p class="undated">{formatStorageBytes(category.undated_bytes)} in {category.undated_files} file{category.undated_files === 1 ? "" : "s"} without a known lifecycle date. Included in the category total, excluded from the date chart.</p>
+    <p class="undated">{formatStorageBytes(category.undated_bytes)} in {category.undated_files} file{category.undated_files === 1 ? "" : "s"} without a known date. Included in the category total, excluded from the date chart.</p>
   {/if}
   {#if result.error}
     <p class="chart-message" role="alert">{result.error}</p>
   {:else if category.days.length === 0}
     <p class="chart-message">{category.files === 0 ? "No retained files in this category." : "No dated files to plot in this category."}</p>
   {:else}
-    <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>in selected range</span></strong><span>{days === 1 ? "Daily" : `${days} days per bar`} · UTC dates</span></div>
+    <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>in selected range</span></strong><span>{days === 1 ? "Daily" : `${days} days per bar`} · {dateLabel}s</span></div>
     {#if rangeBytes === 0}<p class="chart-message">No retained bytes in this date range. Try a wider range.</p>{/if}
     <div class="plot">
       <div class="y-axis" aria-hidden="true"><span>{formatStorageBytes(maximum)}</span><span>{formatStorageBytes(maximum / 2)}</span><span>0 B</span></div>
@@ -79,7 +80,7 @@
     </div>
     <p class="bar-detail" aria-live="polite">{#if active}<strong>{bucketLabel(active)}</strong> · {formatStorageBytes(active.bytes)} · {active.files} file{active.files === 1 ? "" : "s"}{:else}Hover, focus or tap a bar for its dates and exact usage.{/if}</p>
     <details class="values"><summary>View chart data</summary>
-      <div class="table-scroll"><table><caption>{label} · retained bytes by UTC lifecycle date</caption><thead><tr><th scope="col">Date range</th><th scope="col">Bytes</th><th scope="col">Files</th></tr></thead><tbody>
+      <div class="table-scroll"><table><caption>{label} · retained bytes by {dateLabel}</caption><thead><tr><th scope="col">Date range</th><th scope="col">Bytes</th><th scope="col">Files</th></tr></thead><tbody>
         {#each result.buckets as bucket}<tr><th scope="row">{bucketLabel(bucket)}</th><td>{bucket.bytes.toLocaleString()}</td><td>{bucket.files.toLocaleString()}</td></tr>{/each}
       </tbody></table></div>
     </details>
@@ -99,6 +100,7 @@
   .plot { display:flex; gap:10px; }
   .y-axis { width:58px; flex:none; display:flex; flex-direction:column; justify-content:space-between; font-size:10px; text-align:right; padding-bottom:3px; height:164px; }
   .plot-scroll { flex:1; min-width:0; overflow-x:auto; padding-top:4px; }
+  .timeline { display:block; width:100%; }
   .bars { height:160px; display:flex; align-items:stretch; gap:3px; border-bottom:1px solid var(--op-border, #8993a044); background:repeating-linear-gradient(to top, transparent 0, transparent calc(50% - 1px), color-mix(in oklch,var(--color-base-content) 9%,transparent) calc(50% - 1px), color-mix(in oklch,var(--color-base-content) 9%,transparent) 50%); }
   .bar-target { border:0; background:transparent; padding:0; flex:1; min-width:8px; display:flex; align-items:end; cursor:pointer; border-radius:3px 3px 0 0; }
   .bar { display:block; width:100%; max-width:64px; margin:0 auto; border-radius:3px 3px 0 0; background:var(--chart-color); opacity:.85; min-height:2px; }

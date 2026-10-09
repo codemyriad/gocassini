@@ -552,12 +552,18 @@ function normalizeDetailedStorageUsage(raw: unknown): DetailedStorageUsage {
     published,
     directories,
     category_error: asString(value.category_error),
-    categories: Array.isArray(value.categories) ? value.categories.filter((row): row is Record<string, unknown> => row != null && typeof row === "object" && typeof row.id === "string").map((row): StorageUsageCategory => ({
+    published_category: normalizeStorageCategories([value.published_category])[0] ?? null,
+    published_category_error: asString(value.published_category_error),
+    categories: normalizeStorageCategories(value.categories),
+  };
+}
+
+function normalizeStorageCategories(raw: unknown): StorageUsageCategory[] {
+  return Array.isArray(raw) ? raw.filter((row): row is Record<string, unknown> => row != null && typeof row === "object" && typeof row.id === "string").map((row): StorageUsageCategory => ({
       id: asString(row.id), bytes: Math.max(0, asNumber(row.bytes)), files: asCount(row.files),
       undated_bytes: Math.max(0, asNumber(row.undated_bytes)), undated_files: asCount(row.undated_files),
       days: Array.isArray(row.days) ? row.days.filter((day): day is Record<string, unknown> => day != null && typeof day === "object" && typeof day.date === "string").map(day => ({ date: asString(day.date), bytes: Math.max(0, asNumber(day.bytes)), files: asCount(day.files) })) : [],
-    })) : [],
-  };
+    })) : [];
 }
 
 function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {

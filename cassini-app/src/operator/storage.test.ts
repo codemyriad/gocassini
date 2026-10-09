@@ -120,6 +120,20 @@ describe("Storage usage API", () => {
     });
   });
 
+  it("reads published dates separately from local categories and handles older operators", async () => {
+    const published = { id: "published", bytes: 30, files: 3, undated_bytes: 5, undated_files: 1,
+      days: [{ date: "2026-03-05", bytes: 25, files: 2 }] };
+    vi.stubGlobal("fetch", vi.fn(async () => reply({ published_category: published,
+      published_category_error: "One date could not be read", categories: [] })));
+    const client = new OperatorClient("/operator");
+    const usage = await client.getDetailedStorageUsage();
+    expect(usage.published_category).toEqual(published);
+    expect(usage.published_category_error).toBe("One date could not be read");
+    expect(usage.categories).toEqual([]);
+    vi.stubGlobal("fetch", vi.fn(async () => reply({ categories: [] })));
+    expect((await client.getDetailedStorageUsage()).published_category).toBeNull();
+  });
+
   it("recalculates the combined detailed index only through an explicit POST", async () => {
     const fetchMock = vi.fn(async () => reply({ measured_at: "", published: [], directories: [] }));
     vi.stubGlobal("fetch", fetchMock);
