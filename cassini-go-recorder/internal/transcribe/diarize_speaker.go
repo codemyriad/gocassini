@@ -132,8 +132,9 @@ var addSpeakerFloatsFn = AddSpeakerFloats
 // meeting timeline (each decode is already timeline-aligned), so the voices
 // keep one numbering across the whole meeting. Each later stream is decoded
 // straight into the running mix: however often someone reconnected, the
-// diarizer holds one meeting-length buffer, never one per stream.
-func DiarizeSpeaker(ctx context.Context, mkvPath, speakerID string, model DiarizationModel) (SpeakerTurnSet, error) {
+// diarizer holds one meeting-length buffer, never one per stream. threads is
+// the number of CPU threads the model runs with (DiarizationThreads).
+func DiarizeSpeaker(ctx context.Context, mkvPath, speakerID string, model DiarizationModel, threads int) (SpeakerTurnSet, error) {
 	streams, _, err := ProbeMKV(mkvPath)
 	if err != nil {
 		return SpeakerTurnSet{}, fmt.Errorf("probe recording: %w", err)
@@ -166,7 +167,8 @@ func DiarizeSpeaker(ctx context.Context, mkvPath, speakerID string, model Diariz
 		return SpeakerTurnSet{}, fmt.Errorf("hash recording: %w", err)
 	}
 	start := time.Now()
-	turns, err := diarizeFn(model, mix, 16000)
+	threads = max(threads, 1)
+	turns, err := diarizeFn(model, mix, 16000, threads)
 	if err != nil {
 		return SpeakerTurnSet{}, err
 	}
@@ -181,7 +183,7 @@ func DiarizeSpeaker(ctx context.Context, mkvPath, speakerID string, model Diariz
 		Params: TurnSetParams{
 			MinDurationOn:  diarizationMinDurationOn,
 			MinDurationOff: diarizationMinDurationOff,
-			Threads:        diarizationThreads,
+			Threads:        threads,
 			Provider:       "cpu",
 		},
 		ElapsedMS: time.Since(start).Milliseconds(),

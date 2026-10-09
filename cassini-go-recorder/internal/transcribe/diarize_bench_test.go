@@ -51,7 +51,7 @@ func TestDiarizationFixtureAccuracy(t *testing.T) {
 		if wave == nil {
 			t.Fatalf("clip %d: unreadable wav", i+1)
 		}
-		turns, err := diarizeFn(model, wave.Samples, wave.SampleRate)
+		turns, err := diarizeFn(model, wave.Samples, wave.SampleRate, DefaultDiarizationThreads)
 		if err != nil {
 			t.Fatalf("clip %d: %v", i+1, err)
 		}

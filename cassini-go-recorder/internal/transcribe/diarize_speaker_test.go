@@ -29,12 +29,12 @@ func TestDiarizeSpeakerDiarizesASingleStreamWithoutCopyingIt(t *testing.T) {
 		return decoded, nil
 	}
 	var got []float32
-	diarizeFn = func(_ DiarizationModel, samples []float32, _ int) ([]SpeakerTurn, error) {
+	diarizeFn = func(_ DiarizationModel, samples []float32, _, _ int) ([]SpeakerTurn, error) {
 		got = samples
 		return []SpeakerTurn{{StartMS: 0, EndMS: 500, Speaker: 0}}, nil
 	}
 
-	set, err := DiarizeSpeaker(context.Background(), mkvPath, speakerID, DiarizationModel{Name: "m", SHA256: "x"})
+	set, err := DiarizeSpeaker(context.Background(), mkvPath, speakerID, DiarizationModel{Name: "m", SHA256: "x"}, DefaultDiarizationThreads)
 	if err != nil {
 		t.Fatalf("DiarizeSpeaker() error = %v", err)
 	}
@@ -71,7 +71,7 @@ func TestDiarizeSpeakerMixesAReconnectWithoutASecondTrackBuffer(t *testing.T) {
 	origDiarize := diarizeFn
 	t.Cleanup(func() { diarizeFn = origDiarize })
 	var diarized []float32
-	diarizeFn = func(_ DiarizationModel, samples []float32, _ int) ([]SpeakerTurn, error) {
+	diarizeFn = func(_ DiarizationModel, samples []float32, _, _ int) ([]SpeakerTurn, error) {
 		diarized = samples
 		return nil, nil
 	}
@@ -79,7 +79,7 @@ func TestDiarizeSpeakerMixesAReconnectWithoutASecondTrackBuffer(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	set, err := DiarizeSpeaker(context.Background(), mkvPath, streams[0].SpeakerID, DiarizationModel{Name: "m", SHA256: "x"})
+	set, err := DiarizeSpeaker(context.Background(), mkvPath, streams[0].SpeakerID, DiarizationModel{Name: "m", SHA256: "x"}, DefaultDiarizationThreads)
 	runtime.ReadMemStats(&after)
 	if err != nil {
 		t.Fatalf("DiarizeSpeaker() error = %v", err)

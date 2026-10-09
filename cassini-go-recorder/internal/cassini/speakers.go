@@ -62,6 +62,7 @@ var (
 	resolveDiarizationModelFn = transcribe.ResolveDiarizationModel
 	loadDiarizationModelFn    = transcribe.LoadDiarizationModel
 	lockModelRuntimeFn        = transcribe.LockModelRuntime
+	diarizationThreadsFn      = transcribe.DiarizationThreads
 	// speakersBeforeAudioCheck runs between apply's writes and its audio
 	// check; tests use it to change the audio underneath.
 	speakersBeforeAudioCheck = func(string) {}
@@ -121,7 +122,8 @@ diarize finds who spoke when on one participant's own audio and writes the
 turns (times and voice numbers only, no voice data). The model is --model,
 else $CASSINI_DIARIZATION_MODEL, else the speaker separation model installed
 in the model store (Settings, or cassini models install
-nemotron-3-diarization-int8).
+nemotron-3-diarization-int8). It runs on the CPU with
+$CASSINI_DIARIZATION_THREADS threads (default 2, at most 16).
 
 apply rewrites a .meeting bundle in place from its original transcript, the
 edits document (cassini.speaker-edits.v1) and <turns-dir>/<speakerId>.json for
@@ -187,7 +189,13 @@ func runSpeakersDiarize(ctx context.Context, args []string, stdout, stderr io.Wr
 		return speakersExitRuntime
 	}
 	defer unlock()
-	set, err := diarizeSpeakerFn(ctx, input.RecordingPath, *speaker, model)
+	// The operator sets the threads from its own budget; only the speed
+	// depends on them, and the turn set records how many ran.
+	threads, err := diarizationThreadsFn()
+	if err != nil {
+		fmt.Fprintf(stderr, "cassini speakers diarize: %v\n", err)
+	}
+	set, err := diarizeSpeakerFn(ctx, input.RecordingPath, *speaker, model, threads)
 	switch {
 	case errors.Is(err, transcribe.ErrSpeakerNotFound):
 		fmt.Fprintf(stderr, "speaker-not-found: %s\n", *speaker)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
@@ -23,8 +24,33 @@ const nemotronDiarizationRuntimeMarker = ".nemotron-diarization-v2"
 const (
 	diarizationMinDurationOn  = 0.3
 	diarizationMinDurationOff = 0.5
-	diarizationThreads        = 2
 )
+
+// DiarizationThreadsEnv sets how many CPU threads the diarizer uses. The
+// operator sets it from its own thread budget; it is 2 when unset, as on
+// Android, and always between 1 and 16. The threads change only how fast the
+// turns come, not which turns: each turn set records the number it ran with.
+const DiarizationThreadsEnv = "CASSINI_DIARIZATION_THREADS"
+
+const (
+	DefaultDiarizationThreads = 2
+	maxDiarizationThreads     = 16
+)
+
+// DiarizationThreads reads $CASSINI_DIARIZATION_THREADS: the default when it
+// is unset, clamped to 1..16 when it is an integer. A value that is not an
+// integer gives the default and an error saying so, for the caller to warn.
+func DiarizationThreads() (int, error) {
+	raw := strings.TrimSpace(os.Getenv(DiarizationThreadsEnv))
+	if raw == "" {
+		return DefaultDiarizationThreads, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return DefaultDiarizationThreads, fmt.Errorf("%s=%q is not an integer; using %d threads", DiarizationThreadsEnv, raw, DefaultDiarizationThreads)
+	}
+	return min(max(n, 1), maxDiarizationThreads), nil
+}
 
 // DiarizationModelEnv points at a decompressed Nemotron v2 ONNX file. It is a
 // development override: installed systems use the model store.
@@ -108,11 +134,12 @@ func diarizationModelName(path string) string {
 	return name
 }
 
-// diarizeFn runs the diarizer over 16 kHz mono PCM on the meeting timeline and
-// returns normalised turns. Tests replace it so no model is needed.
+// diarizeFn runs the diarizer with that many CPU threads over 16 kHz mono PCM
+// on the meeting timeline and returns normalised turns. Tests replace it so no
+// model is needed.
 var diarizeFn = diarizeWithSherpa
 
-func diarizeWithSherpa(model DiarizationModel, samples []float32, sampleRate int) ([]SpeakerTurn, error) {
+func diarizeWithSherpa(model DiarizationModel, samples []float32, sampleRate, threads int) ([]SpeakerTurn, error) {
 	if sampleRate != 16000 {
 		return nil, fmt.Errorf("diarization needs 16 kHz audio, got %d Hz", sampleRate)
 	}
@@ -127,7 +154,7 @@ func diarizeWithSherpa(model DiarizationModel, samples []float32, sampleRate int
 		MinDurationOff: diarizationMinDurationOff,
 	}
 	cfg.Segmentation.Pyannote.Model = model.Path
-	cfg.Segmentation.NumThreads = diarizationThreads
+	cfg.Segmentation.NumThreads = max(threads, 1)
 	// CUDA is untested for Nemotron; keep it on the CPU like the VAD.
 	cfg.Segmentation.Provider = "cpu"
 	sd := sherpa.NewOfflineSpeakerDiarization(&cfg)

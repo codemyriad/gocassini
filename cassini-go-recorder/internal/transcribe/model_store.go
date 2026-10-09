@@ -115,7 +115,7 @@ func ProbeInstalledDiarizer(ctx context.Context, s *modelstore.Store, m modelsto
 	if err != nil {
 		return err
 	}
-	if _, err := diarizeWithSherpa(model, make([]float32, 16000), 16000); err != nil {
+	if _, err := diarizeWithSherpa(model, make([]float32, 16000), 16000, DefaultDiarizationThreads); err != nil {
 		return err
 	}
 	return ctx.Err()

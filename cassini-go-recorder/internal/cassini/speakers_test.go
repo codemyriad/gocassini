@@ -829,7 +829,7 @@ func TestSpeakersApplyFailsIfTheAudioChanges(t *testing.T) {
 
 // ---------------------------------------------------------------- diarize
 
-func fakeSpeakersDiarization(t *testing.T, model func(string) (transcribe.DiarizationModel, error), diarize func(context.Context, string, string, transcribe.DiarizationModel) (transcribe.SpeakerTurnSet, error)) {
+func fakeSpeakersDiarization(t *testing.T, model func(string) (transcribe.DiarizationModel, error), diarize func(context.Context, string, string, transcribe.DiarizationModel, int) (transcribe.SpeakerTurnSet, error)) {
 	t.Helper()
 	// The inference lock lives in the model store; keep it out of $HOME.
 	t.Setenv("CASSINI_CACHE_ROOT", t.TempDir())
@@ -858,7 +858,7 @@ func TestSpeakersDiarizeWritesTheTurns(t *testing.T) {
 	var gotModelArg, gotPath, gotSpeaker string
 	fakeSpeakersDiarization(t,
 		func(arg string) (transcribe.DiarizationModel, error) { gotModelArg = arg; return model, nil },
-		func(_ context.Context, path, speaker string, m transcribe.DiarizationModel) (transcribe.SpeakerTurnSet, error) {
+		func(_ context.Context, path, speaker string, m transcribe.DiarizationModel, _ int) (transcribe.SpeakerTurnSet, error) {
 			gotPath, gotSpeaker, gotModel = path, speaker, m
 			return transcribe.SpeakerTurnSet{
 				Format: transcribe.SpeakerTurnsFormat, SpeakerID: speaker, Streams: []int{0}, ElapsedMS: 42,
@@ -884,6 +884,45 @@ func TestSpeakersDiarizeWritesTheTurns(t *testing.T) {
 	}
 }
 
+// The operator decides how many CPU threads a diarization may use and says so
+// in $CASSINI_DIARIZATION_THREADS: an integer, 2 when unset (as on Android),
+// kept between 1 and 16. Anything else runs with 2 and says why on stderr.
+func TestSpeakersDiarizeTakesItsThreadsFromTheEnvironment(t *testing.T) {
+	model := transcribe.DiarizationModel{Path: "/models/m.onnx", Name: "m", SHA256: strings.Repeat("d", 64)}
+	var gotThreads int
+	fakeSpeakersDiarization(t,
+		func(string) (transcribe.DiarizationModel, error) { return model, nil },
+		func(_ context.Context, _, speaker string, _ transcribe.DiarizationModel, threads int) (transcribe.SpeakerTurnSet, error) {
+			gotThreads = threads
+			return transcribe.SpeakerTurnSet{Format: transcribe.SpeakerTurnsFormat, SpeakerID: speaker}, nil
+		})
+	for _, tc := range []struct {
+		env     string
+		want    int
+		warning bool
+	}{
+		{env: "", want: 2},
+		{env: "6", want: 6},
+		{env: " 3 ", want: 3},
+		{env: "0", want: 1},
+		{env: "-4", want: 1},
+		{env: "64", want: 16},
+		{env: "many", want: 2, warning: true},
+	} {
+		t.Setenv(transcribe.DiarizationThreadsEnv, tc.env)
+		gotThreads = 0
+
+		code, _, stderr := runSpeakersForTest("diarize", speakersDummyMKV(t), "--speaker", speakersRoomID, "--out", filepath.Join(t.TempDir(), "t.json"))
+
+		if code != 0 || gotThreads != tc.want {
+			t.Errorf("%s=%q: exit %d, %d threads, want %d (stderr %q)", transcribe.DiarizationThreadsEnv, tc.env, code, gotThreads, tc.want, stderr)
+		}
+		if warned := strings.Contains(stderr, transcribe.DiarizationThreadsEnv); warned != tc.warning {
+			t.Errorf("%s=%q: stderr %q, want a warning: %v", transcribe.DiarizationThreadsEnv, tc.env, stderr, tc.warning)
+		}
+	}
+}
+
 // Diarizing is inference, so it takes the model store's inference lock, the
 // one builds and model checks take: a model check started from a terminal
 // must not run beside it. Held elsewhere, diarize waits; it never starts.
@@ -891,7 +930,7 @@ func TestSpeakersDiarizeWaitsForTheModelRuntimeLock(t *testing.T) {
 	model := transcribe.DiarizationModel{Path: "/models/m.onnx", Name: "m", SHA256: strings.Repeat("d", 64)}
 	fakeSpeakersDiarization(t,
 		func(string) (transcribe.DiarizationModel, error) { return model, nil },
-		func(context.Context, string, string, transcribe.DiarizationModel) (transcribe.SpeakerTurnSet, error) {
+		func(context.Context, string, string, transcribe.DiarizationModel, int) (transcribe.SpeakerTurnSet, error) {
 			t.Error("diarized while another inference held the model runtime lock")
 			return transcribe.SpeakerTurnSet{}, nil
 		})
@@ -919,7 +958,7 @@ func TestSpeakersDiarizeWithoutAModelIsUnavailable(t *testing.T) {
 		func(string) (transcribe.DiarizationModel, error) {
 			return transcribe.DiarizationModel{}, fmt.Errorf("%w: set %s", transcribe.ErrDiarizationUnavailable, transcribe.DiarizationModelEnv)
 		},
-		func(context.Context, string, string, transcribe.DiarizationModel) (transcribe.SpeakerTurnSet, error) {
+		func(context.Context, string, string, transcribe.DiarizationModel, int) (transcribe.SpeakerTurnSet, error) {
 			t.Fatal("diarized without a model")
 			return transcribe.SpeakerTurnSet{}, nil
 		})
@@ -936,7 +975,7 @@ func TestSpeakersDiarizeWithoutAModelIsUnavailable(t *testing.T) {
 func TestSpeakersDiarizeUnknownSpeaker(t *testing.T) {
 	fakeSpeakersDiarization(t,
 		func(string) (transcribe.DiarizationModel, error) { return transcribe.DiarizationModel{Path: "m"}, nil },
-		func(_ context.Context, _, speaker string, _ transcribe.DiarizationModel) (transcribe.SpeakerTurnSet, error) {
+		func(_ context.Context, _, speaker string, _ transcribe.DiarizationModel, _ int) (transcribe.SpeakerTurnSet, error) {
 			return transcribe.SpeakerTurnSet{}, fmt.Errorf("%w: %s", transcribe.ErrSpeakerNotFound, speaker)
 		})
 	out := filepath.Join(t.TempDir(), "turns.json")
@@ -952,7 +991,7 @@ func TestSpeakersDiarizeUnknownSpeaker(t *testing.T) {
 func TestSpeakersDiarizeOtherFailures(t *testing.T) {
 	fakeSpeakersDiarization(t,
 		func(string) (transcribe.DiarizationModel, error) { return transcribe.DiarizationModel{Path: "m"}, nil },
-		func(context.Context, string, string, transcribe.DiarizationModel) (transcribe.SpeakerTurnSet, error) {
+		func(context.Context, string, string, transcribe.DiarizationModel, int) (transcribe.SpeakerTurnSet, error) {
 			return transcribe.SpeakerTurnSet{}, errors.New("ffmpeg exploded")
 		})
 	if code, _, stderr := runSpeakersForTest("diarize", speakersDummyMKV(t), "--speaker", speakersRoomID, "--out", filepath.Join(t.TempDir(), "t.json")); code != speakersExitRuntime {
