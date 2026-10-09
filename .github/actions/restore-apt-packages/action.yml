@@ -1,0 +1,38 @@
+name: Restore shared Ubuntu media packages
+description: Reuse main's FFmpeg downloads while APT still resolves and installs current packages.
+outputs:
+  path:
+    description: Downloaded deb files to save after a successful media install.
+    value: ${{ steps.identity.outputs.path }}
+  key:
+    description: Weekly cache key for this Ubuntu release and architecture.
+    value: ${{ steps.identity.outputs.key }}
+  cache-hit:
+    description: Whether this week's exact cache was restored.
+    value: ${{ steps.restore.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Identify package cache
+      id: identity
+      shell: bash
+      run: |
+        . /etc/os-release
+        arch="$(dpkg --print-architecture)"
+        prefix="apt-ffmpeg-v1-${ID}-${VERSION_ID}-${arch}-"
+        {
+          echo "path=$RUNNER_TEMP/cassini-apt-archives/*.deb"
+          echo "prefix=$prefix"
+          echo "key=${prefix}$(date -u +%G-W%V)"
+        } >> "$GITHUB_OUTPUT"
+    - name: Restore package downloads
+      id: restore
+      uses: actions/cache/restore@v4
+      continue-on-error: true
+      with:
+        path: ${{ steps.identity.outputs.path }}
+        key: ${{ steps.identity.outputs.key }}
+        restore-keys: ${{ steps.identity.outputs.prefix }}
+    - name: Use restored archives for subsequent APT installs
+      shell: bash
+      run: sudo bash scripts/ci-apt-package-cache.sh "$RUNNER_TEMP/cassini-apt-archives"
