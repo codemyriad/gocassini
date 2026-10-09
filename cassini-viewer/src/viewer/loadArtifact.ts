@@ -652,7 +652,12 @@ export function readWordEndsBoundedByAudio(provenance: unknown): boolean {
 export function readSpeakerEditsRevision(manifest: PortableMeetingManifest): number | undefined {
   const speechToText = asMaybeObject(asMaybeObject(manifest.provenance)?.speechToText);
   const step = asMaybeObject(speechToText?.[getDefaultTranscriptId(manifest)]);
-  const revision = asMaybeObject(step?.["x-speakerEdits"])?.editsRevision;
+  // Recordings published before the record moved to x-speakerEdits carry the
+  // revision inside x-speakerDiarization; without it they read as never
+  // updated, and the panel would offer a Reload that can't change anything.
+  const revision =
+    asMaybeObject(step?.["x-speakerEdits"])?.editsRevision ??
+    asMaybeObject(step?.["x-speakerDiarization"])?.editsRevision;
   return typeof revision === "number" && Number.isInteger(revision) && revision > 0 ? revision : undefined;
 }
 

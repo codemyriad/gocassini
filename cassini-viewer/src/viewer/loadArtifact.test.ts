@@ -903,6 +903,9 @@ describe("switchPortableTranscript", () => {
     expect(readSpeakerEditsRevision(manifest({ "separated-voices": {}, "raw-asr": record(3) }))).toBeUndefined();
     expect(readSpeakerEditsRevision(manifest({ "separated-voices": record("3") }))).toBeUndefined();
     expect(readSpeakerEditsRevision(manifest({}))).toBeUndefined();
+    // Recordings published while the record lived in x-speakerDiarization.
+    const older = { engine: "sherpa-onnx", "x-speakerDiarization": { editsRevision: 2 } };
+    expect(readSpeakerEditsRevision(manifest({ "separated-voices": older, "raw-asr": {} }))).toBe(2);
 
     // And which summary: one rewritten for the edits, or the build's own.
     const summary = (sha256: unknown) => ({ "x-speakerEdits": { editsRevision: 3, summary: { rewritten: true, sha256 } } });
