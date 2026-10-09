@@ -21,6 +21,10 @@
         "video_ivf": "mira.ivf",
         "audio_ogg": "mira.ogg",
         "wav_source": "_work/mira.wav"
+      },
+      "sha256": {
+        "video_ivf": "8016cfdef0e3a5bb5a413c404263523252b428070edd24200cc05a2e8655304c",
+        "audio_ogg": "63a8704dd9da7a22d6eda95b321f2e5d05ae081cad7c3b3b6f234a90c4915669"
       }
     },
     {
@@ -37,6 +41,10 @@
         "video_ivf": "leo.ivf",
         "audio_ogg": "leo.ogg",
         "wav_source": "_work/leo.wav"
+      },
+      "sha256": {
+        "video_ivf": "1164723aa6bd716afcaf4ee84617492a19ba9cdf5f3f2671fa80e0e806066b68",
+        "audio_ogg": "386d6e751fb52c34b4ebffe72e485fd986eab7861af176c38c4296b32537d41a"
       }
     },
     {
@@ -53,6 +61,10 @@
         "video_ivf": "ben.ivf",
         "audio_ogg": "ben.ogg",
         "wav_source": "_work/ben.wav"
+      },
+      "sha256": {
+        "video_ivf": "6cd8e465fced57e8cf15cff48bed7330cd546274d789ea18f5bd546b53d4c1d0",
+        "audio_ogg": "09e364cd5b4b569f88468a16bfd24b8e83ceb10314f2e79f86d7d4ccfb05f764"
       }
     },
     {
@@ -69,6 +81,10 @@
         "video_ivf": "ana.ivf",
         "audio_ogg": "ana.ogg",
         "wav_source": "_work/ana.wav"
+      },
+      "sha256": {
+        "video_ivf": "3ad8769d00a16a4a961dcce825e4b9c1d54a7714469e288719ffdc858b7acfb2",
+        "audio_ogg": "ea368e2540dd9b4e0fbed7a94e1a661ea46709d7953a1f39c87d0a8afb71cfd8"
       }
     },
     {
@@ -85,6 +101,10 @@
         "video_ivf": "noah.ivf",
         "audio_ogg": "noah.ogg",
         "wav_source": "_work/noah.wav"
+      },
+      "sha256": {
+        "video_ivf": "adbcf33ae101886e877d7d81c0c5406da180c3b4635101a58c4f6b33ada33c15",
+        "audio_ogg": "fe39abed4c2efc05ccc011a58d2fefb66b5d7be50f9f928658a23477ebfec7ef"
       }
     },
     {
@@ -101,6 +121,10 @@
         "video_ivf": "jules.ivf",
         "audio_ogg": "jules.ogg",
         "wav_source": "_work/jules.wav"
+      },
+      "sha256": {
+        "video_ivf": "e96f4e7995511fe4949d2a32cad959146be068cbcf7baea7846a2433a294a287",
+        "audio_ogg": "e529547cab03feaf87912fbad08a80021d29f93fcb89b4c449dce53b23f23eeb"
       }
     }
   ],

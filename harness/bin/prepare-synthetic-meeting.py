@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -586,6 +587,16 @@ def main() -> None:
             "media_prefix": participant.participant_id,
             "turn_count": len(actual_turns),
             "paths": rel_paths,
+            # The files the player streams, which are the ones committed for
+            # a vendored fixture. Recording their hashes ties media and
+            # manifest to one run: test-prepare-synthetic-meeting.sh compares
+            # them with the committed files, so media from another run (say a
+            # manifest restored with git after a run that stopped partway)
+            # cannot pass as this one.
+            "sha256": {
+                key: file_sha256(Path(output_paths[key]))
+                for key in STREAMED_ASSET_KEYS
+            },
         })
 
     manifest_turns.sort(key=lambda item: (item["start_seconds"], item["speaker"]))
@@ -625,6 +636,17 @@ def resample_linear(
         target_positions, source_positions, audio.astype(np.float64, copy=False)
     )
     return resampled.astype(np.float32)
+
+
+STREAMED_ASSET_KEYS = ("video_ivf", "audio_ogg")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def cached_manifest_is_complete(manifest_path: Path, backend: str) -> bool:

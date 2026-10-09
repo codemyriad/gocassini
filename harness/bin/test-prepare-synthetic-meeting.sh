@@ -19,7 +19,8 @@
 #   - a run that fails partway leaves no stale manifest or reference behind;
 #   - cached output is reused only for the backend that produced it;
 #   - every committed fixture manifest under harness/media/processed was
-#     generated with kokoro, not the mock backend's tones.
+#     generated with kokoro, not the mock backend's tones, and every committed
+#     media file is the one that manifest's run produced (sha256).
 #
 # Coverage given up: ffmpeg and ffprobe are STUBS, so rendering the mp4/ivf/ogg
 # assets is not exercised — only the schedule, the WAV mix, and the manifest/
@@ -283,27 +284,89 @@ if generator.cached_manifest_is_complete(manifest_path, "kokoro"):
 print("cache reuse is backend- and cwd-safe")
 PY
 
-# The committed fixtures are what the harness streams and transcribes; tones
-# from the mock backend there transcribe to nothing (four of six showcase
-# voices did). Their manifests are plain git files, readable without LFS.
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-python3 - "$REPO_ROOT" <<'PY' || exit 1
+# Media and manifest of a fixture must come from one run. The generator records
+# each streamed file's sha256; check a fresh run's manifest against its files.
+python3 - "$PROBE_DIR" <<'PY' || exit 1
+import hashlib
 import json
 import sys
 from pathlib import Path
 
+out = Path(sys.argv[1])
+manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+for participant in manifest["participants"]:
+    hashes = participant.get("sha256") or {}
+    if set(hashes) != {"video_ivf", "audio_ogg"}:
+        raise SystemExit(f"FAIL: {participant['id']} records hashes for {sorted(hashes)}")
+    for key, recorded in hashes.items():
+        actual = hashlib.sha256((out / participant["paths"][key]).read_bytes()).hexdigest()
+        if actual != recorded:
+            raise SystemExit(f"FAIL: {participant['id']} {key} hash does not match its file")
+print("manifest records the streamed files' hashes")
+PY
+
+# The committed fixtures are what the harness streams and transcribes; tones
+# from the mock backend there transcribe to nothing (four of six showcase
+# voices did). Every committed fixture must be real speech, and every committed
+# media file must be the one its manifest recorded: a manifest restored with
+# git after a run that stopped partway would otherwise vouch for whatever media
+# the directory holds. Without LFS the media are pointer files, whose oid is
+# the content's sha256, so this runs on a plain checkout too. Only tracked
+# files count: locally generated fixtures are not committed and not checked.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+python3 - "$REPO_ROOT" <<'PY' || exit 1
+import hashlib
+import json
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
 root = Path(sys.argv[1])
-manifests = sorted((root / "harness" / "media" / "processed").glob("*/manifest.json"))
-if not manifests:
+tracked = subprocess.run(
+    ["git", "-C", str(root), "ls-files", "--", "harness/media/processed"],
+    check=True, capture_output=True, text=True,
+).stdout.split()
+by_dir = defaultdict(set)
+for rel in tracked:
+    path = Path(rel)
+    if len(path.parts) == 5:  # harness/media/processed/<fixture>/<file>
+        by_dir[path.parent].add(path.name)
+fixtures = sorted(d for d, names in by_dir.items() if "manifest.json" in names)
+if not fixtures:
     raise SystemExit("FAIL: no committed fixture manifests found")
-for path in manifests:
-    backend = json.loads(path.read_text(encoding="utf-8")).get("backend")
+
+
+def content_sha256(path: Path) -> str:
+    data = path.read_bytes()
+    if data.startswith(b"version https://git-lfs.github.com/spec/"):
+        for line in data.decode("utf-8").splitlines():
+            if line.startswith("oid sha256:"):
+                return line.split(":", 1)[1].strip()
+    return hashlib.sha256(data).hexdigest()
+
+
+for fixture in fixtures:
+    manifest = json.loads((root / fixture / "manifest.json").read_text(encoding="utf-8"))
+    backend = manifest.get("backend")
     if backend != "kokoro":
         raise SystemExit(
-            f"FAIL: {path.relative_to(root)} was generated with backend {backend!r}; "
+            f"FAIL: {fixture}/manifest.json was generated with backend {backend!r}; "
             "committed fixtures must be real speech (--backend kokoro)"
         )
-print(f"{len(manifests)} committed fixture manifest(s) use kokoro")
+    recorded = {}
+    for participant in manifest["participants"]:
+        for key, digest in (participant.get("sha256") or {}).items():
+            recorded[participant["paths"][key]] = digest
+    for name in sorted(by_dir[fixture] - {"manifest.json", "reference.txt"}):
+        if name not in recorded:
+            raise SystemExit(f"FAIL: {fixture}/{name} is committed but its manifest records no hash for it")
+        if content_sha256(root / fixture / name) != recorded[name]:
+            raise SystemExit(
+                f"FAIL: {fixture}/{name} is not the file its manifest was generated with; "
+                "regenerate the whole fixture"
+            )
+print(f"{len(fixtures)} committed fixture(s) use kokoro, media matching their manifest")
 PY
 
 echo "PASS: prepare-synthetic-meeting.py slide keeps ground truth honest"
