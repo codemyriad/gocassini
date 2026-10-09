@@ -159,6 +159,11 @@ type ProcessingStep struct {
 	// record (counts, ids and model hashes only, never voice data) without
 	// this package owning its shape.
 	SpeakerDiarization json.RawMessage `json:"x-speakerDiarization,omitempty"`
+	// SpeakerEdits is set on the transcript people's speaker edits changed,
+	// by renaming a speaker or separating voices: which revision of the edits
+	// it reflects and whether the summary was rewritten for them. Raw JSON
+	// for the same reason as SpeakerDiarization.
+	SpeakerEdits json.RawMessage `json:"x-speakerEdits,omitempty"`
 }
 
 // HintsProvenance says what decoder biasing a speech-to-text pass actually
@@ -227,18 +232,28 @@ type Integrity struct {
 type Speaker struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
-	// Device names the participant a voice was separated from, when this
-	// speaker is one of several people who shared a device. The original
-	// transcript kept beside the separated one still credits the device,
-	// and the roster otherwise has no name for it once its voices are named.
-	// A hint: readers that do not know it show the voice as any speaker.
-	Device *SpeakerDevice `json:"x-device,omitempty"`
+	// SeparatedInto is set on a participant whose device several people
+	// shared, once their voices were separated: it lists the voices that
+	// stand for this participant in the default transcript. The participant
+	// stays in the list because the original transcript kept beside the
+	// separated one still credits it, and a reader must find every speaker a
+	// transcript names here. A hint: a reader that knows it counts and lists
+	// the voices instead of the participant; one that does not shows the
+	// participant as one more speaker, which is all an older reader loses.
+	SeparatedInto []string `json:"x-separatedInto,omitempty"`
 }
 
-// SpeakerDevice is the participant whose audio a voice was separated from.
-type SpeakerDevice struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+// People returns the speakers who are people in the default transcript:
+// every speaker but a participant separated into voices, whose voices are
+// listed in its place.
+func People(speakers []Speaker) []Speaker {
+	out := make([]Speaker, 0, len(speakers))
+	for _, speaker := range speakers {
+		if len(speaker.SeparatedInto) == 0 {
+			out = append(out, speaker)
+		}
+	}
+	return out
 }
 
 type TranscriptItem struct {

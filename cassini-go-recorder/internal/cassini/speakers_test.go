@@ -386,10 +386,16 @@ func TestSpeakersApplySplitsASharedDevice(t *testing.T) {
 	}
 	if record["model"] != "nvidia/Nemotron-3-Diarization INT8" || record["modelSha256"] != strings.Repeat("d", 64) ||
 		record["backend"] != "sherpa-onnx 1.13.7-cassini.6 Nemotron diarization, CPU, 2 threads" ||
-		record["sourceSeparation"] != false || record["editsRevision"] != float64(1) ||
-		record["editsSha256"] != sha256Hex([]byte(editsBody)) || record["assignment"] != transcribe.DiarizationAssignment ||
+		record["sourceSeparation"] != false || record["assignment"] != transcribe.DiarizationAssignment ||
 		record["minDurationOn"] != 0.3 || record["minDurationOff"] != 0.5 {
 		t.Errorf("x-speakerDiarization = %v", record)
+	}
+	editsRecord, ok := sepProv["x-speakerEdits"].(map[string]any)
+	if !ok || editsRecord["editsRevision"] != float64(1) || editsRecord["editsSha256"] != sha256Hex([]byte(editsBody)) {
+		t.Errorf("separated-voices x-speakerEdits = %v, want revision 1 and the edits' SHA-256", sepProv["x-speakerEdits"])
+	}
+	if _, ok := raw["provenance"].(map[string]any)["x-speakerEdits"]; ok {
+		t.Error("the original transcript says it reflects the edits")
 	}
 	wantSplits := []any{map[string]any{
 		"speakerId": speakersRoomID, "voices": []any{voice1, voice2},
@@ -402,8 +408,8 @@ func TestSpeakersApplySplitsASharedDevice(t *testing.T) {
 		t.Error("the provenance copy carries the base stash")
 	}
 	top, ok := manifest["x-speakerDiarization"].(map[string]any)
-	if !ok || top["editsRevision"] != float64(1) {
-		t.Errorf("manifest x-speakerDiarization = %v", manifest["x-speakerDiarization"])
+	if !ok || !reflect.DeepEqual(top["splits"], wantSplits) || top["base"] == nil {
+		t.Errorf("manifest x-speakerDiarization = %v, want the splits and the build's members", manifest["x-speakerDiarization"])
 	}
 	if manifest["speakerCount"] != float64(3) || manifest["wordCount"] != beforeManifest["wordCount"] {
 		t.Errorf("speakerCount=%v wordCount=%v, want 3 and unchanged %v", manifest["speakerCount"], manifest["wordCount"], beforeManifest["wordCount"])
@@ -1068,12 +1074,14 @@ func TestSpeakersApplyThenPackKeepsTheAudioAndTheMarks(t *testing.T) {
 		t.Errorf("transcripts %v default %q, want separated-voices (default) and raw-asr", wordIDs, defaultID)
 	}
 	voice1, voice2 := speakersRoomID+"~1", speakersRoomID+"~2"
-	// Each voice names its device: the original transcript credits the
-	// device, and the file has no other place left that holds its name.
-	room := &portable.SpeakerDevice{ID: speakersRoomID, Label: "Meeting room"}
+	// The device stays in the list, before its voices and marked as
+	// separated into them: the original transcript still credits it, and a
+	// reader that does not know the mark shows one name more rather than
+	// refusing the original transcript.
 	wantSpeakers := []portable.Speaker{
-		{ID: voice1, Label: "Meeting room · Speaker 1", Device: room},
-		{ID: voice2, Label: "Meeting room · Speaker 2", Device: room},
+		{ID: speakersRoomID, Label: "Meeting room", SeparatedInto: []string{voice1, voice2}},
+		{ID: voice1, Label: "Meeting room · Speaker 1"},
+		{ID: voice2, Label: "Meeting room · Speaker 2"},
 		{ID: speakersBenID, Label: "Ben"},
 	}
 	if !reflect.DeepEqual(manifest.Speakers, wantSpeakers) {
@@ -1086,8 +1094,19 @@ func TestSpeakersApplyThenPackKeepsTheAudioAndTheMarks(t *testing.T) {
 	if err := json.Unmarshal(manifest.Provenance.SpeechToText.SpeakerDiarization, &record); err != nil {
 		t.Fatalf("x-speakerDiarization did not survive pack: %v (%s)", err, manifest.Provenance.SpeechToText.SpeakerDiarization)
 	}
-	if record.EditsRevision != 4 || len(record.Splits) != 1 || !reflect.DeepEqual(record.Splits[0].Voices, []string{voice1, voice2}) || record.Base != nil {
+	if len(record.Splits) != 1 || !reflect.DeepEqual(record.Splits[0].Voices, []string{voice1, voice2}) || record.Base != nil {
 		t.Errorf("packed record = %+v", record)
+	}
+	var edits speakerEditsRecord
+	if err := json.Unmarshal(manifest.Provenance.SpeechToText.SpeakerEdits, &edits); err != nil || edits.EditsRevision != 4 {
+		t.Errorf("packed x-speakerEdits = %s (%v), want revision 4", manifest.Provenance.SpeechToText.SpeakerEdits, err)
+	}
+	if got := portable.People(manifest.Speakers); len(got) != 3 {
+		t.Errorf("people = %+v, want the two voices and Ben", got)
+	}
+	var inspected, inspectErr bytes.Buffer
+	if code := Run(context.Background(), []string{"inspect", sealed}, &inspected, &inspectErr); code != 0 || !strings.Contains(inspected.String(), " speakers=3 ") {
+		t.Errorf("inspect: exit %d, %q (stderr %q), want speakers=3: the voices, not their device as well", code, inspected.String(), inspectErr.String())
 	}
 
 	out := filepath.Join(tmp, "outgoing.opus")
@@ -1105,7 +1124,7 @@ func TestSpeakersApplyThenPackKeepsTheAudioAndTheMarks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if shown.DefaultTranscript != "separated-voices" || shown.EditsRevision == nil || *shown.EditsRevision != 4 ||
-		len(shown.Speakers) != 3 || shown.Speakers[0].Device != speakersRoomID {
+		len(shown.Speakers) != 3 || shown.Speakers[0].ID != voice1 || shown.Speakers[0].Device != "Meeting room" {
 		t.Errorf("show = %+v", shown)
 	}
 }
@@ -1193,26 +1212,27 @@ func writeSpeakersSummary(t *testing.T, bundle string, body []byte) {
 	}
 }
 
-// speakersRecord reads manifest.json's x-speakerDiarization; ok is false when
-// the manifest has none.
-func speakersRecord(t *testing.T, bundle string) (speakerDiarizationRecord, bool) {
+// speakersRecord reads x-speakerEdits on the bundle's default transcript;
+// ok is false when it has none.
+func speakersRecord(t *testing.T, bundle string) (speakerEditsRecord, bool) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(bundle, "manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var manifest map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &manifest); err != nil {
+	manifest, err := parseOrderedJSONObject(raw)
+	if err != nil {
 		t.Fatal(err)
 	}
-	recordRaw, ok := manifest[speakersDiarizationKey]
-	var record speakerDiarizationRecord
-	if ok {
-		if err := json.Unmarshal(recordRaw, &record); err != nil {
-			t.Fatal(err)
-		}
+	files, err := manifest.object("files")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return record, ok
+	record, err := readBundleSpeakerEdits(manifest, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record, record.EditsRevision > 0 || record.EditsSHA256 != ""
 }
 
 const speakersNamedMira = `"merges":[],"labels":[{"speakerId":"` + speakersRoomID + `~1","label":"Mira"}]`
@@ -1258,7 +1278,7 @@ func TestSpeakersApplyRewritesTheSummaryAndUndoRestoresIt(t *testing.T) {
 	}
 	want := &speakerSummaryRecord{Rewritten: true, Model: "test-model", SHA256: sha256Hex([]byte(rewritten)), EditsSHA256: sha256Hex([]byte(namedDoc)), TranscriptSHA256: sha256Hex(written)}
 	if !reflect.DeepEqual(record.Summary, want) {
-		t.Errorf("x-speakerDiarization.summary = %+v, want %+v", record.Summary, want)
+		t.Errorf("x-speakerEdits.summary = %+v, want %+v", record.Summary, want)
 	}
 	if report.SummarySHA256 != want.SHA256 {
 		t.Errorf("report summarySha256 = %q, want the rewritten summary's %q", report.SummarySHA256, want.SHA256)
@@ -1276,7 +1296,7 @@ func TestSpeakersApplyRewritesTheSummaryAndUndoRestoresIt(t *testing.T) {
 		t.Error("the kept copy of the build's summary survived the undo")
 	}
 	if record, ok := speakersRecord(t, bundle); ok {
-		t.Errorf("undo left x-speakerDiarization (summary %+v)", record.Summary)
+		t.Errorf("undo left x-speakerEdits (summary %+v)", record.Summary)
 	}
 }
 
@@ -1449,5 +1469,255 @@ func TestSpeakersApplyFinishesAnUndoThatStoppedBeforeDroppingTheSummaryCopy(t *t
 	}
 	if diffs := diffSnapshots(built, snapshotDir(t, bundle)); len(diffs) != 0 {
 		t.Errorf("the retried undo did not restore the build: %v", diffs)
+	}
+}
+
+// ---------------------------------------------------------------- rename
+
+const speakersRenameBen = `{"format":"cassini.speaker-edits.v1","revision":1,"splits":[],"merges":[],"labels":[{"speakerId":"` + speakersBenID + `","label":"Benedict"}]}`
+
+// speakersWithoutDisplay is a bundle as the current build writes it: no
+// display or readable transcript, so an undo can restore it byte for byte.
+func speakersWithoutDisplay(t *testing.T, tmp string, opts speakersBundleOptions) string {
+	t.Helper()
+	bundle := writeSpeakersBundle(t, tmp, opts)
+	for _, name := range []string{speakersDisplayTranscript, speakersReadableTranscript} {
+		if err := os.Remove(filepath.Join(bundle, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return bundle
+}
+
+// transcriptWithoutLabels is a transcript file with every speaker label
+// blanked, to compare what a rename must leave alone.
+func transcriptWithoutLabels(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, speaker := range doc["speakers"].([]any) {
+		speaker.(map[string]any)["label"] = ""
+	}
+	return doc
+}
+
+// Naming a speaker separates nobody's voice. The meeting keeps its one
+// transcript, with only that speaker's label changed; the original is kept
+// beside it for an exact undo but is not listed, so it is never packed; and
+// nothing says voices were separated. The edits are recorded on the
+// transcript's own speech-to-text step, with the summary they rewrote.
+func TestSpeakersApplyARenameOnlyRelabelsTheOneTranscript(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := speakersWithoutDisplay(t, tmp, speakersBundleOptions{additional: true})
+	writeSpeakersSummary(t, bundle, []byte("## Summary\nBen spoke.\n"))
+	rewritten := "## Summary\nBenedict spoke.\n"
+	stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) { return rewritten, "test-model", nil })
+	built := snapshotDir(t, bundle)
+	builtManifest := readJSONMap(t, filepath.Join(bundle, "manifest.json"))
+	edits := writeSpeakersEdits(t, tmp, "rename.json", speakersRenameBen)
+
+	report := speakersApplyOK(t, bundle, edits, t.TempDir())
+
+	want := speakersApplyReport{
+		Revision: 1, Splits: []speakersSplitReport{}, Missing: []string{}, Inconclusive: []string{},
+		SpeakerCount: 2, Summary: "regenerated", SummarySHA256: sha256Hex([]byte(rewritten)),
+	}
+	if !reflect.DeepEqual(report, want) {
+		t.Errorf("report = %+v, want %+v", report, want)
+	}
+	after := snapshotDir(t, bundle)
+	if got := rosterOf(t, filepath.Join(bundle, speakersDefaultTranscript)); !reflect.DeepEqual(got, []transcribe.RosterEntry{
+		{ID: speakersRoomID, Label: "Meeting room"}, {ID: speakersBenID, Label: "Benedict"},
+	}) {
+		t.Errorf("roster = %+v, want Ben renamed and nothing else", got)
+	}
+	if got, want := transcriptWithoutLabels(t, after[speakersDefaultTranscript]), transcriptWithoutLabels(t, built[speakersDefaultTranscript]); !reflect.DeepEqual(got, want) {
+		t.Error("a rename changed the transcript beyond its speaker labels")
+	}
+	if !bytes.Equal(after[speakersRawASRTranscript], built[speakersDefaultTranscript]) {
+		t.Error("the original transcript is not kept byte for byte for the undo")
+	}
+	if !strings.Contains(string(after["captions.vtt"]), "<Benedict> Hello both.") {
+		t.Errorf("captions do not use the new name:\n%s", after["captions.vtt"])
+	}
+
+	manifest := readJSONMap(t, filepath.Join(bundle, "manifest.json"))
+	files := manifest["files"].(map[string]any)
+	entries := files["transcripts"].([]any)
+	delete(entries[0].(map[string]any)["provenance"].(map[string]any), speakersEditsKey)
+	if !reflect.DeepEqual(files, builtManifest["files"]) {
+		t.Errorf("files = %v, want the build's %v less the edits record (no transcript added)", files, builtManifest["files"])
+	}
+	for _, key := range []string{"speakerCount", "segmentCount", "wordCount"} {
+		if manifest[key] != builtManifest[key] {
+			t.Errorf("%s = %v, want the build's %v", key, manifest[key], builtManifest[key])
+		}
+	}
+	if _, ok := manifest[speakersDiarizationKey]; ok {
+		t.Errorf("a rename recorded a diarization: %v", manifest[speakersDiarizationKey])
+	}
+	stt := manifest["provenance"].(map[string]any)["speechToText"].(map[string]any)
+	if _, ok := stt[speakersDiarizationKey]; ok {
+		t.Error("a rename put x-speakerDiarization on the speech-to-text step")
+	}
+	record, ok := speakersRecord(t, bundle)
+	wantRecord := speakerEditsRecord{
+		EditsRevision: 1, EditsSHA256: sha256Hex([]byte(speakersRenameBen)),
+		Summary: &speakerSummaryRecord{Rewritten: true, Model: "test-model", SHA256: sha256Hex([]byte(rewritten)), EditsSHA256: sha256Hex([]byte(speakersRenameBen)), TranscriptSHA256: sha256Hex(after[speakersDefaultTranscript])},
+	}
+	if !ok || !reflect.DeepEqual(record, wantRecord) {
+		t.Errorf("x-speakerEdits = %+v, want %+v", record, wantRecord)
+	}
+
+	code, stdout, _ := runSpeakersForTest("show", bundle, "--json")
+	var shown speakersShowResult
+	if code != 0 || json.Unmarshal([]byte(stdout), &shown) != nil {
+		t.Fatalf("show: exit %d %s", code, stdout)
+	}
+	if shown.DefaultTranscript != "parakeet-tdt-0-6b-v3-int8" || shown.EditsRevision == nil || *shown.EditsRevision != 1 || !reflect.DeepEqual(shown.Transcripts, []string{"parakeet-tdt-0-6b-v3-int8", "other"}) {
+		t.Errorf("show after a rename = %+v", shown)
+	}
+
+	// Applying it again changes nothing and asks no model.
+	speakersApplyOK(t, bundle, edits, t.TempDir())
+	if diffs := diffSnapshots(after, snapshotDir(t, bundle)); len(diffs) != 0 {
+		t.Errorf("a second apply of the rename changed the bundle: %v", diffs)
+	}
+
+	// Undoing it restores the build exactly.
+	empty := writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":2,"splits":[],"merges":[],"labels":[]}`)
+	if report := speakersApplyOK(t, bundle, empty, t.TempDir()); report.Summary != "restored" {
+		t.Errorf("undo: summary %q, want restored", report.Summary)
+	}
+	if diffs := diffSnapshots(built, snapshotDir(t, bundle)); len(diffs) != 0 {
+		t.Errorf("undoing a rename left a trace: %v", diffs)
+	}
+}
+
+// A packed renamed meeting has one transcript, the build's raw-asr, whose
+// speakers carry the new name; the kept original is not in the file, and the
+// edits revision is on that transcript's step for readers to compare.
+func TestSpeakersApplyARenameOnlyPacksOneTranscript(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundle := speakersWithoutDisplay(t, tmp, speakersBundleOptions{realAudio: true})
+	speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "rename.json", speakersRenameBen), t.TempDir())
+
+	manifest := decodePortableManifestFromOpus(t, packAnnotateBundle(t, bundle, filepath.Join(tmp, "renamed.opus")))
+
+	var ids []string
+	for _, entry := range manifest.Transcripts {
+		if entry.Role == "" {
+			ids = append(ids, entry.ID)
+		}
+	}
+	if !reflect.DeepEqual(ids, []string{"raw-asr"}) {
+		t.Errorf("transcripts = %v, want the one raw-asr transcript", ids)
+	}
+	if want := []portable.Speaker{{ID: speakersRoomID, Label: "Meeting room"}, {ID: speakersBenID, Label: "Benedict"}}; !reflect.DeepEqual(manifest.Speakers, want) {
+		t.Errorf("speakers = %+v, want %+v", manifest.Speakers, want)
+	}
+	stt := manifest.Provenance.SpeechToText
+	if len(stt.SpeakerDiarization) != 0 {
+		t.Errorf("a rename packed a diarization record: %s", stt.SpeakerDiarization)
+	}
+	var edits speakerEditsRecord
+	if err := json.Unmarshal(stt.SpeakerEdits, &edits); err != nil || edits.EditsRevision != 1 {
+		t.Errorf("x-speakerEdits = %s (%v), want revision 1", stt.SpeakerEdits, err)
+	}
+}
+
+// A meeting moves between a rename and a split in either direction, and each
+// state is the one a fresh apply of its edits gives; undoing everything at the
+// end restores the build.
+func TestSpeakersApplyMovesBetweenARenameAndASplit(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := speakersWithoutDisplay(t, tmp, speakersBundleOptions{additional: true})
+	built := snapshotDir(t, bundle)
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	renamed := `"merges":[],"labels":[{"speakerId":"` + speakersBenID + `","label":"Benedict"}]`
+	rename := writeSpeakersEdits(t, tmp, "rename.json", speakersRenameBen)
+	split := writeSpeakersEdits(t, tmp, "split.json", speakersSplitDoc(1, renamed))
+
+	// What each document gives on a fresh bundle.
+	fresh := func(edits string) map[string][]byte {
+		t.Helper()
+		dir := t.TempDir()
+		other := speakersWithoutDisplay(t, dir, speakersBundleOptions{additional: true})
+		speakersApplyOK(t, other, edits, turnsDir)
+		snapshot := snapshotDir(t, other)
+		delete(snapshot, "cassini.json") // names the bundle's own path
+		return snapshot
+	}
+	wantRenamed, wantSplit := fresh(rename), fresh(split)
+
+	for i, step := range []struct {
+		edits string
+		want  map[string][]byte
+	}{{rename, wantRenamed}, {split, wantSplit}, {rename, wantRenamed}} {
+		speakersApplyOK(t, bundle, step.edits, turnsDir)
+		got := snapshotDir(t, bundle)
+		delete(got, "cassini.json")
+		if diffs := diffSnapshots(step.want, got); len(diffs) != 0 {
+			t.Errorf("step %d (%s): differs from a fresh apply: %v", i+1, filepath.Base(step.edits), diffs)
+		}
+	}
+
+	speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":4,"splits":[],"merges":[],"labels":[]}`), turnsDir)
+	if diffs := diffSnapshots(built, snapshotDir(t, bundle)); len(diffs) != 0 {
+		t.Errorf("undo after a rename and a split left a trace: %v", diffs)
+	}
+}
+
+// A rename interrupted after it kept the original and relabelled the
+// transcript, but before the manifest, is finished by the next apply, and its
+// undo restores the build.
+func TestSpeakersApplyRecoversFromAnInterruptedRename(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := speakersWithoutDisplay(t, tmp, speakersBundleOptions{})
+	built := snapshotDir(t, bundle)
+	edits := writeSpeakersEdits(t, tmp, "rename.json", speakersRenameBen)
+	speakersApplyOK(t, bundle, edits, t.TempDir())
+	done := snapshotDir(t, bundle)
+	// The crash: the manifest is still the build's.
+	if err := os.WriteFile(filepath.Join(bundle, "manifest.json"), built["manifest.json"], 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	speakersApplyOK(t, bundle, edits, t.TempDir())
+	if diffs := diffSnapshots(done, snapshotDir(t, bundle)); len(diffs) != 0 {
+		t.Errorf("the retried rename differs from an uninterrupted one: %v", diffs)
+	}
+	speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":2,"splits":[],"merges":[],"labels":[]}`), t.TempDir())
+	if diffs := diffSnapshots(built, snapshotDir(t, bundle)); len(diffs) != 0 {
+		t.Errorf("undo after the interrupted rename left a trace: %v", diffs)
+	}
+}
+
+// A split that hears one voice separates nothing, so a name saved with it is
+// a rename: no separated transcript, no diarization record, and the report
+// still says the split was inconclusive.
+func TestSpeakersApplyAnInconclusiveSplitWithANameIsARename(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := speakersWithoutDisplay(t, tmp, speakersBundleOptions{})
+	turnsDir := writeSpeakersTurns(t, tmp, true)
+
+	report := speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "edits.json", speakersSplitDoc(1,
+		`"merges":[],"labels":[{"speakerId":"`+speakersBenID+`","label":"Benedict"}]`)), turnsDir)
+
+	if !reflect.DeepEqual(report.Inconclusive, []string{speakersRoomID}) || report.SpeakerCount != 2 {
+		t.Errorf("report = %+v, want the split inconclusive and 2 speakers", report)
+	}
+	manifest := readJSONMap(t, filepath.Join(bundle, "manifest.json"))
+	if _, ok := manifest["files"].(map[string]any)["transcripts"]; ok {
+		t.Errorf("files.transcripts = %v, want none added", manifest["files"].(map[string]any)["transcripts"])
+	}
+	if _, ok := manifest[speakersDiarizationKey]; ok {
+		t.Error("a split that separated nobody recorded a diarization")
+	}
+	if got := rosterOf(t, filepath.Join(bundle, speakersDefaultTranscript)); got[1].Label != "Benedict" || got[0].ID != speakersRoomID {
+		t.Errorf("roster = %+v", got)
 	}
 }

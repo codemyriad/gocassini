@@ -307,3 +307,42 @@ func TestProcessingStepCarriesSpeakerDiarizationThroughTheWire(t *testing.T) {
 		t.Errorf("a step without a split emits the key: %s", plain)
 	}
 }
+
+// The edits a transcript reflects ride on its step like the split's record,
+// and a participant separated into voices stays in the speaker list, marked,
+// so every transcript's speakers are found there; People leaves it out.
+func TestSpeakerEditsAndSeparatedParticipantsSurviveTheWire(t *testing.T) {
+	edits := `{"editsRevision":3,"editsSha256":"ab"}`
+	manifest := basePublishedManifest()
+	manifest.Speakers = []Speaker{
+		{ID: "spk_room", Label: "Room", SeparatedInto: []string{"spk_room~1", "spk_room~2"}},
+		{ID: "spk_room~1", Label: "Mira"},
+		{ID: "spk_room~2", Label: "Room · Speaker 2"},
+	}
+	encoded, err := EncodePublishedManifest(manifest, []TranscriptInput{
+		{ID: "separated-voices", Default: true, Body: sampleBody("spk_room~1", "hello"), Provenance: &ProcessingStep{Backend: "sherpa-onnx", SpeakerEdits: json.RawMessage(edits)}},
+		{ID: DefaultWordsTranscriptID, Body: sampleBody("spk_room", "hello"), Provenance: &ProcessingStep{Backend: "sherpa-onnx"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("EncodePublishedManifest: %v", err)
+	}
+	if !strings.Contains(string(encoded.Main.JSON), `"x-separatedInto":["spk_room~1","spk_room~2"]`) {
+		t.Errorf("the separated participant's hint is not on the wire: %s", encoded.Main.JSON)
+	}
+	decoded, err := DecodePublishedManifest(encoded.Main.JSON)
+	if err != nil {
+		t.Fatalf("DecodePublishedManifest: %v", err)
+	}
+	if string(decoded.Provenance.SpeechToText.SpeakerEdits) != edits {
+		t.Errorf("x-speakerEdits = %s, want %s", decoded.Provenance.SpeechToText.SpeakerEdits, edits)
+	}
+	if !reflect.DeepEqual(decoded.Speakers, manifest.Speakers) {
+		t.Errorf("speakers = %+v, want %+v", decoded.Speakers, manifest.Speakers)
+	}
+	if got := People(decoded.Speakers); len(got) != 2 || got[0].ID != "spk_room~1" {
+		t.Errorf("People = %+v, want the two voices", got)
+	}
+	if tags := BuildPublishedOpusTags(manifest, encoded, "separated-voices"); tags["CASSINI_SPEAKER_COUNT"] != "2" {
+		t.Errorf("CASSINI_SPEAKER_COUNT = %q, want 2 people", tags["CASSINI_SPEAKER_COUNT"])
+	}
+}

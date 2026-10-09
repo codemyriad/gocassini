@@ -153,6 +153,20 @@ func DefaultVoiceLabel(parentLabel string, n int) string {
 	return fmt.Sprintf("%s · Speaker %d", parentLabel, n)
 }
 
+// DeviceLabelFromVoiceLabel reads the device's label back out of a voice's
+// default label, or "" when the voice has been named.
+func DeviceLabelFromVoiceLabel(label string) string {
+	i := strings.LastIndex(label, " · Speaker ")
+	if i <= 0 {
+		return ""
+	}
+	n := label[i+len(" · Speaker "):]
+	if n == "" || strings.Trim(n, "0123456789") != "" {
+		return ""
+	}
+	return label[:i]
+}
+
 // RosterEntry is one speaker as written to transcript.words.v1.json.
 type RosterEntry struct {
 	ID    string `json:"id"`

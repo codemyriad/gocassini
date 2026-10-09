@@ -257,7 +257,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 		integrity.DurationMS = audio.DurationMS
 	}
 	fmt.Fprintf(out, "portable_meeting=%s title=%s meeting_id=%s created_at=%s speakers=%d words=%d duration_ms=%d cassini=%s\n",
-		path, title, meetingID, createdAt, len(manifest.Speakers), wordCount, manifest.Meeting.DurationMS, integrity.Status)
+		path, title, meetingID, createdAt, len(portable.People(manifest.Speakers)), wordCount, manifest.Meeting.DurationMS, integrity.Status)
 	fmt.Fprintf(out, "audio container=%s codec=%s sample_rate=%d channels=%d duration_ms=%d",
 		audio.Container, audio.Codec, integrity.SampleRate, integrity.Channels, integrity.DurationMS)
 	if integrity.OpusHashSHA256 != "" {

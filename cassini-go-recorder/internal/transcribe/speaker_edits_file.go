@@ -119,3 +119,23 @@ func (t TranscriptSpeakers) Summarize(cfg LLMConfig) (string, error) {
 	segments, _ := WithoutLowConfidenceWords(t.Segments())
 	return buildMeetingSummaryFn(cfg, streams, segments)
 }
+
+// WithLabels returns a copy in which every listed speaker that roster names
+// is called by the label roster gives it. Segments, words and the order of
+// the speakers are kept exactly: a rename changes speakers[].label and
+// nothing else.
+func (t TranscriptSpeakers) WithLabels(roster []RosterEntry) TranscriptSpeakers {
+	labels := make(map[string]string, len(roster))
+	for _, r := range roster {
+		labels[r.ID] = r.Label
+	}
+	out := TranscriptSpeakers{file: t.file}
+	out.file.Speakers = make([]speakerEntry, len(t.file.Speakers))
+	for i, s := range t.file.Speakers {
+		out.file.Speakers[i] = s
+		if label, ok := labels[s.ID]; ok {
+			out.file.Speakers[i].Label = label
+		}
+	}
+	return out
+}

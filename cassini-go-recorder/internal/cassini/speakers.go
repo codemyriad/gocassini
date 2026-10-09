@@ -45,6 +45,7 @@ const (
 	speakersSeparatedID        = "separated-voices"
 	speakersRawASRID           = portable.DefaultWordsTranscriptID
 	speakersDiarizationKey     = "x-speakerDiarization"
+	speakersEditsKey           = "x-speakerEdits"
 	speakersCaptionsFile       = "captions.vtt"
 	speakersSummaryFile        = "summary.md"
 	speakersBaseSummary        = "summary.raw-asr.md"
@@ -238,8 +239,8 @@ type speakersApplyReport struct {
 	// tries again).
 	Summary string `json:"summary"`
 	// SummarySHA256 says which summary the meeting now has: the SHA-256 of
-	// the summary.md apply wrote, as x-speakerDiarization.summary records it
-	// on the default transcript, or "" for the build's own (or none). A
+	// the summary.md apply wrote, as x-speakerEdits.summary records it on the
+	// default transcript, or "" for the build's own (or none). A
 	// reader compares it with the recording it shows: the last apply's
 	// Summary alone does not say whether an earlier one rewrote it.
 	SummarySHA256 string `json:"summarySha256"`
@@ -251,9 +252,24 @@ type speakersSplitReport struct {
 	Inconclusive bool     `json:"inconclusive"`
 }
 
+// speakerEditsRecord is x-speakerEdits on the speech-to-text step of the
+// default transcript: which revision of people's speaker edits the transcript
+// reflects, whether they renamed a speaker or separated voices. Readers
+// compare its revision with the operator's, and its summary with the one they
+// show.
+type speakerEditsRecord struct {
+	EditsRevision int    `json:"editsRevision"`
+	EditsSHA256   string `json:"editsSha256"`
+	// Summary is present once apply has rewritten summary.md, and says for
+	// which edits and with which model; provenance.meetingSummary still
+	// describes the build's summary, now kept as summary.raw-asr.md.
+	Summary *speakerSummaryRecord `json:"summary,omitempty"`
+}
+
 // speakerDiarizationRecord is manifest.json's x-speakerDiarization, and (less
-// Base) the separated-voices transcript's provenance. Counts and ids only:
-// nothing in it is voice data.
+// Base) the separated-voices transcript's provenance: how voices were
+// separated. Only a meeting with a split that found voices has one; a rename
+// separates nothing. Counts and ids only: nothing in it is voice data.
 type speakerDiarizationRecord struct {
 	Backend          string                    `json:"backend,omitempty"`
 	Model            string                    `json:"model,omitempty"`
@@ -262,16 +278,10 @@ type speakerDiarizationRecord struct {
 	MinDurationOff   float64                   `json:"minDurationOff,omitempty"`
 	Assignment       string                    `json:"assignment,omitempty"`
 	SourceSeparation bool                      `json:"sourceSeparation"`
-	EditsRevision    int                       `json:"editsRevision"`
-	EditsSHA256      string                    `json:"editsSha256"`
 	Splits           []speakerDiarizationSplit `json:"splits"`
-	// Summary is present once apply has rewritten summary.md, and says for
-	// which edits and with which model; provenance.meetingSummary still
-	// describes the build's summary, now kept as summary.raw-asr.md.
-	Summary *speakerSummaryRecord `json:"summary,omitempty"`
-	// Base holds the manifest members the build wrote and apply rewrites, so
-	// an edits document that changes nothing restores them exactly. Only on
-	// the bundle's own manifest; never packed.
+	// Base holds the manifest members the build wrote and a split rewrites,
+	// so undoing it restores them exactly. Only on the bundle's own manifest;
+	// never packed.
 	Base *speakerDiarizationBase `json:"base,omitempty"`
 }
 
@@ -283,7 +293,7 @@ type speakerDiarizationSplit struct {
 	Inconclusive bool     `json:"inconclusive"`
 }
 
-// speakerSummaryRecord is the summary member of x-speakerDiarization: the
+// speakerSummaryRecord is the summary member of x-speakerEdits: the
 // summary.md apply wrote (by SHA-256), the model that wrote it, the edits it
 // was written for and the edited transcript it was written from (both by
 // SHA-256). Apply skips the summary model while summary.md and the edited
@@ -372,11 +382,14 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 }
 
 // applySpeakerEditsToBundle applies an edits document to a .meeting bundle in
-// place. The original transcript is kept byte for byte as the raw-asr
-// transcript and is the base of every apply, so applying is idempotent and an
-// edits document that changes nothing leaves no trace. Warnings (a summary
-// that could not be rewritten) go to stderr. With recordingSHA256, every turn
-// set must have been measured on that recording.
+// place. The original transcript is kept byte for byte beside it
+// (transcript.raw-asr.words.v1.json) and is the base of every apply, so
+// applying is idempotent and an edits document that changes nothing leaves no
+// trace. A split that found voices lists that copy as the raw-asr transcript
+// next to the separated one; a rename only relabels the one transcript, and
+// the copy is kept for undo, unlisted. Warnings (a summary that could not be
+// rewritten) go to stderr. With recordingSHA256, every turn set must have been
+// measured on that recording.
 func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, recordingSHA256 string, stderr io.Writer) (speakersApplyReport, error) {
 	doc, err := transcribe.ParseSpeakerEdits(editsRaw)
 	if err != nil {
@@ -456,16 +469,13 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 	if len(result.Missing) > 0 {
 		return speakersApplyReport{}, speakersFail(speakersExitTurnsMissing, "turns-missing: %s", result.Missing[0])
 	}
-	edited, err := base.WithSpeakers(segments, roster)
-	if err != nil {
-		return speakersApplyReport{}, err
-	}
 
 	// The record of what the build wrote: the stash, while the manifest holds
-	// one; otherwise the manifest still is the build's. That is so before the
-	// first apply, and also after a crash part way through one (the raw-asr
-	// copy is written before the manifest) or through an undo (the manifest is
-	// restored before the raw-asr copy is removed).
+	// one (a split); otherwise the manifest's members still are the build's.
+	// That is so before the first apply, after a rename (which changes none
+	// of them), and also after a crash part way through an apply (the raw-asr
+	// copy is written before the manifest) or through an undo (the manifest
+	// is restored before the raw-asr copy is removed).
 	var stash speakerDiarizationBase
 	var previous speakerDiarizationRecord
 	if raw, ok := manifest.get(speakersDiarizationKey); ok {
@@ -473,12 +483,22 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 			return speakersApplyReport{}, fmt.Errorf("parse %s: %w", speakersDiarizationKey, err)
 		}
 	}
+	previousEdits, err := readBundleSpeakerEdits(manifest, files)
+	if err != nil {
+		return speakersApplyReport{}, err
+	}
 	if previous.Base != nil {
 		stash = *previous.Base
 	} else {
 		stash.SpeakerCount, _ = manifest.get("speakerCount")
 		stash.SegmentCount, _ = manifest.get("segmentCount")
-		stash.Transcripts, _ = files.get("transcripts")
+		// A rename records its edits on the default entry; the build's
+		// entries are the same without them.
+		if raw, ok := files.get("transcripts"); ok {
+			if stash.Transcripts, err = withoutSpeakerEdits(raw); err != nil {
+				return speakersApplyReport{}, err
+			}
+		}
 	}
 
 	report := speakersApplyReport{
@@ -498,13 +518,23 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 		}
 		report.Splits = append(report.Splits, speakersSplitReport{SpeakerID: split.ParentID, Voices: voices, Inconclusive: inconclusive})
 	}
-	// Effective means a split found voices, a merge moved words, or a speaker
-	// who is in both rosters got a new name. Not "the roster changed": the
+	// Separated means a split found voices or a merge moved words (merges are
+	// between voices, so they need a split). Effective adds a speaker who is
+	// in both rosters getting a new name. Not "the roster changed": the
 	// result roster lists only speakers with words, so a bundle built without
 	// a transcript (every participant listed, no words) would otherwise lose
 	// its participants and its untranscribed marker to any edits document. It
 	// stays as built; a rerun that transcribes it replays the edits then.
-	effective := appliedSplits > 0 || result.Merged > 0 || renamesSpeaker(base.Roster(), roster)
+	separated := appliedSplits > 0 || result.Merged > 0
+	effective := separated || renamesSpeaker(base.Roster(), roster)
+	// A rename changes speakers[].label and nothing else: the words, their
+	// segments and the transcript's place in the manifest stay as built.
+	edited := base.WithLabels(roster)
+	if separated {
+		if edited, err = base.WithSpeakers(segments, roster); err != nil {
+			return speakersApplyReport{}, err
+		}
+	}
 
 	baseCount, err := rawInt(stash.SpeakerCount)
 	if err != nil {
@@ -531,11 +561,12 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 			return speakersApplyReport{}, err
 		}
 	} else {
-		report.SpeakerCount = baseCount + edited.LogicalSpeakerCount() - base.LogicalSpeakerCount()
+		if separated {
+			report.SpeakerCount = baseCount + edited.LogicalSpeakerCount() - base.LogicalSpeakerCount()
+		}
+		editsRecord := speakerEditsRecord{EditsRevision: doc.Revision, EditsSHA256: sha256Hex(editsRaw)}
 		record := speakerDiarizationRecord{
 			SourceSeparation: false,
-			EditsRevision:    doc.Revision,
-			EditsSHA256:      sha256Hex(editsRaw),
 			Splits:           []speakerDiarizationSplit{},
 		}
 		for i, split := range result.Splits {
@@ -558,12 +589,12 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 		}
 		// The summary model runs before the first write: it is the slow,
 		// fallible step, and the bundle stays as it was while it runs.
-		summary, err := planSpeakerSummary(root, previous.Summary, edited, record.EditsSHA256, stderr)
+		summary, err := planSpeakerSummary(root, previousEdits.Summary, edited, editsRecord.EditsSHA256, stderr)
 		if err != nil {
 			return speakersApplyReport{}, err
 		}
 		report.Summary = summary.status
-		record.Summary = summary.record
+		editsRecord.Summary = summary.record
 		if summary.record != nil {
 			report.SummarySHA256 = summary.record.SHA256
 		}
@@ -595,7 +626,12 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 			}
 			files.delete(key)
 		}
-		if err := writeSeparatedVoicesManifest(manifest, files, stash, record, primaryName, report.SpeakerCount, len(segments)); err != nil {
+		if separated {
+			err = writeSeparatedVoicesManifest(manifest, files, stash, record, editsRecord, primaryName, report.SpeakerCount, len(segments))
+		} else {
+			err = writeRenamedSpeakersManifest(manifest, files, stash, editsRecord)
+		}
+		if err != nil {
 			return speakersApplyReport{}, err
 		}
 		if err := writeOrderedJSON(manifestPath, manifest); err != nil {
@@ -615,8 +651,14 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 }
 
 // writeSeparatedVoicesManifest points the manifest at the separated transcript
-// as the default and the original as raw-asr, and records the split.
-func writeSeparatedVoicesManifest(manifest, files *orderedJSONObject, stash speakerDiarizationBase, record speakerDiarizationRecord, primaryName string, speakerCount, segmentCount int) error {
+// as the default and the original as raw-asr, and records the split and the
+// edits on the separated one.
+func writeSeparatedVoicesManifest(manifest, files *orderedJSONObject, stash speakerDiarizationBase, record speakerDiarizationRecord, edits speakerEditsRecord, primaryName string, speakerCount, segmentCount int) error {
+	// A rename before this split recorded its edits on the build's step; they
+	// now belong to the separated transcript alone.
+	if err := setSpeechToTextMember(manifest, speakersEditsKey, nil); err != nil {
+		return err
+	}
 	var speechToText *orderedJSONObject
 	if prov, err := manifest.object("provenance"); err == nil && prov != nil {
 		if step, err := prov.object("speechToText"); err == nil && step != nil {
@@ -627,8 +669,13 @@ func writeSeparatedVoicesManifest(manifest, files *orderedJSONObject, stash spea
 	if err != nil {
 		return err
 	}
+	editsRaw, err := json.Marshal(edits)
+	if err != nil {
+		return err
+	}
 	separatedProv := speechToText.clone()
 	separatedProv.set(speakersDiarizationKey, recordRaw)
+	separatedProv.set(speakersEditsKey, editsRaw)
 	transcripts := []json.RawMessage{}
 	add := func(entry *orderedJSONObject) error {
 		raw, err := entry.MarshalJSON()
@@ -702,18 +749,114 @@ func writeSeparatedVoicesManifest(manifest, files *orderedJSONObject, stash spea
 	return nil
 }
 
-// restoreSpeakerBase undoes every edit: the original transcript, captions and
-// manifest members come back as the build wrote them.
-func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash speakerDiarizationBase, primaryPath string, baseRaw []byte, base transcribe.TranscriptSpeakers) error {
-	if err := writeFileAtomic(primaryPath, baseRaw, 0o644); err != nil {
-		return fmt.Errorf("restore transcript: %w", err)
-	}
-	if err := regenerateSpeakerCaptions(root, base); err != nil {
+// writeRenamedSpeakersManifest records a rename: the manifest is the build's
+// (a split before it is undone from the stash), with the edits on the
+// default transcript's own speech-to-text step. No transcript is added and
+// nothing says voices were separated, because none were.
+func writeRenamedSpeakersManifest(manifest, files *orderedJSONObject, stash speakerDiarizationBase, edits speakerEditsRecord) error {
+	if err := restoreBuildManifestMembers(manifest, files, stash); err != nil {
 		return err
 	}
-	if err := putBackSpeakerSummary(root); err != nil {
+	raw, err := json.Marshal(edits)
+	if err != nil {
 		return err
 	}
+	if len(stash.Transcripts) == 0 {
+		return setSpeechToTextMember(manifest, speakersEditsKey, raw)
+	}
+	// A bundle that lists its transcripts packs each entry's own step.
+	var entries []json.RawMessage
+	if err := json.Unmarshal(stash.Transcripts, &entries); err != nil {
+		return fmt.Errorf("manifest files.transcripts: %w", err)
+	}
+	i, err := defaultTranscriptEntry(entries)
+	if err != nil || i < 0 {
+		return err
+	}
+	entry, err := parseOrderedJSONObject(entries[i])
+	if err != nil {
+		return fmt.Errorf("manifest files.transcripts: %w", err)
+	}
+	prov, err := entry.object("provenance")
+	if err != nil {
+		return fmt.Errorf("manifest files.transcripts provenance: %w", err)
+	}
+	if prov == nil {
+		prov = &orderedJSONObject{}
+	}
+	prov.set(speakersEditsKey, raw)
+	if err := entry.setObject("provenance", prov); err != nil {
+		return err
+	}
+	if entries[i], err = entry.MarshalJSON(); err != nil {
+		return err
+	}
+	transcripts, err := json.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	files.set("transcripts", transcripts)
+	return manifest.setObject("files", files)
+}
+
+// defaultTranscriptEntry is the index of the entry pack makes the default
+// (the first marked default, else the first), or -1 for none.
+func defaultTranscriptEntry(entries []json.RawMessage) (int, error) {
+	for i, raw := range entries {
+		var ref struct {
+			Default bool `json:"default"`
+		}
+		if err := json.Unmarshal(raw, &ref); err != nil {
+			return -1, fmt.Errorf("manifest files.transcripts: %w", err)
+		}
+		if ref.Default {
+			return i, nil
+		}
+	}
+	if len(entries) > 0 {
+		return 0, nil
+	}
+	return -1, nil
+}
+
+// withoutSpeakerEdits returns files.transcripts with x-speakerEdits removed
+// from every entry's provenance: the entries as the build wrote them.
+func withoutSpeakerEdits(transcripts json.RawMessage) (json.RawMessage, error) {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(transcripts, &entries); err != nil {
+		return nil, fmt.Errorf("manifest files.transcripts: %w", err)
+	}
+	changed := false
+	for i, raw := range entries {
+		entry, err := parseOrderedJSONObject(raw)
+		if err != nil {
+			return nil, fmt.Errorf("manifest files.transcripts: %w", err)
+		}
+		prov, err := entry.object("provenance")
+		if err != nil {
+			return nil, fmt.Errorf("manifest files.transcripts provenance: %w", err)
+		}
+		if _, ok := prov.get(speakersEditsKey); !ok {
+			continue
+		}
+		prov.delete(speakersEditsKey)
+		if err := entry.setObject("provenance", prov); err != nil {
+			return nil, err
+		}
+		if entries[i], err = entry.MarshalJSON(); err != nil {
+			return nil, err
+		}
+		changed = true
+	}
+	if !changed {
+		return transcripts, nil
+	}
+	return json.Marshal(entries)
+}
+
+// restoreBuildManifestMembers puts back the members a split rewrites, as the
+// build wrote them, and drops every record of people's edits.
+func restoreBuildManifestMembers(manifest, files *orderedJSONObject, stash speakerDiarizationBase) error {
 	if len(stash.Transcripts) > 0 {
 		files.set("transcripts", stash.Transcripts)
 	} else {
@@ -730,6 +873,108 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 		}
 	}
 	manifest.delete(speakersDiarizationKey)
+	return setSpeechToTextMember(manifest, speakersEditsKey, nil)
+}
+
+// setSpeechToTextMember sets one member of provenance.speechToText, or with
+// nil removes it. Setting creates the step when the build wrote none; a
+// removal that empties a step this created removes it again, so the manifest
+// is the build's byte for byte.
+func setSpeechToTextMember(manifest *orderedJSONObject, key string, value json.RawMessage) error {
+	prov, err := manifest.object("provenance")
+	if err != nil {
+		return fmt.Errorf("manifest provenance: %w", err)
+	}
+	if prov == nil && value == nil {
+		return nil
+	}
+	if prov == nil {
+		prov = &orderedJSONObject{}
+	}
+	step, err := prov.object("speechToText")
+	if err != nil {
+		return fmt.Errorf("manifest provenance.speechToText: %w", err)
+	}
+	if step == nil && value == nil {
+		return nil
+	}
+	if step == nil {
+		step = &orderedJSONObject{}
+	}
+	if value == nil {
+		if _, ok := step.get(key); !ok {
+			return nil
+		}
+		step.delete(key)
+	} else {
+		step.set(key, value)
+	}
+	if len(step.members) == 0 {
+		prov.delete("speechToText")
+	} else if err := prov.setObject("speechToText", step); err != nil {
+		return err
+	}
+	if len(prov.members) == 0 {
+		manifest.delete("provenance")
+		return nil
+	}
+	return manifest.setObject("provenance", prov)
+}
+
+// readBundleSpeakerEdits reads x-speakerEdits from the bundle's default
+// transcript: the speech-to-text step of the default files.transcripts entry
+// (a split), else provenance.speechToText (a rename). Zero when there is none.
+func readBundleSpeakerEdits(manifest, files *orderedJSONObject) (speakerEditsRecord, error) {
+	var record speakerEditsRecord
+	step, err := manifest.object("provenance")
+	if err == nil && step != nil {
+		step, err = step.object("speechToText")
+	}
+	if err != nil {
+		return record, fmt.Errorf("manifest provenance.speechToText: %w", err)
+	}
+	if raw, ok := files.get("transcripts"); ok {
+		var entries []json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return record, fmt.Errorf("manifest files.transcripts: %w", err)
+		}
+		i, err := defaultTranscriptEntry(entries)
+		if err != nil {
+			return record, err
+		}
+		if i >= 0 {
+			entry, err := parseOrderedJSONObject(entries[i])
+			if err != nil {
+				return record, fmt.Errorf("manifest files.transcripts: %w", err)
+			}
+			if step, err = entry.object("provenance"); err != nil {
+				return record, fmt.Errorf("manifest files.transcripts provenance: %w", err)
+			}
+		}
+	}
+	if raw, ok := step.get(speakersEditsKey); ok {
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return record, fmt.Errorf("parse %s: %w", speakersEditsKey, err)
+		}
+	}
+	return record, nil
+}
+
+// restoreSpeakerBase undoes every edit: the original transcript, captions and
+// manifest members come back as the build wrote them.
+func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash speakerDiarizationBase, primaryPath string, baseRaw []byte, base transcribe.TranscriptSpeakers) error {
+	if err := writeFileAtomic(primaryPath, baseRaw, 0o644); err != nil {
+		return fmt.Errorf("restore transcript: %w", err)
+	}
+	if err := regenerateSpeakerCaptions(root, base); err != nil {
+		return err
+	}
+	if err := putBackSpeakerSummary(root); err != nil {
+		return err
+	}
+	if err := restoreBuildManifestMembers(manifest, files, stash); err != nil {
+		return err
+	}
 	if err := writeOrderedJSON(filepath.Join(root, "manifest.json"), manifest); err != nil {
 		return fmt.Errorf("write meeting artifact manifest: %w", err)
 	}
@@ -998,7 +1243,6 @@ func showMeetingBundleSpeakers(dir string) (speakersShowResult, error) {
 				Default bool   `json:"default"`
 			} `json:"transcripts"`
 		} `json:"files"`
-		SpeakerDiarization *speakerDiarizationRecord `json:"x-speakerDiarization"`
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
 	if err != nil {
@@ -1006,6 +1250,18 @@ func showMeetingBundleSpeakers(dir string) (speakersShowResult, error) {
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return speakersShowResult{}, fmt.Errorf("parse manifest.json: %w", err)
+	}
+	ordered, err := parseOrderedJSONObject(raw)
+	if err != nil {
+		return speakersShowResult{}, fmt.Errorf("parse manifest.json: %w", err)
+	}
+	files, err := ordered.object("files")
+	if err != nil {
+		return speakersShowResult{}, fmt.Errorf("parse manifest.json files: %w", err)
+	}
+	edits, err := readBundleSpeakerEdits(ordered, files)
+	if err != nil {
+		return speakersShowResult{}, err
 	}
 	primary := manifest.Files.Transcript
 	if primary == "" {
@@ -1039,9 +1295,8 @@ func showMeetingBundleSpeakers(dir string) (speakersShowResult, error) {
 	if result.DefaultTranscript == "" {
 		result.DefaultTranscript = result.Transcripts[0]
 	}
-	if manifest.SpeakerDiarization != nil {
-		rev := manifest.SpeakerDiarization.EditsRevision
-		result.EditsRevision = &rev
+	if edits.EditsRevision > 0 {
+		result.EditsRevision = &edits.EditsRevision
 	}
 	return result, nil
 }
@@ -1052,8 +1307,16 @@ func showPortableSpeakers(path string) (speakersShowResult, error) {
 		return speakersShowResult{}, err
 	}
 	result := speakersShowResult{Speakers: []speakersShowEntry{}, Transcripts: []string{}}
+	// A participant separated into voices is listed as its voices, each
+	// naming it by the label the file keeps for it.
+	deviceLabels := map[string]string{}
 	for _, s := range manifest.Speakers {
-		result.Speakers = append(result.Speakers, showEntry(s.ID, s.Label, nil))
+		if len(s.SeparatedInto) > 0 {
+			deviceLabels[s.ID] = s.Label
+		}
+	}
+	for _, s := range portable.People(manifest.Speakers) {
+		result.Speakers = append(result.Speakers, showEntry(s.ID, s.Label, deviceLabels))
 	}
 	for _, t := range manifest.Transcripts {
 		if t.Role != "" {
@@ -1067,9 +1330,9 @@ func showPortableSpeakers(path string) (speakersShowResult, error) {
 	if result.DefaultTranscript == "" && len(result.Transcripts) > 0 {
 		result.DefaultTranscript = result.Transcripts[0]
 	}
-	if manifest.Provenance != nil && manifest.Provenance.SpeechToText != nil && len(manifest.Provenance.SpeechToText.SpeakerDiarization) > 0 {
-		var record speakerDiarizationRecord
-		if err := json.Unmarshal(manifest.Provenance.SpeechToText.SpeakerDiarization, &record); err == nil {
+	if manifest.Provenance != nil && manifest.Provenance.SpeechToText != nil && len(manifest.Provenance.SpeechToText.SpeakerEdits) > 0 {
+		var record speakerEditsRecord
+		if err := json.Unmarshal(manifest.Provenance.SpeechToText.SpeakerEdits, &record); err == nil && record.EditsRevision > 0 {
 			result.EditsRevision = &record.EditsRevision
 		}
 	}

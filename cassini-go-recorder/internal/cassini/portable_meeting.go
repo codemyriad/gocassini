@@ -529,7 +529,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			SampleCount: audio.SampleCount,
 			DurationMS:  audio.DurationMS,
 		},
-		Speakers:   withVoiceDevices(source.Transcript.Speakers, source.AdditionalTranscripts),
+		Speakers:   withSeparatedDevices(source.Transcript.Speakers, source.AdditionalTranscripts),
 		Provenance: source.Artifact.Provenance,
 	})
 	if len(source.SummaryMarkdown) > 0 {
@@ -678,26 +678,49 @@ func verifyPortableOpusIntegrity(audio portableAudioIntegrity, integrity portabl
 	return nil
 }
 
-// withVoiceDevices names, on each separated voice ("<device>~n"), the device
-// it came from, taking the device's label from the other transcripts in the
-// bundle (the original transcript still lists it). The roster is the default
-// transcript's, so without this the device's name would not be in the file.
-func withVoiceDevices(roster []portable.Speaker, others []portableNamedTranscript) []portable.Speaker {
+// withSeparatedDevices keeps, in the roster of the default transcript, each
+// participant whose voices were separated ("<device>~n" ids), just before its
+// first voice, marked with the voices that replace it (x-separatedInto). The
+// other transcripts in the bundle (the original one) still credit the
+// participant, and every reader looks a transcript's speakers up in this one
+// list: one that finds an id missing refuses the transcript. The label is the
+// one those transcripts give it; failing that, the one its voices' default
+// labels carry ("<label> · Speaker n"), else its id.
+func withSeparatedDevices(roster []portable.Speaker, others []portableNamedTranscript) []portable.Speaker {
+	listed := map[string]bool{}
+	voicesOf := map[string][]string{}
+	for _, speaker := range roster {
+		listed[speaker.ID] = true
+		if parent := transcribe.VoiceParent(speaker.ID); parent != "" {
+			voicesOf[parent] = append(voicesOf[parent], speaker.ID)
+		}
+	}
+	if len(voicesOf) == 0 {
+		return roster
+	}
 	labels := map[string]string{}
 	for _, other := range others {
 		for _, speaker := range other.Transcript.Speakers {
-			if _, ok := labels[speaker.ID]; !ok {
+			if _, ok := labels[speaker.ID]; !ok && strings.TrimSpace(speaker.Label) != "" {
 				labels[speaker.ID] = speaker.Label
 			}
 		}
 	}
-	out := make([]portable.Speaker, len(roster))
-	for i, speaker := range roster {
-		out[i] = speaker
+	out := make([]portable.Speaker, 0, len(roster)+len(voicesOf))
+	for _, speaker := range roster {
 		parent := transcribe.VoiceParent(speaker.ID)
-		if label, ok := labels[parent]; ok && parent != "" && label != "" {
-			out[i].Device = &portable.SpeakerDevice{ID: parent, Label: label}
+		if parent != "" && !listed[parent] {
+			listed[parent] = true
+			label := labels[parent]
+			if label == "" {
+				label = transcribe.DeviceLabelFromVoiceLabel(speaker.Label)
+			}
+			if label == "" {
+				label = parent
+			}
+			out = append(out, portable.Speaker{ID: parent, Label: label, SeparatedInto: voicesOf[parent]})
 		}
+		out = append(out, speaker)
 	}
 	return out
 }
