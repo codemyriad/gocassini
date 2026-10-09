@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -1161,5 +1163,48 @@ func TestTestRoomMissingOnlyForgetsARoomTalkSaysIsGone(t *testing.T) {
 				t.Fatalf("asked as %q, want the room's owner %q", gotAuth, tc.owner)
 			}
 		})
+	}
+}
+
+// The test conversation is maintenance, not something an ordinary user should
+// come across. It was created PUBLIC for the convenience of a joinable link,
+// which left it readable and joinable by any authenticated user holding the
+// token — unlisted, but not private. A group conversation with no invitees has
+// the owner as its only participant, and Talk answers everyone else 404.
+func TestTheTestRoomIsCreatedPrivate(t *testing.T) {
+	var gotForm string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotForm = string(body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ocs":{"data":{"token":"abc12345"}}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("APP_SECRET", "shh")
+	t.Setenv("APP_ID", "gocassini")
+	t.Setenv("APP_VERSION", "0.1.0")
+	t.Setenv("NEXTCLOUD_URL", srv.URL)
+
+	rt := &Runtime{}
+	rt.cfg.TalkBackendURL = "https://nc.test"
+	room, owner, err := rt.ensureTestRoom(context.Background(), "", "", "admin")
+	if err != nil {
+		t.Fatalf("ensureTestRoom: %v", err)
+	}
+	// roomType 2 is a group conversation; 3 is public. Pinned because the
+	// difference is invisible until a user turns up in the room.
+	if !strings.Contains(gotForm, "roomType=2") {
+		t.Fatalf("created with %q, want roomType=2: a public test room is joinable by anyone holding its token", gotForm)
+	}
+	if !strings.Contains(gotForm, url.QueryEscape(testRoomName)) {
+		t.Fatalf("created with %q, want it named %q so an administrator finding it knows what it is", gotForm, testRoomName)
+	}
+	if room != "https://nc.test/call/abc12345" {
+		t.Fatalf("room = %q", room)
+	}
+	// Who it belongs to has to come back, or the caller cannot record it and
+	// nothing can later ask Talk whether it is still there.
+	if owner != "admin" {
+		t.Fatalf("owner = %q, want the administrator it was created for", owner)
 	}
 }

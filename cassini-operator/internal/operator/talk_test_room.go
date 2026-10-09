@@ -64,11 +64,12 @@ func (rt *Runtime) testRoomMine(user string) bool {
 // conversation that is gone and for a private one the asker cannot see, and
 // the installed-ExApp e2e arms against exactly such a room.
 //
-// The test conversation is public (roomType 3), so its owner reads it with a
-// plain OCS GET. Only a definite 404 counts as gone. Talk being unreachable or
-// refusing the read says nothing about whether the room exists, and throwing
-// away a usable room on a transient failure would discard a test an
-// administrator had already armed.
+// Asked as the owner because the conversation is private: Talk answers a
+// non-participant 404 for a room that is perfectly well there, so only the
+// owner's answer distinguishes gone from unseen. Only a definite 404 counts.
+// Talk being unreachable or refusing the read says nothing about whether the
+// room exists, and throwing away a usable room on a transient failure would
+// discard a test an administrator had already armed.
 func (rt *Runtime) testRoomMissing(ctx context.Context, room, owner string) (bool, error) {
 	token, owner := testRoomToken(room), strings.TrimSpace(owner)
 	if token == "" || owner == "" {
@@ -135,8 +136,15 @@ const testRoomName = "Cassini recording test"
 // store no owner for a room it had just made itself, which lost the one fact
 // that distinguishes a room Cassini can speak for from one a caller supplied.
 //
-// roomType 3 is a PUBLIC conversation: joinable by its link, needing no invitee
-// list, and deletable when the test is done.
+// roomType 2 is a GROUP conversation with no invitees, so the owner is its only
+// participant. It used to be 3, a PUBLIC one, for the convenience of being
+// joinable by its link — but this is a maintenance conversation, and nothing
+// needs that: the owner opens it as a participant, and the recorder joins
+// through signaling with HPB-internal auth rather than as a Talk participant,
+// which is why the installed-ExApp e2e already records in a private room. A
+// public conversation is unlisted (listable 0) and so never shown to an
+// ordinary user, but any authenticated user holding the token could read and
+// join it. A group one answers them 404.
 func (rt *Runtime) ensureTestRoom(ctx context.Context, existing, currentOwner, wantOwner string) (string, string, error) {
 	wantOwner = strings.TrimSpace(wantOwner)
 	if rt.validTestRoom(existing) && (wantOwner == "" || currentOwner == wantOwner) {
@@ -155,7 +163,7 @@ func (rt *Runtime) ensureTestRoom(ctx context.Context, existing, currentOwner, w
 	}
 	client := &http.Client{Timeout: ncProvisionTimeout}
 	status, body, err := cfg.apiPostFormAs(ctx, client, wantOwner, cfg.ocsURL("/apps/spreed/api/v4/room"), url.Values{
-		"roomType": {"3"},
+		"roomType": {"2"},
 		"roomName": {testRoomName},
 	})
 	if err != nil {
