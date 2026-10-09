@@ -19,7 +19,8 @@ import (
 // diarizations ran so far, so a test can tell which run's turns an apply got;
 // apply copies the edits and the turns it was handed into the bundle and
 // prints a report. "$0.diarize-unavailable" and "$0.apply-fails" make the
-// matching command fail the way the real CLI does.
+// matching command fail the way the real CLI does. Each diarize appends the
+// CASSINI_DIARIZATION_THREADS it was given to "$0.threads".
 func fakeSpeakersCLI(t *testing.T) string {
 	t.Helper()
 	return writeFakeCassini(t, `echo "$*" >> "$0.calls"
@@ -37,6 +38,7 @@ while [ $# -gt 0 ]; do
 done
 case "$sub" in
   diarize)
+    echo "${CASSINI_DIARIZATION_THREADS:-unset}" >> "$0.threads"
     if [ -f "$0.diarize-unavailable" ]; then
       echo "diarization-unavailable: no Nemotron model at /models" >&2; exit 3
     fi
@@ -262,6 +264,46 @@ func TestRefineDiarizationWaitsForMemoryLikeABuild(t *testing.T) {
 	}
 	if got, want := speakerDiarizeMemMB(2*60*60*1000), speakerDiarizeModelMB+440; got != want {
 		t.Fatalf("speakerDiarizeMemMB(2h) = %d, want %d", got, want)
+	}
+}
+
+// The diarizer gets the thread budget a CPU transcription gets: the cores
+// minus the reserve left for Nextcloud and Talk. A value the operator's own
+// environment carries does not reach it.
+func TestRefineDiarizesWithTheBuildThreadBudget(t *testing.T) {
+	rt, bin := newSpeakerRuntime(t, "JOB1")
+	t.Setenv("CASSINI_BUILD_CPU_RESERVE", "2")
+	t.Setenv(envDiarizationThreads, "12")
+	orig := probeOnlineCPUs
+	t.Cleanup(func() { probeOnlineCPUs = orig })
+	probeOnlineCPUs = func() int { return 8 }
+
+	queueSpeakerEdits(t, rt, "JOB1", 0, splitDoc(speakerTestRoom))
+	waitForSpeakerEdits(t, rt.store, "JOB1", func(r speakerEditsRecord) bool { return r.AppliedRevision == 1 })
+	if got := strings.TrimSpace(annTestRead(t, bin+".threads")); got != "6" {
+		t.Fatalf("diarize ran with %s=%q, want the build budget 8-2 = 6", envDiarizationThreads, got)
+	}
+}
+
+func TestSpeakerDiarizeThreads(t *testing.T) {
+	orig := probeOnlineCPUs
+	t.Cleanup(func() { probeOnlineCPUs = orig })
+	for _, c := range []struct {
+		name          string
+		cpus, reserve int
+		want          int
+	}{
+		{"budget", 8, 2, 6},
+		{"one core left", 2, 1, 1},
+		{"reserve takes every core", 2, 4, 1},
+		{"capped at 16", 64, 0, 16},
+		{"cores unknown keep the default", 0, 0, speakerDiarizeThreadsDefault},
+	} {
+		probeOnlineCPUs = func() int { return c.cpus }
+		limits := resourceLimits{cpuReserve: c.reserve}
+		if got := limits.speakerDiarizeThreads(); got != c.want {
+			t.Errorf("%s: %d cpus, reserve %d: threads = %d, want %d", c.name, c.cpus, c.reserve, got, c.want)
+		}
 	}
 }
 
