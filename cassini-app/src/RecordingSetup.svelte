@@ -77,7 +77,14 @@
   // The href for the test conversation. The operator's test_room_url carries
   // the token; behind AppAPI its origin is an internal hostname, so the link a
   // reader clicks has to be rebuilt against this page's own base.
-  $: testRoomHref = nextcloudBase && report?.test_room_url ? talkRoomURL(nextcloudBase, report.test_room_url) : "";
+  // Only a room the reader owns is worth linking to. Talk's Start recording
+  // action belongs to a conversation's moderators, so a room the connection
+  // check made (it creates one as Cassini's own account, needing only a token
+  // to read recording settings with) or one a different administrator armed is
+  // a call this reader cannot record in — and the steps beside the link tell
+  // them to go and record. With no link the panel offers "Prepare a new test",
+  // which makes them a room of their own.
+  $: testRoomHref = nextcloudBase && report?.test_room_url && report?.test_room_mine ? talkRoomURL(nextcloudBase, report.test_room_url) : "";
   let nextcloudBase = "";
   let alive = true;
   // True only while a re-probe is in flight, so a row can say it is being
@@ -365,12 +372,18 @@
           </ol>
           <p class="mb-3 text-sm text-base-content/70">A recording captures a call, so the call needs someone in it: Cassini joins to record, not to talk. The conversation and the test recording are both ordinary ones, and can be deleted afterwards.</p>
           <div class="flex flex-wrap gap-2">
-            {#if testFailed}
-            {:else if (waitingForTalk && testRoomHref) || awaitingPlayback}
-              <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
-            {:else}
-              <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center py-1.5 text-left text-xs!" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
-              {#if testRoomHref}<a class="btn btn-sm" href={testRoomHref} target="_blank" rel="noreferrer">Open test room</a>{/if}
+            <!-- A failed test's actions belong on the row, next to the reason
+                 it failed ("See why it stopped" and a retry, above), so this
+                 panel offers none. Written as a guard rather than an empty
+                 first branch, which read as an oversight and made every build
+                 print `block_empty`. -->
+            {#if !testFailed}
+              {#if (waitingForTalk && testRoomHref) || awaitingPlayback}
+                <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
+              {:else}
+                <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center py-1.5 text-left text-xs!" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
+                {#if testRoomHref}<a class="btn btn-sm" href={testRoomHref} target="_blank" rel="noreferrer">Open test room</a>{/if}
+              {/if}
             {/if}
           </div>
           {#if report.test.started_at}
