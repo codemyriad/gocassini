@@ -104,6 +104,7 @@ jobs:
           ./harness/bin/test-post-boundary-stream.sh
           python3 ./harness/bin/test-audio-only-rejoin.py
           ./harness/bin/test-ci-e2e-mute-timing.sh
+          ./harness/bin/test-stream-video-all-audible.sh
           ./harness/bin/test-negative-manifest.sh
           ./harness/bin/test-harness-prerequisites.sh
       - name: Parse every harness shell script

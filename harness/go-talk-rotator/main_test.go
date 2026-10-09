@@ -266,3 +266,112 @@ func equalStringSlices(a, b []string) bool {
 	}
 	return true
 }
+
+func TestPickAudibleRotatesOneActiveBotByDefault(t *testing.T) {
+	// Bot 1 is not active (still joining); rotation skips it.
+	active := []int{0, 2, 3}
+	current := -1
+	var order []int
+	for round := 0; round < 4; round++ {
+		audible, next := pickAudible(4, active, current, false)
+		if len(audible) != 1 || !audible[next] {
+			t.Fatalf("round %d: expected exactly bot %d audible, got %v", round, next, audible)
+		}
+		order = append(order, next)
+		current = next
+	}
+	want := []int{0, 2, 3, 0}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("rotation order mismatch: got=%v want=%v", order, want)
+		}
+	}
+}
+
+func TestPickAudibleAllAudibleUnmutesEveryActiveBot(t *testing.T) {
+	audible, next := pickAudible(4, []int{0, 2, 3}, 2, true)
+	if next != 2 {
+		t.Fatalf("all-audible must not rotate: got current=%d want=2", next)
+	}
+	for _, idx := range []int{0, 2, 3} {
+		if !audible[idx] {
+			t.Fatalf("bot %d should be audible, got %v", idx, audible)
+		}
+	}
+	if audible[1] {
+		t.Fatalf("inactive bot 1 must not be unmuted, got %v", audible)
+	}
+
+	if audible, _ := pickAudible(4, nil, -1, true); len(audible) != 0 {
+		t.Fatalf("no active bots means nobody audible, got %v", audible)
+	}
+}
+
+func TestGuestBotAnnouncesNickToInCallSessionsOnce(t *testing.T) {
+	b := newBot(&botConfig{Index: 1, GuestName: "Ana Silva"})
+	b.setSignalingSessionID("self-session")
+	var sent []map[string]any
+	b.sendNick = func(data map[string]any) error {
+		sent = append(sent, data)
+		return nil
+	}
+
+	inCallUpdate := map[string]any{
+		"event": map[string]any{
+			"target": "participants",
+			"update": map[string]any{
+				"users": []any{
+					map[string]any{"sessionId": "self-session", "inCall": 7},
+					map[string]any{"sessionId": "peer-a", "inCall": 7},
+					map[string]any{"sessionId": "recorder-internal", "internal": true, "inCall": 1},
+					map[string]any{"sessionId": "peer-out", "inCall": 0},
+					map[string]any{"sessionId": "peer-presence-only"},
+				},
+			},
+		},
+	}
+	b.handleSignalingEvent(inCallUpdate)
+	b.handleSignalingEvent(inCallUpdate)
+
+	got := make([]string, 0, len(sent))
+	for _, data := range sent {
+		if data["type"] != "nickChanged" || data["roomType"] != "video" {
+			t.Fatalf("unexpected message: %v", data)
+		}
+		if name := data["payload"].(map[string]any)["name"]; name != "Ana Silva" {
+			t.Fatalf("expected name Ana Silva, got %v", name)
+		}
+		got = append(got, data["to"].(string))
+	}
+	sort.Strings(got)
+	want := []string{"peer-a", "recorder-internal"}
+	if !equalStringSlices(got, want) {
+		t.Fatalf("nickChanged recipients: got=%v want=%v (once each, internal sessions included)", got, want)
+	}
+
+	// A session that leaves the call hears the name again when it returns.
+	b.handleSignalingEvent(map[string]any{
+		"event": map[string]any{"target": "room", "leave": []any{"recorder-internal"}},
+	})
+	b.handleSignalingEvent(inCallUpdate)
+	if len(sent) != 3 || sent[2]["to"] != "recorder-internal" {
+		t.Fatalf("expected a fresh announcement to the returning session, got %v", sent)
+	}
+}
+
+func TestAuthenticatedBotDoesNotAnnounceNick(t *testing.T) {
+	b := newBot(&botConfig{Index: 1, GuestName: "alice", AuthUser: "alice"})
+	b.setSignalingSessionID("self-session")
+	b.sendNick = func(data map[string]any) error {
+		t.Fatalf("authenticated bot sent %v", data)
+		return nil
+	}
+	b.handleSignalingEvent(map[string]any{
+		"event": map[string]any{
+			"target": "participants",
+			"update": map[string]any{
+				"users": []any{map[string]any{"sessionId": "recorder-internal", "internal": true, "inCall": 1}},
+			},
+		},
+	})
+}
