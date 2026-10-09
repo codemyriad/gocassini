@@ -9,7 +9,7 @@
   import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
   import { guardLeave } from "./operator/unsaved";
-  import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
+  import { isLikelyAdminHint, probeOperatorFor } from "./operator/adminProbe";
   import {
     buildFeatureNotice,
     buildSetupNotice,
@@ -50,7 +50,9 @@
   // operator surface, and — when the deployment is not set up — which of the two
   // explanations you get (setupHealth.ts). Being able to read the ADMIN-gated
   // /status IS being an administrator, so there is no second notion of admin
-  // here to drift from the first.
+  // here to drift from the first. Nextcloud's own admin flag only spares the
+  // request for someone it says is not one (probeOperatorFor): AppAPI checks
+  // the same admin group, so that person's probe could only be refused.
   export let ncMode: boolean = false;
 
   // The shell's provider is the static one plus the context bundle (D-626):
@@ -374,7 +376,9 @@
     try {
       const { operatorBasePath } = loadConfig();
       const [probe, health] = await Promise.all([
-        probeOperatorAvailable(operatorBasePath),
+        // Not asked for someone Nextcloud says is no administrator: the
+        // ADMIN route could only refuse them, on every page load.
+        probeOperatorFor(window, operatorBasePath),
         fetchSetupHealth(operatorBasePath),
       ]);
       operatorAvailable = probe.available;
@@ -397,7 +401,7 @@
       // it hides the operator routes entirely — so stay quiet on those. Anything
       // else (a network failure or an unexpected status) shouldn't silently hide
       // the operator surface with no trace, so surface it.
-      if (!probe.available && probe.status !== 403 && probe.status !== 404) {
+      if (!probe.available && !probe.skipped && probe.status !== 403 && probe.status !== 404) {
         console.warn(
           `Cassini: operator surface hidden — probe returned ${probe.status ?? "a network error"}.`,
         );

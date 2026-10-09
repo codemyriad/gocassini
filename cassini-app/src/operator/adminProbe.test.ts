@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isLikelyAdminHint, probeOperatorAvailable } from "./adminProbe";
+import { isLikelyAdminHint, probeOperatorAvailable, probeOperatorFor } from "./adminProbe";
 
 // A minimal fetch stub. `body`, when given, is what response.json() resolves
 // to; without it json() throws, which is what a bodiless denial looks like.
@@ -143,5 +143,36 @@ describe("isLikelyAdminHint", () => {
         },
       }),
     ).toBeNull();
+  });
+});
+
+// A non-administrator opening Cassini used to send GET operator/status on
+// every page load and get 404 from AppAPI. Nextcloud already says who is an
+// administrator, by the same group AppAPI checks: only they are asked.
+describe("probeOperatorFor", () => {
+  const asks = () => {
+    const urls: string[] = [];
+    return { urls, fetchImpl: fetchWithStatus(200, (url) => urls.push(url), statusBody({ ok: true })) };
+  };
+
+  it("asks nothing for someone Nextcloud says is not an administrator", async () => {
+    const { urls, fetchImpl } = asks();
+    expect(await probeOperatorFor({ OC: { isUserAdmin: () => false } }, "/operator", fetchImpl)).toEqual({
+      available: false,
+      status: null,
+      body: null,
+      skipped: true,
+    });
+    expect(urls).toEqual([]);
+  });
+
+  it("still asks the boundary for an administrator, and where Nextcloud says nothing", async () => {
+    for (const win of [{ OC: { isUserAdmin: () => true } }, {}, { OC: { isUserAdmin: () => { throw new Error("boom"); } } }]) {
+      const { urls, fetchImpl } = asks();
+      const probe = await probeOperatorFor(win, "/operator", fetchImpl);
+      expect(probe.available).toBe(true);
+      expect(probe.skipped).toBeUndefined();
+      expect(urls).toEqual(["/operator/status"]);
+    }
   });
 });
