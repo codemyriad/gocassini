@@ -378,9 +378,11 @@ is checked the same way as for marks: a meeting the caller cannot open answers
   - 400 `{"error":"invalid","message":…}`;
   - 503 `{"error":"diarization-unavailable","detail":…}`, when a new split
     needs a model this operator does not have;
-  - 429 `{"error":"rate-limited","retryAfterMs":n}`, when the caller has
-    saved more edits than the operator allows one person in a while, counted
-    across all meetings (the limit is set on the operator). The People panel
+  - 429 `{"error":"rate-limited","retryAfterMs":n}`, with `Retry-After` in
+    seconds, when the caller has already saved 30 edits in the last hour,
+    counted across all meetings. `CASSINI_SPEAKER_EDITS_PER_HOUR` on the
+    operator changes the 30 (0 turns the limit off). The count is kept in
+    memory, so restarting the operator resets it. The People panel
     says "Too many changes in a short time. Try again in N min.", with N the
     minutes rounded up, and keeps the names typed so the same Save sends
     them later.
@@ -396,8 +398,11 @@ split participant once from `current/<job>.run` (the turns are stored
 write-once in the operator database and reused forever), runs
 `cassini speakers apply --recording current/<job>.run`, then seals and
 publishes like any build. It runs `cassini speakers diarize` with
-`CASSINI_DIARIZATION_THREADS` set from its own thread budget, never more than
-the host's budget allows, and 2 when it does not know the budget. Before diarizing it waits, as a build does, until
+`CASSINI_DIARIZATION_THREADS` set to the same thread budget a CPU
+transcription gets: the host's CPU cores less the reserve kept for Nextcloud
+and Talk (`CASSINI_BUILD_CPU_RESERVE`), between 1 and 16, and 2 when it cannot
+count the cores. A diarization runs on a build worker, so it never shares that
+budget with a transcription. Before diarizing it waits, as a build does, until
 the host has free the model's working set (about 384 MiB), the decoded track
 (64 bytes per audio millisecond, about 230 MiB an hour) and the usual CPU
 headroom; when that does not come it goes back to the queue rather than fail.

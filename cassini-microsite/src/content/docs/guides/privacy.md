@@ -70,9 +70,11 @@ artifacts:
   attempt history, so a name typed and later removed is still there. Each
   attempt's log directory keeps the edits it applied and the turns it used.
   Renaming a participant whose voices were not separated replaces the name
-  Talk gave them in the published file, which holds only the renamed
-  transcript; the original, with Talk's name, stays in the working copy on the
-  app volume. Once a device's voices are separated, the published file also
+  Talk gave them in the published file's transcript and captions; the file
+  holds only the renamed transcript, and the original, with Talk's name, stays
+  in the working copy on the app volume. The summary is rewritten with the new
+  name only when a summary model is set up and the call succeeds; until then
+  the published summary still uses Talk's name. Once a device's voices are separated, the published file also
   carries the original transcript byte for byte, and keeps that participant,
   under Talk's name, in its speaker list next to the voices.
   See [Separating voices on a shared device](https://github.com/codemyriad/gocassini/blob/main/docs/speaker-separation.md).
