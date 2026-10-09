@@ -27,8 +27,44 @@ func TestRebuildAudioEncodePolicyRepeatsThePublishedMeetingsEncode(t *testing.T)
 			if !tt.noBundle {
 				seedCanonicalMeeting(t, rt.cfg.WorkRoot, "job-1", tt.manifest)
 			}
-			if got := rt.rebuildAudioEncodePolicy("job-1"); got != tt.want {
-				t.Fatalf("rebuildAudioEncodePolicy() = %q, want %q", got, tt.want)
+			got, err := rt.rebuildAudioEncodePolicy("job-1")
+			if err != nil || got != tt.want {
+				t.Fatalf("rebuildAudioEncodePolicy() = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+// When the published meeting's encode cannot be read, any guess may differ
+// from it and the publish would discard its marks, so the rerun stops instead.
+func TestRebuildAudioEncodePolicyRefusesToGuess(t *testing.T) {
+	tests := []struct {
+		name string
+		seed func(t *testing.T, meetingDir string)
+	}{
+		{name: "unreadable manifest", seed: func(t *testing.T, meetingDir string) {
+			if err := os.Mkdir(filepath.Join(meetingDir, "manifest.json"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "malformed manifest", seed: func(t *testing.T, meetingDir string) {
+			if err := os.WriteFile(filepath.Join(meetingDir, "manifest.json"), []byte(`{"audioEncode":`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "audio encode record without a policy", seed: func(t *testing.T, meetingDir string) {
+			if err := os.WriteFile(filepath.Join(meetingDir, "manifest.json"), []byte(`{"audioEncode":{"bitrateBps":64000}}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt, _ := newAdmissionTestRuntime(t, fakeModelCassini(t, readyInt8Inventory), "job-1")
+			seedCanonicalMeeting(t, rt.cfg.WorkRoot, "job-1", "")
+			tt.seed(t, canonicalMeetingPath(rt.cfg.WorkRoot, "job-1"))
+			if got, err := rt.rebuildAudioEncodePolicy("job-1"); err == nil {
+				t.Fatalf("rebuildAudioEncodePolicy() = %q with no error; want the rerun refused", got)
 			}
 		})
 	}
@@ -84,6 +120,15 @@ func TestExecuteBuildCLIRerunKeepsThePublishedAudioEncode(t *testing.T) {
 		if !strings.Contains(args, "--audio-encode "+audioEncodeLegacy) {
 			t.Fatalf("rerun build %q does not keep the published %s encode", args, audioEncodeLegacy)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(canonicalMeetingPath(rt.cfg.WorkRoot, jobID), "manifest.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.executeBuildCLI(context.Background(), buildTask{JobID: jobID, AttemptNumber: 3, ArtifactRunPath: runPath}); err == nil || !strings.Contains(err.Error(), "keep its marks") {
+		t.Fatalf("rerun of a meeting whose encode cannot be read: err = %v, want it refused", err)
+	}
+	if _, err := os.Stat(argsLog); !os.IsNotExist(err) {
+		t.Fatalf("a build ran although the published meeting's encode could not be read (stat args log: %v)", err)
 	}
 }
 

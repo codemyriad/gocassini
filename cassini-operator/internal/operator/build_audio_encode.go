@@ -2,6 +2,7 @@ package operator
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,23 +24,23 @@ const (
 // encode gives the same packets, so the marks carry over to the rebuilt file;
 // a different encode gives different packets and the publish discards them
 // ("different audio"). A rerun therefore repeats the encode of the meeting it
-// replaces, which current/<job>.meeting — never pruned, and only ever replaced
-// by a successful build — records in its manifest.
-func (rt *Runtime) rebuildAudioEncodePolicy(jobID string) string {
+// replaces, which current/<job>.meeting (never pruned, and only ever replaced
+// by a successful build) records in its manifest. When that record cannot be
+// read the rerun fails: guessing an encode could silently discard the marks.
+func (rt *Runtime) rebuildAudioEncodePolicy(jobID string) (string, error) {
 	meetingPath := canonicalMeetingPath(rt.cfg.WorkRoot, jobID)
 	if _, err := os.Stat(meetingPath); os.IsNotExist(err) {
-		return "" // nothing was built (so nothing published) yet
+		return "", nil // nothing was built (so nothing published) yet
 	}
 	manifestPath := filepath.Join(meetingPath, "manifest.json")
 	raw, err := os.ReadFile(manifestPath)
 	if os.IsNotExist(err) {
 		// Every build since the audio encode became a choice writes a
 		// manifest; a meeting without one predates it.
-		return audioEncodeLegacy
+		return audioEncodeLegacy, nil
 	}
 	if err != nil {
-		rt.logger.Printf("rerun audio encode: cannot read %s (%v); rebuilding with the default encode, which may not carry this meeting's marks", manifestPath, err)
-		return ""
+		return "", fmt.Errorf("read the audio encode of the published meeting, which a rerun must repeat to keep its marks: %w", err)
 	}
 	var manifest struct {
 		AudioEncode *struct {
@@ -47,11 +48,14 @@ func (rt *Runtime) rebuildAudioEncodePolicy(jobID string) string {
 		} `json:"audioEncode"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
-		rt.logger.Printf("rerun audio encode: cannot parse %s (%v); rebuilding with the default encode, which may not carry this meeting's marks", manifestPath, err)
-		return ""
+		return "", fmt.Errorf("read the audio encode of the published meeting, which a rerun must repeat to keep its marks: parse %s: %w", manifestPath, err)
 	}
 	if manifest.AudioEncode == nil {
-		return audioEncodeLegacy
+		return audioEncodeLegacy, nil
 	}
-	return strings.TrimSpace(manifest.AudioEncode.Policy)
+	policy := strings.TrimSpace(manifest.AudioEncode.Policy)
+	if policy == "" {
+		return "", fmt.Errorf("read the audio encode of the published meeting, which a rerun must repeat to keep its marks: %s records an audio encode without a policy", manifestPath)
+	}
+	return policy, nil
 }

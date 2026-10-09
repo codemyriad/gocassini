@@ -250,7 +250,7 @@ At the attempt level:
   `runs/<job-id>--attempt-NNN.seal/<job-id>.opus`, and `artifact_opus_sha256` is
   its digest
 - rerun attempts typically reuse the canonical `.run` and create fresh attempt-local `.meeting`, `.seal` and `.site` outputs
-- a rerun rebuilds the audio with the encode policy recorded in `current/<job-id>.meeting` (`fixed-64k` when it records none), so the rebuilt `.opus` has the same audio and the marks made on the published one carry over
+- a rerun rebuilds the audio with the encode policy recorded in `current/<job-id>.meeting` (`fixed-64k` when it records none), so the rebuilt `.opus` has the same audio and the marks made on the published one carry over; when that record cannot be read, the rerun fails rather than guess an encode that would discard the marks
 
 The split is the same one every stage uses, and it is what lets a publish deliver
 a specific attempt's artifact rather than whatever is currently canonical:

@@ -389,7 +389,11 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	}
 
 	buildArgs := []string{"build", task.ArtifactRunPath, "--out", meetingPath}
-	if policy := rt.rebuildAudioEncodePolicy(task.JobID); policy != "" {
+	policy, err := rt.rebuildAudioEncodePolicy(task.JobID)
+	if err != nil {
+		return meetingPath, err
+	}
+	if policy != "" {
 		buildArgs = append(buildArgs, "--audio-encode", policy)
 	}
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, buildArgs...)
