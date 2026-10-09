@@ -2,6 +2,9 @@
 # Model-free image and explicit-install transcription smoke (D-797).
 # Checks an empty store, then installs a model outside the image and proves
 # transcription with installed-only resolution. CUDA still requires real GPU use.
+# Then installs the voice separation model (Nemotron diarization) and proves,
+# offline, that it separates two committed showcase voices mixed onto one
+# participant's track, as when several people share one laptop.
 
 set -euo pipefail
 
@@ -10,14 +13,31 @@ set -euo pipefail
 # Models-only checks need no GPU, model download, or speech fixture.
 MODELS_ONLY="${CASSINI_SMOKE_MODELS_ONLY:-0}"
 
+# Voice separation runs wherever transcription does; 0 skips it (e.g. a
+# local run without the LFS voices).
+DIARIZATION="${CASSINI_SMOKE_DIARIZATION:-1}"
+DIARIZER_ID=nemotron-3-diarization-int8
+
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 FIXTURE_HOST="${REPO_ROOT}/harness/media/parakeet-smoke.mkv"
+VOICES_DIR="${REPO_ROOT}/harness/media/processed/showcase-lantern-festival-v1"
 if [[ "${MODELS_ONLY}" != "1" ]]; then
   "$(dirname "${BASH_SOURCE[0]}")/ci-ffmpeg-bundle.sh"
   if [[ ! -s "${FIXTURE_HOST}" ]]; then
     echo "[transcribe-smoke] FAIL fixture missing or empty: ${FIXTURE_HOST}" >&2
     echo "[transcribe-smoke] run scripts/fetch-smoke-fixture.sh to regenerate" >&2
     exit 1
+  fi
+  if [[ "${DIARIZATION}" == "1" ]]; then
+    for voice in mira leo; do
+      # An Ogg file starts with "OggS"; a Git LFS pointer with "version".
+      if [[ "$(head -c 4 "${VOICES_DIR}/${voice}.ogg" 2>/dev/null)" != "OggS" ]]; then
+        echo "[transcribe-smoke] FAIL ${VOICES_DIR}/${voice}.ogg is missing or a Git LFS pointer" >&2
+        echo "[transcribe-smoke] run: git lfs pull --include=harness/media/processed/showcase-lantern-festival-v1/${voice}.ogg" >&2
+        echo "[transcribe-smoke] (or set CASSINI_SMOKE_DIARIZATION=0 to skip voice separation)" >&2
+        exit 1
+      fi
+    done
   fi
 fi
 
@@ -136,6 +156,11 @@ log "installing ${MODEL_ID} into the writable model store"
 docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${MODEL_ID}" --cache-root "${CACHE_ROOT}" --device "${DEVICE}" --progress-json > "${LOG_DIR}/install.log" 2>&1
 # A warm install is locally satisfied even when network acquisition is forbidden.
 docker exec -e CASSINI_DISALLOW_MODEL_DOWNLOAD=1 "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${MODEL_ID}" --cache-root "${CACHE_ROOT}" --device "${DEVICE}" --no-probe > "${LOG_DIR}/reuse.log" 2>&1
+if [[ "${DIARIZATION}" == "1" ]]; then
+  # The diarizer runs on the CPU in every image, CUDA ones included: no --device.
+  log "installing ${DIARIZER_ID} into the writable model store"
+  docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${DIARIZER_ID}" --cache-root "${CACHE_ROOT}" --progress-json > "${LOG_DIR}/diarizer-install.log" 2>&1
+fi
 
 # Replacing the container must keep weights on the state volume. Invalidate the
 # executable's readiness fingerprint and prove its local recheck and the next
@@ -264,3 +289,47 @@ docker cp "${CONTAINER_NAME}:/tmp/smoke-out/transcript.words.v1.json" "$TRANSCRI
 python3 "$REPO_ROOT/harness/bin/verify-smoke-transcript.py" \
   "$TRANSCRIPT_HOST" --minimum "${MIN_LEVENSHTEIN:-0.50}"
 log "transcribe smoke and transcript quality passed"
+
+if [[ "${DIARIZATION}" != "1" ]]; then
+  log "voice separation skipped (CASSINI_SMOKE_DIARIZATION=${DIARIZATION})"
+  exit 0
+fi
+
+# ---- Voice separation, offline, with the model installed above ----
+# The first 45 s of two showcase voices (Mira at 0.9 s and 33.8 s, Leo at
+# 5.0 s and 39.9 s), mixed onto one participant's track as a shared laptop
+# records them, built with the image's own FFmpeg.
+log "separating two voices on one participant's track with ${DIARIZER_ID} (network disabled)"
+docker exec "${CONTAINER_NAME}" mkdir -p /tmp/diarize
+docker cp "${VOICES_DIR}/mira.ogg" "${CONTAINER_NAME}:/tmp/diarize/mira.ogg"
+docker cp "${VOICES_DIR}/leo.ogg" "${CONTAINER_NAME}:/tmp/diarize/leo.ogg"
+docker exec "${CONTAINER_NAME}" ffmpeg -nostdin -v error -y \
+  -i /tmp/diarize/mira.ogg -i /tmp/diarize/leo.ogg \
+  -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0,atrim=0:45" \
+  -ac 1 -ar 48000 -c:a libopus \
+  -metadata:s:a:0 participant_id=room-laptop -metadata:s:a:0 "participant_name=Room laptop" \
+  /tmp/diarize/shared-laptop.mkv
+# A participant's speaker id is spk_<slug>_<first 12 bytes of sha256(id)>.
+SHARED_SPEAKER="spk_room_laptop_$(printf %s room-laptop | sha256sum | cut -c1-24)"
+set +e
+docker exec -e CASSINI_DISALLOW_MODEL_DOWNLOAD=1 -e CASSINI_DIARIZATION_THREADS=2 "${CONTAINER_NAME}" \
+  /usr/local/bin/cassini speakers diarize /tmp/diarize/shared-laptop.mkv \
+  --speaker "${SHARED_SPEAKER}" --out /tmp/diarize/turns.json > "${LOG_DIR}/diarize.log" 2>&1
+DIARIZE_RC=$?
+set -e
+if [[ ${DIARIZE_RC} -ne 0 ]]; then
+  log "FAIL cassini speakers diarize exited ${DIARIZE_RC}:"
+  sed 's/^/    /' "${LOG_DIR}/diarize.log"
+  exit 1
+fi
+docker cp "${CONTAINER_NAME}:/tmp/diarize/turns.json" "${LOG_DIR}/turns.json"
+python3 - "${LOG_DIR}/turns.json" <<'CHECK'
+import json,sys
+turns=json.load(open(sys.argv[1]))
+voices={t['speaker'] for t in turns['turns']}
+assert len(voices)>=2, f"found {len(voices)} voices, want at least 2: {turns['turns']}"
+assert turns['params']['threads']==2 and turns['params']['provider']=='cpu', turns['params']
+assert 'INT8' in turns['model']['name'] and 'nemotron-diarization' in turns['model']['runtime'], turns['model']
+print(f"[transcribe-smoke] OK   {len(turns['turns'])} turns, {len(voices)} voices in {turns['elapsedMs']} ms")
+CHECK
+log "voice separation passed"

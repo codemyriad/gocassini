@@ -460,7 +460,12 @@ IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-transcribe-short-c
 
 `ci-transcribe-smoke-exapp.sh` checks bundled models and transcript quality in
 one run, including actual GPU use for CUDA images. It replaces the separate
-transcript-verification runner.
+transcript-verification runner. It also installs the voice separation model
+and, with the network disabled, runs `cassini speakers diarize` on two showcase
+voices (`mira.ogg`, `leo.ogg`) mixed onto one participant's track, expecting two
+voices. Those two files are in Git LFS: run
+`git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ogg,harness/media/processed/showcase-lantern-festival-v1/leo.ogg"`
+first, or set `CASSINI_SMOKE_DIARIZATION=0` to skip that part.
 
 Use the stack-backed install/roundtrip tests above when you need Nextcloud,
 AppAPI, Talk recording-backend, or WebRTC media coverage.
