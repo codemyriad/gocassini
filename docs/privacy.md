@@ -53,18 +53,23 @@ artifacts:
   `.opus`.
 - **Transcripts** — a timestamped word-level transcript when transcription is enabled and succeeds. Audio-only files carry an empty compatibility transcript and an explicit skipped/failed status.
 - **Captions** — a `captions.vtt` subtitle track when transcription succeeds.
-- **Separated voices** — only when someone who can read a meeting says several
-  people shared one device: that participant's speaker turns (start and end
-  times with a voice number, no audio and no voice embedding), the edits people
-  made (which device was separated, which voices are the same person, and the
-  names they typed), and the original transcript kept beside the separated one.
-  The operator database keeps the current edits, the edits the published
-  recording carries and who saved the last revision, and every saved revision
-  stays as a snapshot in that meeting's attempt history, so a name typed and
-  later removed is still there. Each attempt's log directory keeps the edits it
-  applied and the turns it used. Renaming a participant does not remove the
-  name Talk gave them from the published file: the original transcript is kept
-  byte for byte, and each voice repeats its device's label.
+- **Speaker edits and separated voices** — only when someone who can read a
+  meeting names a speaker or says several people shared one device: the edits
+  people made (which device was separated, which voices are the same person,
+  and the names they typed), the original transcript, kept beside the edited
+  one so every edit can be undone, and for a separated device that
+  participant's speaker turns (start and end times with a voice number, no
+  audio and no voice embedding). The operator database keeps the current
+  edits, the edits the published recording carries and who saved the last
+  revision, and every saved revision stays as a snapshot in that meeting's
+  attempt history, so a name typed and later removed is still there. Each
+  attempt's log directory keeps the edits it applied and the turns it used.
+  Renaming a participant whose voices were not separated replaces the name
+  Talk gave them in the published file, which holds only the renamed
+  transcript; the original, with Talk's name, stays in the working copy on the
+  app volume. Once a device's voices are separated, the published file also
+  carries the original transcript byte for byte, and keeps that participant,
+  under Talk's name, in its speaker list next to the voices.
   See [Separating voices on a shared device](./speaker-separation.md).
 - **Summaries** — an optional `summary.md`, produced only when the LLM step is
   enabled.
