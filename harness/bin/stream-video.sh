@@ -29,6 +29,9 @@ PREPARE="${PREPARE:-1}"
 ROTATE_SECONDS="${ROTATE_SECONDS:-5}"
 AUDIO_TRACK_AFTERS="${AUDIO_TRACK_AFTERS:-}"
 VIDEO_TRACK_AFTERS="${VIDEO_TRACK_AFTERS:-}"
+# 1 sends every participant's audio at once. The default (0) keeps one
+# participant audible and rotates it every ROTATE_SECONDS.
+ROTATOR_ALL_AUDIBLE="${ROTATOR_ALL_AUDIBLE:-0}"
 declare -a MEDIA_PREFIX_LIST=()
 declare -a AUDIO_TRACK_AFTER_LIST=()
 declare -a VIDEO_TRACK_AFTER_LIST=()
@@ -77,6 +80,10 @@ while [[ $# -gt 0 ]]; do
     --rotate-seconds)
       ROTATE_SECONDS="$2"
       shift 2
+      ;;
+    --all-audible)
+      ROTATOR_ALL_AUDIBLE=1
+      shift
       ;;
     --join-delays)
       JOIN_DELAYS="$2"
@@ -148,6 +155,11 @@ if [[ -z "$CALL_URL" ]]; then
     echo "missing --call-url and no $RUNTIME_DIR/last_call_url found" >&2
     exit 1
   fi
+fi
+
+if [[ "$ROTATOR_ALL_AUDIBLE" != "0" && "$ROTATOR_ALL_AUDIBLE" != "1" ]]; then
+  echo "ROTATOR_ALL_AUDIBLE must be 0 or 1, got: $ROTATOR_ALL_AUDIBLE" >&2
+  exit 1
 fi
 
 if ! [[ "$USERS" =~ ^[0-9]+$ ]] || (( USERS < 1 )); then
@@ -315,6 +327,10 @@ if [[ "$RECORD_BEFORE_MEDIA" == "1" ]]; then
 fi
 if [[ -n "$MUTE_ROTATION_START_FILE" ]]; then
   CMD_ARGS+=(--mute-start-file "$MUTE_ROTATION_START_FILE")
+fi
+if [[ "$ROTATOR_ALL_AUDIBLE" == "1" ]]; then
+  log "Audio: all participants audible together"
+  CMD_ARGS+=(--all-audible)
 fi
 
 for ((i = 1; i <= USERS; i++)); do
