@@ -8,26 +8,52 @@ this device") in that participant's menu; it starts at once. Cassini then
 finds the different voices on that participant's own track and splits its words
 between them, as "Meeting room laptop · Speaker 1", "… · Speaker 2" and so on.
 People can name the voices, say that two of them are the same person, or undo
-the split.
+the split. They can also simply rename any speaker.
 
 This is a proof of concept. Nothing runs automatically, and nothing recognises
 a person: the voices are anonymous until someone types a name.
+
+## Words used on this page
+
+- **Participant** (or **device**): one Talk participant, with one audio track
+  in the recording. Its id looks like `spk_meeting_room_laptop_0123…`.
+- **Diarization**: finding who spoke when in one audio track, without knowing
+  who anyone is. The diarizer is the model that does it,
+  [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization).
+- **Turn**: one stretch of time the diarizer gives to one anonymous voice
+  number: start, end, voice.
+- **Voice**: one of the people the diarizer found on a participant's track.
+  Its id is the participant's id with `~n` added (see below).
+- **Split**: a participant whose voices were separated. A split that finds
+  fewer than two voices with words is **inconclusive** and changes nothing.
+- **Bundle**: the `.meeting` directory a build writes on the server
+  (`current/<job>.meeting`): audio, transcript, captions, summary and
+  `manifest.json`. `cassini pack` turns it into the published `.opus` file.
+- **Original transcript**: the transcript as speech recognition and the build
+  wrote it, before anyone edited the speakers. Its transcript id is `raw-asr`
+  ("automatic speech recognition, unedited"), the id the build already gives
+  its one transcript.
+- **Separated transcript**: the transcript after a split, with the
+  participant's words given to its voices. Its transcript id is
+  `separated-voices`.
 
 ## What happens
 
 1. **Diarize one track.** `cassini speakers diarize` decodes the chosen
    participant's own audio from the recording (`current/<job>.run`) and runs
-   [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)
-   on it, locally on the CPU with two threads. Nothing is re-transcribed. It
-   takes about 1–2 s per minute of audio. The result is a list of turns: start,
-   end and an anonymous voice number. It is computed once per participant and
-   kept, so the voice numbers never move after someone has named them.
-2. **Apply the edits.** `cassini speakers apply` rewrites the built `.meeting`
-   bundle from its original transcript, the people's edits and the stored
-   turns. It runs no model and never touches the audio.
+   the diarizer on it, locally on the CPU, with the number of threads in
+   `CASSINI_DIARIZATION_THREADS` (2 unless the operator sets it). Nothing is
+   re-transcribed. It takes about 1–2 s per minute of audio. The result is the
+   list of turns. It is computed once per participant and kept, so the voice
+   numbers never move after someone has named them.
+2. **Apply the edits.** `cassini speakers apply` rewrites the bundle from its
+   original transcript, the people's edits and the stored turns. It runs no
+   model and never touches the audio.
 3. **Republish.** The bundle goes through the usual seal and publish. The audio
    is not re-encoded, so the published file keeps its audio identity and every
    tag and mark stays attached.
+
+A rename needs no turns and no model: step 1 is skipped.
 
 ## The edits document
 
@@ -50,36 +76,104 @@ twice changes nothing and removing an entry undoes it exactly.
 - `merges` says one voice is the same person as another voice **of the same
   device**. Voices of different devices are already different microphones;
   merging into a voice that is itself merged is refused.
-- `labels` names speakers or voices: 1–64 characters, no control characters,
-  no leading or trailing space. A label for a voice that does not exist (yet)
-  is kept and has no effect, so a name survives undoing and redoing a split.
-
-A split that finds fewer than two voices with words is **inconclusive**: the
-device stays one speaker, and the report says so. It is not an error.
+- `labels` names participants or voices: 1–64 characters, no control
+  characters, no leading or trailing space. A label for a voice that does not
+  exist (yet) is kept and has no effect, so a name survives undoing and redoing
+  a split.
 
 ## Voice ids: the `~n` convention
 
 Voice *n* of participant `spk_x` has the id `spk_x~n`. Participant ids are
-`spk_<slug>_<hex>` and never contain `~`, so the device of any voice is the id
-before the last `~`. *n* is the voice's rank by its first turn in the stored
-diarizer output. It does not depend on the words, so a rerun of speech
+`spk_<slug>_<hex>` and never contain `~`, so the participant of any voice is
+the id before the last `~`. *n* is the voice's rank by its first turn in the
+stored diarizer output. It does not depend on the words, so a rerun of speech
 recognition, or undoing and redoing the split, gives the same voice the same
 id. A voice the diarizer found but no word landed on keeps its number and is
 left out of the speaker list.
 
-Until someone names it, a voice is called `<device label> · Speaker n`.
+Until someone names it, a voice is called `<participant label> · Speaker n`.
 
-## What the bundle holds after a split
+## What apply changes in the bundle
+
+Apply does one of three things, decided by what the edits change:
+
+- **Nothing to do** (no split that found voices, and no label that changes a
+  name): the bundle is put back as the build wrote it.
+- **A rename** (labels change names, and no split found voices): only the
+  names change.
+- **A split** (at least one split found two or more voices, with any merges
+  and labels): the participant's words go to its voices.
+
+Every apply first keeps the original transcript, byte for byte, as
+`transcript.raw-asr.words.v1.json`. It is the base of every later apply and is
+never overwritten; undoing every edit puts it back.
+
+### A rename
 
 | File | Content |
 | ---- | ------- |
-| `transcript.words.v1.json` | The separated transcript. Its `speakers[]` lists the speakers that have words, with voices in place of the split device. |
-| `transcript.raw-asr.words.v1.json` | The original transcript, byte for byte. It is the base of every later apply and is never overwritten. |
+| `transcript.words.v1.json` | The same transcript with `speakers[].label` changed for the renamed speakers. Words, segments and the order of the speakers are untouched. |
+| `transcript.raw-asr.words.v1.json` | The original transcript, kept for undo. It is **not** listed in `files.transcripts`, so `cassini pack` does not put it in the published file. |
+| `speaker-edits.json` | The edits document as applied. |
+| `captions.vtt` | Regenerated with the new names. |
+| `summary.md`, `summary.raw-asr.md` | As for a split, below. |
+| `manifest.json` | The build's, with `x-speakerEdits` (below) on the default transcript's speech-to-text step: the `files.transcripts` entry marked default when the build listed its transcripts, else `provenance.speechToText`. `speakerCount`, `segmentCount` and `files` are otherwise the build's. |
+
+A rename separates nobody, so it writes no `x-speakerDiarization`.
+
+### A split
+
+| File | Content |
+| ---- | ------- |
+| `transcript.words.v1.json` | The separated transcript. Its `speakers[]` lists the speakers that have words, with voices in place of the split participant. |
+| `transcript.raw-asr.words.v1.json` | The original transcript, byte for byte, listed as the `raw-asr` transcript. |
 | `speaker-edits.json` | The edits document as applied. |
 | `captions.vtt` | Regenerated from the separated transcript. |
 | `summary.md` | Rewritten for the edited speakers when the bundle has a summary (one call to the summary model). |
 | `summary.raw-asr.md` | The build's summary, byte for byte, kept the first time the summary is rewritten. |
 | `manifest.json` | See below. `wordCount` is unchanged. |
+
+`manifest.json` changes in four places:
+
+- `files.transcripts` lists `separated-voices` (the primary file, default) and
+  then `raw-asr` (the original). Each carries a copy of
+  `provenance.speechToText`. Transcripts of additional models follow these two.
+- `separated-voices` adds `x-speakerEdits` and `x-speakerDiarization` to its
+  copy.
+- `speakerCount` counts each voice in place of its participant. Participants
+  who said nothing have no roster entry but stay counted, as the build counted
+  them. The roster keeps the build's order, with each split participant
+  replaced in place by its voices in voice order.
+- The top level gets `x-speakerDiarization` with `base`: the manifest members
+  as the build wrote them (`speakerCount`, `segmentCount`,
+  `files.transcripts`). `base` is never packed; it is what an undo restores.
+
+### The two records
+
+`x-speakerEdits` says which of people's edits a transcript reflects. Every
+rename and every split writes it, on the default transcript only:
+
+- `editsRevision` and `editsSha256`: the revision and SHA-256 of the edits
+  document applied;
+- `summary`, once apply has rewritten `summary.md`:
+  `{"rewritten": true, "model", "sha256", "editsSha256", "transcriptSha256"}`,
+  the SHA-256 of the summary it wrote, of the edits it now stands for and of
+  the edited transcript it was written from. `provenance.meetingSummary` still
+  describes the build's summary, now `summary.raw-asr.md`.
+
+The viewer compares `editsRevision` with the revision the operator applied, and
+`summary.sha256` with the summary the operator last published, to know when
+the copy on screen is older and must be read again.
+
+`x-speakerDiarization` says how voices were separated, and only a split
+writes it: the backend (`sherpa-onnx <runtime> Nemotron diarization, CPU,
+<n> threads`), model name and SHA-256, `minDurationOn` / `minDurationOff`, the
+word assignment rule, `sourceSeparation: false` (voices are not separated from
+each other's sound, only their words), and per split the voice ids, turn
+count, number of voices found and whether it was inconclusive. Counts, ids and
+hashes only.
+
+### The summary
 
 The summary model is called before apply writes anything, and only when
 `summary.md` is not already the one apply wrote from this exact edited
@@ -95,41 +189,20 @@ report says `"summary":"stale"`; the People panel shows that as a note.
 Applying the same edits again tries again. Undoing every edit puts the build's
 summary back.
 
+### Undo, older bundles and interruptions
+
 `transcript.display.v1.json` and `transcript.readable.v1.json`, when present,
-are removed: they carry their own copies of speaker labels, and the viewer
-derives both from the words.
+are removed by a rename or a split: they carry their own copies of speaker
+labels, and the viewer derives both from the words.
 
-`manifest.json` changes in three places:
-
-- `files.transcripts` lists `separated-voices` (the primary file, default) and
-  then `raw-asr` (the original). Each carries a copy of
-  `provenance.speechToText`; `separated-voices` adds `x-speakerDiarization`.
-  Transcripts of additional models follow these two.
-- `x-speakerDiarization` records the split: the backend
-  (`sherpa-onnx <runtime> Nemotron diarization, CPU, 2 threads`), model name
-  and SHA-256, `minDurationOn` / `minDurationOff`, the word assignment rule,
-  `sourceSeparation: false` (voices are not separated from each other's sound,
-  only their words), the edits revision and SHA-256, and per split the voice
-  ids, turn count, number of voices found and whether it was inconclusive.
-  Once apply has rewritten `summary.md` it also has `summary`:
-  `{"rewritten": true, "model", "sha256", "editsSha256", "transcriptSha256"}`,
-  the SHA-256 of the summary it wrote, of the edits it now stands for and of
-  the edited transcript it was written from
-  (`provenance.meetingSummary` still describes the build's summary, now
-  `summary.raw-asr.md`). Counts, ids and hashes only. The bundle's copy also keeps `base`, the manifest
-  members as the build wrote them; `base` is never packed.
-- `speakerCount` counts each voice in place of its device. Participants who
-  said nothing have no roster entry but stay counted, as the build counted them.
-  The roster keeps the build's order, with each split device replaced in place
-  by its voices in voice order.
-
-An edits document that changes nothing (no applied split, no merge, no label
-that changes a name) restores the bundle as the build wrote it: the original
-transcript and captions are put back, the raw-asr file, `speaker-edits.json`
-and `x-speakerDiarization` are removed, and `manifest.json` is byte-identical
-to the build's. The one exception is a display or readable transcript from an
-older build: removed by the first split, it stays removed, along with its
-`files` key. The current build writes neither.
+An edits document that changes nothing restores the bundle as the build wrote
+it: the original transcript and captions are put back, the raw-asr file,
+`speaker-edits.json`, `x-speakerEdits` and `x-speakerDiarization` are removed,
+and `manifest.json` is byte-identical to the build's. The one exception is a
+display or readable transcript from an older build: removed by the first
+rename or split, it stays removed, along with its `files` key. The current
+build writes neither. Moving between a rename and a split, in either
+direction, gives the bundle a fresh apply of the new edits would give.
 
 A bundle built without a transcript (transcription skipped or failed) has no
 words to separate or attribute, so apply leaves it exactly as built; a rerun
@@ -144,29 +217,60 @@ the build's summary back and says so (`"summary":"restored"`).
 
 ## In the portable `.opus`
 
-`cassini pack` needs no special handling. The packed file has:
+`cassini pack` needs no special handling. After a **rename** the file has one
+words transcript, `raw-asr`, with the new names in the speaker list and
+`x-speakerEdits` on its speech-to-text step. The original transcript is not in
+the file.
+
+After a **split** the file has:
 
 - the default words transcript `separated-voices` and a second words transcript
-  `raw-asr`, which the viewer offers as a variant;
-- the global speaker list of the separated transcript, so voices are ordinary
-  speakers to every reader (viewer, CLI, agents, search);
-- `x-speakerDiarization` on the `separated-voices` speech-to-text provenance.
+  `raw-asr` (the original), which the viewer offers as "Original";
+- `x-speakerEdits` and `x-speakerDiarization` on the `separated-voices`
+  speech-to-text step;
+- one speaker list for both transcripts: the voices, and, just before them,
+  the split participant itself, under the label Talk gave it, marked
+  `"x-separatedInto": [<voice ids>]`.
 
-The `raw-asr` items still name the original device id, which is not in the
-global speaker list once its words all went to voices. The device is kept out
-of that list on purpose: every reader of `speakers[]` would count it as one
-more person. Instead each voice names its device in an optional hint,
-`"x-device": {"id", "label"}`, which `cassini pack` fills in from the `raw-asr`
-transcript's own speakers. A reader that shows a non-default transcript
-accepts speaker ids it does not find in the list, names such a device from
-that hint (or, in older files, from a voice's default label without
-` · Speaker n`), and lists it where its first voice is. A reader older than
-this change does not: it opens the default `separated-voices` transcript of a
-separated meeting, and refuses the `raw-asr` variant ("references unknown
-speaker"). That includes the embed already published and app versions before
-this one. The viewer counts and
-lists the meeting's people the same way whichever transcript is shown: each
-voice is a person, and a split device is not counted on top of its voices.
+```json
+"speakers": [
+  { "id": "spk_room_…", "label": "Meeting room laptop", "x-separatedInto": ["spk_room_…~1", "spk_room_…~2"] },
+  { "id": "spk_room_…~1", "label": "Mira" },
+  { "id": "spk_room_…~2", "label": "Meeting room laptop · Speaker 2" },
+  { "id": "spk_ben_…", "label": "Ben" }
+]
+```
+
+### Why the participant stays in the speaker list
+
+The original transcript still credits the participant's id, and every reader
+looks up a transcript's speakers in the file's one speaker list. A reader that
+finds an id missing refuses the transcript: viewers before this change answer
+"references unknown speaker" when someone switches to "Original". Keeping the
+participant in the list fixes that for every reader, old and new.
+
+The cost is that a reader which does not know the `x-separatedInto` hint sees
+the participant as one more speaker: a count one higher, and the device's
+name listed beside its voices. That is all an older reader loses. Every reader
+in this repository knows the hint and counts and lists people, never the
+participant on top of its voices: the viewer (counts, the People panel, the
+meeting facts), `cassini inspect`, `cassini meetings context`, `cassini
+speakers show`, and the `CASSINI_SPEAKER_COUNT` tag. The summary prompt and
+search look speakers up by id only, so the extra entry changes nothing there.
+A transcript in the viewer lists the participant only where its own words
+credit it, that is on "Original".
+
+The alternatives were worse. Leaving the participant out (with a hint on each
+voice naming it) keeps counts right in old readers but breaks their
+"Original" outright. Separate speaker lists per transcript do not exist in the
+format, so every reader would have to change.
+
+Cassini for Android reads `speakers[]` from the same files. It already keeps
+the speaker list as the union of every transcript's speakers (its own
+diarized variants add their speakers and keep the old ones), it shows a
+speaker id it does not find instead of failing, and it ignores members it does
+not know. So it opens both transcripts of a separated meeting, and shows the
+participant as one more speaker until it learns the hint.
 
 ## Commands
 
@@ -177,8 +281,10 @@ cassini speakers show "./Weekly Sync.opus" --json
 
 # Diarize one participant's track. Exit 3 when no model or runtime is available
 # (stderr "diarization-unavailable: …"), 4 when the recording has no stream for
-# that participant ("speaker-not-found: …").
-cassini speakers diarize ./runs/weekly.run --speaker spk_… --out ./turns/spk_….json
+# that participant ("speaker-not-found: …"). CASSINI_DIARIZATION_THREADS sets the
+# CPU threads: an integer, 2 when unset (as on Android), kept between 1 and 16;
+# anything else runs with 2 and warns on stderr. The turn set records the threads.
+CASSINI_DIARIZATION_THREADS=4 cassini speakers diarize ./runs/weekly.run --speaker spk_… --out ./turns/spk_….json
 
 # Apply the edits in place. Turns are read from <turns-dir>/<speakerId>.json.
 # With --recording, turns measured on any other recording are refused
@@ -187,7 +293,7 @@ cassini speakers diarize ./runs/weekly.run --speaker spk_… --out ./turns/spk_�
 # {"revision","splits":[{"speakerId","voices","inconclusive"}],"missing",
 #  "inconclusive","merged","speakerCount","summary","summarySha256"}. A summary
 # that could not be rewritten is reported "stale" with the reason on stderr.
-# summarySha256 names the summary the meeting now has (x-speakerDiarization's
+# summarySha256 names the summary the meeting now has (x-speakerEdits'
 # summary.sha256, "" for the build's own), whatever this apply did to it: the
 # viewer reads the recording again whenever it differs from the one on screen.
 cassini speakers apply ./meetings/weekly.meeting --edits ./edits.json --turns-dir ./turns --recording ./runs/weekly.run --json
@@ -195,9 +301,9 @@ cassini speakers apply ./meetings/weekly.meeting --edits ./edits.json --turns-di
 
 The turns file (`cassini.speaker-turns.v1`) holds the participant id, the
 stream indexes used, the recording's file name and SHA-256, the model name,
-SHA-256 and runtime, the settings, and the turns. No audio and no voice
-embedding. apply refuses a set that names no recording or model, or whose
-turns are not spans of time with a voice number.
+SHA-256 and runtime, the settings (threads included), and the turns. No audio
+and no voice embedding. apply refuses a set that names no recording or model,
+or whose turns are not spans of time with a voice number.
 
 apply fails rather than publish if the bundle's audio changes while it runs.
 
@@ -271,7 +377,13 @@ is checked the same way as for marks: a meeting the caller cannot open answers
     edited at all;
   - 400 `{"error":"invalid","message":…}`;
   - 503 `{"error":"diarization-unavailable","detail":…}`, when a new split
-    needs a model this operator does not have.
+    needs a model this operator does not have;
+  - 429 `{"error":"rate-limited","retryAfterMs":n}`, when the caller has
+    saved more edits than the operator allows one person in a while, counted
+    across all meetings (the limit is set on the operator). The People panel
+    says "Too many changes in a short time. Try again in N min.", with N the
+    minutes rounded up, and keeps the names typed so the same Save sends
+    them later.
 
   A document that asks for what the recording already carries (the applied
   revision, nothing applying or failed; order and stray spaces in labels do
@@ -283,7 +395,9 @@ A `refine` attempt runs no transcription. It copies `current/<job>.meeting`
 split participant once from `current/<job>.run` (the turns are stored
 write-once in the operator database and reused forever), runs
 `cassini speakers apply --recording current/<job>.run`, then seals and
-publishes like any build. Before diarizing it waits, as a build does, until
+publishes like any build. It runs `cassini speakers diarize` with
+`CASSINI_DIARIZATION_THREADS` set from its own thread budget, never more than
+the host's budget allows, and 2 when it does not know the budget. Before diarizing it waits, as a build does, until
 the host has free the model's working set (about 384 MiB), the decoded track
 (64 bytes per audio millisecond, about 230 MiB an hour) and the usual CPU
 headroom; when that does not come it goes back to the queue rather than fail.
@@ -351,8 +465,10 @@ installs it.
 
 Android runs the same model and the same word assignment rule ("largest union
 overlap; nearest turn in gaps; one speaker per word", with the same
-`minDurationOn` 0.3 s, `minDurationOff` 0.5 s, activity threshold 0.5 and two
-CPU threads), so both produce the same split of one recording. They differ in
+`minDurationOn` 0.3 s, `minDurationOff` 0.5 s and activity threshold 0.5), so
+both produce the same split of one recording. Android uses two CPU threads;
+Cassini uses as many as the operator gives it, two by default, which changes
+only how fast the turns come. They differ in
 what they run on and how they name things:
 
 - **Input.** Android diarizes a whole mixed recording, because a phone has one
@@ -366,8 +482,8 @@ what they run on and how they name things:
   the current separated transcript, rebuilt from the original on every apply.
 - **Provenance.** Both write `x-speakerDiarization` on the speech-to-text
   provenance of the separated transcript; the members differ (Android records
-  elapsed time and threshold, Cassini records the edits revision and the
-  splits).
+  elapsed time and threshold, Cassini records the splits, and the edits
+  revision separately in `x-speakerEdits`).
 - **Names.** On Android, names belong to the document on the phone. In Cassini
   they are saved into the published recording's speaker list, visible to
   everyone who can open it.
