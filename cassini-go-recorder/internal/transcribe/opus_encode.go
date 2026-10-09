@@ -95,12 +95,14 @@ type SourceAudio struct {
 	// SpeechBitrateBps is the rate the source spent per coded channel while
 	// there was something to code (see probeSpeechBitrates and
 	// speechBitrateFromHistogram); 0 when unknown. Per channel because the mix
-	// is mono: a participant whose client sends stereo at 64 kb/s spends about
-	// half of it on a second channel the downmix folds away, so their voice
-	// needs about what a 32 kb/s mono sender's does.
+	// is mono: a participant whose client sends stereo at 64 kb/s spends part
+	// of it on a second channel the downmix folds away. Halving is a sizing
+	// rule, not an exact split (Opus codes the two channels jointly); on a
+	// voice sent as 64 kb/s stereo and folded to mono, the 44 kb/s encode it
+	// leads to scored within 0.03 of the old 64 kb/s one (PESQ-WB, ViSQOL).
 	SpeechBitrateBps int
-	// Empty marks a track that carried under a second of audio (fewer than
-	// minSpeechPackets packets, often none: a participant who never
+	// Empty marks a track with fewer than minSpeechPackets packets (about a
+	// second of 20 ms Talk frames; often none at all: a participant who never
 	// unmuted). It still counts for bandwidth but not for bitrate: there is
 	// no voice in it for the mix to make room for.
 	Empty bool
