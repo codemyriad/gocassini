@@ -97,7 +97,7 @@ cassini models import \
 ```bash
 cassini models import \
   --model nemotron-3-diarization-int8 \
-  --revision c074d86335b3b794f8fa5edc25594558f128bdb3914d27806a3a5a2e44963cb6 \
+  --revision 47c221ea9b4d4e7f6c108bd098e769bc706cdc986c29f6133c93cae335fe6779 \
   --from /mnt/transfer/model.int8.onnx.zst \
   --cache-root /persistent/model-store
 ```

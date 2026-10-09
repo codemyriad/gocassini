@@ -314,16 +314,27 @@ The installed app reads and saves a meeting's speaker edits at
 is checked the same way as for marks: a meeting the caller cannot open answers
 404.
 
+Both the route and the refine attempt work on the meeting readers have, the
+**published bundle**: the last published attempt's own bundle
+(`runs/<job>--attempt-NNN.meeting`) until its copy into `current/<job>.meeting`
+is recorded, then `current/<job>.meeting`. A publish marks its attempt
+published before it makes that copy, and a copy that failed leaves `current/`
+on the meeting before it until it is retried; reading `current/` in that
+window would show, and edit, a meeting readers no longer have.
+
 - `GET` returns `{available, reason, revision, appliedRevision, state,
   lastError, doc, participants, report, progress}`. `participants` is the
-  original roster: the devices that can be split (never the synthetic
+  published bundle's original roster: the devices that can be split (never the synthetic
   `merged` speaker of the mixed-track fallback, which is nobody's own audio).
   `state` is `idle`, `applying`, `failed` or `unavailable`. When `available`
   is false, `reason` is one of `no-job` (a meeting with no operator job),
-  `no-source-audio`, `no-transcript` (also an audio-only build, whose
+  `no-source-audio` (the capture is gone: it expired under Storage retention, or
+  the recording was made with **Keep after each recording: Nothing**, which
+  deletes it after processing), `no-transcript` (also an audio-only build, whose
   manifest says transcription was skipped or failed), `unpublished-rebuild`
-  (the job's last rerun built but was never published, so `current/` holds a
-  meeting readers do not have; a rerun that publishes clears it) or
+  (the published bundle was built by a rerun that was never published, as an
+  older operator left `current/` after a rerun whose seal or publish failed,
+  so readers do not have it; a rerun that publishes clears it) or
   `diarization-unavailable`; for the last, `reasonDetail` says why (not
   installed, a runtime without Nemotron, or an unreadable model inventory)
   and how to install the model.
@@ -352,7 +363,7 @@ is checked the same way as for marks: a meeting the caller cannot open answers
     apply, summary, seal and publish, plus, for each split that had no
     stored turns at queue time, the meeting's length times this operator's
     diarization pace (each split diarizes its own full-length track, one
-    after another). The length is `durationMs` of `current/<job>.meeting`,
+    after another). The length is `durationMs` of the published bundle,
     from its manifest or else its transcript; when neither says, the
     estimate is the 3 s base, which is also its floor. The pace is the
     median `elapsedMs / durationMs` of the turn sets this operator has
@@ -368,31 +379,43 @@ is checked the same way as for marks: a meeting the caller cannot open answers
   rewrite, 5 s seal and publish); the part that is not diarization took
   3–4 s on 3-minute meetings and about 14 s on the 64-minute one.
 - `POST {expectRevision, doc}` stores the next revision and queues a `refine`
-  attempt in one transaction. It answers 200 with the `GET` shape, or:
+  attempt in one transaction. It is admitted the way a rerun is: under the
+  job's artifact lock, which every build, seal, publish and expiry of the job
+  holds while it runs. The POST waits at most 2 s for that lock, so a save
+  never hangs behind a whole build. It answers 200 with the `GET` shape, or:
   - 409 `{"error":"revision-conflict","revision":n}`;
-  - 409 `busy`, while the job is still building, sealing or publishing (a
-    job whose rerun is blocked for want of resources is not busy: a refine
-    needs none of them);
+  - 409 `busy`, while the job is still building, sealing or publishing, while
+    its artifact lock stays taken past the 2 s, and while an archive
+    operation (a promotion or an expiry) or a Nextcloud retention operation
+    on the published file is unfinished (a job whose rerun is blocked for
+    want of resources is not busy: a refine needs none of them);
   - 409 `{"error":"unavailable","reason":…}`, for a meeting that cannot be
-    edited at all;
+    edited at all, `reason` as for `GET` (a capture that expired or is set
+    to be deleted after processing answers `no-source-audio`, as a rerun of
+    it is refused);
   - 400 `{"error":"invalid","message":…}`;
   - 503 `{"error":"diarization-unavailable","detail":…}`, when a new split
     needs a model this operator does not have;
   - 429 `{"error":"rate-limited","retryAfterMs":n}`, with `Retry-After` in
     seconds, when the caller has already saved 30 edits in the last hour,
-    counted across all meetings. `CASSINI_SPEAKER_EDITS_PER_HOUR` on the
-    operator changes the 30 (0 turns the limit off). The count is kept in
-    memory, so restarting the operator resets it. The People panel
-    says "Too many changes in a short time. Try again in N min.", with N the
-    minutes rounded up, and keeps the names typed so the same Save sends
-    them later.
+    counted across all meetings. Only saves that queued a refine count: a
+    refused save, or one that asks for what the recording already carries,
+    costs nothing, and reading is never limited.
+    `CASSINI_SPEAKER_EDITS_PER_HOUR` on the operator changes the 30 (0 turns
+    the limit off). The count is kept in memory, so restarting the operator
+    resets it. The app treats any 429 as this limit, also one without a JSON
+    body (a proxy's), and reads the wait from `retryAfterMs`, else
+    `Retry-After`. The People panel says "Too many changes in a short time.
+    Try again in N min.", with N the minutes rounded up, and keeps the names
+    typed so the same Save sends them later.
 
   A document that asks for what the recording already carries (the applied
   revision, nothing applying or failed; order and stray spaces in labels do
   not count) is not a new revision: the POST answers the current state and
   queues nothing.
 
-A `refine` attempt runs no transcription. It copies `current/<job>.meeting`
+A `refine` attempt runs no transcription. It copies the published bundle,
+resolved under the job's artifact lock so nothing moves while it copies
 (refusing one built by a rerun that was never published), diarizes each newly
 split participant once from `current/<job>.run` (the turns are stored
 write-once in the operator database and reused forever), runs
