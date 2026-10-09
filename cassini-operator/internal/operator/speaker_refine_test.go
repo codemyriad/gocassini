@@ -111,6 +111,7 @@ func TestRefineDiarizesOnceAppliesAndPublishes(t *testing.T) {
 	if job.CurrentAttemptNumber != 2 {
 		t.Fatalf("current attempt = %d, want the refine (2)", job.CurrentAttemptNumber)
 	}
+	waitForPublishedAttempt(t, rt, "JOB1", 2)
 	if rec.LastError != "" || !strings.Contains(string(rec.LastReport), `"revision":1`) {
 		t.Fatalf("after publish: lastError=%q report=%s", rec.LastError, rec.LastReport)
 	}
@@ -159,6 +160,7 @@ func TestRefineDiarizesOnceAppliesAndPublishes(t *testing.T) {
 	doc.Labels = append(doc.Labels, speakerEditsLabel{SpeakerID: speakerTestRoom + "~2", Label: "Bea"})
 	queueSpeakerEdits(t, rt, "JOB1", 1, doc)
 	waitForSpeakerEdits(t, rt.store, "JOB1", func(r speakerEditsRecord) bool { return r.AppliedRevision == 2 })
+	waitForPublishedAttempt(t, rt, "JOB1", 3)
 	if got := len(speakersCalls(t, bin, "speakers diarize")); got != 1 {
 		t.Fatalf("diarize ran %d times, want the stored turns reused", got)
 	}
@@ -355,6 +357,7 @@ func TestRerunReplaysSpeakerEdits(t *testing.T) {
 	if job.State != "succeeded" || builds != 1 {
 		t.Fatalf("rerun = %s (error %s), builds %d", job.State, jobErrorText(job), builds)
 	}
+	waitForPublishedAttempt(t, rt, "JOB1", 2)
 	apply := speakersCalls(t, bin, "speakers apply")
 	if len(apply) != 1 || !strings.HasPrefix(apply[0], "speakers apply "+attemptMeetingPath(rt.cfg.WorkRoot, "JOB1", 2)+" ") {
 		t.Fatalf("apply calls = %v, want one on the rerun's fresh bundle", apply)
@@ -407,6 +410,7 @@ func TestRerunAfterASplitThatNeverAppliedStillSucceeds(t *testing.T) {
 	if job.State != "succeeded" || job.CurrentAttemptNumber != 4 {
 		t.Fatalf("rerun = %s attempt %d (error %s), want the rerun to succeed", job.State, job.CurrentAttemptNumber, jobErrorText(job))
 	}
+	waitForPublishedAttempt(t, rt, "JOB1", 4)
 	if got := len(speakersCalls(t, bin, "speakers diarize")); got != 1 {
 		t.Fatalf("diarize ran %d times, want only the failed split's attempt", got)
 	}

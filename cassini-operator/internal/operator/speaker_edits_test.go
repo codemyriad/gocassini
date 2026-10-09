@@ -90,6 +90,25 @@ func waitForSpeakerEdits(t *testing.T, store *Store, jobID string, cond func(spe
 	return rec
 }
 
+// waitForPublishedAttempt waits until attempt is the job's current archive.
+// A publish marks the attempt succeeded before it promotes the attempt's
+// bundle into current/, so a test that reads current/ waits for the
+// promotion, not for the job state.
+func waitForPublishedAttempt(t *testing.T, rt *Runtime, jobID string, attempt int) {
+	t.Helper()
+	deadline := time.Now().Add(testWaitTimeout)
+	var got int
+	for time.Now().Before(deadline) {
+		got = 0
+		_ = rt.store.db.QueryRow(`SELECT published_attempt FROM artifact_availability WHERE job_id = ?`, jobID).Scan(&got)
+		if got == attempt {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("job %s never promoted attempt %d to its current archive (published attempt %d)", jobID, attempt, got)
+}
+
 func TestSpeakerEditsValidationMirrorsTheRecorderRules(t *testing.T) {
 	// "Spk-Room" is a participant the CLI could not name a turns file after.
 	participants := map[string]bool{speakerTestRoom: true, speakerTestRemote: true, "Spk-Room": true}
