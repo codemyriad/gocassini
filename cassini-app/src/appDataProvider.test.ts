@@ -341,6 +341,16 @@ describe("AppDataProvider speaker edits", () => {
     ).rejects.toMatchObject({ name: "SpeakerEditsError", status, ...expected });
   });
 
+  // A 429 from anything in front of the operator (a proxy) has no JSON body,
+  // only Retry-After in seconds: it is still "too many changes", with that wait.
+  it("reports a bodiless 429 as rate-limited, with its Retry-After", async () => {
+    respondWith("Too Many Requests\n", { status: 429, headers: { "Retry-After": "120" } });
+
+    await expect(
+      new AppDataProvider().saveSpeakerEdits(entry("m1"), 1, { splits: [], merges: [], labels: [] }),
+    ).rejects.toMatchObject({ name: "SpeakerEditsError", status: 429, code: "rate-limited", retryAfterMs: 120_000 });
+  });
+
   it("calls an older operator that has no speakers route not found", async () => {
     respondWith("404 page not found\n", { status: 404 });
 

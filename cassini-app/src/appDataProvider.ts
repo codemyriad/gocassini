@@ -216,11 +216,14 @@ const SPEAKER_EDITS_CODES: readonly string[] = [
 
 // The speakers route's refusals. A 404 is "not-found" whatever its body says:
 // an unknown meeting, one this caller may not read, and an operator older than
-// the route all answer it, and none of them has anything to offer here.
+// the route all answer it, and none of them has anything to offer here. A 429
+// is "rate-limited" whatever its body says: a proxy in front of the operator
+// answers it with no JSON, only Retry-After.
 async function readSpeakerEditsError(response: Response): Promise<SpeakerEditsError> {
   const body = await readErrorBody(response);
   const served = typeof body.error === "string" && SPEAKER_EDITS_CODES.includes(body.error) ? (body.error as SpeakerEditsErrorCode) : "";
-  return new SpeakerEditsError(response.status, response.status === 404 ? "not-found" : served, {
+  const byStatus: SpeakerEditsErrorCode | "" = response.status === 404 ? "not-found" : response.status === 429 ? "rate-limited" : "";
+  return new SpeakerEditsError(response.status, byStatus || served, {
     revision: typeof body.revision === "number" ? body.revision : undefined,
     detail: typeof body.message === "string" ? body.message : undefined,
     reason: typeof body.reason === "string" ? body.reason : undefined,
