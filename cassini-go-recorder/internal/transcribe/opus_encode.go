@@ -248,8 +248,8 @@ func probeSpeechBitrates(mkv string) (map[int]int, error) {
 	hists := map[int]map[int]int{}
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
-		// csv with p=0 keeps -show_entries order regardless of how it was
-		// requested: stream_index, duration_time, size.
+		// ffprobe writes a section's fields in its own fixed order, not the
+		// order -show_entries names them in: stream_index, duration_time, size.
 		fields := strings.Split(strings.TrimSpace(scanner.Text()), ",")
 		if len(fields) < 3 {
 			continue
@@ -282,13 +282,16 @@ func probeSpeechBitrates(mkv string) (map[int]int, error) {
 // speechBitrateFromHistogram estimates the rate a track's encoder spent on
 // sound, from a histogram of per-packet bitrates (bps -> packet count).
 //
-// The 90th-percentile packet is taken as "speaking" even for a participant
-// who talks a tenth of the time; the estimate is the mean of every packet at
-// least half that rate. That drops the silence frames a VBR Opus track is
-// mostly made of (including DTX, discontinuous transmission, where a WebRTC
-// sender sends a tiny packet only now and then while its user is quiet; both
-// cost a fraction of a speech frame) and keeps the speech, so a Talk track sent at 32 kb/s reads ~32 kb/s however long its
-// owner was quiet, while a constant-rate source (AAC, MP3) reads its average.
+// The 90th-percentile packet is taken as "speaking"; the estimate is the mean
+// of every packet at least half that rate. That drops the silence frames a VBR
+// Opus track is mostly made of (including DTX, discontinuous transmission,
+// where a WebRTC sender sends a tiny packet only now and then while its user
+// is quiet; both cost a fraction of a speech frame) and keeps the speech, so a
+// Talk track sent at 32 kb/s reads ~32 kb/s however long its owner was quiet,
+// while a constant-rate source (AAC, MP3) reads its average. A participant
+// whose speech fills under a tenth of their track's packets reads at about
+// their silence rate instead; the mix is sized by the highest-rate track, so
+// that only matters when this participant also sent at the highest rate.
 func speechBitrateFromHistogram(hist map[int]int) int {
 	total := 0
 	keys := make([]int, 0, len(hist))

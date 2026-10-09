@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -148,9 +150,10 @@ func TestSpeechBitrateFromHistogramIgnoresSilence(t *testing.T) {
 
 // A 16 kHz source is published at its own bandwidth and a fraction of the old
 // fixed rate; the chosen encode is recorded in manifest.json; and a rebuild
-// asking for the recorded policy reproduces the same audio, which is what
-// keeps marks bound across a rerun. The fixed-64k rebuild of the same source
-// is the pre-D-850 file: larger, and different audio.
+// asking for the recorded policy reproduces the same Opus packets, which is
+// what keeps marks bound across a rerun (they are bound to a digest of the
+// packets, not of the decoded sound). The fixed-64k rebuild of the same source
+// is the pre-D-850 file: larger, and different packets.
 func TestBuildMeetingArtifactSizesTheMixFromTheSource(t *testing.T) {
 	requireFFMediaTools(t)
 	src := filepath.Join("..", "..", "..", "harness", "media", "parakeet-smoke.mkv") // 16 kHz FLAC
@@ -158,9 +161,9 @@ func TestBuildMeetingArtifactSizesTheMixFromTheSource(t *testing.T) {
 		t.Fatalf("public smoke fixture missing: %v", err)
 	}
 	type built struct {
-		enc  AudioEncode
-		size int64
-		pcm  string
+		enc     AudioEncode
+		size    int64
+		packets string
 	}
 	build := func(policy string) built {
 		t.Helper()
@@ -186,11 +189,7 @@ func TestBuildMeetingArtifactSizesTheMixFromTheSource(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pcm, _, err := PCMsha256FromWebM(webm)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return built{enc: *manifest.AudioEncode, size: info.Size(), pcm: pcm}
+		return built{enc: *manifest.AudioEncode, size: info.Size(), packets: opusPacketsSHA256(t, webm)}
 	}
 
 	first := build("")
@@ -202,18 +201,29 @@ func TestBuildMeetingArtifactSizesTheMixFromTheSource(t *testing.T) {
 	}
 
 	rerun := build(first.enc.Policy)
-	if rerun.pcm != first.pcm {
-		t.Fatalf("rebuild with the recorded policy changed the audio: %s != %s", rerun.pcm, first.pcm)
+	if rerun.packets != first.packets {
+		t.Fatalf("rebuild with the recorded policy changed the Opus packets: %s != %s", rerun.packets, first.packets)
 	}
 
 	legacy := build(AudioEncodeFixed64k)
 	if legacy.enc != (AudioEncode{Policy: AudioEncodeFixed64k, BitrateBps: 64000, Application: "voip"}) {
 		t.Fatalf("fixed-64k recorded as %+v", legacy.enc)
 	}
-	if legacy.pcm == first.pcm {
-		t.Fatal("fixed-64k and match-source produced the same audio; the policy did not reach the encoder")
+	if legacy.packets == first.packets {
+		t.Fatal("fixed-64k and match-source produced the same Opus packets; the policy did not reach the encoder")
 	}
 	if first.size*3 > legacy.size*2 {
 		t.Fatalf("source-sized mix is %d bytes, not clearly smaller than the fixed-64k %d bytes", first.size, legacy.size)
 	}
+}
+
+// opusPacketsSHA256 hashes the compressed packets of the file's audio, without
+// decoding them; the digest does not depend on the container.
+func opusPacketsSHA256(t *testing.T, path string) string {
+	t.Helper()
+	out, err := exec.Command("ffmpeg", "-v", "error", "-i", path, "-map", "0:a:0", "-c:a", "copy", "-f", "hash", "-hash", "sha256", "-").Output()
+	if err != nil {
+		t.Fatalf("hash Opus packets of %s: %v", path, err)
+	}
+	return strings.TrimSpace(string(out))
 }
