@@ -107,6 +107,7 @@ func buildPolicyFingerprint(opts buildOptions) string {
 	if opts.device == "cpu" || opts.device == "cuda" {
 		cfg.Device = opts.device
 	}
+	cfg.AudioEncodePolicy = strings.TrimSpace(opts.audioEncode)
 	if cfg.TranscriptionMode != "off" {
 		cfg.Device = transcribe.ResolveDevice(cfg.Device)
 		if cfg.ModelID == "" {

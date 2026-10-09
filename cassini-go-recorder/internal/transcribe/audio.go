@@ -22,7 +22,11 @@ type AudioStream struct {
 	SpeakerID     string
 	SpeakerLabel  string
 	Channels      int
-	StartTimeMS   int64
+	// Codec and SampleRate are the source codec name and its decoded sample
+	// rate as ffprobe reports them; the mix encode is sized from them.
+	Codec       string
+	SampleRate  int
+	StartTimeMS int64
 	// FirstPacketTimeMS is the first packet PTS on the shared meeting
 	// timeline. Matroska stream start_time is commonly zero for rotated or
 	// late-joining participant tracks, so it cannot represent this offset.
@@ -57,11 +61,13 @@ func setPCMCapacityDurationHints(streams []AudioStream, durationMS int64) {
 
 type ffprobeOutput struct {
 	Streams []struct {
-		Index     int    `json:"index"`
-		CodecType string `json:"codec_type"`
-		Channels  int    `json:"channels"`
-		StartTime string `json:"start_time"`
-		Tags      struct {
+		Index      int    `json:"index"`
+		CodecType  string `json:"codec_type"`
+		CodecName  string `json:"codec_name"`
+		SampleRate string `json:"sample_rate"`
+		Channels   int    `json:"channels"`
+		StartTime  string `json:"start_time"`
+		Tags       struct {
 			Title             string `json:"title"`
 			ParticipantID     string `json:"PARTICIPANT_ID"`
 			ParticipantName   string `json:"PARTICIPANT_NAME"`
@@ -88,7 +94,7 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 func probeMKV(mkv string) ([]AudioStream, int64, string, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration:format_tags=recorded_at_local",
+		"-show_entries", "stream=index,codec_type,codec_name,sample_rate,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration:format_tags=recorded_at_local",
 		"-of", "json",
 		mkv,
 	)
@@ -124,6 +130,7 @@ func probeMKV(mkv string) ([]AudioStream, int64, string, error) {
 			// their only stable speaker identity.
 			speakerIdentity = label
 		}
+		sampleRate, _ := strconv.Atoi(strings.TrimSpace(s.SampleRate))
 		streams = append(streams, AudioStream{
 			Index:              s.Index,
 			TimeBase:           sourceTimeBaseFromTags(s.Tags.FirstPacketWallMS, s.Tags.FirstTimelineNS, s.Tags.ClockRate),
@@ -131,6 +138,8 @@ func probeMKV(mkv string) ([]AudioStream, int64, string, error) {
 			SpeakerID:          speakerIDFromLabel(speakerIdentity),
 			SpeakerLabel:       label,
 			Channels:           s.Channels,
+			Codec:              strings.TrimSpace(s.CodecName),
+			SampleRate:         sampleRate,
 			StartTimeMS:        max(0, durationStringToMS(s.StartTime)),
 			TimelineDurationMS: durationMs,
 		})
@@ -431,10 +440,13 @@ func expectedPCMSamples(durationMS int64, sampleRate int) int {
 }
 
 // MixDownToWebM mixes all audio streams from the MKV into a single-channel
-// 48 kHz Opus WebM file.
-func MixDownToWebM(mkv string, streams []AudioStream, outPath string) error {
+// 48 kHz Opus WebM file, encoded as enc (see ChooseMeetingAudioEncode).
+func MixDownToWebM(mkv string, streams []AudioStream, outPath string, enc AudioEncode) error {
 	if len(streams) == 0 {
 		return fmt.Errorf("no streams to mix")
+	}
+	if enc.BitrateBps <= 0 || enc.Application == "" {
+		return fmt.Errorf("incomplete mix encode %+v; choose it with ChooseAudioEncode", enc)
 	}
 
 	workDir, err := os.MkdirTemp("", "cassini-mix-*")
@@ -458,20 +470,16 @@ func MixDownToWebM(mkv string, streams []AudioStream, outPath string) error {
 	}
 
 	if len(trackPaths) == 1 {
-		return runFFmpegQuiet(
+		args := []string{
 			"-y",
 			"-v", "error",
 			"-i", trackPaths[0],
 			"-map", "0:a:0",
 			"-ac", "1",
 			"-ar", "48000",
-			"-c:a", "libopus",
-			"-b:a", "64k",
-			"-vbr", "on",
-			"-compression_level", "10",
-			"-application", "voip",
-			outPath,
-		)
+		}
+		args = append(args, enc.libopusArgs()...)
+		return runFFmpegQuiet(append(args, outPath)...)
 	}
 
 	args := []string{"-y", "-v", "error"}
@@ -489,14 +497,9 @@ func MixDownToWebM(mkv string, streams []AudioStream, outPath string) error {
 		"-map", "[out]",
 		"-ac", "1",
 		"-ar", "48000",
-		"-c:a", "libopus",
-		"-b:a", "64k",
-		"-vbr", "on",
-		"-compression_level", "10",
-		"-application", "voip",
-		outPath,
 	)
-	return runFFmpegQuiet(args...)
+	args = append(args, enc.libopusArgs()...)
+	return runFFmpegQuiet(append(args, outPath)...)
 }
 
 // PCMsha256FromWebM decodes the WebM audio to 48 kHz mono s16le PCM and

@@ -114,7 +114,8 @@ func TestMixDownToWebMPreservesDelayedTrackOffsets(t *testing.T) {
 	}
 
 	outPath := filepath.Join(tmp, "meeting.webm")
-	if err := MixDownToWebM(meetingPath, streams, outPath); err != nil {
+	enc, _ := ChooseAudioEncode(AudioEncodeFixed64k, nil)
+	if err := MixDownToWebM(meetingPath, streams, outPath, enc); err != nil {
 		t.Fatalf("mix delayed meeting: %v", err)
 	}
 
