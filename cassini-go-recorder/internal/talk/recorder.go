@@ -1000,22 +1000,36 @@ func (r *Recorder) eventLoop(ctx context.Context) error {
 				return err
 			}
 		case "message":
-			message := asMap(event["message"])
-			data := asMap(message["data"])
-			if len(data) == 0 {
-				continue
-			}
-			sender := asMap(message["sender"])
-			if asString(data["from"]) == "" {
-				if sid := asString(sender["sessionid"]); sid != "" {
-					data["from"] = sid
-				}
-			}
-			if err := r.handleSignalingData(ctx, data); err != nil {
+			if err := r.handleSignalingMessage(ctx, asMap(event["message"])); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// handleSignalingMessage unwraps one "message" frame from the signaling server.
+// The sender's session comes from the frame's sender field, which the server
+// fills in, when the payload does not name one itself.
+func (r *Recorder) handleSignalingMessage(ctx context.Context, message map[string]any) error {
+	data := asMap(message["data"])
+	if len(data) == 0 {
+		return nil
+	}
+	sender := asMap(message["sender"])
+	if asString(data["type"]) == "nickChanged" {
+		// Only the server-stamped sender counts here: a "from" inside the
+		// payload is whatever the client wrote.
+		if asString(sender["type"]) == "session" {
+			r.handleNickChanged(asString(sender["sessionid"]), data["payload"])
+		}
+		return nil
+	}
+	if asString(data["from"]) == "" {
+		if sid := asString(sender["sessionid"]); sid != "" {
+			data["from"] = sid
+		}
+	}
+	return r.handleSignalingData(ctx, data)
 }
 
 func (r *Recorder) requestOfferLoop(ctx context.Context) error {
@@ -1501,6 +1515,36 @@ func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any)
 		return nil
 	}
 	return nil
+}
+
+// handleNickChanged records the display name a Talk client announces for its
+// own session. Talk clients send a "nickChanged" message to every in-call
+// session, the recorder's internal session included, when they join the call,
+// when another participant joins, and when the name changes.
+//
+// It is the only name source for a guest who sets their name before their
+// signaling session connects (the harness guest bots always do): Nextcloud
+// announces the name in a participants update at that moment, the signaling
+// server drops the entry because the session is not connected yet, and no later
+// update repeats it unless someone else's change happens to. Without this the recording keeps the participant-<id>
+// placeholder for that guest. The name only ever applies to the sending
+// session, which the signaling server stamps on the message, so one
+// participant cannot rename another.
+func (r *Recorder) handleNickChanged(fromSession string, payload any) {
+	if fromSession == "" || fromSession == r.signalingSessionID {
+		return
+	}
+	// Talk sends {"name": "..."}; the older data-channel form is a bare
+	// string, which some clients also put on the signaling path.
+	name := asString(payload)
+	if name == "" {
+		name = asString(asMap(payload)["name"])
+	}
+	if strings.TrimSpace(name) == "" {
+		return
+	}
+	remoteSessionID := r.resolveRemoteSessionID(fromSession, "", "")
+	r.rememberParticipantIdentity(remoteSessionID, name, "")
 }
 
 // ensureSubscriber returns an existing peer or registers a new peer and issues

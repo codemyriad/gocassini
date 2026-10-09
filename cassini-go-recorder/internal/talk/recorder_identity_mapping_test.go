@@ -1,6 +1,7 @@
 package talk
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -321,5 +322,167 @@ func TestPresenceUpdateBeforeSignalingJoinResolvesCorrectly(t *testing.T) {
 	// 4. resolveRemoteSessionID for ncRoomSessionID must resolve to signalingSessionID
 	if resolved := r.resolveRemoteSessionID(ncRoomSessionID, "", guestActorID); resolved != signalingSessionID {
 		t.Fatalf("expected ncRoomSessionID to resolve to %q, got %q", signalingSessionID, resolved)
+	}
+}
+
+// newIdentityTestRecorder builds a recorder with a live session artifact and
+// no signaling connection, enough to drive identity handling directly.
+func newIdentityTestRecorder(t *testing.T) (*Recorder, *sessionCaptureArtifact) {
+	t.Helper()
+	artifact, err := newSessionCaptureArtifact(filepath.Join(t.TempDir(), "nick.mkv"), "https://example.test/call/room", "room-token", "recorder", true)
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	t.Cleanup(func() { _ = artifact.close() })
+	r := &Recorder{
+		sessionArtifact:     artifact,
+		sessionPath:         artifact.sessionPath,
+		signalingSessionID:  "recorder-internal-session",
+		subscribers:         make(map[string]*subscriberPeer),
+		inCallEver:          make(map[string]struct{}),
+		sessionsByRemote:    make(map[string]*sessionCapture),
+		identityByRemote:    make(map[string]participantIdentity),
+		remoteByRoomSession: make(map[string]string),
+	}
+	return r, artifact
+}
+
+// nickChangedMessage is the frame the signaling server delivers when a Talk
+// client calls sendTo(recorder, 'nickChanged', {name}).
+func nickChangedMessage(senderSessionID string, payload any) map[string]any {
+	return map[string]any{
+		"sender": map[string]any{"type": "session", "sessionid": senderSessionID},
+		"data": map[string]any{
+			"to":       "recorder-internal-session",
+			"roomType": "video",
+			"type":     "nickChanged",
+			"payload":  payload,
+		},
+	}
+}
+
+// A guest who sets their name before their signaling session connects never
+// appears with a displayName in any participants update the recorder sees:
+// Nextcloud announces the name while the session is unknown to the signaling
+// server, which drops the entry. Seen in the harness as a guest named Ana
+// Silva recorded as participant-6mHDQx8p. The guest's client then announces
+// the name with nickChanged, and that must replace the placeholder on the
+// stream that is already open, in memory and in session.json.
+func TestNickChangedNamesGuestWhoseNameUpdateWasDropped(t *testing.T) {
+	r, artifact := newIdentityTestRecorder(t)
+	ctx := context.Background()
+
+	signalingSessionID := "6mHDQx8pIpqJ8HRhcG1vYwYaA5eq-IL91aAQEAg"
+	roomSessionID := "57MlUbXLg72X2GDF45JMH9Fq"
+	guestActorID := "86f96b8607af9e941d9c1568384952066b2218f7"
+
+	// The order the harness logs show: the signaling join (no name),
+	// then the in-call update (actor id, no name), then media.
+	if err := r.handleRoomEvent(map[string]any{
+		"target": "room",
+		"type":   "join",
+		"join": []any{map[string]any{
+			"sessionid":     signalingSessionID,
+			"roomsessionid": roomSessionID,
+		}},
+	}); err != nil {
+		t.Fatalf("handleRoomEvent(join): %v", err)
+	}
+	if err := r.handleParticipantsEvent(map[string]any{
+		"changed": []any{map[string]any{
+			"sessionId":          signalingSessionID,
+			"nextcloudSessionId": roomSessionID,
+			"actorType":          "guests",
+			"actorId":            guestActorID,
+			"inCall":             float64(7),
+		}},
+	}); err != nil {
+		t.Fatalf("handleParticipantsEvent(incall): %v", err)
+	}
+	t.Cleanup(func() { _ = r.removeSubscriber(signalingSessionID) })
+
+	sessionCap, err := r.ensureSessionCapture(signalingSessionID)
+	if err != nil {
+		t.Fatalf("ensureSessionCapture: %v", err)
+	}
+	if sessionCap.ParticipantName != "participant-6mHDQx8p" {
+		t.Fatalf("precondition: expected placeholder participant-6mHDQx8p, got %q", sessionCap.ParticipantName)
+	}
+	desc := trackDescriptor{kind: "audio", codec: "audio/opus", mid: "janus", clockRate: 48000}
+	if _, err := artifact.openStream(signalingSessionID, sessionCap.ParticipantID, sessionCap.ParticipantName, desc, 3365858225, 111, time.Now()); err != nil {
+		t.Fatalf("openStream: %v", err)
+	}
+
+	if err := r.handleSignalingMessage(ctx, nickChangedMessage(signalingSessionID, map[string]any{"name": "Ana Silva"})); err != nil {
+		t.Fatalf("handleSignalingMessage(nickChanged): %v", err)
+	}
+
+	if _, name := r.sessionIdentity(signalingSessionID); name != "Ana Silva" {
+		t.Fatalf("expected session name Ana Silva, got %q", name)
+	}
+	artifact.mu.Lock()
+	participants := append([]session.Participant(nil), artifact.sessionMeta.Participants...)
+	artifact.mu.Unlock()
+	if len(participants) != 1 || participants[0].Display != "Ana Silva" || participants[0].PID != guestActorID {
+		t.Fatalf("expected one participant %s displayed as Ana Silva, got %+v", guestActorID, participants)
+	}
+	raw, err := os.ReadFile(artifact.sessionPath)
+	if err != nil {
+		t.Fatalf("read session.json: %v", err)
+	}
+	if !strings.Contains(string(raw), `"display": "Ana Silva"`) {
+		t.Fatalf("expected session.json to name Ana Silva: %s", raw)
+	}
+}
+
+// Talk clients announce the name as soon as they see the recorder in the
+// call, which is usually before the first media packet. The name must then
+// be used when the stream opens, and the older bare-string payload must work
+// as well as the {"name": ...} object.
+func TestNickChangedBeforeMediaNamesTheStream(t *testing.T) {
+	r, _ := newIdentityTestRecorder(t)
+	ctx := context.Background()
+
+	if err := r.handleSignalingMessage(ctx, nickChangedMessage("guest-session-1", "Noah Brandt")); err != nil {
+		t.Fatalf("handleSignalingMessage(nickChanged): %v", err)
+	}
+	sessionCap, err := r.ensureSessionCapture("guest-session-1")
+	if err != nil {
+		t.Fatalf("ensureSessionCapture: %v", err)
+	}
+	if sessionCap.ParticipantName != "Noah Brandt" {
+		t.Fatalf("expected stream named Noah Brandt, got %q", sessionCap.ParticipantName)
+	}
+	if count := r.subscriberCount(); count != 0 {
+		t.Fatalf("nickChanged must not create subscribers, got %d", count)
+	}
+}
+
+// The name applies to the session the signaling server says sent it. A "from"
+// written into the payload by the client is ignored, so one participant cannot
+// rename another.
+func TestNickChangedIgnoresClientWrittenFrom(t *testing.T) {
+	r, _ := newIdentityTestRecorder(t)
+	ctx := context.Background()
+
+	message := nickChangedMessage("mallory-session", map[string]any{"name": "Mallory"})
+	asMap(message["data"])["from"] = "victim-session"
+	if err := r.handleSignalingMessage(ctx, message); err != nil {
+		t.Fatalf("handleSignalingMessage(nickChanged): %v", err)
+	}
+
+	victim, err := r.ensureSessionCapture("victim-session")
+	if err != nil {
+		t.Fatalf("ensureSessionCapture(victim): %v", err)
+	}
+	if victim.ParticipantName != "participant-victim-s" {
+		t.Fatalf("victim must keep its placeholder, got %q", victim.ParticipantName)
+	}
+	sender, err := r.ensureSessionCapture("mallory-session")
+	if err != nil {
+		t.Fatalf("ensureSessionCapture(sender): %v", err)
+	}
+	if sender.ParticipantName != "Mallory" {
+		t.Fatalf("expected the sender to be named Mallory, got %q", sender.ParticipantName)
 	}
 }
