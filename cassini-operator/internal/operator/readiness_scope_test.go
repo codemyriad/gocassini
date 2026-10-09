@@ -1047,3 +1047,47 @@ func TestAConfirmedOrMissingBackendIsNotTreatedAsUnreached(t *testing.T) {
 		}
 	}
 }
+
+// Whose room the panel is looking at, answered per request.
+//
+// The connection check creates this conversation as Cassini's own provisioning
+// user, because it only needs a token to read Talk's recording settings with.
+// Talk's Start recording action belongs to a conversation's moderators, so an
+// administrator sent into that room finds no way to start the recording the
+// steps beside the link just asked them for. Reported from staging, where the
+// test tool looked broken and the install was fine.
+func TestReadinessSaysWhoseTestRoomItIs(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkBackendURL = "https://nc.test"
+	// Stored the way the connection check stores it: a usable room, no owner.
+	putRecordingSetup(t, rt, `{"test_room_url":"https://nc.test/call/abc12345"}`, http.StatusOK)
+
+	for _, tc := range []struct {
+		name   string
+		owner  string
+		asking string
+		want   bool
+	}{
+		{"the connection check's room belongs to nobody who reads the panel", "", "admin", false},
+		{"another administrator's room is not this reader's", "alice", "admin", false},
+		{"a room this reader armed is theirs", "admin", "admin", true},
+		{"a reader AppAPI did not name owns nothing", "admin", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt.recordingSetup.mu.Lock()
+			rt.recordingSetup.state.TestRoomOwner = tc.owner
+			rt.recordingSetup.mu.Unlock()
+
+			r := httptest.NewRequest("GET", "/health", nil)
+			if tc.asking != "" {
+				r.Header.Set("AUTHORIZATION-APP-API",
+					base64.StdEncoding.EncodeToString([]byte(tc.asking+":app-secret")))
+			}
+			if got := rt.adminReadiness(r).TestRoomMine; got != tc.want {
+				t.Fatalf("test_room_mine = %v, want %v: owner=%q asking=%q", got, tc.want, tc.owner, tc.asking)
+			}
+		})
+	}
+}

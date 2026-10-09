@@ -77,7 +77,14 @@
   // The href for the test conversation. The operator's test_room_url carries
   // the token; behind AppAPI its origin is an internal hostname, so the link a
   // reader clicks has to be rebuilt against this page's own base.
-  $: testRoomHref = nextcloudBase && report?.test_room_url ? talkRoomURL(nextcloudBase, report.test_room_url) : "";
+  // Only a room the reader owns is worth linking to. Talk's Start recording
+  // action belongs to a conversation's moderators, so a room the connection
+  // check made (it creates one as Cassini's own account, needing only a token
+  // to read recording settings with) or one a different administrator armed is
+  // a call this reader cannot record in — and the steps beside the link tell
+  // them to go and record. With no link the panel offers "Prepare a new test",
+  // which makes them a room of their own.
+  $: testRoomHref = nextcloudBase && report?.test_room_url && report?.test_room_mine ? talkRoomURL(nextcloudBase, report.test_room_url) : "";
   let nextcloudBase = "";
   let alive = true;
   // True only while a re-probe is in flight, so a row can say it is being

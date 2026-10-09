@@ -103,6 +103,10 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   const report: RecordingReadiness = {
     state: "passed", recording_state: "passed", secret_configured: true, secret_source: "setup",
     test_room_url: "https://preview.invalid/call/review-room",
+    // The operator sends this per request: the room is the reader's only when
+    // they armed it. The gallery's reader is that administrator, so the test
+    // row offers "Open test room" as it does for them.
+    test_room_mine: true,
     test: { state: "not_started", published: false },
     checks: [
       { id: "host.workdir", state: "passed", code: "workdir", message: "working directory is writable", checked_at },
@@ -145,6 +149,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
         { id: "archive.search", state: "not_verified", code: "search_coverage_not_checked", message: "Archive search coverage has not been checked yet.", action: "recheck" },
       ];
       report.test_room_url = "";
+      report.test_room_mine = false;
       report.test = { state: "idle", published: false };
       // No test row written here: nothing it depends on has been established,
       // so the rule below blocks it — which is what the operator does, and for
@@ -339,10 +344,16 @@ export function createPreviewClient(id: string): DoctorClient {
       }
       if (payload.test_room_url !== undefined) {
         report.test_room_url = "https://preview.invalid/call/review-room";
+        // Mirrors the operator: whose room a named one is, is unknown, so it
+        // does not claim it is the caller's.
+        report.test_room_mine = false;
         const check = report.checks.find(row => row.id === "talk.discovery");
         if (check) Object.assign(check, { state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet.", action: "recheck" });
       }
-      if (payload.action === "arm_test") report.test = { state: "waiting_for_talk", published: false, started_at: new Date().toISOString() };
+      if (payload.action === "arm_test") {
+        report.test = { state: "waiting_for_talk", published: false, started_at: new Date().toISOString() };
+        report.test_room_mine = true;
+      }
       if (payload.action === "confirm_playback") report.test.playback_verified_at = new Date().toISOString();
       const testRow = report.checks.find(check => check.id === "test");
       if (testRow && payload.action === "arm_test") Object.assign(testRow, { state: "not_verified", code: "test_in_progress", message: "Cassini is waiting for a recording started in the test room.", checked_at: undefined });

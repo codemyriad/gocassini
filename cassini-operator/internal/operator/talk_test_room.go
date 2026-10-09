@@ -29,6 +29,27 @@ func actingUser(r *http.Request) string {
 	return strings.TrimSpace(user)
 }
 
+// testRoomMine reports whether the stored test conversation belongs to the
+// given user, and therefore whether Talk will let them start a recording in it.
+//
+// Ownership is the whole question: Talk's Start recording action is
+// moderator-only and a conversation's creator is its owner. The connection
+// check creates this room as Cassini's own provisioning user, because it only
+// needs a token to read recording settings with and does not care whose room it
+// is — so a room can exist that the administrator reading the panel cannot
+// record in. An empty owner means exactly that, and is not a match for anyone.
+func (rt *Runtime) testRoomMine(user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return false
+	}
+	s := &rt.recordingSetup
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt.loadRecordingSetupLocked()
+	return s.state.TestRoomOwner != "" && s.state.TestRoomOwner == user
+}
+
 // roomIsGone reports whether the connection probe failed because the
 // conversation Cassini checks with no longer exists — or because Talk itself is
 // not there to hold it, which the probe cannot tell apart and which makes no

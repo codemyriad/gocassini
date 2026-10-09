@@ -114,7 +114,14 @@ type readinessResponse struct {
 	SecretConfigured bool             `json:"secret_configured"`
 	SecretSource     string           `json:"secret_source"`
 	TestRoomURL      string           `json:"test_room_url"`
-	Test             readinessTest    `json:"test"`
+	// TestRoomMine says the test conversation belongs to the administrator who
+	// asked, and so that Talk will let them start a recording in it.
+	//
+	// Sent as an answer rather than an owner id because only the request knows
+	// who is asking: the panel has no identity of its own, and another
+	// administrator's user id is not the panel's business.
+	TestRoomMine bool          `json:"test_room_mine"`
+	Test         readinessTest `json:"test"`
 }
 
 func (rt *Runtime) recordingSetupPath() string {
@@ -911,6 +918,17 @@ func (rt *Runtime) readinessTest(ctx context.Context, setup recordingSetupState)
 	return result
 }
 
+// adminReadiness is the readiness an administrator's own request answers with.
+//
+// The acting user is only knowable from the request, so the ownership of the
+// test room is resolved here rather than inside readiness(), which several
+// callers share and which has no request to read.
+func (rt *Runtime) adminReadiness(r *http.Request) readinessResponse {
+	resp := rt.readiness(r.Context())
+	resp.TestRoomMine = rt.testRoomMine(actingUser(r))
+	return resp
+}
+
 func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	switch {
@@ -971,7 +989,7 @@ func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported health operation")
 		return
 	}
-	writeJSON(w, http.StatusOK, rt.readiness(r.Context()))
+	writeJSON(w, http.StatusOK, rt.adminReadiness(r))
 }
 
 func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request) {
@@ -1085,7 +1103,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		delete(s.probedAt, "talk")
 	}
 	s.mu.Unlock()
-	writeJSON(w, 200, rt.readiness(r.Context()))
+	writeJSON(w, 200, rt.adminReadiness(r))
 }
 
 // Used by both manual and Talk-backed recording admission. Expired or missing
