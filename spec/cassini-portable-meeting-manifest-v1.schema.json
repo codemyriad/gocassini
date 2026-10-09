@@ -74,6 +74,15 @@
       "type": "object",
       "description": "Which systems produced the text, display formatting and summary, plus records of speaker attribution and word timing. Unknown members are ignored.",
       "properties": {
+        "recording": {
+          "type": "object",
+          "description": "The recording's saved capture and media-retention policy, not confirmation that deletion has completed.",
+          "properties": {
+            "captureMode": { "enum": ["audio-only", "audio-video"] },
+            "sourceRetention": { "enum": ["storage-policy", "delete-after-processing"] }
+          },
+          "required": ["captureMode", "sourceRetention"]
+        },
         "speechToText": {
           "type": "object",
           "additionalProperties": {

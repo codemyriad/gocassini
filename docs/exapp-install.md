@@ -34,6 +34,34 @@ configuration and
 helps you verify a short recording. See [Recording readiness](recording-readiness.md)
 for the guided flow, AIO-specific setup, and restart persistence.
 
+## Capture and storage choices
+
+Cassini can be used immediately with the default retention policy and audio-only
+capture. Administrators can enable **Capture video** in **Operator → Publish
+pipeline** to retain source camera video on the Cassini server. Published meeting files contain audio
+only in either mode.
+
+A nonblocking reminder offers to review retention in **Operator → Storage**.
+Saving retention or choosing **Don't remind again** clears that reminder for the
+whole installation. Neither action changes video capture consent; save that
+choice separately in Operator → Publish pipeline.
+
+```text
+Publish pipeline -> Capture video -> Save -> Future recordings use saved mode
+Storage -> Retention Save ---------------> Reminder cleared installation-wide
+Reminder -> Don't remind again ----------> Same retention values; reminder cleared
+```
+
+Capture changes affect recordings admitted after Save; active recordings keep
+their original policy. Existing retained video is governed by source retention
+and is not removed by turning capture off.
+
+An upgrade without a saved `retain_video` field uses false. Before expecting video
+on an upgraded installation, verify the running version provides this toggle,
+explicitly enable it, save, and check a new job reports **Audio and video**.
+When rolling back to a version predating capture consent, verify that version's
+recording behavior separately; older versions can capture video by default.
+
 ## Prerequisites
 
 - Nextcloud **32 or newer** (the manifest's `min-version`; Cassini targets and
@@ -301,7 +329,7 @@ Options).
 | `CASSINI_DISALLOW_MODEL_DOWNLOAD` | No | Set `1` on a host with no outbound network access. Images contain no models. This forbids model downloads and resumed network jobs. Local `cassini models import`, runtime checks, activation, and already installed models remain available; missing models never block audio publication |
 | `CASSINI_ATTRIBUTION_DISABLED` | No | Set `1` to skip the cross-track speaker-attribution stage. By default every word is annotated with acoustic evidence; no words are changed or removed either way |
 | `CASSINI_ATTRIBUTION_DROP` | No | Set `1` to delete words the acoustic evidence contradicts instead of annotating them (room-system microphones). The manifest records how many words were removed |
-| `CASSINI_ARTIFACT_RETENTION` | No | How much of each recording's per-run working files the app keeps on its own volume. `sealed` (the default) reclaims a completed run's working copies — all duplicated in the canonical library or transient staging — and keeps the sealed meeting file and every log; `superseded` reclaims only runs a rerun replaced; `all` keeps everything, as the escape hatch when something must be recovered from a completed run. Nothing removes the last copy of anything, and published recordings are never touched |
+| `CASSINI_ARTIFACT_RETENTION` | No | Deprecated and ignored. Configure retention under Operator → Storage; defaults keep forever. See [container retention](./container-retention.md). |
 | `CASSINI_ROOM_ID_PEPPER` | No (recommended) | Deployment-wide secret mixed into the one-way derivation of each meeting's room id. A meeting publishes a derived id rather than its Talk conversation token, because for a public conversation that token is also the link that joins it — and a Talk token is short enough that an unpeppered derivation can be reversed by enumeration offline. With a pepper set it cannot. **Choose it once:** changing it changes every room id, while meetings already published keep the ids they were written with, so a room splits in two. Existing recordings retain their original room ids |
 | `OPENROUTER_API_KEY` | No | Initial API key for the LLM endpoint, when it needs one (a self-hosted model server usually does not). Pre-fills the app's LLM settings on first start; afterwards keys are managed in the app |
 | `LLM_BASE_URL` | No | Initial OpenAI-compatible API base URL for meeting summaries — a hosted provider or your own model server. Pre-fills the app's LLM settings on first start; afterwards endpoints are changed in the app (`PUT /settings/llm`), never by redeploying. **The full local transcript is sent to whatever endpoint is configured** (transcription itself is always local). Unset, the app starts with no LLM endpoint and publishes raw transcripts without summaries. Defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |

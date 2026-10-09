@@ -1,14 +1,18 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
   import { AppDataProvider } from "./appDataProvider";
   import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
   import SetupNotice from "./SetupNotice.svelte";
+  import RetentionReminder from "./RetentionReminder.svelte";
+  import { onRetentionChanged } from "./operator/retentionSignal";
+  import { dismissRetentionReminder, retentionMutationBusy } from "./operator/retentionReminder";
+  import type { RetentionSettings } from "./operator/retention";
   import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
-  import { guardLeave } from "./operator/unsaved";
+  import { guardLeave, unsavedChanges } from "./operator/unsaved";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
   import {
     buildFeatureNotice,
@@ -26,6 +30,7 @@
     applyPanel,
     applySurface,
     readSurface,
+    readPanel,
     type OperatorPanel,
     type Surface,
   } from "./surfaceRouting";
@@ -103,6 +108,72 @@
   // route that carries it is the one the shell already calls at mount.
   let setupFeatures: SetupFeatures | null = null;
   let recordingNeedsAction = false;
+  let appFrame: HTMLDivElement;
+  let retentionSettings: RetentionSettings | null = null;
+  let retentionError = "";
+  let retentionLoading = false;
+  let dismissingRetention = false;
+  let retentionGeneration = 0;
+  let destroyed = false;
+  let stopListeningForRetentionChanges: (() => void) | null = null;
+
+  function acceptRetention(settings: RetentionSettings): void {
+    if (destroyed || !operatorClient) return;
+    // A panel load or old shell request must not undo a more recent save.
+    if (retentionSettings && settings.revision < retentionSettings.revision) return;
+    retentionGeneration++;
+    retentionSettings = settings;
+    retentionError = "";
+    retentionLoading = false;
+  }
+
+  async function refreshRetention(): Promise<void> {
+    const client = operatorClient;
+    if (!client || destroyed || (retentionSettings && retentionSettings.revision > 0)) return;
+    const generation = ++retentionGeneration;
+    retentionLoading = true;
+    try {
+      const settings = await client.getRetention();
+      if (!destroyed && generation === retentionGeneration && client === operatorClient) acceptRetention(settings);
+    } catch {
+      if (!destroyed && generation === retentionGeneration && client === operatorClient) {
+        retentionError = "Could not load retention settings.";
+      }
+    } finally {
+      if (generation === retentionGeneration) retentionLoading = false;
+    }
+  }
+
+  async function ignoreRetention(): Promise<void> {
+    const client = operatorClient;
+    if (!client || $unsavedChanges || $retentionMutationBusy || dismissingRetention) return;
+    dismissingRetention = true;
+    retentionError = "";
+    try {
+      const settings = await dismissRetentionReminder(client);
+      if (!destroyed && client === operatorClient) acceptRetention(settings);
+    } catch (error) {
+      if (!destroyed && client === operatorClient) {
+        retentionError = `Could not dismiss the reminder: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    } finally { dismissingRetention = false; }
+  }
+
+  function focusRetention(): void {
+    appFrame?.querySelector<HTMLElement>("#retention-policies h2")?.focus();
+  }
+  function openStorage(): void {
+    if (surface === "operator" && readPanel(window.location.hash) === "storage") {
+      focusRetention();
+      return;
+    }
+    guardLeave(() => {
+      const hash = applyPanel(applySurface(window.location.hash, "operator"), "storage");
+      window.history.pushState({}, "", locationWithHash(hash));
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      void tick().then(focusRetention);
+    });
+  }
 
   // The same answer, whole, for the one field that is not a capability: the
   // storage mode behind the audience chip. Kept rather than re-derived so the
@@ -378,7 +449,7 @@
         fetchSetupHealth(operatorBasePath),
       ]);
       operatorAvailable = probe.available;
-      operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;
+      operatorClient = probe.available ? (operatorClient ?? new OperatorClient(operatorBasePath)) : null;
       setupHealth = health;
       setupFeatures = health?.features ?? null;
       recordingNeedsAction = health?.recordingState === "needs_action";
@@ -439,13 +510,21 @@
     // this component has mounted, but registering afterwards would make that
     // ordering a thing to keep true rather than a thing that cannot fail.
     stopListeningForSetupChanges = onSetupChanged(() => {
-      void readInstanceState();
+      void readInstanceState().then(() => refreshRetention());
     });
+    stopListeningForRetentionChanges = onRetentionChanged(acceptRetention);
+    window.addEventListener("focus", refreshRetention);
 
     await readInstanceState();
+    // Advisory only: Operator never waits for this request.
+    if (!destroyed) void refreshRetention();
   });
 
   onDestroy(() => {
+    destroyed = true;
+    retentionGeneration++;
+    stopListeningForRetentionChanges?.();
+    window.removeEventListener("focus", refreshRetention);
     stopListeningForSetupChanges?.();
     stopListeningForSetupChanges = null;
     if (typeof window !== "undefined") {
@@ -454,6 +533,8 @@
   });
 </script>
 
+<div class="cassini-app-frame" bind:this={appFrame}>
+<div class="cassini-app-content">
 <!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab is
      gone (D-751) and `setup` is no longer a surface (D-756), so the checks now
      live in Operator › Publish pipeline, above the recording-access section.
@@ -504,6 +585,15 @@
       </button>
     </nav>
 
+    {#if operatorClient && (retentionSettings?.revision === 0 || retentionError)}
+      <div class="cassini-shell-banner" inert={overlayOpen} data-theme={themeMode}>
+        <div class="cassini-root" data-theme={themeMode}>
+          <RetentionReminder settings={retentionSettings} error={retentionError} loading={retentionLoading}
+            dirty={$unsavedChanges} busy={$retentionMutationBusy} dismissing={dismissingRetention}
+            on:review={openStorage} on:retry={() => void refreshRetention()} on:ignore={() => void ignoreRetention()} />
+        </div>
+      </div>
+    {/if}
     {#if setupNotice && !setupNotice.blocking}
       <!-- Advisory: setup is unproven but the archive still reads, so this is a
            strip above the list, not a replacement for it. Kept beside the nav
@@ -566,7 +656,7 @@
         </ViewerApp>
       </div>
     {/if}
-    {#if surface === "operator"}
+    {#if surface === "operator" && operatorClient}
       <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
            .cassini-root: putting .cassini-root's height:100% on the flex/scroll
            element fought the flex sizing. Here the outer div is a clean bounded
@@ -646,13 +736,19 @@
   </ViewerApp>
 {/if}
 
+</div>
+
+</div>
+
 <style>
+  .cassini-app-frame { position: relative; height: 100%; min-height: 0; overflow: hidden; }
+  .cassini-app-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
   /* Plain CSS (not Tailwind utilities) so the nav renders regardless of content
      scanning; theme tokens come from app.css (:root / :host). */
   .cassini-shell {
     display: flex;
     flex-direction: column;
-    /* The first-run dialog's scrim is absolute against THIS, not the viewport:
+    /* Shell overlays are positioned against this surface, not the viewport:
        a fixed one would dim Nextcloud's own header and sidebar too. */
     position: relative;
     /* A DEFINITE height, so the viewer's height:100% chain resolves through this

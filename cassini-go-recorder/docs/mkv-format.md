@@ -58,6 +58,7 @@ Built by [`containerMetadataEntries`](../pkg/core/remux/metadata.go#L159-L175). 
 | `cassini_format` | constant | Format version sentinel; always `cassini-meeting-mkv-v1` for V1 |
 | `cassini_embedded_report` | constant | Filename of the attached JSON report (`cassini-report.v1.json`) |
 | `session_started_at` | `session.StartedWallUTC` | Wall-clock RFC3339 start time |
+| `recorded_at_local` | `session.RecordedAtLocal` | Recording-site start time (`YYYY-MM-DDTHH:MM:SS`, no offset), captured once at session creation; absent on older recordings |
 | `participant_count` | `len(sess.Participants)` | Number of participants seen |
 | `logical_track_count` | `len(sess.LogicalTracks)` | Number of distinct logical tracks |
 | `packet_stream_count` | `len(sess.PacketStreams)` | Number of `.rtplog` segments that fed this MKV |

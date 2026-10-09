@@ -1,4 +1,13 @@
+export interface MediaCleanupStatus {
+  status: "waiting" | "pending" | "error" | "completed";
+  last_error?: string;
+  completed_at?: string;
+}
+
 export interface Job {
+  media_cleanup?: MediaCleanupStatus;
+	/** True when retention has deleted the original source recording. */
+	source_expired?: boolean;
   id: string;
   provider: string;
   request_json: string;
@@ -42,6 +51,7 @@ export interface Job {
 }
 
 export interface JobAttempt {
+  files_present?: Record<string, boolean>;
   job_id: string;
   attempt_number: number;
   trigger_kind: string;
@@ -84,6 +94,7 @@ export interface JobAttempt {
 }
 
 export interface JobDetailResponse {
+  availability?: { media_cleanup?: MediaCleanupStatus; source_retention?: string; source: string; output: string; published_attempt: number; rerun_blocked_reason?: string };
   job: Job;
   attempts: JobAttempt[];
 }
@@ -111,6 +122,9 @@ export interface SettingsEffective {
 }
 
 export interface Settings {
+  retain_video?: boolean;
+  meeting_format?: "opus" | "json";
+  source_retention?: "storage-policy" | "delete-after-processing";
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;
@@ -131,13 +145,16 @@ export interface Settings {
 }
 
 export interface SettingsUpdate {
+  retain_video?: boolean;
+  meeting_format?: "opus" | "json";
+  source_retention?: "storage-policy" | "delete-after-processing";
   transcription_enabled?: boolean;
   active_model?: string;
   active_revision?: string;
-  quality: SettingsQuality;
-  device_override: string;
-  transcription_terms: string[];
-  search_aliases: string[][];
+  quality?: SettingsQuality;
+  device_override?: string;
+  transcription_terms?: string[];
+  search_aliases?: string[][];
 }
 
 // --- LLM settings (D-696): mirror GET/PUT <basePath>/settings/llm. Keys are
@@ -275,4 +292,56 @@ export interface SpeechModelJob {
 }
 export interface SpeechModelInventory {
   models: SpeechModel[]; jobs: SpeechModelJob[]; downloads_allowed: boolean; device: string;
+}
+
+// StorageUsage is the first-pass accounting view (D-804): apparent file bytes
+// in the folders that hold a recording or its build artifacts. It deliberately
+// does not claim filesystem allocation, free space, or a de-duplicated total.
+export interface StorageUsageSource {
+  id: string;
+  label: string;
+  location: string;
+  bytes: number;
+  duration_ms: number;
+  files: number;
+  collections: number;
+  requests: number;
+  error: string;
+}
+
+export interface StorageUsage {
+  measured_at: string;
+  duration_ms: number;
+  sources: StorageUsageSource[];
+}
+
+export interface ArtifactStorageFileType {
+  extension: string;
+  bytes: number;
+  files: number;
+}
+
+export interface DetailedStorageDirectory {
+  id: string;
+  label: string;
+  location: string;
+  bytes: number;
+  files: number;
+  collections: number;
+  formats: ArtifactStorageFileType[];
+  error: string;
+}
+
+export interface StorageUsageDay { date: string; bytes: number; files: number }
+export interface StorageUsageCategory {
+  id: string; bytes: number; files: number;
+  undated_bytes: number; undated_files: number; days: StorageUsageDay[];
+}
+export interface DetailedStorageUsage {
+  categories: StorageUsageCategory[];
+  category_error: string;
+  measured_at: string;
+  duration_ms: number;
+  published: StorageUsageSource[];
+  directories: DetailedStorageDirectory[];
 }

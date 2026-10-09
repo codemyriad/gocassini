@@ -47,6 +47,24 @@ func runImportMeetingMetadata(ctx context.Context, args []string, stdout, stderr
 	if !exapp.appAPIActive() {
 		return fail(fmt.Errorf("import requires the AppAPI environment"))
 	}
+	cfg, code, err := loadConfig(nil, stderr)
+	if err != nil {
+		return fail(err)
+	}
+	if code != 0 {
+		return code
+	}
+	unlock, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		return fail(err)
+	}
+	defer unlock()
+	jobs, err := OpenStore(cfg.DBPath)
+	if err != nil {
+		return fail(err)
+	}
+	defer jobs.Close()
+	exapp.lifecycle = jobs
 	names, err := exapp.ownerRecordingNames(ctx, &http.Client{Timeout: ncProvisionTimeout})
 	if err != nil {
 		return fail(err)
@@ -55,18 +73,12 @@ func runImportMeetingMetadata(ctx context.Context, args []string, stdout, stderr
 	if err != nil {
 		return fail(err)
 	}
-	cfg, code, err := loadConfig(nil, stderr)
-	if err != nil {
-		return fail(err)
-	}
-	if code != 0 {
-		return code
-	}
 	store, err := openMeetingMetadataStore(meetingMetadataPath(cfg.DBPath), log.New(stderr, "metadata: ", 0))
 	if err != nil {
 		return fail(err)
 	}
 	defer store.Close()
+	store.lifecycle = jobs
 	for _, row := range rows {
 		if err := store.Put(ctx, row.id, row.name, row.entry); err != nil {
 			return fail(err)
@@ -94,15 +106,16 @@ func mapSeedMetadata(catalog siteCatalog, inventory map[int64]string) ([]seedMet
 	rows := make([]seedMetadataRow, 0, len(catalog.Meetings))
 	for _, entry := range catalog.Meetings {
 		var probe struct {
-			ID        string `json:"id"`
-			AudioPath string `json:"audioPath"`
+			ID          string `json:"id"`
+			AudioPath   string `json:"audioPath"`
+			MeetingPath string `json:"meetingPath"`
 		}
 		if err := json.Unmarshal(entry, &probe); err != nil {
 			return nil, err
 		}
-		name := strings.TrimPrefix(probe.AudioPath, "./meetings/")
-		if probe.ID == "" || seenIDs[probe.ID] || probe.AudioPath != "./meetings/"+name || path.Base(name) != name || !strings.HasSuffix(name, ".opus") || seen[name] || ids[name] <= 0 {
-			return nil, fmt.Errorf("invalid, duplicate, or absent destination recording: %q", probe.AudioPath)
+		name := strings.TrimPrefix(meetingPath(probe.AudioPath, probe.MeetingPath), "./meetings/")
+		if probe.ID == "" || seenIDs[probe.ID] || meetingPath(probe.AudioPath, probe.MeetingPath) != "./meetings/"+name || path.Base(name) != name || !isMeetingFile(name) || seen[name] || ids[name] <= 0 {
+			return nil, fmt.Errorf("invalid, duplicate, or absent destination recording: %q", meetingPath(probe.AudioPath, probe.MeetingPath))
 		}
 		seen[name], seenIDs[probe.ID] = true, true
 		rows = append(rows, seedMetadataRow{ids[name], name, entry})

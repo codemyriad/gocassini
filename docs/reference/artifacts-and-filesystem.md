@@ -2,6 +2,16 @@
 
 This page describes Cassini’s main artifact types and the operator’s runtime layout.
 
+Transcription-only publication uses portable `.json` instead of `.opus`, including
+the corresponding current, sealed and published paths described below. The
+`artifact_opus_path` API field retains its historical name for both formats.
+JSON publication normally retains source bundles for reruns. With explicit
+`delete-after-processing` retention, successful promotion keeps only JSON;
+terminal success or failure triggers journaled removal of source bundles, Opus
+aliases and attempt media staging. Disposal subprocesses use job-owned
+`runs/<job-id>--attempt-NNN.scratch` temporary directories, also removed by cleanup.
+See [source disposal](../proposals/source-media-disposal/implementation.md).
+
 ## The four artifact shapes to know
 
 | Artifact | Produced by | Purpose |
@@ -49,6 +59,20 @@ Conceptually:
 - output: reusable captured media
 
 Use `.run` when you need to rerun or inspect the build stage.
+
+New live `.run` manifests and source `session.json` indexes include
+`capture_mode`: `audio-only` (default) or `audio-video` (explicit opt-in).
+Operator recording jobs also store this admission snapshot and `retain_video` in
+their request JSON. Missing provenance on an older recording means **unknown**,
+not proof that video was excluded.
+
+Audio-only sessions contain audio RTP logs and audio logical tracks; opted-in
+sessions may also contain video logs and source MKV tracks. Audio RTCP and normal
+transport/signaling are retained in both modes. Capture mode does not change the
+portable `.opus` publication contract. Changing the policy affects new captures;
+existing-source build and publish operations preserve their source. Source
+retention determines when the whole source artifact, including opted-in video,
+is deleted.
 
 ## `.meeting` bundle
 
@@ -256,7 +280,7 @@ At the attempt level:
   `runs/<job-id>--attempt-NNN.seal/<job-id>.opus`, and `artifact_opus_sha256` is
   its digest
 - rerun attempts typically reuse the canonical `.run` and create fresh attempt-local `.meeting`, `.seal` and `.site` outputs
-- a rerun rebuilds the audio with the encode policy recorded in `current/<job-id>.meeting` (`fixed-64k` when it records none), so the rebuilt `.opus` has the same audio and the marks made on the published one carry over; when that record cannot be read, the rerun fails rather than guess an encode that would discard the marks
+- a rerun rebuilds the audio with the encode policy recorded in `current/<job-id>.meeting` (`fixed-64k` when it records none), so the rebuilt `.opus` has the same audio and the marks made on the published one carry over; when that record cannot be read, the rerun fails rather than guess an encode that would discard the marks. Publication promotes that bundle, so it is absent when nothing was published yet or the publication carried no audio (a transcription-only `.json`); those reruns take the default encode. A published `.opus` whose local copy the retention policy expired has no readable record, so its rerun fails
 
 The split is the same one every stage uses, and it is what lets a publish deliver
 a specific attempt's artifact rather than whatever is currently canonical:
@@ -268,32 +292,14 @@ a specific attempt's artifact rather than whatever is currently canonical:
 
 ## Retention
 
-Attempt-local payloads under `runs/` are pruned by an explicit policy,
-`--artifact-retention` / `CASSINI_ARTIFACT_RETENTION`:
+Configure container-local retention in Operator → Storage. All policies default
+to keep forever; recordings, attempt history, current output archives and stage
+logs can expire independently using UTC calendar dates. Job metadata and external
+published recordings remain. Successful duplicate cleanup is independent of age.
+The old artifact-retention flag/environment variable is deprecated and ignored.
 
-| Policy | Prunes |
-|--------|--------|
-| `all` | nothing |
-| `superseded` | the `.run`, `.meeting`, `.site` and `.seal` of attempts a rerun has replaced |
-| `sealed` **(default)** | `superseded`, plus a succeeded attempt's `.run`, `.meeting` and `.site` |
-
-One removal happens outside this policy and `all` does not disable it: a
-successfully delivered attempt's `.site` is removed as soon as the sink accepts
-it (D-550). That is an access boundary rather than housekeeping — the attempt
-site is a full copy of the recording on the app's own volume, outside the
-Nextcloud access model — so retention is not a way to keep one.
-
-Never pruned, under any policy: everything in `current/`, every attempt `.logs`
-directory, the retained `.seal` of a succeeded attempt, and the live site. Every
-removal is additionally guarded on the artifact that replaces it existing, so a
-record that failed before promotion keeps its attempt `.run` and a failed job
-keeps everything — nothing here removes the last copy of anything.
-
-Attempt rows keep the paths of artifacts that were pruned. The row is the record
-of what that attempt produced; the retention policy governs whether the bytes are
-still there. So an `artifact_site_path` on a succeeded attempt under the `sealed`
-policy names a directory that no longer exists, by design — the operator log line
-`artifact retention removed id=… policy=… <path> (…)` is what says why.
+See [container retention](../container-retention.md) for categories, date anchors,
+exact deletion paths, whole-recording expiry, recovery, deployment and diagnostics.
 
 ## Live site lineage
 

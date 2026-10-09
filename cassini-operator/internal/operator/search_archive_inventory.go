@@ -79,14 +79,15 @@ func (rt *Runtime) searchInventory(ctx context.Context) (searchArchiveInventory,
 	seen := map[string]bool{}
 	for _, raw := range catalog.Meetings {
 		var entry struct {
-			AudioPath string `json:"audioPath"`
+			AudioPath   string `json:"audioPath"`
+			MeetingPath string `json:"meetingPath"`
 		}
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			return searchArchiveInventory{}, false, fmt.Errorf("parse local archive meeting: %w", err)
 		}
-		asset, valid := siteRelativeAsset(entry.AudioPath)
+		asset, valid := siteRelativeAsset(meetingPath(entry.AudioPath, entry.MeetingPath))
 		name := filepath.Base(asset)
-		if !valid || !strings.EqualFold(filepath.Ext(asset), ".opus") || seen[name] {
+		if !valid || !isMeetingFile(strings.ToLower(asset)) || seen[name] {
 			continue
 		}
 		inventory.OpusNames = append(inventory.OpusNames, name)

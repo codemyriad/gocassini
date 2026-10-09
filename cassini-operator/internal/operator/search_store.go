@@ -155,6 +155,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS segment_fts USING fts5(
 // searchStore is the sidecar index.
 type searchStore struct {
 	sidecarDB
+	lifecycle *Store
 	// In-process index writes invalidate the operator's cached coverage.
 	// External writers are still bounded by the cache TTL.
 	revision atomic.Uint64
@@ -322,6 +323,17 @@ func (s *searchStore) writeTx(ctx context.Context, fn func(tx *sql.Tx) error) er
 // transaction, so a failure leaves the previous rows intact rather than a
 // half-replaced meeting that would answer with a mixture of two attempts.
 func (s *searchStore) ReplaceMeeting(ctx context.Context, opusName, opusSHA256, rowSource string, rows []searchRow) error {
+	if s != nil && s.lifecycle != nil {
+		release, err := meetingProjectionLocks.acquire(ctx, opusName)
+		if err != nil {
+			return err
+		}
+		defer release()
+		if err := (ExAppConfig{lifecycle: s.lifecycle}).meetingNotRetired(ctx, opusName); err != nil {
+			return err
+		}
+	}
+
 	name := strings.TrimSpace(opusName)
 	if name == "" {
 		return errors.New("opus name must not be empty")

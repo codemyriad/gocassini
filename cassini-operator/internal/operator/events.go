@@ -12,12 +12,13 @@ import (
 )
 
 type StateChangeEvent struct {
-	Type          string      `json:"type"`
-	JobID         string      `json:"job_id"`
-	AttemptNumber int         `json:"attempt_number,omitempty"`
-	At            string      `json:"at"`
-	Job           Job         `json:"job"`
-	Attempt       *JobAttempt `json:"attempt,omitempty"`
+	Availability  *artifactAvailability `json:"availability,omitempty"`
+	Type          string                `json:"type"`
+	JobID         string                `json:"job_id"`
+	AttemptNumber int                   `json:"attempt_number,omitempty"`
+	At            string                `json:"at"`
+	Job           Job                   `json:"job"`
+	Attempt       *JobAttempt           `json:"attempt,omitempty"`
 }
 
 type stateChangePublisher func(StateChangeEvent)
@@ -100,6 +101,11 @@ func (s *Store) emitStateChange(ctx context.Context, eventType, jobID string, at
 func (rt *Runtime) publishStateChangeEvent(event StateChangeEvent) {
 	if rt.events == nil {
 		return
+	}
+	if deletesSourceMedia(event.Job) {
+		availability := rt.artifactAvailability(event.Job)
+		event.Availability = &availability
+		event.Job.MediaCleanup = availability.MediaCleanup
 	}
 	rt.events.Publish(event)
 }

@@ -90,6 +90,7 @@ func buildTwoTrackMeetingFromSmoke(t *testing.T, dir string) string {
 		"-metadata:s:a:0", "participant_id=user-one",
 		"-metadata:s:a:1", "title=SpeakerTwo",
 		"-metadata:s:a:1", "participant_id=user-two",
+		"-metadata", "recorded_at_local=2026-03-10T14:00:00",
 		"-c:a", "flac",
 		out,
 	); err != nil {
@@ -115,6 +116,9 @@ func TestBuildMeetingArtifactOffAndFailedPreserveAudio(t *testing.T) {
 			var manifest artifactManifest
 			if err := json.Unmarshal(raw, &manifest); err != nil {
 				t.Fatal(err)
+			}
+			if manifest.Source.RecordedAtLocal != "2026-03-10T14:00:00" {
+				t.Fatalf("recording time lost: %s", raw)
 			}
 			want := "skipped"
 			if mode == "on" {
@@ -265,6 +269,7 @@ func TestBuildMeetingArtifactPipelineWiring(t *testing.T) {
 		t.Fatalf("read manifest: %v", err)
 	}
 	var manifest struct {
+		Source     artifactSource `json:"source"`
 		Provenance struct {
 			SpeechToText struct {
 				Backend string `json:"backend"`
@@ -275,6 +280,9 @@ func TestBuildMeetingArtifactPipelineWiring(t *testing.T) {
 	}
 	if err := json.Unmarshal(rawManifest, &manifest); err != nil {
 		t.Fatalf("parse manifest: %v", err)
+	}
+	if manifest.Source.RecordedAtLocal != "2026-03-10T14:00:00" {
+		t.Fatalf("recording time lost: %s", rawManifest)
 	}
 	if manifest.Provenance.SpeechToText.Backend != "fake-fixed" {
 		t.Errorf("provenance.speechToText.backend = %q, want the engine actually used (fake-fixed)",

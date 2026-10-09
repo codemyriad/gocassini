@@ -593,6 +593,7 @@
                   <span class="row-title">{meeting.title}</span>
                   <span class="row-meta">
                     <span>{formatMeetingDateWithDay(meeting.dateLabel)}</span>
+                    <span class="badge badge-ghost badge-xs">{meeting.meetingPath ? "Transcription only" : "Audio included"}</span>
                     {#if showRoom}
                       <span class="rule" aria-hidden="true"></span>
                       <span class="row-room">{rowRoom}</span>

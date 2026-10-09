@@ -155,6 +155,14 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 		return err
 	}
 	defer release()
+	if s.exapp.lifecycle != nil {
+		var pending int
+		if err := s.exapp.lifecycle.db.QueryRowContext(ctx, `SELECT count(*) FROM remote_retention_operation WHERE name=? AND status!='completed'`, name).Scan(&pending); err != nil {
+			return err
+		} else if pending > 0 {
+			return &annotationBlocked{"retention transition is awaiting recovery"}
+		}
+	}
 	store := s.rt.annotationReads()
 	var desired, confirmed int64
 	var flight sql.NullInt64
@@ -167,7 +175,10 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 		return nil
 	}
 	// The storage root can move after acceptance; ownership is the catalog ID.
-	rel = ncRecordingsRoot + "/meetings/" + path.Base(name)
+	rel, err = s.exapp.currentOwnerMeetingPath(ctx, path.Base(name))
+	if err != nil {
+		return err
+	}
 	target, err := s.snapshot(ctx, desired)
 	if err != nil {
 		return err
@@ -191,7 +202,7 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 		return err
 	}
 	defer os.RemoveAll(dir)
-	in, out := filepath.Join(dir, "in.opus"), filepath.Join(dir, "out.opus")
+	in, out := filepath.Join(dir, "in"+meetingExtension(rel)), filepath.Join(dir, "out"+meetingExtension(rel))
 	if _, _, err = s.exapp.stageRecording(ctx, s.client, ncRecordingsOwner, rel, in, maxAnnotateRecordingBytes, state.ETag); err != nil {
 		return err
 	}
@@ -288,7 +299,7 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	if _, err = store.db.ExecContext(ctx, `UPDATE annotation_head SET in_flight=?,input_etag=?,output_sha256=?,output_size=? WHERE opus_name=?`, desired, state.ETag, digest, info.Size(), name); err != nil {
 		return err
 	}
-	if _, _, err = s.exapp.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, rel, out, ncRecordingsContentType, state.ETag); err != nil {
+	if _, _, err = s.exapp.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, rel, out, meetingContentType(rel), state.ETag); err != nil {
 		return err
 	}
 	if err = s.exapp.verifyUploadedLeaf(ctx, s.client, rel, info.Size()); err != nil {

@@ -2,6 +2,7 @@ package cassini
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -49,6 +50,7 @@ func salvageableRecording(err error, bundle RunBundle) bool {
 }
 
 type recordOptions struct {
+	retainVideo       bool
 	callURL           string
 	talkBaseURL       string
 	talkRoomToken     string
@@ -86,6 +88,7 @@ func recordConfig(opts recordOptions, recordingPath string) config.Config {
 		Mode:                    "talk",
 		OutputPath:              recordingPath,
 		CleanupIntermediate:     !opts.keepIntermediate,
+		RetainVideo:             opts.retainVideo,
 		Duration:                time.Duration(opts.durationSeconds) * time.Second,
 		StopWhenRoomEmpty:       opts.stopWhenRoomEmpty,
 		RoomEmptyGrace:          time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
@@ -177,6 +180,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs.Float64Var(&opts.roomEmptyGraceSec, "room-empty-grace", 30, "seconds to wait before stopping after room becomes empty")
 	fs.BoolVar(&opts.insecure, "insecure", false, "disable TLS certificate verification (testing only)")
 	fs.StringVar(&opts.turnMode, "turn-mode", "all", "TURN usage mode: off, udp-only, all")
+	fs.BoolVar(&opts.retainVideo, "retain-video", false, "also capture camera video (default: audio only)")
 	fs.BoolVar(&opts.keepIntermediate, "keep-intermediate", false, "keep recorder intermediate work files inside the run bundle")
 	fs.BoolVar(&opts.simulate, "simulate", false, "write a local synthetic capture bundle for testing")
 	fs.IntVar(&opts.simTracks, "sim-tracks", 3, "number of synthetic tracks in simulate mode")
@@ -220,7 +224,10 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if opts.simulate {
 		cfg.Mode = "simulate"
 	}
-	_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
+	if err := StartRunBundleCapture(bundle, cfg.Mode, cfg.CaptureMode()); err != nil {
+		fmt.Fprintf(stderr, "persist capture policy: %v\n", err)
+		return 1
+	}
 
 	fmt.Fprintln(stdout, "[2/3] Recording")
 	recordErr := runRecorderApp(ctx, cfg)
@@ -233,6 +240,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 	manifest := RunManifest{
 		SourceMode:   cfg.Mode,
+		CaptureMode:  cfg.CaptureMode(),
 		RecorderName: opts.name,
 	}
 	if recordErr != nil {
@@ -290,7 +298,10 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 	cfg := recordConfig(opts, bundle.RecordingPath)
 
 	if !reusedRun {
-		_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
+		if err := StartRunBundleCapture(bundle, cfg.Mode, cfg.CaptureMode()); err != nil {
+			fmt.Fprintf(stderr, "persist capture policy: %v\n", err)
+			return 1
+		}
 
 		fmt.Fprintln(stdout, "[3/5] Recording meeting")
 		recordErr := runRecorderApp(ctx, cfg)
@@ -302,6 +313,7 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 		}
 		manifest := RunManifest{
 			SourceMode:   cfg.Mode,
+			CaptureMode:  cfg.CaptureMode(),
 			RecorderName: opts.name,
 		}
 		if recordErr != nil {
@@ -444,6 +456,7 @@ Paths:
 func runInspect(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini inspect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	dumpMeetingTimes := fs.Bool("meeting-times", false, "dump portable meeting retention timestamps as JSON")
 	dumpTranscript := fs.Bool("transcript", false, "dump the default words transcript from a portable .opus as transcript.words.v1.json to stdout (instead of the inspect summary)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
@@ -455,6 +468,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
   cassini inspect /path/to/session.json
   cassini inspect /path/to/archive.csr
   cassini inspect --transcript ./archive/meeting.opus
+  cassini inspect --meeting-times ./archive/meeting.opus
 
 `+"\n")
 	}
@@ -469,7 +483,25 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	if *dumpMeetingTimes && *dumpTranscript {
+		return 2
+	}
 	path := fs.Arg(0)
+	if *dumpMeetingTimes {
+		meeting, err := inspectpkg.ExtractMeeting(path)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(struct {
+			CreatedAtUTC    string `json:"createdAtUtc"`
+			RecordedAtLocal string `json:"recordedAtLocal"`
+		}{meeting.Manifest.Meeting.CreatedAtUTC, meeting.Manifest.Meeting.RecordedAtLocal}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
 
 	// --transcript reads the default words transcript back out of a published
 	// portable .opus and writes it as transcript.words.v1.json to stdout. This

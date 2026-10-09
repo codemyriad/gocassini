@@ -36,6 +36,7 @@ type multiTranscriptWire struct {
 }
 
 type multiTranscriptProvenanceWire struct {
+	Recording         *RecordingProvenance       `json:"recording,omitempty"`
 	SpeechToText      map[string]*ProcessingStep `json:"speechToText,omitempty"`
 	DisplayTranscript map[string]*ProcessingStep `json:"displayTranscript,omitempty"`
 	MeetingSummary    *ProcessingStep            `json:"meetingSummary,omitempty"`
@@ -188,13 +189,14 @@ func DecodePublishedManifest(rawJSON []byte) (Manifest, error) {
 	}
 	if wire.Provenance != nil {
 		manifest.Provenance = &Provenance{
+			Recording:         wire.Provenance.Recording,
 			SpeechToText:      defaultProcessingStep(wire.Provenance.SpeechToText, wire.Transcripts, ""),
 			DisplayTranscript: defaultProcessingStep(wire.Provenance.DisplayTranscript, wire.ReadableTranscripts, RoleDisplay),
 			MeetingSummary:    wire.Provenance.MeetingSummary,
 			Attribution:       wire.Provenance.Attribution,
 			WordTimings:       wire.Provenance.WordTimings,
 		}
-		if manifest.Provenance.SpeechToText == nil &&
+		if manifest.Provenance.Recording == nil && manifest.Provenance.SpeechToText == nil &&
 			manifest.Provenance.DisplayTranscript == nil && manifest.Provenance.MeetingSummary == nil &&
 			manifest.Provenance.Attribution == nil && manifest.Provenance.WordTimings == nil {
 			manifest.Provenance = nil
@@ -358,6 +360,7 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 
 	provenance := &multiTranscriptProvenanceWire{}
 	if manifest.Provenance != nil {
+		provenance.Recording = manifest.Provenance.Recording
 		provenance.MeetingSummary = manifest.Provenance.MeetingSummary
 		// Meeting-level, not keyed by transcript id: the attribution stage
 		// runs once against the default raw transcript. In drop mode this
@@ -469,7 +472,7 @@ func hasAnyProvenance(p *multiTranscriptProvenanceWire) bool {
 		return false
 	}
 	return len(p.SpeechToText) > 0 || len(p.DisplayTranscript) > 0 ||
-		p.MeetingSummary != nil || p.Attribution != nil || p.WordTimings != nil
+		p.Recording != nil || p.MeetingSummary != nil || p.Attribution != nil || p.WordTimings != nil
 }
 
 func validateTranscriptInputs(transcripts []TranscriptInput) error {

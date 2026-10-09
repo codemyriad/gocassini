@@ -1,0 +1,140 @@
+import { mount, unmount } from "svelte";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
+import Settings from "./Settings.svelte";
+import "./app.css";
+
+const ids = ["recordings", "current", "failed_capture", "failed_build", "superseded", "failed_publish", "logs", "other"];
+const categories = ids.map((id, index) => {
+  const days = id === "other" ? [] : Array.from({ length: 45 }, (_, day) => ({
+    date: new Date(Date.UTC(2026, 7, 16 + day)).toISOString().slice(0, 10),
+    bytes: Math.round((Math.sin(day * 0.8) ** 2 + 0.1) * (8 - index) * 4_000_000),
+    files: 3,
+  }));
+  const undated_bytes = id === "other" ? 8_000_000 : 1_000;
+  return { id, bytes: days.reduce((sum, day) => sum + day.bytes, 0) + undated_bytes,
+    files: days.length * 3 + 1, undated_bytes, undated_files: 1, days };
+});
+const fixture = {
+  measured_at: "2026-09-29T10:00:00Z",
+  published: [{ id: "published", label: "Published recordings", bytes: 983_000_000 }],
+  directories: [{ id: "current", bytes: 1 }], categories,
+};
+const forever = { forever: true };
+const settings = {
+  version: 3, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
+  recordings: forever, current: forever, logs: forever,
+  history: { mode: "group", policy: forever, fine: Object.fromEntries(ids.slice(2, 6).map((id) => [id, forever])) },
+};
+
+let app: ReturnType<typeof mount> | undefined;
+let host: HTMLDivElement;
+let fail = false;
+let empty = false;
+let posts = 0;
+let puts = 0;
+
+beforeEach(() => {
+  fail = false;
+  empty = false;
+  posts = 0;
+  puts = 0;
+  Object.assign(window, { __CASSINI_CONFIG__: { operatorBasePath: "/operator" } });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (init?.method === "PUT") puts += 1;
+    if (path === "/operator/storage/retention") return Response.json(settings);
+    expect(path).toBe("/operator/storage/usage/details");
+    if (init?.method === "POST") posts += 1;
+    if (fail) return Response.json({ error: "Synthetic scan failure" }, { status: 503 });
+    const report = empty ? {
+      ...fixture,
+      categories: categories.map((category) => ({ ...category, bytes: 0, files: 0,
+        undated_bytes: 0, undated_files: 0, days: [] })),
+    } : fixture;
+    return Response.json(report);
+  }));
+  host = document.createElement("div");
+  host.style.maxWidth = "980px";
+  host.style.margin = "auto";
+  host.style.padding = "20px";
+  document.body.append(host);
+});
+
+afterEach(async () => {
+  if (app) await unmount(app);
+  app = undefined;
+  host.remove();
+  delete (window as Window & { __CASSINI_CONFIG__?: unknown }).__CASSINI_CONFIG__;
+  vi.unstubAllGlobals();
+  await page.viewport(1500, 1000);
+});
+
+function category(id: string) {
+  return document.getElementById(`category-${id}`)!;
+}
+
+function barCount(id: string) {
+  return category(id).querySelectorAll(".bar-target").length;
+}
+
+describe("storage charts in the browser", () => {
+  it("keeps chart controls independent of retention writes and storage rescans", async () => {
+    await page.viewport(1280, 1000);
+    app = mount(Settings, { target: host, props: { panel: "storage" } });
+    await expect.element(page.getByRole("button", { name: "Recalculate", exact: true })).toBeEnabled();
+    await expect.poll(() => posts).toBe(1);
+    await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: /Explore Source recordings:/ }).click();
+    await page.getByLabelText("Source recordings precision", { exact: true }).selectOptions("7");
+    expect(barCount("recordings")).toBe(7);
+    (category("recordings").querySelector(".bar-target") as HTMLElement).focus();
+    await expect.poll(() => category("recordings").querySelector(".bar-detail")?.textContent).toMatch(/2026/);
+    await page.getByText("View chart data", { exact: true }).first().click();
+    expect(category("recordings").querySelectorAll("tbody tr")).toHaveLength(7);
+
+    await page.getByLabelText("Source recordings time range", { exact: true }).selectOptions("custom");
+    await page.getByLabelText("Source recordings from date").fill("2026-09-01");
+    await page.getByLabelText("Source recordings through date").fill("2026-09-07");
+    expect(barCount("recordings")).toBe(1);
+    await page.getByLabelText("Source recordings through date").fill("2026-08-31");
+    await expect.element(page.getByRole("alert")).toHaveTextContent("end date");
+    await page.getByLabelText("Source recordings through date").fill("2026-09-07");
+    await page.getByLabelText("Source recordings precision", { exact: true }).selectOptions("custom");
+    await page.getByLabelText("Source recordings days per bar").fill("0");
+    await expect.element(page.getByRole("alert")).toHaveTextContent("whole number");
+    await page.getByLabelText("Source recordings days per bar").fill("3");
+    expect(barCount("recordings")).toBe(3);
+
+    await page.getByRole("button", { name: /Explore Logs:/ }).click();
+    await expect.element(page.getByLabelText("Logs time range", { exact: true })).toHaveValue("all");
+    await expect.element(page.getByLabelText("Source recordings time range", { exact: true })).toHaveValue("custom");
+    await page.getByLabelText("Split attempt history").click();
+    await expect.element(page.getByRole("button", { name: /Explore Failed recordings:/ })).toBeVisible();
+    expect(document.querySelectorAll(".comparison-row")).toHaveLength(8);
+    await page.getByRole("button", { name: /Explore Other local files:/ }).click();
+    await expect.element(page.getByText("No dated files to plot in this category.")).toBeVisible();
+    expect(puts).toBe(0);
+    expect(posts).toBe(1);
+
+    await page.getByLabelText("Split attempt history").click();
+    await page.getByLabelText("Source recordings time range", { exact: true }).selectOptions("all");
+    await page.getByLabelText("Source recordings precision", { exact: true }).selectOptions("1");
+    await page.getByText("View chart data", { exact: true }).first().click();
+    window.scrollTo(0, 0);
+    await page.screenshot({ path: "../node_modules/.cache/vitest-screenshots/storage-charts-desktop.png" });
+    await page.viewport(390, 844);
+    await page.screenshot({ path: "../node_modules/.cache/vitest-screenshots/storage-charts-mobile.png" });
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(innerWidth);
+
+    fail = true;
+    await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+    await expect.element(page.getByText(/Couldn’t recalculate:/)).toBeVisible();
+    expect(document.querySelectorAll(".comparison-row")).toHaveLength(5);
+    fail = false;
+    empty = true;
+    await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+    await expect.element(page.getByText("No retained files in this category.").first()).toBeVisible();
+  });
+});

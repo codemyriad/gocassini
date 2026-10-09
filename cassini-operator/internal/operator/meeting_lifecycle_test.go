@@ -1,0 +1,106 @@
+package operator
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"testing"
+)
+
+func TestMeetingLifecycleSurvivesReopenAndConflicts(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "jobs.sqlite")
+	s, err := OpenStore(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	m := meetingLifecycle{Name: "meeting.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/meeting.opus", State: "active", Anchor: "2026-01-01T00:00:00Z", AnchorSource: "recording-completed"}
+	if err = s.adoptMeetingLifecycle(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.adoptMeetingLifecycle(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	m.Anchor = "2026-02-01T00:00:00Z"
+	if err = s.adoptMeetingLifecycle(ctx, m); err == nil {
+		t.Fatal("age reset accepted")
+	}
+	m.Anchor = "2026-01-01T00:00:00Z"
+	m.FileID = 43
+	if err = s.adoptMeetingLifecycle(ctx, m); err == nil {
+		t.Fatal("identity replacement accepted")
+	}
+	s.Close()
+	s, err = OpenStore(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	cfg := ExAppConfig{lifecycle: s}
+	rel, err := cfg.currentOwnerMeetingPath(ctx, m.Name)
+	if err != nil || rel != m.Path {
+		t.Fatalf("locator: %q %v", rel, err)
+	}
+	if _, err = s.db.Exec(`UPDATE meeting_lifecycle SET state='retiring' WHERE name=?`, m.Name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cfg.currentOwnerMeetingPath(ctx, m.Name); !errors.Is(err, errMeetingRetired) {
+		t.Fatal("retirement did not deny access", err)
+	}
+}
+
+func TestRetiredProjectionCannotBeRebuilt(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	ctx := context.Background()
+	m := meetingLifecycle{Name: "m.opus", FileID: 42, Path: ncRecordingsRoot + "/meetings/m.opus", State: "active", Anchor: "2026-01-01T00:00:00Z", AnchorSource: "recording-completed"}
+	if err := rt.store.adoptMeetingLifecycle(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := openMeetingMetadataStore(filepath.Join(t.TempDir(), "metadata.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	metadata.lifecycle = rt.store
+	search, err := openSearchStore(filepath.Join(t.TempDir(), "search.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer search.Close()
+	search.lifecycle = rt.store
+	if _, err = rt.store.db.Exec(`UPDATE meeting_lifecycle SET state='retired' WHERE name=?`, m.Name); err != nil {
+		t.Fatal(err)
+	}
+	if err = metadata.Put(ctx, m.FileID, m.Name, []byte(`{"id":"m","title":"expired title","audioPath":"meetings/m.opus"}`)); !errors.Is(err, errMeetingRetired) {
+		t.Fatal("metadata resurrection", err)
+	}
+	if err = search.ReplaceMeeting(ctx, m.Name, "digest", searchRowSourceWords, []searchRow{{Text: "expired words"}}); !errors.Is(err, errMeetingRetired) {
+		t.Fatal("search resurrection", err)
+	}
+	var count int
+	if err = search.db.QueryRow(`SELECT COUNT(*) FROM segment_ref`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("expired text returned to index", err)
+	}
+}
+
+func TestMeetingLifecycleTimestampSchemaUpgrade(t *testing.T) {
+	rt, close := newBareSealRuntime(t)
+	defer close()
+	// Simulate the previous schema with an existing retirement tombstone.
+	if _, err := rt.store.db.Exec(`ALTER TABLE meeting_lifecycle DROP COLUMN created_at_utc;
+ ALTER TABLE meeting_lifecycle DROP COLUMN recorded_at_local;
+ INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source)
+ VALUES('m.opus',42,'Cassini/meetings/m.opus','retired','2020-01-01T00:00:00Z','recording-completed');`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := rt.store.ensureMeetingLifecycleSchema(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, ok, err := rt.store.meetingLifecycle(context.Background(), "m.opus")
+	if err != nil || !ok || m.State != "retired" || m.Anchor != "2020-01-01T00:00:00Z" || m.CreatedAtUTC != "" || m.RecordedAtLocal != "" {
+		t.Fatal(m, ok, err)
+	}
+}

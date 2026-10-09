@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 )
 
@@ -92,7 +91,7 @@ func (s *annotationService) writeAnnotationBatch(w http.ResponseWriter, r *http.
 	paths := make(map[string]string, len(entries))
 	names := make(map[string]string, len(entries))
 	for _, entry := range entries {
-		if strings.HasSuffix(entry.opusName, ".opus") {
+		if isMeetingFile(entry.opusName) {
 			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
 			if err != nil {
 				continue
@@ -149,6 +148,11 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 		return response, err
 	}
 	defer release()
+	for _, name := range names {
+		if err := s.exapp.meetingNotRetired(ctx, name); err != nil {
+			return response, annotateNotFound(err)
+		}
+	}
 	encoded, _ := json.Marshal(request)
 	sum := sha256.Sum256(encoded)
 	hash := hex.EncodeToString(sum[:])

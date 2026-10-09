@@ -14,6 +14,7 @@ const (
 )
 
 type Config struct {
+	RetainVideo                 bool
 	Mode                        string
 	OutputPath                  string
 	FinalOutputPath             string
@@ -65,6 +66,7 @@ func FromFlags(args []string) (Config, error) {
 	fs.StringVar(&cfg.OutputPath, "output", "/tmp/gocassini.csr", "output path; in talk mode this can be the final .mkv directly, while simulate mode still writes a legacy .csr archive")
 	fs.StringVar(&cfg.FinalOutputPath, "final-output", "", "optional final multi-track MKV output path override (default: derived from --output)")
 	fs.StringVar(&cfg.SegmentsDir, "segments-dir", "", "directory for intermediate per-session files (default: unique mktemp dir next to --final-output)")
+	fs.BoolVar(&cfg.RetainVideo, "retain-video", false, "also capture camera video (default: audio only)")
 	fs.BoolVar(&cfg.CleanupIntermediate, "cleanup-intermediate", false, "remove intermediate segment files after successful compose")
 	fs.IntVar(&cfg.SimTracks, "sim-tracks", 3, "number of synthetic tracks in simulate mode")
 	fs.IntVar(&cfg.SimPackets, "sim-packets", 150, "packets per synthetic track in simulate mode")
@@ -146,4 +148,11 @@ func FromFlags(args []string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func (c Config) CaptureMode() string {
+	if c.RetainVideo {
+		return "audio-video"
+	}
+	return "audio-only"
 }

@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -192,6 +193,10 @@ func (rt *Runtime) backfillOneMeeting(
 	ctx context.Context, target searchBackfillTarget, opusName string,
 	indexed map[string]searchIndexedState, delivered searchDeliveredStateReader, archive searchArchiveReader,
 ) (searchBackfillOutcome, string) {
+	if rt.store != nil {
+		rt.store.artifactGate.RLock()
+		defer rt.store.artifactGate.RUnlock()
+	}
 	// What was DELIVERED is the archive's record to give. The job database
 	// cannot answer it — its digest is written at seal time, in the same step
 	// that promotes current/, so the two move together across attempts and
@@ -311,6 +316,9 @@ func (rt *Runtime) indexFromLocalBundle(
 	ctx context.Context, target searchBackfillTarget, opusName, delivered, deliveredCopy string,
 ) (searchBackfillOutcome, string, bool) {
 	localOpus := canonicalOpusPath(rt.cfg.WorkRoot, target.JobID)
+	if meetingExtension(opusName) == ".json" {
+		localOpus = filepath.Join(currentRoot(rt.cfg.WorkRoot), target.JobID+".json")
+	}
 	localDigest, err := fileSHA256(localOpus)
 	if err != nil {
 		return 0, searchBackfillReasonNoBundle, false

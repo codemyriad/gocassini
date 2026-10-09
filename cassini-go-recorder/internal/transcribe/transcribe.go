@@ -68,7 +68,7 @@ var (
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
 	// --- 1. Probe MKV ---
 	fmt.Fprintln(stdout, "  probing audio streams...")
-	streams, srcDurationMS, err := ProbeMKV(mkvPath)
+	streams, srcDurationMS, recordedAtLocal, err := probeMKV(mkvPath)
 	if err != nil {
 		return fmt.Errorf("probe MKV: %w", err)
 	}
@@ -109,13 +109,13 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		if reason == "transcription_failed" {
 			status = "failed"
 		}
-		return writeUntranscribed(outputDir, mkvPath, streams, srcDurationMS, audioDurationMS, sha256hex, enc, status, reason)
+		return writeUntranscribed(outputDir, mkvPath, recordedAtLocal, streams, srcDurationMS, audioDurationMS, sha256hex, enc, status, reason)
 	}
 	// A checkpoint lets the operator salvage audio after a native process crash.
 	if err := os.WriteFile(filepath.Join(outputDir, ".transcription-started"), []byte("1"), 0600); err != nil {
 		return err
 	}
-	err = transcribePrepared(ctx, mkvPath, outputDir, webmPath, streams, srcDurationMS, audioDurationMS, sha256hex, enc, cfg, stdout)
+	err = transcribePrepared(ctx, mkvPath, outputDir, webmPath, recordedAtLocal, streams, srcDurationMS, audioDurationMS, sha256hex, enc, cfg, stdout)
 	if err == nil {
 		return nil
 	}
@@ -127,12 +127,12 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		status, reason = "skipped", "model_unavailable"
 	}
 	fmt.Fprintf(stdout, "  transcription %s: %v; preserving audio\n", status, err)
-	return writeUntranscribed(outputDir, mkvPath, streams, srcDurationMS, audioDurationMS, sha256hex, enc, status, reason)
+	return writeUntranscribed(outputDir, mkvPath, recordedAtLocal, streams, srcDurationMS, audioDurationMS, sha256hex, enc, status, reason)
 }
 
 var errModelUnavailable = errors.New("model unavailable")
 
-func writeUntranscribed(outputDir, mkvPath string, streams []AudioStream, srcDurationMS, audioDurationMS int64, hash string, enc AudioEncode, status, reason string) error {
+func writeUntranscribed(outputDir, mkvPath, recordedAtLocal string, streams []AudioStream, srcDurationMS, audioDurationMS int64, hash string, enc AudioEncode, status, reason string) error {
 	for _, name := range []string{"captions.vtt", "summary.md"} {
 		_ = os.Remove(filepath.Join(outputDir, name))
 	}
@@ -148,13 +148,14 @@ func writeUntranscribed(outputDir, mkvPath string, streams []AudioStream, srcDur
 		return err
 	}
 	return WriteManifest(filepath.Join(outputDir, "manifest.json"), ManifestInput{
-		SrcBasename: filepath.Base(mkvPath), SrcDurationMS: srcDurationMS, DigestDurationMS: audioDurationMS, Streams: streams,
+		RecordedAtLocal: recordedAtLocal,
+		SrcBasename:     filepath.Base(mkvPath), SrcDurationMS: srcDurationMS, DigestDurationMS: audioDurationMS, Streams: streams,
 		AudioEncode: &enc,
 		Processing:  &portable.Processing{Transcription: portable.TranscriptionStatus{Status: status, Reason: reason}},
 	})
 }
 
-func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath string, streams []AudioStream, srcDurationMS, audioDurationMS int64, sha256hex string, enc AudioEncode, cfg BuildConfig, stdout io.Writer) error {
+func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recordedAtLocal string, streams []AudioStream, srcDurationMS, audioDurationMS int64, sha256hex string, enc AudioEncode, cfg BuildConfig, stdout io.Writer) error {
 	// Resolve the STT execution policy for this host: an explicit device/model
 	// always wins; otherwise derive both from the quality tier and detected
 	// hardware (a GPU box runs fp32, a CPU box int8). CUDA uses one host thread
@@ -333,6 +334,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath string
 	if err := WriteManifest(manifestPath, ManifestInput{
 		Processing:        &portable.Processing{Transcription: portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision}},
 		SrcBasename:       srcBasename,
+		RecordedAtLocal:   recordedAtLocal,
 		SrcDurationMS:     srcDurationMS,
 		DigestDurationMS:  audioDurationMS,
 		AudioEncode:       &enc,

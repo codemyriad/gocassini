@@ -309,6 +309,7 @@ type HintsProvenance struct {
 type ManifestInput struct {
 	Processing       *portable.Processing
 	SrcBasename      string
+	RecordedAtLocal  string
 	SrcDurationMS    int64
 	DigestDurationMS int64
 	AudioEncode      *AudioEncode
@@ -394,6 +395,16 @@ func WriteManifest(path string, in ManifestInput) error {
 		files.Transcripts = []artifactTranscriptRef{{ID: "untranscribed", Path: "transcript.words.v1.json", Default: true}}
 		prov = nil
 	}
+	// Explicit capture metadata takes precedence over legacy filename inference.
+	recordedAtLocal := strings.TrimSpace(in.RecordedAtLocal)
+	if recordedAtLocal != "" {
+		parsed, err := time.Parse("2006-01-02T15:04:05", recordedAtLocal)
+		if err != nil || parsed.Format("2006-01-02T15:04:05") != recordedAtLocal {
+			return fmt.Errorf("invalid recordedAtLocal %q", recordedAtLocal)
+		}
+	} else {
+		recordedAtLocal = meetingtime.InferRecordedAtLocal(in.SrcBasename)
+	}
 	doc := artifactManifest{
 		Processing:  in.Processing,
 		Kind:        "cassini.meeting-artifact.v1",
@@ -402,7 +413,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		Source: artifactSource{
 			Basename:        in.SrcBasename,
 			DurationMS:      in.SrcDurationMS,
-			RecordedAtLocal: meetingtime.InferRecordedAtLocal(in.SrcBasename),
+			RecordedAtLocal: recordedAtLocal,
 		},
 		Files:            files,
 		SpeakerCount:     logicalSpeakerCount(in.Streams),

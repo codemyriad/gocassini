@@ -24,12 +24,7 @@ type publishTask struct {
 }
 
 func (rt *Runtime) startPublishWorker() {
-	// Reconcile leftover promotion staging before any worker can promote
-	// again: a crash between replaceStagedDirectory's two renames leaves the
-	// destination (including the live published site) missing with only the
-	// ".backup" copy surviving in the staging root.
-	rt.reconcilePromotionLeftovers()
-	rt.sweepArtifactRetention()
+	// NewRuntime completes archive recovery before starting any workers.
 	rt.workerWG.Add(1)
 	go rt.publishWorker()
 }
@@ -66,6 +61,9 @@ func (rt *Runtime) publishWorker() {
 }
 
 func (rt *Runtime) runPublishJob(task publishTask) {
+	unlock := rt.store.lockArtifacts(task.JobID)
+	defer unlock()
+	defer rt.cleanupMediaAfterStage(task.JobID)
 	if err := rt.waitForRecordingIdle(); err != nil {
 		return
 	}
@@ -152,12 +150,13 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish staging cleanup failed id=%s attempt=%d path=%s: %v", task.JobID, task.AttemptNumber, attemptArtifactSitePath, err)
 	}
 
-	// The job is terminal now, so its attempt payloads are prunable under the
-	// configured policy (D-583). Housekeeping, after the success is recorded:
-	// nothing here can turn a published meeting into a failed job. The site this
-	// policy would prune for the current attempt is already gone above; the
-	// removal is idempotent, and the policy still governs the attempt `.run`,
-	// `.meeting` and every superseded attempt.
+	// Record the current archive only after successful delivery and indexing.
+	// Recoverable paired promotion precedes successful duplicate cleanup;
+	// superseded versions belong to the scheduled age-policy worker.
+	if err := rt.promotePublishedPair(task.JobID, task.AttemptNumber); err != nil {
+		rt.logger.Printf("published archive promotion pending id=%s: %v", task.JobID, err)
+		return
+	}
 	rt.pruneArtifactsForJob(task.JobID)
 }
 
@@ -193,7 +192,10 @@ func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (str
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "publish", publishInput, "--out", attemptSiteDir)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
-	cmd.Env = os.Environ()
+	cmd.Env, err = rt.mediaScratchEnv(os.Environ(), task.JobID, task.AttemptNumber)
+	if err != nil {
+		return attemptSiteDir, err
+	}
 	// Kill the whole process group on ctx cancel so exporter grandchildren
 	// don't outlive the publish.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

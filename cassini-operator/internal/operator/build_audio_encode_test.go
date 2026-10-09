@@ -70,6 +70,51 @@ func TestRebuildAudioEncodePolicyRefusesToGuess(t *testing.T) {
 	}
 }
 
+// Since publication (not the build) promotes current/<job>.meeting, the bundle
+// is also absent when nothing was published, when the publication carried no
+// audio (transcription-only `.json`, which a job that deletes its source media
+// always publishes), and when retention expired the published meeting's local
+// copy. Only the last has packets to keep and no record of how they were made.
+func TestRebuildAudioEncodePolicyWithoutAPublishedMeetingBundle(t *testing.T) {
+	tests := []struct {
+		name      string
+		published string // "": no publication; else the published seal's file name
+		wantErr   bool
+	}{
+		{name: "nothing published yet takes the default"},
+		{name: "transcription-only publication has no audio to keep", published: "job-1.json"},
+		{name: "published audio whose local copy expired is refused", published: "job-1.opus", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt, _ := newAdmissionTestRuntime(t, fakeModelCassini(t, readyInt8Inventory), "job-1")
+			if tt.published != "" {
+				seal := filepath.Join(attemptSealDir(rt.cfg.WorkRoot, "job-1", 1), tt.published)
+				res, err := rt.store.db.Exec(`UPDATE job_attempts SET artifact_opus_path=? WHERE job_id=? AND attempt_number=1`, seal, "job-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if n, _ := res.RowsAffected(); n != 1 {
+					t.Fatalf("seeded %d attempts, want 1", n)
+				}
+				if _, err := rt.store.db.Exec(`INSERT INTO artifact_availability(job_id,published_attempt,output) VALUES(?,1,'expired')`, "job-1"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := rt.rebuildAudioEncodePolicy("job-1")
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "keep its marks") {
+					t.Fatalf("rebuildAudioEncodePolicy() = %q, %v; want the rerun refused", got, err)
+				}
+				return
+			}
+			if err != nil || got != "" {
+				t.Fatalf("rebuildAudioEncodePolicy() = %q, %v; want the default encode", got, err)
+			}
+		})
+	}
+}
+
 // A rerun of a meeting published before D-850 must rebuild its audio with the
 // encode it was published with, or the publish discards the marks people made
 // on it ("different audio"). That holds for the audio-only rebuild after a

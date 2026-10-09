@@ -45,6 +45,25 @@ Behavior:
 - returns `503` when recording capacity is full
 - creates **no** job row on recording-capacity rejection
 
+## Capture policy
+
+`GET /settings` returns `retain_video` as a boolean, false by default. The
+administrator-only `PUT /settings` accepts an optional `retain_video` boolean
+and an optional `quality` field. Omitting `quality` preserves both the current
+quality and its automatic/user policy source; explicitly supplying it pins the
+quality as user-selected. Omitting `retain_video` preserves the saved choice;
+explicit false disables future video capture. The app offers this choice in
+**Operator → Publish pipeline**, independently of retention confirmation or
+reminder dismissal. Hardware detection and unrelated settings updates preserve
+explicit consent.
+
+Recording admission resolves the trusted saved policy and stores `retain_video`
+and `capture_mode` (`audio-only` or `audio-video`) in the job's request JSON.
+Caller-supplied recording parameters cannot override it. The admitted child is
+launched with that immutable snapshot, including an explicit `--retain-video`
+boolean. A later Save changes subsequent captures. Older jobs without a capture
+mode remain unknown; build/publish reruns reuse their existing media.
+
 ## List jobs
 
 ```http
@@ -175,6 +194,27 @@ Each event carries:
 - the current `attempt` when available
 
 The control panel uses this together with snapshot reads from `GET /jobs` and `GET /jobs/:id`.
+
+## Storage usage index
+
+```http
+GET /storage/usage/details
+POST /storage/usage/details
+```
+
+`GET` returns the most recently built storage index without scanning the
+filesystem or Nextcloud. `POST` rebuilds that index and returns the refreshed
+state in the same response. The response includes current and legacy published
+Nextcloud roots, local directory totals, and retention `categories`. Each category
+has `id`, `bytes`, `files`, `undated_bytes`, `undated_files`, and `days` containing
+UTC `{date, bytes, files}` aggregates. Dates follow retention lifecycle records;
+they describe files still retained, not historical disk usage. `category_error`
+indicates incomplete lifecycle classification. Directory `formats` remain for
+API compatibility. See [storage usage](../storage-usage.md) for category mappings,
+accounting scope and chart controls.
+
+The operator also rebuilds this index on fixed five-minute UTC boundaries. A
+`POST` does not move or reset that schedule.
 
 ## Summary of stage and state values
 
@@ -380,3 +420,27 @@ The current API is not:
 It is the operator’s control and inspection surface. The one exception is
 `/insights`: it is per-caller and multi-user by construction, which is why it
 lives outside the ADMIN operator surface rather than beside `/jobs`.
+
+## Publication and source retention
+
+`GET/PUT /settings` includes `source_retention`: `storage-policy` (default) or
+`delete-after-processing`. Omission preserves the saved choice. Disposal requires
+`meeting_format=json`, `retain_video=false`, and enabled prepared transcription;
+incompatible combinations return 400, and an unprepared selection returns 409.
+The administrator can change settings during a recording. Admission freezes
+capture and publication/retention policy in the job's request JSON; disposal jobs
+also preserve their required transcription settings. Legacy jobs are unchanged.
+
+Job details expose `availability.source_retention` and optional
+`availability.media_cleanup` with `status` (`waiting`, `pending`, `error`,
+`completed`), `last_error` and `completed_at`. Job-list rows include
+`media_cleanup`; disposal state events include both that job field and
+`availability`. Successfully removed source media uses availability `deleted`,
+distinct from age-based `expired`. Rerun returns 409 for disposal jobs even if
+cleanup has not finished.
+
+`POST /jobs/{id}/cleanup` requests a cleanup retry for a terminal disposal job.
+It returns 202 and resets the retry deadline; the worker checks due work every
+30 seconds, subject to existing job/archive locks. It never reruns processing.
+The installed `/operator/jobs/{id}/cleanup` route is ADMIN-only and requires the
+normal versioned AppAPI route update when deploying.
