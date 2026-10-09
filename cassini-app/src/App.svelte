@@ -78,21 +78,14 @@
   let overlayOpen = false;
   let viewerApp: { closeOverlay: () => void } | null = null;
 
-  // setupNotice is non-null when this deployment's recordings substrate is not
-  // proven (D-585). Where it renders depends on whether the archive can still be
-  // READ, which is not the same question as whether setup completed:
-  //
-  //   blocking   the per-caller scan finds no mount and the catalog fails closed
-  //              to empty, so the list underneath would be an error or a lie.
-  //              The notice takes the browse slot.
-  //   advisory   a restarted container that never re-ran setup. Publishing is
-  //              refused, but every published recording still opens, so the list
-  //              stays and the notice is a strip above it. Replacing it here
-  //              would blank a working archive on every reboot.
-  //
-  // Either way an administrator keeps the operator surface — that is the one
-  // place they can still act. Null (the normal case, and every case where the
-  // check itself could not be made) leaves the shell exactly as it was.
+  // setupNotice is non-null when this deployment cannot prove it can save new
+  // recordings (D-585). It is always a strip above the meeting list, never a
+  // replacement for it: with direct shares (#334) every reader opens their own
+  // Nextcloud shares, and reading never consults the setup check. Only
+  // publishing is refused (D-849); a read that fails says so in the list. An
+  // administrator also keeps the operator surface — the one place they can act.
+  // Null (the normal case, and every case where the check itself could not be
+  // made) leaves the shell exactly as it was.
   let setupNotice: SetupNoticeContent | null = null;
 
   // True while the notice's own "Try again" is running (D-759). The button is
@@ -598,12 +591,10 @@
         </div>
       </div>
     {/if}
-    {#if setupNotice && !setupNotice.blocking}
-      <!-- Advisory: setup is unproven but the archive still reads, so this is a
-           strip above the list, not a replacement for it. Kept beside the nav
-           rather than inside the browse slot so it stays put while an
-           administrator works on the operator surface — publishing is refused
-           there too. -->
+    {#if setupNotice}
+      <!-- Kept beside the nav rather than inside the browse slot so it stays
+           put while an administrator works on the operator surface — publishing
+           is refused there too. -->
       <div class="cassini-shell-banner" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
           <SetupNotice
@@ -616,50 +607,29 @@
         </div>
       </div>
     {/if}
-    {#if setupNotice?.blocking}
-      <!-- The browse slot, explaining itself. An administrator keeps the tab
-           bar above and the operator surface below: nothing about a missing
-           substrate stops them starting a recording or reading job history. -->
-      <div
-        class="cassini-shell-surface cassini-shell-scroll scroll-stable"
-        class:cassini-shell-hidden={surface !== "browse"}
-        data-theme={themeMode}
-      >
-        <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice
-            notice={setupNotice}
-            tone={setupNotice.tone}
-            busy={setupRetryBusy}
-            on:retry={retrySetupCheck}
-            on:navigate={openPublishPipeline}
-          />
-        </div>
-      </div>
-    {:else}
-      <!-- Browse stays mounted (preserves list/meeting/playback state) and is
-           hidden while an admin surface is active; those mount only when active
-           so the operator's SSE stream + polling don't run in the background. -->
-      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-        <ViewerApp {ncMode} {dataProvider} {audience} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
-          <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
-          <!-- Its opposite, driven by the same bit (D-700): the readiness card
-               says a question cannot be asked here, this one asks it. The Prepare
-               panel hands down the meetings it is describing; whether there is an
-               endpoint to ask, and whether this reader may pick a template, are
-               the shell's to know and neither is a fact the viewing layer has. -->
-          <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
-            {#if insightsReady}
-              <GenerateCard
-                {entries}
-                {operatorClient}
-                on:open={handleOpenPanel}
-                on:created={(event) => onInsightCreated(event.detail)}
-              />
-            {/if}
-          </svelte:fragment>
-        </ViewerApp>
-      </div>
-    {/if}
+    <!-- Browse stays mounted (preserves list/meeting/playback state) and is
+         hidden while an admin surface is active; those mount only when active
+         so the operator's SSE stream + polling don't run in the background. -->
+    <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
+      <ViewerApp {ncMode} {dataProvider} {audience} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
+        <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+        <!-- Its opposite, driven by the same bit (D-700): the readiness card
+             says a question cannot be asked here, this one asks it. The Prepare
+             panel hands down the meetings it is describing; whether there is an
+             endpoint to ask, and whether this reader may pick a template, are
+             the shell's to know and neither is a fact the viewing layer has. -->
+        <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
+          {#if insightsReady}
+            <GenerateCard
+              {entries}
+              {operatorClient}
+              on:open={handleOpenPanel}
+              on:created={(event) => onInsightCreated(event.detail)}
+            />
+          {/if}
+        </svelte:fragment>
+      </ViewerApp>
+    </div>
     {#if surface === "operator" && operatorClient}
       <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
            .cassini-root: putting .cassini-root's height:100% on the flex/scroll
@@ -676,26 +646,11 @@
       </div>
     {/if}
   </div>
-{:else if setupNotice?.blocking}
-  <!-- No operator surface to preserve, so the notice IS the app. It carries its
-       own height and scroll: without the operator tab there is no .cassini-shell
-       around it, and it is otherwise a direct child of the shadow :host (or #app
-       in the standalone build), both of which are height:100%. -->
-  <div class="cassini-setup-surface" data-theme={themeMode}>
-    <div class="cassini-root" data-theme={themeMode}>
-      <SetupNotice
-        notice={setupNotice}
-        tone={setupNotice.tone}
-        busy={setupRetryBusy}
-        on:retry={retrySetupCheck}
-        on:navigate={openPublishPipeline}
-      />
-    </div>
-  </div>
 {:else if setupNotice}
-  <!-- Advisory, with no operator tab. .cassini-shell is reused verbatim: it is
-       already the "fixed chrome above a full-height viewer" geometry the nav
-       relies on, which is the same problem. -->
+  <!-- The notice with no operator tab: a strip above the meeting list, as
+       everywhere. .cassini-shell is reused verbatim: it is already the "fixed
+       chrome above a full-height viewer" geometry the nav relies on, which is
+       the same problem. -->
   <div class="cassini-shell">
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
@@ -878,21 +833,15 @@
     display: none;
   }
 
-  /* The advisory strip: fixed chrome, like the nav, so the viewer below keeps a
+  /* The setup strip: fixed chrome, like the nav, so the viewer below keeps a
      bounded flex height. flex:none is what stops it stretching or being squeezed
-     when the meeting list grows. */
+     when the meeting list grows. Its administrator details can be long, so it
+     scrolls itself past 40% of the shell rather than squeezing the meeting list
+     (or the operator surface) out of view on a small screen (D-849). */
   .cassini-shell-banner {
     flex: none;
-    background: var(--color-main-background, var(--color-base-100, #ffffff));
-  }
-
-  /* The notice standing in for the whole app (no operator tab). Same bounded
-     scroller + background as .cassini-shell-scroll, but height:100% instead of
-     flex:1 because there is no .cassini-shell flex column above it here. */
-  .cassini-setup-surface {
-    height: 100%;
-    min-height: 100%;
+    max-height: 40%;
     overflow-y: auto;
-    background: var(--color-main-background, var(--color-base-200, #f3f4f6));
+    background: var(--color-main-background, var(--color-base-100, #ffffff));
   }
 </style>

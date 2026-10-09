@@ -15,7 +15,12 @@
 #     slide note;
 #   - `--scenario /dev/stdin` fed from a pipe works — the invocation used to
 #     probe this script in review; it used to fail because the path was
-#     resolve()d into a dead /proc/<pid>/fd/pipe:[...] target before reading.
+#     resolve()d into a dead /proc/<pid>/fd/pipe:[...] target before reading;
+#   - a run that fails partway leaves no stale manifest or reference behind;
+#   - cached output is reused only for the backend that produced it;
+#   - every committed fixture manifest under harness/media/processed was
+#     generated with kokoro, not the mock backend's tones, and every committed
+#     media file is the one that manifest's run produced (sha256).
 #
 # Coverage given up: ffmpeg and ffprobe are STUBS, so rendering the mp4/ivf/ogg
 # assets is not exercised — only the schedule, the WAV mix, and the manifest/
@@ -229,6 +234,139 @@ if manifest["duration_seconds"] != 12.0:
         f"FAIL: clean scenario duration changed: {manifest['duration_seconds']}"
     )
 print("clean scenario untouched")
+PY
+
+# A run that stops partway must not leave the previous run's manifest behind
+# to describe media it no longer matches. Rerun the clean scenario with an
+# ffmpeg that fails on the second participant: the first participant's media
+# is already replaced by then, so the old manifest has to be gone.
+mkdir -p "$TMP_DIR/failing-stub"
+cat > "$TMP_DIR/failing-stub/ffmpeg" <<'STUB'
+#!/usr/bin/env bash
+out=""
+for arg in "$@"; do out="$arg"; done
+case "$out" in
+  */ben.*) echo "stub ffmpeg: refusing $out" >&2; exit 1 ;;
+esac
+printf 'stub' > "$out"
+STUB
+chmod +x "$TMP_DIR/failing-stub/ffmpeg"
+[[ -f "$CLEAN_DIR/manifest.json" ]] || fail "clean run left no manifest to go stale"
+if PATH="$TMP_DIR/failing-stub:$PATH" python3 "$GEN" --scenario "$TMP_DIR/clean.json" \
+    --output-dir "$CLEAN_DIR" --backend mock --force >/dev/null 2>&1; then
+  fail "generator succeeded although ffmpeg failed"
+fi
+[[ ! -e "$CLEAN_DIR/manifest.json" ]] \
+  || fail "a partial run left the previous manifest describing replaced media"
+[[ ! -e "$CLEAN_DIR/reference.txt" ]] \
+  || fail "a partial run left the previous reference.txt behind"
+
+# Reuse of earlier output: only a complete run from the SAME backend counts,
+# and the manifest's relative paths resolve against its own directory, not
+# the caller's cwd.
+python3 - "$GEN" "$PROBE_DIR" <<'PY' || exit 1
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("generator", sys.argv[1])
+generator = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = generator  # dataclasses look their module up here
+spec.loader.exec_module(generator)
+manifest_path = Path(sys.argv[2]) / "manifest.json"
+
+os.chdir("/")
+if not generator.cached_manifest_is_complete(manifest_path, "mock"):
+    raise SystemExit("FAIL: complete mock output not reusable from another cwd")
+if generator.cached_manifest_is_complete(manifest_path, "kokoro"):
+    raise SystemExit("FAIL: mock-backend output accepted for a kokoro request")
+print("cache reuse is backend- and cwd-safe")
+PY
+
+# Media and manifest of a fixture must come from one run. The generator records
+# each streamed file's sha256; check a fresh run's manifest against its files.
+python3 - "$PROBE_DIR" <<'PY' || exit 1
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+out = Path(sys.argv[1])
+manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+for participant in manifest["participants"]:
+    hashes = participant.get("sha256") or {}
+    if set(hashes) != {"video_ivf", "audio_ogg"}:
+        raise SystemExit(f"FAIL: {participant['id']} records hashes for {sorted(hashes)}")
+    for key, recorded in hashes.items():
+        actual = hashlib.sha256((out / participant["paths"][key]).read_bytes()).hexdigest()
+        if actual != recorded:
+            raise SystemExit(f"FAIL: {participant['id']} {key} hash does not match its file")
+print("manifest records the streamed files' hashes")
+PY
+
+# The committed fixtures are what the harness streams and transcribes; tones
+# from the mock backend there transcribe to nothing (four of six showcase
+# voices did). Every committed fixture must be real speech, and every committed
+# media file must be the one its manifest recorded: a manifest restored with
+# git after a run that stopped partway would otherwise vouch for whatever media
+# the directory holds. Without LFS the media are pointer files, whose oid is
+# the content's sha256, so this runs on a plain checkout too. Only tracked
+# files count: locally generated fixtures are not committed and not checked.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+python3 - "$REPO_ROOT" <<'PY' || exit 1
+import hashlib
+import json
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+root = Path(sys.argv[1])
+tracked = subprocess.run(
+    ["git", "-C", str(root), "ls-files", "--", "harness/media/processed"],
+    check=True, capture_output=True, text=True,
+).stdout.split()
+by_dir = defaultdict(set)
+for rel in tracked:
+    path = Path(rel)
+    if len(path.parts) == 5:  # harness/media/processed/<fixture>/<file>
+        by_dir[path.parent].add(path.name)
+fixtures = sorted(d for d, names in by_dir.items() if "manifest.json" in names)
+if not fixtures:
+    raise SystemExit("FAIL: no committed fixture manifests found")
+
+
+def content_sha256(path: Path) -> str:
+    data = path.read_bytes()
+    if data.startswith(b"version https://git-lfs.github.com/spec/"):
+        for line in data.decode("utf-8").splitlines():
+            if line.startswith("oid sha256:"):
+                return line.split(":", 1)[1].strip()
+    return hashlib.sha256(data).hexdigest()
+
+
+for fixture in fixtures:
+    manifest = json.loads((root / fixture / "manifest.json").read_text(encoding="utf-8"))
+    backend = manifest.get("backend")
+    if backend != "kokoro":
+        raise SystemExit(
+            f"FAIL: {fixture}/manifest.json was generated with backend {backend!r}; "
+            "committed fixtures must be real speech (--backend kokoro)"
+        )
+    recorded = {}
+    for participant in manifest["participants"]:
+        for key, digest in (participant.get("sha256") or {}).items():
+            recorded[participant["paths"][key]] = digest
+    for name in sorted(by_dir[fixture] - {"manifest.json", "reference.txt"}):
+        if name not in recorded:
+            raise SystemExit(f"FAIL: {fixture}/{name} is committed but its manifest records no hash for it")
+        if content_sha256(root / fixture / name) != recorded[name]:
+            raise SystemExit(
+                f"FAIL: {fixture}/{name} is not the file its manifest was generated with; "
+                "regenerate the whole fixture"
+            )
+print(f"{len(fixtures)} committed fixture(s) use kokoro, media matching their manifest")
 PY
 
 echo "PASS: prepare-synthetic-meeting.py slide keeps ground truth honest"
