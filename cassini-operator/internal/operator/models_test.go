@@ -102,8 +102,10 @@ func TestModelRoutesUnderBothMountsAndDuplicateInstall(t *testing.T) {
 				if rec.Code != 202 {
 					t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
 				}
-				if strings.HasPrefix(rec.Header().Get("Location"), "//") {
-					t.Fatal("invalid Location")
+				// Through the AppAPI proxy a Location on a 202 becomes a 302
+				// the browser follows outside the proxy, to a 404.
+				if got := rec.Header().Get("Location"); got != "" {
+					t.Fatalf("install answered Location %q; the browser would follow it", got)
 				}
 			}
 			jobs, err := rt.modelJobs(rt.ctx)

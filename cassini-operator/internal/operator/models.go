@@ -249,7 +249,11 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 500, err.Error())
 			return
 		}
-		w.Header().Set("Location", strings.TrimRight(rt.cfg.BasePath, "/")+"/settings/models/jobs/"+j.ID)
+		// The body is the job, and Settings reads the jobs from the inventory
+		// afterwards, so the answer carries no Location. Under AppAPI, Nextcloud's proxy hands headers to
+		// PHP, which turns any answer with a Location into a 302 unless it is a
+		// 201 or a 3xx: the browser then followed the job's path outside the
+		// proxy and the install looked like a 404.
 		writeJSON(w, http.StatusAccepted, j)
 		return
 	}
