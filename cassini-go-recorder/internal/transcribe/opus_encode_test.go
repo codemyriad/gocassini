@@ -83,6 +83,23 @@ func TestMatchSourceSizesTheEncodeFromTheSources(t *testing.T) {
 			wantBitrate: 64000, wantCutoff: 20000,
 		},
 		{
+			// A participant who never unmuted leaves a track with no
+			// packets; there is no voice in it to make room for.
+			name:        "an empty track does not set the rate",
+			sources:     []SourceAudio{opusTrack(32000), {Codec: "opus", SampleRate: 48000, Empty: true}},
+			wantBitrate: 43000, wantCutoff: 20000,
+		},
+		{
+			name:        "an empty 24 kHz track still sets the bandwidth",
+			sources:     []SourceAudio{{Codec: "aac", SampleRate: 16000, SpeechBitrateBps: 24000}, {Codec: "flac", SampleRate: 24000, Empty: true}},
+			wantBitrate: 32000, wantCutoff: 12000,
+		},
+		{
+			name:        "only empty tracks is the band ceiling",
+			sources:     []SourceAudio{{Codec: "opus", SampleRate: 48000, Empty: true}},
+			wantBitrate: 64000, wantCutoff: 20000,
+		},
+		{
 			name:        "no sources at all is the old fullband 64k",
 			sources:     nil,
 			wantBitrate: 64000, wantCutoff: 20000,
@@ -170,7 +187,7 @@ func TestPacketRateHistogramsCountsStereoPacketsPerChannel(t *testing.T) {
 		`2,0.020000,0,""`, // an empty packet has no TOC byte: its stream's fallback
 		`3,0.020000,160`,  // no dump (a mixed recording): its stream's fallback
 	}, "\n") + "\n"
-	hists, err := packetRateHistograms(strings.NewReader(listing), map[int]int{0: 1, 1: 1, 2: 1, 3: 2})
+	hists, packets, err := packetRateHistograms(strings.NewReader(listing), map[int]int{0: 1, 1: 1, 2: 1, 3: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +199,9 @@ func TestPacketRateHistogramsCountsStereoPacketsPerChannel(t *testing.T) {
 	}
 	if !reflect.DeepEqual(hists, want) {
 		t.Fatalf("per-channel packet rates = %v, want %v", hists, want)
+	}
+	if wantPackets := map[int]int{0: 2, 1: 1, 2: 1, 3: 1}; !reflect.DeepEqual(packets, wantPackets) {
+		t.Fatalf("packet counts = %v, want %v (every packet, with or without a duration)", packets, wantPackets)
 	}
 }
 
@@ -198,16 +218,19 @@ func TestMatchSourceCountsAStereoSenderPerChannel(t *testing.T) {
 	runFFmpegForTest(t, "-f", "lavfi", "-i", "anoisesrc=d=4:c=pink:seed=1", "-f", "lavfi", "-i", "anoisesrc=d=4:c=pink:seed=2",
 		"-filter_complex", "[0][1]amerge=inputs=2", "-c:a", "libopus", "-b:a", "64k", "-ac", "2", stereo)
 	inputs := []string{"-i", stereo}
-	for i, seed := range []string{"3", "4"} {
+	// The third mono track holds under a second of sound (20 packets), like a
+	// participant who spoke once; it cannot be measured and must not decide
+	// the rate either.
+	for i, d := range []string{"4", "4", "0.4"} {
 		mono := filepath.Join(dir, "mono"+strconv.Itoa(i)+".ogg")
-		runFFmpegForTest(t, "-f", "lavfi", "-i", "anoisesrc=d=4:c=pink:seed="+seed, "-c:a", "libopus", "-b:a", "30k", "-ac", "1", mono)
+		runFFmpegForTest(t, "-f", "lavfi", "-i", "anoisesrc=d="+d+":c=pink:seed="+strconv.Itoa(3+i), "-c:a", "libopus", "-b:a", "30k", "-ac", "1", mono)
 		talk := filepath.Join(dir, "talk"+strconv.Itoa(i)+".ogg")
 		rewriteOpusAsTalkTrack(t, mono, talk)
 		inputs = append(inputs, "-i", talk)
 	}
 	mkv := filepath.Join(dir, "recording.mkv")
 	args := append([]string{}, inputs...)
-	for i := range 3 {
+	for i := range 4 {
 		args = append(args, "-map", strconv.Itoa(i)+":a")
 	}
 	runFFmpegForTest(t, append(args, "-c", "copy", mkv)...)
@@ -221,11 +244,14 @@ func TestMatchSourceCountsAStereoSenderPerChannel(t *testing.T) {
 			t.Fatalf("stream %d says %d channels; the fixture must look like a Talk recording (2 for every track)", s.Index, s.Channels)
 		}
 	}
-	rates, err := probeSpeechBitrates(mkv, streams)
+	rates, packets, err := probeSpeechBitrates(mkv, streams)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range streams {
+	if len(streams) != 4 || packets[streams[3].Index] >= minSpeechPackets {
+		t.Fatalf("fixture: want a fourth track under a second long, got %d streams, packets %v", len(streams), packets)
+	}
+	for _, s := range streams[:3] {
 		if r := rates[s.Index]; r < 24000 || r > 40000 {
 			t.Fatalf("stream %d reads %d bps per channel, want about 30 kb/s (rates %v)", s.Index, r, rates)
 		}
@@ -235,7 +261,7 @@ func TestMatchSourceCountsAStereoSenderPerChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	if enc.BitrateBps > 48000 {
-		t.Fatalf("encode = %+v; the stereo sender set the mono mix's rate from both of its channels", enc)
+		t.Fatalf("encode = %+v; the stereo sender set the mono mix's rate from both of its channels, or the short track forced the ceiling", enc)
 	}
 }
 

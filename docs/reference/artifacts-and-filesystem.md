@@ -78,7 +78,8 @@ The default, `match-source`, sizes the encode from the recording's tracks:
   mono (one channel): a participant sending stereo (two channels) at 64 kb/s
   counts as 32 kb/s, about what their voice needs once the two are mixed into
   one. The channel count is read from each Opus packet, since a Talk track's
-  header says stereo whether or not the sender codes it.
+  header says stereo whether or not the sender codes it. A track with under
+  a second of audio (a participant who never unmuted) does not count.
 
 `manifest.json` records the choice as `audioEncode`. A bundle without that
 record was built with the earlier encode, policy `fixed-64k` (64 kb/s whatever

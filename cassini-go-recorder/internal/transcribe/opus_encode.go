@@ -99,6 +99,11 @@ type SourceAudio struct {
 	// half of it on a second channel the downmix folds away, so their voice
 	// needs about what a 32 kb/s mono sender's does.
 	SpeechBitrateBps int
+	// Empty marks a track that carried under a second of audio (fewer than
+	// minSpeechPackets packets, often none: a participant who never
+	// unmuted). It still counts for bandwidth but not for bitrate: there is
+	// no voice in it for the mix to make room for.
+	Empty bool
 }
 
 // opusBand is one libopus bandwidth with the bitrate range this policy allows
@@ -157,10 +162,11 @@ func ChooseAudioEncode(policy string, sources []SourceAudio) (AudioEncode, error
 //   - Bitrate: the mix carries roughly one speaker at a time, so it needs
 //     about what the highest-rate single source spent on speech per channel
 //     (the mix is mono; see SourceAudio.SpeechBitrateBps), plus headroom for
-//     the re-encode, clamped to the band's floor and ceiling. A
-//     source with no usable measurement (lossless, PCM, too short) gets the
-//     ceiling, which for fullband is the old fixed 64k, so nothing gets worse
-//     than before.
+//     the re-encode, clamped to the band's floor and ceiling. Empty tracks
+//     (see SourceAudio.Empty) are left out. A source with no usable
+//     measurement (lossless, PCM, packets without durations), or a
+//     recording with no track that is not empty, gets the ceiling, which for
+//     fullband is the old fixed 64k, so nothing gets worse than before.
 //   - Application "audio": "voip" reshapes the signal (see
 //     AudioEncode.Application) rather than reproduce it. Against the decoded
 //     sources, "audio" scored at least as well at every rate measured, and
@@ -168,17 +174,24 @@ func ChooseAudioEncode(policy string, sources []SourceAudio) (AudioEncode, error
 func chooseMatchSourceEncode(sources []SourceAudio) AudioEncode {
 	bandwidthHz := 0
 	speechBps := 0
-	measured := len(sources) > 0
+	measured, counted := true, 0
 	for _, s := range sources {
 		bw := fullbandHz
 		if !isOpusCodec(s.Codec) && s.SampleRate > 0 {
 			bw = s.SampleRate / 2
 		}
 		bandwidthHz = max(bandwidthHz, bw)
+		if s.Empty {
+			continue
+		}
+		counted++
 		if s.SpeechBitrateBps <= 0 {
 			measured = false
 		}
 		speechBps = max(speechBps, s.SpeechBitrateBps)
+	}
+	if counted == 0 {
+		measured = false
 	}
 	if bandwidthHz == 0 {
 		bandwidthHz = fullbandHz
@@ -215,23 +228,29 @@ func ChooseMeetingAudioEncode(mkv string, streams []AudioStream, policy string) 
 	default:
 		return ChooseAudioEncode(policy, nil)
 	}
-	rates, err := probeSpeechBitrates(mkv, streams)
+	rates, packets, err := probeSpeechBitrates(mkv, streams)
 	if err != nil {
 		return AudioEncode{}, err
 	}
 	sources := make([]SourceAudio, 0, len(streams))
 	for _, s := range streams {
-		sources = append(sources, SourceAudio{Codec: s.Codec, SampleRate: s.SampleRate, SpeechBitrateBps: rates[s.Index]})
+		sources = append(sources, SourceAudio{
+			Codec:            s.Codec,
+			SampleRate:       s.SampleRate,
+			SpeechBitrateBps: rates[s.Index],
+			Empty:            packets[s.Index] < minSpeechPackets,
+		})
 	}
 	return ChooseAudioEncode(policy, sources)
 }
 
 // minSpeechPackets is the least a track must carry before its bitrate counts:
-// about a second of 20 ms frames. Shorter tracks say nothing reliable.
+// about a second of 20 ms frames. Shorter tracks say nothing reliable, and
+// hold too little sound to matter to the mix (see SourceAudio.Empty).
 const minSpeechPackets = 50
 
 // probeSpeechBitrates returns, per audio stream index, the bitrate the source
-// spent per coded channel while coding sound, from packet sizes alone (one
+// spent per coded channel while coding sound, and how many packets it holds, from packet sizes alone (one
 // demux pass, no decode). A whole-recording average would be meaningless for
 // Talk tracks, which are mostly silence between a participant's turns; see
 // speechBitrateFromHistogram.
@@ -244,7 +263,7 @@ const minSpeechPackets = 50
 // 3.1), so when every stream is Opus the probe also asks ffprobe for packet
 // data and reads that bit. Otherwise the stream's channel count is used,
 // except for Opus, whose header count cannot be trusted and counts as one.
-func probeSpeechBitrates(mkv string, streams []AudioStream) (map[int]int, error) {
+func probeSpeechBitrates(mkv string, streams []AudioStream) (rates, packets map[int]int, err error) {
 	readTOC := len(streams) > 0
 	fallbackChannels := make(map[int]int, len(streams))
 	for _, s := range streams {
@@ -264,29 +283,29 @@ func probeSpeechBitrates(mkv string, streams []AudioStream) (map[int]int, error)
 	cmd := exec.Command("ffprobe", append(args, "-of", "csv=p=0", mkv)...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("open packet probe: %w", err)
+		return nil, nil, fmt.Errorf("open packet probe: %w", err)
 	}
 	stderr := boundedBuffer{limit: 8192}
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start packet probe: %w", err)
+		return nil, nil, fmt.Errorf("start packet probe: %w", err)
 	}
-	hists, scanErr := packetRateHistograms(stdout, fallbackChannels)
+	hists, packets, scanErr := packetRateHistograms(stdout, fallbackChannels)
 	if scanErr != nil {
 		// Drain so ffprobe is not blocked on a full pipe before Wait.
 		_, _ = io.Copy(io.Discard, stdout)
 	}
 	if err := cmd.Wait(); err != nil {
-		return nil, fmt.Errorf("ffprobe packets: %w\n%s", err, truncate(stderr.String(), 800))
+		return nil, nil, fmt.Errorf("ffprobe packets: %w\n%s", err, truncate(stderr.String(), 800))
 	}
 	if scanErr != nil {
-		return nil, fmt.Errorf("read packet probe: %w", scanErr)
+		return nil, nil, fmt.Errorf("read packet probe: %w", scanErr)
 	}
-	rates := make(map[int]int, len(hists))
+	rates = make(map[int]int, len(hists))
 	for index, hist := range hists {
 		rates[index] = speechBitrateFromHistogram(hist)
 	}
-	return rates, nil
+	return rates, packets, nil
 }
 
 func isOpusCodec(codec string) bool {
@@ -297,12 +316,13 @@ func isOpusCodec(codec string) bool {
 // "stream_index,duration_time,size[,data]" line per packet: ffprobe writes a
 // section's fields in its own fixed order, not the order -show_entries names
 // them in) into per-stream histograms of per-channel packet bitrates (bps ->
-// packet count). With -show_data each packet line is followed by a hex dump
+// packet count), and per-stream packet counts (every packet, with or without a
+// duration). With -show_data each packet line is followed by a hex dump
 // of the packet whose first line starts "00000000: "; its first byte is the
 // Opus TOC byte. Every other dump line is ignored. A packet without a dump
 // counts at its stream's fallbackChannels (one when missing).
-func packetRateHistograms(r io.Reader, fallbackChannels map[int]int) (map[int]map[int]int, error) {
-	hists := map[int]map[int]int{}
+func packetRateHistograms(r io.Reader, fallbackChannels map[int]int) (hists map[int]map[int]int, packets map[int]int, err error) {
+	hists, packets = map[int]map[int]int{}, map[int]int{}
 	type packet struct {
 		index    int
 		bps      float64
@@ -342,6 +362,7 @@ func packetRateHistograms(r io.Reader, fallbackChannels map[int]int) (map[int]ma
 			continue // a hex dump line past the first
 		}
 		flush()
+		packets[index]++
 		duration, err2 := strconv.ParseFloat(fields[1], 64)
 		size, err3 := strconv.Atoi(fields[2])
 		if err2 != nil || err3 != nil || duration <= 0 || size < 0 {
@@ -350,7 +371,7 @@ func packetRateHistograms(r io.Reader, fallbackChannels map[int]int) (map[int]ma
 		pending = &packet{index: index, bps: float64(size) * 8 / duration, channels: max(fallbackChannels[index], 1)}
 	}
 	flush()
-	return hists, scanner.Err()
+	return hists, packets, scanner.Err()
 }
 
 // speechBitrateFromHistogram estimates the rate a track's encoder spent on
