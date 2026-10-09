@@ -50,6 +50,51 @@ func (rt *Runtime) testRoomMine(user string) bool {
 	return s.state.TestRoomOwner != "" && s.state.TestRoomOwner == user
 }
 
+// testRoomMissing asks Talk whether the stored conversation is still there.
+//
+// Separate from the connection probe on purpose: whether a conversation exists
+// is not a signaling question, and the probe cannot always get far enough to
+// ask. With no High Performance Backend it never reads Talk's recording
+// settings, so nothing ever reported the room gone — the URL still parsed,
+// validTestRoom still accepted it, and arming re-armed the test against a
+// conversation that had been deleted.
+//
+// Only asked about a room whose owner Cassini knows, which is every room it
+// made. A room a caller named is left alone: Talk answers 404 both for a
+// conversation that is gone and for a private one the asker cannot see, and
+// the installed-ExApp e2e arms against exactly such a room.
+//
+// The test conversation is public (roomType 3), so its owner reads it with a
+// plain OCS GET. Only a definite 404 counts as gone. Talk being unreachable or
+// refusing the read says nothing about whether the room exists, and throwing
+// away a usable room on a transient failure would discard a test an
+// administrator had already armed.
+func (rt *Runtime) testRoomMissing(ctx context.Context, room, owner string) (bool, error) {
+	token, owner := testRoomToken(room), strings.TrimSpace(owner)
+	if token == "" || owner == "" {
+		return false, nil
+	}
+	cfg, err := LoadExAppConfig()
+	if err != nil {
+		return false, fmt.Errorf("read the AppAPI environment: %w", err)
+	}
+	if !cfg.Active {
+		return false, nil
+	}
+	client := &http.Client{Timeout: ncProvisionTimeout}
+	status, body, err := cfg.apiGetAs(ctx, client, owner, cfg.ocsURL("/apps/spreed/api/v4/room/"+url.PathEscape(token)))
+	if err != nil {
+		return false, fmt.Errorf("ask Talk about the test room: %w", err)
+	}
+	if status == http.StatusNotFound {
+		return true, nil
+	}
+	if status < 200 || status >= 300 {
+		return false, fmt.Errorf("Talk answered %s when asked about the test room", ocsRefusal(status, body))
+	}
+	return false, nil
+}
+
 // roomIsGone reports whether the connection probe failed because the
 // conversation Cassini checks with no longer exists — or because Talk itself is
 // not there to hold it, which the probe cannot tell apart and which makes no
@@ -85,23 +130,28 @@ const testRoomName = "Cassini recording test"
 // accepts any existing room — that is the connection check, which only needs a
 // token to read recording settings with and does not care whose room it is.
 //
+// It returns the owner alongside the room, so the caller can record who the
+// conversation belongs to rather than infer it. The connection check used to
+// store no owner for a room it had just made itself, which lost the one fact
+// that distinguishes a room Cassini can speak for from one a caller supplied.
+//
 // roomType 3 is a PUBLIC conversation: joinable by its link, needing no invitee
 // list, and deletable when the test is done.
-func (rt *Runtime) ensureTestRoom(ctx context.Context, existing, currentOwner, wantOwner string) (string, error) {
+func (rt *Runtime) ensureTestRoom(ctx context.Context, existing, currentOwner, wantOwner string) (string, string, error) {
 	wantOwner = strings.TrimSpace(wantOwner)
 	if rt.validTestRoom(existing) && (wantOwner == "" || currentOwner == wantOwner) {
-		return existing, nil
+		return existing, currentOwner, nil
 	}
 	base := rt.readinessBackendURL()
 	if base == "" {
-		return "", fmt.Errorf("no usable Nextcloud base URL to build a test room on")
+		return "", "", fmt.Errorf("no usable Nextcloud base URL to build a test room on")
 	}
 	cfg, err := LoadExAppConfig()
 	if err != nil {
-		return "", fmt.Errorf("read the AppAPI environment: %w", err)
+		return "", "", fmt.Errorf("read the AppAPI environment: %w", err)
 	}
 	if !cfg.Active {
-		return "", fmt.Errorf("a test room needs the AppAPI environment")
+		return "", "", fmt.Errorf("a test room needs the AppAPI environment")
 	}
 	client := &http.Client{Timeout: ncProvisionTimeout}
 	status, body, err := cfg.apiPostFormAs(ctx, client, wantOwner, cfg.ocsURL("/apps/spreed/api/v4/room"), url.Values{
@@ -109,12 +159,12 @@ func (rt *Runtime) ensureTestRoom(ctx context.Context, existing, currentOwner, w
 		"roomName": {testRoomName},
 	})
 	if err != nil {
-		return "", fmt.Errorf("create a test room: %w", err)
+		return "", "", fmt.Errorf("create a test room: %w", err)
 	}
 	if status < 200 || status >= 300 {
 		// Said rather than swallowed: without this the failure reads as "the
 		// test did not start" with no indication that Talk refused it.
-		return "", fmt.Errorf("Talk refused to create a test room (HTTP %d)", status)
+		return "", "", fmt.Errorf("Talk refused to create a test room (HTTP %d)", status)
 	}
 	var payload struct {
 		OCS struct {
@@ -124,15 +174,21 @@ func (rt *Runtime) ensureTestRoom(ctx context.Context, existing, currentOwner, w
 		} `json:"ocs"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return "", fmt.Errorf("decode the created test room: %w", err)
+		return "", "", fmt.Errorf("decode the created test room: %w", err)
 	}
 	token := strings.TrimSpace(payload.OCS.Data.Token)
 	if token == "" {
-		return "", fmt.Errorf("Talk created a test room without a token")
+		return "", "", fmt.Errorf("Talk created a test room without a token")
 	}
 	roomURL := strings.TrimRight(base, "/") + "/call/" + token
 	if !rt.validTestRoom(roomURL) {
-		return "", fmt.Errorf("the created test room does not parse as a room URL")
+		return "", "", fmt.Errorf("the created test room does not parse as a room URL")
 	}
-	return roomURL, nil
+	// Whoever Talk attributed the creation to is the owner, and an empty
+	// wantOwner was Cassini's own provisioning user.
+	owner := wantOwner
+	if owner == "" {
+		owner = cfg.provisioningUser()
+	}
+	return roomURL, owner, nil
 }

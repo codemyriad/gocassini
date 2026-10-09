@@ -816,12 +816,17 @@ func TestTheConnectionCheckAcceptsAnyExistingRoom(t *testing.T) {
 	rt := &Runtime{}
 	rt.cfg.TalkBackendURL = "https://nc.test"
 	room := "https://nc.test/call/abc12345"
-	got, err := rt.ensureTestRoom(context.Background(), room, "admin", "")
+	got, owner, err := rt.ensureTestRoom(context.Background(), room, "admin", "")
 	if err != nil {
 		t.Fatalf("ensureTestRoom: %v", err)
 	}
 	if got != room {
 		t.Fatalf("got %q; the check must not replace a usable room it did not create", got)
+	}
+	// Reusing a room must not relabel whose it is: the administrator who armed
+	// it is still the only one who can record in it.
+	if owner != "admin" {
+		t.Fatalf("owner = %q, want \"admin\": a reused room keeps the owner it had", owner)
 	}
 }
 
@@ -1087,6 +1092,73 @@ func TestReadinessSaysWhoseTestRoomItIs(t *testing.T) {
 			}
 			if got := rt.adminReadiness(r).TestRoomMine; got != tc.want {
 				t.Fatalf("test_room_mine = %v, want %v: owner=%q asking=%q", got, tc.want, tc.owner, tc.asking)
+			}
+		})
+	}
+}
+
+// A test conversation can be deleted — by an administrator tidying up, or with
+// the whole Talk database — and nothing about the stored URL changes when it
+// is: it still parses, so validTestRoom still accepts it. The connection probe
+// only notices while it can read Talk's recording settings, which needs a High
+// Performance Backend, so a room deleted without one stayed stored and arming
+// re-armed the test against a conversation that was gone.
+func TestTestRoomMissingOnlyForgetsARoomTalkSaysIsGone(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		owner   string
+		want    bool
+		wantErr bool
+		asked   bool
+	}{
+		{name: "Talk says there is no such conversation", status: http.StatusNotFound, owner: "admin", want: true, asked: true},
+		{name: "the conversation is still there", status: http.StatusOK, owner: "admin", asked: true},
+		// A room is evidence an administrator may have armed a test against.
+		// Talk being broken is not a reason to throw it away.
+		{name: "Talk erroring says nothing about the room", status: http.StatusBadGateway, owner: "admin", wantErr: true, asked: true},
+		// Talk answers 404 both for a conversation that is gone and for a
+		// private one the asker cannot see, so a room whose owner Cassini does
+		// not know is never judged. The installed-ExApp e2e arms one.
+		{name: "a room Cassini cannot speak for is left alone", status: http.StatusNotFound, owner: "", asked: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath, gotAuth string
+			asked := false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				asked, gotPath, gotAuth = true, r.URL.Path, r.Header.Get("AUTHORIZATION-APP-API")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"ocs":{"meta":{"status":"x"}}}`))
+			}))
+			defer srv.Close()
+			t.Setenv("APP_SECRET", "shh")
+			t.Setenv("APP_ID", "gocassini")
+			t.Setenv("APP_VERSION", "0.1.0")
+			t.Setenv("NEXTCLOUD_URL", srv.URL)
+
+			rt := &Runtime{}
+			rt.cfg.TalkBackendURL = "https://nc.test"
+			got, err := rt.testRoomMissing(context.Background(), "https://nc.test/call/abc12345", tc.owner)
+			if got != tc.want {
+				t.Fatalf("missing = %v, want %v", got, tc.want)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if asked != tc.asked {
+				t.Fatalf("asked Talk = %v, want %v", asked, tc.asked)
+			}
+			if !tc.asked {
+				return
+			}
+			if !strings.HasSuffix(gotPath, "/apps/spreed/api/v4/room/abc12345") {
+				t.Fatalf("asked about %q, want the stored room's token", gotPath)
+			}
+			// Asked as the owner: they are a participant, so a 404 from them is
+			// the conversation being gone rather than one they cannot see.
+			want := base64.StdEncoding.EncodeToString([]byte(tc.owner + ":shh"))
+			if gotAuth != want {
+				t.Fatalf("asked as %q, want the room's owner %q", gotAuth, tc.owner)
 			}
 		})
 	}

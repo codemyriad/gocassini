@@ -372,12 +372,18 @@
           </ol>
           <p class="mb-3 text-sm text-base-content/70">A recording captures a call, so the call needs someone in it: Cassini joins to record, not to talk. The conversation and the test recording are both ordinary ones, and can be deleted afterwards.</p>
           <div class="flex flex-wrap gap-2">
-            {#if testFailed}
-            {:else if (waitingForTalk && testRoomHref) || awaitingPlayback}
-              <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
-            {:else}
-              <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center py-1.5 text-left text-xs!" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
-              {#if testRoomHref}<a class="btn btn-sm" href={testRoomHref} target="_blank" rel="noreferrer">Open test room</a>{/if}
+            <!-- A failed test's actions belong on the row, next to the reason
+                 it failed ("See why it stopped" and a retry, above), so this
+                 panel offers none. Written as a guard rather than an empty
+                 first branch, which read as an oversight and made every build
+                 print `block_empty`. -->
+            {#if !testFailed}
+              {#if (waitingForTalk && testRoomHref) || awaitingPlayback}
+                <button class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" disabled={busy} on:click={() => save({ action: "arm_test" })}>Prepare a new test</button>
+              {:else}
+                <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center py-1.5 text-left text-xs!" disabled={busy} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
+                {#if testRoomHref}<a class="btn btn-sm" href={testRoomHref} target="_blank" rel="noreferrer">Open test room</a>{/if}
+              {/if}
             {/if}
           </div>
           {#if report.test.started_at}
