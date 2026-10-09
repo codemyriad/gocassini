@@ -492,3 +492,57 @@ The optional `processing.transcription` object distinguishes `skipped` (reason
 (with model and revision). A completed zero-word transcript means no speech was
 transcribed; absent processing metadata retains the legacy interpretation. Consumers
 ignore unknown optional fields under the existing v1 compatibility rule.
+
+## Transcription-only JSON files
+
+`cassini pack meeting.meeting --out meeting.json` writes a self-contained
+transcription document. Its outer `kind` is `cassini-transcription` and `version`
+is `1`. This is a separate document contract; it is not an Ogg/Opus file.
+The schema is [cassini-transcription-v1.schema.json](../spec/cassini-transcription-v1.schema.json).
+
+The document has three content members:
+
+- `source`: the complete source portable-meeting manifest, including meeting
+  dates, duration, speakers, transcript descriptors, processing/provenance,
+  summary metadata, attachments and annotations. Its audio/integrity fields
+  describe the source recording and retain the annotation timeline identity.
+  They do not claim that audio is present or that a reader verified absent audio.
+- `bodies`: every transcript body, keyed by transcript ID, as inline JSON.
+  Includes every words variant and display document; no sidecar is required.
+- `tags`: descriptive player metadata and metadata mirrors. The producer omits
+  encoded payload chunks, which the inline documents replace.
+
+Bodies retain their compact JSON serialization and SHA-256 from the source
+transcript descriptors. Readers verify body hashes and sizes before use.
+Reformatting whitespace is allowed; changing body content requires rebuilding
+its descriptor. Adapters rebuild transport compression descriptors from the verified inline
+bodies. There are no audio packets or embedded playable media. Source display
+documents may retain descriptive media filenames; these are not playback sources.
+The `summary.md` attachment remains base64-encoded as in the Opus manifest.
+
+`inspect`, `inspect --transcript`, `inspect --meeting-times`, `publish`,
+`annotate show/apply/snapshot/carry`, `retag`, and meeting context/summary readers
+accept these documents. Annotation writes retain the source audio digest and
+meeting timeline; time-range marks remain useful without playback. File reads
+recognize the JSON document even when a Nextcloud recipient renames a share.
+
+In **Settings → Publish pipeline → Published meeting**, select **Transcription
+only (.json)** and save. The default is **Include audio (.opus)**. This uses the
+existing persisted `settings.json` and admin settings API (`meeting_format`);
+unsupported values are rejected. The selection is recorded before the first seal is queued and
+survives restart. Subsequent attempts of that meeting keep the recorded format,
+so reruns preserve its Nextcloud file ID, shares and annotation queue. Existing
+meetings from before this setting continue to use Opus. Changing the setting
+back and forth affects new meetings and safely creates a mixed archive.
+
+JSON catalog entries use `meetingPath`; Opus entries retain `audioPath`.
+`artifactPath` continues to mean a legacy directory. Readers expose the same
+transcripts, tags, summary, metadata and context features. The viewer labels JSON
+meetings **Transcription only**, displays a playback-unavailable notice, and
+omits the audio player. Downloads contain the original meeting file.
+
+This setting controls the published artefact, not capture: the recorder still
+uses local audio for transcription and source identity. The temporary Opus used
+while sealing JSON is removed. Local capture/build artefacts follow container
+retention. Nextcloud whole-meeting retention applies equally to both formats,
+using the same adopted published timestamps and conditional deletion safeguards.

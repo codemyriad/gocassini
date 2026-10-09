@@ -171,7 +171,7 @@ function validateMeeting(meeting, label) {
   if (typeof meeting.dateLabel !== "string" || meeting.dateLabel.trim() === "") {
     throw new Error(`${label} dateLabel must be a non-empty string`);
   }
-  if (typeof meeting.artifactPath !== "string" && typeof meeting.audioPath !== "string") {
+  if (typeof meeting.artifactPath !== "string" && typeof meeting.audioPath !== "string" && typeof meeting.meetingPath !== "string") {
     throw new Error(`${label} must define artifactPath or audioPath`);
   }
   return meeting;
@@ -195,7 +195,7 @@ function copySiteShell(sourceDir, outputDir, { overwrite }) {
 function copyCatalogArtifacts(siteDir, catalog, outputDir) {
   const copiedPaths = new Set();
   for (const meeting of catalog.meetings) {
-    for (const assetPath of [meeting.artifactPath, meeting.audioPath]) {
+    for (const assetPath of [meeting.artifactPath, meeting.audioPath, meeting.meetingPath]) {
       if (typeof assetPath !== "string" || assetPath.trim() === "") {
         continue;
       }

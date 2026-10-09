@@ -106,8 +106,8 @@ Documentation: https://gocassini.com/docs]]></description>
       </variable>
       <variable>
         <name>CASSINI_ARTIFACT_RETENTION</name>
-        <display-name>Working-file retention (optional)</display-name>
-        <description>How much of each recording's per-run working files Cassini keeps on its own volume. "sealed" (the default) reclaims a completed run's working copies, all of which are duplicated in the canonical library or were temporary staging, and keeps the sealed meeting file and every log. "superseded" only reclaims runs a rerun has replaced. "all" keeps everything, which is the escape hatch when something needs to be recovered from a completed run. Nothing removes the last copy of anything, and published recordings are never touched. Leave empty unless you are diagnosing a problem.</description>
+        <display-name>Deprecated working-file retention</display-name>
+        <description>Deprecated and ignored. Configure container-local retention in Operator → Storage. All categories default to keep forever; choose 7, 30, 60, 90 or custom days, evaluated on UTC dates. Successful duplicate working copies are cleaned independently. Published Nextcloud files and job metadata are not evicted.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>
@@ -205,7 +205,7 @@ Documentation: https://gocassini.com/docs]]></description>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^operator\/jobs\/[^\/]+\/rerun\/?$</url>
+        <url>^operator\/jobs\/[^\/]+\/(rerun|cleanup)\/?$</url>
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
@@ -228,6 +228,17 @@ Documentation: https://gocassini.com/docs]]></description>
         <verb>GET,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: storage usage summaries and per-category details. -->
+      <route>
+        <url>^operator\/storage\/usage\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/usage\/details\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: recordings storage status. GET reports whether the "cassini"
            service account exists and whether its Files tree and the sharing
            API are ready, with the setup steps still missing; POST
@@ -236,6 +247,26 @@ Documentation: https://gocassini.com/docs]]></description>
       <route>
         <url>^operator\/storage\/?$</url>
         <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/retention\/?$</url>
+        <verb>GET,PUT</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/retention\/sweep\/?$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/retention\/preview\/?$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/retention\/operations\/?$</url>
+        <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,

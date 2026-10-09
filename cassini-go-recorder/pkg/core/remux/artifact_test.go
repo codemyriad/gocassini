@@ -262,9 +262,10 @@ func TestMergeSegmentsEmbedsCassiniMetadata(t *testing.T) {
 	}
 
 	sess := session.Session{
-		Version:        1,
-		SessionID:      "meeting_20260310T120000Z",
-		StartedWallUTC: "2026-03-10T12:00:00Z",
+		Version:         1,
+		SessionID:       "meeting_20260310T120000Z",
+		StartedWallUTC:  "2026-03-10T12:00:00Z",
+		RecordedAtLocal: "2026-03-10T14:00:00",
 		Platform: session.Platform{
 			Name:       "nextcloudtalk",
 			Deployment: "custom",
@@ -416,6 +417,12 @@ func TestMergeSegmentsEmbedsCassiniMetadata(t *testing.T) {
 	var report embeddedReport
 	if err := json.Unmarshal(reportBody, &report); err != nil {
 		t.Fatalf("parse embedded report json: %v", err)
+	}
+	if got := tagValue(meta.Format.Tags, "RECORDED_AT_LOCAL", "recorded_at_local"); got != "2026-03-10T14:00:00" {
+		t.Fatalf("recorded_at_local = %q", got)
+	}
+	if report.Session.RecordedAtLocal != "2026-03-10T14:00:00" {
+		t.Fatalf("report lost local time: %+v", report.Session)
 	}
 	if report.Schema != embeddedReportSchema {
 		t.Fatalf("unexpected embedded report schema: %q", report.Schema)

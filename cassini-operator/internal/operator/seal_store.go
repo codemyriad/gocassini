@@ -42,8 +42,8 @@ func (s *Store) MarkSealQueued(ctx context.Context, id, jobArtifactMeetingPath, 
 
 	if _, err := tx.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, artifact_meeting_path = ?, updated_at = ?, build_finished_at = ?, seal_queued_at = ?, completed_at = NULL, error = NULL
-WHERE id = ?`, "seal", "queued", jobArtifactMeetingPath, queuedAt, queuedAt, queuedAt, id); err != nil {
+SET stage = ?, state = ?, updated_at = ?, build_finished_at = ?, seal_queued_at = ?, completed_at = NULL, error = NULL
+WHERE id = ?`, "seal", "queued", queuedAt, queuedAt, queuedAt, id); err != nil {
 		return fmt.Errorf("update seal queued: %w", err)
 	}
 	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
@@ -154,8 +154,8 @@ func (s *Store) MarkSealSucceeded(ctx context.Context, id, jobArtifactOpusPath, 
 
 	if _, err := tx.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, artifact_opus_path = ?, artifact_opus_sha256 = ?, updated_at = ?, seal_finished_at = ?, publish_queued_at = ?, completed_at = NULL, error = NULL
-WHERE id = ?`, "publish", "queued", jobArtifactOpusPath, opusSHA256, finishedAt, finishedAt, finishedAt, id); err != nil {
+SET stage = ?, state = ?, updated_at = ?, seal_finished_at = ?, publish_queued_at = ?, completed_at = NULL, error = NULL
+WHERE id = ?`, "publish", "queued", finishedAt, finishedAt, finishedAt, id); err != nil {
 		return fmt.Errorf("update seal success: %w", err)
 	}
 	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)

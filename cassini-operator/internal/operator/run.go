@@ -76,16 +76,19 @@ type Config struct {
 	// Empty means unset, which resolves to the default; a non-empty unknown
 	// name is rejected at startup.
 	PublishSink string
-	// ArtifactRetention names which attempt-scoped payloads under runs/ are
-	// pruned (retention.go, D-583). Empty means unset, which resolves to the
-	// default; a non-empty unknown name is rejected at startup.
+	// ArtifactRetention is a deprecated compatibility option. Known legacy
+	// values are accepted but ignored; Operator → Storage owns retention.
 	ArtifactRetention string
 }
 
 type Runtime struct {
-	modelMu     sync.Mutex
-	modelCancel context.CancelFunc
-	modelJobID  string
+	remoteRetentionMu sync.RWMutex
+	remoteRetention   *annotationService
+	retention         *retentionConfig
+	retentionSweepMu  sync.Mutex
+	modelMu           sync.Mutex
+	modelCancel       context.CancelFunc
+	modelJobID        string
 	// modelInventoryCache holds `cassini models list` results per device;
 	// see cachedModelInventory.
 	modelInventoryMu    sync.Mutex
@@ -220,21 +223,37 @@ type Runtime struct {
 	llmMu           sync.RWMutex
 	llm             LLMSettings
 	llmSettingsPath string
+	// storageUsage is an explicitly refreshed, process-local index. GET reads it
+	// in constant time; only POST /storage/usage performs filesystem and WebDAV
+	// traversal. storageUsageRefreshMu keeps two administrator-triggered scans
+	// from running over the same archive at once.
+	storageUsageMu        sync.RWMutex
+	storageUsageRefreshMu sync.Mutex
+	storageUsage          storageUsageResponse
+	// detailedStorageUsage combines published roots with retention categories,
+	// lifecycle dates and local directory totals. It refreshes independently
+	// from the aggregate report.
+	detailedStorageUsageMu        sync.RWMutex
+	detailedStorageUsageRefreshMu sync.Mutex
+	detailedStorageUsage          detailedStorageUsageResponse
 }
 
 type TriggerRequest struct {
-	Platform              string  `json:"platform"`
-	BaseURL               string  `json:"baseURL,omitempty"`
-	TalkConnectURL        string  `json:"talkConnectURL,omitempty"`
-	RoomToken             string  `json:"roomToken,omitempty"`
-	URL                   string  `json:"url,omitempty"`
-	TalkAuthMode          string  `json:"talkAuthMode"`
-	GuestName             string  `json:"guestName"`
-	DurationSeconds       *int    `json:"duration,omitempty"`
-	StopWhenRoomEmpty     bool    `json:"stopWhenRoomEmpty"`
-	RoomEmptyGraceSeconds float64 `json:"roomEmptyGrace"`
-	StopWhenRoomEmptySet  bool    `json:"-"`
-	RoomEmptyGraceSet     bool    `json:"-"`
+	ProcessingPolicy      *recordingProcessingPolicy `json:"processing_policy,omitempty"`
+	RetainVideo           bool                       `json:"retain_video"`
+	CaptureMode           string                     `json:"capture_mode,omitempty"`
+	Platform              string                     `json:"platform"`
+	BaseURL               string                     `json:"baseURL,omitempty"`
+	TalkConnectURL        string                     `json:"talkConnectURL,omitempty"`
+	RoomToken             string                     `json:"roomToken,omitempty"`
+	URL                   string                     `json:"url,omitempty"`
+	TalkAuthMode          string                     `json:"talkAuthMode"`
+	GuestName             string                     `json:"guestName"`
+	DurationSeconds       *int                       `json:"duration,omitempty"`
+	StopWhenRoomEmpty     bool                       `json:"stopWhenRoomEmpty"`
+	RoomEmptyGraceSeconds float64                    `json:"roomEmptyGrace"`
+	StopWhenRoomEmptySet  bool                       `json:"-"`
+	RoomEmptyGraceSet     bool                       `json:"-"`
 }
 
 type createJobResponse struct {
@@ -242,8 +261,9 @@ type createJobResponse struct {
 }
 
 type jobDetailResponse struct {
-	Job      Job          `json:"job"`
-	Attempts []JobAttempt `json:"attempts"`
+	Availability artifactAvailability `json:"availability"`
+	Job          Job                  `json:"job"`
+	Attempts     []JobAttempt         `json:"attempts"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -291,6 +311,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg.TalkSecretSource = prov.SecretSource
 	cfg.TalkRecordingBackendURL = prov.BackendURL
 
+	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "work root: %v\n", err)
+		return 1
+	}
+	defer unlockRoot()
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
@@ -309,6 +335,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	exappCfg.meetingMetadata = runtime.meetingMetadata
+	exappCfg.lifecycle = store
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
@@ -372,6 +399,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// silently does not serve published/meetings-context, and one configured
 	// with a relative CASSINI_BIN serves it via a path nothing validated.
 	exappCfg.CassiniBin = cfg.CassiniBin
+	// Keep the full storage index warm on fixed five-minute boundaries. This is
+	// started after the ExApp configuration is complete because the index may
+	// read Nextcloud Files as well as local artifacts.
+	runtime.startDetailedStorageUsageRebuilder(exappCfg)
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{
@@ -413,7 +444,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// (and is commonly empty in an ExApp), so applying the standalone default to
 	// it here would misreport the resolved nextcloud-files sink as local.
 	logger.Printf("publish_sink -> %s", sink.Name())
-	logger.Printf("artifact_retention -> %s", artifactRetentionOrDefault(cfg.ArtifactRetention))
+	if cfg.ArtifactRetention != "" {
+		logger.Printf("artifact-retention / CASSINI_ARTIFACT_RETENTION is deprecated and ignored; configure Operator → Storage (default keep forever)")
+	}
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
@@ -544,7 +577,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
 	fs.StringVar(&cfg.PublishSink, "sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
-	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "which attempt artifacts under runs/ are pruned (policies: "+strings.Join(artifactRetentionNames(), ", ")+"; default "+defaultArtifactRetention+")")
+	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "deprecated and ignored; configure Operator → Storage (default keep forever)")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
@@ -728,6 +761,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	rt := &Runtime{
+		retention:    newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
 		ctx:          ctx,
 		cancel:       cancel,
 		store:        store,
@@ -770,11 +804,13 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	if searchIndex, err := openSearchStore(searchStorePath(cfg.DBPath), logger); err != nil {
 		logger.Printf("search index unavailable (%v); meetings will publish but not be indexed", err)
 	} else {
+		searchIndex.lifecycle = store
 		rt.searchStore = searchIndex
 	}
 	if metadata, err := openMeetingMetadataStore(meetingMetadataPath(cfg.DBPath), logger); err != nil {
 		logger.Printf("meeting metadata index unavailable (%v); list metadata will need archive recovery", err)
 	} else {
+		metadata.lifecycle = store
 		rt.meetingMetadata = metadata
 	}
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
@@ -837,6 +873,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		}
 		return rt.runRecordDoctorContext(probeCtx)
 	})
+	rt.reconcilePromotionLeftovers()
+	rt.recoverArtifactOperations()
+	rt.reconcileArtifactDuplicatesOnStartup()
 	rt.startModelWorker()
 	rt.startProcessingMonitor()
 	rt.startBuildWorkers()
@@ -844,6 +883,8 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.startPublishWorker()
 	rt.workerWG.Add(1)
 	go rt.requeueDispatcher()
+	rt.startRetentionWorker()
+	rt.startMediaCleanupWorker()
 	return rt
 }
 
@@ -924,7 +965,13 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// (D-718).
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
+		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
+		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
 		{"/storage", exappCfg.storageHandler(rt)},
+		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
+		{"/storage/retention/sweep", http.HandlerFunc(rt.retentionSweepHandler)},
+		{"/storage/retention/preview", http.HandlerFunc(rt.remoteRetentionPreviewHandler)},
+		{"/storage/retention/operations", http.HandlerFunc(rt.remoteRetentionOperationsHandler)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the
 		// old hand-rolled list because main moved route registration into this
@@ -962,7 +1009,16 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	exappCfg.lifecycle = rt.store
 	annotations := newAnnotationService(rt, exappCfg, logger)
+	rt.remoteRetentionMu.Lock()
+	rt.remoteRetention = annotations
+	rt.remoteRetentionMu.Unlock()
+	if annotations != nil {
+		if err := annotations.recoverRemoteRetentionAtStartup(rt.ctx); err != nil {
+			logger.Printf("remote retention recovery: %v", err)
+		}
+	}
 	search := rt.searchDeps()
 	if annotations != nil {
 		search.importAnnotations = annotations.importListedDocuments
@@ -984,6 +1040,17 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	if annotations != nil {
 		rt.startInitialAnnotationBuild(exappCfg, logger)
 		annotations.register(root)
+		if rt.ctx != nil && rt.retention != nil {
+			rt.workerWG.Add(1)
+			go func() {
+				defer rt.workerWG.Done()
+				rt.retentionSweepMu.Lock()
+				defer rt.retentionSweepMu.Unlock()
+				if err := annotations.runRemoteRetention(rt.ctx, time.Now()); err != nil {
+					logger.Printf("startup remote retention: %v", err)
+				}
+			}()
+		}
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)
@@ -1064,6 +1131,28 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("list jobs: %v", err))
 			return
 		}
+		rows, err := rt.store.db.QueryContext(r.Context(), `SELECT job_id FROM artifact_availability WHERE source='expired'`)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load recording availability")
+			return
+		}
+		expired := map[string]bool{}
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				break
+			}
+			expired[id] = true
+		}
+		err = errors.Join(err, rows.Err(), rows.Close())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load recording availability")
+			return
+		}
+		for i := range jobs {
+			jobs[i].SourceExpired = expired[jobs[i].ID]
+			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i])
+		}
 		writeJSON(w, http.StatusOK, jobs)
 	case http.MethodPost:
 		rt.handleCreateJob(w, r)
@@ -1125,6 +1214,9 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	defer rt.recordWG.Done()
+	unlock := rt.store.lockArtifacts(job.ID)
+	defer unlock()
+	defer rt.cleanupMediaAfterStage(job.ID)
 	// The record slot is freed as soon as the record subprocess exits (the
 	// releaseSlot call below): post-record bookkeeping — Talk delivery with
 	// its retry schedule, the build handoff — must not hold recording
@@ -1181,6 +1273,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
+	rt.removeSuccessfulCaptureDuplicate(job.ID, job.CurrentAttemptNumber)
 	// Tell spreed the recording stopped. Status only — the meeting itself
 	// goes to Nextcloud as the published .opus, never through Talk's
 	// recording store (D-551). Retried with backoff but never fails the
@@ -1226,6 +1319,27 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 		return createJobResponse{}, nil, errRecordBusy
 	}
 
+	// Freeze trusted capture policy at admission; caller JSON is never consent.
+	settings := rt.currentSettings()
+	if err := normalizeSourceRetention(&settings); err != nil {
+		rt.releaseRecordSlot()
+		return createJobResponse{}, nil, fmt.Errorf("%w: %v", errRecordingSetup, err)
+	}
+	req.ProcessingPolicy = &recordingProcessingPolicy{MeetingFormat: settings.MeetingFormat, SourceRetention: settings.SourceRetention}
+	if settings.SourceRetention == sourceDeleteAfterProcessing {
+		req.ProcessingPolicy.Transcription = &settings
+	}
+	req.RetainVideo = settings.RetainVideo
+	req.CaptureMode = "audio-only"
+	if req.RetainVideo {
+		req.CaptureMode = "audio-video"
+	}
+	var err error
+	requestBody, err = encodeTriggerRequest(req)
+	if err != nil {
+		rt.releaseRecordSlot()
+		return createJobResponse{}, nil, err
+	}
 	jobID := ulid.Make().String()
 	now := nowUTCString()
 	job := Job{
@@ -1309,6 +1423,8 @@ func looksLikeRepoRoot(dir string) bool {
 }
 
 type Store struct {
+	artifactGate         sync.RWMutex
+	artifactJobs         sync.Map
 	db                   *sql.DB
 	stateChangePublisher stateChangePublisher
 }
@@ -1337,6 +1453,14 @@ func OpenStore(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.ensureMeetingLifecycleSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.ensureRetentionSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -1345,15 +1469,17 @@ func (s *Store) Close() error {
 }
 
 type Job struct {
-	ID                   string  `json:"id"`
-	Provider             string  `json:"provider"`
-	RequestJSON          string  `json:"request_json"`
-	Stage                string  `json:"stage"`
-	State                string  `json:"state"`
-	CurrentAttemptNumber int     `json:"current_attempt_number"`
-	RerunCount           int     `json:"rerun_count"`
-	ArtifactRunPath      *string `json:"artifact_run_path"`
-	ArtifactMeetingPath  *string `json:"artifact_meeting_path"`
+	MediaCleanup         *mediaCleanupStatus `json:"media_cleanup,omitempty"`
+	SourceExpired        bool                `json:"source_expired,omitempty"`
+	ID                   string              `json:"id"`
+	Provider             string              `json:"provider"`
+	RequestJSON          string              `json:"request_json"`
+	Stage                string              `json:"stage"`
+	State                string              `json:"state"`
+	CurrentAttemptNumber int                 `json:"current_attempt_number"`
+	RerunCount           int                 `json:"rerun_count"`
+	ArtifactRunPath      *string             `json:"artifact_run_path"`
+	ArtifactMeetingPath  *string             `json:"artifact_meeting_path"`
 	// ArtifactOpusPath is the canonical portable meeting, current/<id>.opus,
 	// promoted from the attempt the seal stage sealed. ArtifactOpusSHA256 is
 	// that file's digest, which the publish worker re-checks before delivering
@@ -1444,6 +1570,11 @@ INSERT INTO jobs (
 	)
 	if err != nil {
 		return fmt.Errorf("insert job: %w", err)
+	}
+	if deletesSourceMedia(job) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO media_cleanup(job_id) VALUES(?)`, job.ID); err != nil {
+			return err
+		}
 	}
 	if err := insertInitialAttemptTx(tx, job); err != nil {
 		return err
@@ -1896,6 +2027,14 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		rt.handleStopJob(w, r, id)
 		return
 	}
+	if action == "cleanup" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleRetryMediaCleanup(w, r, id)
+		return
+	}
 	if action == "rerun" {
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)
@@ -1922,7 +2061,17 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("list job attempts: %v", err))
 		return
 	}
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts})
+	for i := range attempts {
+		a := &attempts[i]
+		a.FilesPresent = map[string]bool{}
+		for key, p := range map[string]*string{"run": a.ArtifactRunPath, "meeting": a.ArtifactMeetingPath, "opus": a.ArtifactOpusPath, "site": a.ArtifactSitePath, "record_log": a.RecordLogPath, "build_log": a.BuildLogPath, "seal_log": a.SealLogPath, "publish_log": a.PublishLogPath} {
+			if p != nil {
+				_, e := os.Stat(*p)
+				a.FilesPresent[key] = e == nil
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job)})
 }
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {

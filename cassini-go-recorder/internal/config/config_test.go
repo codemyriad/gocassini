@@ -202,3 +202,18 @@ func TestFromFlagsAcceptsWriteReport(t *testing.T) {
 		t.Fatalf("expected write-report to be true")
 	}
 }
+
+func TestRetainVideoRequiresExplicitFlag(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{{nil, false}, {[]string{"--retain-video"}, true}, {[]string{"--retain-video=false"}, false}} {
+		cfg, err := FromFlags(tc.args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.RetainVideo != tc.want {
+			t.Fatalf("%v: video=%v", tc.args, cfg.RetainVideo)
+		}
+	}
+}

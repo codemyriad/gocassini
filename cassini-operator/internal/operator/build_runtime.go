@@ -49,6 +49,9 @@ func (rt *Runtime) buildWorker(index int) {
 }
 
 func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
+	unlock := rt.store.lockArtifacts(task.JobID)
+	defer unlock()
+	defer rt.cleanupMediaAfterStage(task.JobID)
 	// MaxBuildWorkers controls queue consumers, not simultaneous GPU inference.
 	// Hold one process-wide admission lock across claim, resource checks, and the
 	// complete build so two workers cannot both observe the same RAM/VRAM as free.
@@ -107,6 +110,17 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 			maxDeferrals := rt.buildResourceDeferralLimit()
 			nextDeferral := task.DeferralCount + 1
 			if unavailable.permanent || nextDeferral > maxDeferrals {
+				job, getErr := rt.store.GetJob(context.Background(), task.JobID)
+				if getErr != nil {
+					rt.logger.Printf("read build policy: %v", getErr)
+					return
+				}
+				if deletesSourceMedia(job) {
+					if err := rt.store.MarkBuildFailed(context.Background(), task.JobID, builtMeetingPath, unavailable.Error(), finishedAt); err != nil {
+						rt.logger.Printf("terminal build failure: %v", err)
+					}
+					return
+				}
 				blocked, blockErr := rt.store.MarkBuildBlocked(
 					context.Background(), task, strings.TrimSpace(unavailable.Error()), finishedAt,
 				)
@@ -166,14 +180,8 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	if err := SetMeetingBundleRoom(builtMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
 		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, builtMeetingPath, err)
 	}
-	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, builtMeetingPath, task.JobID)
-	if promoteErr != nil {
-		rt.logger.Printf("build promote failed id=%s attempt=%d worker=%d meeting=%s: %v", task.JobID, task.AttemptNumber, workerIndex, builtMeetingPath, promoteErr)
-		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, builtMeetingPath, promoteErr.Error(), finishedAt); updateErr != nil {
-			rt.logger.Printf("build promote failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
-		}
-		return
-	}
+	// Current output denotes the last successful publication, never a build.
+	canonicalMeetingPath := builtMeetingPath
 	// Hand off to the seal worker, not to publish. Sealing the portable `.opus`
 	// used to be a detached goroutine started right here, after publish was
 	// already queued: best-effort, unordered across reruns, and invisible when
@@ -335,6 +343,18 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// headroom.
 	limits := resourceLimitsFromEnv()
 	settings := rt.currentSettings()
+	job, policyErr := rt.store.GetJob(ctx, task.JobID)
+	if policyErr != nil {
+		return meetingPath, policyErr
+	}
+	dispose := deletesSourceMedia(job)
+	if dispose {
+		policy := processingPolicy(job)
+		if policy.Transcription == nil {
+			return meetingPath, fmt.Errorf("missing saved transcription policy")
+		}
+		settings = *policy.Transcription
+	}
 	device, model, mode, reason := deviceCPU, "", "off", "disabled"
 	atCeiling := task.DeferralCount >= rt.buildResourceDeferralLimit()
 	// keepAudio drops transcription from this build. At the retry ceiling it is
@@ -357,12 +377,15 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 			// any other resource wait and fall back only at the retry ceiling.
 			return meetingPath, err
 		default:
+			if dispose {
+				return meetingPath, err
+			}
 			keepAudio(err)
 		}
 	}
 	rt.logger.Printf("resource governor: job %s transcription=%s device=%s model=%s reason=%s", task.JobID, mode, device, model, reason)
 	if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, model), rt.logger.Printf); err != nil {
-		if mode != "on" || !atCeiling || !transientResourceError(err) {
+		if dispose || mode != "on" || !atCeiling || !transientResourceError(err) {
 			return meetingPath, err
 		}
 		// Still short of RAM for the model at the ceiling; audio needs far less.
@@ -378,7 +401,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	env = setEnvKey(env, "CASSINI_TRANSCRIPTION", mode)
 	env = setEnvKey(env, "CASSINI_TRANSCRIPTION_REASON", reason)
 	buildEnv, err := limits.applyToEnv(env, device, model)
-	if err != nil && mode == "on" && atCeiling && transientResourceError(err) {
+	if !dispose && err != nil && mode == "on" && atCeiling && transientResourceError(err) {
 		// Still no VRAM at the retry ceiling: keep the audio rather than block.
 		keepAudio(err)
 		env = setEnvKey(setEnvKey(env, "CASSINI_TRANSCRIPTION", mode), "CASSINI_TRANSCRIPTION_REASON", reason)
@@ -391,12 +414,19 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
+	buildEnv, err = rt.mediaScratchEnv(buildEnv, task.JobID, task.AttemptNumber)
+	if err != nil {
+		return meetingPath, err
+	}
 	cmd.Env = buildEnv
 	// Kill the whole process group on ctx cancel so transcriber/ffmpeg
 	// grandchildren don't outlive the build.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
+		if dispose {
+			return meetingPath, fmt.Errorf("cassini build: %w", err)
+		}
 		// A fatal native inference error can terminate the recorder. A checkpoint
 		// proves media preparation completed, so retry only the media path.
 		_, prepared := os.Stat(filepath.Join(meetingPath, ".transcription-started"))
@@ -420,6 +450,14 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	}
 	if _, err := os.Stat(filepath.Join(meetingPath, "cassini.json")); err != nil {
 		return meetingPath, fmt.Errorf("build output missing cassini.json: %w", err)
+	}
+	if dispose {
+		if err := requireCompletedTranscription(meetingPath); err != nil {
+			return meetingPath, err
+		}
+		if err := stampMediaPolicy(meetingPath, job); err != nil {
+			return meetingPath, err
+		}
 	}
 	return meetingPath, nil
 }

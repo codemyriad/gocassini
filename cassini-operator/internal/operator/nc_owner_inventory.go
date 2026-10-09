@@ -84,7 +84,7 @@ func (c ExAppConfig) ownerRecordingNames(ctx context.Context, client *http.Clien
 			continue
 		}
 		name := path.Base(href.Path)
-		if !strings.HasSuffix(name, ".opus") || path.Base(name) != name {
+		if !isMeetingFile(name) || path.Base(name) != name {
 			continue
 		}
 		for _, stat := range item.Propstat {

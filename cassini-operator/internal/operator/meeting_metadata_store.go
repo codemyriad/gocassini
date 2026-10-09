@@ -28,7 +28,10 @@ CREATE INDEX IF NOT EXISTS meeting_metadata_by_date ON meeting_metadata(date_lab
 `
 )
 
-type meetingMetadataStore struct{ sidecarDB }
+type meetingMetadataStore struct {
+	sidecarDB
+	lifecycle *Store
+}
 
 func meetingMetadataPath(dbPath string) string { return sidecarPath(dbPath, meetingMetadataFilename) }
 
@@ -37,21 +40,33 @@ func openMeetingMetadataStore(file string, logger *log.Logger) (*meetingMetadata
 	if err != nil {
 		return nil, err
 	}
-	return &meetingMetadataStore{db}, nil
+	return &meetingMetadataStore{sidecarDB: db}, nil
 }
 
 func (s *meetingMetadataStore) Put(ctx context.Context, fileID int64, opusName string, entry json.RawMessage) error {
-	if s == nil || fileID <= 0 || !strings.HasSuffix(opusName, ".opus") || path.Base(opusName) != opusName {
+	if s != nil && s.lifecycle != nil {
+		release, err := meetingProjectionLocks.acquire(ctx, opusName)
+		if err != nil {
+			return err
+		}
+		defer release()
+		if err := (ExAppConfig{lifecycle: s.lifecycle}).meetingNotRetired(ctx, opusName); err != nil {
+			return err
+		}
+	}
+
+	if s == nil || fileID <= 0 || !isMeetingFile(opusName) || path.Base(opusName) != opusName {
 		return fmt.Errorf("invalid meeting metadata key")
 	}
 	var probe struct {
-		DateLabel string `json:"dateLabel"`
-		AudioPath string `json:"audioPath"`
+		DateLabel   string `json:"dateLabel"`
+		AudioPath   string `json:"audioPath"`
+		MeetingPath string `json:"meetingPath"`
 	}
 	if err := json.Unmarshal(entry, &probe); err != nil {
 		return fmt.Errorf("decode meeting metadata: %w", err)
 	}
-	if catalogEntryOpusName(probe.AudioPath, "") != opusName {
+	if catalogEntryOpusName(meetingPath(probe.AudioPath, probe.MeetingPath), "") != opusName {
 		return fmt.Errorf("meeting metadata does not describe %s", opusName)
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO meeting_metadata

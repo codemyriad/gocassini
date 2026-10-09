@@ -111,7 +111,7 @@ The operator supports these main flags:
 | `--work-root` | per-job artifact root |
 | `--site-root` | live published site root |
 | `--sink` | where published meetings are delivered (`local` or `nextcloud-files`; an installed ExApp defaults to `nextcloud-files`, otherwise `local`) |
-| `--artifact-retention` | which attempt payloads under `runs/` are pruned (`all`, `superseded`, `sealed`; default `sealed`) |
+| `--artifact-retention` | Deprecated and ignored; use Operator → Storage. All categories default to keep forever. |
 | `--cassini-bin` | Cassini CLI binary path |
 | `--max-record-workers` | recording slot count |
 | `--max-build-workers` | build worker count |
@@ -127,7 +127,7 @@ Important env vars:
 | `WORK_ROOT` | fallback work-root env |
 | `CASSINI_OPERATOR_SITE_ROOT` | site-root path |
 | `CASSINI_PUBLISH_SINK` | publish sink name; `--sink` wins over it. Declared in `appinfo/info.xml` so AppAPI injects it |
-| `CASSINI_ARTIFACT_RETENTION` | artifact retention policy; `--artifact-retention` wins over it |
+| `CASSINI_ARTIFACT_RETENTION` | Deprecated and ignored; retained for deployment compatibility. Use Operator → Storage. |
 | `SITE_ROOT` | fallback site-root env |
 | `CASSINI_BIN` | Cassini CLI binary path |
 | `CASSINI_MAX_RECORD_WORKERS` | record worker count |
@@ -211,3 +211,11 @@ Before pulling demo data, set `DEMO_DATA_URL` in a local shell or gitignored `.e
 
 - [Running the local developer stack](../local-developer-stack.md)
 - [Artifacts and filesystem](./artifacts-and-filesystem.md)
+
+### Published meeting format
+
+In **Settings → Publish pipeline → Published meeting**, choose **Include audio
+(.opus)** (default) or **Transcription only (.json)**, then save. The operator
+persists this as `meeting_format` in `settings.json` through the existing admin
+settings API; no restart is needed. New meetings use this selection, while
+reruns retain their original format. Local capture retention is independent.

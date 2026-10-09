@@ -29,9 +29,16 @@ provisioning, permissions and the full meeting workflow, use the
 ## Build and verify
 
 ```bash
+npm exec -- playwright install chromium
 npm run test
 npm run build:all
 ```
+
+The test command runs unit tests and Vitest browser checks for retention,
+its first-run review, eviction, and storage charts. Those browser checks mount
+the real Svelte components with synthetic operator responses, so no operator
+or Nextcloud server is required.
+The installed ExApp browser validation remains part of the harness workflow.
 
 `build` produces the standalone app. `build:embedded` produces the single JS/CSS
 bundle served by the ExApp on Nextcloud’s embedded page and checks its shape.

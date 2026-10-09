@@ -39,6 +39,7 @@ export interface PortableAttachment {
 }
 
 export interface PortableMeetingManifest {
+  transcriptionOnly?: boolean;
   kind?: string;
   version?: number;
   profile?: string;
@@ -109,6 +110,23 @@ export interface PortableTranscriptDescriptor {
 export interface ExtractedPortableManifest {
   manifest: PortableMeetingManifest;
   tags: Record<string, string>;
+}
+
+export async function extractTranscriptionDocument(value: unknown): Promise<ExtractedPortableManifest> {
+  const doc = value as {kind?: string; version?: number; source?: PortableMeetingManifest; bodies?: Record<string, unknown>};
+  if (doc?.kind !== "cassini-transcription" || doc.version !== 1 || !doc.source || !doc.bodies) throw new Error("Unsupported transcription document");
+  const manifest = doc.source;
+  validatePortableIndexManifest(manifest);
+  const tags: Record<string, string> = {};
+  for (const entry of [...manifest.transcripts!, ...(manifest.readableTranscripts ?? [])]) {
+    if (!Object.hasOwn(doc.bodies, entry.id)) throw new Error(`Missing transcript ${entry.id}`);
+    const raw = JSON.stringify(doc.bodies[entry.id]).replace(/[<>&\u2028\u2029]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+    const bytes = new TextEncoder().encode(raw);
+    if (await sha256Hex(bytes) !== entry.payloadRef.sha256 || bytes.length !== entry.payloadRef.rawBytes) throw new Error(`Transcript integrity mismatch: ${entry.id}`);
+    tags[entry.payloadRef.prefix + "INLINE_JSON"] = raw;
+  }
+  manifest.transcriptionOnly = true;
+  return {manifest: await resolvePortableDefaultBodies(manifest, tags), tags};
 }
 
 export async function extractPortableManifestFromArrayBuffer(
@@ -626,6 +644,7 @@ export async function loadPortableTranscriptBody(
   tags: Record<string, string>,
   payloadRef: PortablePayloadRef,
 ): Promise<unknown> {
+  if (tags[payloadRef.prefix + "INLINE_JSON"]) return JSON.parse(tags[payloadRef.prefix + "INLINE_JSON"]);
   if (!payloadRef || typeof payloadRef.prefix !== "string" || payloadRef.prefix === "") {
     throw new Error("portable transcript payloadRef is missing a prefix");
   }

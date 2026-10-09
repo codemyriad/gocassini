@@ -104,6 +104,14 @@ Flags:
 		return backfillSearchExitNotStarted
 	}
 
+	jobs, err := OpenStore(cfg.DBPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "open durable meeting lifecycle: %v\n", err)
+		return backfillSearchExitNotStarted
+	}
+	defer jobs.Close()
+	exapp.lifecycle = jobs
+
 	runCtx, cancel := context.WithTimeout(ctx, backfillSearchTimeout)
 	defer cancel()
 
@@ -125,6 +133,14 @@ Flags:
 		return backfillSearchExitOK
 	}
 
+	// This maintenance process reads local current bundles as well as the
+	// remote archive. Do not race the server's promotion/retention worker.
+	unlockRoot, err := lockWorkRoot(cfg.WorkRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "local archive is in use; stop the operator before backfill: %v\n", err)
+		return backfillSearchExitNotStarted
+	}
+	defer unlockRoot()
 	index, err := openSearchStore(searchStorePath(cfg.DBPath), logger)
 	if err != nil {
 		fmt.Fprintf(stderr, "open search index: %v\nnothing was written\n", err)
@@ -132,7 +148,8 @@ Flags:
 	}
 	defer index.Close()
 
-	rt := &Runtime{cfg: cfg, logger: logger, searchStore: index}
+	index.lifecycle = jobs
+	rt := &Runtime{cfg: cfg, store: jobs, logger: logger, searchStore: index}
 	// What was delivered is the archive's record to give — one PROPFIND per
 	// meeting — and the archive reader is the fallback for meetings this
 	// operator has no local copy of, which after a volume rebuild can be most
@@ -171,7 +188,7 @@ func (c ExAppConfig) archiveBackfillTargets(ctx context.Context) ([]searchBackfi
 	}
 	targets := make([]searchBackfillTarget, 0, len(names))
 	for _, name := range names {
-		jobID := strings.TrimSuffix(name, ".opus")
+		jobID := meetingStem(name)
 		if jobID == "" || strings.ContainsAny(jobID, "/\\\x00\r\n") {
 			continue
 		}

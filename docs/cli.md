@@ -52,6 +52,18 @@ Record a meeting and finish with one portable file:
 ./bin/cassini record --call "$CALL_URL" --out "./My Meetings/2026-03-11 Weekly Sync.opus"
 ```
 
+Recording defaults to audio only. To retain camera video in the source capture,
+explicitly add `--retain-video`:
+
+```bash
+./bin/cassini record --call "$CALL_URL" --retain-video --out ./runs/weekly-sync.run
+```
+
+`--retain-video=false` explicitly selects the default. The portable `.opus` output
+contains audio only in either mode. CLI capture flags apply to that invocation;
+installed recordings use the administrator's saved **Capture video** policy.
+Rebuilding an existing source keeps its media and does not start another capture.
+
 If Cassini fails after capture or during processing, fix the issue and rerun the
 same command with the same `--out` path. Cassini keeps resumable state in a
 hidden `.cassini-work/` directory next to the target file and reuses the

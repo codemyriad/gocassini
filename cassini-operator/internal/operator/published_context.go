@@ -188,7 +188,7 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 			http.NotFound(w, r)
 			return
 		}
-		destPath := filepath.Join(staging, id+".opus")
+		destPath := filepath.Join(staging, id+meetingExtension(source))
 		status, err := c.stageMeetingForContext(ctx, client, caller, source, destPath, &budget)
 		switch {
 		case err == nil:
@@ -360,6 +360,7 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 		Meetings []struct {
 			ID           string `json:"id"`
 			AudioPath    string `json:"audioPath"`
+			MeetingPath  string `json:"meetingPath"`
 			ArtifactPath string `json:"artifactPath"`
 		} `json:"meetings"`
 	}
@@ -384,8 +385,8 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 		// format has only an artifactPath directory and no recording to read, so
 		// it is absent here and answers 404 for the same reason
 		// meetings/<id>.opus does: there is no file.
-		base := path.Base(strings.TrimSpace(entry.AudioPath))
-		if !strings.HasSuffix(base, ".opus") {
+		base := path.Base(strings.TrimSpace(meetingPath(entry.AudioPath, entry.MeetingPath)))
+		if !isMeetingFile(base) {
 			continue
 		}
 		if _, taken := readable[id]; !taken {

@@ -471,7 +471,7 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 			s.logf("insights: run=%s caller=%s asked for id=%s, which is not in their readable set", run.ID, run.CreatedBy, id)
 			return "", insightFailure(insightReasonMeetingUnavailable), false
 		}
-		destPath := filepath.Join(staging, id+".opus")
+		destPath := filepath.Join(staging, id+meetingExtension(source))
 		status, err := s.exapp.stageMeetingForContext(ctx, s.client, run.CreatedBy, source, destPath, &budget)
 		switch {
 		case err == nil:

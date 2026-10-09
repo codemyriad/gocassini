@@ -255,9 +255,14 @@ other AI setting is readable without being an administrator.
 
 ## Deletion and uninstall
 
-- **Attempt history is pruned by policy.** Per-attempt working artifacts under
-  the operator volume are removed according to `CASSINI_ARTIFACT_RETENTION`
-  (default `sealed`); the delivered copy in Nextcloud Files is the durable one.
+- **Recording media can be deleted after processing.** Select **Nothing** under
+  **Keep after each recording** to delete audio, video and raw packet logs after
+  successful publication or terminal failure. Transcription artifacts, including
+  the published JSON, remain. Audio is stored temporarily, and processing cannot
+  be rerun. See [Recording media and publication](/docs/guides/recording-media).
+- **Other container artifacts follow Storage policies.** Recordings, attempt
+  history, current output and stage logs have separate policies, defaulting to
+  keep forever. Nextcloud whole-meeting retention is configured separately.
 - **A delivered attempt's staging copy is removed once Nextcloud accepts it**, so
   the full recording does not linger on the app volume outside the Nextcloud
   access model.

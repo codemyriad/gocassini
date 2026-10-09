@@ -13,7 +13,7 @@ import (
 func TestGuestParticipantDisplayNameDecoupledSessionID(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "guest-identity.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestGuestParticipantDisplayNameDecoupledSessionID(t *testing.T) {
 func TestParticipantsUpdateCallStateUnknownPreservesIdentity(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "presence-identity.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestResolveRemoteSessionIDAndForgetParticipantIdentity(t *testing.T) {
 func TestPresenceUpdateBeforeSignalingJoinResolvesCorrectly(t *testing.T) {
 	tmp := t.TempDir()
 	artifactPath := filepath.Join(tmp, "presence-first.mkv")
-	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder", true)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
 	}

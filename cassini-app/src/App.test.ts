@@ -79,7 +79,7 @@ describe("the shell's setup features", () => {
     // hint here would put a template picker in front of someone whose request
     // for it 403s.
     expect(appSource).toContain(
-      "operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;",
+      "operatorClient = probe.available ? (operatorClient ?? new OperatorClient(operatorBasePath)) : null;",
     );
     expect(appSource).not.toMatch(/isLikelyAdminHint[^\n]*operatorClient/);
   });
@@ -112,7 +112,7 @@ describe("the shell after the Setup tab", () => {
     expect(appSource).toContain(">\n        Operator\n      </button>");
     expect(appSource).not.toContain('selectSurface("setup")');
     expect(appSource).not.toContain('surface === "setup"');
-    expect(appSource).not.toContain("Setup.svelte");
+    expect(appSource).not.toContain('"./Setup.svelte"');
   });
 
   it("sends the setup notice's own button somewhere that exists", () => {
@@ -189,8 +189,13 @@ describe("the setup notice in the shell", () => {
       expect(branch).toMatch(/<ViewerApp\b/);
       // ...and draws the notice only as the strip above it.
       expect(branch.match(/<SetupNotice\b/g)).toHaveLength(1);
-      expect(branch.indexOf("cassini-shell-banner")).toBeLessThan(branch.indexOf("<SetupNotice"));
-      expect(branch.indexOf("<SetupNotice")).toBeLessThan(branch.indexOf("<ViewerApp"));
+      // The nearest banner before the notice must be its own, not another
+      // strip's (the retention reminder also sits above the list).
+      const notice = branch.indexOf("<SetupNotice");
+      const banner = branch.lastIndexOf("cassini-shell-banner", notice);
+      expect(banner).toBeGreaterThan(-1);
+      expect(branch.slice(banner, notice)).not.toContain("{/if}");
+      expect(notice).toBeLessThan(branch.indexOf("<ViewerApp"));
     }
   });
 

@@ -29,6 +29,11 @@ describe("meetingIdFromUrl", () => {
 });
 
 describe("singleMeetingEntry", () => {
+  it("embeds JSON with its original meeting path and no audio path", () => {
+    const entry = singleMeetingEntry("https://x.test/Team-Sync.json?v=3");
+    expect(entry).toMatchObject({id: "Team-Sync", title: "Team Sync", meetingPath: "https://x.test/Team-Sync.json?v=3"});
+    expect(entry.audioPath).toBeUndefined();
+  });
   it("reads a title and date out of the name, as the static export does", () => {
     const entry = singleMeetingEntry("https://x.test/Daily-Standup--2026-03-13--12-00-00.opus");
     expect(entry).toMatchObject({

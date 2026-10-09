@@ -2,9 +2,12 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -47,15 +50,14 @@ func (rt *Runtime) sealWorker() {
 //  1. claim               seal/queued -> seal/running (conditional)
 //  2. pack                attempt .meeting -> attempt .opus  (verified by cassini pack)
 //  3. digest              sha256 of the sealed file
-//  4. promote             attempt .opus -> current/<job>.opus (atomic rename)
-//  5. MarkSealSucceeded   records both paths + the digest AND queues publish
+//  4. MarkSealSucceeded   records the attempt path/digest and queues publish
 //
-// A crash between 4 and 5 leaves a correct canonical `.opus` and a seal/queued
-// row the requeue dispatcher re-runs — packing the same bundle again produces
-// the same artifact, so the retry costs nothing. A crash the other way round
-// would advertise a canonical artifact that was never promoted, which is why
-// the promotion comes first.
+// Only successful delivery promotes current output. A failed seal or publish
+// therefore cannot replace the last successfully published local archive.
 func (rt *Runtime) runSealJob(task sealTask) {
+	unlock := rt.store.lockArtifacts(task.JobID)
+	defer unlock()
+	defer rt.cleanupMediaAfterStage(task.JobID)
 	if err := rt.waitForRecordingIdle(); err != nil {
 		return
 	}
@@ -86,11 +88,7 @@ func (rt *Runtime) runSealJob(task sealTask) {
 		return
 	}
 
-	canonicalOpus, err := promoteOpusFile(rt.cfg.WorkRoot, attemptOpus, task.JobID)
-	if err != nil {
-		rt.failSeal(task, attemptOpus, err, finishedAt)
-		return
-	}
+	canonicalOpus := attemptOpus // promotion follows successful delivery
 
 	if err := rt.enqueuePublishAfterSeal(task, canonicalOpus, attemptOpus, digest, finishedAt); err != nil {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
@@ -117,6 +115,37 @@ func (rt *Runtime) failSeal(task sealTask, attemptOpus string, cause error, fini
 // source of truth and the requeue dispatcher re-delivers any task the channel
 // could not accept (full queue) or never saw (operator restart) (D-367).
 func (rt *Runtime) enqueueSealJobNonBlocking(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
+	format := rt.currentSettings().MeetingFormat
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil {
+		return err
+	}
+	if policy := processingPolicy(job); policy != nil {
+		format = policy.MeetingFormat
+	}
+	// A rerun updates the existing artefact in its original format. This
+	// preserves its Nextcloud file ID, shares and durable annotation identity.
+	var previous string
+	if err := rt.store.db.QueryRowContext(context.Background(), `SELECT format FROM meeting_format WHERE job_id=? ORDER BY attempt_number LIMIT 1`, jobID).Scan(&previous); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if previous != "" {
+		format = previous
+	} else {
+		var published int
+		if err := rt.store.db.QueryRowContext(context.Background(), `SELECT count(*) FROM job_attempts WHERE job_id=? AND publish_finished_at IS NOT NULL AND state='succeeded'`, jobID).Scan(&published); err != nil {
+			return err
+		}
+		if published > 0 {
+			format = "opus"
+		}
+	}
+	if format == "" {
+		format = "opus"
+	}
+	if _, err := rt.store.db.ExecContext(context.Background(), `INSERT INTO meeting_format(job_id,attempt_number,format) VALUES(?,?,?) ON CONFLICT DO NOTHING`, jobID, attemptNumber, format); err != nil {
+		return err
+	}
 	if err := rt.store.MarkSealQueued(context.Background(), jobID, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt); err != nil {
 		return err
 	}
@@ -169,17 +198,26 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 	// The room's display name is also the meeting title (D-462); its token is
 	// what `cassini pack` derives the published room id from (D-622).
 	roomToken, roomName := rt.talkRoomForJob(task.JobID)
+	format := "opus"
+	err = rt.store.db.QueryRowContext(ctx, `SELECT format FROM meeting_format WHERE job_id=? AND attempt_number=?`, task.JobID, task.AttemptNumber).Scan(&format)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	env, err := rt.mediaScratchEnv(os.Environ(), task.JobID, task.AttemptNumber)
+	if err != nil {
+		return "", err
+	}
 	return packAttemptMeetingToOpus(
 		ctx,
 		rt.cfg.CassiniBin,
 		task.ArtifactMeetingPath,
-		attemptOpusPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber),
+		filepath.Join(attemptSealDir(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber), task.JobID+"."+format),
 		roomName,
 		roomToken,
 		roomName,
 		task.JobID,
 		task.AttemptNumber,
-		sink,
+		sink, env,
 	)
 }
 
