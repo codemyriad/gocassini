@@ -52,6 +52,10 @@ STACK_TOPOLOGY=(
 )
 
 cleanup() {
+  if [[ -n "${JANUS_MONITOR_PID:-}" ]] && kill -0 "$JANUS_MONITOR_PID" 2>/dev/null; then
+    kill "$JANUS_MONITOR_PID"
+    wait "$JANUS_MONITOR_PID" || true
+  fi
   log "Cleaning up local test stack"
   "$REPO_ROOT/bin/cassini" dev stack down --volumes "${STACK_TOPOLOGY[@]}" || true
 }
@@ -71,10 +75,26 @@ export CALL_URL
 rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PHASE1_LOG" "$PHASE2_LOG"
 mkdir -p "$(dirname "$OUTPUT")"
 
+# Start before either publisher, and retain observations through the rejoin.
+if [[ "${RETAIN_VIDEO:-true}" == "false" ]]; then
+  JANUS_EVIDENCE="${FINAL_OUTPUT%.mkv}-janus.json"
+  JANUS_READY="${JANUS_EVIDENCE}.ready"
+  rm -f "$JANUS_READY" "$JANUS_EVIDENCE"
+  python3 "$SCRIPT_DIR/monitor-audio-only-janus.py" --output "$JANUS_EVIDENCE" --ready-file "$JANUS_READY" &
+  JANUS_MONITOR_PID=$!
+  for ((i=0; i<40; i++)); do
+    [[ -f "$JANUS_READY" ]] && break
+    kill -0 "$JANUS_MONITOR_PID" 2>/dev/null || { echo "Janus monitor failed to start" >&2; exit 1; }
+    sleep 0.25
+  done
+  [[ -f "$JANUS_READY" ]] || { echo "Janus monitor not ready" >&2; exit 1; }
+fi
+
 (
   cd "$RECORDER_DIR"
   go run ./cmd/gocassini \
     --mode talk \
+    --retain-video="${RETAIN_VIDEO:-true}" \
     --call-url "$CALL_URL" \
     --name "$NAME_PREFIX" \
     --duration "$REC_DURATION" \
@@ -113,6 +133,12 @@ log "Phase-two recorder evidence boundary: ${PHASE_TWO_BOUNDARY_NS} participant=
 ) >"$PHASE2_LOG" 2>&1 || true
 
 wait "$REC_PID" || true
+
+if [[ "${RETAIN_VIDEO:-true}" == "false" ]]; then
+  kill "$JANUS_MONITOR_PID"
+  wait "$JANUS_MONITOR_PID"
+  JANUS_MONITOR_PID=""
+fi
 
 if [[ ! -f "$FINAL_OUTPUT" ]]; then
   log "[FAIL] final mkv not found: $FINAL_OUTPUT"
@@ -194,8 +220,17 @@ if [[ -z "$STREAMS_DIR" || ! -d "$STREAMS_DIR" ]]; then
   log "[FAIL] could not derive session artifact streams directory from MKV metadata"
   exit 1
 fi
+BOUNDARY_KIND="any"
+if [[ "${RETAIN_VIDEO:-true}" == "false" ]]; then
+  BOUNDARY_KIND="audio"
+  SESSION_JSON="$(cassini_session_json_from_mkv "$FINAL_OUTPUT")"
+  python3 "$SCRIPT_DIR/verify-audio-only-rejoin.py" \
+    --input "$FINAL_OUTPUT" --session "$SESSION_JSON" \
+    --janus "$JANUS_EVIDENCE" --boundary-ns "$PHASE_TWO_BOUNDARY_NS"
+fi
 if ! POST_BOUNDARY_EVIDENCE="$(
   "$SCRIPT_DIR/verify-post-boundary-stream.sh" \
+    --kind "$BOUNDARY_KIND" \
     --events "$EVENTS_PATH" \
     --boundary-ns "$PHASE_TWO_BOUNDARY_NS" \
     --participant "$PHASE_TWO_PARTICIPANT" \

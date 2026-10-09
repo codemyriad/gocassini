@@ -1,7 +1,7 @@
 // One recording, addressed by URL (D-775).
 //
 // The public embed shows a single meeting that nothing catalogued: there is no
-// catalog.json and no operator, just a `.opus` at a URL. MeetingView already
+// catalog.json and no operator, just a meeting file at a URL. MeetingView already
 // takes a MeetingCatalogEntry and loads it through the DataProvider, so all
 // that is missing is the entry — which is derived here, from the URL, because
 // the URL is the only thing the embedding page told us.
@@ -30,7 +30,7 @@ export function meetingIdFromUrl(src: string): string {
   } catch {
     // A malformed escape is not a reason to refuse to show the meeting.
   }
-  return name.replace(/\.opus$/i, "") || "meeting";
+  return name.replace(/\.(?:opus|json)$/i, "") || "meeting";
 }
 
 // describeMeeting reads a title and a date out of the id the way the static
@@ -45,7 +45,7 @@ export function singleMeetingEntry(src: string, title = ""): MeetingCatalogEntry
     id,
     title: title.trim() || described.title,
     dateLabel: described.dateLabel,
-    audioPath: src,
+    ...(/\.json(?:[?#]|$)/i.test(src) ? { meetingPath: src } : { audioPath: src }),
   };
 }
 

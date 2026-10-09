@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cassini transcription-only meeting v1",
+  "type": "object",
+  "required": ["kind", "version", "source", "bodies", "tags"],
+  "properties": {
+    "kind": { "const": "cassini-transcription" },
+    "version": { "const": 1 },
+    "source": {
+      "$ref": "cassini-portable-meeting-manifest-v1.schema.json",
+      "description": "Complete source recording metadata. Audio identity is lineage; this document contains no playable audio."
+    },
+    "bodies": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+      "additionalProperties": { "type": "object" },
+      "description": "All transcript bodies, keyed by source descriptor ID. Each compact body's bytes and SHA-256 must match its descriptor."
+    },
+    "tags": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Source metadata mirrors and descriptive player tags, excluding encoded payload chunks."
+    }
+  }
+}

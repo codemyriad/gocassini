@@ -20,6 +20,7 @@ type RunBundle struct {
 }
 
 type RunManifest struct {
+	CaptureMode  string           `json:"capture_mode,omitempty"`
 	Kind         string           `json:"kind"`
 	Version      string           `json:"version"`
 	CreatedAtUTC string           `json:"created_at_utc"`
@@ -164,6 +165,21 @@ func ensureEmptyDir(path string) error {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 	return nil
+}
+
+// StartRunBundleCapture records policy before any media is received, so a
+// failed/empty attempt still has provenance. Reused sources do not call it.
+func StartRunBundleCapture(bundle RunBundle, sourceMode, captureMode string) error {
+	meta, err := readRunManifest(bundle.ManifestPath)
+	if err != nil {
+		return err
+	}
+	meta.SourceMode = sourceMode
+	meta.CaptureMode = captureMode
+	meta.State = bundleStatePreparing
+	meta.Stage = "record"
+	meta.Error = ""
+	return writeRunManifest(bundle, meta)
 }
 
 func UpdateRunBundleStatus(bundle RunBundle, state string, stage string, errText string) error {

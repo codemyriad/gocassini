@@ -5,8 +5,9 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
-const [summaryPath, out] = process.argv.slice(2);
-assert(summaryPath && out, "Usage: check-installed-browser.mjs VALIDATOR_SUMMARY OUTPUT_DIR");
+const [summaryPath, out, retentionAction = "save"] = process.argv.slice(2);
+assert(summaryPath && out, "Usage: check-installed-browser.mjs VALIDATOR_SUMMARY OUTPUT_DIR [save|ignore]");
+assert(["save", "ignore"].includes(retentionAction), "retention action must be save or ignore");
 const summary = JSON.parse(await readFile(summaryPath, "utf8"));
 assert.equal(summary.result, "passed");
 assert(summary.last_job_id, "validator did not identify its recording");
@@ -37,6 +38,16 @@ try {
   const response = await page.goto(url.href);
   assert.equal(response.status(), 200);
   // Playwright locators pierce the app's open shadow root.
+  // The recording must be usable before the admin acknowledges retention.
+  // A meeting sheet makes shell chrome inert but does not remove the reminder.
+  const reminder = page.locator(".retention-reminder");
+  await reminder.waitFor({ state: "visible" });
+  const retentionURL = new URL("/index.php/apps/app_api/proxy/gocassini/operator/storage/retention", base).href;
+  const beforeResponse = await page.request.get(retentionURL, { headers: { "Cache-Control": "no-cache" } });
+  assert.equal(beforeResponse.status(), 200);
+  const before = await beforeResponse.json();
+  assert.equal(before.revision, 0, "fresh installs must start with unacknowledged settings");
+  assert.equal(await page.getByRole("dialog", { name: "Choose what Cassini keeps" }).count(), 0);
   await page.locator(".cassini-shell").waitFor({ state: "visible" });
   checks.embedded_app = true;
   await page.locator(".cassini-word").first().waitFor({ state: "visible" });
@@ -56,6 +67,47 @@ try {
     return find(document);
   });
   checks.recording_playback = true;
+  const stillUnconfirmed = await (await page.request.get(retentionURL)).json();
+  assert.equal(stillUnconfirmed.revision, 0, "playback must not acknowledge retention");
+  // Navigate out of the meeting sheet through its normal Close action first.
+  await page.locator('button[aria-label="Close the meeting"][title="Close (Esc)"]').click();
+  if (retentionAction === "save") {
+    await reminder.getByRole("button", { name: "Review settings", exact: true }).click();
+  }
+  const [savedResponse] = await Promise.all([
+    page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "PUT"),
+    page.getByRole("button", { name: retentionAction === "save" ? "Save retention settings" : "Don't remind again", exact: true }).click(),
+  ]);
+  assert.equal(savedResponse.status(), 200);
+  const saved = await savedResponse.json();
+  assert.deepEqual(saved, { ...before, revision: before.revision + 1 });
+  await reminder.waitFor({ state: "hidden" });
+  checks.retention_review = true;
+  if (retentionAction === "ignore") checks.retention_dismissal = true;
+  const [reloadedResponse] = await Promise.all([
+    page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "GET"),
+    page.reload(),
+  ]);
+  assert.equal(reloadedResponse.status(), 200);
+  assert.deepEqual(await reloadedResponse.json(), saved);
+  assert.equal(await reminder.count(), 0);
+  checks.retention_review_persisted = true;
+  await page.goto(url.href);
+  await page.locator(".cassini-word").first().waitFor({ state: "visible" });
+  assert.equal(await reminder.count(), 0);
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForFunction(() => {
+    const roots = [document];
+    while (roots.length) {
+      for (const element of roots.pop().querySelectorAll("*")) {
+        if (element.tagName === "AUDIO" && element.currentTime > 0) return true;
+        if (element.shadowRoot) roots.push(element.shadowRoot);
+      }
+    }
+    return false;
+  });
+  checks.recording_playback_after_review = true;
+
   assert.deepEqual(errors, [], "uncaught browser errors");
   await page.screenshot({ path: `${out}/installed.png`, fullPage: true });
   await writeFile(`${out}/result.json`, JSON.stringify({ result: "passed", checks, job_id: summary.last_job_id }, null, 2));

@@ -29,6 +29,7 @@ func newMediaErrorTestArtifact(t *testing.T) *sessionCaptureArtifact {
 		"https://example.test/call/room",
 		"room-token",
 		"recorder",
+		true,
 	)
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)

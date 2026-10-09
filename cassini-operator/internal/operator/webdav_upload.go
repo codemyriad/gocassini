@@ -234,6 +234,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			return true
 		}
 		readAs := caller
+		w.Header().Set("Cache-Control", "no-store")
 
 		if relPath == "catalog.json" {
 			c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
@@ -247,7 +248,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			c.serveSearch(r.Context(), w, r, client, caller, search, logger)
 			return true
 		}
-		if !strings.HasPrefix(relPath, "meetings/") || !strings.HasSuffix(relPath, ".opus") {
+		if !strings.HasPrefix(relPath, "meetings/") || !isMeetingFile(relPath) {
 			http.NotFound(w, r)
 			return true
 		}

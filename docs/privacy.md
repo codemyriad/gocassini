@@ -27,6 +27,28 @@ transcript is still produced and published; the summary is skipped, and the app
 offers no way to run an insight. A self-hosted endpoint keeps both
 on your own network too.
 
+## Video capture consent
+
+Cassini records audio only by default. An administrator can explicitly enable
+**Capture video** in **Operator → Publish pipeline**. Reviewing or dismissing the
+retention reminder does not change this choice. Saving capture settings applies
+to subsequent recordings; a recording already admitted keeps its original
+capture policy.
+
+With the default, the recorder requests audio without video, declines video in
+each negotiated answer, and rejects video at the capture writer. Audio control
+traffic (RTCP, ICE and DTLS) still flows. With **Capture video** enabled, camera
+video is retained in the source session and multitrack `recording.mkv` on the
+Cassini server. Published `.opus` meeting files still contain audio only. Source
+retention controls how long that retained video stays on the server; capture
+consent and retention are independent settings.
+
+Upgrades with no saved capture choice default to audio only. Changing this
+setting does not remove video from existing source recordings. Older recordings
+without capture provenance display an unknown capture mode. Rebuilding an
+existing source reuses that media; it does not record the call again or strip
+historical video.
+
 ## Speech-model downloads
 
 Transcription is optional and starts off. An explicit installation downloads model
@@ -42,7 +64,8 @@ A recorded meeting moves through capture → build → publish, and each stage w
 artifacts:
 
 - **Recordings** — the raw multitrack capture of the call (`recording.mkv`), one
-  audio track per participant.
+  audio track per participant, plus video only when an administrator explicitly
+  enables **Capture video**.
 - **Audio** — the processed meeting audio, ultimately the portable single-file
   `.opus`.
 - **Transcripts** — a timestamped word-level transcript when transcription is enabled and succeeds. Audio-only files carry an empty compatibility transcript and an explicit skipped/failed status.
@@ -261,3 +284,20 @@ could not use.
   LLM knobs.
 - [Artifacts and filesystem](./reference/artifacts-and-filesystem.md) — artifact
   types, the operator layout, and retention.
+
+## Transcription-only publication and source deletion
+
+Publishing a transcription-only JSON does not by itself delete captured audio.
+By default source media remains under Storage policies and can support reruns.
+Administrators may explicitly select **Nothing** under **Keep after each recording**
+for future transcription-only recordings. This uses audio-only capture, keeps
+media temporarily through initial processing, and deletes it after publication
+succeeds or processing permanently fails. Failure may leave no usable transcript.
+The operator shows actual cleanup progress and errors; a missing viewer player
+is not evidence of completed source deletion. Processing cannot be rerun in this
+mode, including while deletion is pending. The saved recording policy survives
+in job metadata and the published JSON provenance.
+
+Published transcripts, summaries, metadata and logs remain under their respective
+policies. This is deletion of Cassini-managed media, not a promise that audio
+never touches disk or that external backups/snapshots are erased.

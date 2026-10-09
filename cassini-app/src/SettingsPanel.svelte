@@ -78,7 +78,29 @@
   ];
 
   let settings: Settings | null = null;
+  let meetingFormat: "opus" | "json" = "opus";
+  let savedMeetingFormat: "opus" | "json" = "opus";
   let transcriptionEnabled = false;
+  let retainVideo = false;
+  let sourceRetention: "storage-policy" | "delete-after-processing" = "storage-policy";
+  let savedSourceRetention = "storage-policy";
+  let savedRetainVideo = false;
+  let transcriptionSettings: HTMLElement;
+
+  function focusTranscriptionSettings() {
+    transcriptionSettings.focus({ preventScroll: true });
+    transcriptionSettings.scrollIntoView({
+      block: "start",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+    });
+  }
+  $: recordingMedia = sourceRetention === "delete-after-processing" ? "nothing" : retainVideo ? "audio-video" : "audio-only";
+
+  function selectRecordingMedia(value: "nothing" | "audio-video" | "audio-only") {
+    sourceRetention = value === "nothing" ? "delete-after-processing" : "storage-policy";
+    retainVideo = value === "audio-video";
+    if (value === "nothing") meetingFormat = "json";
+  }
   let activeModel = "";
   let activeRevision = "";
   let savedTranscription = "";
@@ -190,7 +212,13 @@
 
   function applySettings(next: Settings) {
     settings = next;
+    meetingFormat = next.meeting_format ?? "opus";
+    savedMeetingFormat = meetingFormat;
     transcriptionEnabled = next.transcription_enabled === true;
+    retainVideo = next.retain_video === true;
+    sourceRetention = next.source_retention ?? "storage-policy";
+    savedSourceRetention = sourceRetention;
+    savedRetainVideo = retainVideo;
     activeModel = next.active_model ?? "";
     activeRevision = next.active_revision ?? "";
     savedTranscription = JSON.stringify([transcriptionEnabled,activeModel,activeRevision]);
@@ -251,10 +279,13 @@
       try {
         applySettings(
           await operatorClient.putSettings({
+            meeting_format: meetingFormat,
+            source_retention: sourceRetention,
             transcription_enabled: transcriptionEnabled,
+            retain_video: retainVideo,
             active_model: activeModel,
             active_revision: activeRevision,
-            quality,
+            ...(quality !== savedQuality ? { quality } : {}),
             device_override: deviceOverride,
             transcription_terms: transcriptionTermsText.split(/\r?\n/),
             search_aliases: parseSearchAliases(searchAliasesText),
@@ -404,7 +435,8 @@
   // the LLM one.
   $: sttDirty =
     settings !== null &&
-    (JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
+    (sourceRetention !== savedSourceRetention || retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
+      meetingFormat !== savedMeetingFormat ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
       transcriptionTermsText !== savedTranscriptionTermsText ||
@@ -494,9 +526,6 @@
     </div>
   </header>
 
-{#if operatorClient}
-{/if}
-
 <!-- The readiness checks offer a "Set up storage" action that scrolls here,
      which is what the removed Setup page's own anchor used to do. Keeping the
      id on a wrapper rather than inside RecordingAccessPanel leaves that
@@ -514,6 +543,62 @@
     <p class="op-state">Settings aren't available.</p>
   {:else}
     <div class="pipe-body">
+      <section class="op-tint p-4 grid gap-4" aria-labelledby="recording-publication-heading">
+        <div>
+          <h2 id="recording-publication-heading" class="set-row-name op-card-title">Recording media and publication</h2>
+          <p class="set-row-sub">Choose which recording media stays on the server after processing, then choose what people receive.</p>
+        </div>
+        <fieldset class="grid gap-3" disabled={saving}>
+          <legend class="op-field-label mb-2">Keep after each recording</legend>
+          <label class="flex items-start gap-3">
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
+            <span><strong>Nothing</strong><span id="keep-nothing-help" class="set-row-sub block">Keep no audio, video or raw packet logs. Audio is captured temporarily for a single processing run, then deleted after publication succeeds or processing permanently fails. Transcription artifacts, including the published JSON, are kept. Processing cannot be rerun.</span></span>
+          </label>
+          <label class="flex items-start gap-3">
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-video" aria-label="Full audio + video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
+            <span><strong>Full audio + video</strong><span id="keep-video-help" class="set-row-sub block">Capture and keep audio, available camera video and associated recording files on the server. Uses more storage. Transcription can be rerun while the source recording remains.</span></span>
+          </label>
+          <label class="flex items-start gap-3">
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-only" aria-label="Audio-only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} aria-describedby="keep-audio-help" />
+            <span><strong>Audio-only</strong><span id="keep-audio-help" class="set-row-sub block">Capture and keep audio and associated recording files, without camera video. Transcription can be rerun while the source recording remains.</span></span>
+          </label>
+        </fieldset>
+        {#if recordingMedia === "nothing"}
+          <p class="set-row-sub">Temporary retries within the initial run remain possible. If transcription permanently fails, there may be no usable transcript. Transcripts, meeting information and diagnostic logs follow their existing retention policies.</p>
+          {#if !transcriptionEnabled || !activeModel || !activeRevision}
+            <div class="transcription-setup" role="status">
+              <TriangleAlert size={20} class="transcription-setup-icon" aria-hidden="true" />
+              <div class="transcription-setup-copy">
+                <strong>Set up transcription to keep no recording media</strong>
+                <p>Choose a ready model and enable transcription before saving. This lets Cassini create the transcript before deleting the recording media.</p>
+              </div>
+              <button class="transcription-setup-action" type="button" on:click={focusTranscriptionSettings}>Go to transcription settings</button>
+            </div>
+          {/if}
+        {:else}
+          <p class="set-row-sub">Storage policies control how long recording media is kept. Your publication choice below does not delete the source recording.</p>
+        {/if}
+        <label class="op-field" for="meeting-format">
+          <span class="op-field-label">Published meeting</span>
+          <select id="meeting-format" class="op-input" bind:value={meetingFormat} disabled={saving} aria-describedby="publication-help">
+            <option value="opus" disabled={recordingMedia === "nothing"}>Include audio (.opus)</option>
+            <option value="json">Transcription only (.json)</option>
+          </select>
+        </label>
+        <p id="publication-help" class="set-row-sub">
+          {#if recordingMedia === "nothing"}
+            Keeping no recording media publishes transcription-only JSON. Audio publication is unavailable with this choice.
+          {:else if meetingFormat === "opus"}
+            Publish playable audio together with the transcript and meeting information. Captured video stays on the server and is not included in the published file.
+          {:else}
+            Publish the transcript, speaker blocks, summaries, metadata, tags and annotations without audio playback. Retained recording media remains available on the server for reruns.
+          {/if}
+        </p>
+        {#if meetingFormat === "json" && !transcriptionEnabled}
+          <p class="set-row-sub">Transcription is off. Enable it below to include a transcript; otherwise new meetings will contain neither a transcript nor playable audio.</p>
+        {/if}
+        <p class="set-row-sub">Changes apply to recordings accepted after Save. Existing and active recordings keep their saved policy. Reruns keep their original publication format.</p>
+      </section>
       <!-- What the operator found, and — the part the tier alone does not
            answer — what the next build will actually do with it. The device is
            auto-selected, and on a host with no usable GPU that answer is the
@@ -562,7 +647,7 @@
             </p>
           {:else}
             <p class="hw-effective">
-              Transcription is off. Recordings are published as audio. If you turn it on, it runs on the
+              Transcription is off. If you turn it on, it runs on the
               <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>.
             </p>
           {/if}
@@ -606,14 +691,14 @@
            Each step is its own row under a full rule with extra space above,
            so two independent settings — one of which sends text to a third
            party — do not read as one block, without a card around each. -->
-      <section class="op-tint pipe-step">
+      <section class="op-tint pipe-step scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
         <div class="set-row-main">
           <p id="stt-quality-heading" class="set-row-name op-card-title">Quality</p>
           <p class="set-row-sub">
             {#if transcriptionEnabled}
               Applies to every recording on this machine.
             {:else}
-              Transcription is off, so recordings are published as audio. To transcribe, install
+              Transcription is off. To transcribe, install
               and enable a model below.
             {/if}
             {#if runsOnGPU}
@@ -846,7 +931,7 @@
           </div>
         {:else}
           <p class="save-bar-text">{saving ? "Saving changes…" : "You have unsaved changes"}</p>
-          <button class="sb-btn sb-light" type="button" disabled={saving || !isDirty} on:click={handleSave}>
+          <button class="sb-btn sb-light" type="button" disabled={saving || !isDirty || (sourceRetention === "delete-after-processing" && (!transcriptionEnabled || !activeModel || !activeRevision))} on:click={handleSave}>
             {#if saving}
               <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
               Saving…
@@ -860,6 +945,52 @@
   {/if}
 
 <style>
+  .transcription-setup {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    background-color: color-mix(in srgb, var(--color-primary) 9%, var(--color-base-100));
+    border-radius: var(--radius-box, 0.75rem);
+  }
+  .transcription-setup :global(.transcription-setup-icon) {
+    flex: none;
+    color: var(--color-primary);
+  }
+  .transcription-setup-copy {
+    flex: 1 1 240px;
+    min-width: 0;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--color-base-content);
+  }
+  .transcription-setup-copy strong {
+    font-weight: 650;
+  }
+  .transcription-setup-copy p {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .transcription-setup-action {
+    padding: 9px 12px;
+    cursor: pointer;
+    background-color: var(--color-base-content);
+    color: var(--color-base-100);
+    border: 0;
+    border-radius: var(--radius-field, 0.5rem);
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .transcription-setup-action:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 88%, var(--color-base-100));
+  }
+  .transcription-setup-action:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+  }
   .pipe-body {
     display: grid;
     gap: calc(var(--op-x, 20px) + 8px);

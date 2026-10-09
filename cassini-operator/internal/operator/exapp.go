@@ -187,6 +187,7 @@ type ExAppConfig struct {
 	// It is never an authority: DAV checks every read as the caller.
 	sharePaths      *recordingSharePathCache
 	meetingMetadata *meetingMetadataStore
+	lifecycle       *Store
 	onEnabled       func(bool)
 }
 

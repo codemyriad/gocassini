@@ -188,6 +188,8 @@ func deliveredOpusName(attemptSiteDir, jobID string) (string, error) {
 		Meetings []struct {
 			ID           string `json:"id"`
 			AudioPath    string `json:"audioPath"`
+			MeetingPath  string `json:"meetingPath"`
+			DocumentPath string `json:"documentPath"`
 			ArtifactPath string `json:"artifactPath"`
 		} `json:"meetings"`
 	}
@@ -204,7 +206,7 @@ func deliveredOpusName(attemptSiteDir, jobID string) (string, error) {
 			break
 		}
 	}
-	ref := strings.TrimSpace(chosen.AudioPath)
+	ref := strings.TrimSpace(meetingPath(chosen.AudioPath, chosen.MeetingPath))
 	if ref == "" {
 		// A directory-shaped legacy entry has no basename any visibility scan
 		// can return, so it could only ever be indexed unreachably. Refuse it

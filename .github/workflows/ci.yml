@@ -102,6 +102,7 @@ jobs:
           ./harness/bin/test-installed-backend-url.sh
           ./harness/bin/test-stack-resume.sh
           ./harness/bin/test-post-boundary-stream.sh
+          python3 ./harness/bin/test-audio-only-rejoin.py
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-negative-manifest.sh
           ./harness/bin/test-harness-prerequisites.sh
@@ -292,6 +293,18 @@ jobs:
           BOT_PASSWORD: "ci-bot-password"
           NEXTCLOUD_IMAGE: ${{ matrix.nextcloud_image }}
         run: ./harness/bin/${{ matrix.script }}
+      - name: Upload capture policy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-evidence-${{ strategy.job-index }}
+          path: |
+            /tmp/gocassini-ci*-janus.json
+            /tmp/gocassini-ci*-timing.json
+            /tmp/gocassini-ci*-resume.json
+          retention-days: 7
+          if-no-files-found: ignore
+
 
   # ci-e2e-mute.sh exercises a heavier 3-publisher mute scenario. It now gates
   # audio rotation on recorder-side stream_opened evidence, so it runs once

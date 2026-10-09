@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -315,6 +316,9 @@ func (rt *Runtime) indexFromLocalBundle(
 	ctx context.Context, target searchBackfillTarget, opusName, delivered, deliveredCopy string,
 ) (searchBackfillOutcome, string, bool) {
 	localOpus := canonicalOpusPath(rt.cfg.WorkRoot, target.JobID)
+	if meetingExtension(opusName) == ".json" {
+		localOpus = filepath.Join(currentRoot(rt.cfg.WorkRoot), target.JobID+".json")
+	}
 	localDigest, err := fileSHA256(localOpus)
 	if err != nil {
 		return 0, searchBackfillReasonNoBundle, false

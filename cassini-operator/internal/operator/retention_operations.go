@@ -132,12 +132,27 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 	if err := validateArtifactTree(rt.cfg.WorkRoot, dir); err != nil {
 		return err
 	}
+	// A crash may remove the operation directory before clearing its journal.
+	// Recreate the empty directory so replay can fsync and finish idempotently.
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
 	allowed := map[string]bool{}
-	for _, p := range []string{canonicalRunPath(rt.cfg.WorkRoot, op.Job), canonicalMeetingPath(rt.cfg.WorkRoot, op.Job), canonicalOpusPath(rt.cfg.WorkRoot, op.Job), attemptRunPath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptMeetingPath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptSealDir(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptSitePath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptLogsDir(rt.cfg.WorkRoot, op.Job, op.Attempt)} {
+	for _, p := range []string{canonicalRunPath(rt.cfg.WorkRoot, op.Job), canonicalMeetingPath(rt.cfg.WorkRoot, op.Job), filepath.Join(currentRoot(rt.cfg.WorkRoot), op.Job+".json"), canonicalOpusPath(rt.cfg.WorkRoot, op.Job), attemptRunPath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptMeetingPath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptSealDir(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptSitePath(rt.cfg.WorkRoot, op.Job, op.Attempt), attemptLogsDir(rt.cfg.WorkRoot, op.Job, op.Attempt)} {
 		rel, _ := filepath.Rel(rt.cfg.WorkRoot, p)
 		allowed[rel] = true
 	}
 	for i, rel := range op.Targets {
+		if op.Kind == "media-disposal" && op.Action == "remove" {
+			for _, p := range append(mediaPromotionPaths(rt.cfg.WorkRoot, op.Job), attemptScratchPath(rt.cfg.WorkRoot, op.Job, op.Attempt)) {
+				r, _ := filepath.Rel(rt.cfg.WorkRoot, p)
+				allowed[r] = true
+			}
+			sealRel, _ := filepath.Rel(rt.cfg.WorkRoot, attemptSealDir(rt.cfg.WorkRoot, op.Job, op.Attempt))
+			if filepath.Dir(rel) == sealRel && filepath.Base(rel) != op.Job+".json" {
+				allowed[rel] = true
+			}
+		}
 		if !allowed[rel] {
 			return fmt.Errorf("unowned operation target %q", rel)
 		}
@@ -194,7 +209,7 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 		if op.MissingMeeting {
 			meeting = nil
 		}
-		if _, err = tx.Exec(`UPDATE jobs SET artifact_meeting_path=?,artifact_opus_path=?,artifact_opus_sha256=? WHERE id=?`, meeting, canonicalOpusPath(rt.cfg.WorkRoot, op.Job), op.Digest, op.Job); err != nil {
+		if _, err = tx.Exec(`UPDATE jobs SET artifact_meeting_path=?,artifact_opus_path=?,artifact_opus_sha256=? WHERE id=?`, meeting, filepath.Join(rt.cfg.WorkRoot, op.Targets[1]), op.Digest, op.Job); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(`INSERT INTO artifact_availability(job_id,published_attempt,output) VALUES(?,?,'present') ON CONFLICT(job_id) DO UPDATE SET published_attempt=excluded.published_attempt,output='present'`, op.Job, op.Attempt); err != nil {
@@ -222,6 +237,12 @@ func (rt *Runtime) finishOperation(op artifactOperation) error {
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
+	}
+	// Disposal completion must survive a host crash as well as a process restart.
+	if op.Kind == "media-disposal" {
+		if err := syncArtifactDir(filepath.Dir(dir)); err != nil {
+			return err
+		}
 	}
 	if _, err := rt.store.db.Exec(`DELETE FROM artifact_operations WHERE job_id=?`, op.Job); err != nil {
 		return err
@@ -320,6 +341,9 @@ func (rt *Runtime) promotePublishedPair(job string, attempt int) error {
 	// and an intermediate whose own lineage agrees (or is genuinely absent).
 	if prior == 0 {
 		cp := canonicalOpusPath(rt.cfg.WorkRoot, job)
+		if a.ArtifactOpusPath != nil && meetingExtension(*a.ArtifactOpusPath) == ".json" {
+			cp = filepath.Join(currentRoot(rt.cfg.WorkRoot), job+".json")
+		}
 		mp := canonicalMeetingPath(rt.cfg.WorkRoot, job)
 		for _, p := range []string{cp, mp} {
 			if e := validateArtifactTree(rt.cfg.WorkRoot, p); e != nil {
@@ -362,6 +386,9 @@ func (rt *Runtime) promotePublishedPair(job string, attempt int) error {
 		}
 	}
 	meeting, opus := attemptMeetingPath(rt.cfg.WorkRoot, job, attempt), attemptOpusPath(rt.cfg.WorkRoot, job, attempt)
+	if a.ArtifactOpusPath != nil && meetingExtension(*a.ArtifactOpusPath) == ".json" {
+		opus = filepath.Join(attemptSealDir(rt.cfg.WorkRoot, job, attempt), job+".json")
+	}
 	if err = validateArtifactTree(rt.cfg.WorkRoot, meeting); err != nil {
 		return err
 	}
@@ -384,7 +411,11 @@ func (rt *Runtime) promotePublishedPair(job string, attempt int) error {
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	missingMeeting := false
+	jobRow, err := rt.store.GetJob(context.Background(), job)
+	if err != nil {
+		return err
+	}
+	missingMeeting := deletesSourceMedia(jobRow)
 	if _, e := os.Stat(meeting); os.IsNotExist(e) && prior == 0 {
 		missingMeeting = true
 	} else if e != nil {
@@ -401,7 +432,7 @@ func (rt *Runtime) promotePublishedPair(job string, attempt int) error {
 		}
 	}
 	op := artifactOperation{Job: job, Attempt: attempt, Action: "promote", Digest: *a.ArtifactOpusSHA256, MissingMeeting: missingMeeting}
-	for _, p := range []string{canonicalMeetingPath(rt.cfg.WorkRoot, job), canonicalOpusPath(rt.cfg.WorkRoot, job)} {
+	for _, p := range []string{canonicalMeetingPath(rt.cfg.WorkRoot, job), filepath.Join(currentRoot(rt.cfg.WorkRoot), job+meetingExtension(opus))} {
 		rel, _ := filepath.Rel(rt.cfg.WorkRoot, p)
 		op.Targets = append(op.Targets, rel)
 	}

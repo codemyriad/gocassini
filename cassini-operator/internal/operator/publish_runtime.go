@@ -63,6 +63,7 @@ func (rt *Runtime) publishWorker() {
 func (rt *Runtime) runPublishJob(task publishTask) {
 	unlock := rt.store.lockArtifacts(task.JobID)
 	defer unlock()
+	defer rt.cleanupMediaAfterStage(task.JobID)
 	if err := rt.waitForRecordingIdle(); err != nil {
 		return
 	}
@@ -191,7 +192,10 @@ func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (str
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "publish", publishInput, "--out", attemptSiteDir)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
-	cmd.Env = os.Environ()
+	cmd.Env, err = rt.mediaScratchEnv(os.Environ(), task.JobID, task.AttemptNumber)
+	if err != nil {
+		return attemptSiteDir, err
+	}
 	// Kill the whole process group on ctx cancel so exporter grandchildren
 	// don't outlive the publish.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

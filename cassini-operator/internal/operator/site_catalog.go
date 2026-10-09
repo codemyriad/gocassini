@@ -60,13 +60,14 @@ func catalogEntryID(entry json.RawMessage) (string, error) {
 func catalogEntryAssets(entry json.RawMessage) ([]string, error) {
 	var probe struct {
 		AudioPath    string `json:"audioPath"`
+		MeetingPath  string `json:"meetingPath"`
 		ArtifactPath string `json:"artifactPath"`
 	}
 	if err := json.Unmarshal(entry, &probe); err != nil {
 		return nil, fmt.Errorf("parse catalog entry: %w", err)
 	}
 	var assets []string
-	for _, candidate := range []string{probe.AudioPath, probe.ArtifactPath} {
+	for _, candidate := range []string{meetingPath(probe.AudioPath, probe.MeetingPath), probe.ArtifactPath} {
 		rel, ok := siteRelativeAsset(candidate)
 		if !ok {
 			continue

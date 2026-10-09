@@ -27,7 +27,11 @@ RECORDING_STARTER_NAME="${RECORDING_STARTER_NAME:-}"
 RECORDING_TIMEOUT="${RECORDING_TIMEOUT:-90}"
 PREPARE="${PREPARE:-1}"
 ROTATE_SECONDS="${ROTATE_SECONDS:-5}"
+AUDIO_TRACK_AFTERS="${AUDIO_TRACK_AFTERS:-}"
+VIDEO_TRACK_AFTERS="${VIDEO_TRACK_AFTERS:-}"
 declare -a MEDIA_PREFIX_LIST=()
+declare -a AUDIO_TRACK_AFTER_LIST=()
+declare -a VIDEO_TRACK_AFTER_LIST=()
 declare -a NAME_LIST=()
 declare -a JOIN_DELAY_LIST=()
 declare -a AUDIO_READY_LIST=()
@@ -167,6 +171,8 @@ split_csv_into() {
   done
 }
 
+split_csv_into "$AUDIO_TRACK_AFTERS" AUDIO_TRACK_AFTER_LIST
+split_csv_into "$VIDEO_TRACK_AFTERS" VIDEO_TRACK_AFTER_LIST
 split_csv_into "$NAMES" NAME_LIST
 split_csv_into "$JOIN_DELAYS" JOIN_DELAY_LIST
 split_csv_into "$AUDIO_READY_AFTERS" AUDIO_READY_LIST
@@ -176,6 +182,8 @@ split_csv_into "$AUTH_USERS" AUTH_USER_LIST
 split_csv_into "$AUTH_PASSWORDS" AUTH_PASSWORD_LIST
 
 for pair in \
+  "audio-track-afters:${#AUDIO_TRACK_AFTER_LIST[@]}" \
+  "video-track-afters:${#VIDEO_TRACK_AFTER_LIST[@]}" \
   "names:${#NAME_LIST[@]}" \
   "join-delays:${#JOIN_DELAY_LIST[@]}" \
   "audio-ready-afters:${#AUDIO_READY_LIST[@]}" \
@@ -350,6 +358,12 @@ for ((i = 1; i <= USERS; i++)); do
   fi
   CMD_ARGS+=(--join-delay "$join_delay")
   CMD_ARGS+=(--audio-ready-after "$audio_ready")
+  if (( ${#AUDIO_TRACK_AFTER_LIST[@]} >= i )); then
+    CMD_ARGS+=(--audio-track-after "${AUDIO_TRACK_AFTER_LIST[$((i - 1))]}")
+  fi
+  if (( ${#VIDEO_TRACK_AFTER_LIST[@]} >= i )); then
+    CMD_ARGS+=(--video-track-after "${VIDEO_TRACK_AFTER_LIST[$((i - 1))]}")
+  fi
   CMD_ARGS+=(--sync-shift "$sync_shift")
   if (( ${#BOT_DURATION_LIST[@]} >= i )); then
     CMD_ARGS+=(--bot-duration "${BOT_DURATION_LIST[$((i - 1))]}")

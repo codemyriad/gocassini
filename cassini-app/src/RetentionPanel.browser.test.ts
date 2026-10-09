@@ -11,8 +11,8 @@ const group = (keys: string[]) => ({
   fine: Object.fromEntries(keys.map((key) => [key, forever()])),
 });
 const initialSettings = () => ({
-  version: 3, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
-  recordings: forever(),
+  version: 4, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
+  recordings: forever(), nextcloud: { meetings: forever() },
   history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]),
   current: forever(), logs: forever(),
 });
@@ -28,7 +28,8 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    expect(new URL(String(input), location.href).pathname).toBe("/operator/storage/retention");
+    const path = new URL(String(input), location.href).pathname;
+    expect(path).toBe("/operator/storage/retention");
     if (init?.method === "PUT") {
       puts += 1;
       if ((init.headers as Record<string, string>)["If-Match"] !== `"${saved.revision}"`) {
@@ -54,10 +55,11 @@ function mountPanel() {
 
 describe("retention settings in the browser", () => {
   it("keeps edits local until Save, retains fine controls, and handles stale revisions", async () => {
+    saved.revision = 1;
     mountPanel();
-    await expect.element(page.getByRole("heading", { name: "Storage", exact: true })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).toBeVisible();
     await expect.element(page.getByText("Keep forever", { exact: true }).first()).toBeVisible();
-    expect(page.getByRole("checkbox").all().length).toBe(4);
+    expect(page.getByRole("checkbox").all().length).toBe(5);
     await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeDisabled();
     await expect.element(page.getByLabelText("Sweep time", { exact: true })).toHaveValue("02:00");
     await expect.element(page.getByLabelText("Timezone", { exact: true })).toHaveValue("UTC");
@@ -111,6 +113,31 @@ describe("retention settings in the browser", () => {
     await page.getByLabelText("Source recordings days").fill("1");
     await page.getByRole("button", { name: "Save retention settings" }).click();
     await expect.element(page.getByRole("status")).toBeVisible();
+  });
+
+  it("saves the whole-meeting policy without inspection or sweep controls", async () => {
+    mountPanel();
+    const meetings = page.getByRole("group", { name: "Whole meetings", exact: true });
+    await expect.element(meetings).toBeVisible();
+    await meetings.getByRole("checkbox").click();
+    await meetings.getByRole("button", { name: "7 days", exact: true }).click();
+    expect(puts).toBe(0);
+    expect(page.getByRole("button", { name: /preview|sweep|operation/i }).all()).toHaveLength(0);
+    await meetings.getByRole("button", { name: "30 days", exact: true }).click();
+    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await expect.element(page.getByText("Retention settings saved.")).toBeVisible();
+    expect(saved.nextcloud).toEqual({ meetings: { forever: false, count: 30, unit: "days" } });
+  });
+
+  it("confirms unchanged defaults without a scroll gate", async () => {
+    host.style.height = "3000px";
+    app = mount(RetentionPanel, { target: host, props: {
+      operatorClient: new OperatorClient("/operator"), initialSettings: initialSettings(),
+    } });
+    await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeEnabled();
+    await page.getByRole("button", { name: "Save retention settings" }).click();
+    expect(puts).toBe(1);
+    expect(saved.revision).toBe(1);
   });
 
   it.each([1280, 390])("has no horizontal overflow at %ipx", async (width) => {

@@ -99,6 +99,12 @@ func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) error {
 		return errRetentionUnavailable
 	}
 	var failures error
+	rt.remoteRetentionMu.RLock()
+	remote := rt.remoteRetention
+	rt.remoteRetentionMu.RUnlock()
+	if remote != nil {
+		failures = remote.runRemoteRetention(ctx, now)
+	}
 	// Read bounded pages; no SQLite transaction spans filesystem work.
 	after := ""
 	for {
@@ -164,6 +170,12 @@ func (rt *Runtime) expireJobArtifacts(ctx context.Context, id string, s retentio
 	// Blocked/recoverable and queued work reserve all its local inputs.
 	if job.Stage != "done" || (job.State != "succeeded" && job.State != "failed" && job.State != "interrupted") {
 		return nil
+	}
+	if deletesSourceMedia(job) {
+		state := rt.mediaCleanupStatus(job)
+		if state.Status != "completed" {
+			return nil
+		}
 	}
 	attempts, err := rt.store.ListJobAttempts(ctx, id)
 	if err != nil {
@@ -239,7 +251,7 @@ func (rt *Runtime) expireCanonicalArchives(ctx context.Context, job Job, attempt
 			return nil
 		}
 		// Include the latest seal's hardlink/copy, but not different versions.
-		return rt.expirePaths(id, published, "current", s.Current, retentionAnchor(a.PublishFinishedAt), now, s.Revision, canonicalMeetingPath(rt.cfg.WorkRoot, id), canonicalOpusPath(rt.cfg.WorkRoot, id), attemptSealDir(rt.cfg.WorkRoot, id, published), attemptMeetingPath(rt.cfg.WorkRoot, id, published))
+		return rt.expirePaths(id, published, "current", s.Current, retentionAnchor(a.PublishFinishedAt), now, s.Revision, canonicalMeetingPath(rt.cfg.WorkRoot, id), canonicalOpusPath(rt.cfg.WorkRoot, id), filepath.Join(currentRoot(rt.cfg.WorkRoot), id+".json"), attemptSealDir(rt.cfg.WorkRoot, id, published), attemptMeetingPath(rt.cfg.WorkRoot, id, published))
 	}
 	return nil
 }

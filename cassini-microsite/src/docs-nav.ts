@@ -22,6 +22,7 @@ export const docsNav: NavSection[] = [
     items: [
       { label: "Who can see a recording", slug: "guides/who-can-see-a-recording" },
       { label: "CPU or GPU", slug: "guides/cpu-or-gpu" },
+      { label: "Recording media and publication", slug: "guides/recording-media" },
       { label: "AI providers, summaries and insights", slug: "guides/ai-providers" },
       { label: "The meeting file", slug: "guides/meeting-file" },
       { label: "Agent access via the CLI", slug: "guides/agent-access" },

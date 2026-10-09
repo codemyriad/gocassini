@@ -58,7 +58,11 @@ type searchDeliveredStateReader func(ctx context.Context, opusName string) (dige
 func (c ExAppConfig) archiveDeliveredState() searchDeliveredStateReader {
 	client := &http.Client{Timeout: ncFilesUploadTimeout}
 	return func(ctx context.Context, opusName string) (string, bool, error) {
-		state, err := c.davPropfindLeafState(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings/"+opusName)
+		rel, err := c.currentOwnerMeetingPath(ctx, opusName)
+		if err != nil {
+			return "", false, err
+		}
+		state, err := c.davPropfindLeafState(ctx, client, ncRecordingsOwner, rel)
 		if err != nil {
 			return "", false, err
 		}
@@ -112,7 +116,11 @@ const archiveOpusReadTimeout = 10 * time.Minute
 // bytes that are written, so what gets recorded is the artifact that was
 // actually indexed rather than one the caller was told about.
 func (c ExAppConfig) downloadArchiveOpus(ctx context.Context, client *http.Client, opusName, destPath string) (string, error) {
-	digest, _, status, err := c.davDownloadFile(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings/"+opusName, destPath, 0)
+	rel, err := c.currentOwnerMeetingPath(ctx, opusName)
+	if err != nil {
+		return "", err
+	}
+	digest, _, status, err := c.davDownloadFile(ctx, client, ncRecordingsOwner, rel, destPath, 0)
 	// Branch on STATUS first: absence is a statement about the archive, and
 	// reading it off the error text would report a missing recording as a
 	// transport failure the operator would retry forever.

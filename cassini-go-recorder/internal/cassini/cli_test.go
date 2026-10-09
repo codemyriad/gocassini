@@ -1144,3 +1144,46 @@ func TestMeetingWorkspaceChangedTranscriptionRequestIsNotReused(t *testing.T) {
 		t.Fatal("stale workspace retained")
 	}
 }
+
+func TestRecordConfigCapturePolicy(t *testing.T) {
+	for _, video := range []bool{false, true} {
+		cfg := recordConfig(recordOptions{retainVideo: video}, "recording.mkv")
+		if cfg.RetainVideo != video {
+			t.Fatalf("video policy lost: %v", cfg.RetainVideo)
+		}
+	}
+}
+
+func TestFailedRecordKeepsCapturePolicyProvenance(t *testing.T) {
+	previous := runRecorderApp
+	t.Cleanup(func() { runRecorderApp = previous })
+	for _, video := range []bool{false, true} {
+		output := filepath.Join(t.TempDir(), "failed.run")
+		expected := "audio-only"
+		if video {
+			expected = "audio-video"
+		}
+		runRecorderApp = func(_ context.Context, cfg config.Config) error {
+			meta, err := readRunManifest(filepath.Join(output, "cassini.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.CaptureMode != expected || meta.Stage != "record" {
+				t.Fatalf("capture began without policy: %+v", meta)
+			}
+			return errors.New("no captured audio")
+		}
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), []string{"record", "--call", "https://example.com/call/test", "--out", output, fmt.Sprintf("--retain-video=%t", video)}, &stdout, &stderr)
+		if code != 1 {
+			t.Fatalf("failed record returned %d", code)
+		}
+		meta, err := readRunManifest(filepath.Join(output, "cassini.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if meta.CaptureMode != expected || meta.State != bundleStateFailed {
+			t.Fatalf("failed capture lost provenance: %+v", meta)
+		}
+	}
+}

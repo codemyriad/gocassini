@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	inspectpkg "gocassini/internal/inspect"
+	"gocassini/internal/portable"
 )
 
 type publishOptions struct {
@@ -400,7 +401,7 @@ func addPortableMeeting(opusPath string, stagingRoot string, added map[string]st
 	if existing, ok := added[trimmed]; ok {
 		return fmt.Errorf("meeting id %q collides between %s and %s", trimmed, existing, opusPath)
 	}
-	target := filepath.Join(stagingRoot, trimmed+".opus")
+	target := filepath.Join(stagingRoot, trimmed+filepath.Ext(opusPath))
 	if err := copyFile(opusPath, target, 0o644); err != nil {
 		return fmt.Errorf("stage portable meeting %s: %w", opusPath, err)
 	}
@@ -412,6 +413,10 @@ func addPortableMeeting(opusPath string, stagingRoot string, added map[string]st
 // portable meeting (decodable embedded manifest + intact audio integrity)
 // before it is shipped into the published site.
 func verifyPortableMeetingInput(opusPath string) error {
+	if strings.EqualFold(filepath.Ext(opusPath), ".json") {
+		_, err := portable.ReadTranscriptionTags(opusPath)
+		return err
+	}
 	var out bytes.Buffer
 	if err := inspectpkg.InspectPath(&out, opusPath); err != nil {
 		return err

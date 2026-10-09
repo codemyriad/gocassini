@@ -16,6 +16,12 @@ import (
 )
 
 func TestDirectSharePublishStoresPrivateFileAndVerifiedShares(t *testing.T) {
+	for _, extension := range []string{".opus", ".json"} {
+		t.Run(extension, func(t *testing.T) { testDirectSharePublishStoresPrivateFileAndVerifiedShares(t, extension) })
+	}
+}
+
+func testDirectSharePublishStoresPrivateFileAndVerifiedShares(t *testing.T, extension string) {
 	ctx := context.Background()
 	rt, cleanup := newBarePublishRuntime(t, log.New(ioDiscard{}, "", 0))
 	defer cleanup()
@@ -38,10 +44,10 @@ func TestDirectSharePublishStoresPrivateFileAndVerifiedShares(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(attempt, "meetings"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(attempt, "meetings", jobID+".opus"), []byte("sealed bytes"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(attempt, "meetings", jobID+extension), []byte("sealed bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(attempt, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[{"id":"DIRECT1","title":"Planning","audioPath":"./meetings/DIRECT1.opus"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(attempt, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[{"id":"DIRECT1","title":"Planning","meetingPath":"./meetings/DIRECT1`+extension+`"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +88,7 @@ func TestDirectSharePublishStoresPrivateFileAndVerifiedShares(t *testing.T) {
 	if _, err := sink.Deliver(ctx, publishDelivery{AttemptSitePath: attempt, JobID: jobID, RoomName: "Room One"}); err != nil {
 		t.Fatal(err)
 	}
-	remote := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
+	remote := ncRecordingsRoot + "/meetings/" + jobID + extension
 	if got := string(files.files[remote]); got != "sealed bytes" {
 		t.Fatalf("remote bytes = %q", got)
 	}

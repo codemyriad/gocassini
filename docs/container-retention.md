@@ -4,6 +4,52 @@ Retention is the saved rule for how long to keep an artifact. Eviction is the
 deletion performed when that rule becomes due. These policies apply to the
 operator's local working artifacts, under its configured **work root**.
 They do not delete recordings published to Nextcloud Files or the live site.
+[Whole-meeting Nextcloud retention](nextcloud-retention.md) is configured separately.
+
+The same page shows [storage usage by retention category and date](storage-usage.md).
+
+## Initial retention reminder
+
+Cassini is usable before an administrator saves retention settings. Administrators
+see a nonblocking **Review retention settings** banner until the configuration
+has been saved or explicitly dismissed. **Review settings** opens the existing editor in
+**Operator → Storage**. Saving unchanged defaults is allowed on the first save.
+Merely visiting Storage does not acknowledge the reminder.
+
+**Don't remind again** saves the latest effective configuration unchanged and
+suppresses the reminder for the whole installation. It does not use a browser-local
+preference or change retention durations. Save and dismissal deliberately share
+the same saved-revision representation; it does not record which action was used.
+Ignore is disabled while settings contain unsaved changes or another retention
+save is running. A failed dismissal stays visible and can be retried; a concurrent
+administrator's saved policy is preserved by the existing revision checks.
+
+```text
+Open app -> browse / record / play with effective settings
+     |
+     +-- revision zero -> reminder --+--> Storage -> Save --+
+                                     +--> Don't remind ----+
+                                                           |
+                                               persisted revision > 0
+                                                           |
+                                               hidden across sessions
+```
+
+The existing saved revision records acknowledgement for the whole installation,
+across browsers and operator restarts. Previously saved installations skip the
+reminder. A failed read or save remains recoverable without blocking app use.
+Changes made in another session are picked up when the window regains focus;
+unsaved editor changes are never overwritten by that refresh.
+
+Defaults remain **Keep forever** for container-local categories and the separate
+[Nextcloud whole-meeting policy](nextcloud-retention.md). Storage saves both in
+the same configuration; dismissing the reminder preserves both policies. Camera
+capture remains independent. Recording credentials,
+permissions and publishing-account readiness remain independent requirements.
+The recording-access panel and account creation are available in
+**Operator → Publish pipeline**, with existing setup/health notices for failures.
+
+## Configuring policies
 
 Administrators configure retention under **Operator → Storage**. Every category
 starts at **Keep forever**. Choose **7, 30, 60, 90, or Custom days**. Custom
@@ -375,3 +421,36 @@ npm run build:all --workspace cassini-app
 The browser tests use synthetic APIs, never real recordings. Retention tests
 verify whole-bundle deletion, independent output retention, settings migration
 and unavailable-source rerun protection.
+
+### Transcription-only output
+
+With **Transcription only (.json)** selected in **Settings → Publish pipeline**,
+the current published output and immutable
+attempt seal are `.json` files. They follow the same current-output and attempt
+history deadlines, promotion journal and expiry recovery as `.opus` files.
+Captured `.run` and intermediate `.meeting` audio still follow their existing
+container policies; the publication setting does not change those policies.
+
+### Explicit deletion after processing
+
+**Settings → Publish pipeline → Recording media and publication** can override
+normal media retention for newly admitted transcription-only publications.
+Under **Keep after each recording**, **Full audio + video** and **Audio-only**
+retain source media under Storage policies, including source-based reruns.
+**Nothing** selects transcription-only publication and requires
+JSON publication, audio-only capture and prepared transcription. It removes
+source recordings and media intermediates after successful publication or any
+terminal failure, even if Storage says Keep forever. It does not delete the
+published transcript. JSON outputs and logs continue to use their existing rules.
+
+Cleanup has a durable obligation, an operation journal and restart recovery;
+failed cleanup is visible in the operator and retried automatically. **Retry
+media deletion** retries cleanup only. Processing reruns are blocked even while
+cleanup is pending or has failed. Active/queued processing retains its inputs;
+permanent resource failures terminate rather than leaving disposal jobs blocked.
+
+Settings changes affect subsequently accepted recordings only. Existing JSON
+publications never silently opt into source deletion. See the
+[implementation](proposals/source-media-disposal/implementation.md) and
+[usage guide](proposals/source-media-disposal/tutorial.md) for deletion targets,
+recovery and verification.

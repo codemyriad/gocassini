@@ -23,10 +23,12 @@ press _Record_ and Cassini is listening.
    a participant, so nobody sees an extra person in the room.
 2. Each participant arrives as their own audio stream, carrying the name Talk
    sent with it.
-3. When recording stops, Cassini transcribes the audio on the hardware you gave
-   it, in-process, with sherpa-onnx and NVIDIA Parakeet models.
-4. The meeting is published into Nextcloud Files as one `.opus` file, with a
-   summary if you have configured a language model.
+3. When recording stops, enabled transcription processes the audio locally with
+   sherpa-onnx and NVIDIA Parakeet models. Install and enable a speech model in
+   Publish pipeline to produce transcripts.
+4. The meeting is published into Nextcloud Files as an audio `.opus` or
+   transcription-only `.json` file, with a summary if configured and a transcript
+   is available.
 
 ## What you get
 
@@ -43,8 +45,8 @@ press _Record_ and Cassini is listening.
 
 - **No live transcription or captions.** Transcription starts after recording
   stops. The operator schedules processing around live recordings to protect capture.
-- **Audio only.** Cassini records the video streams, but the meeting file, the
-  transcript and the viewer are audio only for now.
+- **No published video playback.** Camera capture is optional. Published meetings
+  contain audio or transcription-only data; captured video stays on the server.
 
 ## What leaves your server
 
@@ -58,6 +60,9 @@ question about meetings they have access to.
 There is no telemetry.
 
 ## Where next
+
+- [Recording media and publication](/docs/guides/recording-media) — keep no
+  recording media, audio and video, or audio only; configure publication and transcription.
 
 - [Install on Nextcloud](/docs/getting-started/install) — the requirements and
   the five install steps in full.

@@ -211,3 +211,11 @@ Before pulling demo data, set `DEMO_DATA_URL` in a local shell or gitignored `.e
 
 - [Running the local developer stack](../local-developer-stack.md)
 - [Artifacts and filesystem](./artifacts-and-filesystem.md)
+
+### Published meeting format
+
+In **Settings → Publish pipeline → Published meeting**, choose **Include audio
+(.opus)** (default) or **Transcription only (.json)**, then save. The operator
+persists this as `meeting_format` in `settings.json` through the existing admin
+settings API; no restart is needed. New meetings use this selection, while
+reruns retain their original format. Local capture retention is independent.
