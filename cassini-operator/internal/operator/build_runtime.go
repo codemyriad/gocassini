@@ -49,6 +49,8 @@ func (rt *Runtime) buildWorker(index int) {
 }
 
 func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
+	unlock := rt.store.lockArtifacts(task.JobID)
+	defer unlock()
 	// MaxBuildWorkers controls queue consumers, not simultaneous GPU inference.
 	// Hold one process-wide admission lock across claim, resource checks, and the
 	// complete build so two workers cannot both observe the same RAM/VRAM as free.
@@ -166,14 +168,8 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	if err := SetMeetingBundleRoom(builtMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
 		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, builtMeetingPath, err)
 	}
-	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, builtMeetingPath, task.JobID)
-	if promoteErr != nil {
-		rt.logger.Printf("build promote failed id=%s attempt=%d worker=%d meeting=%s: %v", task.JobID, task.AttemptNumber, workerIndex, builtMeetingPath, promoteErr)
-		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, builtMeetingPath, promoteErr.Error(), finishedAt); updateErr != nil {
-			rt.logger.Printf("build promote failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
-		}
-		return
-	}
+	// Current output denotes the last successful publication, never a build.
+	canonicalMeetingPath := builtMeetingPath
 	// Hand off to the seal worker, not to publish. Sealing the portable `.opus`
 	// used to be a detached goroutine started right here, after publish was
 	// already queued: best-effort, unordered across reruns, and invisible when

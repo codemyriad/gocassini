@@ -243,6 +243,7 @@ jobs:
           ./harness/bin/test-av-drift-pair-requirement.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-stack-resume.sh
+          python3 ./harness/bin/test-seed-published-maintenance.py
           # The synthetic-meeting generator's self-overlap slide: a slid
           # turn is recorded at its slid start, the declared duration is
           # recomputed after sliding, and every track shares that extent.
