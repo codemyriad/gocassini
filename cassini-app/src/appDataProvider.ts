@@ -210,6 +210,7 @@ const SPEAKER_EDITS_CODES: readonly string[] = [
   "invalid",
   "diarization-unavailable",
   "unavailable",
+  "rate-limited",
   "not-found",
 ] satisfies SpeakerEditsErrorCode[];
 
@@ -223,7 +224,20 @@ async function readSpeakerEditsError(response: Response): Promise<SpeakerEditsEr
     revision: typeof body.revision === "number" ? body.revision : undefined,
     detail: typeof body.message === "string" ? body.message : undefined,
     reason: typeof body.reason === "string" ? body.reason : undefined,
+    retryAfterMs: readRetryAfterMs(body, response),
   });
+}
+
+// How long a rate-limited caller waits: the body's retryAfterMs, else a
+// Retry-After header in seconds, else unknown.
+function readRetryAfterMs(body: Record<string, unknown>, response: Response): number | undefined {
+  if (typeof body.retryAfterMs === "number" && Number.isFinite(body.retryAfterMs) && body.retryAfterMs >= 0) {
+    return body.retryAfterMs;
+  }
+  const seconds = Number(response.headers.get("Retry-After") ?? "");
+  return response.status === 429 && response.headers.has("Retry-After") && Number.isFinite(seconds) && seconds >= 0
+    ? seconds * 1000
+    : undefined;
 }
 
 async function readAnnotationError(response: Response): Promise<AnnotationError> {

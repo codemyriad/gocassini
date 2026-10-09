@@ -89,6 +89,12 @@ describe("speaker edits documents", () => {
       /not published\. An administrator can run it again from Cassini Admin\.$/,
     );
     expect(describeSpeakerEditsError(new SpeakerEditsError(409, "unavailable", { reason: "later" }))).toMatch(/cannot be changed/);
+    // Too many saves: when to try again, in whole minutes, never "0 min".
+    const limited = (retryAfterMs?: number) => describeSpeakerEditsError(new SpeakerEditsError(429, "rate-limited", { retryAfterMs }));
+    expect(limited(125_000)).toBe("Too many changes in a short time. Try again in 3 min.");
+    expect(limited(60_000)).toBe("Too many changes in a short time. Try again in 1 min.");
+    expect(limited(0)).toBe("Too many changes in a short time. Try again in 1 min.");
+    expect(limited(undefined)).toBe("Too many changes in a short time. Try again later.");
   });
 
   it("locks every save on a meeting the operator cannot republish, and only new splits without the diarizer", () => {

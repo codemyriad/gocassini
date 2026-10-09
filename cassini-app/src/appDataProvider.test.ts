@@ -329,6 +329,8 @@ describe("AppDataProvider speaker edits", () => {
     [503, { error: "diarization-unavailable" }, { code: "diarization-unavailable" }],
     // A split meeting whose participant audio has gone since.
     [409, { error: "unavailable", reason: "no-source-audio" }, { code: "unavailable", reason: "no-source-audio" }],
+    // Too many saves by this person across all meetings.
+    [429, { error: "rate-limited", retryAfterMs: 90_000 }, { code: "rate-limited", retryAfterMs: 90_000 }],
     [404, { error: "meeting not found" }, { code: "not-found" }],
     [500, { error: "database is locked" }, { code: "" }],
   ])("reports a %i refusal as its typed code", async (status, body, expected) => {

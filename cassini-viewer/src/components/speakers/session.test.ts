@@ -222,6 +222,28 @@ describe("speakers session", () => {
   });
 });
 
+describe("too many changes", () => {
+  it("says when to try again and keeps every typed name for then", async () => {
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new SpeakerEditsError(429, "rate-limited", { retryAfterMs: 125_000 }))
+      .mockResolvedValueOnce(state({ revision: 2, state: "applying" }));
+    const session = createSpeakersSession();
+    await session.open(async () => state(), save);
+    session.setLabel("room~1", "Mira");
+
+    expect(await session.saveEdits(labels)).toBe(false);
+    expect(get(session).error).toBe("Too many changes in a short time. Try again in 3 min.");
+    expect(get(session).pending.labels).toEqual({ "room~1": "Mira" });
+
+    // Later, the same Save sends them.
+    expect(await session.saveEdits(labels)).toBe(true);
+    expect(save.mock.calls[1][1].labels).toEqual([{ speakerId: "room~1", label: "Mira" }]);
+    expect(get(session).pending.labels).toEqual({});
+    session.close();
+  });
+});
+
 describe("how often the operator is asked", () => {
   it("asks once a second while it applies, and waits longer after a failed first read", async () => {
     expect(SPEAKER_POLL_MS).toBe(1000);

@@ -177,7 +177,8 @@ export interface DataProvider {
   // saveSpeakerEdits sends the whole desired document with the revision it was
   // made from and answers the new state (`applying`). It rejects with a
   // SpeakerEditsError: revision-conflict, busy, invalid,
-  // diarization-unavailable, unavailable (with the reason) or not-found.
+  // diarization-unavailable, unavailable (with the reason), rate-limited
+  // (with retryAfterMs) or not-found.
   loadSpeakerEdits?(entry: MeetingCatalogEntry): Promise<SpeakerEditsState>;
   saveSpeakerEdits?(
     entry: MeetingCatalogEntry,

@@ -107,29 +107,35 @@ export interface SpeakerEditsState {
 
 // "unavailable" is the operator's answer to a save on a meeting whose
 // participant audio or transcript has gone since it was split (409, with the
-// `reason` GET reports as available=false).
+// `reason` GET reports as available=false). "rate-limited" is its answer
+// (429) to someone who saved more changes than it allows one person in a
+// while, across all meetings; `retryAfterMs` says when the next one is
+// taken.
 export type SpeakerEditsErrorCode =
   | "revision-conflict"
   | "busy"
   | "invalid"
   | "diarization-unavailable"
   | "unavailable"
+  | "rate-limited"
   | "not-found";
 
 // A refusal from the speakers route. `revision` is the stored revision a
 // revision-conflict reports; `detail` is the operator's own sentence for an
-// invalid document; `reason` says why an unavailable meeting is.
+// invalid document; `reason` says why an unavailable meeting is;
+// `retryAfterMs` how long a rate-limited caller waits.
 export class SpeakerEditsError extends Error {
   status: number;
   code: SpeakerEditsErrorCode | "";
   revision?: number;
   detail?: string;
   reason?: string;
+  retryAfterMs?: number;
 
   constructor(
     status: number,
     code: SpeakerEditsErrorCode | "",
-    options: { revision?: number; detail?: string; reason?: string } = {},
+    options: { revision?: number; detail?: string; reason?: string; retryAfterMs?: number } = {},
   ) {
     super(code || `HTTP ${status}`);
     this.name = "SpeakerEditsError";
@@ -138,6 +144,7 @@ export class SpeakerEditsError extends Error {
     this.revision = options.revision;
     this.detail = options.detail;
     this.reason = options.reason;
+    this.retryAfterMs = options.retryAfterMs;
   }
 }
 
@@ -147,8 +154,18 @@ const ERROR_MESSAGES: Record<SpeakerEditsErrorCode, string> = {
   invalid: "Cassini could not accept these changes.",
   "diarization-unavailable": "Voice separation is not installed on this server. An administrator can download it in Cassini's Settings.",
   unavailable: "The voices in this recording cannot be changed any more.",
+  "rate-limited": "Too many changes in a short time. Try again later.",
   "not-found": "This meeting is not available to you any more.",
 };
+
+// "Too many changes in a short time. Try again in N min.": whole minutes,
+// rounded up, and never "0 min".
+export function rateLimitedMessage(retryAfterMs: number | undefined): string {
+  if (retryAfterMs === undefined || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) {
+    return ERROR_MESSAGES["rate-limited"];
+  }
+  return `Too many changes in a short time. Try again in ${Math.max(1, Math.ceil(retryAfterMs / 60_000))} min.`;
+}
 
 export function describeSpeakerEditsError(error: unknown): string {
   if (error instanceof SpeakerEditsError) {
@@ -157,6 +174,9 @@ export function describeSpeakerEditsError(error: unknown): string {
     }
     if (error.code === "unavailable" && error.reason && error.reason in UNAVAILABLE_REASONS) {
       return UNAVAILABLE_REASONS[error.reason as SpeakerEditsUnavailableReason];
+    }
+    if (error.code === "rate-limited") {
+      return rateLimitedMessage(error.retryAfterMs);
     }
     return (error.code && ERROR_MESSAGES[error.code]) || error.message;
   }
