@@ -486,3 +486,34 @@ func TestNickChangedIgnoresClientWrittenFrom(t *testing.T) {
 		t.Fatalf("expected the sender to be named Mallory, got %q", sender.ParticipantName)
 	}
 }
+
+// nickChanged carries a name the client chose, so it only fills a gap. A
+// logged-in user's name from the signaling join is Nextcloud's, and a client
+// announcing a different one must not replace it in the recording.
+func TestNickChangedDoesNotReplaceNameFromNextcloud(t *testing.T) {
+	r, _ := newIdentityTestRecorder(t)
+	ctx := context.Background()
+
+	if err := r.handleRoomEvent(map[string]any{
+		"target": "room",
+		"type":   "join",
+		"join": []any{map[string]any{
+			"sessionid": "alice-session",
+			"userid":    "alice",
+			"user":      map[string]any{"displayname": "Alice Example"},
+		}},
+	}); err != nil {
+		t.Fatalf("handleRoomEvent(join): %v", err)
+	}
+	if err := r.handleSignalingMessage(ctx, nickChangedMessage("alice-session", map[string]any{"name": "Bob Impostor"})); err != nil {
+		t.Fatalf("handleSignalingMessage(nickChanged): %v", err)
+	}
+
+	sessionCap, err := r.ensureSessionCapture("alice-session")
+	if err != nil {
+		t.Fatalf("ensureSessionCapture: %v", err)
+	}
+	if sessionCap.ParticipantName != "Alice Example" {
+		t.Fatalf("expected Nextcloud's name Alice Example to stay, got %q", sessionCap.ParticipantName)
+	}
+}

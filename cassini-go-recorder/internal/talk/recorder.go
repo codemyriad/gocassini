@@ -1526,10 +1526,11 @@ func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any)
 // signaling session connects (the harness guest bots always do): Nextcloud
 // announces the name in a participants update at that moment, the signaling
 // server drops the entry because the session is not connected yet, and no later
-// update repeats it unless someone else's change happens to. Without this the recording keeps the participant-<id>
-// placeholder for that guest. The name only ever applies to the sending
-// session, which the signaling server stamps on the message, so one
-// participant cannot rename another.
+// update repeats it unless someone else's change happens to. Without this the
+// recording keeps the participant-<id> placeholder for that guest. The name
+// only ever applies to the sending session, which the signaling server stamps
+// on the message, so one participant cannot rename another, and it never
+// replaces a name Nextcloud supplied.
 func (r *Recorder) handleNickChanged(fromSession string, payload any) {
 	if fromSession == "" || fromSession == r.signalingSessionID {
 		return
@@ -1544,6 +1545,17 @@ func (r *Recorder) handleNickChanged(fromSession string, payload any) {
 		return
 	}
 	remoteSessionID := r.resolveRemoteSessionID(fromSession, "", "")
+	// The client chooses this name, so it only fills a gap: a name Nextcloud
+	// already supplied (a logged-in user's account name, or a guest name that
+	// did arrive) stays. A guest who renames later is covered by Nextcloud's
+	// own participants update, which reaches the recorder once the session
+	// exists.
+	r.sessionMu.Lock()
+	current := r.identityByRemote[remoteSessionID]
+	r.sessionMu.Unlock()
+	if known := strings.TrimSpace(current.DisplayName); known != "" && !isPlaceholderParticipantName(known, remoteSessionID, current.ParticipantID) {
+		return
+	}
 	r.rememberParticipantIdentity(remoteSessionID, name, "")
 }
 
