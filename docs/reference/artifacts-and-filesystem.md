@@ -67,12 +67,19 @@ Conceptually:
 - output: an intermediate bundle staged for packing into a portable `.opus`
 
 `meeting.webm` is the meeting's only Opus encode; packing copies its packets
-into the `.opus` unchanged. Its bitrate and audio bandwidth follow the sources
-(policy `source-v1`: a 16 kHz phone recording is coded as wideband at a little
-over its own rate, a Talk call at about what its participants sent, never above
-64 kb/s). `manifest.json` records the choice as `audioEncode`; a bundle without
-that record was built with the earlier fixed 64 kb/s encode (`fixed-64k`).
-`cassini build --audio-encode <policy>` rebuilds with a named policy.
+into the `.opus` unchanged. How it is encoded is set by a named encode policy.
+The default, `match-source`, sizes the encode from the recording's tracks:
+
+- audio bandwidth (the highest frequency kept) stops where the widest track
+  stops: a 16 kHz phone recording holds nothing above 8 kHz, so the mix is
+  coded up to 8 kHz; Talk tracks count as full range (up to 20 kHz);
+- bitrate is a third over what the highest-rate track spent while someone was
+  speaking, never above 64 kb/s.
+
+`manifest.json` records the choice as `audioEncode`. A bundle without that
+record was built with the earlier encode, policy `fixed-64k` (64 kb/s whatever
+the sources carried). `cassini build --audio-encode <policy>` rebuilds with a
+named policy.
 
 The `.meeting` bundle is transient build scratch, not a published format. Its
 `cassini.json` and `manifest.json` are internal staging manifests, not a

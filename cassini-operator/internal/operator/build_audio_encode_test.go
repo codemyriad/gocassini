@@ -18,7 +18,7 @@ func TestRebuildAudioEncodePolicyRepeatsThePublishedMeetingsEncode(t *testing.T)
 		{name: "first build has no meeting to match", noBundle: true, want: ""},
 		{name: "meeting without a manifest predates D-850", want: audioEncodeLegacy},
 		{name: "manifest without an audioEncode record predates D-850", manifest: `{"kind":"cassini.meeting-artifact.v1","files":{"audio":"meeting.webm"}}`, want: audioEncodeLegacy},
-		{name: "recorded policy is repeated", manifest: `{"audioEncode":{"policy":"source-v1","bitrateBps":32000,"cutoffHz":8000}}`, want: "source-v1"},
+		{name: "recorded policy is repeated", manifest: `{"audioEncode":{"policy":"match-source","bitrateBps":32000,"cutoffHz":8000}}`, want: "match-source"},
 		{name: "recorded legacy policy is repeated", manifest: `{"audioEncode":{"policy":"fixed-64k","bitrateBps":64000}}`, want: audioEncodeLegacy},
 	}
 	for _, tt := range tests {

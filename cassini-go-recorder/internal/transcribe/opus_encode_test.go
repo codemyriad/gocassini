@@ -24,7 +24,7 @@ func TestFixed64kEncodeIsThePreD850Encode(t *testing.T) {
 	}
 }
 
-func TestSourceV1SizesTheEncodeFromTheSources(t *testing.T) {
+func TestMatchSourceSizesTheEncodeFromTheSources(t *testing.T) {
 	opusTrack := func(bps int) SourceAudio { return SourceAudio{Codec: "opus", SampleRate: 48000, SpeechBitrateBps: bps} }
 	tests := []struct {
 		name        string
@@ -45,7 +45,7 @@ func TestSourceV1SizesTheEncodeFromTheSources(t *testing.T) {
 			wantBitrate: 32000, wantCutoff: 8000,
 		},
 		{
-			name:        "Talk tracks at 32 kb/s follow the richest track, fullband",
+			name:        "Talk tracks at 32 kb/s follow the highest-rate track, fullband",
 			sources:     []SourceAudio{opusTrack(30900), opusTrack(32900), opusTrack(32000)},
 			wantBitrate: 44000, wantCutoff: 20000,
 		},
@@ -84,22 +84,22 @@ func TestSourceV1SizesTheEncodeFromTheSources(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			enc, err := ChooseAudioEncode(AudioEncodeSourceV1, tt.sources)
+			enc, err := ChooseAudioEncode(AudioEncodeMatchSource, tt.sources)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if enc.Policy != AudioEncodeSourceV1 || enc.BitrateBps != tt.wantBitrate || enc.CutoffHz != tt.wantCutoff {
-				t.Fatalf("encode = %+v, want source-v1 at %d bps, cutoff %d Hz", enc, tt.wantBitrate, tt.wantCutoff)
+			if enc.Policy != AudioEncodeMatchSource || enc.BitrateBps != tt.wantBitrate || enc.CutoffHz != tt.wantCutoff {
+				t.Fatalf("encode = %+v, want match-source at %d bps, cutoff %d Hz", enc, tt.wantBitrate, tt.wantCutoff)
 			}
 		})
 	}
 }
 
 func TestChooseAudioEncodeRejectsUnknownPolicies(t *testing.T) {
-	if ValidAudioEncodePolicy("source-v0") {
+	if ValidAudioEncodePolicy("no-such-policy") {
 		t.Fatal("an unknown policy name was accepted")
 	}
-	if _, err := ChooseAudioEncode("source-v0", nil); err == nil {
+	if _, err := ChooseAudioEncode("no-such-policy", nil); err == nil {
 		t.Fatal("ChooseAudioEncode accepted an unknown policy")
 	}
 	enc, err := ChooseAudioEncode("", []SourceAudio{{Codec: "aac", SampleRate: 16000, SpeechBitrateBps: 24000}})
@@ -194,8 +194,8 @@ func TestBuildMeetingArtifactSizesTheMixFromTheSource(t *testing.T) {
 	}
 
 	first := build("")
-	if first.enc.Policy != AudioEncodeSourceV1 || first.enc.CutoffHz != 8000 || first.enc.BitrateBps != 32000 || first.enc.Application != "audio" {
-		t.Fatalf("16 kHz FLAC source encoded as %+v, want source-v1 wideband (8000 Hz) at the 32 kb/s ceiling", first.enc)
+	if first.enc.Policy != AudioEncodeMatchSource || first.enc.CutoffHz != 8000 || first.enc.BitrateBps != 32000 || first.enc.Application != "audio" {
+		t.Fatalf("16 kHz FLAC source encoded as %+v, want match-source wideband (8000 Hz) at the 32 kb/s ceiling", first.enc)
 	}
 	if first.enc.SourceBandwidthHz != 8000 || first.enc.SourceSpeechBitrateBps <= 0 {
 		t.Fatalf("source measurements not recorded: %+v", first.enc)
@@ -211,7 +211,7 @@ func TestBuildMeetingArtifactSizesTheMixFromTheSource(t *testing.T) {
 		t.Fatalf("fixed-64k recorded as %+v", legacy.enc)
 	}
 	if legacy.pcm == first.pcm {
-		t.Fatal("fixed-64k and source-v1 produced the same audio; the policy did not reach the encoder")
+		t.Fatal("fixed-64k and match-source produced the same audio; the policy did not reach the encoder")
 	}
 	if first.size*3 > legacy.size*2 {
 		t.Fatalf("source-sized mix is %d bytes, not clearly smaller than the fixed-64k %d bytes", first.size, legacy.size)

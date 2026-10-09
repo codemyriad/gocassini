@@ -43,7 +43,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.StringVar(&opts.device, "device", "auto", "transcriber device: auto, cpu, cuda")
 	fs.BoolVar(&opts.keepWork, "keep-work", false, "keep transcriber work files inside the meeting bundle")
 	fs.BoolVar(&opts.rebuild, "rebuild-image", false, "ignored (kept for compatibility)")
-	fs.StringVar(&opts.audioEncode, "audio-encode", "", "meeting audio encode policy: "+transcribe.AudioEncodeSourceV1+" (default, sized from the sources) or "+transcribe.AudioEncodeFixed64k+" (to rebuild a meeting first built with it, before D-850)")
+	fs.StringVar(&opts.audioEncode, "audio-encode", "", "meeting audio encode policy: "+transcribe.AudioEncodeMatchSource+" (default, sized from the sources) or "+transcribe.AudioEncodeFixed64k+" (to rebuild a meeting first built with it, before D-850)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini build ./runs/meeting.run --out "./2026-03-11 Weekly Sync.opus"
@@ -194,7 +194,7 @@ func validateBuildOptions(opts buildOptions) error {
 		return fmt.Errorf("invalid --device %q", opts.device)
 	}
 	if !transcribe.ValidAudioEncodePolicy(opts.audioEncode) {
-		return fmt.Errorf("invalid --audio-encode %q (known: %s, %s)", opts.audioEncode, transcribe.AudioEncodeSourceV1, transcribe.AudioEncodeFixed64k)
+		return fmt.Errorf("invalid --audio-encode %q (known: %s, %s)", opts.audioEncode, transcribe.AudioEncodeMatchSource, transcribe.AudioEncodeFixed64k)
 	}
 	return nil
 }

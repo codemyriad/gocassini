@@ -14,9 +14,10 @@ import (
 // `cassini pack` copies its packets into the published .opus untouched, so the
 // settings chosen here decide what every published meeting costs to store.
 //
-// They are also part of the meeting's identity. Annotations are bound to the
-// Opus packets (integrity.opusAudioSha256), and a rerun rebuilds the mix from
-// the same capture. Rebuilding with different settings produces different
+// They are also part of the meeting's identity. Annotations (the tags and
+// marks people put on a meeting) are bound to the Opus packets
+// (integrity.opusAudioSha256), and a rerun rebuilds the mix from the same
+// capture. Rebuilding with different settings produces different
 // packets, and the publish path then discards the marks people made on the
 // previous version. So encode policies are versioned by name, a released
 // policy is never changed in place (a new behaviour gets a new name), and a
@@ -24,15 +25,17 @@ import (
 // with (`cassini build --audio-encode`, which the operator passes on reruns).
 const (
 	// AudioEncodeFixed64k is the encode every meeting got before D-850:
-	// 64 kb/s VBR whatever the sources carried, with libopus picking the
-	// audio bandwidth. A manifest without an audioEncode record was built
+	// 64 kb/s VBR (variable bitrate: 64 kb/s is the average target, quiet
+	// stretches cost less) whatever the sources carried, with libopus picking
+	// the audio bandwidth. A manifest without an audioEncode record was built
 	// with it.
 	AudioEncodeFixed64k = "fixed-64k"
-	// AudioEncodeSourceV1 sizes bitrate and audio bandwidth from the sources;
-	// see chooseSourceV1Encode.
-	AudioEncodeSourceV1 = "source-v1"
+	// AudioEncodeMatchSource sizes bitrate and audio bandwidth (the highest
+	// frequency kept) from what the sources carry; see
+	// chooseMatchSourceEncode.
+	AudioEncodeMatchSource = "match-source"
 	// DefaultAudioEncodePolicy is what a first build of a recording uses.
-	DefaultAudioEncodePolicy = AudioEncodeSourceV1
+	DefaultAudioEncodePolicy = AudioEncodeMatchSource
 )
 
 // AudioEncode is the Opus encode chosen for one meeting mix. It is recorded in
@@ -43,8 +46,10 @@ type AudioEncode struct {
 	// CutoffHz caps the audio bandwidth libopus may code (4000, 6000, 8000,
 	// 12000 or 20000). Zero leaves the choice to libopus.
 	CutoffHz int `json:"cutoffHz,omitempty"`
-	// Application is libopus's -application: "voip" (high-pass filter and
-	// formant emphasis, the pre-D-850 choice) or "audio" (codes what is there).
+	// Application is libopus's -application tuning: "voip" reshapes the
+	// signal for intelligibility on a phone line (it filters out low
+	// frequencies and boosts the bands that carry vowels; the pre-D-850
+	// choice), "audio" tries to reproduce the input as it is.
 	Application string `json:"application"`
 	// SourceBandwidthHz and SourceSpeechBitrateBps are the measurements the
 	// choice was made from (zero when the policy does not look at sources, or
@@ -57,7 +62,7 @@ type AudioEncode struct {
 // The empty name means DefaultAudioEncodePolicy.
 func ValidAudioEncodePolicy(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "", AudioEncodeFixed64k, AudioEncodeSourceV1:
+	case "", AudioEncodeFixed64k, AudioEncodeMatchSource:
 		return true
 	}
 	return false
@@ -91,9 +96,13 @@ type SourceAudio struct {
 }
 
 // opusBand is one libopus bandwidth with the bitrate range this policy allows
-// for it. Floors keep speech comfortably intelligible after a second lossy
-// generation; ceilings are where Opus speech stops improving audibly for that
-// bandwidth (the full-band ceiling is the pre-D-850 fixed rate).
+// for it. Opus names its bandwidths by the highest frequency they keep:
+// narrowband 4 kHz (telephone), mediumband 6 kHz, wideband 8 kHz,
+// super-wideband 12 kHz, fullband 20 kHz (everything people hear). Floors keep
+// speech comfortably intelligible after a second lossy generation (the mix is
+// coded again from sources that were already lossy-coded once); ceilings are
+// where Opus speech stops improving audibly for that bandwidth (the fullband
+// ceiling is the pre-D-850 fixed rate).
 type opusBand struct {
 	cutoffHz   int
 	floorBps   int
@@ -115,8 +124,10 @@ var opusBands = []opusBand{
 const fullbandHz = 20000
 
 // speechBitrateHeadroom covers the second lossy generation. Measured on a
-// 16 kHz / 24 kb/s AAC recording against its decoded source (PESQ-WB): the
-// old fixed 64k scored 4.29, a 32k wideband encode 4.17, a 24k one 3.87.
+// 16 kHz / 24 kb/s AAC recording against its decoded source with PESQ-WB, the
+// ITU speech quality score that predicts a listener rating from 1 (bad) to
+// about 4.6 (no audible difference from the reference): the old fixed 64k
+// scored 4.29, a 32k wideband encode 4.17, a 24k one 3.87.
 const speechBitrateHeadroom = 4.0 / 3.0
 
 // ChooseAudioEncode picks the Opus settings for a meeting mix under policy.
@@ -124,29 +135,30 @@ func ChooseAudioEncode(policy string, sources []SourceAudio) (AudioEncode, error
 	switch strings.TrimSpace(policy) {
 	case AudioEncodeFixed64k:
 		return AudioEncode{Policy: AudioEncodeFixed64k, BitrateBps: 64000, Application: "voip"}, nil
-	case "", AudioEncodeSourceV1:
-		return chooseSourceV1Encode(sources), nil
+	case "", AudioEncodeMatchSource:
+		return chooseMatchSourceEncode(sources), nil
 	default:
-		return AudioEncode{}, fmt.Errorf("unknown audio encode policy %q (known: %s, %s)", policy, AudioEncodeSourceV1, AudioEncodeFixed64k)
+		return AudioEncode{}, fmt.Errorf("unknown audio encode policy %q (known: %s, %s)", policy, AudioEncodeMatchSource, AudioEncodeFixed64k)
 	}
 }
 
-// chooseSourceV1Encode never spends bits on what no source carries:
+// chooseMatchSourceEncode never spends bits on what no source carries:
 //
-//   - Bandwidth: the mix cannot contain frequencies above the widest source's
-//     Nyquist limit, so libopus is told to stop there (a 16 kHz phone
-//     recording is coded as wideband, not fullband). Opus sources count as
-//     fullband (see fullbandHz).
-//   - Bitrate: the mix carries roughly one speaker at a time, so it needs about
-//     what the richest single source spent on speech, plus headroom for the
-//     re-encode, clamped to the band's floor and ceiling. A source with no
-//     usable measurement (lossless, PCM, too short) gets the ceiling, which
-//     for fullband is the old fixed 64k, so nothing gets worse than before.
-//   - Application "audio": "voip" mode's high-pass and formant emphasis
-//     reshape the signal rather than code it. Against the decoded sources,
-//     "audio" scored at least as well at every rate measured, and far better
-//     on clean high-rate speech (PESQ-WB 4.25 vs 2.88 at 64k).
-func chooseSourceV1Encode(sources []SourceAudio) AudioEncode {
+//   - Bandwidth: a source sampled at R Hz holds no frequency above R/2, so
+//     the mix has nothing above the widest source's R/2 and libopus is told
+//     to stop there (a 16 kHz phone recording is coded as wideband, not
+//     fullband). Opus sources count as fullband (see fullbandHz).
+//   - Bitrate: the mix carries roughly one speaker at a time, so it needs
+//     about what the highest-rate single source spent on speech, plus
+//     headroom for the re-encode, clamped to the band's floor and ceiling. A
+//     source with no usable measurement (lossless, PCM, too short) gets the
+//     ceiling, which for fullband is the old fixed 64k, so nothing gets worse
+//     than before.
+//   - Application "audio": "voip" reshapes the signal (see
+//     AudioEncode.Application) rather than reproduce it. Against the decoded
+//     sources, "audio" scored at least as well at every rate measured, and
+//     far better on clean high-rate speech (PESQ-WB 4.25 vs 2.88 at 64k).
+func chooseMatchSourceEncode(sources []SourceAudio) AudioEncode {
 	bandwidthHz := 0
 	speechBps := 0
 	measured := len(sources) > 0
@@ -179,7 +191,7 @@ func chooseSourceV1Encode(sources []SourceAudio) AudioEncode {
 		bitrate = min(max(want, band.floorBps), band.ceilingBps)
 	}
 	return AudioEncode{
-		Policy:                 AudioEncodeSourceV1,
+		Policy:                 AudioEncodeMatchSource,
 		BitrateBps:             bitrate,
 		CutoffHz:               band.cutoffHz,
 		Application:            "audio",
@@ -192,7 +204,7 @@ func chooseSourceV1Encode(sources []SourceAudio) AudioEncode {
 // the mix encode under policy. The fixed policy measures nothing.
 func ChooseMeetingAudioEncode(mkv string, streams []AudioStream, policy string) (AudioEncode, error) {
 	switch strings.TrimSpace(policy) {
-	case "", AudioEncodeSourceV1:
+	case "", AudioEncodeMatchSource:
 	default:
 		return ChooseAudioEncode(policy, nil)
 	}
@@ -272,9 +284,10 @@ func probeSpeechBitrates(mkv string) (map[int]int, error) {
 //
 // The 90th-percentile packet is taken as "speaking" even for a participant
 // who talks a tenth of the time; the estimate is the mean of every packet at
-// least half that rate. That drops the silence/DTX frames a VBR Opus track is
-// mostly made of (they cost a fraction of a speech frame) and keeps the
-// speech, so a Talk track sent at 32 kb/s reads ~32 kb/s however long its
+// least half that rate. That drops the silence frames a VBR Opus track is
+// mostly made of (including DTX, discontinuous transmission, where a WebRTC
+// sender sends a tiny packet only now and then while its user is quiet; both
+// cost a fraction of a speech frame) and keeps the speech, so a Talk track sent at 32 kb/s reads ~32 kb/s however long its
 // owner was quiet, while a constant-rate source (AAC, MP3) reads its average.
 func speechBitrateFromHistogram(hist map[int]int) int {
 	total := 0
