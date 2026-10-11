@@ -73,21 +73,25 @@ it("keeps publication separate from source retention and explicitly opts into de
   const open = () => app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
   open();
   const nothing = page.getByRole("radio", { name: "Nothing", exact: true });
-  await expect.element(page.getByRole("radio", { name: "Full audio + video", exact: true })).toBeChecked();
+  await expect.element(page.getByRole("radio", { name: "Audio and video", exact: true })).toBeChecked();
   expect(writes).toHaveLength(0);
+  // Publishing audio needs audio kept, so Nothing waits for a transcript-only format.
+  await expect.element(nothing).toBeDisabled();
+  await expect.element(page.getByText("Unavailable while audio is published.")).toBeVisible();
+  await page.getByRole("combobox", { name: "Published meeting" }).selectOptions("json");
+  await expect.element(nothing).toBeEnabled();
   await nothing.click();
-  await expect.element(page.getByRole("combobox", { name: "Published meeting" })).toHaveValue("json");
   expect(writes).toHaveLength(0);
-  await expect.element(page.getByText(/Processing cannot be rerun/)).toBeVisible();
-  await expect.element(page.getByRole("radio", { name: "Full audio + video", exact: true })).not.toBeChecked();
-  expect((host.querySelector('option[value="opus"]') as HTMLOptionElement).disabled).toBe(true);
+  await expect.element(page.getByRole("radio", { name: "Audio and video", exact: true })).not.toBeChecked();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => saved.source_retention).toBe("delete-after-processing");
   expect(writes[0]).toMatchObject({ meeting_format: "json", source_retention: "delete-after-processing", retain_video: false, transcription_enabled: true });
   await unmount(app!); app = undefined; open();
   await expect.element(nothing).toBeChecked();
-  await page.getByRole("radio", { name: "Audio-only", exact: true }).click();
-  expect((host.querySelector('option[value="opus"]') as HTMLOptionElement).disabled).toBe(false);
+  // Choosing audio while Nothing is kept falls back to keeping audio only.
+  await page.getByRole("combobox", { name: "Published meeting" }).selectOptions("opus");
+  await expect.element(page.getByRole("radio", { name: "Audio only", exact: true })).toBeChecked();
+  await page.getByRole("combobox", { name: "Published meeting" }).selectOptions("json");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => saved.source_retention).toBe("storage-policy");
   expect(saved.meeting_format).toBe("json");
@@ -103,8 +107,8 @@ it("requires prepared transcription before saving deletion", async () => {
   host = document.createElement("div"); document.body.append(host);
   app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
   await page.getByRole("radio", { name: "Nothing", exact: true }).click();
-  await expect.element(page.getByText("Set up transcription to keep no recording media")).toBeVisible();
+  await expect.element(page.getByText("Transcription must be on to keep nothing.")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: "Go to transcription settings" }).click();
+  await page.getByRole("button", { name: "Set up transcription" }).click();
   await expect.element(page.getByRole("region", { name: "Transcription settings" })).toHaveFocus();
 });
