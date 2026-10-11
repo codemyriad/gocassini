@@ -128,8 +128,8 @@ afterEach(async () => {
 });
 
 const reminder = () => page.getByRole("region", { name: "Retention reminder" });
-const source = () => page.getByRole("group", { name: "Source recordings", exact: true });
-const save = () => page.getByRole("button", { name: "Save retention settings", exact: true });
+const source = () => page.getByRole("group", { name: "Recordings", exact: true });
+const save = () => page.getByRole("button", { name: "Save", exact: true });
 async function open(hash = "") {
   if (app) await unmount(app);
   history.replaceState({}, "", location.pathname + location.search + hash);
@@ -284,10 +284,10 @@ describe("retention reminder in the app", () => {
     await save().click();
     await expect.element(page.getByRole("alert")).toHaveTextContent("Settings changed");
     failGet = true;
-    await page.getByRole("button", { name: "Reload saved settings" }).click();
+    await page.getByRole("button", { name: "Discard changes" }).click();
     await page.getByRole("button", { name: "Leave", exact: true }).click();
     await expect.element(page.getByRole("alert")).toHaveTextContent("Synthetic retention read failure");
-    await page.getByRole("button", { name: "Reload saved settings" }).click();
+    await page.getByRole("button", { name: "Discard changes" }).click();
     await expect.element(page.getByRole("alertdialog")).toBeVisible();
     failGet = false;
     await page.getByRole("button", { name: "Leave", exact: true }).click();
@@ -417,7 +417,7 @@ describe("retention reminder in the app", () => {
     await source().getByRole("button", { name: "30 days", exact: true }).click();
     await expect.element(ignore).toBeDisabled();
     await expect.element(page.getByText("Save or discard your changes before dismissing.")).toBeVisible();
-    await page.getByRole("button", { name: "Reload saved settings" }).click();
+    await page.getByRole("button", { name: "Discard changes" }).click();
     await page.getByRole("button", { name: "Leave", exact: true }).click();
     await expect.element(ignore).toBeEnabled();
     holdSave = true;
@@ -437,7 +437,7 @@ describe("retention reminder in the app", () => {
     await save().click();
     await expect.poll(() => releaseSave !== null).toBe(true);
     await page.getByRole("button", { name: "Browse", exact: true }).click();
-    await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("heading", { name: "Retention", exact: true })).not.toBeInTheDocument();
     releaseSave!();
     holdSave = false;
     await expect.element(reminder()).not.toBeInTheDocument();
