@@ -112,3 +112,36 @@ it("requires prepared transcription before saving deletion", async () => {
   await page.getByRole("button", { name: "Set up transcription" }).click();
   await expect.element(page.getByRole("region", { name: "Transcription settings" })).toHaveFocus();
 });
+
+it("turns transcription on from the heading switch and shows the model as one row", async () => {
+  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
+  const writes: Record<string, unknown>[] = [];
+  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+    download_bytes: 700 * 1024 * 1024, installed_bytes: 0, installed: true, ready: true, device: "cpu" };
+  const best = { ...balanced, id: "parakeet-tdt-0.6b-v3", name: "Parakeet best", download_bytes: 2.2 * 1024 ** 3, installed: false, ready: false };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") {
+      if (init?.method === "PUT") { const update = JSON.parse(init.body as string); writes.push(update); saved = { ...saved, ...update }; }
+      return Response.json(saved);
+    }
+    if (path === "/operator/settings/models") return Response.json({ models: [balanced, best], downloads_allowed: true, device: "cpu",
+      jobs: [{ id: "j1", model: best.id, revision: "r1", device: "cpu", state: "cancelled", updated_at: "", progress: { phase: "", completed_bytes: 0, total_bytes: 0, reused_bytes: 0 } }] });
+    if (path === "/operator/settings/llm") return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
+    return Response.json({});
+  }));
+  host = document.createElement("div"); document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  const toggle = page.getByRole("checkbox", { name: "Transcribe every recording" });
+  await expect.element(page.getByText("Parakeet balanced")).toBeVisible();
+  await expect.element(toggle).toBeEnabled();
+  await toggle.click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => writes.at(-1)).toMatchObject({ transcription_enabled: true, active_model: balanced.id, active_revision: "r1" });
+
+  await page.getByRole("radio", { name: /^Best/ }).click();
+  await expect.element(page.getByText("Parakeet best")).toBeVisible();
+  await expect.element(page.getByText("2.2 GiB")).toBeVisible();
+  await expect.element(page.getByText("Download cancelled. Retry resumes it.")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+});

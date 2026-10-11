@@ -47,6 +47,7 @@
     LLMStep,
     Settings,
     SettingsQuality,
+    SpeechModel,
   } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
@@ -109,6 +110,14 @@
   }
   let activeModel = "";
   let activeRevision = "";
+  let readyModel: SpeechModel | null = null;
+  function toggleTranscription(on: boolean) {
+    if (on && readyModel) {
+      activeModel = readyModel.id;
+      activeRevision = readyModel.revision;
+    }
+    transcriptionEnabled = on && !!readyModel;
+  }
   let savedTranscription = "";
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
@@ -689,23 +698,28 @@
            party — do not read as one block, without a card around each. -->
       <section class="op-tint pipe-step scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
         <div class="set-row-main">
-          <p id="stt-quality-heading" class="set-row-name op-card-title">Quality</p>
-          <p class="set-row-sub">
-            {#if transcriptionEnabled}
-              Applies to every recording on this machine.
-            {:else}
-              Transcription is off. To transcribe, install
-              and enable a model below.
-            {/if}
-            {#if runsOnGPU}
-              On the GPU, every quality setting uses the same full-precision model, so this only
-              changes transcription on the CPU.
-            {:else}
-              Higher quality uses a larger model: more accurate, but slower on this machine.
-            {/if}
-          </p>
+          <!-- The switch sits in the heading, as on Summarisation. Turning it
+               on selects the ready model for the chosen quality. -->
+          <div class="step-head">
+            <p class="set-row-name op-card-title">Transcription</p>
+            <input
+              type="checkbox"
+              class="op-switch"
+              aria-label="Transcribe every recording"
+              disabled={!transcriptionEnabled && !readyModel}
+              checked={transcriptionEnabled}
+              on:change={(event) => toggleTranscription(event.currentTarget.checked)}
+            />
+          </div>
+          {#if !transcriptionEnabled && !readyModel}
+            <p class="set-row-sub">Download the model below to turn transcription on.</p>
+          {/if}
+          {#if runsOnGPU}
+            <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
+          {/if}
+          <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
           <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
-            {#each QUALITY_OPTIONS as option}
+            {#each QUALITY_OPTIONS as option (option.value)}
               <label class="q-opt" class:selected={quality === option.value}>
                 <input
                   type="radio"
@@ -722,7 +736,7 @@
             {/each}
           </div>
           <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
-            on:disable={() => transcriptionEnabled = false}
+            bind:readyModel
             on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
         </div>
 
