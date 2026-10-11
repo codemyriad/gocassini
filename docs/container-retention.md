@@ -11,12 +11,12 @@ The same page shows [storage usage by retention category and date](storage-usage
 ## Initial retention reminder
 
 Cassini is usable before an administrator saves retention settings. Administrators
-see a nonblocking **Review retention settings** banner until the configuration
-has been saved or explicitly dismissed. **Review settings** opens the existing editor in
+see a nonblocking **Choose how long Cassini keeps recordings** banner until the configuration
+has been saved or explicitly dismissed. **Review** opens the existing editor in
 **Operator → Storage**. Saving unchanged defaults is allowed on the first save.
 Merely visiting Storage does not acknowledge the reminder.
 
-**Don't remind again** saves the latest effective configuration unchanged and
+**Dismiss** saves the latest effective configuration unchanged and
 suppresses the reminder for the whole installation. It does not use a browser-local
 preference or change retention durations. Save and dismissal deliberately share
 the same saved-revision representation; it does not record which action was used.
@@ -28,7 +28,7 @@ administrator's saved policy is preserved by the existing revision checks.
 Open app -> browse / record / play with effective settings
      |
      +-- revision zero -> reminder --+--> Storage -> Save --+
-                                     +--> Don't remind ----+
+                                     +--> Dismiss ---------+
                                                            |
                                                persisted revision > 0
                                                            |
@@ -62,9 +62,9 @@ same deadlines; it does not force unexpired artifacts to be deleted.
 | Category | Contents | Age starts at |
 |---|---|---|
 | Recordings | Successful `.run`: captured audio and video | Original recording completion |
-| Attempt history | Failed `.run`; failed build/seal `.meeting`/`.opus`; superseded successful seals; failed `.site` staging | Attempt termination; superseded output uses the replacing successful publication date |
-| Current output archive | Current `.meeting` and `.opus`, including its retained seal alias | Publication of that version |
-| Logs | Attempt stage logs, successful and failed | Attempt termination |
+| Previous attempts | Failed `.run`; failed build/seal `.meeting`/`.opus`; superseded successful seals; failed `.site` staging | Attempt termination; superseded output uses the replacing successful publication date |
+| Published meetings (on this server) | Current `.meeting` and `.opus`, including its retained seal alias | Publication of that version |
+| Processing logs | Attempt stage logs, successful and failed | Attempt termination |
 
 Recordings use one policy for the entire source `.run` bundle: captured audio,
 video, raw packets and supporting files expire together. There is no separate
@@ -76,7 +76,7 @@ Recordings policy -> delete entire source .run -> rerun unavailable
 Current policy    -> delete current .meeting + .opus and retained seal alias
 ```
 
-Attempt history uses either one group policy or fine-grained policies. The first
+Previous attempts uses either one group policy or fine-grained policies. The first
 fine-grained split copies the group value; subsequent toggles preserve inactive
 values. Only the selected mode applies.
 
@@ -98,11 +98,11 @@ Only existing targets are included in a deletion operation.
 | UI policy / API key | Exact paths under `W` | Selection and age anchor |
 |---|---|---|
 | Recordings / `recordings` | `current/J.run/`; `runs/J--attempt-A.run/` if its original capture copy remains | Job source must point to canonical `current/J.run`. Uses the recording attempt's `record_finished_at`. |
-| Attempt history: Failed recordings / `history.fine.failed_capture` | `runs/J--attempt-A.run/` | Failed or interrupted attempt, only when the job has no canonical source reference. Uses attempt termination. |
-| Attempt history: Failed build / seal output / `history.fine.failed_build` | `runs/J--attempt-A.meeting/`; `runs/J--attempt-A.seal/` | Failed or interrupted attempt. Uses attempt termination. Also covers these files when the attempt failed later, during publication. |
-| Attempt history: Superseded successful output / `history.fine.superseded` | `runs/J--attempt-A.meeting/`; `runs/J--attempt-A.seal/` | Successfully published attempt with a later successful publication. Uses the **next successful attempt's** `publish_finished_at`. |
-| Attempt history: Failed publish staging / `history.fine.failed_publish` | `runs/J--attempt-A.site/` | Failed or interrupted attempt. Uses attempt termination. |
-| Current output archive / `current` | `current/J.meeting/`; `current/J.opus`; `runs/J--attempt-A.seal/`; `runs/J--attempt-A.meeting/` | `A` is the published attempt recorded in `artifact_availability`. It must have succeeded and have `publish_finished_at`, which is the age anchor. |
+| Previous attempts: Failed recordings / `history.fine.failed_capture` | `runs/J--attempt-A.run/` | Failed or interrupted attempt, only when the job has no canonical source reference. Uses attempt termination. |
+| Previous attempts: Failed processing / `history.fine.failed_build` | `runs/J--attempt-A.meeting/`; `runs/J--attempt-A.seal/` | Failed or interrupted attempt. Uses attempt termination. Also covers these files when the attempt failed later, during publication. |
+| Previous attempts: Replaced output / `history.fine.superseded` | `runs/J--attempt-A.meeting/`; `runs/J--attempt-A.seal/` | Successfully published attempt with a later successful publication. Uses the **next successful attempt's** `publish_finished_at`. |
+| Previous attempts: Failed publishing / `history.fine.failed_publish` | `runs/J--attempt-A.site/` | Failed or interrupted attempt. Uses attempt termination. |
+| Published meetings (on this server) / `current` | `current/J.meeting/`; `current/J.opus`; `runs/J--attempt-A.seal/`; `runs/J--attempt-A.meeting/` | `A` is the published attempt recorded in `artifact_availability`. It must have succeeded and have `publish_finished_at`, which is the age anchor. |
 | Logs / `logs` | `runs/J--attempt-A.logs/` | Each finished attempt of an eligible job. Uses attempt termination. |
 
 “Attempt termination” means `completed_at`, falling back to `interrupted_at`.
@@ -122,14 +122,14 @@ W/
       cassini.json                 source bundle manifest
       recording.mkv                captured audio/video container
       session/                     optional capture/session data
-    J.meeting/                     Current output archive
+    J.meeting/                     Published meetings (on this server)
       cassini.json
       meeting.webm
       transcript.words.v1.json
       manifest.json
       captions.vtt                 optional
       summary.md                   optional
-    J.opus                         Current output archive
+    J.opus                         Published meetings (on this server)
   runs/
     J--attempt-A.run/              failed source or leftover capture copy
     J--attempt-A.meeting/          intermediate build output
@@ -191,7 +191,7 @@ Shortening it can make old artifacts eligible at the next sweep. Extending it
 or choosing Keep forever cannot restore deleted files. A rerun does not reset
 the source recording's age; a newly published output has its own publication date.
 
-Set **Sweep time** and **Timezone** in Storage to choose the daily cleanup
+Set the **Daily cleanup** time and timezone in Storage to choose the daily cleanup
 schedule. Time is entered in 24-hour format; timezone names such as
 `Europe/Zagreb` follow daylight-saving changes automatically. Save activates the
 new schedule without a restart. Startup still performs an expiry sweep, and
@@ -289,8 +289,8 @@ or superseded-history deadline. Scheduled and manual expiry do **not** call
 | Evicted category | Effect |
 |---|---|
 | Recordings | Job list shows **Recording deleted**; global Record bar is empty and labeled **Record (deleted)**; details explain that retention deleted the source and rerun is unavailable. Both UI and API prevent reruns. |
-| Current output archive | Local current output is unavailable. Source-based rerun remains possible if the `.run` still exists and normal rerun requirements hold. Published copies remain available through their sink. |
-| Attempt history | The selected old/failed attempt artifacts are gone; job and attempt records remain. |
+| Published meetings (on this server) | Local current output is unavailable. Source-based rerun remains possible if the `.run` still exists and normal rerun requirements hold. Published copies remain available through their sink. |
+| Previous attempts | The selected old/failed attempt artifacts are gone; job and attempt records remain. |
 | Logs | Stage log files are gone; this does not delete job/attempt rows or rotate operator service logs. |
 
 The API distinguishes `present`, `missing`, and explicitly `expired` source/output
@@ -424,7 +424,7 @@ and unavailable-source rerun protection.
 
 ### Transcription-only output
 
-With **Transcription only (.json)** selected in **Settings → Publish pipeline**,
+With **Transcript only (.json)** selected in **Settings → Publish pipeline**,
 the current published output and immutable
 attempt seal are `.json` files. They follow the same current-output and attempt
 history deadlines, promotion journal and expiry recovery as `.opus` files.
@@ -433,9 +433,9 @@ container policies; the publication setting does not change those policies.
 
 ### Explicit deletion after processing
 
-**Settings → Publish pipeline → Recording media and publication** can override
+**Settings → Publish pipeline → Publishing** can override
 normal media retention for newly admitted transcription-only publications.
-Under **Keep after each recording**, **Full audio + video** and **Audio-only**
+Under **Keep on the server after publishing**, **Audio and video** and **Audio only**
 retain source media under Storage policies, including source-based reruns.
 **Nothing** selects transcription-only publication and requires
 JSON publication, audio-only capture and prepared transcription. It removes

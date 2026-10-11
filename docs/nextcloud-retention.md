@@ -1,6 +1,6 @@
 # Whole-meeting retention in Nextcloud Files
 
-Administrators configure **Nextcloud Files > Whole meetings** in Operator >
+Administrators configure **Published meetings in Nextcloud** in Operator >
 Storage. The default is **Keep forever**. A finite policy deletes the published
 `.opus` or transcription-only `.json`, including all its transcript and meeting notes, and removes the meeting
 from active Files, Cassini lists, search and annotations. Container retention
