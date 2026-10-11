@@ -137,7 +137,7 @@ async function open(hash = "") {
   await expect.poll(() => statusCalls).toBeGreaterThan(0);
 }
 async function openStorage() {
-  await page.getByRole("button", { name: "Review settings", exact: true }).click();
+  await page.getByRole("button", { name: "Review", exact: true }).click();
   await expect.element(save()).toBeEnabled();
 }
 
@@ -196,7 +196,7 @@ describe("retention reminder in the app", () => {
 
     saved = defaults();
     await open();
-    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect.element(reminder()).not.toBeInTheDocument();
     expect(saved.revision).toBe(1);
     expect(retainVideo).toBe(video);
@@ -209,7 +209,7 @@ describe("retention reminder in the app", () => {
     await expect.element(video).not.toBeChecked();
     await expect.element(reminder()).toBeVisible();
     await video.click();
-    const ignore = page.getByRole("button", { name: "Don't remind again", exact: true });
+    const ignore = page.getByRole("button", { name: "Dismiss", exact: true });
     await expect.element(ignore).toBeDisabled();
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect.element(page.getByRole("button", { name: "Save", exact: true })).not.toBeInTheDocument();
@@ -232,9 +232,9 @@ describe("retention reminder in the app", () => {
     Object.assign(saved.nextcloud.meetings, { forever: false, count: 30, unit: "days" });
     const before = structuredClone(saved);
     await open();
-    await expect.element(reminder()).toHaveTextContent("Review how long Cassini keeps container files and published meetings.");
+    await expect.element(reminder()).toHaveTextContent("Choose how long Cassini keeps recordings");
     expect(reminder().element().textContent).not.toContain("indefinitely");
-    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect.element(reminder()).not.toBeInTheDocument();
     expect(saved).toEqual({ ...before, revision: 1 });
   });
@@ -254,7 +254,7 @@ describe("retention reminder in the app", () => {
     await open();
     await openStorage();
     await source().getByRole("button", { name: "30 days", exact: true }).click();
-    await page.getByRole("button", { name: "Review settings", exact: true }).click();
+    await page.getByRole("button", { name: "Review", exact: true }).click();
     expect(source().getByRole("button", { name: "30 days", exact: true }).element().getAttribute("aria-pressed")).toBe("true");
     await page.getByRole("button", { name: "Browse", exact: true }).click();
     await expect.element(page.getByRole("alertdialog")).toBeVisible();
@@ -380,7 +380,7 @@ describe("retention reminder in the app", () => {
     await expect.element(reminder()).toBeVisible();
     const before = structuredClone(saved);
     holdSave = true;
-    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect.poll(() => releaseSave !== null).toBe(true);
     await expect.element(reminder()).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Dismissing…", exact: true })).toBeDisabled();
@@ -401,11 +401,11 @@ describe("retention reminder in the app", () => {
   it("keeps a failed dismissal visible and allows retry", async () => {
     await open();
     failPut = true;
-    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect.element(page.getByRole("alert")).toHaveTextContent("Could not dismiss the reminder");
     expect(saved.revision).toBe(0);
     failPut = false;
-    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect.element(reminder()).not.toBeInTheDocument();
     expect(saved.revision).toBe(1);
   });
@@ -413,7 +413,7 @@ describe("retention reminder in the app", () => {
   it("protects a dirty draft and excludes Ignore while the editor saves", async () => {
     await open();
     await openStorage();
-    const ignore = page.getByRole("button", { name: "Don't remind again", exact: true });
+    const ignore = page.getByRole("button", { name: "Dismiss", exact: true });
     await source().getByRole("button", { name: "30 days", exact: true }).click();
     await expect.element(ignore).toBeDisabled();
     await expect.element(page.getByText("Save or discard your changes before dismissing.")).toBeVisible();
@@ -448,7 +448,7 @@ describe("retention reminder in the app", () => {
     await open();
     await openStorage();
     holdSave = true;
-    await page.getByRole("button", { name: "Don't remind again", exact: true }).click();
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect.poll(() => releaseSave !== null).toBe(true);
     await expect.element(save()).toBeDisabled();
     await expect.element(source().getByRole("checkbox")).toBeDisabled();
