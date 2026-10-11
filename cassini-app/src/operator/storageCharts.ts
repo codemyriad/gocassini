@@ -2,17 +2,17 @@ import type { StorageUsageCategory } from "./types";
 import { retentionDayPresets } from "./retention";
 
 export const categoryPresentation: Record<string, { label: string; description: string; color: string }> = {
-  recordings: { label: "Source recordings", description: "Original captured audio, video and supporting files, dated when recording finished.", color: "#527eac" },
-  current: { label: "Current output archive", description: "The latest published output retained locally, dated when it was published.", color: "#588c75" },
-  history: { label: "Attempt history", description: "Failed recordings, failed builds, superseded output and failed publish staging.", color: "#aa7840" },
-  failed_capture: { label: "Failed recordings", description: "Attempt history · captures from failed or interrupted attempts, dated when the attempt ended.", color: "#ae7543" },
-  failed_build: { label: "Failed build / seal output", description: "Attempt history · processing output from failed or interrupted attempts, dated when the attempt ended.", color: "#b1874c" },
-  superseded: { label: "Superseded successful output", description: "Attempt history · older successful output, dated when a later publication replaced it.", color: "#9075aa" },
-  failed_publish: { label: "Failed publish staging", description: "Attempt history · staging from failed or interrupted attempts, dated when the attempt ended.", color: "#b57278" },
-  logs: { label: "Logs", description: "Attempt stage logs, dated when the attempt ended. Operator service logs are excluded.", color: "#528e9a" },
-  other: { label: "Other local files", description: "Work in progress and files without established retention ownership. No lifecycle date is assigned.", color: "#7d8490" },
+  recordings: { label: "Recordings", description: "Audio, video and supporting files, dated when recording finished.", color: "#527eac" },
+  current: { label: "Published meetings (on this server)", description: "This server's copy of the latest published meeting, dated when it was published.", color: "#588c75" },
+  history: { label: "Previous attempts", description: "Failed recordings, failed processing, replaced output and failed publishing.", color: "#aa7840" },
+  failed_capture: { label: "Failed recordings", description: "Recordings from failed or interrupted attempts, dated when the attempt ended.", color: "#ae7543" },
+  failed_build: { label: "Failed processing", description: "Processing output from failed or interrupted attempts, dated when the attempt ended.", color: "#b1874c" },
+  superseded: { label: "Replaced output", description: "Older output, dated when a later publication replaced it.", color: "#9075aa" },
+  failed_publish: { label: "Failed publishing", description: "Publishing files from failed or interrupted attempts, dated when the attempt ended.", color: "#b57278" },
+  logs: { label: "Processing logs", description: "Logs from each recording attempt, dated when the attempt ended.", color: "#528e9a" },
+  other: { label: "Other local files", description: "Work in progress and files no cleanup rule covers. They have no date.", color: "#7d8490" },
 };
-const historyIDs = ["failed_capture", "failed_build", "superseded", "failed_publish"];
+export const historyIDs = ["failed_capture", "failed_build", "superseded", "failed_publish"];
 export function displayStorageCategories(categories: StorageUsageCategory[], splitHistory: boolean): StorageUsageCategory[] {
   if (splitHistory) return categories;
   const history: StorageUsageCategory = { id: "history", bytes: 0, files: 0, undated_bytes: 0, undated_files: 0, days: [] };
@@ -41,6 +41,7 @@ export function storageDateExtent(category: StorageUsageCategory, measuredAt: st
   const end = Number.isFinite(measured) ? measured : Date.now();
   return { from: iso(dates.length ? Math.min(...dates) : end), to: iso(dates.length ? Math.max(end, ...dates) : end) };
 }
+// Picks the bar width from the range: at most 60 bars, so every range stays well under the 180-bar cap.
 export function defaultStoragePrecision(from: string, to: string): number {
   const days = Math.floor((utcDay(to) - utcDay(from)) / DAY) + 1;
   return [1, ...retentionDayPresets].find(size => days / size <= 60) ?? Math.ceil(days / 60);
@@ -55,9 +56,9 @@ export function storageBuckets(category: StorageUsageCategory, from: string, to:
   const start = utcDay(from), end = utcDay(to);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return { buckets: [], error: "Choose valid start and end dates." };
   if (end < start) return { buckets: [], error: "The end date must be on or after the start date." };
-  if (!Number.isInteger(precision) || precision < 1 || precision > 9999) return { buckets: [], error: "Precision must be a whole number from 1 to 9999 days." };
+  if (!Number.isInteger(precision) || precision < 1 || precision > 9999) return { buckets: [], error: "Days per bar must be a whole number from 1 to 9999." };
   const count = Math.floor((end - start) / (DAY * precision)) + 1;
-  if (count > 180) return { buckets: [], error: "This range needs more than 180 bars. Choose a shorter range or a larger number of days per bar." };
+  if (count > 180) return { buckets: [], error: "This range needs more than 180 bars. Choose a shorter range." };
   const buckets = Array.from({length: count}, (_,i) => ({ from: iso(start+i*precision*DAY), to: iso(Math.min(end,start+((i+1)*precision-1)*DAY)), bytes: 0, files: 0 }));
   for (const day of category.days) {
     const date = utcDay(day.date);
