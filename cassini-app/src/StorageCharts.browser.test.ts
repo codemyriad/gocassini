@@ -22,7 +22,7 @@ const fixture = {
 };
 const forever = { forever: true };
 const settings = {
-  version: 3, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
+  version: 3, revision: 0, schedule: { time: "03:42", timezone: "UTC" },
   recordings: forever, current: forever, logs: forever,
   history: { mode: "group", policy: forever, fine: Object.fromEntries(ids.slice(2, 6).map((id) => [id, forever])) },
 };

@@ -6,7 +6,7 @@ import { notifySetupChanged } from "./operator/setupSignal";
 import "./app.css";
 
 const defaults = () => ({
-  version: 4, revision: 0, nextcloud: { meetings: { forever: true } }, schedule: { time: "02:00", timezone: "UTC" },
+  version: 4, revision: 0, nextcloud: { meetings: { forever: true } }, schedule: { time: "03:42", timezone: "UTC" },
   recordings: { forever: true }, current: { forever: true }, logs: { forever: true },
   history: { mode: "group", fine_initialized: false, policy: { forever: true },
     fine: Object.fromEntries(["failed_capture", "failed_build", "superseded", "failed_publish"]

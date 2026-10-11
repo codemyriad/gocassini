@@ -29,7 +29,7 @@ deferred. Preview evaluates proposed
 settings without saving settings, lifecycle migrations or deletion intent.
 Saving activates the
 policy for startup and scheduled sweeps; it does not sweep immediately. The
-shared daily schedule defaults to 02:00 UTC.
+shared daily schedule defaults to 03:42 UTC.
 
 The ADMIN-only API is under `/operator/storage/retention`:
 

@@ -51,8 +51,13 @@ type retentionSchedule struct {
 	Timezone string `json:"timezone"`
 }
 
+// defaultRetentionTime is off the hour so the sweep avoids other jobs that run
+// on the hour, and outside 02:00-03:00, the hour daylight-saving changes touch.
+// It applies only when no schedule has been stored.
+const defaultRetentionTime = "03:42"
+
 func defaultRetentionSchedule() retentionSchedule {
-	return retentionSchedule{Time: "02:00", Timezone: "UTC"}
+	return retentionSchedule{Time: defaultRetentionTime, Timezone: "UTC"}
 }
 
 func (s retentionSchedule) validate() error {

@@ -11,7 +11,7 @@ const group = (keys: string[]) => ({
   fine: Object.fromEntries(keys.map((key) => [key, forever()])),
 });
 const initialSettings = () => ({
-  version: 4, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
+  version: 4, revision: 0, schedule: { time: "03:42", timezone: "UTC" },
   recordings: forever(), nextcloud: { meetings: forever() },
   history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]),
   current: forever(), logs: forever(),
@@ -62,7 +62,7 @@ describe("retention settings in the browser", () => {
     expect(page.getByRole("checkbox").all().length).toBe(5);
     await expect.element(page.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(page.getByRole("button", { name: "Discard changes" }).all()).toHaveLength(0);
-    await expect.element(page.getByLabelText("Cleanup time", { exact: true })).toHaveValue("02:00");
+    await expect.element(page.getByLabelText("Cleanup time", { exact: true })).toHaveValue("03:42");
     await expect.element(page.getByLabelText("Timezone", { exact: true })).toHaveValue("UTC");
     await page.getByLabelText("Cleanup time", { exact: true }).fill("15:45");
     await page.getByLabelText("Timezone", { exact: true }).selectOptions("Europe/Zagreb");

@@ -55,7 +55,7 @@ Administrators configure retention under **Operator → Storage**. Every categor
 starts at **Keep forever**. Choose **7, 30, 60, 90, or Custom days**. Custom
 retention accepts a whole number from 1 to 9999 days. Saving changes does not delete files immediately: existing
 artefacts are evaluated at startup and daily at the configured time (default
-**02:00 UTC**), using their original
+**03:42 UTC**), using their original
 lifecycle dates. There is no byte/count cap. A manual API sweep evaluates the
 same deadlines; it does not force unexpired artifacts to be deleted.
 
@@ -183,7 +183,7 @@ days**, at 00:00 UTC. This is a calendar-date rule, not N times 24 hours after
 the exact timestamp. A capture completed on September 1 at 23:50 UTC with a
 7-day policy becomes eligible on September 8 at 00:00 UTC. The next sweep that
 can reserve the job performs deletion. With the default schedule that would
-normally be September 8 at 02:00 UTC; a manual or startup sweep can act earlier
+normally be September 8 at 03:42 UTC; a manual or startup sweep can act earlier
 that day.
 
 Changing a policy applies to existing artifacts using their original dates.
@@ -316,7 +316,7 @@ expiry and is shown as an error in Storage; repair the file and restart. The old
 and warned about, not translated into finite expiry policies.
 
 The `schedule` setting stores `time` (`HH:MM`) and `timezone` (for example `UTC`).
-Older files without this setting default to 02:00 UTC. Invalid schedule values
+Older files without this setting default to 03:42 UTC. Invalid schedule values
 are rejected. Timezone data is embedded in the operator for minimal containers.
 
 The admin API is `GET/PUT /operator/storage/retention` (or the configured base
