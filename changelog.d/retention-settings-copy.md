@@ -5,3 +5,7 @@
 - New installations run the daily cleanup at 03:42 UTC instead of 02:00 UTC. A saved cleanup time is kept.
 - Publishing asks what people receive first, then what stays on the server. Keeping nothing is unavailable while audio is published.
 - Transcription has its on/off switch in the heading, and the model shows as one row with its size, state and one action.
+
+### Fixed
+- The "Who can see recordings" card and, in high-contrast themes, the "Create an insight" card now have the same inner padding as the cards around them.
+- The dot or icon in a tag chip sits on the centre of its label in every browser, including the tag filter in the rooms rail and the tag picker.
