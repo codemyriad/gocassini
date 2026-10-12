@@ -751,11 +751,41 @@
 
   /* The matched moments under a row. `speaker: quote` is the mock's
      .row-snippet; the timestamps are what make each one reachable. */
+  /* Under the meeting's details by default. As an extra column its unwrapped
+     snippets took all the width and crushed the title to one letter, so it
+     sits beside the details only when the list is wide, at a capped width. */
+  .meeting-row > :not(.row-moments) {
+    grid-row: 1;
+  }
   .row-moments {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    /* Above the open action's hit area, like the checkbox and tag button:
+       each moment opens its own spot in the transcript. */
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
+    min-width: 0;
     margin-top: 0.25rem;
+  }
+  .row-pickable .row-moments {
+    grid-column: 2 / -1;
+  }
+  @container meeting-list (min-width: 960px) {
+    .row-moments,
+    .row-pickable .row-moments {
+      grid-row: 1;
+      grid-column: auto;
+      width: min(36rem, 45cqw);
+      margin-top: 0;
+    }
+    /* Last, with room, so "1m" never reads as part of a moment's "0:43". */
+    .meeting-row:has(.row-moments) .row-duration {
+      order: 1;
+      padding-left: 1rem;
+    }
   }
 
   .row-moment {
@@ -1036,6 +1066,11 @@
      be scrolled clear of it rather than sitting permanently underneath. */
   .list-scroll-inset {
     padding-bottom: var(--list-bottom-inset, 96px);
+  }
+  /* The rows lay out by the list's width, not the window's: the list shares
+     the screen with the rooms rail and the open meeting. */
+  .list-scroll {
+    container: meeting-list / inline-size;
   }
 
   .meeting-row {
