@@ -1,0 +1,120 @@
+{
+  "scenario_id": "appstore-retro-v1",
+  "title": "Sprint retro",
+  "description": "App Store screenshot meeting: Kestrel Labs prepares the version two beta. Turns are scheduled back to back from measured Kokoro durations. The first 14 s are silent so the recording, started once the call is live, catches every line.",
+  "duration_seconds": 87,
+  "participants": [
+    {
+      "id": "amara",
+      "display_name": "Amara Osei",
+      "role": "Product lead",
+      "voice": "af_sarah",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#60a5fa"
+    },
+    {
+      "id": "tomas",
+      "display_name": "Tomás Rivera",
+      "role": "Engineering lead",
+      "voice": "am_michael",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f97316"
+    },
+    {
+      "id": "hannah",
+      "display_name": "Hannah Becker",
+      "role": "Designer",
+      "voice": "bf_emma",
+      "lang_code": "b",
+      "join_delay_seconds": 0,
+      "theme_color": "#a78bfa"
+    },
+    {
+      "id": "priya",
+      "display_name": "Priya Nair",
+      "role": "QA",
+      "voice": "af_nicole",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f472b6"
+    },
+    {
+      "id": "leo",
+      "display_name": "Leo Marsh",
+      "role": "Customer success",
+      "voice": "bm_george",
+      "lang_code": "b",
+      "join_delay_seconds": 0,
+      "theme_color": "#34d399"
+    }
+  ],
+  "turns": [
+    {
+      "speaker": "amara",
+      "start_seconds": 15.5,
+      "text": "Let's do the retro. What went well this sprint?"
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 18.45,
+      "text": "Deciding early on read only offline. It made the design work much simpler."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 23.59,
+      "text": "And the Riverside call. Because we had a clear answer, Ruth was relaxed about offline editing coming later."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 31.06,
+      "text": "What didn't go so well?"
+    },
+    {
+      "speaker": "priya",
+      "start_seconds": 33.0,
+      "text": "We found the clock problem in sync late. If we'd tested on the clinic's old tablets earlier, we'd have caught it in week one."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 44.93,
+      "text": "Agreed. And I underestimated sync. The timestamp fix took two days, not half a day."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 51.8,
+      "text": "Is the beta on the third of November at risk?"
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 54.84,
+      "text": "Not now. The fix is merged, and Priya has signed it off."
+    },
+    {
+      "speaker": "priya",
+      "start_seconds": 59.08,
+      "text": "Yes, but I'd like one more pass on a slow connection before we ship."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 65.04,
+      "text": "Then let's add that. Actions: Priya, borrow two old tablets from Riverside for testing. Tomás, add a slow network test to the build."
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 74.13,
+      "text": "And can we keep a short list of what clinics ask us for? Offline editing and exports keep coming up."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 80.21,
+      "text": "Good idea. Leo, can you own that list?"
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 82.95,
+      "text": "Happy to."
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "scenario_id": "appstore-design-review-v1",
+  "title": "Design review: offline mode",
+  "description": "App Store screenshot meeting: Kestrel Labs prepares the version two beta. Turns are scheduled back to back from measured Kokoro durations. The first 14 s are silent so the recording, started once the call is live, catches every line.",
+  "duration_seconds": 85,
+  "participants": [
+    {
+      "id": "hannah",
+      "display_name": "Hannah Becker",
+      "role": "Designer",
+      "voice": "bf_emma",
+      "lang_code": "b",
+      "join_delay_seconds": 0,
+      "theme_color": "#a78bfa"
+    },
+    {
+      "id": "amara",
+      "display_name": "Amara Osei",
+      "role": "Product lead",
+      "voice": "af_sarah",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#60a5fa"
+    },
+    {
+      "id": "tomas",
+      "display_name": "Tomás Rivera",
+      "role": "Engineering lead",
+      "voice": "am_michael",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f97316"
+    }
+  ],
+  "turns": [
+    {
+      "speaker": "hannah",
+      "start_seconds": 15.5,
+      "text": "Thanks for joining. I have three screens for offline mode: the banner, the schedule, and what happens when you try to edit."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 22.73,
+      "text": "Start with the banner."
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 24.49,
+      "text": "It sits at the top of the schedule. It says you're offline, and the schedule was last updated at a given time. It's amber, not red, because nothing is broken."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 33.62,
+      "text": "Good. Can it show when we're syncing again, so people know their view is fresh?"
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 38.74,
+      "text": "Yes. When you reconnect it turns blue for a moment and says up to date."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 42.91,
+      "text": "And the edit case? In the beta, editing offline is off."
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 46.94,
+      "text": "Right. If you tap an appointment offline, the edit button is greyed out, with one line underneath: you can edit this when you're back online."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 54.79,
+      "text": "One worry. Receptionists at the clinic work on old tablets. Is the contrast on the amber banner strong enough?"
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 62.71,
+      "text": "I checked it against the accessibility guidelines, and it passes. I also tested it at the largest text size."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 69.41,
+      "text": "Then I'm happy. Let's approve the banner and the disabled edit state for the beta."
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 74.6,
+      "text": "Great. I'll hand the final files to Tomás tomorrow."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 78.06,
+      "text": "And I'll add the banner to this week's build so Priya can start testing it."
+    }
+  ]
+}

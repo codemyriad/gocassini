@@ -1,0 +1,91 @@
+{
+  "scenario_id": "appstore-standup-v1",
+  "title": "Daily standup",
+  "description": "App Store screenshot meeting: Kestrel Labs prepares the version two beta. Turns are scheduled back to back from measured Kokoro durations. The first 14 s are silent so the recording, started once the call is live, catches every line.",
+  "duration_seconds": 74,
+  "participants": [
+    {
+      "id": "tomas",
+      "display_name": "Tomás Rivera",
+      "role": "Engineering lead",
+      "voice": "am_michael",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f97316"
+    },
+    {
+      "id": "priya",
+      "display_name": "Priya Nair",
+      "role": "QA",
+      "voice": "af_nicole",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f472b6"
+    },
+    {
+      "id": "hannah",
+      "display_name": "Hannah Becker",
+      "role": "Designer",
+      "voice": "bf_emma",
+      "lang_code": "b",
+      "join_delay_seconds": 0,
+      "theme_color": "#a78bfa"
+    },
+    {
+      "id": "leo",
+      "display_name": "Leo Marsh",
+      "role": "Customer success",
+      "voice": "bm_george",
+      "lang_code": "b",
+      "join_delay_seconds": 0,
+      "theme_color": "#34d399"
+    }
+  ],
+  "turns": [
+    {
+      "speaker": "tomas",
+      "start_seconds": 15.5,
+      "text": "Quick one today. Yesterday I finished caching the schedule on the device. Today I'm on the sync after you reconnect."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 23.59,
+      "text": "One blocker: when the tablet's clock is wrong, sync can apply an older change on top of a newer one."
+    },
+    {
+      "speaker": "priya",
+      "start_seconds": 30.82,
+      "text": "I saw that too. I've logged it as a sync conflict bug, and it's my top test case."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 39.27,
+      "text": "Thanks. I'll switch to server timestamps, which should fix it."
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 43.33,
+      "text": "The offline banner files are with Tomás. Today I'm on the release notes screen."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 48.33,
+      "text": "Riverside Clinic is happy with read only offline for the beta. They'd like two clinics in the beta, and they need a data export for an audit. I'm sending the export steps on Friday."
+    },
+    {
+      "speaker": "priya",
+      "start_seconds": 60.89,
+      "text": "Is the beta still on for the third of November?"
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 65.1,
+      "text": "Yes, as long as the timestamp fix lands this week."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 68.83,
+      "text": "Great. That's everything from me."
+    }
+  ]
+}

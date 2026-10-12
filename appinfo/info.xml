@@ -4,46 +4,86 @@
   <id>gocassini</id>
   <name>Cassini</name>
   <summary>Record, transcribe and search Nextcloud Talk meetings on your own hardware.</summary>
-  <description><![CDATA[Cassini is a recording backend for Nextcloud Talk that puts you in control of your meeting data.
+  <description><![CDATA[> 🧪 **Release candidate.** Nextcloud lists pre-releases only on servers set to the beta update channel. On a stable server, the [install guide](https://gocassini.com/docs/getting-started/install/) shows how to register Cassini by hand.
 
-- **Record and transcribe on your own infrastructure.** Speech-to-text runs in-process with sherpa-onnx and NVIDIA Parakeet models, on CPU or on a CUDA GPU. Transcription is optional and starts off: an administrator installs a model from Settings, or imports one copied in by hand on an air-gapped server.
-- **AI is opt-in.** Summaries and cross-meeting insights run only once you configure a model, local or third-party, in the app.
-- **One portable file per meeting.** Audio, transcript, speaker names, summary and tags in a single `.opus` that any player opens and that stays readable without Cassini.
+> 👀 **Try it first.** Start a call with friends or colleagues on [demo.gocassini.com](https://demo.gocassini.com), press Record, and explore what was said.
 
-**What you get**
+Nextcloud Talk calls, recorded and transcribed on your own hardware. Build on everything your team says without handing it to a third party.
 
-- Works in any Talk room, group calls and 1:1. Press *Record*; Cassini is the recording server behind the same button.
-- Transcripts with synced audio playback and the right name on every line, taken from Talk's signalling rather than guessed from voices. Copy or download a transcript as Markdown, or download the audio.
-- Recordings are shared with the local people, groups and Teams captured from each Talk room. Nextcloud Files checks access to every file.
-- Search and tags across meetings.
-- A Doctor checklist for administrators that answers "is recording going to work?" and offers a fix where Cassini can make one.
-- A CLI and an agent skill, so scripts and coding agents read the same meetings with the same permissions a person has.
+## What you get
 
-**Requirements**
+- 🎙️ **The same Record button.** Works in any Talk room, group calls and 1:1. Cassini is the recording server behind it.
+- 📝 **A name on every line.** Each Talk participant becomes a named speaker, so transcripts show real names. If several people share one laptop, Cassini can separate their voices and you label each one.
+- 🔎 **Search and tags** across all your meetings.
+- 💬 **Ask your meetings.** Optional summaries and questions across meetings, once you connect a language model, local or hosted.
+- 📦 **Check every word, keep every meeting.** Each meeting is one audio file that any player opens, with its transcript and summary inside. Listen while you read to verify what was said. The [format is open](https://format.gocassini.com), so your archive stays readable without Cassini.
+- 🔒 **Access follows the Talk room.** The people, groups and Teams in a room can open its meetings: recordings, transcripts and summaries. Search, tags and the CLI only reach meetings you can open.
+- 🗑️ **Keep the words, drop the audio.** Publish meetings as transcripts only and keep nothing on the server. Or set how long audio, video and published meetings are kept.
+- 🩺 **Run it from inside Nextcloud.** Setup, transcription models, storage and health checks all live in the app. The Doctor checklist tells administrators whether recording will work and fixes what it can.
+- 🛠️ **Build on your meetings.** A CLI and an agent skill let scripts and coding agents turn calls into notes, issues and plans, with the same permissions a person has.
+
+## Getting started
+
+1. Install Cassini from **Apps → External apps** (needs AppAPI with a HaRP deploy daemon).
+2. Open Cassini and run the **Doctor** checklist. Paste your signalling server's `internalsecret` when it asks.
+3. Optional: install a transcription model from **Settings**. CPU works; an NVIDIA GPU is faster.
+4. Start a Talk call and press **Record**.
+
+## Requirements
 
 - Nextcloud 33.0.9 to 35 with AppAPI and a HaRP deploy daemon.
-- Talk's High-performance backend. Cassini joins calls as an internal signalling client and needs the signalling server's `internalsecret`, the one value you supply by hand, in the Doctor checklist after installing.
-- Nextcloud Files sharing enabled. No Team folders or Everyone Group app is required.
-- Optional: an NVIDIA GPU with the Container Toolkit, for faster transcription. CPU works on amd64 and arm64.
+- Talk's High-performance backend.
+- Nextcloud Files sharing enabled. No Team folders or Everyone Group app needed.
+- No GPU needed: CPU works on amd64 and arm64. As a rough guide, on an 8-thread desktop CPU the default setting transcribes an hour of audio in about 2 minutes, using 1.3 GiB of RAM.
+- Optional: an NVIDIA GPU with the Container Toolkit. The same hour takes about 15 seconds.
 
-**What leaves your server**
+## What leaves your server
 
-Recordings and transcripts never leave your hardware. When an administrator installs a transcription model, the server downloads it from `dist.gocassini.com`; nothing about your meetings is sent. If you configure a language model, transcript text goes to it for summaries and for questions people ask in the app. Nothing else is sent, and there is no telemetry. Full note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md
+Recordings and transcripts never leave your hardware. When an administrator installs a transcription model, the server downloads it from `dist.gocassini.com`; nothing about your meetings is sent. If you configure a language model, transcript text goes to it for summaries and for questions people ask in the app. Nothing else is sent, and there is no telemetry. [Full privacy note](https://gocassini.com/docs/guides/privacy/).
 
-**Cassini is in beta.** We run it daily on our own Nextcloud, but expect rough edges. Read the changelog before you update and open an issue if something breaks.
+## Listen to it in action
 
-Documentation: https://gocassini.com/docs]]></description>
+Listen to our [Nextcloud Conference 2026 talk](https://gocassini.com/nextcloud-conf-2026), played back in Cassini's own viewer with its transcript, summary and tags.
+
+## Support
+
+Questions and bugs: [GitHub issues](https://github.com/codemyriad/gocassini/issues).
+
+**Need help deploying Cassini for your organisation?** [Book a 30-minute call](https://cal.eu/chris-de-sousa-fxpsnh/cassini-setup-call) with [Codemyriad](https://codemyriad.io) to talk through your setup.
+
+## Ethical AI rating
+
+### Speech-to-text (NVIDIA Parakeet): 🟡
+
+Positive:
+- the software for training and inference of this model is open source
+- the trained model is freely available (CC-BY-4.0), and runs on your own hardware
+
+Negative:
+- the training data is only partly available: the Granary corpus is open, but NVIDIA's NeMo ASR Set 3.0 includes licensed corpora
+
+### Voice separation (NVIDIA Nemotron 3 Diarization): 🟡
+
+Positive:
+- the software for training and inference of this model is open source
+- the trained model is freely available (OpenMDW 1.1), and runs on your own hardware
+
+Negative:
+- part of the training data is licensed from third parties and not freely available
+
+Summaries and questions use whichever language model you connect, so their rating depends on that model. Learn more about the [Nextcloud Ethical AI Rating](https://nextcloud.com/blog/nextcloud-ethical-ai-rating/).]]></description>
   <version>0.2.0-beta.8</version>
   <licence>agpl</licence>
-  <author>codemyriad</author>
+  <author homepage="https://codemyriad.io">Codemyriad</author>
   <namespace>Cassini</namespace>
   <documentation>
     <user>https://gocassini.com/docs</user>
-    <admin>https://github.com/codemyriad/gocassini/blob/main/docs/exapp-install.md</admin>
+    <admin>https://gocassini.com/docs/getting-started/install/</admin>
   </documentation>
-  <category>integration</category>
+  <category>social</category>
   <category>ai</category>
-  <website>https://github.com/codemyriad/gocassini</website>
+  <category>integration</category>
+  <website>https://gocassini.com</website>
   <bugs>https://github.com/codemyriad/gocassini/issues</bugs>
   <repository>https://github.com/codemyriad/gocassini</repository>
 
@@ -51,8 +91,12 @@ Documentation: https://gocassini.com/docs]]></description>
        fetches these URLs at listing time (they are not bundled in the tarball).
        Committed under img/screenshots/, served via raw.githubusercontent.com
        from main — so they resolve once this lands on main. -->
-  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-browse.png</screenshot>
-  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-operator.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/01-meeting.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/02-summary.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/03-meetings.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/04-insight.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/05-publish.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/06-doctor.png</screenshot>
 
   <dependencies>
     <!-- Support bounds are enforced by ci/nextcloud-compatibility.json. -->

@@ -1,0 +1,102 @@
+{
+  "scenario_id": "appstore-customer-call-v1",
+  "title": "Riverside Clinic check-in",
+  "description": "App Store screenshot meeting: Kestrel Labs prepares the version two beta. Turns are scheduled back to back from measured Kokoro durations. The first 14 s are silent so the recording, started once the call is live, catches every line.",
+  "duration_seconds": 90,
+  "participants": [
+    {
+      "id": "leo",
+      "display_name": "Leo Marsh",
+      "role": "Customer success",
+      "voice": "bm_george",
+      "lang_code": "b",
+      "join_delay_seconds": 0,
+      "theme_color": "#34d399"
+    },
+    {
+      "id": "ruth",
+      "display_name": "Ruth Calloway",
+      "role": "Riverside Clinic",
+      "voice": "bf_isabella",
+      "lang_code": "b",
+      "join_delay_seconds": 0,
+      "theme_color": "#facc15"
+    },
+    {
+      "id": "amara",
+      "display_name": "Amara Osei",
+      "role": "Product lead",
+      "voice": "af_sarah",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#60a5fa"
+    }
+  ],
+  "turns": [
+    {
+      "speaker": "leo",
+      "start_seconds": 15.5,
+      "text": "Hi Ruth, thanks for making time. Amara from our product team is here too."
+    },
+    {
+      "speaker": "ruth",
+      "start_seconds": 20.96,
+      "text": "Hello both. I'll be honest, the main thing on our side is still offline mode. Our community clinics lose signal all the time."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 28.41,
+      "text": "That's exactly what we want to talk about. The beta of version two ships on the third of November, and it includes offline mode for reading the schedule."
+    },
+    {
+      "speaker": "ruth",
+      "start_seconds": 37.33,
+      "text": "So staff can see the day's appointments without signal?"
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 41.11,
+      "text": "Yes. The schedule is saved on the device, with a clear banner showing when it was last updated."
+    },
+    {
+      "speaker": "ruth",
+      "start_seconds": 47.13,
+      "text": "That covers most of our mornings. What about booking or moving appointments offline?"
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 52.19,
+      "text": "That's coming in the release after. We want to get conflict handling right before anyone edits offline."
+    },
+    {
+      "speaker": "ruth",
+      "start_seconds": 59.12,
+      "text": "That's fair. I'd rather wait than have two nurses book the same slot."
+    },
+    {
+      "speaker": "ruth",
+      "start_seconds": 63.46,
+      "text": "One more thing. Our data protection officer wants an export of all appointment data, for the annual audit."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 70.2,
+      "text": "We can do a full export today from the admin page. I'll send you the steps by Friday."
+    },
+    {
+      "speaker": "ruth",
+      "start_seconds": 76.45,
+      "text": "Lovely. And could two of our clinics join the beta?"
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 79.81,
+      "text": "Absolutely. Leo will set up beta access for both clinics before the third of November."
+    },
+    {
+      "speaker": "ruth",
+      "start_seconds": 85.61,
+      "text": "Brilliant. Thank you both."
+    }
+  ]
+}

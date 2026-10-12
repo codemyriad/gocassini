@@ -1,0 +1,106 @@
+{
+  "scenario_id": "appstore-weekly-planning-v1",
+  "title": "Weekly planning",
+  "description": "App Store screenshot meeting: Kestrel Labs prepares the version two beta. Turns are scheduled back to back from measured Kokoro durations. The first 14 s are silent so the recording, started once the call is live, catches every line.",
+  "duration_seconds": 107,
+  "participants": [
+    {
+      "id": "amara",
+      "display_name": "Amara Osei",
+      "role": "Product lead",
+      "voice": "af_sarah",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#60a5fa"
+    },
+    {
+      "id": "tomas",
+      "display_name": "Tomás Rivera",
+      "role": "Engineering lead",
+      "voice": "am_michael",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f97316"
+    },
+    {
+      "id": "hannah",
+      "display_name": "Hannah Becker",
+      "role": "Designer",
+      "voice": "bf_emma",
+      "lang_code": "b",
+      "join_delay_seconds": 0,
+      "theme_color": "#a78bfa"
+    },
+    {
+      "id": "priya",
+      "display_name": "Priya Nair",
+      "role": "QA",
+      "voice": "af_nicole",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f472b6"
+    }
+  ],
+  "turns": [
+    {
+      "speaker": "amara",
+      "start_seconds": 15.5,
+      "text": "Morning everyone. Two things today: confirm the date for the version two beta, and decide how much of offline mode makes the cut."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 23.89,
+      "text": "On the date, I'm comfortable with Monday the third of November. The booking engine is done, and the last piece is sync."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 31.93,
+      "text": "And offline mode? That's the thing Riverside Clinic keeps asking about."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 36.56,
+      "text": "Reading the schedule offline works today. Editing offline is the hard part, because two people can change the same appointment and we have to resolve the conflict when they reconnect."
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 49.13,
+      "text": "From the design side, I'd rather ship read only offline and do it well. A clear banner that says you're offline, and the last time we synced."
+    },
+    {
+      "speaker": "priya",
+      "start_seconds": 57.45,
+      "text": "I agree. Sync conflicts are where the bugs will be. If editing offline goes into the beta, I need at least two extra weeks of testing."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 70.73,
+      "text": "Then let's decide. The beta ships on the third of November with read only offline mode. Offline editing moves to the release after."
+    },
+    {
+      "speaker": "tomas",
+      "start_seconds": 79.24,
+      "text": "Works for me. I'll write up the conflict rules so we can start on editing straight after."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 85.28,
+      "text": "Great. Hannah, can you mock up the offline banner by Friday?"
+    },
+    {
+      "speaker": "hannah",
+      "start_seconds": 89.32,
+      "text": "Yes, I'll share it in the design channel on Thursday."
+    },
+    {
+      "speaker": "priya",
+      "start_seconds": 92.71,
+      "text": "And I'll draft the beta test plan, with offline as its own section."
+    },
+    {
+      "speaker": "amara",
+      "start_seconds": 99.22,
+      "text": "Perfect. Leo will tell Riverside Clinic on Wednesday's call. Thanks everyone."
+    }
+  ]
+}
