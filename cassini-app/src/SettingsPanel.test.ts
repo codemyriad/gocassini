@@ -100,43 +100,65 @@ describe("SettingsPanel summarisation step", () => {
 
   it("offers the way out of the locked state", () => {
     expect(settingsPanelSource).toContain("NeedsProviderCard");
-    expect(settingsPanelSource).toContain('dispatch("openProviders")');
+    expect(settingsPanelSource).toContain("Needs a provider.");
+    expect(settingsPanelSource).toContain('on:click={() => dispatch("openProviders")}>Add one</button>');
   });
 });
 
 describe("SettingsPanel layout", () => {
-  it("keeps the device override with the hardware it corrects", () => {
-    // It is the answer to "what the operator found is wrong", so it sits under
-    // the finding rather than at the end of the page — and under a rule rather
-    // than in a card of its own, which would read as a pipeline step.
-    const hardwareAt = settingsPanelSource.indexOf(">Hardware<");
+  it("keeps the device override with the hardware it corrects, inside the transcript question", () => {
+    // It is the answer to "what the operator found is wrong", so it opens
+    // under the finding rather than at the end of the page or in a card of its
+    // own, which would read as a pipeline step.
+    const transcriptAt = settingsPanelSource.indexOf('aria-label="Transcription settings"');
+    const hardwareAt = settingsPanelSource.indexOf('id="hardware-details"');
     const deviceAt = settingsPanelSource.indexOf(">Override transcription device<");
-    const summarisationAt = settingsPanelSource.indexOf("Summarisation\n");
-    expect(hardwareAt).toBeGreaterThan(-1);
-    expect(deviceAt).toBeGreaterThan(hardwareAt);
-    expect(deviceAt).toBeLessThan(summarisationAt);
+    const summaryAt = settingsPanelSource.indexOf('aria-labelledby="summary-heading"');
+    expect([transcriptAt, hardwareAt, deviceAt, summaryAt].every((at) => at > -1)).toBe(true);
+    expect([transcriptAt, hardwareAt, deviceAt, summaryAt]).toEqual(
+      [...[transcriptAt, hardwareAt, deviceAt, summaryAt]].sort((a, b) => a - b));
+    expect(settingsPanelSource).not.toContain(">Hardware<");
   });
 
-  it("gives each pipeline step a card of its own", () => {
-    // Quality and Summarisation once shared one card separated by hairlines,
-    // which made two independent settings — one of which sends text to a third
-    // party — read as one block. Each step is its own tinted card, as each
-    // template is on Insight templates.
+  it("asks the four questions in one card, in the order of the strip", () => {
+    // Transcript, then the two steps that need one, then what is kept. The
+    // chips above follow the same order, so chip N points at question N.
+    const cardAt = settingsPanelSource.indexOf('aria-labelledby="recording-publication-heading"');
+    const headingAt = settingsPanelSource.indexOf(">After each meeting<");
+    const at = [">Transcript<", ">Summary<", ">What participants receive<", ">What stays on this server<"]
+      .map((title) => settingsPanelSource.indexOf(title));
+    expect([cardAt, headingAt, ...at].every((index) => index > -1)).toBe(true);
+    expect([cardAt, headingAt, ...at]).toEqual([...[cardAt, headingAt, ...at]].sort((a, b) => a - b));
+    expect(settingsPanelSource).not.toContain("Summarisation\n");
+  });
+
+  it("keeps the summary switch in the card and the provider and template in their own card below", () => {
+    // Question 2 says whether, and with what; Summary settings below says how.
+    // One switch only, so the two cannot disagree.
+    expect(settingsPanelSource.match(/aria-label="Summarise every meeting"/g)?.length).toBe(1);
+    const switchAt = settingsPanelSource.indexOf('aria-label="Summarise every meeting"');
+    const cardEnd = settingsPanelSource.indexOf("Applies to new recordings after saving.");
+    const settingsAt = settingsPanelSource.indexOf(">Summary settings<");
+    const providerAt = settingsPanelSource.indexOf('<span class="op-field-label">Provider</span>');
+    expect(switchAt).toBeLessThan(cardEnd);
+    expect(cardEnd).toBeLessThan(settingsAt);
+    expect(settingsAt).toBeLessThan(providerAt);
+    expect(settingsPanelSource).toContain("on:click={() => focusSection(summaryCard)}>Change</button>");
+  });
+
+  it("asks quality and the model inside the transcript question", () => {
+    const transcriptAt = settingsPanelSource.indexOf('aria-label="Transcription settings"');
+    const qualityAt = settingsPanelSource.indexOf(">Quality<");
+    const modelsAt = settingsPanelSource.indexOf("<SpeechModels");
+    const summaryAt = settingsPanelSource.indexOf('aria-labelledby="summary-heading"');
+    expect([transcriptAt, qualityAt, modelsAt, summaryAt]).toEqual(
+      [...[transcriptAt, qualityAt, modelsAt, summaryAt]].sort((a, b) => a - b));
+  });
+
+  it("gives summary settings, vocabulary and search spellings cards of their own", () => {
     const steps = settingsPanelSource.match(/<section\b[^>]*class="[^"\n]*\bpipe-step\b[^"\n]*"[^>]*>/g);
     expect(steps?.length).toBe(3);
     expect(settingsPanelSource).not.toContain("rounded-box border border-base-300 bg-base-200 p-3");
-  });
-
-  it("asks about transcription inside Publishing, between what is published and what is kept", () => {
-    const publishingAt = settingsPanelSource.indexOf('aria-labelledby="recording-publication-heading"');
-    const formatAt = settingsPanelSource.indexOf('id="meeting-format"');
-    const transcriptionAt = settingsPanelSource.indexOf('aria-label="Transcription settings"');
-    const qualityAt = settingsPanelSource.indexOf(">Quality<");
-    const keepAt = settingsPanelSource.indexOf(">Keep on the server after publishing<");
-    const hardwareAt = settingsPanelSource.indexOf(">Hardware<");
-    expect(publishingAt).toBeGreaterThan(-1);
-    expect([publishingAt, formatAt, transcriptionAt, qualityAt, keepAt, hardwareAt]).toEqual(
-      [...[publishingAt, formatAt, transcriptionAt, qualityAt, keepAt, hardwareAt]].sort((a, b) => a - b));
   });
 });
 

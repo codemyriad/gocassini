@@ -76,6 +76,9 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
   } else if (input.summaryEnabled && input.hasProvider) {
     const state = input.providerName ? `On · ${input.providerName}` : "On";
     summarise = transcribing ? { state, tone: "on" } : { state, tone: "amber", reason: "needs a transcript" };
+  } else if (!transcribing) {
+    // Nothing is wrong: the summary waits on a transcript before a provider.
+    summarise = { state: "Off", tone: "off", badge: "needs a transcript" };
   } else {
     summarise = { state: "Off", tone: "off", ...(input.hasProvider ? {} : { badge: "add a provider" }) };
   }

@@ -91,11 +91,13 @@
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
   let transcriptionSettings: HTMLElement;
-  let publicationSettings: HTMLElement;
-  let summarySettings: HTMLElement;
-  let keepSettings: HTMLElement;
+  let publicationSettings: HTMLElement | null = null;
+  let summarySettings: HTMLElement | null = null;
+  let summaryCard: HTMLElement;
+  let keepSettings: HTMLElement | null = null;
+  let hardwareOpen = false;
 
-  function focusSection(section: HTMLElement | undefined) {
+  function focusSection(section: HTMLElement | null | undefined) {
     if (!section) return;
     section.focus({ preventScroll: true });
     section.scrollIntoView({
@@ -322,7 +324,7 @@
       try {
         applySettings(
           await operatorClient.putSettings({
-            meeting_format: meetingFormat,
+            meeting_format: publishedFormat,
             source_retention: sourceRetention,
             transcription_enabled: transcriptionEnabled,
             retain_video: retainVideo,
@@ -490,7 +492,21 @@
     { name: "Summarise", step: status.summarise, target: () => summarySettings },
     { name: "Publish", step: status.publish, target: () => publicationSettings },
     { name: "Keep on server", step: status.keep, target: () => keepSettings },
-  ] satisfies { name: string; step: StepStatus; target: () => HTMLElement }[];
+  ] satisfies { name: string; step: StepStatus; target: () => HTMLElement | null }[];
+
+  // Everything after the transcript is asked once transcription is SAVED on,
+  // like the strip: turning the switch on in the draft says to save first.
+  $: savedTranscriptionOn = settings?.transcription_enabled === true;
+  // An older save publishes transcript-only meetings with no transcript.
+  // Saving with transcription off publishes the audio, so it says so.
+  $: savedTranscriptOnlyWithout = !savedTranscriptionOn && savedMeetingFormat === "json";
+  $: savedKeepsNothingWithout = !savedTranscriptionOn && savedSourceRetention === "delete-after-processing";
+  // Without a transcript the meeting is published as audio, whatever the
+  // format select last said.
+  $: publishedFormat = transcriptionEnabled ? meetingFormat : "opus" as const;
+  $: runsOnLine = savedDevice === "cuda"
+    ? `Runs on the ${deviceLabel("cuda")}.`
+    : settings?.detected_gpu ? "Runs on the CPU." : "Runs on the CPU, no GPU found.";
 
   // How long kept media stays, from the Recordings policy: "for 30 days",
   // "kept forever", or "" when retention could not be read.
@@ -498,6 +514,13 @@
   $: keptFor = keptSpan === null ? "" : keptSpan === "forever" ? "kept forever" : `for ${keptSpan}`;
 
   $: providers = llm?.providers ?? [];
+  // What question 2 says the summary runs with: the provider (the first one
+  // until a step names its own, as switching on would choose) and the
+  // template, by name where the registry knows it.
+  $: summaryUses = [
+    providerName(summary.provider || providers[0]?.id || ""),
+    workflows.find((workflow) => workflow.id === summary.template)?.name ?? (summary.template || "the built-in template"),
+  ].join(" · ");
   // Null while the LLM settings have not been read: three states, and the
   // locked card belongs to exactly one of them.
   $: hasProvider = llm === null ? null : providers.length > 0;
@@ -619,11 +642,14 @@
     <div class="pipe-body">
       <section class="op-tint p-4 grid gap-4" aria-labelledby="recording-publication-heading">
         <div class="strip-head">
-          <h2 id="recording-publication-heading" class="set-row-name op-card-title">Publishing</h2>
-          <span class="strip-current" title="The saved settings new recordings get">Current</span>
+          <h2 id="recording-publication-heading" class="set-row-name op-card-title">After each meeting</h2>
+          {#if savedTranscriptionOn}
+            <span class="strip-current" title="The saved settings new recordings get">Current</span>
+          {/if}
         </div>
         <!-- What new recordings get with the SAVED settings, one chip per step;
-             each chip jumps to the setting it describes. -->
+             chip N jumps to question N below. -->
+        {#if savedTranscriptionOn}
         <ul class="pipe-strip" aria-label="Current settings">
           {#each chips as chip (chip.name)}
             <li>
@@ -641,23 +667,16 @@
             </li>
           {/each}
         </ul>
-        <div class="grid gap-1 scroll-mt-4" aria-label="Publication settings" role="group" tabindex="-1" bind:this={publicationSettings}>
-          <label class="op-field" for="meeting-format">
-            <span class="op-field-label">Published meeting</span>
-            <select id="meeting-format" class="op-input" value={meetingFormat} on:change={(event) => selectMeetingFormat(event.currentTarget.value === "json" ? "json" : "opus")} disabled={saving} aria-describedby="publication-help">
-              <option value="opus">Audio and transcript (.opus)</option>
-              <option value="json">Transcript only (.json)</option>
-            </select>
-          </label>
-          <p id="publication-help" class="set-row-sub">Camera video is never published; it stays on the server.</p>
-        </div>
-        <!-- Transcription sits between what is published and what stays on
-             the server: whether a transcript is made decides both. The switch
-             sits in the heading, as on Summarisation; turning it on selects
-             the ready model for the chosen quality. -->
-        <section class="pub-transcription scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
-          <div class="step-head">
-            <p class="op-field-label">Transcription</p>
+        {/if}
+
+        <!-- 1. Whether a transcript is made decides the questions after it: a
+             summary needs one, and so does publishing a transcript. The switch
+             sits in the heading; turning it on selects the ready model for the
+             chosen quality. -->
+        <section class="pub-q scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
+          <div class="q-head">
+            <span class="q-num" aria-hidden="true">1</span>
+            <h3 class="q-title">Transcript</h3>
             <input
               type="checkbox"
               class="op-switch"
@@ -667,11 +686,11 @@
               on:change={(event) => toggleTranscription(event.currentTarget.checked)}
             />
           </div>
-          {#if meetingFormat === "json" && !transcriptionEnabled}
-            <p class="set-row-sub">Transcription is off. Turn it on above to include a transcript.</p>
+          {#if transcriptionEnabled && !savedTranscriptionOn}
+            <p class="set-row-sub">Save to set up the summary and what participants receive.</p>
           {/if}
           {#if !transcriptionEnabled && !readyModel}
-            <p class="set-row-sub">Download the model below to turn transcription on.</p>
+            <p class="set-row-sub">Download the model below to turn it on.</p>
           {/if}
           {#if runsOnGPU}
             <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
@@ -697,13 +716,136 @@
           <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
             bind:readyModel bind:inventory={modelInventory}
             on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
+          <!-- What the operator found, and what the next build will do with
+               it. The device is auto-selected, and on a host with no usable GPU
+               that answer is the CPU: slower, but a transcript. Saying so here
+               keeps the fallback explicit (D-702). The facts and the override
+               that corrects them open inline under "Change". -->
+          <p class="set-row-sub pipe-gap">
+            {runsOnLine}
+            <button type="button" class="link" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>Change</button>
+          </p>
+          {#if hardwareOpen}
+            <div id="hardware-details" class="hw-details">
+              <dl class="hw-facts">
+                <div class="hw-fact">
+                  <dt>GPU</dt>
+                  <dd>
+                    {#if settings.detected_gpu}
+                      <span class="pill yes">Yes</span>
+                    {:else}
+                      <span class="pill">No</span>
+                    {/if}
+                  </dd>
+                </div>
+                <div class="hw-fact">
+                  <dt>CPU cores</dt>
+                  <dd><span class="pill">{settings.cores}</span></dd>
+                </div>
+                <div class="hw-fact">
+                  <dt>Settings</dt>
+                  <dd><span class="pill">{sourceLabel(settings.source)}</span></dd>
+                </div>
+              </dl>
+              {#if settings.transcription_enabled && settings.effective.model}
+                <p class="set-row-sub">
+                  Transcribes on the <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>
+                  with the <code class="pipe-code">{settings.effective.model}</code> model.
+                </p>
+              {/if}
+              {#if settings.effective.min_free_memory_mb > 0}
+                <p class="set-row-sub">
+                  Each recording is processed once {formatMemory(settings.effective.min_free_memory_mb)}
+                  of memory is free.
+                </p>
+              {/if}
+              {#if settings.effective.note}
+                <p class="set-row-sub">{settings.effective.note}</p>
+              {/if}
+              <label class="op-field hw-device" for="stt-device">
+                <span class="op-field-label">Override transcription device</span>
+              </label>
+              <span class="op-select hw-device-select">
+                <select id="stt-device" bind:value={deviceOverride} class="op-input">
+                  <option value="">Auto</option>
+                  <option value="cpu">CPU</option>
+                  <option value="cuda">GPU (CUDA)</option>
+                </select>
+                <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
+              </span>
+              <p class="set-row-sub">
+                Leave on Auto unless the hardware above is wrong. Auto uses the GPU when one is
+                available. If you choose a device this machine doesn't have, recordings won't be
+                processed.
+              </p>
+            </div>
+          {/if}
+          {#if !savedTranscriptionOn}
+            {#if savedTranscriptOnlyWithout}
+              <p class="set-row-sub pipe-warn pipe-gap" role="status">Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.</p>
+            {/if}
+            {#if savedKeepsNothingWithout && (!transcriptionEnabled || !activeModel || !activeRevision)}
+              <p class="set-row-sub pipe-gap" role="status"><strong>Transcription must be on to keep nothing.</strong></p>
+            {/if}
+            <p class="set-row-sub pipe-gap">Turn transcription on to choose a summary, what participants receive and what stays on this server.</p>
+          {/if}
         </section>
-        <fieldset class="grid gap-3 scroll-mt-4" disabled={saving} tabindex="-1" bind:this={keepSettings}>
-          <legend class="op-field-label mb-2">Keep on the server after publishing</legend>
-          <label class="flex items-start gap-3 text-sm" class:keep-unavailable={meetingFormat === "opus"}>
-            <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} disabled={meetingFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
+
+        {#if savedTranscriptionOn}
+        <!-- 2. Whether each meeting is summarised. Only the switch and what it
+             will use live here; the provider and template are set in Summary
+             settings below. -->
+          <section class="pub-q scroll-mt-4" aria-labelledby="summary-heading" tabindex="-1" bind:this={summarySettings}>
+            <div class="q-head">
+              <span class="q-num" aria-hidden="true">2</span>
+              <h3 id="summary-heading" class="q-title" class:off={hasProvider === false}>Summary</h3>
+              <input
+                type="checkbox"
+                class="op-switch"
+                aria-label="Summarise every meeting"
+                disabled={hasProvider !== true}
+                checked={summary.enabled && hasProvider === true}
+                on:change={(event) => toggleSummary(event.currentTarget.checked)}
+              />
+            </div>
+            {#if llmError}
+              <p class="set-row-sub pipe-warn">Couldn't load the AI provider settings.</p>
+            {:else if hasProvider === false}
+              <p class="set-row-sub">Needs a provider. <button type="button" class="link" on:click={() => dispatch("openProviders")}>Add one</button></p>
+            {:else if hasProvider === true}
+              <p class="set-row-sub">Uses {summaryUses}. <button type="button" class="link" on:click={() => focusSection(summaryCard)}>Change</button></p>
+            {/if}
+          </section>
+
+        <!-- 3. What participants receive. -->
+          <section class="pub-q scroll-mt-4" aria-labelledby="publication-heading" tabindex="-1" bind:this={publicationSettings}>
+            <div class="q-head">
+              <span class="q-num" aria-hidden="true">3</span>
+              <h3 id="publication-heading" class="q-title">What participants receive</h3>
+            </div>
+            <div class="q-row">
+              <select id="meeting-format" class="op-input q-select" aria-label="Published meeting" value={meetingFormat} on:change={(event) => selectMeetingFormat(event.currentTarget.value === "json" ? "json" : "opus")} disabled={saving} aria-describedby="publication-help">
+                <option value="opus">Audio and transcript (.opus)</option>
+                <option value="json">Transcript only (.json)</option>
+              </select>
+              <p id="publication-help" class="set-row-sub">Camera video is never published.</p>
+            </div>
+            {#if meetingFormat === "json" && !transcriptionEnabled}
+              <p class="set-row-sub pipe-warn">Transcription is off. Turn it on above to include a transcript.</p>
+            {/if}
+          </section>
+
+        <!-- 4. What stays on the server. Independent of transcription: audio
+             only versus audio and video is a choice either way. -->
+        <fieldset class="pub-q grid gap-3 scroll-mt-4" disabled={saving} tabindex="-1" bind:this={keepSettings}>
+          <legend class="q-head">
+            <span class="q-num" aria-hidden="true">4</span>
+            <span class="q-title">What stays on this server</span>
+          </legend>
+          <label class="flex items-start gap-3 text-sm" class:keep-unavailable={publishedFormat === "opus"}>
+            <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} disabled={publishedFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
             <span><strong>Nothing.</strong> <span id="keep-nothing-help">The recording is deleted after publishing and cannot be reprocessed.</span>
-              {#if meetingFormat === "opus"}<span class="set-row-sub block">Unavailable while audio is published.</span>{/if}</span>
+              {#if publishedFormat === "opus"}<span class="set-row-sub block">Unavailable while audio is published.</span>{/if}</span>
           </label>
           <label class="flex items-start gap-3 text-sm">
             <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-video" aria-label="Audio and video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
@@ -713,128 +855,29 @@
             <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-only" aria-label="Audio only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
             <span>{#if keptFor}<strong>Audio only</strong>, {keptFor}.{:else}<strong>Audio only.</strong>{/if}</span>
           </label>
-        </fieldset>
-        {#if recordingMedia === "nothing"}
-          {#if !transcriptionEnabled || !activeModel || !activeRevision}
-            <p class="set-row-sub" role="status"><strong>Transcription must be on to keep nothing.</strong> <button type="button" class="link" on:click={focusTranscriptionSettings}>Set up transcription</button></p>
-          {/if}
-        {:else}
-          {#if keptSpan === "forever"}
+          {#if recordingMedia === "nothing"}
+            {#if !transcriptionEnabled || !activeModel || !activeRevision}
+              <p class="set-row-sub" role="status"><strong>Transcription must be on to keep nothing.</strong> <button type="button" class="link" on:click={focusTranscriptionSettings}>Set up transcription</button></p>
+            {/if}
+          {:else if keptSpan === "forever"}
             <p class="set-row-sub">Kept forever: change this in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
           {:else if keptSpan}
             <p class="set-row-sub">The {keptSpan} {keptSpan === "1 day" ? "comes" : "come"} from <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
           {:else}
             <p class="set-row-sub">How long kept media stays is set in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
           {/if}
-        {/if}
+        </fieldset>
         <p class="set-row-sub">Applies to new recordings after saving.</p>
-      </section>
-      <!-- What the operator found, and — the part the tier alone does not
-           answer — what the next build will actually do with it. The device is
-           auto-selected, and on a host with no usable GPU that answer is the
-           CPU: slower, but a transcript. Saying so here is what keeps the
-           fallback explicit rather than something an admin discovers from a
-           blocked build (D-702). -->
-      <section class="op-tint hw-card">
-        <p class="set-row-name op-card-title">Hardware</p>
-        <p class="set-row-sub">What Cassini found on the machine it runs on, and how it will transcribe.</p>
-        <dl class="hw-facts">
-          <div class="hw-fact">
-            <dt>GPU</dt>
-            <dd>
-              {#if settings.detected_gpu}
-                <span class="pill yes">Yes</span>
-              {:else}
-                <span class="pill">No</span>
-              {/if}
-            </dd>
-          </div>
-          <div class="hw-fact">
-            <dt>CPU cores</dt>
-            <dd>
-              <span class="pill"
-                >{settings.cores}</span
-              >
-            </dd>
-          </div>
-          <div class="hw-fact">
-            <dt>Settings</dt>
-            <dd>
-              <span class="pill"
-                >{sourceLabel(settings.source)}</span
-              >
-            </dd>
-          </div>
-        </dl>
-        <div class="hw-section">
-          {#if settings.transcription_enabled}
-            <p class="hw-effective">
-              Transcribes on the
-              <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>
-              {#if settings.effective.model}
-                with the <code class="pipe-code">{settings.effective.model}</code> model
-              {/if}
-            </p>
-          {:else}
-            <p class="hw-effective">
-              Transcription is off. If you turn it on, it runs on the
-              <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>.
-            </p>
-          {/if}
-          {#if settings.effective.min_free_memory_mb > 0}
-            <p class="set-row-sub">
-              Each recording is processed once {formatMemory(settings.effective.min_free_memory_mb)}
-              of memory is free.
-            </p>
-          {/if}
-          {#if settings.effective.note}
-            <p class="set-row-sub">{settings.effective.note}</p>
-          {/if}
-        </div>
-
-        <!-- The override belongs to the hardware, not to the end of the page:
-             it is the answer to "what the operator found is wrong", so it sits
-             under the finding it corrects rather than three sections away from
-             it. A rule rather than a card of its own, because on its own it
-             would read as a step in the pipeline, which it is not. -->
-        <div class="hw-section">
-          <label class="op-field hw-device" for="stt-device">
-            <span class="set-row-name">Override transcription device</span>
-          </label>
-          <span class="op-select hw-device-select">
-            <select id="stt-device" bind:value={deviceOverride} class="op-input">
-              <option value="">Auto</option>
-              <option value="cpu">CPU</option>
-              <option value="cuda">GPU (CUDA)</option>
-            </select>
-            <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
-          </span>
-          <p class="set-row-sub hw-device-note">
-            Leave on Auto unless the hardware above is wrong. Auto uses the GPU when one is
-            available. If you choose a device this machine doesn't have, recordings won't be
-            processed.
-          </p>
-        </div>
+        {/if}
       </section>
 
-      <!-- Summarisation. The switch belongs to the name, not to the far edge of
-           the row: what is being turned on is the step, and the row is the
-           step. -->
-      <section class="op-tint pipe-step scroll-mt-4" aria-label="Summarisation settings" tabindex="-1" bind:this={summarySettings}>
+
+      <!-- How the summary is written: the provider and template. Whether it is
+           written at all is question 2 of the card above, which holds the only
+           switch; this card is where its "Change" lands. -->
+      <section class="op-tint pipe-step scroll-mt-4" aria-labelledby="summary-settings-heading" tabindex="-1" bind:this={summaryCard}>
         <div class="set-row-main">
-          <div class="step-head">
-            <p class="set-row-name op-card-title" class:off={hasProvider === false}>
-              Summarisation
-            </p>
-            <input
-              type="checkbox"
-              class="op-switch"
-              aria-label="Summarise every meeting"
-              disabled={hasProvider !== true}
-              checked={summary.enabled && hasProvider === true}
-              on:change={(event) => toggleSummary(event.currentTarget.checked)}
-            />
-          </div>
+          <h2 id="summary-settings-heading" class="set-row-name op-card-title" class:off={hasProvider === false}>Summary settings</h2>
           <p class="set-row-sub" class:off={hasProvider === false}>
             Sends each transcript to the provider and writes the summary shown on the meeting.
           </p>
@@ -1162,26 +1205,85 @@
   .keep-unavailable {
     color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
-  .pub-transcription {
+  .pub-q {
     display: grid;
     gap: 4px;
-    padding-block: 16px;
-    border-block: 1px solid var(--op-border, color-mix(in oklch, var(--color-base-content) 12%, transparent));
+    min-width: 0;
+    margin: 0;
+    padding: 16px 0 0;
+    border: 0;
+    border-top: 1px solid var(--op-border, color-mix(in oklch, var(--color-base-content) 12%, transparent));
+  }
+  .pub-q:focus {
+    outline: none;
+  }
+  .pub-q:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 4px;
+  }
+  .q-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    margin-bottom: 4px;
+  }
+  /* A fieldset's legend sits on the border unless it floats into the box. */
+  fieldset.pub-q > legend.q-head {
+    float: left;
+    width: 100%;
+  }
+  fieldset.pub-q > legend.q-head + * {
+    clear: both;
+  }
+  .q-num {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 30%, transparent);
+    border-radius: 50%;
+  }
+  .q-title {
+    margin: 0;
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .q-title.off {
+    color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+  }
+  .q-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+  .q-select {
+    width: auto;
+    max-width: 100%;
+  }
+  .hw-details {
+    display: grid;
+    gap: 6px;
+    margin-top: 4px;
   }
   .pipe-body {
     display: grid;
     gap: calc(var(--op-x, 20px) + 8px);
     margin-top: calc(var(--op-x, 20px) + 8px - 16px);
   }
-  .hw-card {
-    padding: 14px 16px;
-  }
   .hw-facts {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 8px 22px;
-    margin: 11px 0 0;
+    margin: 0;
     padding: 10px 12px;
     background-color: var(--op-inset);
     border: 1px solid var(--op-inset-border);
@@ -1218,17 +1320,6 @@
     color: var(--color-success);
     border-color: var(--color-success);
   }
-  .hw-section {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
-  }
-  .hw-effective {
-    margin: 0;
-    font-size: 13.5px;
-    font-weight: 600;
-    line-height: 1.5;
-  }
   .pipe-code {
     padding: 1px 5px;
     font-family: var(--font-mono);
@@ -1249,10 +1340,6 @@
   .hw-device-select {
     display: block;
     max-width: 20rem;
-    margin-top: 8px;
-  }
-  .hw-device-note {
-    margin-top: 6px;
   }
 
   .pipe-step {
@@ -1260,11 +1347,6 @@
     align-items: flex-start;
     gap: 14px;
     padding: 14px 16px;
-  }
-  .step-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
   }
   .pipe-gap {
     margin-top: 8px;

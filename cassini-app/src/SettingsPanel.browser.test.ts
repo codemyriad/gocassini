@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 it("saves the publication format through settings and restores it on reload", async () => {
-  let saved = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
+  let saved = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "prepared", active_revision: "r1" };
   const writes: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -43,13 +43,13 @@ it("saves the publication format through settings and restores it on reload", as
   await expect.element(format).toHaveValue("opus");
   await format.selectOptions("json");
   expect(writes).toHaveLength(0);
-  await expect.element(page.getByText("Transcription is off. Turn it on above to include a transcript.")).toBeVisible();
-  // Publishing reads: what is published, then transcription, then what stays on the server.
+  // The card reads: transcript, summary, what is published, then what stays on the server.
   const card = host.querySelector('[aria-labelledby="recording-publication-heading"]')!;
-  const order = ["#meeting-format", '[aria-label="Transcription settings"]', "fieldset"].map((selector) => card.querySelector(selector));
+  const order = ['[aria-label="Transcription settings"]', '[aria-labelledby="summary-heading"]', "#meeting-format", "fieldset"].map((selector) => card.querySelector(selector));
   expect(order.every(Boolean)).toBe(true);
-  expect(order[0]!.compareDocumentPosition(order[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(order[1]!.compareDocumentPosition(order[2]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  for (let i = 1; i < order.length; i++) {
+    expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => saved.meeting_format).toBe("json");
   expect(writes[0].meeting_format).toBe("json");
@@ -106,15 +106,29 @@ it("keeps publication separate from source retention and explicitly opts into de
 });
 
 it("requires prepared transcription before saving deletion", async () => {
+  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "json", source_retention: "delete-after-processing", transcription_enabled: false, transcription_terms: [] };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), location.href).pathname;
-    if (path === "/operator/settings") return Response.json({ quality: "balanced", meeting_format: "json", transcription_enabled: false });
+    if (path === "/operator/settings") return Response.json(saved);
     if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
     return Response.json({});
   }));
   host = document.createElement("div"); document.body.append(host);
-  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
-  await page.getByRole("radio", { name: "Nothing", exact: true }).click();
+  const open = () => app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  // An older save: transcript only and nothing kept, with transcription off.
+  // The questions after the transcript are hidden, so the warnings sit under it.
+  open();
+  await expect.element(page.getByText("Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.")).toBeVisible();
+  await expect.element(page.getByText("Transcription must be on to keep nothing.")).toBeVisible();
+  await page.getByPlaceholder(/^Gocassini/).fill("Cassini");
+  await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+
+  // Saved on and keeping nothing; switching transcription off in the draft.
+  await unmount(app!); app = undefined;
+  saved = { ...saved, transcription_enabled: true, active_model: "m", active_revision: "r1" };
+  open();
+  await page.getByRole("checkbox", { name: "Transcribe every recording" }).click();
+  await expect.element(page.getByText("Transcription is off. Turn it on above to include a transcript.")).toBeVisible();
   await expect.element(page.getByText("Transcription must be on to keep nothing.")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Set up transcription" }).click();
@@ -181,6 +195,12 @@ it("shows the saved settings in the status strip and moves only after Save", asy
 
   await strip.getByRole("button", { name: /^Transcribe/ }).click();
   await expect.element(page.getByRole("region", { name: "Transcription settings" })).toHaveFocus();
+  await strip.getByRole("button", { name: /^Summarise/ }).click();
+  const question = page.getByRole("region", { name: "Summary", exact: true });
+  await expect.element(question).toHaveFocus();
+  await expect.element(question).toHaveTextContent("Uses OpenRouter · the built-in template.");
+  await question.getByRole("button", { name: "Change", exact: true }).click();
+  await expect.element(page.getByRole("region", { name: "Summary settings" })).toHaveFocus();
 
   await page.getByRole("combobox", { name: "Published meeting" }).selectOptions("json");
   await expect.element(publish).toHaveTextContent("Audio + transcript");
@@ -192,7 +212,7 @@ it("says how long kept media stays from the Recordings policy and follows the re
   let retention = true;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), location.href).pathname;
-    if (path === "/operator/settings") return Response.json({ quality: "balanced", meeting_format: "opus", source_retention: "storage-policy", retain_video: false });
+    if (path === "/operator/settings") return Response.json({ quality: "balanced", meeting_format: "opus", source_retention: "storage-policy", retain_video: false, transcription_enabled: true, active_model: "m", active_revision: "r1" });
     if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
     if (path === "/operator/storage/retention") return retention ? Response.json({ recordings: { forever: false, count: 30, unit: "days" } }) : new Response("down", { status: 503 });
     return Response.json({});
@@ -212,4 +232,78 @@ it("says how long kept media stays from the Recordings policy and follows the re
   await unmount(app!); app = undefined; retention = false; open();
   await expect.element(page.getByText("How long kept media stays is set in Storage.")).toBeVisible();
   await expect.element(page.getByRole("button", { name: /^Keep on server/ })).toHaveTextContent(/Audio only$/);
+});
+
+it("asks everything after the transcript only once transcription is saved on", async () => {
+  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
+  const writes: Record<string, unknown>[] = [];
+  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+    download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") {
+      if (init?.method === "PUT") { const update = JSON.parse(init.body as string); writes.push(update); saved = { ...saved, ...update }; }
+      return Response.json(saved);
+    }
+    if (path === "/operator/settings/models") return Response.json({ models: [balanced], jobs: [], downloads_allowed: true, device: "cpu" });
+    if (path === "/operator/settings/llm") return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
+    return Response.json({});
+  }));
+  host = document.createElement("div"); document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  const card = () => host.querySelector('[aria-labelledby="recording-publication-heading"]')!;
+  const later = ['[aria-label="Current settings"]', '[aria-labelledby="summary-heading"]', "#meeting-format", "fieldset"];
+  const offLine = page.getByText("Turn transcription on to choose a summary, what participants receive and what stays on this server.");
+  await expect.element(offLine).toBeVisible();
+  for (const selector of later) expect(card().querySelector(selector)).toBeNull();
+  expect(card().textContent).not.toContain("Current");
+
+  await page.getByRole("checkbox", { name: "Transcribe every recording" }).click();
+  await expect.element(page.getByText("Save to set up the summary and what participants receive.")).toBeVisible();
+  expect(card().querySelector("fieldset")).toBeNull();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.element(page.getByRole("list", { name: "Current settings" })).toBeVisible();
+  await expect.element(page.getByRole("region", { name: "Summary", exact: true })).toBeVisible();
+  await expect.element(page.getByRole("combobox", { name: "Published meeting" })).toBeVisible();
+  await expect.element(page.getByRole("radio", { name: "Audio only", exact: true })).toBeVisible();
+  await expect.element(offLine).not.toBeInTheDocument();
+  await expect.element(page.getByText("Save to set up the summary and what participants receive.")).not.toBeInTheDocument();
+
+  // Turning transcription off publishes audio again, whatever the select said,
+  // and audio published means something must be kept.
+  await page.getByRole("combobox", { name: "Published meeting" }).selectOptions("json");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => saved.meeting_format).toBe("json");
+  await page.getByRole("checkbox", { name: "Transcribe every recording" }).click();
+  await expect.element(page.getByRole("radio", { name: "Nothing", exact: true })).toBeDisabled();
+  await expect.element(page.getByText("Unavailable while audio is published.")).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => writes.at(-1)).toMatchObject({ transcription_enabled: false, meeting_format: "opus" });
+  await expect.element(offLine).toBeVisible();
+});
+
+it("opens the hardware facts under Change and sends Add one to the providers", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") return Response.json({ quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "m", active_revision: "r1",
+      detected_gpu: false, cores: 8, source: "auto", device_override: "", effective: { device: "cpu", model: "", min_free_memory_mb: 0, note: "" } });
+    if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
+    if (path === "/operator/settings/llm") return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
+    return Response.json({});
+  }));
+  const openProviders = vi.fn();
+  host = document.createElement("div"); document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") }, events: { openProviders } });
+  await expect.element(page.getByText("Runs on the CPU, no GPU found.")).toBeVisible();
+  const device = page.getByRole("combobox", { name: "Override transcription device" });
+  expect(host.querySelector("#stt-device")).toBeNull();
+  const change = page.getByRole("button", { name: "Change", exact: true });
+  await change.click();
+  await expect.element(change).toHaveAttribute("aria-expanded", "true");
+  await expect.element(device).toBeVisible();
+  await expect.element(page.getByText("8", { exact: true })).toBeVisible();
+
+  await expect.element(page.getByText("Needs a provider.")).toBeVisible();
+  await page.getByRole("button", { name: "Add one", exact: true }).click();
+  expect(openProviders).toHaveBeenCalledTimes(1);
 });

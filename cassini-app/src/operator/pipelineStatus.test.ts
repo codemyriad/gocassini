@@ -15,7 +15,7 @@ describe("pipelineStatus", () => {
   it("fresh install: nothing configured", () => {
     expect(pipelineStatus(fresh)).toEqual({
       transcribe: { state: "Off", tone: "off", badge: "download a model" },
-      summarise: { state: "Off", tone: "off", badge: "add a provider" },
+      summarise: { state: "Off", tone: "off", badge: "needs a transcript" },
       publish: { state: "Audio, no transcript", tone: "on" },
       keep: { state: "Audio only · forever", tone: "on" },
     });
@@ -47,6 +47,13 @@ describe("pipelineStatus", () => {
     const status = pipelineStatus({ ...fresh, download: { percent: 42 } });
     expect(status.transcribe).toEqual({ state: "Off · downloading 42%", tone: "busy" });
     expect(status.publish).toEqual({ state: "Audio, no transcript", tone: "on", badge: "until the model is ready" });
+  });
+
+  it("asks for a provider once transcription is on", () => {
+    const status = pipelineStatus({ ...fresh, transcriptionEnabled: true, modelInstalled: true });
+    expect(status.summarise).toEqual({ state: "Off", tone: "off", badge: "add a provider" });
+    expect(pipelineStatus({ ...team, transcriptionEnabled: false, summaryEnabled: false }).summarise)
+      .toEqual({ state: "Off", tone: "off", badge: "needs a transcript" });
   });
 
   it("summary on with transcription off warns on Summarise", () => {
