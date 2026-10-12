@@ -197,9 +197,7 @@ it("shows the saved settings in the status strip and moves only after Save", asy
   await strip.getByRole("button", { name: /^Summarise/ }).click();
   const question = page.getByRole("region", { name: "Summary", exact: true });
   await expect.element(question).toHaveFocus();
-  await expect.element(question).toHaveTextContent("Uses OpenRouter · the built-in template.");
-  await question.getByRole("button", { name: "Change", exact: true }).click();
-  await expect.element(page.getByRole("region", { name: "Summary settings" })).toHaveFocus();
+  await expect.element(question.getByRole("combobox", { name: "Provider" })).toHaveValue("or");
 
   await page.getByRole("combobox", { name: "Published meeting" }).selectOptions("json");
   await expect.element(publish).toHaveTextContent("Audio + transcript");
@@ -256,6 +254,7 @@ it("lets everything after the transcript change only once transcription is saved
   const audioOnly = page.getByRole("radio", { name: "Audio only", exact: true });
   const addOne = page.getByRole("button", { name: "Add one", exact: true });
   await expect.element(offLine).toBeVisible();
+  expect(host.querySelector(".q-callout svg")).not.toBeNull();
   await expect.element(page.getByRole("list", { name: "Current settings" })).toBeVisible();
   await expect.element(page.getByRole("button", { name: /^Transcribe/ })).toHaveTextContent("Off");
   for (const control of [summarySwitch, addOne, format, audioOnly]) await expect.element(control).toBeDisabled();

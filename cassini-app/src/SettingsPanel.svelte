@@ -15,7 +15,7 @@
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import { fly } from "svelte/transition";
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
-  import { ChevronDown, RefreshCw, TriangleAlert } from "@lucide/svelte";
+  import { ChevronDown, Info, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import SpeechModels from "./SpeechModels.svelte";
   import ModelCombobox from "./ModelCombobox.svelte";
@@ -37,7 +37,6 @@
   // same reason "Who can see recordings" does: it is a page's worth of state
   // that applies to the pipeline below it, and it is admin-only, which this
   // panel already is.
-  import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
   import { pipelineStatus, retentionSpan, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
@@ -93,7 +92,6 @@
   let transcriptionSettings: HTMLElement;
   let publicationSettings: HTMLElement;
   let summarySettings: HTMLElement;
-  let summaryCard: HTMLElement;
   let keepSettings: HTMLElement;
   let hardwareOpen = false;
 
@@ -514,13 +512,6 @@
   $: keptFor = keptSpan === null ? "" : keptSpan === "forever" ? "kept forever" : `for ${keptSpan}`;
 
   $: providers = llm?.providers ?? [];
-  // What question 2 says the summary runs with: the provider (the first one
-  // until a step names its own, as switching on would choose) and the
-  // template, by name where the registry knows it.
-  $: summaryUses = [
-    providerName(summary.provider || providers[0]?.id || ""),
-    workflows.find((workflow) => workflow.id === summary.template)?.name ?? (summary.template || "the built-in template"),
-  ].join(" · ");
   // Null while the LLM settings have not been read: three states, and the
   // locked card belongs to exactly one of them.
   $: hasProvider = llm === null ? null : providers.length > 0;
@@ -780,16 +771,18 @@
             {#if savedTranscriptOnlyWithout}
               <p class="set-row-sub pipe-warn pipe-gap" role="status">Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.</p>
             {/if}
-            <p class="set-row-sub pipe-gap">Transcription needs to be on to edit the settings below.</p>
+            <p class="q-callout pipe-gap">
+              <Info size={14} class="q-callout-icon" aria-hidden="true" />
+              <span>Transcription needs to be on to edit the settings below.</span>
+            </p>
           {/if}
         </section>
 
         <!-- 2–4 need a SAVED transcript, like the strip: until transcription
              is saved on they are shown dimmed and cannot be changed, and the
              chips still jump to them. -->
-        <!-- 2. Whether each meeting is summarised. Only the switch and what it
-             will use live here; the provider and template are set in Summary
-             settings below. -->
+        <!-- 2. Whether each meeting is summarised, and with which provider. The
+             switch belongs to the heading: what is turned on is the step. -->
           <section class="pub-q scroll-mt-4" class:off={!savedTranscriptionOn} aria-labelledby="summary-heading" tabindex="-1" bind:this={summarySettings}>
             <div class="q-head">
               <span class="q-num" aria-hidden="true">2</span>
@@ -804,11 +797,98 @@
               />
             </div>
             {#if llmError}
-              <p class="set-row-sub pipe-warn">Couldn't load the AI provider settings.</p>
+              <p class="set-row-sub pipe-warn">
+                Couldn't load the AI provider settings, so this step can't be shown or changed:
+                {llmError}
+              </p>
             {:else if hasProvider === false}
               <p class="set-row-sub">Needs a provider. <button type="button" class="link" disabled={!savedTranscriptionOn} on:click={() => dispatch("openProviders")}>Add one</button></p>
             {:else if hasProvider === true}
-              <p class="set-row-sub">Uses {summaryUses}. <button type="button" class="link" disabled={!savedTranscriptionOn} on:click={() => focusSection(summaryCard)}>Change</button></p>
+              <p class="set-row-sub">Sends each transcript to the provider and writes the summary shown on the meeting.</p>
+              {#if savedTranscriptionOn && !transcriptionEnabled}
+                <p class="set-row-sub">A summary needs a transcript. While transcription is off, recordings get no summary.</p>
+              {/if}
+              {#if summary.enabled}
+              <fieldset class="step-config" disabled={!savedTranscriptionOn || saving}>
+                <label class="op-field">
+                  <span class="op-field-label">Provider</span>
+                  <span class="op-select">
+                    <select
+                      class="op-input"
+                      value={summary.provider}
+                      on:change={(event) => chooseProvider(event.currentTarget.value)}
+                    >
+                      {#each providers as provider (provider.id)}
+                        <option value={provider.id}>{providerName(provider.id)}</option>
+                      {/each}
+                    </select>
+                    <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
+                  </span>
+                </label>
+
+                <ModelCombobox
+                  bind:value={summary.model}
+                  models={summaryModels}
+                  loading={loadingModelsFor === summary.provider}
+                  error={modelsErrorByProvider[summary.provider] ?? ""}
+                  placeholder={providerModelPlaceholder(summary.provider)}
+                  on:open={() => void loadModels(summary.provider)}
+                />
+
+                <!-- The summary is an insight like any other, so it names the
+                     template it runs rather than hiding a prompt of its own. A
+                     free-text "workflow" field asked an administrator to know an
+                     id the registry could have told them. -->
+                {#if SUMMARY_TEMPLATE_CHOICE}
+                <label class="op-field">
+                  <span class="op-field-label">Insight template</span>
+                  <select
+                    bind:value={summary.template}
+                    class="op-input"
+                    disabled={!workflowsKnown}
+                  >
+                    <!-- No synthetic "default" row. It named no template and
+                         disclosed no question, and the template it stood for is
+                         one of the options below it. Empty is still what a policy
+                         written before the field existed stores, and it is
+                         resolved to a real id the moment the registry lands — so
+                         this option is only ever reachable when it could not be. -->
+                    {#if summary.template === ""}
+                      <option value="">The workflow Cassini ships</option>
+                    {/if}
+                    {#each summaryTemplates as workflow (workflow.id)}
+                      <option value={workflow.id}>{workflow.name}</option>
+                    {/each}
+                    <!-- A template saved by an older or newer image is still what
+                         this step runs, so it stays selectable rather than
+                         silently resetting to the default when this build has
+                         never heard of it. -->
+                    {#if summary.template !== "" && !summaryTemplates.some((w) => w.id === summary.template)}
+                      <option value={summary.template}>
+                        {summary.template} — not in this build
+                      </option>
+                    {/if}
+                  </select>
+                  {#if !workflowsKnown}
+                    <span class="pipe-help">
+                      Templates could not be listed.
+                    </span>
+                  {/if}
+                  <!-- The field is saved and served; the publish pipeline does not
+                       resolve it yet (internal/transcribe/summary.go splices the
+                       shipped prompt directly). Saying so beats a control that
+                       silently does nothing — delete this line when the pipeline
+                       reads it back (D-719). -->
+                  <span class="pipe-help">
+                    Your choice is saved, but summaries still use the built-in template for now.
+                  </span>
+                  <button type="button" class="link-btn pipe-link" on:click={() => dispatch("openTemplates")}>
+                    View insight templates
+                  </button>
+                </label>
+                {/if}
+              </fieldset>
+              {/if}
             {/if}
           </section>
 
@@ -865,118 +945,6 @@
         <p class="set-row-sub">Applies to new recordings after saving.</p>
       </section>
 
-
-      <!-- How the summary is written: the provider and template. Whether it is
-           written at all is question 2 of the card above, which holds the only
-           switch; this card is where its "Change" lands. -->
-      <section class="op-tint pipe-step scroll-mt-4" aria-labelledby="summary-settings-heading" tabindex="-1" bind:this={summaryCard}>
-        <div class="set-row-main">
-          <h2 id="summary-settings-heading" class="set-row-name op-card-title" class:off={hasProvider === false}>Summary settings</h2>
-          <p class="set-row-sub" class:off={hasProvider === false}>
-            Sends each transcript to the provider and writes the summary shown on the meeting.
-          </p>
-          {#if !transcriptionEnabled}
-            <p class="set-row-sub pipe-gap">
-              A summary needs a transcript. While transcription is off, recordings get no summary.
-            </p>
-          {/if}
-
-          {#if llmError}
-            <p class="set-row-sub pipe-warn pipe-gap">
-              Couldn't load the AI provider settings, so this step can't be shown or changed:
-              {llmError}
-            </p>
-          {:else if hasProvider === false}
-            <div class="pipe-gap-lg">
-              <NeedsProviderCard
-                title="Add a provider to write summaries"
-                on:open={() => dispatch("openProviders")}
-              />
-            </div>
-          {:else if hasProvider === true && summary.enabled}
-            <div class="step-config">
-              <label class="op-field">
-                <span class="op-field-label">Provider</span>
-                <span class="op-select">
-                  <select
-                    class="op-input"
-                    value={summary.provider}
-                    on:change={(event) => chooseProvider(event.currentTarget.value)}
-                  >
-                    {#each providers as provider (provider.id)}
-                      <option value={provider.id}>{providerName(provider.id)}</option>
-                    {/each}
-                  </select>
-                  <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
-                </span>
-              </label>
-
-              <ModelCombobox
-                bind:value={summary.model}
-                models={summaryModels}
-                loading={loadingModelsFor === summary.provider}
-                error={modelsErrorByProvider[summary.provider] ?? ""}
-                placeholder={providerModelPlaceholder(summary.provider)}
-                on:open={() => void loadModels(summary.provider)}
-              />
-
-              <!-- The summary is an insight like any other, so it names the
-                   template it runs rather than hiding a prompt of its own. A
-                   free-text "workflow" field asked an administrator to know an
-                   id the registry could have told them. -->
-              {#if SUMMARY_TEMPLATE_CHOICE}
-              <label class="op-field">
-                <span class="op-field-label">Insight template</span>
-                <select
-                  bind:value={summary.template}
-                  class="op-input"
-                  disabled={!workflowsKnown}
-                >
-                  <!-- No synthetic "default" row. It named no template and
-                       disclosed no question, and the template it stood for is
-                       one of the options below it. Empty is still what a policy
-                       written before the field existed stores, and it is
-                       resolved to a real id the moment the registry lands — so
-                       this option is only ever reachable when it could not be. -->
-                  {#if summary.template === ""}
-                    <option value="">The workflow Cassini ships</option>
-                  {/if}
-                  {#each summaryTemplates as workflow (workflow.id)}
-                    <option value={workflow.id}>{workflow.name}</option>
-                  {/each}
-                  <!-- A template saved by an older or newer image is still what
-                       this step runs, so it stays selectable rather than
-                       silently resetting to the default when this build has
-                       never heard of it. -->
-                  {#if summary.template !== "" && !summaryTemplates.some((w) => w.id === summary.template)}
-                    <option value={summary.template}>
-                      {summary.template} — not in this build
-                    </option>
-                  {/if}
-                </select>
-                {#if !workflowsKnown}
-                  <span class="pipe-help">
-                    Templates could not be listed.
-                  </span>
-                {/if}
-                <!-- The field is saved and served; the publish pipeline does not
-                     resolve it yet (internal/transcribe/summary.go splices the
-                     shipped prompt directly). Saying so beats a control that
-                     silently does nothing — delete this line when the pipeline
-                     reads it back (D-719). -->
-                <span class="pipe-help">
-                  Your choice is saved, but summaries still use the built-in template for now.
-                </span>
-                <button type="button" class="link-btn pipe-link" on:click={() => dispatch("openTemplates")}>
-                  View insight templates
-                </button>
-              </label>
-              {/if}
-            </div>
-          {/if}
-        </div>
-
-      </section>
 
       <!-- Both fields steer how names come out: one when transcribing, one when
            searching what was transcribed. -->
@@ -1345,10 +1313,27 @@
   .pipe-gap {
     margin-top: 8px;
   }
-  .pipe-gap-lg {
-    margin-top: 12px;
+  .q-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 0;
+    padding: 8px 10px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+    background-color: var(--op-inset);
+    border: 1px solid var(--op-inset-border);
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .q-callout :global(.q-callout-icon) {
+    flex: none;
+    margin-top: 3px;
   }
   .step-config {
+    min-width: 0;
+    padding: 0;
+    border: 0;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;

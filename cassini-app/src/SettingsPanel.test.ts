@@ -99,7 +99,6 @@ describe("SettingsPanel summarisation step", () => {
   });
 
   it("offers the way out of the locked state", () => {
-    expect(settingsPanelSource).toContain("NeedsProviderCard");
     expect(settingsPanelSource).toContain("Needs a provider.");
     expect(settingsPanelSource).toContain('on:click={() => dispatch("openProviders")}>Add one</button>');
   });
@@ -132,18 +131,15 @@ describe("SettingsPanel layout", () => {
     expect(settingsPanelSource).not.toContain("Summarisation\n");
   });
 
-  it("keeps the summary switch in the card and the provider and template in their own card below", () => {
-    // Question 2 says whether, and with what; Summary settings below says how.
-    // One switch only, so the two cannot disagree.
-    expect(settingsPanelSource.match(/aria-label="Summarise every meeting"/g)?.length).toBe(1);
+  it("asks the summary switch, provider and template inside question 2", () => {
+    // One place for the whole step, under its switch; no separate card.
     const switchAt = settingsPanelSource.indexOf('aria-label="Summarise every meeting"');
-    const cardEnd = settingsPanelSource.indexOf("Applies to new recordings after saving.");
-    const settingsAt = settingsPanelSource.indexOf(">Summary settings<");
     const providerAt = settingsPanelSource.indexOf('<span class="op-field-label">Provider</span>');
-    expect(switchAt).toBeLessThan(cardEnd);
-    expect(cardEnd).toBeLessThan(settingsAt);
-    expect(settingsAt).toBeLessThan(providerAt);
-    expect(settingsPanelSource).toContain("on:click={() => focusSection(summaryCard)}>Change</button>");
+    const templateAt = settingsPanelSource.indexOf("Insight template");
+    const publicationAt = settingsPanelSource.indexOf(">What participants receive<");
+    expect([switchAt, providerAt, templateAt, publicationAt]).toEqual(
+      [...[switchAt, providerAt, templateAt, publicationAt]].sort((a, b) => a - b));
+    expect(settingsPanelSource).not.toContain(">Summary settings<");
   });
 
   it("asks quality and the model inside the transcript question", () => {
@@ -155,11 +151,11 @@ describe("SettingsPanel layout", () => {
       [...[transcriptAt, qualityAt, modelsAt, summaryAt]].sort((a, b) => a - b));
   });
 
-  it("gives summary settings and the transcript hints cards of their own", () => {
+  it("gives the transcript hints a card of their own", () => {
     // Vocabulary and search spellings share one card: both steer how names
     // come out, one when transcribing and one when searching.
     const steps = settingsPanelSource.match(/<section\b[^>]*class="[^"\n]*\bpipe-step\b[^"\n]*"[^>]*>/g);
-    expect(steps?.length).toBe(2);
+    expect(steps?.length).toBe(1);
     const hintsAt = settingsPanelSource.indexOf(">Transcript hints<");
     const vocabularyAt = settingsPanelSource.indexOf(">Vocabulary<");
     const spellingsAt = settingsPanelSource.indexOf(">Search spellings<");
