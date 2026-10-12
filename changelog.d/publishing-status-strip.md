@@ -3,5 +3,5 @@
 - The card asks four numbered questions in the order the steps run. Until transcription is saved on, the questions after it are dimmed and cannot be changed, and saving with transcription off publishes the audio.
 - The keep-on-server options say how long kept audio and video stay, from the Recordings retention policy in Storage.
 - Hardware is now a line in the transcript question; the detected GPU, cores and the device override open under Change.
-- The summary switch is now in the card; the provider and template are in a Summary settings card below it.
+- Summarisation is now part of the card: its switch, provider and template sit in the summary question, and the separate Summarisation card is gone.
 - Vocabulary and Search spellings are now one Transcript hints card.
