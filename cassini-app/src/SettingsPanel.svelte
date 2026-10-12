@@ -15,9 +15,10 @@
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import { fly } from "svelte/transition";
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
-  import { ChevronDown, Info, RefreshCw, TriangleAlert } from "@lucide/svelte";
+  import { ChevronDown, Info, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import SpeechModels from "./SpeechModels.svelte";
+  import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
   import ModelCombobox from "./ModelCombobox.svelte";
   // D-757: "Who can see recordings" is a section of the Settings panel, above
   // the pipeline it applies to. Its own component because it is a page's worth
@@ -476,6 +477,7 @@
     meetingFormat: savedMeetingFormat,
     transcriptionEnabled: settings?.transcription_enabled === true,
     quality: savedQuality,
+    activeModel: settings?.active_model,
     device: savedDevice,
     modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
     download: runningDownload(modelInventory),
@@ -503,8 +505,9 @@
   // format select last said.
   $: publishedFormat = transcriptionEnabled ? meetingFormat : "opus" as const;
   $: runsOnLine = savedDevice === "cuda"
-    ? `Runs on the ${deviceLabel("cuda")}.`
-    : settings?.detected_gpu ? "Runs on the CPU." : "Runs on the CPU, no GPU found.";
+    ? deviceLabel("cuda")
+    : settings?.detected_gpu ? "CPU" : "CPU, no GPU found";
+  $: inUseModel = modelInventory?.models.find((m) => m.id === activeModel);
 
   // How long kept media stays, from the Recordings policy: "for 30 days",
   // "kept forever", or "" when retention could not be read.
@@ -601,17 +604,6 @@
         every room.
       </p>
     </div>
-    <div class="op-panel-actions">
-      <button
-        class="icon-btn"
-        type="button"
-        on:click={loadAll}
-        disabled={loading || !operatorClient}
-        aria-label="Reload the publish pipeline"
-      >
-        <RefreshCw size={15} aria-hidden="true" />
-      </button>
-    </div>
   </header>
 
 <!-- The readiness checks offer a "Set up storage" action that scrolls here,
@@ -631,7 +623,7 @@
     <p class="op-state">Settings aren't available.</p>
   {:else}
     <div class="pipe-body">
-      <section class="op-tint p-4 grid gap-4" aria-labelledby="recording-publication-heading">
+      <section class="op-tint p-4 grid gap-4 pipe-card" aria-labelledby="recording-publication-heading">
         <div class="strip-head">
           <h2 id="recording-publication-heading" class="set-row-name op-card-title">After each meeting</h2>
           <span class="strip-current" title="The saved settings new recordings get">Current</span>
@@ -682,34 +674,18 @@
           {#if runsOnGPU}
             <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
           {/if}
-          <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
-          <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
-            {#each QUALITY_OPTIONS as option (option.value)}
-              <label class="q-opt" class:selected={quality === option.value}>
-                <input
-                  type="radio"
-                  name="stt-quality"
-                  class="q-radio"
-                  value={option.value}
-                  bind:group={quality}
-                />
-                <span class="q-main">
-                  <span class="q-label">{option.label}</span>
-                  <span class="q-desc">{option.description}</span>
-                </span>
-              </label>
-            {/each}
-          </div>
-          <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
-            bind:readyModel bind:inventory={modelInventory}
-            on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
-          <!-- What the operator found, and what the next build will do with
-               it. The device is auto-selected, and on a host with no usable GPU
-               that answer is the CPU: slower, but a transcript. Saying so here
-               keeps the fallback explicit (D-702). The facts and the override
-               that corrects them open inline under "Change". -->
-          <p class="set-row-sub pipe-gap">
-            {runsOnLine}
+          <!-- What transcribes new recordings, and where. Builds use the saved
+               model, not the quality picked below, so this names it. The
+               device is auto-selected; on a host with no usable GPU that is the
+               CPU, said out loud (D-702). The facts and the override open under
+               "Change". -->
+          <p class="in-use pipe-gap" role="status">
+            {#if transcriptionEnabled && inUseModel}
+              <span class="in-use-label">In use</span>
+              <strong>{inUseModel.name}</strong>
+              <span aria-hidden="true">·</span>
+            {/if}
+            <span>{runsOnLine}</span>
             <button type="button" class="link" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>Change</button>
           </p>
           {#if hardwareOpen}
@@ -767,6 +743,30 @@
               </p>
             </div>
           {/if}
+          <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
+          <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
+            {#each QUALITY_OPTIONS as option (option.value)}
+              <label class="q-opt" class:selected={quality === option.value}>
+                <input
+                  type="radio"
+                  name="stt-quality"
+                  class="q-radio"
+                  value={option.value}
+                  bind:group={quality}
+                />
+                <span class="q-main">
+                  <span class="q-label">{option.label}</span>
+                  <span class="q-desc">{option.description}</span>
+                </span>
+              </label>
+            {/each}
+          </div>
+          {#if !(transcriptionEnabled && inUseModel?.id === speechModelFor(quality, selectedDevice))}
+            <p class="model-heading pipe-gap">{QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? "This quality"} model</p>
+          {/if}
+          <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
+            bind:readyModel bind:inventory={modelInventory}
+            on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
           {#if !savedTranscriptionOn}
             {#if savedTranscriptOnlyWithout}
               <p class="set-row-sub pipe-warn pipe-gap" role="status">Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.</p>
@@ -946,6 +946,8 @@
       </section>
 
 
+      <VoiceSeparationModel client={operatorClient} inventory={modelInventory} />
+
       <!-- Both fields steer how names come out: one when transcribing, one when
            searching what was transcribed. -->
       <section class="op-tint pipe-step hints-card" aria-labelledby="transcript-hints-heading">
@@ -1056,8 +1058,18 @@
     padding: 0;
     list-style: none;
   }
+  /* The strip follows the card's width, not the window's: inside Nextcloud
+     the card is much narrower than the viewport. */
+  .pipe-card {
+    container-type: inline-size;
+  }
+  .pipe-strip li {
+    display: flex;
+  }
   .strip-chip {
     display: grid;
+    grid-template-rows: 1fr auto;
+    align-content: start;
     gap: 4px;
     justify-items: start;
     width: 100%;
@@ -1069,6 +1081,7 @@
   }
   .chip-box {
     display: grid;
+    align-content: start;
     gap: 1px;
     width: 100%;
     padding: 7px 10px;
@@ -1124,8 +1137,13 @@
     background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-base-100));
     border-color: var(--color-warning);
   }
-  /* Phone width: one row per step, name left and state right. */
-  @media (max-width: 560px) {
+  @container (max-width: 640px) {
+    .pipe-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  /* Narrow: one row per step, name left and state right. */
+  @container (max-width: 420px) {
     .pipe-strip {
       grid-template-columns: 1fr;
       gap: 0;
@@ -1213,7 +1231,7 @@
   }
   .q-title {
     margin: 0;
-    font-size: 12.5px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1.4;
   }
@@ -1312,6 +1330,38 @@
   }
   .pipe-gap {
     margin-top: 8px;
+  }
+  .in-use {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    margin-bottom: 0;
+    padding: 6px 10px 5px;
+    font-size: 12.5px;
+    line-height: 1.35;
+    border-radius: var(--radius-box, 0.5rem);
+    background: var(--op-inset, color-mix(in oklch, var(--color-base-content) 5%, transparent));
+  }
+  /* Nextcloud styles every button with a min-height and padding. */
+  .in-use .link {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    line-height: inherit;
+  }
+  .in-use-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .model-heading {
+    margin-bottom: -4px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
   .q-callout {
     display: flex;

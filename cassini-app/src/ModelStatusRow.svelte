@@ -5,9 +5,11 @@
   export let name: string;
   export let size = "";
   export let state = "";
+  // Quiet: a secondary row under a heading, not a card of its own.
+  export let quiet = false;
 </script>
 
-<div class="model-row">
+<div class="model-row" class:quiet>
   <div class="model-line">
     <strong class="model-name">{name}</strong>
     {#if size}<span class="model-meta">{size}</span>{/if}
@@ -23,5 +25,8 @@
   .model-name { font-size: 13.5px; overflow-wrap: anywhere; }
   .model-meta { font-size: 12.5px; color: color-mix(in oklch, var(--color-base-content) 65%, transparent); }
   .model-action { margin-left: auto; }
+  .quiet { padding: 8px 12px; background: none; border: 1px solid var(--op-inset-border, color-mix(in oklch, var(--color-base-content) 12%, transparent)); }
+  .quiet .model-name { font-size: 12.5px; font-weight: 600; }
+  .quiet .model-action :global(.op-button) { font-size: 12.5px; }
   .model-detail { display: grid; gap: 6px; font-size: 12.5px; min-width: 0; }
 </style>

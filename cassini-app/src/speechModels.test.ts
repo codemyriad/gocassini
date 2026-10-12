@@ -20,11 +20,16 @@ function inventory(models: SpeechModel[], jobs: SpeechModelJob[] = []): SpeechMo
 function job(state: string, device = "cpu"): SpeechModelJob {
   return { id: "j1", model: diarizer.id, revision: diarizer.revision, device, state, updated_at: "now", progress: { phase: state, completed_bytes: 5, total_bytes: 10, reused_bytes: 0 } };
 }
-function card(props: { model: SpeechModel; job?: SpeechModelJob; downloadsAllowed?: boolean }) {
-  return render(VoiceSeparationModel, { props }).body;
+function card({ model, job, downloadsAllowed = false }: { model: SpeechModel; job?: SpeechModelJob; downloadsAllowed?: boolean }) {
+  const inv = { ...inventory([speech, model], job ? [job] : []), downloads_allowed: downloadsAllowed };
+  return render(VoiceSeparationModel, { props: { inventory: inv } }).body;
 }
 
 describe("voice separation in the speech models", () => {
+  it("renders nothing without a separation model", () => {
+    expect(render(VoiceSeparationModel, { props: { inventory: inventory([speech]) } }).body).not.toContain("Voice separation");
+  });
+
   it("is found by its kind, and never as the transcription model", () => {
     expect(voiceSeparationModel(inventory([speech, diarizer]))).toEqual(diarizer);
     // An operator that does not label kinds lists no separation model.
@@ -39,15 +44,15 @@ describe("voice separation in the speech models", () => {
   it("follows its own CPU job whatever device transcribes", () => {
     const inv = inventory([diarizer], [job("downloading", "cuda"), { ...job("downloading"), id: "j2" }]);
     expect(modelJob(inv, diarizer, "cpu")?.id).toBe("j2");
-    expect(SpeechModelsSource).toContain('modelJob(inventory, separation, "cpu")');
-    expect(SpeechModelsSource).toContain('action(kind, separation, separationJob, "cpu")');
+    // It has its own Settings card; the transcript step no longer lists it.
+    expect(SpeechModelsSource).not.toContain("VoiceSeparationModel");
   });
 
   it("offers the download with its size, and nothing that selects it for transcription", () => {
     const html = card({ model: diarizer, downloadsAllowed: true });
-    expect(html).toContain("Voice separation (optional)");
-    expect(html).toContain("download 61.9 MiB · installed 99.2 MiB");
-    expect(html).toContain("Download voice separation");
+    expect(html).toContain("Voice separation");
+    expect(html).toContain("61.9 MiB");
+    expect(html).toContain(">Download<");
     expect(html).toContain("Not installed");
     expect(html).not.toContain("Use this model");
     expect(html).not.toContain("Enable transcription");
@@ -56,14 +61,14 @@ describe("voice separation in the speech models", () => {
   it("says when it is ready, being installed, or cannot run here", () => {
     const ready = card({ model: { ...diarizer, installed: true, ready: true } });
     expect(ready).toContain("Ready");
-    expect(ready).toContain("separate voices in a meeting's participant list");
+    expect(ready).toContain("from the participant list");
     expect(ready).not.toContain("<button");
 
     expect(card({ model: diarizer, job: job("downloading"), downloadsAllowed: true })).toContain("Voice separation download progress");
-    expect(card({ model: diarizer, job: { ...job("failed"), error: "disk full" }, downloadsAllowed: true })).toContain("Retry download");
+    expect(card({ model: diarizer, job: { ...job("failed"), error: "disk full" }, downloadsAllowed: true })).toContain(">Retry<");
 
     const unsupported = card({ model: { ...diarizer, installed: true, runtime_supported: false }, downloadsAllowed: true });
-    expect(unsupported).toContain("cannot run voice separation");
+    expect(unsupported).toContain("Not available in this server's Cassini build");
     expect(unsupported).not.toContain("<button");
 
     // Air-gapped: no download button until the files are imported.

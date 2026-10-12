@@ -14,6 +14,8 @@ export interface PipelineInput {
   meetingFormat: "opus" | "json";
   transcriptionEnabled: boolean;
   quality: SettingsQuality;
+  /** The saved model new recordings transcribe with; it names the tier when set. */
+  activeModel?: string;
   /** The effective device from the hardware facts: "cuda" or "cpu". */
   device: string;
   /** Whether the model for the saved quality is installed; null while unknown. */
@@ -31,6 +33,14 @@ export interface PipelineInput {
 }
 
 const QUALITY_LABELS: Record<SettingsQuality, string> = { fast: "Fast", balanced: "Balanced", best: "Best" };
+
+// The tier a speech model belongs to. Builds use the saved model, not the
+// quality setting, so the strip names what actually transcribes.
+const MODEL_TIERS: Record<string, string> = {
+  "parakeet-tdt-ctc-110m-en-int8": "Fast",
+  "parakeet-tdt-0.6b-v3-int8": "Balanced",
+  "parakeet-tdt-0.6b-v3": "Best",
+};
 
 // The model a quality tier runs on a device. On the GPU every tier runs the
 // full-precision model.
@@ -62,7 +72,7 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
 
   let transcribe: StepStatus;
   if (transcribing) {
-    transcribe = { state: `On · ${QUALITY_LABELS[input.quality] ?? input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}`, tone: "on" };
+    transcribe = { state: `On · ${(input.activeModel && MODEL_TIERS[input.activeModel]) || QUALITY_LABELS[input.quality] || input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}`, tone: "on" };
   } else if (input.download) {
     const percent = input.download.percent;
     transcribe = { state: percent === null ? "Off · downloading" : `Off · downloading ${percent}%`, tone: "busy" };
