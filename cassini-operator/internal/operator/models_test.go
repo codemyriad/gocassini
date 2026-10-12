@@ -102,8 +102,10 @@ func TestModelRoutesUnderBothMountsAndDuplicateInstall(t *testing.T) {
 				if rec.Code != 202 {
 					t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
 				}
-				if strings.HasPrefix(rec.Header().Get("Location"), "//") {
-					t.Fatal("invalid Location")
+				// Through the AppAPI proxy a Location on a 202 becomes a 302
+				// the browser follows outside the proxy, to a 404.
+				if got := rec.Header().Get("Location"); got != "" {
+					t.Fatalf("install answered Location %q; the browser would follow it", got)
 				}
 			}
 			jobs, err := rt.modelJobs(rt.ctx)
@@ -199,5 +201,49 @@ func TestModelProbeFailureIsNotReady(t *testing.T) {
 	failed := awaitModelState(t, rt, "failed")
 	if !strings.Contains(failed.Error, "probe refused") {
 		t.Fatalf("lost error: %+v", failed)
+	}
+}
+
+// The speaker separation model is installed like a speech model, on the CPU,
+// and can never become the transcription model.
+func TestDiarizerInstallsOnTheCPUAndNeverTranscribes(t *testing.T) {
+	rt := modelTestRuntime(t)
+	supported := true
+	diarizer := modelInfo{ID: defaultDiarizationModel, Kind: modelKindDiarization, Revision: strings.Repeat("c", 64), Installed: true, Ready: true, Device: "cpu", RuntimeSupported: &supported}
+	speech := modelInfo{ID: modelParakeet110M, Kind: "speech", Revision: strings.Repeat("a", 64), Device: "cpu"}
+	b, _ := json.Marshal([]modelInfo{speech, diarizer})
+	if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "inventory.json"), b, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := modelRequest(rt, "GET", "/settings/models?device=cpu", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"kind":"diarization"`) || !strings.Contains(rec.Body.String(), `"runtime_supported":true`) {
+		t.Fatalf("inventory lost the kind: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = modelRequest(rt, "POST", "/settings/models/install", fmt.Sprintf(`{"model":%q,"device":"cuda"}`, diarizer.ID))
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "CPU") {
+		t.Fatalf("cuda install: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = modelRequest(rt, "POST", "/settings/models/install", fmt.Sprintf(`{"model":%q,"device":"cpu"}`, diarizer.ID))
+	if rec.Code != 202 {
+		t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
+	}
+	rt.startModelWorker()
+	if j := awaitModelState(t, rt, "ready"); j.Model != diarizer.ID || j.Device != "cpu" {
+		t.Fatalf("job = %+v", j)
+	}
+
+	// Ready, but not a speech model: transcription cannot be switched to it.
+	update := fmt.Sprintf(`{"quality":"fast","transcription_enabled":true,"active_model":%q,"active_revision":%q,"device_override":"cpu"}`, diarizer.ID, diarizer.Revision)
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest("PUT", "/settings", strings.NewReader(update)))
+	if rec.Code != 409 || rt.currentSettings().TranscriptionEnabled {
+		t.Fatalf("diarizer activated as the transcription model: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Its runtime check waits for the memory a diarizer needs, not a speech model's.
+	limits := resourceLimitsFromEnv()
+	if got, int8 := limits.minFreeMemForBuild("cpu", diarizer.ID), limits.minFreeMemForBuild("cpu", modelParakeetV3Int8); got >= int8 {
+		t.Fatalf("diarizer probe floor = %d MB, not below a v3 int8 build's %d MB", got, int8)
 	}
 }

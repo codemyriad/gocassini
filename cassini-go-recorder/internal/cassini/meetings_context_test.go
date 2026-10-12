@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -1175,5 +1176,28 @@ func TestMeetingsContextLocalRefusesAnOversizedCatalogFile(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "larger than") {
 		t.Errorf("stderr=%q, want the size refusal rather than a parse error", stderr)
+	}
+}
+
+// A participant whose voices were separated stays in the file's speaker list
+// for the original transcript's sake. The context lists people, so it names
+// the voices and not the participant on top of them.
+func TestMeetingContextListsSeparatedVoicesNotTheirParticipant(t *testing.T) {
+	meeting := extractedMeetingFixture(append(wordsAt("spk1~1", 0, 200, "hello"), wordsAt("spk1~2", 400, 200, "hi")...), "")
+	meeting.Manifest.Speakers = []portable.Speaker{
+		{ID: "spk1", Label: "Room laptop", SeparatedInto: []string{"spk1~1", "spk1~2"}},
+		{ID: "spk1~1", Label: "Erlich"},
+		{ID: "spk1~2", Label: "Room laptop · Speaker 2"},
+		{ID: "spk2", Label: "Monica"},
+	}
+
+	got := buildMeetingContext("mtg", meeting, meetingsCatalogEntry{})
+
+	var labels []string
+	for _, speaker := range got.Speakers {
+		labels = append(labels, speaker.Label)
+	}
+	if want := []string{"Erlich", "Room laptop · Speaker 2", "Monica"}; !reflect.DeepEqual(labels, want) {
+		t.Errorf("speakers = %v, want %v", labels, want)
 	}
 }

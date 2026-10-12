@@ -8,12 +8,14 @@ import type {
   DisplayTranscriptV1,
   ReadableTranscriptV1,
   TranscriptIndex,
+  TranscriptSpeaker,
   TranscriptWordsV1,
 } from "../core/types";
 import {
   buildDisplayTranscriptFromArtifacts,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  readSplitDevices,
   describeTranscript,
   extractPortableManifestFromArrayBuffer,
   extractTranscriptionDocument,
@@ -30,6 +32,7 @@ import {
   type PortableTranscriptEntry,
 } from "./portable";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
+import { withoutSplitDevices } from "../core/speakers";
 
 export interface LoadedArtifact {
   transcriptionOnly?: boolean;
@@ -59,6 +62,33 @@ export interface LoadedArtifact {
   wordEndsBoundedByAudio: boolean;
   availableTranscripts: PortableTranscriptDescriptor[];
   currentTranscriptId: string;
+  /**
+   * The revision of people's speaker edits this recording was published with
+   * (`x-speakerEdits.editsRevision` on its default transcript's
+   * speech-to-text step), whether they renamed a speaker or separated voices.
+   * Absent when it carries none: nobody edited the speakers, or the edits
+   * applied changed nothing and the operator published the original
+   * speakers. The People panel compares it with what the operator has
+   * applied, to say when the copy on screen is the older one.
+   */
+  speakerEditsRevision?: number;
+  /**
+   * Which summary this recording has: the SHA-256 of one rewritten for
+   * people's speaker edits (`x-speakerEdits.summary.sha256`, beside
+   * `editsRevision`), absent for the build's own. The People panel compares
+   * it with the one the operator last published, which an apply that leaves
+   * the summary alone still names.
+   */
+  speakerSummarySha256?: string;
+  /**
+   * The devices whose voices were separated, with the names the file gives
+   * them (the roster entries marked `x-separatedInto` in a portable `.opus`).
+   * Where no
+   * operator says what the participants were (an embed, a static export),
+   * the People panel names a split device from here, so a device whose
+   * voices are all named still goes by its own name.
+   */
+  splitDevices?: TranscriptSpeaker[];
 }
 
 export type ArtifactTimingPrecisionLevel = "word" | "mixed" | "segment";
@@ -127,10 +157,19 @@ export class PortableMeetingStore {
   // A → B → A without re-fetching or re-decompressing payloads.
   private readonly bodyCache = new Map<string, Map<string, unknown>>();
 
-  async loadManifest(audioUrl: string): Promise<ExtractedPortableManifest> {
+  // `fresh` drops what is cached for this file and reads it from the server:
+  // the recording at this path was republished (its speakers changed), and
+  // both the parsed copy here and the browser's copy are the old one. The
+  // read replaces the browser's copy ("reload", not "no-store"), so what reads
+  // the file next — the player's range requests included — gets the new bytes.
+  async loadManifest(audioUrl: string, options: { fresh?: boolean } = {}): Promise<ExtractedPortableManifest> {
+    if (options.fresh) {
+      this.manifestCache.delete(audioUrl);
+      this.bodyCache.delete(audioUrl);
+    }
     let manifestPromise = this.manifestCache.get(audioUrl);
     if (!manifestPromise) {
-      manifestPromise = fetchPortableManifest(audioUrl);
+      manifestPromise = fetchPortableManifest(audioUrl, options.fresh ? { cache: "reload" } : {});
       this.manifestCache.set(audioUrl, manifestPromise);
     }
     try {
@@ -221,9 +260,10 @@ export async function loadArtifactFromDirectory(basePath: string): Promise<Loade
 export async function loadPortableArtifactFromAudioPath(
   audioPath: string,
   store: PortableMeetingStore = defaultPortableStore,
+  options: { fresh?: boolean } = {},
 ): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const { manifest } = await store.loadManifest(resolvedAudioPath);
+  const { manifest } = await store.loadManifest(resolvedAudioPath, options);
   const availableTranscripts = listAvailableTranscripts(manifest);
   const currentTranscriptId = getDefaultTranscriptId(manifest);
   store.primeBodies(resolvedAudioPath, manifest, currentTranscriptId);
@@ -365,6 +405,9 @@ function buildPortableLoadedArtifact({
     wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest.provenance),
     availableTranscripts,
     currentTranscriptId,
+    speakerEditsRevision: readSpeakerEditsRevision(manifest),
+    speakerSummarySha256: readSpeakerSummarySha256(manifest),
+    splitDevices: readSplitDevices(manifest.speakers),
   };
 }
 
@@ -504,14 +547,16 @@ function resolveDocumentAssetUrl(assetPath: string): string {
   return new URL(assetPath, window.location.href).toString();
 }
 
-async function fetchPortableManifest(audioUrl: string): Promise<ExtractedPortableManifest> {
+async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): Promise<ExtractedPortableManifest> {
   if (new URL(audioUrl).pathname.toLowerCase().endsWith(".json")) {
-    const response = await fetch(audioUrl, {cache: "no-store"});
+    // no-store already bypasses the HTTP cache, so it also covers a fresh load.
+    const response = await fetch(audioUrl, {...init, cache: "no-store"});
     if (!response.ok) throw new Error(`Could not load ${audioUrl}.`);
     return extractTranscriptionDocument(await response.json());
   }
 
   const partialResponse = await fetch(audioUrl, {
+    ...init,
     headers: {
       Range: `bytes=0-${PORTABLE_METADATA_RANGE_END}`,
     },
@@ -529,7 +574,7 @@ async function fetchPortableManifest(audioUrl: string): Promise<ExtractedPortabl
     }
   }
 
-  const fullResponse = await fetch(audioUrl);
+  const fullResponse = await fetch(audioUrl, init);
   if (!fullResponse.ok) {
     throw new Error(`Could not load ${audioUrl}.`);
   }
@@ -597,6 +642,36 @@ export function readWordEndsBoundedByAudio(provenance: unknown): boolean {
   return wordTimings?.endsBoundedByAudio === true;
 }
 
+/**
+ * The speaker-edits revision a published recording carries, or undefined.
+ *
+ * Read from the DEFAULT transcript's step whatever transcript is shown: the
+ * separated voices are the default one, and the record says which edits the
+ * file was published with, not which transcript the reader picked.
+ */
+export function readSpeakerEditsRevision(manifest: PortableMeetingManifest): number | undefined {
+  const speechToText = asMaybeObject(asMaybeObject(manifest.provenance)?.speechToText);
+  const step = asMaybeObject(speechToText?.[getDefaultTranscriptId(manifest)]);
+  // Recordings published before the record moved to x-speakerEdits carry the
+  // revision inside x-speakerDiarization; without it they read as never
+  // updated, and the panel would offer a Reload that can't change anything.
+  const revision =
+    asMaybeObject(step?.["x-speakerEdits"])?.editsRevision ??
+    asMaybeObject(step?.["x-speakerDiarization"])?.editsRevision;
+  return typeof revision === "number" && Number.isInteger(revision) && revision > 0 ? revision : undefined;
+}
+
+/**
+ * The SHA-256 of the summary speaker edits rewrote, which a published
+ * recording records beside their revision, or undefined for the build's own.
+ */
+export function readSpeakerSummarySha256(manifest: PortableMeetingManifest): string | undefined {
+  const speechToText = asMaybeObject(asMaybeObject(manifest.provenance)?.speechToText);
+  const step = asMaybeObject(speechToText?.[getDefaultTranscriptId(manifest)]);
+  const sha256 = asMaybeObject(asMaybeObject(step?.["x-speakerEdits"])?.summary)?.sha256;
+  return typeof sha256 === "string" && sha256 !== "" ? sha256 : undefined;
+}
+
 function asLooseObject(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("manifest must be an object");
@@ -613,12 +688,15 @@ function buildPortableMetadataRaw(
 ): Record<string, unknown> {
   const provenance = asMaybeObject(portable.provenance);
   const displayId = pickDisplayForTranscript(portable, currentTranscriptId)?.id;
+  const splitDeviceIds = new Set(readSplitDevices(portable.speakers).map((device) => device.id));
   return {
     meeting: portable.meeting ?? {},
     audio: portable.audio ?? {},
     integrity: (portable as Record<string, unknown>).integrity ?? {},
     stats: {
-      speakers: transcript.speakers.length,
+      // People, whichever transcript is shown: on the original one a device
+      // separated into voices is a speaker too, but its voices are who spoke.
+      speakers: withoutSplitDevices(transcript.speakers).length,
       passages: displayTranscript?.blocks.length ?? transcript.segments.length,
       words: transcript.segments.reduce((count, segment) => count + segment.words.length, 0),
       sourceTranscriptVersion: displayTranscript?.sourceTranscriptVersion ?? "transcript.words.v1",
@@ -635,7 +713,11 @@ function buildPortableMetadataRaw(
           displayTranscript: processingStepForId(provenance.displayTranscript, displayId),
         }
       : {},
-    speakers: Array.isArray(portable.speakers) ? portable.speakers : [],
+    // The roster less any device separated into voices: those voices are
+    // listed in its place.
+    speakers: Array.isArray(portable.speakers)
+      ? portable.speakers.filter((speaker) => !splitDeviceIds.has(asMaybeObject(speaker)?.id as string))
+      : [],
   };
 }
 

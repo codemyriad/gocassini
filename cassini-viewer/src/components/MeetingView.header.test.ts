@@ -41,7 +41,7 @@ describe("MeetingView header", () => {
     // with it. A duration of 0:00 is a claim, not a placeholder, and the room
     // and date never render their own absence (D-775).
     expect(meetingFactsSource).toContain("{#if durationMs > 0}");
-    expect(meetingFactsSource).toContain("{#if speakerNames.length > 0}");
+    expect(meetingFactsSource).toContain("{#if people.voices > 0}");
     expect(meetingFactsSource).toContain("{#if room}");
     expect(meetingFactsSource).toContain("$: dated = hasMeetingDate(dateLabel);");
     expect(meetingFactsSource).toContain("{#if hasAny}");

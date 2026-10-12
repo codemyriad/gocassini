@@ -84,6 +84,14 @@ describe("the shell's setup features", () => {
     expect(appSource).not.toMatch(/isLikelyAdminHint[^\n]*operatorClient/);
   });
 
+  it("does not probe the admin-only operator for someone Nextcloud says is not an administrator", () => {
+    // The probe goes through probeOperatorFor, which asks nothing when
+    // OC.isUserAdmin() is false; a skipped probe is not a failure to warn of.
+    expect(appSource).toContain("probeOperatorFor(window, operatorBasePath)");
+    expect(appSource).not.toContain("probeOperatorAvailable(");
+    expect(appSource).toContain("!probe.skipped");
+  });
+
   it("lets a failed re-check leave the last answer standing", () => {
     // fetchSetupHealth answers null for a failed or unparseable check, and
     // null is "nobody said" rather than "no". Assigning it would retract what

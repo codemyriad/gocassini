@@ -168,6 +168,15 @@ Words transcript bodies have this shape:
 Each `items[]` entry is exactly one timed word. Its `text` is non-empty and
 contains no whitespace; paragraph text belongs in a display body.
 
+`speakers[]` is one list for every words transcript in the file: each
+`speaker` id an item names is listed there, with its `label`. A participant
+whose voices were separated after several people shared its device stays in
+the list for the transcript that still credits it, marked
+`"x-separatedInto": [<voice ids>]` with the voices that replace it in the
+default transcript. A reader that knows the hint counts and lists those voices
+instead of the participant; one that does not shows the participant as one
+more speaker. See [Separating voices on a shared device](./speaker-separation.md).
+
 Display entries retain their native JSON document: `transcript.display.v1` with
 `blocks`. The entry's `format`, role, and MIME identify which body it carries;
 all body kinds use the same chunk and integrity mechanism below.

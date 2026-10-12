@@ -1,19 +1,70 @@
 package operator
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestMigrationsRunContiguouslyThroughMediaCleanup(t *testing.T) {
+// TestMigrationsRunContiguouslyThroughSpeakerEdits: loadMigrations refuses a
+// gap or a reused version, and the speaker edits come after the media
+// cleanup, whatever numbers the two end up with.
+func TestMigrationsRunContiguouslyThroughSpeakerEdits(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	last := migrations[len(migrations)-1]
-	if last.Version != 15 || last.Name != "media_cleanup" {
-		t.Fatalf("last migration = %04d_%s, want 0015_media_cleanup", last.Version, last.Name)
+	n := len(migrations)
+	if n < 2 || migrations[n-2].Name != "media_cleanup" || migrations[n-1].Name != "speaker_edits" {
+		t.Fatalf("last migrations = %04d_%s, %04d_%s, want media_cleanup then speaker_edits",
+			migrations[n-2].Version, migrations[n-2].Name, migrations[n-1].Version, migrations[n-1].Name)
+	}
+}
+
+// TestMigrateDownRemovesSpeakerEditsAndUpRestoresThem: a rollback to the last
+// release must leave job_attempts as that release reads it, and the speaker
+// edits must come back on re-upgrade.
+func TestMigrateDownRemovesSpeakerEditsAndUpRestoresThem(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	speakerEdits := migrations[len(migrations)-1]
+	if speakerEdits.Name != "speaker_edits" {
+		t.Fatalf("last migration = %04d_%s, want speaker_edits", speakerEdits.Version, speakerEdits.Name)
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	seedJobRow(t, store.db, seededJobRow{ID: "kept", Stage: "done", State: "succeeded", CreatedAt: "2026-10-01T10:00:00Z"})
+
+	if err := store.migrateDownTo(speakerEdits.Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", speakerEdits.Version-1, err)
+	}
+	for _, table := range []string{"speaker_edits", "speaker_split_turns"} {
+		if sqliteTableExists(t, store.db, table) {
+			t.Fatalf("%s survived the down migration", table)
+		}
+	}
+	if _, err := store.db.Exec(`SELECT speaker_edits_json FROM job_attempts`); err == nil {
+		t.Fatal("job_attempts.speaker_edits_json survived the down migration")
+	}
+	if _, err := store.GetJob(context.Background(), "kept"); err != nil {
+		t.Fatalf("the down migration lost a job: %v", err)
+	}
+
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	if _, err := store.GetSpeakerEdits(context.Background(), "kept"); err != nil {
+		t.Fatalf("speaker edits did not come back on re-upgrade: %v", err)
+	}
+	if _, _, err := store.AttemptSpeakerEdits(context.Background(), "kept", 1); err != nil {
+		t.Fatalf("attempt speaker edits did not come back on re-upgrade: %v", err)
 	}
 }
 

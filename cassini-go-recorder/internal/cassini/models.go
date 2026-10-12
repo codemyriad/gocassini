@@ -22,11 +22,46 @@ type modelView struct {
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
 	Device         string `json:"device"`
+	// RuntimeSupported is set for diarization models only: whether this
+	// binary's native runtime can run them at all.
+	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
 }
+
+// listModelView is one `models list` row. A speech model counts its VAD in
+// the sizes and is ready once it passed the runtime check on the device. A
+// diarizer always runs on the CPU, has nothing to pair with, and is ready when
+// it is installed and the runtime supports Nemotron: that is cheap to check
+// on every listing and, unlike a receipt, survives a reboot.
+func listModelView(s *modelstore.Store, m modelstore.Model, device string) modelView {
+	var dl, installed int64
+	for _, c := range s.Components(m) {
+		d, n := s.Catalogue.Sizes(c)
+		dl += d
+		installed += n
+	}
+	view := modelView{Model: m, Revision: m.Revision, DownloadBytes: dl, InstalledBytes: installed, Installed: s.Complete(m) == nil, Device: device}
+	if m.Kind == modelstore.KindDiarization {
+		supported := diarizationRuntimeFn()
+		view.RuntimeSupported = &supported
+		view.Device = "cpu"
+		view.Ready = view.Installed && supported
+		return view
+	}
+	view.Ready = s.Ready(m, device, transcribe.ModelRuntimeFingerprint())
+	return view
+}
+
+// Seams so the command can be tested without the native runtime.
+var (
+	diarizationRuntimeFn   = transcribe.HasDiarizationRuntime
+	probeInstalledModelFn  = transcribe.ProbeInstalledModel
+	probeInstalledDiarizer = transcribe.ProbeInstalledDiarizer
+)
 
 func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "Usage: cassini models list|install|probe|pack|import [model] [options]")
+		fmt.Fprintln(stderr, "Models are speech models (installed with their VAD) and the speaker separation model "+transcribe.DefaultDiarizationModelID+".")
 		return 2
 	}
 	command := args[0]
@@ -36,7 +71,7 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	revision := fs.String("revision", "", "pinned model revision (models list --json)")
 	modelID := fs.String("model", "", "model ID, required for raw-file import")
 	device := fs.String("device", "cpu", "target device: cpu or cuda")
-	from := fs.String("from", "", "local pack, original tar.bz2, or extracted directory")
+	from := fs.String("from", "", "local pack, original tar.bz2, extracted directory, or a single-file model's file (.zst or decompressed)")
 	vad := fs.String("vad", "", "local Silero VAD file (or .zst), for raw import")
 	out := fs.String("out", "", "output model pack path")
 	jsonOutput := fs.Bool("json", false, "machine-readable inventory/result")
@@ -86,17 +121,10 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if command == "list" {
 		views := []modelView{}
 		for _, m := range s.Catalogue.Models {
-			if m.ID == "silero-vad" {
+			if m.Kind == modelstore.KindVAD {
 				continue
 			}
-			var dl, installed int64
-			for _, c := range s.Components(m) {
-				d, n := s.Catalogue.Sizes(c)
-				dl += d
-				installed += n
-			}
-			view := modelView{m, m.Revision, dl, installed, s.Complete(m) == nil, s.Ready(m, *device, transcribe.ModelRuntimeFingerprint()), *device}
-			views = append(views, view)
+			views = append(views, listModelView(s, m, *device))
 		}
 		if *jsonOutput {
 			if err := enc.Encode(views); err != nil {
@@ -104,7 +132,11 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			}
 		} else {
 			for _, v := range views {
-				fmt.Fprintf(stdout, "%s  %s  installed=%t ready=%t download=%d bytes\n", v.ID, v.Revision, v.Installed, v.Ready, v.DownloadBytes)
+				line := fmt.Sprintf("%s  %s  %s  installed=%t ready=%t download=%d bytes", v.ID, v.Kind, v.Revision, v.Installed, v.Ready, v.DownloadBytes)
+				if v.RuntimeSupported != nil && !*v.RuntimeSupported {
+					line += "  (this runtime cannot run it)"
+				}
+				fmt.Fprintln(stdout, line)
 			}
 		}
 		return 0
@@ -129,8 +161,12 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if err != nil {
 		return fail(err)
 	}
-	if m.ID == "silero-vad" {
-		return fail(fmt.Errorf("select a speech model; VAD is included automatically"))
+	if m.Kind == modelstore.KindVAD {
+		return fail(fmt.Errorf("select a speech or diarization model; VAD is included with speech models automatically"))
+	}
+	diarizer := m.Kind == modelstore.KindDiarization
+	if diarizer && *device != "cpu" && command != "pack" {
+		return fail(fmt.Errorf("%s runs on the CPU only; omit --device", m.ID))
 	}
 	switch command {
 	case "pack":
@@ -155,7 +191,12 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	if !*noProbe {
 		s.Progress(modelstore.Progress{Version: 1, Phase: "checking"})
-		if err := transcribe.ProbeInstalledModel(ctx, s, m, *device); err != nil {
+		if diarizer {
+			err = probeInstalledDiarizer(ctx, s, m)
+		} else {
+			err = probeInstalledModelFn(ctx, s, m, *device)
+		}
+		if err != nil {
 			if errors.Is(err, transcribe.ErrRuntimeCheckDeferred) {
 				fmt.Fprintln(stderr, "models:", err)
 				return exitTempFail
@@ -165,7 +206,7 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		s.Progress(modelstore.Progress{Version: 1, Phase: "ready"})
 	}
 	if *jsonOutput {
-		returnCode := enc.Encode(map[string]any{"model": m.ID, "revision": m.Revision, "ready": s.Ready(m, *device, transcribe.ModelRuntimeFingerprint())})
+		returnCode := enc.Encode(map[string]any{"model": m.ID, "revision": m.Revision, "ready": listModelView(s, m, *device).Ready})
 		if returnCode != nil {
 			return fail(returnCode)
 		}

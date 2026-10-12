@@ -29,6 +29,12 @@ type nextcloudFilesPublishSink struct {
 type upload struct {
 	local, remote string
 	size          int64
+	// keepMarks is set when this upload only changes who spoke: a refine
+	// attempt, which re-seals the published meeting.webm untouched. Such a
+	// recording is the same audio as the one it replaces, so a carry that
+	// comes back unresolved is a fault to stop at, never a new recording
+	// whose old marks may go.
+	keepMarks bool
 }
 
 func (s *nextcloudFilesPublishSink) putOverDeliveredCopy(ctx context.Context, item upload, state ncLeafState) (*annotateResult, error) {
@@ -91,6 +97,9 @@ func (s *nextcloudFilesPublishSink) stageDeliveredMarks(ctx context.Context, ite
 		return upload{}, annotateResult{}, fmt.Errorf("carry the marks on %s: it reported success and wrote nothing: %w", item.remote, err)
 	}
 	if result.Resolved != nil && !*result.Resolved {
+		if item.keepMarks && result.Carried > 0 {
+			return upload{}, annotateResult{}, fmt.Errorf("refusing to publish %s: its audio identity changed under a speaker edit, which would discard %d mark(s); the published recording is unchanged", item.remote, result.Carried)
+		}
 		// A different audio identity does not inherit the old recording's marks.
 		s.logf("nc files: %s: different audio — discarding %d carried mark(s)", item.remote, result.Carried)
 		sealed, err := runAnnotateShow(ctx, s.cassiniBin, item.local)

@@ -90,6 +90,12 @@ func modelBuildPeakMB(model string) int {
 		return 1792
 	case modelParakeetV3Fp32:
 		return 3584
+	case defaultDiarizationModel:
+		// Its runtime check, the only "build" a diarizer has: about 200 MB
+		// measured, with room for the native runtime.
+		return 1024
+	case "nemotron-3-diarization":
+		return 1536
 	default:
 		return 3584
 	}

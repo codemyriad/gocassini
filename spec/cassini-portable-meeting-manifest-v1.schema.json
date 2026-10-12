@@ -486,6 +486,15 @@
         "label": {
           "type": "string",
           "minLength": 1
+        },
+        "x-separatedInto": {
+          "type": "array",
+          "description": "Hint on a participant whose device several people shared, once their voices were separated: the ids of the voices that stand for this participant in the default transcript. The participant stays in this list because another transcript (the original) still credits it. Readers that know the hint count and list the voices instead of the participant.",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },

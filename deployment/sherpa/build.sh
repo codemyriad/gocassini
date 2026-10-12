@@ -27,8 +27,8 @@ for tool in cmake curl tar sha256sum; do
   command -v "$tool" >/dev/null || { echo "Missing build prerequisite: $tool" >&2; exit 1; }
 done
 version=1.13.7
-source_commit=832bfe50d1e45929e47c9d6e7a65e8a00a855820
-source_sha=38da1ff4ed104b10b758a183227e549187037a495bdf3fcf354e9bf79510f391
+source_commit=7e87f9b23838daceb88d96422777851c41c80f99
+source_sha=cf484c2e3aa80c961f1184f6882554feaae365b289862c56ff5cf68dca40b708
 fingerprint=$("$here/build.sh" --fingerprint)
 preinstalled=OFF
 ort_identity=pinned-upstream-archive
@@ -69,7 +69,7 @@ cmake -S "$source_dir" -B "$build_dir" \
   -DSHERPA_ONNX_ENABLE_BINARY=OFF -DSHERPA_ONNX_ENABLE_TESTS=OFF \
   -DSHERPA_ONNX_ENABLE_PYTHON=OFF -DSHERPA_ONNX_ENABLE_PORTAUDIO=OFF \
   -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF -DSHERPA_ONNX_ENABLE_TTS=OFF \
-  -DSHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=OFF \
+  -DSHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=ON \
   -DSHERPA_ONNX_BUILD_C_API_EXAMPLES=OFF "$@"
 cmake --build "$build_dir" --target sherpa-onnx-c-api --parallel "${CASSINI_NATIVE_BUILD_JOBS:-2}"
 cp "$build_dir/lib/libsherpa-onnx-c-api.$extension" "$output/"
@@ -79,7 +79,7 @@ if [[ -z $ort ]]; then echo 'Pinned ONNX Runtime library missing from build depe
 cp -L "$(dirname "$ort")"/libonnxruntime*."$extension"* "$output/"
 if [[ $backend == cuda ]]; then test -f "$output/libonnxruntime_providers_cuda.so"; fi
 printf '%s\n' "$fingerprint" > "$output/cassini-native-inputs.sha256"
-printf 'sherpa=%s\nfrontend=+cassini-parakeet-v3-reference-v1\nbackend=%s\nsource_commit=%s\nsource_sha256=%s\n' \
+printf 'sherpa=%s\nfrontend=+cassini-parakeet-v3-reference-v1\ndiarization=nemotron-diarization-v2\nbackend=%s\nsource_commit=%s\nsource_sha256=%s\n' \
   "$version" "$backend" "$source_commit" "$source_sha" > "$output/cassini-native-buildinfo.txt"
 
 printf 'onnxruntime_identity=%s\n' "$ort_identity" >> "$output/cassini-native-buildinfo.txt"

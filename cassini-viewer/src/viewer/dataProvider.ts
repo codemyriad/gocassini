@@ -39,6 +39,7 @@ import type {
   TagVocabulary,
   VocabularyTag,
 } from "./annotations";
+import type { SpeakerEditsDoc, SpeakerEditsState } from "./speakerEdits";
 import {
   searchMeetingTranscripts,
   type MeetingSearchOptions,
@@ -49,6 +50,17 @@ import {
 // which has an operator behind it) can type its methods without reaching past
 // the viewing layer's published entry points.
 export type { MeetingCatalogEntry, InsightRecord, MeetingSearchOptions, MeetingSearchOutcome };
+// The speaker-edit types and their error, for the same reason: a provider with
+// an operator behind it implements the two optional methods below.
+export { SpeakerEditsError } from "./speakerEdits";
+export type { SpeakerEditsDoc, SpeakerEditsErrorCode, SpeakerEditsState } from "./speakerEdits";
+
+// How a meeting is (re)loaded. `fresh` skips every cache between the viewer and
+// the published file: the recording at that path was republished, and the copy
+// already read is the old one.
+export interface LoadMeetingOptions {
+  fresh?: boolean;
+}
 
 // DataProvider mirrors ONLY what App.svelte actually calls. Every method is
 // keyed off a MeetingCatalogEntry (or nothing) so the caller never has to know
@@ -61,7 +73,7 @@ export interface DataProvider {
   loadCatalog(): Promise<MeetingCatalog | null>;
   // Load a meeting's full artifact, routing on audioPath (packed `.opus`) vs
   // artifactPath (loose dev-only directory).
-  loadMeetingForEntry(entry: MeetingCatalogEntry): Promise<LoadedArtifact>;
+  loadMeetingForEntry(entry: MeetingCatalogEntry, options?: LoadMeetingOptions): Promise<LoadedArtifact>;
   // Lightweight speaker/segment/duration counts for catalog card hydration.
   // Only meaningful for audioPath (portable) entries; null otherwise.
   loadMeetingSummary(entry: MeetingCatalogEntry): Promise<PortableMeetingSummary | null>;
@@ -151,6 +163,28 @@ export interface DataProvider {
   // when this exists, so a failed run is recoverable from wherever it is seen
   // rather than only from the panel that started it.
   retryInsight?(id: string): Promise<InsightRecord>;
+
+  // OPTIONAL: people's edits to a meeting's speakers — `GET|POST
+  // annotations/meetings/<id>/speakers`. Saying that several people used one
+  // participant's device separates the voices in that device's own audio, and
+  // the operator republishes the recording with them (speakerEdits.ts).
+  //
+  // Optional for the reason the tag writes are: only an operator holds a
+  // participant's own audio and can republish a recording. Both must exist for
+  // the People panel to offer anything; a provider without them shows the
+  // speakers the recording already has, voices included, and nothing to change.
+  //
+  // saveSpeakerEdits sends the whole desired document with the revision it was
+  // made from and answers the new state (`applying`). It rejects with a
+  // SpeakerEditsError: revision-conflict, busy, invalid,
+  // diarization-unavailable, unavailable (with the reason), rate-limited
+  // (with retryAfterMs) or not-found.
+  loadSpeakerEdits?(entry: MeetingCatalogEntry): Promise<SpeakerEditsState>;
+  saveSpeakerEdits?(
+    entry: MeetingCatalogEntry,
+    expectRevision: number,
+    doc: SpeakerEditsDoc,
+  ): Promise<SpeakerEditsState>;
 }
 
 // resolvePublishedUrl locates a file in the operator's published archive.
@@ -210,14 +244,14 @@ export class StaticCatalogProvider implements DataProvider {
     return searchMeetingTranscripts(query, options);
   }
 
-  async loadMeetingForEntry(entry: MeetingCatalogEntry): Promise<LoadedArtifact> {
+  async loadMeetingForEntry(entry: MeetingCatalogEntry, options: LoadMeetingOptions = {}): Promise<LoadedArtifact> {
     // Primary published path: a `.opus` portable meeting loads via its
     // audioPath. Directory loading (artifactPath) is a dev-only affordance used
     // only when an entry has no audioPath — so audioPath is checked first even
     // if both happen to be present.
     const filePath = entry.meetingPath ?? entry.audioPath;
     if (filePath) {
-      return loadPortableArtifactFromAudioPath(filePath, this.portableStore);
+      return loadPortableArtifactFromAudioPath(filePath, this.portableStore, options);
     }
     if (entry.artifactPath) {
       return loadArtifactFromDirectory(entry.artifactPath);
@@ -330,8 +364,8 @@ export class OperatorListProvider implements DataProvider {
     return this.assets.loadCatalog();
   }
 
-  loadMeetingForEntry(entry: MeetingCatalogEntry): Promise<LoadedArtifact> {
-    return this.assets.loadMeetingForEntry(entry);
+  loadMeetingForEntry(entry: MeetingCatalogEntry, options?: LoadMeetingOptions): Promise<LoadedArtifact> {
+    return this.assets.loadMeetingForEntry(entry, options);
   }
 
   loadMeetingSummary(entry: MeetingCatalogEntry): Promise<PortableMeetingSummary | null> {

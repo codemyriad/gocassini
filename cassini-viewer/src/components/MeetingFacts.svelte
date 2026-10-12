@@ -5,14 +5,22 @@
   import { Calendar, Check, ChevronRight, Clock, Copy, MessageSquare, Users } from "@lucide/svelte";
 
   import { formatClockTime } from "../core/transcript";
+  import { countPeople, type SpeakerGroup, type VoiceSample } from "../core/speakers";
   import { formatMeetingDateShort, formatMeetingDateWithDay, hasMeetingDate } from "../viewer/catalog";
   import { popover } from "./tags/popover";
+  import PeoplePanel from "./speakers/PeoplePanel.svelte";
+  import type { SpeakersSession } from "./speakers/session";
   import type { ArtifactRecordingFacts, ArtifactTimingPrecision } from "../viewer/loadArtifact";
 
   export let dateLabel = "";
   export let room: string | null = null;
   export let durationMs = 0;
-  export let speakerNames: string[] = [];
+  // The meeting's devices with any voices separated from them (groupSpeakers).
+  export let speakerGroups: SpeakerGroup[] = [];
+  // Present only where speakers can be changed (MeetingView decides).
+  export let speakerSession: SpeakersSession | null = null;
+  export let voiceSamples: ReadonlyMap<string, VoiceSample> = new Map();
+  export let playingSampleId: string | null = null;
   export let recording: ArtifactRecordingFacts | null = null;
   export let timing: ArtifactTimingPrecision | null = null;
 
@@ -21,7 +29,13 @@
   let panel: HTMLDivElement;
 
   $: dated = hasMeetingDate(dateLabel);
-  $: hasAny = dated || Boolean(room) || durationMs > 0 || speakerNames.length > 0;
+  // The meeting's people are the same whichever transcript is shown, so the
+  // header counts what the People panel lists.
+  $: people = countPeople(speakerGroups);
+  $: hasAny = dated || Boolean(room) || durationMs > 0 || people.voices > 0;
+  $: peopleTitle = people.split
+    ? `${people.voices} voices on ${people.devices} ${people.devices === 1 ? "device" : "devices"}`
+    : `${people.voices} ${people.voices === 1 ? "participant" : "participants"}`;
   $: transcribed = formatProcessed(recording?.processedAtUtc ?? null);
   $: model = recording?.model ?? "";
   $: size = [
@@ -66,11 +80,6 @@
     }
   }
 
-  function initials(name: string): string {
-    const parts = name.trim().split(/\s+/).filter(Boolean);
-    return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? (parts.at(-1)?.[0] ?? "") : "")).toUpperCase() || "?";
-  }
-
   async function toggle() {
     open = !open;
     if (open) {
@@ -106,10 +115,10 @@
         {formatClockTime(durationMs)}
       </span>
     {/if}
-    {#if speakerNames.length > 0}
-      <span class="mf-chip-part tabular-nums" title={`${speakerNames.length} ${speakerNames.length === 1 ? "participant" : "participants"}`}>
+    {#if people.voices > 0}
+      <span class="mf-chip-part tabular-nums" title={peopleTitle}>
         <Users size={12} aria-hidden="true" />
-        {speakerNames.length}
+        {people.voices}
       </span>
     {/if}
   </button>
@@ -119,6 +128,7 @@
       bind:this={panel}
       use:popover={{ anchor, close: () => (open = false) }}
       class="tag-popover mf-panel"
+      class:mf-wide={speakerSession !== null}
       role="dialog"
       aria-label="Meeting details"
       tabindex="-1"
@@ -145,20 +155,16 @@
           {/if}
         </dl>
       {/if}
-      {#if speakerNames.length > 0}
-        <div class="mf-people">
-          <p class="mf-heading">
-            {speakerNames.length} {speakerNames.length === 1 ? "participant" : "participants"}
-          </p>
-          <ul>
-            {#each speakerNames as name}
-              <li>
-                <span class="mf-avatar" aria-hidden="true">{initials(name)}</span>
-                <span class="truncate">{name}</span>
-              </li>
-            {/each}
-          </ul>
-        </div>
+      {#if people.voices > 0}
+        <PeoplePanel
+          groups={speakerGroups}
+          session={speakerSession}
+          samples={voiceSamples}
+          {playingSampleId}
+          on:sample
+          on:stopSample
+          on:reload
+        />
       {/if}
       {#if hasAbout}
         <div class="mf-about" class:open={aboutOpen}>
@@ -259,6 +265,10 @@
     --mf-tint: color-mix(in oklch, var(--color-base-content) 10%, transparent);
     color: var(--mf-strong);
   }
+  /* Room for a name field beside each voice. */
+  .mf-panel.mf-wide {
+    width: min(360px, calc(100vw - 16px));
+  }
   .mf-panel:focus {
     outline: none;
   }
@@ -286,50 +296,10 @@
     min-width: 0;
   }
 
-  .mf-people {
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    padding-top: 8px;
-  }
-  .mf-facts + .mf-people {
+  /* The People section is its own component; it still sits under the facts
+     on the same rule. */
+  .mf-facts + :global(.mf-people) {
     border-top: 1px solid var(--color-base-300);
-  }
-  .mf-heading {
-    flex: none;
-    margin-bottom: 6px;
-    padding-inline: 12px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--mf-muted);
-  }
-  .mf-people ul {
-    display: grid;
-    gap: 6px;
-    min-height: 0;
-    max-height: 220px;
-    padding: 0 12px 10px;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  .mf-people li {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    color: var(--mf-strong);
-  }
-  .mf-avatar {
-    flex: none;
-    display: inline-grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    border-radius: 999px;
-    background-color: var(--mf-tint);
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--mf-strong);
   }
 
   .mf-about {

@@ -27,6 +27,12 @@ type modelInfo struct {
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
 	Device         string `json:"device"`
+	// Kind is speech or diarization (the CLI never lists the VAD). Settings
+	// shows a diarizer as an optional download, never as a transcription
+	// model.
+	Kind string `json:"kind"`
+	// RuntimeSupported is set for diarizers: whether the runtime can run one.
+	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
 }
 type modelProgress struct {
 	Version   int    `json:"version"`
@@ -226,6 +232,10 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 400, err.Error())
 			return
 		}
+		if m.Kind == modelKindDiarization && in.Device != "cpu" {
+			writeJSONError(w, 400, "Speaker separation runs on the CPU; install it with device cpu")
+			return
+		}
 		if in.Device == "cuda" && in.Model != "parakeet-tdt-0.6b-v3" {
 			writeJSONError(w, 400, "CUDA requires the fp32 model")
 			return
@@ -239,7 +249,11 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 500, err.Error())
 			return
 		}
-		w.Header().Set("Location", strings.TrimRight(rt.cfg.BasePath, "/")+"/settings/models/jobs/"+j.ID)
+		// The body is the job, and Settings reads the jobs from the inventory
+		// afterwards, so the answer carries no Location. Under AppAPI, Nextcloud's proxy hands headers to
+		// PHP, which turns any answer with a Location into a 302 unless it is a
+		// 201 or a 3xx: the browser then followed the job's path outside the
+		// proxy and the install looked like a 404.
 		writeJSON(w, http.StatusAccepted, j)
 		return
 	}

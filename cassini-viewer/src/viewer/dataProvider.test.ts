@@ -90,8 +90,20 @@ describe("StaticCatalogProvider", () => {
       expect(loadPortableArtifactFromAudioPath).toHaveBeenCalledWith(
         "./m1.opus",
         expect.any(FakePortableMeetingStore),
+        {},
       );
       expect(loadArtifactFromDirectory).not.toHaveBeenCalled();
+    });
+
+    it("asks the portable loader for a fresh copy of a republished recording", async () => {
+      const provider = new StaticCatalogProvider();
+      await provider.loadMeetingForEntry(entry({ audioPath: "./m1.opus" }), { fresh: true });
+
+      expect(loadPortableArtifactFromAudioPath).toHaveBeenCalledWith(
+        "./m1.opus",
+        expect.any(FakePortableMeetingStore),
+        { fresh: true },
+      );
     });
 
     it("prefers audioPath over artifactPath when both are present", async () => {
@@ -369,6 +381,16 @@ describe("OperatorListProvider", () => {
     expect(loadPortableMeetingSummary).toHaveBeenCalled();
     expect(switchPortableTranscript).toHaveBeenCalled();
     expect(loadBundledArtifact).toHaveBeenCalled();
+  });
+
+  it("passes a fresh reload through to the static provider", async () => {
+    await new OperatorListProvider().loadMeetingForEntry(entry({ id: "m1", audioPath: "./m1.opus" }), { fresh: true });
+
+    expect(loadPortableArtifactFromAudioPath).toHaveBeenLastCalledWith(
+      "./m1.opus",
+      expect.any(FakePortableMeetingStore),
+      { fresh: true },
+    );
   });
 });
 

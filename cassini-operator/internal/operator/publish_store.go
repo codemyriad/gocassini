@@ -159,6 +159,9 @@ SET stage = ?, state = ?, artifact_site_path = ?, updated_at = ?, publish_finish
 WHERE job_id = ? AND attempt_number = ?`, "done", "succeeded", attemptArtifactSitePath, finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
 		return fmt.Errorf("update attempt publish success: %w", err)
 	}
+	if err := markSpeakerEditsPublishedTx(ctx, tx, id, attemptNumber); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit publish success update: %w", err)
 	}

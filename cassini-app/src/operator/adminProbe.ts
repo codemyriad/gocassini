@@ -30,6 +30,28 @@ export interface OperatorProbeResult {
   // Carries `recordings_access`, which is the admin-only half of the setup
   // notice.
   body: unknown;
+  // True when no request was made: Nextcloud said this user is not an
+  // administrator (probeOperatorFor).
+  skipped?: true;
+}
+
+// probeOperatorFor probes the operator only for someone who may be an
+// administrator. When Nextcloud says outright that this user is not one
+// (OC.isUserAdmin() is false), the probe could only be refused: AppAPI checks
+// an ADMIN route against the same admin group, so every page load of every
+// other user sent a request that came back 403 or 404. That answer is known
+// without asking. A true or absent hint still probes: the boundary is the
+// only word on who IS an administrator, and outside Nextcloud there is no
+// hint at all.
+export async function probeOperatorFor(
+  win: unknown,
+  operatorBasePath: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<OperatorProbeResult> {
+  if (isLikelyAdminHint(win) === false) {
+    return { available: false, status: null, body: null, skipped: true };
+  }
+  return probeOperatorAvailable(operatorBasePath, fetchImpl);
 }
 
 export async function probeOperatorAvailable(
@@ -78,11 +100,12 @@ async function readJSON(response: Response): Promise<unknown> {
   }
 }
 
-// isLikelyAdminHint reads Nextcloud's OC.isUserAdmin() when present, as an
-// OPTIMISTIC anti-flash hint ONLY: it lets the shell show the operator tab
+// isLikelyAdminHint reads Nextcloud's OC.isUserAdmin() when present. True is
+// an OPTIMISTIC anti-flash hint: it lets the shell show the operator tab
 // immediately instead of waiting a round-trip, and the probe then corrects it.
-// Outside Nextcloud (standalone) OC is absent and this returns null (no hint) —
-// the boundary probe is always authoritative.
+// False spares the probe (probeOperatorFor): it is the same admin-group check
+// AppAPI makes at the boundary. Outside Nextcloud (standalone) OC is absent
+// and this returns null (no hint): the boundary probe decides.
 export function isLikelyAdminHint(win: unknown): boolean | null {
   const oc = (win as { OC?: { isUserAdmin?: () => boolean } } | null | undefined)?.OC;
   if (oc && typeof oc.isUserAdmin === "function") {
