@@ -13,6 +13,7 @@
     "./tagPalette": "./src/viewer/tagPalette.ts",
     "./tags/*": "./src/components/tags/*",
     "./insights": "./src/viewer/insights.ts",
+    "./insightName": "./src/viewer/insightName.ts",
     "./app.css": "./src/app.css"
   },
   "scripts": {

@@ -162,6 +162,46 @@ describe("InsightDocument", () => {
     });
   });
 
+  describe("rename", () => {
+    const named: InsightRecord = {
+      id: "ins_0123456789abcdef",
+      status: "succeeded",
+      createdBy: "alice",
+      attemptNumber: 1,
+      workflowId: "summarise",
+      workflowVersion: "v0",
+      workflowSha256: "abc",
+      meetingIds: [],
+      roomIds: [],
+      question: "",
+      name: "Design sync",
+      provider: "",
+      model: "",
+      documentPath: "",
+      reason: "",
+      error: "",
+      createdAt: "2026-09-03T10:00:00Z",
+      updatedAt: "2026-09-03T10:00:00Z",
+    };
+
+    it("heads the document with the insight's name", () => {
+      expect(render(InsightDocument, { props: { insight: named } }).body).toMatch(/<h2[^>]*>\s*Design sync\s*<\/h2>/);
+    });
+
+    it("offers the pencil exactly where the provider can rename", () => {
+      expect(render(InsightDocument, { props: { insight: named, canRename: true } }).body).toContain(
+        'aria-label="Rename the insight"',
+      );
+      expect(render(InsightDocument, { props: { insight: named } }).body).not.toContain("Rename the insight");
+    });
+
+    it("saves on Enter, cancels on Escape, and dispatches rather than performing one", () => {
+      expect(insightDocumentSource).toContain('event.key === "Escape"');
+      expect(insightDocumentSource).toContain('event.key === "Enter"');
+      expect(insightDocumentSource).toContain('dispatch("rename", name)');
+    });
+  });
+
   it("dispatches retry rather than performing one", () => {
     expect(insightDocumentSource).toContain('dispatch("retry")');
     expect(insightDocumentSource).not.toContain("fetch(");
