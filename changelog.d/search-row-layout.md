@@ -7,3 +7,4 @@
 - The app asks for its stylesheet by build, not only by app version. An update that keeps the version number (a rebuilt image, a hot-deploy) could leave a browser pairing the new script with an older stylesheet, which unstyled every screen built from components.
 - On wide lists the matched transcript lines take more room and start further left, while the meeting's title, date and tags keep about 34rem.
 - "Who can see recordings" in Settings and the "Shared with participants" note in the rooms rail say the same three points, as a list. The note's last line no longer wraps early.
+- A meeting opened with words carried in from a search opens on its Transcript tab, where the matches are highlighted.
