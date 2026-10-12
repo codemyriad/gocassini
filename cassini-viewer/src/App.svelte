@@ -1008,7 +1008,13 @@
 
   async function renameInsightRun(record: InsightRecord, name: string) {
     const provider = dataProvider;
-    if (!provider.renameInsight || renamingInsightId !== "") {
+    if (!provider.renameInsight) {
+      return;
+    }
+    if (renamingInsightId !== "") {
+      // Said, not swallowed: the sheet keeps its input open on an error, and a
+      // request that was never sent must not close it as if it had been.
+      insightRenameError = { id: record.id, message: "Another rename is still saving. Try again in a moment." };
       return;
     }
     renamingInsightId = record.id;
@@ -1543,6 +1549,7 @@
             on:openSource={openInsightSource}
             on:retry={retrySelectedInsight}
             on:rename={renameSelectedInsight}
+            on:renameCancel={() => (insightRenameError = null)}
           />
         {:else}
           <!-- The other direction (D-721): a meeting says which insights read

@@ -199,3 +199,22 @@ func TestMigrateDownRemovesTheInsightNameAndKeepsTheRun(t *testing.T) {
 		t.Fatalf("GetRun() after re-upgrade = %+v, %v; want the run back with no name", run, err)
 	}
 }
+
+// TestNewestMigrationHasARollbackTest is the tripwire: a rollback to the last
+// release is only known to work for a migration that has a down-and-up test in
+// this file. Adding a migration means adding its test and naming it here, or
+// this fails.
+func TestNewestMigrationHasARollbackTest(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	covered := map[string]bool{
+		"speaker_edits": true,
+		"insight_name":  true,
+	}
+	newest := migrations[len(migrations)-1].Name
+	if !covered[newest] {
+		t.Fatalf("the newest migration %q has no rollback test in migrations_test.go; add one and list it here", newest)
+	}
+}

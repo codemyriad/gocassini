@@ -556,6 +556,18 @@ func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPa
 			return "", err
 		}
 	}
+	// The name is read now, not off the snapshot the attempt began with: the
+	// sheet allows a rename while the model is still answering, and the file
+	// that lands minutes later has to carry the name the card shows. A row that
+	// cannot be re-read keeps the name it started with rather than failing a
+	// delivery the model has already been paid for.
+	if s.store != nil {
+		if current, err := s.store.GetRun(ctx, run.ID); err == nil {
+			run.Name = current.Name
+		} else {
+			s.logf("insights: run=%s could not re-read its name before delivery, keeping the one it started with: %v", run.ID, err)
+		}
+	}
 	now := s.now()
 	bases := []string{insightDocumentBaseName(run, now)}
 	if unnamed := insightUnnamedBaseName(run, now); unnamed != bases[0] {
@@ -603,8 +615,9 @@ func insightFolderChain() []string {
 // whose name has nothing filename-safe left in it, is the day it was asked for,
 // what was asked, and the run it came from.
 //
-// The name is read once, at delivery: renaming an insight later does not move
-// a file the requester may already have moved, shared or renamed themselves.
+// The name is read once, at delivery (deliver re-reads the row for it):
+// renaming an insight later does not move a file the requester may already
+// have moved, shared or renamed themselves.
 func insightDocumentBaseName(run InsightRun, now time.Time) string {
 	if name := insightFileSafeName(run.Name); name != "" {
 		return name
@@ -623,16 +636,20 @@ func insightUnnamedBaseName(run InsightRun, now time.Time) string {
 }
 
 // insightFileSafeName turns a name into something every client of the
-// requester's files can hold: no path separators or the colon Windows and macOS
-// sync clients refuse, no control characters, whitespace collapsed to single
-// spaces, and no leading dot, which would hide the file. Capped so that a suffix
-// and ".md" still fit comfortably inside any file system's name limit.
+// requester's files can hold: none of the characters Windows refuses in a file
+// name — which a Nextcloud with Windows-compatible names enforced refuses too,
+// and a question mark is on that list, so the default name of every question
+// run carries one — no control or invisible format characters, whitespace
+// collapsed to single spaces, no leading dot (a hidden file) and no trailing
+// dot or space (dropped by Windows, so the name on disk would not be the one
+// chosen). Capped so that a suffix and ".md" still fit comfortably inside any
+// file system's name limit.
 func insightFileSafeName(name string) string {
 	cleaned := strings.Map(func(r rune) rune {
 		switch {
-		case r == '/' || r == '\\' || r == ':':
+		case strings.ContainsRune(`/\:*?"<>|`, r):
 			return ' '
-		case unicode.IsControl(r):
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
 			return -1
 		}
 		return r
@@ -641,7 +658,7 @@ func insightFileSafeName(name string) string {
 	if runes := []rune(cleaned); len(runes) > maxInsightFileNameRunes {
 		cleaned = strings.TrimSpace(string(runes[:maxInsightFileNameRunes]))
 	}
-	return strings.TrimLeft(cleaned, ". ")
+	return strings.TrimRight(strings.TrimLeft(cleaned, ". "), ". ")
 }
 
 // davExists reports whether relPath is already a file in userID's home. A HEAD

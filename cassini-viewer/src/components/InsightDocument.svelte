@@ -6,6 +6,7 @@
   import CloseButton from "./ui/CloseButton.svelte";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
+  import { INSIGHT_NAME_MAX } from "../viewer/insightName";
   import {
     describeInsightFailure,
     formatInsightCreated,
@@ -58,6 +59,9 @@
     openSource: MeetingCatalogEntry;
     retry: void;
     rename: string;
+    // The editor was closed without a save, so a refusal shown in it is over:
+    // the shell drops it, and the next opening starts clean.
+    renameCancel: void;
   }>();
 
   // The heading turns into its own input, pre-filled with what it says. It
@@ -86,6 +90,7 @@
     if (event.key === "Escape") {
       event.preventDefault();
       stopRename();
+      dispatch("renameCancel");
     } else if (event.key === "Enter") {
       event.preventDefault();
       const name = draftName.trim();
@@ -93,6 +98,7 @@
         // Nothing changed. Saving it would turn a headline that is only
         // standing in for a name — the question — into a name.
         stopRename();
+        dispatch("renameCancel");
         return;
       }
       savingName = true;
@@ -173,7 +179,7 @@
             type="text"
             class="input input-sm ins-name-input"
             aria-label="Insight name"
-            maxlength="120"
+            maxlength={INSIGHT_NAME_MAX}
             autocomplete="off"
             disabled={renaming}
             on:keydown={onNameKeydown}

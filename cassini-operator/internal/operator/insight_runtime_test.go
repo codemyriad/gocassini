@@ -355,9 +355,15 @@ func TestInsightDocumentNameIsTheInsightsNameMadeFileSafe(t *testing.T) {
 	cases := []struct{ name, want string }{
 		{"Design sync · 3 meetings", "Design sync · 3 meetings"},
 		{"Q3/Q4: plans\\notes", "Q3 Q4 plans notes"},
+		// The default name of every question run ends in one of these, and a
+		// Nextcloud enforcing Windows-compatible names refuses the PUT.
+		{"What did we decide?", "What did we decide"},
+		{`"Launch" <v2> | plan * notes`, "Launch v2 plan notes"},
 		{"  spaced \t out  ", "spaced out"},
 		{"bell\x07", "bell"},
+		{"zero​width‎", "zerowidth"},
 		{"..hidden", "hidden"},
+		{"trailing. ", "trailing"},
 		{strings.Repeat("a", 150), strings.Repeat("a", maxInsightFileNameRunes)},
 		// Nothing filename-safe left: the dated name, so the file still has one.
 		{"/:/", "2026-09-03-summarise-ins_0123456789abcdef"},
@@ -1282,5 +1288,29 @@ func TestTheChildEnvNeverBorrowsAnotherEndpointsModel(t *testing.T) {
 	env = s.insightChildEnvFor(insightProviderRef{id: "hosted"})
 	if got, _ := envValue(env, "INSIGHT_MODEL"); got != "small" {
 		t.Fatalf("INSIGHT_MODEL = %q, want the insight step's own resolved model", got)
+	}
+}
+
+// A rename made while the model is still answering is the name the file lands
+// under: deliver reads the row, not the snapshot the attempt began with.
+func TestPerformDeliversUnderTheNameTheRunHasWhenItLands(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	store := newInsightTestStore(t)
+	snapshot := insightTestRun()
+	seedInsightRun(t, store, snapshot.ID, snapshot.CreatedBy)
+	if _, err := store.RenameRun(context.Background(), snapshot.ID, "Weekly sync"); err != nil {
+		t.Fatalf("RenameRun() error = %v", err)
+	}
+	service, _ := insightTestService(t, dav.server.URL, bin, store)
+	snapshot.Name = "Weekly snyc"
+
+	outcome := service.perform(context.Background(), snapshot)
+
+	if outcome.Status != insightStatusSucceeded {
+		t.Fatalf("status = %q, want succeeded (error %q)", outcome.Status, outcome.Error)
+	}
+	if want := ncInsightsRoot + "/Weekly sync.md"; outcome.DocumentPath != want {
+		t.Errorf("documentPath = %q, want the renamed %q", outcome.DocumentPath, want)
 	}
 }
