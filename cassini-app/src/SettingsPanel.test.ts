@@ -155,9 +155,17 @@ describe("SettingsPanel layout", () => {
       [...[transcriptAt, qualityAt, modelsAt, summaryAt]].sort((a, b) => a - b));
   });
 
-  it("gives summary settings, vocabulary and search spellings cards of their own", () => {
+  it("gives summary settings and the transcript hints cards of their own", () => {
+    // Vocabulary and search spellings share one card: both steer how names
+    // come out, one when transcribing and one when searching.
     const steps = settingsPanelSource.match(/<section\b[^>]*class="[^"\n]*\bpipe-step\b[^"\n]*"[^>]*>/g);
-    expect(steps?.length).toBe(3);
+    expect(steps?.length).toBe(2);
+    const hintsAt = settingsPanelSource.indexOf(">Transcript hints<");
+    const vocabularyAt = settingsPanelSource.indexOf(">Vocabulary<");
+    const spellingsAt = settingsPanelSource.indexOf(">Search spellings<");
+    expect(hintsAt).toBeGreaterThan(-1);
+    expect(hintsAt).toBeLessThan(vocabularyAt);
+    expect(vocabularyAt).toBeLessThan(spellingsAt);
     expect(settingsPanelSource).not.toContain("rounded-box border border-base-300 bg-base-200 p-3");
   });
 });

@@ -306,4 +306,8 @@ it("opens the hardware facts under Change and sends Add one to the providers", a
   await expect.element(page.getByText("Needs a provider.")).toBeVisible();
   await page.getByRole("button", { name: "Add one", exact: true }).click();
   expect(openProviders).toHaveBeenCalledTimes(1);
+
+  const hints = page.getByRole("region", { name: "Transcript hints" });
+  await expect.element(hints.getByRole("textbox", { name: /One term per line/ })).toBeVisible();
+  await expect.element(hints.getByRole("textbox", { name: /One name per line/ })).toBeVisible();
 });

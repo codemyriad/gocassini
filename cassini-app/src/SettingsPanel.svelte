@@ -984,10 +984,13 @@
 
       </section>
 
-      <section class="op-tint pipe-step">
+      <!-- Both fields steer how names come out: one when transcribing, one when
+           searching what was transcribed. -->
+      <section class="op-tint pipe-step hints-card" aria-labelledby="transcript-hints-heading">
+        <h2 id="transcript-hints-heading" class="set-row-name op-card-title">Transcript hints</h2>
         <div class="set-row-main pipe-text-step">
           <div>
-            <h3 class="set-row-name op-card-title">Vocabulary</h3>
+            <h3 class="q-title">Vocabulary</h3>
             <p class="set-row-sub">Saved names and preferred spellings for transcription hints.</p>
           </div>
           <label class="op-field">
@@ -1007,12 +1010,9 @@
             <li>Hints guide recognition toward preferred spellings; they do not guarantee the correct word. When hints cannot be used, the recording notes why.</li>
           </ul>
         </div>
-      </section>
-
-      <section class="op-tint pipe-step">
-        <div class="set-row-main pipe-text-step">
+        <div class="set-row-main pipe-text-step hints-part">
           <div>
-            <h3 class="set-row-name op-card-title">Search spellings</h3>
+            <h3 class="q-title">Search spellings</h3>
             <p class="set-row-sub">Common mishearings of a name, so searching for the name finds them too.</p>
           </div>
           <label class="op-field">
@@ -1364,6 +1364,14 @@
     font-size: 11.5px;
     line-height: 1.45;
     color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+  }
+  .hints-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .hints-part {
+    padding-top: 14px;
+    border-top: 1px solid var(--op-border, color-mix(in oklch, var(--color-base-content) 12%, transparent));
   }
   .pipe-text-step {
     display: grid;
