@@ -116,7 +116,6 @@ it("requires prepared transcription before saving deletion", async () => {
   host = document.createElement("div"); document.body.append(host);
   const open = () => app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
   // An older save: transcript only and nothing kept, with transcription off.
-  // The questions after the transcript are hidden, so the warnings sit under it.
   open();
   await expect.element(page.getByText("Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.")).toBeVisible();
   await expect.element(page.getByText("Transcription must be on to keep nothing.")).toBeVisible();
@@ -234,7 +233,7 @@ it("says how long kept media stays from the Recordings policy and follows the re
   await expect.element(page.getByRole("button", { name: /^Keep on server/ })).toHaveTextContent(/Audio only$/);
 });
 
-it("asks everything after the transcript only once transcription is saved on", async () => {
+it("lets everything after the transcript change only once transcription is saved on", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
   const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
@@ -251,21 +250,24 @@ it("asks everything after the transcript only once transcription is saved on", a
   }));
   host = document.createElement("div"); document.body.append(host);
   app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
-  const card = () => host.querySelector('[aria-labelledby="recording-publication-heading"]')!;
-  const later = ['[aria-label="Current settings"]', '[aria-labelledby="summary-heading"]', "#meeting-format", "fieldset"];
-  const offLine = page.getByText("Turn transcription on to choose a summary, what participants receive and what stays on this server.");
+  const offLine = page.getByText("Transcription needs to be on to edit the settings below.");
+  const summarySwitch = page.getByRole("checkbox", { name: "Summarise every meeting" });
+  const format = page.getByRole("combobox", { name: "Published meeting" });
+  const audioOnly = page.getByRole("radio", { name: "Audio only", exact: true });
+  const addOne = page.getByRole("button", { name: "Add one", exact: true });
   await expect.element(offLine).toBeVisible();
-  for (const selector of later) expect(card().querySelector(selector)).toBeNull();
-  expect(card().textContent).not.toContain("Current");
+  await expect.element(page.getByRole("list", { name: "Current settings" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /^Transcribe/ })).toHaveTextContent("Off");
+  for (const control of [summarySwitch, addOne, format, audioOnly]) await expect.element(control).toBeDisabled();
+  // The chips still jump to the dimmed questions.
+  await page.getByRole("button", { name: /^Publish/ }).click();
+  await expect.element(page.getByRole("region", { name: "What participants receive" })).toHaveFocus();
 
   await page.getByRole("checkbox", { name: "Transcribe every recording" }).click();
   await expect.element(page.getByText("Save to set up the summary and what participants receive.")).toBeVisible();
-  expect(card().querySelector("fieldset")).toBeNull();
+  await expect.element(format).toBeDisabled();
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect.element(page.getByRole("list", { name: "Current settings" })).toBeVisible();
-  await expect.element(page.getByRole("region", { name: "Summary", exact: true })).toBeVisible();
-  await expect.element(page.getByRole("combobox", { name: "Published meeting" })).toBeVisible();
-  await expect.element(page.getByRole("radio", { name: "Audio only", exact: true })).toBeVisible();
+  for (const control of [addOne, format, audioOnly]) await expect.element(control).toBeEnabled();
   await expect.element(offLine).not.toBeInTheDocument();
   await expect.element(page.getByText("Save to set up the summary and what participants receive.")).not.toBeInTheDocument();
 

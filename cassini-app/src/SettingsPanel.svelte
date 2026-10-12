@@ -91,10 +91,10 @@
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
   let transcriptionSettings: HTMLElement;
-  let publicationSettings: HTMLElement | null = null;
-  let summarySettings: HTMLElement | null = null;
+  let publicationSettings: HTMLElement;
+  let summarySettings: HTMLElement;
   let summaryCard: HTMLElement;
-  let keepSettings: HTMLElement | null = null;
+  let keepSettings: HTMLElement;
   let hardwareOpen = false;
 
   function focusSection(section: HTMLElement | null | undefined) {
@@ -492,15 +492,15 @@
     { name: "Summarise", step: status.summarise, target: () => summarySettings },
     { name: "Publish", step: status.publish, target: () => publicationSettings },
     { name: "Keep on server", step: status.keep, target: () => keepSettings },
-  ] satisfies { name: string; step: StepStatus; target: () => HTMLElement | null }[];
+  ] satisfies { name: string; step: StepStatus; target: () => HTMLElement }[];
 
-  // Everything after the transcript is asked once transcription is SAVED on,
-  // like the strip: turning the switch on in the draft says to save first.
+  // Everything after the transcript can be changed once transcription is
+  // SAVED on, like the strip: turning the switch on in the draft says to save
+  // first.
   $: savedTranscriptionOn = settings?.transcription_enabled === true;
   // An older save publishes transcript-only meetings with no transcript.
   // Saving with transcription off publishes the audio, so it says so.
   $: savedTranscriptOnlyWithout = !savedTranscriptionOn && savedMeetingFormat === "json";
-  $: savedKeepsNothingWithout = !savedTranscriptionOn && savedSourceRetention === "delete-after-processing";
   // Without a transcript the meeting is published as audio, whatever the
   // format select last said.
   $: publishedFormat = transcriptionEnabled ? meetingFormat : "opus" as const;
@@ -643,13 +643,10 @@
       <section class="op-tint p-4 grid gap-4" aria-labelledby="recording-publication-heading">
         <div class="strip-head">
           <h2 id="recording-publication-heading" class="set-row-name op-card-title">After each meeting</h2>
-          {#if savedTranscriptionOn}
-            <span class="strip-current" title="The saved settings new recordings get">Current</span>
-          {/if}
+          <span class="strip-current" title="The saved settings new recordings get">Current</span>
         </div>
         <!-- What new recordings get with the SAVED settings, one chip per step;
              chip N jumps to question N below. -->
-        {#if savedTranscriptionOn}
         <ul class="pipe-strip" aria-label="Current settings">
           {#each chips as chip (chip.name)}
             <li>
@@ -667,7 +664,6 @@
             </li>
           {/each}
         </ul>
-        {/if}
 
         <!-- 1. Whether a transcript is made decides the questions after it: a
              summary needs one, and so does publishing a transcript. The switch
@@ -784,18 +780,17 @@
             {#if savedTranscriptOnlyWithout}
               <p class="set-row-sub pipe-warn pipe-gap" role="status">Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.</p>
             {/if}
-            {#if savedKeepsNothingWithout && (!transcriptionEnabled || !activeModel || !activeRevision)}
-              <p class="set-row-sub pipe-gap" role="status"><strong>Transcription must be on to keep nothing.</strong></p>
-            {/if}
-            <p class="set-row-sub pipe-gap">Turn transcription on to choose a summary, what participants receive and what stays on this server.</p>
+            <p class="set-row-sub pipe-gap">Transcription needs to be on to edit the settings below.</p>
           {/if}
         </section>
 
-        {#if savedTranscriptionOn}
+        <!-- 2–4 need a SAVED transcript, like the strip: until transcription
+             is saved on they are shown dimmed and cannot be changed, and the
+             chips still jump to them. -->
         <!-- 2. Whether each meeting is summarised. Only the switch and what it
              will use live here; the provider and template are set in Summary
              settings below. -->
-          <section class="pub-q scroll-mt-4" aria-labelledby="summary-heading" tabindex="-1" bind:this={summarySettings}>
+          <section class="pub-q scroll-mt-4" class:off={!savedTranscriptionOn} aria-labelledby="summary-heading" tabindex="-1" bind:this={summarySettings}>
             <div class="q-head">
               <span class="q-num" aria-hidden="true">2</span>
               <h3 id="summary-heading" class="q-title" class:off={hasProvider === false}>Summary</h3>
@@ -803,7 +798,7 @@
                 type="checkbox"
                 class="op-switch"
                 aria-label="Summarise every meeting"
-                disabled={hasProvider !== true}
+                disabled={hasProvider !== true || !savedTranscriptionOn}
                 checked={summary.enabled && hasProvider === true}
                 on:change={(event) => toggleSummary(event.currentTarget.checked)}
               />
@@ -811,20 +806,20 @@
             {#if llmError}
               <p class="set-row-sub pipe-warn">Couldn't load the AI provider settings.</p>
             {:else if hasProvider === false}
-              <p class="set-row-sub">Needs a provider. <button type="button" class="link" on:click={() => dispatch("openProviders")}>Add one</button></p>
+              <p class="set-row-sub">Needs a provider. <button type="button" class="link" disabled={!savedTranscriptionOn} on:click={() => dispatch("openProviders")}>Add one</button></p>
             {:else if hasProvider === true}
-              <p class="set-row-sub">Uses {summaryUses}. <button type="button" class="link" on:click={() => focusSection(summaryCard)}>Change</button></p>
+              <p class="set-row-sub">Uses {summaryUses}. <button type="button" class="link" disabled={!savedTranscriptionOn} on:click={() => focusSection(summaryCard)}>Change</button></p>
             {/if}
           </section>
 
         <!-- 3. What participants receive. -->
-          <section class="pub-q scroll-mt-4" aria-labelledby="publication-heading" tabindex="-1" bind:this={publicationSettings}>
+          <section class="pub-q scroll-mt-4" class:off={!savedTranscriptionOn} aria-labelledby="publication-heading" tabindex="-1" bind:this={publicationSettings}>
             <div class="q-head">
               <span class="q-num" aria-hidden="true">3</span>
               <h3 id="publication-heading" class="q-title">What participants receive</h3>
             </div>
             <div class="q-row">
-              <select id="meeting-format" class="op-input q-select" aria-label="Published meeting" value={meetingFormat} on:change={(event) => selectMeetingFormat(event.currentTarget.value === "json" ? "json" : "opus")} disabled={saving} aria-describedby="publication-help">
+              <select id="meeting-format" class="op-input q-select" aria-label="Published meeting" value={meetingFormat} on:change={(event) => selectMeetingFormat(event.currentTarget.value === "json" ? "json" : "opus")} disabled={saving || !savedTranscriptionOn} aria-describedby="publication-help">
                 <option value="opus">Audio and transcript (.opus)</option>
                 <option value="json">Transcript only (.json)</option>
               </select>
@@ -837,7 +832,7 @@
 
         <!-- 4. What stays on the server. Independent of transcription: audio
              only versus audio and video is a choice either way. -->
-        <fieldset class="pub-q grid gap-3 scroll-mt-4" disabled={saving} tabindex="-1" bind:this={keepSettings}>
+        <fieldset class="pub-q grid gap-3 scroll-mt-4" class:off={!savedTranscriptionOn} disabled={saving || !savedTranscriptionOn} tabindex="-1" bind:this={keepSettings}>
           <legend class="q-head">
             <span class="q-num" aria-hidden="true">4</span>
             <span class="q-title">What stays on this server</span>
@@ -868,7 +863,6 @@
           {/if}
         </fieldset>
         <p class="set-row-sub">Applies to new recordings after saving.</p>
-        {/if}
       </section>
 
 
