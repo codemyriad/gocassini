@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -430,7 +431,7 @@ def main() -> None:
     if (
         not args.force
         and manifest_path.is_file()
-        and cached_manifest_is_complete(manifest_path)
+        and cached_manifest_is_complete(manifest_path, args.backend)
     ):
         print(manifest_path)
         return
@@ -517,6 +518,16 @@ def main() -> None:
         max_end = max(max_end, scheduled_start + actual_duration + 0.6)
     total_samples = int(math.ceil(max_end * sample_rate))
 
+    # Everything above only computes; from here on files are replaced one
+    # participant at a time and the manifest is written last. Remove the
+    # previous manifest and reference first, so a run that stops partway
+    # leaves no manifest describing media the directory no longer holds. The
+    # committed showcase fixture once shipped that mix: Kokoro speech for two
+    # participants and mock-backend tones for the other four, under a
+    # manifest that said "mock".
+    for stale in (manifest_path, output_dir / "reference.txt"):
+        stale.unlink(missing_ok=True)
+
     for participant in participants:
         track = np.zeros(total_samples, dtype=np.float32)
         actual_turns: list[dict[str, Any]] = []
@@ -576,6 +587,16 @@ def main() -> None:
             "media_prefix": participant.participant_id,
             "turn_count": len(actual_turns),
             "paths": rel_paths,
+            # The files the player streams, which are the ones committed for
+            # a vendored fixture. Recording their hashes ties media and
+            # manifest to one run: test-prepare-synthetic-meeting.sh compares
+            # them with the committed files, so media from another run (say a
+            # manifest restored with git after a run that stopped partway)
+            # cannot pass as this one.
+            "sha256": {
+                key: file_sha256(Path(output_paths[key]))
+                for key in STREAMED_ASSET_KEYS
+            },
         })
 
     manifest_turns.sort(key=lambda item: (item["start_seconds"], item["speaker"]))
@@ -617,11 +638,31 @@ def resample_linear(
     return resampled.astype(np.float32)
 
 
-def cached_manifest_is_complete(manifest_path: Path) -> bool:
+STREAMED_ASSET_KEYS = ("video_ivf", "audio_ogg")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def cached_manifest_is_complete(manifest_path: Path, backend: str) -> bool:
+    """Whether a previous run's output can be reused as is.
+
+    Only output from the requested backend counts: a kokoro request must not
+    be answered with mock-backend tones. Paths in the manifest are relative to
+    its directory (see main), so they are checked there, not in the cwd.
+    """
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
+    if manifest.get("backend") != backend:
+        return False
+    base_dir = manifest_path.parent
     participants = manifest.get("participants") or []
     if not isinstance(participants, list) or not participants:
         return False
@@ -639,7 +680,7 @@ def cached_manifest_is_complete(manifest_path: Path) -> bool:
             paths.get("wav_source"),
         ]
         for raw_path in required:
-            if not raw_path or not Path(raw_path).is_file():
+            if not raw_path or not (base_dir / raw_path).is_file():
                 return False
     return True
 

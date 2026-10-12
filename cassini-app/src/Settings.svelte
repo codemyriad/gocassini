@@ -62,6 +62,7 @@
       {operatorClient}
       on:openProviders={() => dispatch("panel", "endpoints")}
       on:openTemplates={() => dispatch("panel", "templates")}
+      on:openStorage={() => dispatch("panel", "storage")}
     />
   {:else if panel === "storage"}
     <StorageUsagePanel {operatorClient} />

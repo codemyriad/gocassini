@@ -13,7 +13,7 @@ import (
 
 func TestRetentionScheduleNextSweep(t *testing.T) {
 	for _, tc := range []struct{ name, now, clock, zone, want string }{
-		{"default", "2026-09-25T01:00:00Z", "02:00", "UTC", "2026-09-25T02:00:00Z"},
+		{"default", "2026-09-25T01:00:00Z", "03:42", "UTC", "2026-09-25T03:42:00Z"},
 		{"at deadline", "2026-09-25T02:00:00Z", "02:00", "UTC", "2026-09-26T02:00:00Z"},
 		{"local day", "2026-09-25T22:00:00Z", "02:00", "Europe/Zagreb", "2026-09-26T00:00:00Z"},
 		{"fractional offset", "2026-09-25T00:00:00Z", "06:15", "Asia/Kathmandu", "2026-09-25T00:30:00Z"},
@@ -33,7 +33,7 @@ func TestRetentionScheduleNextSweep(t *testing.T) {
 
 func TestRetentionScheduleSaveAndDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "retention.json")
-	// Older settings files acquire the original 02:00 UTC schedule.
+	// Older settings files acquire the default 03:42 UTC schedule.
 	data, _ := json.Marshal(defaultRetentionSettings())
 	var legacy map[string]json.RawMessage
 	if err := json.Unmarshal(data, &legacy); err != nil {
@@ -45,7 +45,7 @@ func TestRetentionScheduleSaveAndDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := newRetentionConfig(path)
-	if c.loadErr != nil || c.settings.Schedule != defaultRetentionSchedule() {
+	if c.loadErr != nil || c.settings.Schedule != (retentionSchedule{Time: "03:42", Timezone: "UTC"}) {
 		t.Fatal("missing default", c.loadErr)
 	}
 	rt := &Runtime{retention: c}

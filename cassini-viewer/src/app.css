@@ -379,6 +379,13 @@
   background-color: transparent;
   border: 1px solid var(--color-border-maxcontrast);
 }
+/* The Prepare panel's Generate card (the shell's GenerateCard) has no surface
+ * outside high contrast, so it has no inset either. Once the edge above draws
+ * it, it takes the bundle card's inset and corners, or its text meets the edge. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .prepare-panel .ins-card {
+  padding: 14px;
+  border-radius: var(--radius-box, 0.75rem);
+}
 :host([data-nc-theme*="highcontrast"]) .cassini-root :is(
   .mf-chip,
   .mf-panel,

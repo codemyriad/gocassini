@@ -24,7 +24,6 @@ export interface SetupNoticeStep {
 }
 export type SetupNoticeTone = "warning" | "neutral";
 export interface SetupNotice {
-  blocking: boolean;
   tone: SetupNoticeTone;
   title: string;
   summary: string;
@@ -105,15 +104,17 @@ export function buildSetupNotice(options: {
   const { health, access, isAdmin, appUrl } = options;
   const verdict = health ?? access;
   if (!verdict || verdict.ok) return null;
-  // The provisioning check gates new publishing. An unverified check after a
-  // restart does not revoke current Nextcloud shares, so reads remain visible.
-  const blocking = verdict.state !== "unknown";
-  const summary = blocking
-    ? "Calls will still run, but their recordings will fail until this is fixed."
-    : "Recordings that are already here still open, but new ones will fail until this check runs.";
+  // The provisioning check gates new publishing only. Reading never consults
+  // it, so the notice never replaces the meeting list (D-849). It promises
+  // browsing, not that every read succeeds: a Nextcloud outage that fails this
+  // check can fail a reader's share scan too, and the list reports that itself.
+  const failing = verdict.state !== "unknown";
+  const summary = failing
+    ? "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed."
+    : "You can still browse recordings, but new ones will fail until this check runs.";
   const base: SetupNotice = {
-    blocking, tone: blocking ? "warning" : "neutral",
-    title: blocking ? "Cassini can't save recordings right now" : "Cassini hasn't checked that it can save recordings",
+    tone: failing ? "warning" : "neutral",
+    title: failing ? "Cassini can't save recordings right now" : "Cassini hasn't checked that it can save recordings",
     summary, cause: "", steps: [], detail: "", note: "", shareLabel: "", shareUrl: "", reference: "",
   };
   if (!isAdmin) {

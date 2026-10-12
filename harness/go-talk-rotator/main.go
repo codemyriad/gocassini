@@ -564,6 +564,9 @@ type botConfig struct {
 	RecordingPollTimeout time.Duration
 	MediaStartGate       *mediaStartGate
 	CallURLRaw           string
+	// StartAudible: all-audible mode with no mute gate, so nothing will
+	// ever mute this bot once its audio is ready (see connectMuted).
+	StartAudible bool
 }
 
 type muteRotationGate struct {
@@ -615,6 +618,13 @@ type bot struct {
 	audienceMu sync.Mutex
 	audience   map[string]struct{}
 
+	// nickMu guards nickAnnounced: the in-call sessions this guest bot
+	// has already sent its name to. sendNick is the transport, swapped
+	// out by tests; nil means the signaling connection.
+	nickMu        sync.Mutex
+	nickAnnounced map[string]struct{}
+	sendNick      func(data map[string]any) error
+
 	eventCancel context.CancelFunc
 	mediaCancel context.CancelFunc
 
@@ -636,6 +646,8 @@ func newBot(cfg *botConfig) *bot {
 		connectedCh: make(chan struct{}),
 		doneCh:      make(chan struct{}),
 		audience:    make(map[string]struct{}),
+
+		nickAnnounced: make(map[string]struct{}),
 	}
 }
 
@@ -759,7 +771,7 @@ func (b *bot) run(parent context.Context) (runErr error) {
 	if err := b.startWebRTC(ctx); err != nil {
 		return err
 	}
-	if err := b.setAudioMuted(true); err != nil {
+	if err := b.setAudioMuted(b.connectMuted()); err != nil {
 		return err
 	}
 	b.markConnected()
@@ -1299,6 +1311,7 @@ func (b *bot) handleSignalingEvent(event map[string]any) {
 		}
 		for _, raw := range asSlice(payload["leave"]) {
 			b.removeAudienceSession(asString(raw))
+			b.forgetNickAnnouncement(asString(raw))
 		}
 	case "participants":
 		update := asMap(payload["update"])
@@ -1309,6 +1322,9 @@ func (b *bot) handleSignalingEvent(event map[string]any) {
 		if asBool(update["all"]) {
 			if flags, ok := asInt(update["incall"]); ok && flags == 0 {
 				b.clearAudienceSessions()
+				b.nickMu.Lock()
+				b.nickAnnounced = make(map[string]struct{})
+				b.nickMu.Unlock()
 				return
 			}
 		}
@@ -1326,17 +1342,68 @@ func (b *bot) handleSignalingEvent(event map[string]any) {
 			if sessionID == "" {
 				continue
 			}
+			flags, hasFlags := asInt(user["inCall"])
+			if hasFlags && flags == 0 {
+				b.forgetNickAnnouncement(sessionID)
+			} else if hasFlags {
+				b.announceNick(sessionID)
+			}
 			if asBool(user["internal"]) {
 				b.removeAudienceSession(sessionID)
 				continue
 			}
-			if flags, ok := asInt(user["inCall"]); ok && flags == 0 {
+			if hasFlags && flags == 0 {
 				b.removeAudienceSession(sessionID)
 				continue
 			}
 			b.addAudienceSession(sessionID)
 		}
 	}
+}
+
+// announceNick tells an in-call session this guest's name, once per session,
+// the way Talk's web client does with a "nickChanged" message to each call
+// participant (the recorder's internal session included). Nextcloud's own
+// announcement of a guest name can never reach the recorder for these bots:
+// they set the name before their signaling session connects, so the signaling
+// server drops that participants update. Authenticated bots skip this; their
+// name arrives with the signaling join.
+func (b *bot) announceNick(sessionID string) {
+	if strings.TrimSpace(b.cfg.AuthUser) != "" || strings.TrimSpace(b.cfg.GuestName) == "" {
+		return
+	}
+	if sessionID == "" || sessionID == b.getSignalingSessionID() {
+		return
+	}
+	b.nickMu.Lock()
+	if _, done := b.nickAnnounced[sessionID]; done {
+		b.nickMu.Unlock()
+		return
+	}
+	b.nickAnnounced[sessionID] = struct{}{}
+	b.nickMu.Unlock()
+
+	send := b.sendNick
+	if send == nil {
+		send = b.sendCallMessage
+	}
+	if err := send(map[string]any{
+		"to":       sessionID,
+		"roomType": "video",
+		"type":     "nickChanged",
+		"payload":  map[string]any{"name": b.cfg.GuestName},
+	}); err != nil {
+		b.logf("nickChanged to %s failed: %v", sessionID, err)
+		b.forgetNickAnnouncement(sessionID)
+	}
+}
+
+// forgetNickAnnouncement lets a session that left the call hear the name
+// again when it comes back.
+func (b *bot) forgetNickAnnouncement(sessionID string) {
+	b.nickMu.Lock()
+	delete(b.nickAnnounced, sessionID)
+	b.nickMu.Unlock()
 }
 
 func (b *bot) handleCallData(ctx context.Context, data map[string]any) error {
@@ -1769,6 +1836,15 @@ func (b *bot) setAudioMuted(muted bool) error {
 	return nil
 }
 
+// connectMuted reports whether the bot mutes its audio as it connects. The
+// rotator unmutes bots by polling, so a bot whose media starts between two
+// polls drops its first packets. A bot in all-audible mode that is ready at
+// once and has no mute gate to wait for would be unmuted by the next poll
+// anyway, so it starts audible instead.
+func (b *bot) connectMuted() bool {
+	return !(b.cfg.StartAudible && b.isAudioReady())
+}
+
 func (b *bot) isAudioMutedFlag() bool {
 	b.muteMu.Lock()
 	defer b.muteMu.Unlock()
@@ -1934,11 +2010,42 @@ func waitForMuteRotationGate(ctx context.Context, gate muteRotationGate) bool {
 	}
 }
 
-func rotateAudio(ctx context.Context, bots []*bot, every time.Duration, gate muteRotationGate) {
+// allAudiblePollInterval is how often the all-audible mode looks for bots that
+// have become ready. Nothing rotates in that mode, so the rotation interval
+// does not apply.
+const allAudiblePollInterval = 250 * time.Millisecond
+
+// pickAudible decides which of the active bots send audio for the next round.
+// By default exactly one is audible: the first active bot after current in
+// index order, wrapping around, so the floor rotates. With allAudible every
+// active bot is audible and nothing rotates. It returns the audible set and
+// the index the next round rotates from (-1 when no bot is active).
+func pickAudible(botCount int, active []int, current int, allAudible bool) (map[int]bool, int) {
+	isActive := make(map[int]bool, len(active))
+	for _, idx := range active {
+		isActive[idx] = true
+	}
+	if allAudible {
+		if len(active) == 0 {
+			return map[int]bool{}, current
+		}
+		return isActive, current
+	}
+	for offset := 1; offset <= botCount; offset++ {
+		idx := (current + offset) % botCount
+		if isActive[idx] {
+			return map[int]bool{idx: true}, idx
+		}
+	}
+	return map[int]bool{}, -1
+}
+
+func rotateAudio(ctx context.Context, bots []*bot, every time.Duration, gate muteRotationGate, allAudible bool) {
 	if !waitForMuteRotationGate(ctx, gate) {
 		return
 	}
 	current := -1
+	lastAudible := ""
 	for {
 		if allBotsDone(bots) {
 			return
@@ -1949,41 +2056,38 @@ func rotateAudio(ctx context.Context, bots []*bot, every time.Duration, gate mut
 				active = append(active, i)
 			}
 		}
-		if len(active) == 0 {
+		audible, next := pickAudible(len(bots), active, current, allAudible)
+		if len(audible) == 0 {
 			if !sleepContext(ctx, 250*time.Millisecond) {
 				return
 			}
 			continue
 		}
 
-		chosen := -1
-		for offset := 1; offset <= len(bots); offset++ {
-			idx := (current + offset) % len(bots)
-			for _, activeIdx := range active {
-				if idx == activeIdx {
-					chosen = idx
-					break
-				}
-			}
-			if chosen >= 0 {
-				break
-			}
-		}
-		if chosen < 0 {
-			if !sleepContext(ctx, 250*time.Millisecond) {
-				return
-			}
-			continue
-		}
-
-		current = chosen
+		current = next
 		for _, idx := range active {
-			if err := bots[idx].setAudioMuted(idx != chosen); err != nil {
+			if err := bots[idx].setAudioMuted(!audible[idx]); err != nil {
 				log.Printf("[manager] mute switch failed for %s: %v", bots[idx].cfg.GuestName, err)
 			}
 		}
-		mediaSec := bots[chosen].cfg.JoinDelay.Seconds() + float64(bots[chosen].videoSamples.Load())/30.0
-		log.Printf("[manager] audible=%s active=%d media_t=%.3f wall_ns=%d", bots[chosen].cfg.GuestName, len(active), mediaSec, time.Now().UnixNano())
+
+		if allAudible {
+			names := make([]string, 0, len(active))
+			for _, idx := range active {
+				names = append(names, bots[idx].cfg.GuestName)
+			}
+			if joined := strings.Join(names, ","); joined != lastAudible {
+				log.Printf("[manager] audible=all (%s) active=%d", joined, len(active))
+				lastAudible = joined
+			}
+			if !sleepContext(ctx, allAudiblePollInterval) {
+				return
+			}
+			continue
+		}
+
+		mediaSec := bots[current].cfg.JoinDelay.Seconds() + float64(bots[current].videoSamples.Load())/30.0
+		log.Printf("[manager] audible=%s active=%d media_t=%.3f wall_ns=%d", bots[current].cfg.GuestName, len(active), mediaSec, time.Now().UnixNano())
 
 		if !sleepContext(ctx, every) {
 			return
@@ -2393,6 +2497,7 @@ func run() error {
 		recordingTimeoutSec          float64
 		roomEmptyGraceSec            float64
 		muteStartFile                string
+		allAudible                   bool
 	)
 
 	flag.StringVar(&callURL, "call-url", "", "Talk call URL")
@@ -2419,6 +2524,7 @@ func run() error {
 	flag.Float64Var(&recordingTimeoutSec, "recording-timeout", 90, "Seconds to wait for recording to become active")
 	flag.Float64Var(&roomEmptyGraceSec, "room-empty-grace-seconds", defaultRoomEmptyGrace.Seconds(), "Grace period before stopping after room empties")
 	flag.StringVar(&muteStartFile, "mute-start-file", "", "Optional file path that must exist before audio mute rotation starts")
+	flag.BoolVar(&allAudible, "all-audible", false, "Send every participant's audio at once instead of rotating one audible participant")
 	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
 	flag.Parse()
 
@@ -2604,6 +2710,7 @@ func run() error {
 			RecordingPollTimeout: time.Duration(recordingTimeoutSec * float64(time.Second)),
 			MediaStartGate:       mediaGate,
 			CallURLRaw:           callURL,
+			StartAudible:         allAudible && strings.TrimSpace(muteStartFile) == "",
 		})
 	}
 
@@ -2636,7 +2743,11 @@ func run() error {
 			log.Printf("[manager] recording gate enabled starter=%d timeout=%s", recordingStarterIndex, time.Duration(recordingTimeoutSec*float64(time.Second)))
 		}
 	}
-	log.Printf("[manager] rotating audible audio every %.2fs", rotateSeconds)
+	if allAudible {
+		log.Printf("[manager] all participants audible together (no rotation)")
+	} else {
+		log.Printf("[manager] rotating audible audio every %.2fs", rotateSeconds)
+	}
 	if strings.TrimSpace(muteStartFile) != "" {
 		log.Printf("[manager] mute rotation start file=%s", muteStartFile)
 	}
@@ -2688,7 +2799,7 @@ func run() error {
 
 	rotateCtx, rotateCancel := context.WithCancel(ctx)
 	defer rotateCancel()
-	go rotateAudio(rotateCtx, bots, time.Duration(rotateSeconds*float64(time.Second)), muteRotationGate{File: strings.TrimSpace(muteStartFile)})
+	go rotateAudio(rotateCtx, bots, time.Duration(rotateSeconds*float64(time.Second)), muteRotationGate{File: strings.TrimSpace(muteStartFile)}, allAudible)
 
 	type botResult struct {
 		index int

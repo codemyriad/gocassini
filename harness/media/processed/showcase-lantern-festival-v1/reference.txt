@@ -24,7 +24,7 @@
 [118.6s] Leo Rossi: That is the nicest way anyone has ever called legal text useless.
 [121.8s] Ben Fischer: One actual risk. The old audio normalization bug still clips if somebody shouts directly into the iPad. It is way better, not perfect.
 [128.0s] Mira Chen: How imperfect is not perfect?
-[129.6s] Ben Fischer: Festival imperfect, not demo-day imperfect. If someone screams woo into the mic, the waveform gets crunchy for about half a second.
+[129.9s] Ben Fischer: Festival imperfect, not demo-day imperfect. If someone screams woo into the mic, the waveform gets crunchy for about half a second.
 [135.7s] Jules Okafor: Honestly, that sounds on brand for a lantern festival.
 [138.2s] Noah Patel: Please write down backup battery counts before we joke ourselves into failure. I have six U S B C packs, two extension reels, and one adapter that everyone will forget.
 [145.7s] Ana Morales: I am not forgetting the adapter. I am taping it to the table with my name on it.

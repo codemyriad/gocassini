@@ -1163,6 +1163,33 @@ CALL_URL="$(./bin/cassini dev room create --name "Lantern Festival Demo" | tail 
 That showcase scenario is synthetic, but it is written more like a real meeting
 and is the better sample for judging transcript cleanup quality.
 
+Who is audible: by default the player (the Go rotator behind every
+`stream-video.sh` based flow) lets one participant send audio at a time and
+hands that turn to the next participant every 5 seconds (`ROTATE_SECONDS`).
+The others stay in the call but send no audio packets. That exercises mute
+handling, but it cuts a scripted meeting into five-second windows, so most of
+each speaker's lines never reach the recording. To play the meeting as written,
+with every participant audible together, pass `--all-audible` or set
+`ROTATOR_ALL_AUDIBLE=1`:
+
+```bash
+./bin/cassini dev player showcase --call-url "$CALL_URL" --all-audible
+ROTATOR_ALL_AUDIBLE=1 ./harness/bin/stream-video.sh --call-url "$CALL_URL" --users 3
+```
+
+Expect people talking over each other when the showcase plays this way. Its
+start times were written against guessed line lengths, and the synthesized
+voices (Kokoro, a local text-to-speech engine) speak more slowly: the fixture
+holds 234 s of speech in a 182 s meeting, and 33 of its 36 speaker changes
+start before the previous line has ended, by up to 4.5 s. Each participant's
+own track is clean, so per-speaker transcription is unaffected.
+
+Guest bots also tell every in-call session their name with the same
+`nickChanged` signaling message Talk's web client sends, so the recorder can
+label a guest who joins at the moment the recording starts. Nextcloud's own
+announcement of that name is sent before the guest's signaling session exists,
+and the signaling server drops it.
+
 Roundtrip it end to end with the synthetic meeting roundtrip script by pointing
 at a real Talk room:
 
@@ -1660,7 +1687,8 @@ Do not delete source database rows or the manifest to bypass these checks.
   - `stream-synthetic-meeting.sh`: play a synthetic meeting fixture with
     realistic names and join delays
   - `stream-video.sh`: basic player flow using the Go rotator and local sample
-    assets
+    assets; one participant audible at a time unless `--all-audible` or
+    `ROTATOR_ALL_AUDIBLE=1`
   - `roundtrip-synthetic-meeting.sh`: record a real Talk meeting MKV, then build
     the transcriber + publisher + viewer artifact bundle
   - `stream-three-songs.sh`: three-client synchronized player flow

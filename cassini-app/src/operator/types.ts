@@ -338,6 +338,8 @@ export interface StorageUsageCategory {
   undated_bytes: number; undated_files: number; days: StorageUsageDay[];
 }
 export interface DetailedStorageUsage {
+  published_category?: StorageUsageCategory | null;
+  published_category_error?: string;
   categories: StorageUsageCategory[];
   category_error: string;
   measured_at: string;

@@ -18,7 +18,15 @@ describe("direct share setup status", () => {
   });
   it("keeps existing reads visible while setup is unverified", () => {
     const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unknown" }, access: null, isAdmin: true, appUrl: "" });
-    expect(notice?.blocking).toBe(false);
     expect(notice?.tone).toBe("neutral");
+    // Browsing, not a promise that every read succeeds (D-849).
+    expect(notice?.summary).toMatch(/^You can still browse recordings, but new ones will fail/);
+  });
+  it("says browsing still works when the check fails, since only publishing stops (D-849)", () => {
+    const notice = buildSetupNotice({ health: { ...health, ok: false, state: "unavailable" }, access: null, isAdmin: false, appUrl: "" });
+    expect(notice?.tone).toBe("warning");
+    expect(notice?.title).toBe("Cassini can't save recordings right now");
+    expect(notice?.summary).toMatch(/^You can still browse recordings\./);
+    expect(notice).not.toHaveProperty("blocking");
   });
 });

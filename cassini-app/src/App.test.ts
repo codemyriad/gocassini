@@ -169,3 +169,41 @@ describe("the shell after the Setup tab", () => {
     expect(appSource).toMatch(/function openRecordingSetup\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
   });
 });
+
+describe("the setup notice in the shell", () => {
+  // The markup after <script>/<style>, split at the shell's top-level branches.
+  const markup = appSource.slice(appSource.indexOf("</script>"), appSource.indexOf("<style"));
+  const branches = markup.split(/\n\{:else(?: if [^}]*)?\}\n/);
+
+  it("never takes the meeting list's place (D-849)", () => {
+    // A failed recordings check refuses publishing; reading never consults it.
+    // The notice used to replace the browse slot (and, with no operator tab,
+    // the whole app) whenever the check failed, which hid every published
+    // recording behind a message about future ones.
+    expect(appSource).not.toContain("blocking");
+    expect(appSource).not.toContain("cassini-setup-surface");
+    // Every top-level branch that draws the notice also mounts the viewer.
+    const withNotice = branches.filter((branch) => /<SetupNotice\b/.test(branch));
+    expect(withNotice).toHaveLength(2);
+    for (const branch of withNotice) {
+      expect(branch).toMatch(/<ViewerApp\b/);
+      // ...and draws the notice only as the strip above it.
+      expect(branch.match(/<SetupNotice\b/g)).toHaveLength(1);
+      // The nearest banner before the notice must be its own, not another
+      // strip's (the retention reminder also sits above the list).
+      const notice = branch.indexOf("<SetupNotice");
+      const banner = branch.lastIndexOf("cassini-shell-banner", notice);
+      expect(banner).toBeGreaterThan(-1);
+      expect(branch.slice(banner, notice)).not.toContain("{/if}");
+      expect(notice).toBeLessThan(branch.indexOf("<ViewerApp"));
+    }
+  });
+
+  it("keeps the strip from squeezing the meeting list out of view", () => {
+    // Expanded administrator details on a phone used to leave the viewer a
+    // few pixels tall. The strip scrolls itself instead.
+    const rule = appSource.match(/\.cassini-shell-banner \{[^}]*\}/)?.[0] ?? "";
+    expect(rule).toContain("max-height: 40%;");
+    expect(rule).toContain("overflow-y: auto;");
+  });
+});

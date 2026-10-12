@@ -27,8 +27,13 @@ describe("storage chart dates and totals", () => {
       expect(storageBuckets(category(),from,to,size).error).not.toBe("");
     }
   });
-  it("bounds chart density without silently changing chosen precision", () => {
-    expect(storageBuckets(category(), "2020-01-01", "2026-01-01", 1).error).toContain("180");
+  it("supports all dates at daily precision without dropping buckets", () => {
+    const result = storageBuckets(category(), "2020-01-01", "2026-01-01", 1);
+    expect(result.error).toBe("");
+    expect(result.buckets).toHaveLength(2193);
+    expect(result.buckets[0].from).toBe("2020-01-01");
+    expect(result.buckets.at(-1)?.to).toBe("2026-01-01");
+    expect(result.buckets.reduce((sum, bucket) => sum + bucket.bytes, 0)).toBe(90);
     expect(defaultStoragePrecision("2020-01-01", "2026-01-01")).toBe(60);
   });
   it("includes old data in an adaptive all-dates range and recent empty days", () => {

@@ -16,19 +16,16 @@
 
 <section class="retention-reminder" aria-label="Retention reminder">
   <div>
-    <p class="font-semibold">Review retention settings</p>
-    <p>{keepsForever ? "Cassini currently keeps container files and published meetings indefinitely." : "Review how long Cassini keeps container files and published meetings."} You can keep using the app and review this in Storage.</p>
-    {#if settings?.revision === 0}
-      <p class="scope">Dismissing applies to this installation. Current settings will be kept.</p>
-      {#if dirty}<p class="scope">Save or discard your changes before dismissing.</p>{/if}
-    {/if}
+    <p class="font-semibold">Choose how long Cassini keeps recordings</p>
+    {#if keepsForever}<p>Recordings and published meetings are kept indefinitely until you set a limit.</p>{/if}
+    {#if settings?.revision === 0 && dirty}<p class="scope">Save or discard your changes before dismissing.</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
   </div>
   <div class="actions">
-    <button class="btn btn-sm" on:click={() => dispatch("review")}>Review settings</button>
+    <button class="btn btn-sm" on:click={() => dispatch("review")}>Review</button>
     {#if settings?.revision === 0}
       <button class="btn btn-sm btn-ghost" disabled={dirty || busy || loading} on:click={() => dispatch("ignore")}>
-        {dismissing ? "Dismissing…" : "Don't remind again"}
+        {dismissing ? "Dismissing…" : "Dismiss"}
       </button>
     {/if}
     {#if error}<button class="btn btn-sm" disabled={loading || busy} on:click={() => dispatch("retry")}>{loading ? "Retrying…" : "Retry"}</button>{/if}

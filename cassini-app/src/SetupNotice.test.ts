@@ -11,19 +11,19 @@ import noticeSource from "./SetupNotice.svelte?raw";
 describe("the setup notice", () => {
   it("takes its tone rather than assuming the loud one", () => {
     expect(noticeSource).toContain('export let tone: SetupNoticeTone = "warning";');
-    // Both layouts branch on it. The advisory strip used to be an
-    // `alert alert-warning` whatever it was saying, which is how a notice about
-    // a check that has not run yet came to look like a fault.
+    // The strip branches on it. It used to be an `alert alert-warning`
+    // whatever it was saying, which is how a notice about a check that has not
+    // run yet came to look like a fault.
     expect(noticeSource).toContain("{tone === 'warning' ? 'alert-warning' : ''}");
     const triangles = noticeSource.match(/<TriangleAlert/g) ?? [];
     const infos = noticeSource.match(/<Info/g) ?? [];
-    expect(triangles).toHaveLength(2);
-    expect(infos).toHaveLength(2);
+    expect(triangles).toHaveLength(1);
+    expect(infos).toHaveLength(1);
   });
 
   it("puts the technical account behind a collapsed disclosure", () => {
     const disclosures = noticeSource.match(/<summary class="cursor-pointer font-medium">Details for administrators<\/summary>/g) ?? [];
-    expect(disclosures).toHaveLength(2);
+    expect(disclosures).toHaveLength(1);
     // Bound, not `open`: the disclosure starts closed, and "Show details" and
     // the triangle on the <details> itself cannot disagree about the state.
     expect(noticeSource).toContain("bind:open={detailsOpen}");
@@ -33,7 +33,7 @@ describe("the setup notice", () => {
 
   it("offers the two actions from the mock, as buttons", () => {
     const showDetails = noticeSource.match(/\n\s*Show details\n\s*<\/button>/g) ?? [];
-    expect(showDetails).toHaveLength(2);
+    expect(showDetails).toHaveLength(1);
     expect(noticeSource).toContain('{busy ? "Checking…" : "Try again"}');
     // Try again is a request to the operator, which the shell owns; the
     // component asks for it and does nothing itself.
@@ -49,8 +49,12 @@ describe("the setup notice", () => {
     expect(noticeSource).toContain('dispatch("navigate", "settings")');
   });
 
-  it("keeps the strip and the card, and shows the cause under the consequence", () => {
-    expect(noticeSource).toContain("{#if notice.blocking}");
+  // A failed check refuses publishing only; it never stands in for the list
+  // of recordings, which still open (D-849). There is no card layout left to
+  // take the list's place.
+  it("is a strip, and shows the cause under the consequence", () => {
+    expect(noticeSource).not.toContain("notice.blocking");
+    expect(noticeSource).not.toContain('class="card');
     expect(noticeSource).toContain('class="alert items-start gap-3 py-2');
     expect(noticeSource).toContain("{#if notice.cause}");
     expect(noticeSource.indexOf("{notice.summary}")).toBeLessThan(noticeSource.indexOf("{notice.cause}"));
