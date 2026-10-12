@@ -158,6 +158,15 @@ describe("insightHeadline", () => {
     );
   });
 
+  it("names an insight by its own name first", () => {
+    expect(
+      insightHeadline(insight({ id: "i1", name: "  Design sync  ", question: "What did we decide?" })),
+    ).toBe("Design sync");
+    expect(insightHeadline(insight({ id: "i1", name: "   ", question: "What did we decide?" }))).toBe(
+      "What did we decide?",
+    );
+  });
+
   it("falls back to the workflow id rather than inventing a display name", () => {
     expect(insightHeadline(insight({ id: "i1", question: "", workflowId: "todos" }))).toBe(
       "todos",
@@ -185,6 +194,11 @@ describe("filterInsights", () => {
   it("matches the question and the workflow id, case-insensitively", () => {
     expect(filterInsights([asked, plain], "pricing")).toEqual([asked]);
     expect(filterInsights([asked, plain], "TODOS")).toEqual([plain]);
+  });
+
+  it("matches the name", () => {
+    const named = insight({ id: "i5", name: "Design sync", workflowId: "summarise" });
+    expect(filterInsights([asked, plain, named], "design")).toEqual([named]);
   });
 
   it("returns everything for an empty query", () => {

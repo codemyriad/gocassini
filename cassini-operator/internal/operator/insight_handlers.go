@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"cassini-operator/internal/operator/appapi"
@@ -18,6 +19,7 @@ import (
 //	GET  insights                 list the caller's     200 {"insights":[{run}, …]}
 //	GET  insights/<id>            one run + document    200 {run, "document": "…"}
 //	POST insights/<id>/retry      retry a failed run    200 {run} · 409 if busy
+//	POST insights/<id>/name       rename a run          200 {run}
 //
 // Mounted on the ROOT mux beside /published/, not under the operator's
 // BasePath, because they are their own top-level prefix in appinfo/info.xml.
@@ -79,6 +81,14 @@ type insightCreateRequest struct {
 	// id from a newer catalogue must still be sendable.
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
+	// Name is what the asker calls this insight. Optional: empty means no name,
+	// and the viewer titles the run by its question or workflow as before.
+	Name string `json:"name"`
+}
+
+// insightRenameRequest is the rename body. An empty name clears it.
+type insightRenameRequest struct {
+	Name string `json:"name"`
 }
 
 // insightDetailResponse is one run with the document it produced. The document
@@ -94,7 +104,7 @@ type insightListResponse struct {
 	Insights []InsightRun `json:"insights"`
 }
 
-// register mounts the four operations on the root mux. Two patterns, because
+// register mounts the five operations on the root mux. Two patterns, because
 // Go's ServeMux resolves "/insights" and "/insights/" separately and the
 // manifest declares both the bare and the trailing-slash form of each route.
 func (s *insightService) register(root *http.ServeMux) {
@@ -132,7 +142,7 @@ func (s *insightService) serveCollection(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// serveItem routes the two per-run paths. The trailing-slash form of the
+// serveItem routes the three per-run paths. The trailing-slash form of the
 // collection lands here too — AppAPI's `^insights\/?$` matches it — so it is
 // forwarded rather than treated as a run whose id is empty.
 func (s *insightService) serveItem(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +175,12 @@ func (s *insightService) serveItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.retry(w, r, caller, id)
+	case "name":
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.rename(w, r, caller, id)
 	default:
 		http.NotFound(w, r)
 	}
@@ -249,6 +265,7 @@ func (s *insightService) create(w http.ResponseWriter, r *http.Request, caller s
 		MeetingIDs:        request.MeetingIDs,
 		RoomIDs:           insightCatalogRooms(catalog, request.MeetingIDs),
 		Question:          request.Question,
+		Name:              request.Name,
 		RequestedProvider: strings.TrimSpace(request.Provider),
 		RequestedModel:    strings.TrimSpace(request.Model),
 		AttemptNumber:     1,
@@ -337,7 +354,28 @@ func decodeInsightCreateRequest(w http.ResponseWriter, r *http.Request) (insight
 	if utf8.RuneCountInString(request.Question) > maxInsightQuestionRunes {
 		return request, fmt.Errorf("a question is at most %d characters", maxInsightQuestionRunes)
 	}
+
+	name, err := normaliseInsightName(request.Name)
+	if err != nil {
+		return request, err
+	}
+	request.Name = name
 	return request, nil
+}
+
+// normaliseInsightName trims a name and refuses one that cannot be a title.
+// Control characters are refused rather than stripped: a name is printed on a
+// card and becomes a file name, and silently editing what somebody typed would
+// leave them a title they did not write.
+func normaliseInsightName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if utf8.RuneCountInString(name) > maxInsightNameRunes {
+		return "", fmt.Errorf("a name is at most %d characters", maxInsightNameRunes)
+	}
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return "", errors.New("a name cannot contain control characters")
+	}
+	return name, nil
 }
 
 // insightRegistryUnavailableError separates "this deployment does not ship that
@@ -537,6 +575,40 @@ func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, i
 		return
 	}
 	s.launchFn(id, run.AttemptNumber)
+	writeJSON(w, http.StatusOK, run)
+}
+
+// --- POST insights/<id>/name --------------------------------------------------------
+
+// rename sets the run's name. Allowed in any status: the name is a label, and
+// no attempt reads it.
+func (s *insightService) rename(w http.ResponseWriter, r *http.Request, caller, id string) {
+	if _, ok := s.ownRun(w, r, caller, id); !ok {
+		return
+	}
+	var request insightRenameRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxInsightRequestBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "The request could not be read.")
+		return
+	}
+	name, err := normaliseInsightName(request.Name)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	run, err := s.store.RenameRun(r.Context(), id, name)
+	switch {
+	case err == nil:
+	case errors.Is(err, sql.ErrNoRows):
+		http.NotFound(w, r)
+		return
+	default:
+		s.logf("insights: rename run=%s for caller=%s: %v", id, caller, err)
+		writeJSONError(w, http.StatusBadGateway, "the insight could not be renamed")
+		return
+	}
 	writeJSON(w, http.StatusOK, run)
 }
 

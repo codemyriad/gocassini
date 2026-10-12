@@ -41,6 +41,9 @@ export interface InsightRecord {
   // filterInsightsByRoom.
   roomIds: string[];
   question: string;
+  // What the asker called it (D-791); "" for none, and absent from an operator
+  // older than names, which reads the same.
+  name?: string;
   provider: string;
   model: string;
   documentPath: string;
@@ -230,13 +233,19 @@ export function filterInsightsByRoom(
 }
 
 // insightHeadline is what names an insight in a list and at the head of its
-// document: the question it was asked.
+// document: the name its asker gave it (D-791), else the question it was asked.
 //
-// A workflow can be run with no question of its own ("summarise these"), and
-// then the workflow id is the honest fallback — the workflow's display NAME
-// lives in the registry the operator serves, not here, and inventing one in the
-// viewer would put a second set of names in front of the same four ids.
+// A run from before names, or one somebody cleared, falls back to the question;
+// a workflow run with no question of its own ("summarise these") falls back to
+// the workflow id. That last one is honest rather than friendly: the workflow's
+// display NAME lives in the registry the operator serves, not here, and
+// inventing one in the viewer would put a second set of names in front of the
+// same ids. It is also why every unnamed summary used to read "summarise".
 export function insightHeadline(record: InsightRecord): string {
+  const name = record.name?.trim() ?? "";
+  if (name !== "") {
+    return name;
+  }
   const question = record.question?.trim() ?? "";
   return question !== "" ? question : record.workflowId || "Insight";
 }
@@ -378,12 +387,12 @@ export function insightsForMeeting(
   return insights.filter((record) => stringsOf(record.meetingIds).includes(meetingId));
 }
 
-// filterInsights is the list's text filter, applied to insights: the question,
-// the workflow id, and the created date AS THE CARD PRINTS IT. Those three are
-// exactly what an insight row shows, which is the rule — the date is included
-// because it is on the card, and the answer is excluded for the same reason the
-// meeting filter does not reach into transcripts: a hit the list cannot show is
-// a hit that looks like a bug.
+// filterInsights is the list's text filter, applied to insights: the name, the
+// question, the workflow id — the headline and what it falls back to — and the
+// created date AS THE CARD PRINTS IT. That is what an insight row shows, which
+// is the rule — the date is included because it is on the card, and the answer
+// is excluded for the same reason the meeting filter does not reach into
+// transcripts: a hit the list cannot show is a hit that looks like a bug.
 export function filterInsights(
   insights: readonly InsightRecord[],
   query: string,
@@ -393,7 +402,7 @@ export function filterInsights(
     return [...insights];
   }
   return insights.filter((record) =>
-    [record.question ?? "", record.workflowId ?? "", formatInsightCreated(record)].some(
+    [record.name ?? "", record.question ?? "", record.workflowId ?? "", formatInsightCreated(record)].some(
       (haystack) => haystack.toLowerCase().includes(needle),
     ),
   );

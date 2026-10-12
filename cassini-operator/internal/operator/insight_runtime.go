@@ -18,6 +18,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 // Insights: one question asked of several meetings, answered by the model this
@@ -89,6 +90,15 @@ const (
 	// context.
 	maxInsightQuestionRunes = 2000
 
+	// maxInsightNameRunes bounds an insight's name. A title, not a sentence:
+	// long enough for "Weekly sync · Design, 4 meetings, 28 Sep – 12 Oct 2026",
+	// short enough to sit on one card line and in a file name.
+	maxInsightNameRunes = 120
+
+	// maxInsightFileNameRunes caps the part of a delivered file name taken from
+	// the insight's name.
+	maxInsightFileNameRunes = 100
+
 	// maxInsightDocumentBytes bounds what one run may produce. An insight is
 	// prose over a handful of meetings; four megabytes is orders of magnitude
 	// past that, and the bound is a refusal rather than a truncation — half an
@@ -130,9 +140,9 @@ const (
 	maxConcurrentInsightRuns = 2
 
 	// maxInsightDeliveryAttempts bounds the search for a free file name in the
-	// requester's folder. A run id is unique, so a taken name means a file put
-	// there out of band; a handful of suffixes covers that without ever
-	// overwriting anything.
+	// requester's folder, per base name tried (see deliver). A run id is unique,
+	// so a taken unnamed file means one put there out of band; a handful of
+	// suffixes covers that without ever overwriting anything.
 	maxInsightDeliveryAttempts = 5
 )
 
@@ -193,6 +203,7 @@ type insightRunStore interface {
 	CreateRun(ctx context.Context, run InsightRun) error
 	GetRun(ctx context.Context, id string) (InsightRun, error)
 	ListRuns(ctx context.Context, createdBy string) ([]InsightRun, error)
+	RenameRun(ctx context.Context, id, name string) (InsightRun, error)
 	BeginAttempt(ctx context.Context, id string) (InsightRun, error)
 	ResumeAttempt(ctx context.Context, id string, attempt int) (InsightRun, error)
 	FinishAttempt(ctx context.Context, id string, outcome InsightOutcome) error
@@ -526,8 +537,10 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 // the path it was written to.
 //
 // It never overwrites: each candidate name is checked first, and a run that
-// cannot find a free one fails rather than replacing bytes somebody kept. The run
-// id is in the name, so a collision means a file placed there out of band.
+// cannot find a free one fails rather than replacing bytes somebody kept. A named
+// run tries its name first, and names repeat ("Weekly sync" every week), so when
+// every suffix of it is taken it falls back to the dated name with the run id in
+// it, which only a file placed there out of band can collide with.
 func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPath string) (string, error) {
 	info, err := os.Stat(documentPath)
 	if err != nil {
@@ -543,27 +556,45 @@ func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPa
 			return "", err
 		}
 	}
-	base := insightDocumentBaseName(run, s.now())
-	for attempt := 1; attempt <= maxInsightDeliveryAttempts; attempt++ {
-		name := base + ".md"
-		if attempt > 1 {
-			name = fmt.Sprintf("%s-%d.md", base, attempt)
+	// The name is read now, not off the snapshot the attempt began with: the
+	// sheet allows a rename while the model is still answering, and the file
+	// that lands minutes later has to carry the name the card shows. A row that
+	// cannot be re-read keeps the name it started with rather than failing a
+	// delivery the model has already been paid for.
+	if s.store != nil {
+		if current, err := s.store.GetRun(ctx, run.ID); err == nil {
+			run.Name = current.Name
+		} else {
+			s.logf("insights: run=%s could not re-read its name before delivery, keeping the one it started with: %v", run.ID, err)
 		}
-		relPath := ncInsightsRoot + "/" + name
-		taken, err := s.davExists(ctx, run.CreatedBy, relPath)
-		if err != nil {
-			return "", err
-		}
-		if taken {
-			s.logf("insights: run=%s found %s already in caller=%s's files; it was not overwritten", run.ID, relPath, run.CreatedBy)
-			continue
-		}
-		if _, err := s.exapp.davPutFileStatus(ctx, s.client, run.CreatedBy, relPath, documentPath, "text/markdown; charset=utf-8"); err != nil {
-			return "", err
-		}
-		return relPath, nil
 	}
-	return "", fmt.Errorf("%s already holds %d files named like this insight", ncInsightsRoot, maxInsightDeliveryAttempts)
+	now := s.now()
+	bases := []string{insightDocumentBaseName(run, now)}
+	if unnamed := insightUnnamedBaseName(run, now); unnamed != bases[0] {
+		bases = append(bases, unnamed)
+	}
+	for _, base := range bases {
+		for attempt := 1; attempt <= maxInsightDeliveryAttempts; attempt++ {
+			name := base + ".md"
+			if attempt > 1 {
+				name = fmt.Sprintf("%s-%d.md", base, attempt)
+			}
+			relPath := ncInsightsRoot + "/" + name
+			taken, err := s.davExists(ctx, run.CreatedBy, relPath)
+			if err != nil {
+				return "", err
+			}
+			if taken {
+				s.logf("insights: run=%s found %s already in caller=%s's files; it was not overwritten", run.ID, relPath, run.CreatedBy)
+				continue
+			}
+			if _, err := s.exapp.davPutFileStatus(ctx, s.client, run.CreatedBy, relPath, documentPath, "text/markdown; charset=utf-8"); err != nil {
+				return "", err
+			}
+			return relPath, nil
+		}
+	}
+	return "", fmt.Errorf("%s already holds %d files named like this insight", ncInsightsRoot, len(bases)*maxInsightDeliveryAttempts)
 }
 
 // insightFolderChain is the collections that must exist before the PUT, outermost
@@ -579,14 +610,55 @@ func insightFolderChain() []string {
 }
 
 // insightDocumentBaseName names the file the requester will see in their own
-// files: the day it was asked for, what was asked, and the run it came from. The
-// run id is what makes it unique and what ties the file back to the card.
+// files. A named run takes its name, because the Files app is where people look
+// for it again and the name is what they will remember. An unnamed one, or one
+// whose name has nothing filename-safe left in it, is the day it was asked for,
+// what was asked, and the run it came from.
+//
+// The name is read once, at delivery (deliver re-reads the row for it):
+// renaming an insight later does not move a file the requester may already
+// have moved, shared or renamed themselves.
 func insightDocumentBaseName(run InsightRun, now time.Time) string {
+	if name := insightFileSafeName(run.Name); name != "" {
+		return name
+	}
+	return insightUnnamedBaseName(run, now)
+}
+
+// insightUnnamedBaseName is the dated name with the run id in it. The run id is
+// what makes it unique and what ties the file back to the card.
+func insightUnnamedBaseName(run InsightRun, now time.Time) string {
 	workflow := strings.TrimSpace(run.WorkflowID)
 	if workflow == "" {
 		workflow = "insight"
 	}
 	return fmt.Sprintf("%s-%s-%s", now.UTC().Format("2006-01-02"), workflow, run.ID)
+}
+
+// insightFileSafeName turns a name into something every client of the
+// requester's files can hold: none of the characters Windows refuses in a file
+// name — which a Nextcloud with Windows-compatible names enforced refuses too,
+// and a question mark is on that list, so the default name of every question
+// run carries one — no control or invisible format characters, whitespace
+// collapsed to single spaces, no leading dot (a hidden file) and no trailing
+// dot or space (dropped by Windows, so the name on disk would not be the one
+// chosen). Capped so that a suffix and ".md" still fit comfortably inside any
+// file system's name limit.
+func insightFileSafeName(name string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		switch {
+		case strings.ContainsRune(`/\:*?"<>|`, r):
+			return ' '
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, name)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if runes := []rune(cleaned); len(runes) > maxInsightFileNameRunes {
+		cleaned = strings.TrimSpace(string(runes[:maxInsightFileNameRunes]))
+	}
+	return strings.TrimRight(strings.TrimLeft(cleaned, ". "), ". ")
 }
 
 // davExists reports whether relPath is already a file in userID's home. A HEAD

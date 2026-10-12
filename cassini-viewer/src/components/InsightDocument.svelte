@@ -1,13 +1,14 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, tick } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, Copy, Download, ExternalLink, FileText, MessageSquare } from "@lucide/svelte";
+  import { Calendar, Copy, Download, ExternalLink, FileText, MessageSquare, Pencil } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
   import { saveTranscript } from "../viewer/exportTransfer";
   import { exportFileName, renderInsightExport } from "../viewer/insightExport";
   import { roomLabelOf } from "../viewer/rooms";
+  import { INSIGHT_NAME_MAX } from "../viewer/insightName";
   import {
     describeInsightFailure,
     formatInsightCreated,
@@ -48,6 +49,12 @@
   export let canRetry = false;
   export let retrying = false;
   export let retryError = "";
+  // Whether the name can be changed from here (D-791), in the same shape as
+  // retry: the provider offers it, the shell sends it. This is the one place an
+  // insight is renamed; the card and the list only show the name.
+  export let canRename = false;
+  export let renaming = false;
+  export let renameError = "";
   // Where the document's folder opens in Nextcloud Files, or "" in a build
   // with no Nextcloud. Sharing is Nextcloud's: its share sidebar is there, and
   // a second share dialog here would be a second answer to who can see it.
@@ -59,7 +66,65 @@
     close: void;
     openSource: MeetingCatalogEntry;
     retry: void;
+    rename: string;
+    // The editor was closed without a save, so a refusal shown in it is over:
+    // the shell drops it, and the next opening starts clean.
+    renameCancel: void;
   }>();
+
+  // The heading turns into its own input, pre-filled with what it says. It
+  // stays an input until the save has landed, so a refused name is still
+  // there to fix next to the reason it was refused.
+  let editingName = false;
+  let editingId = "";
+  let draftName = "";
+  let savingName = false;
+  let nameInput: HTMLInputElement | undefined;
+
+  async function startRename() {
+    draftName = headline;
+    editingId = insight.id;
+    editingName = true;
+    await tick();
+    nameInput?.select();
+  }
+
+  function stopRename() {
+    editingName = false;
+    savingName = false;
+  }
+
+  function onNameKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      stopRename();
+      dispatch("renameCancel");
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const name = draftName.trim();
+      if (name === headline) {
+        // Nothing changed. Saving it would turn a headline that is only
+        // standing in for a name — the question — into a name.
+        stopRename();
+        dispatch("renameCancel");
+        return;
+      }
+      savingName = true;
+      dispatch("rename", name);
+    }
+  }
+
+  // Another insight in the same sheet is not the one being renamed.
+  $: if (editingName && insight.id !== editingId) {
+    stopRename();
+  }
+  $: if (savingName && !renaming) {
+    if (renameError) {
+      savingName = false;
+    } else {
+      stopRename();
+    }
+  }
 
   $: question = insight.question?.trim() ?? "";
   $: headline = insightHeadline(insight);
@@ -178,9 +243,39 @@
        reaches. The three that identify this run are here. -->
   <header class="ins-head">
     <div class="ins-head-top">
-      <h2>{headline}</h2>
+      <div class="ins-head-title">
+        {#if editingName}
+          <input
+            bind:this={nameInput}
+            bind:value={draftName}
+            type="text"
+            class="input input-sm ins-name-input"
+            aria-label="Insight name"
+            maxlength={INSIGHT_NAME_MAX}
+            autocomplete="off"
+            disabled={renaming}
+            on:keydown={onNameKeydown}
+          />
+        {:else}
+          <h2>{headline}</h2>
+          {#if canRename}
+            <button
+              type="button"
+              class="ins-rename btn btn-sm btn-square btn-quiet"
+              aria-label="Rename the insight"
+              title="Rename"
+              on:click={startRename}
+            >
+              <Pencil size={14} aria-hidden="true" />
+            </button>
+          {/if}
+        {/if}
+      </div>
       <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
     </div>
+    {#if editingName && renameError}
+      <p class="ins-rename-error" role="status">{renameError}</p>
+    {/if}
     <div class="ins-head-meta">
       {#if room}
         <span class="ins-head-fact">
@@ -398,6 +493,30 @@
     justify-content: space-between;
     gap: 0.75rem;
     min-width: 0;
+  }
+  .ins-head-title {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: flex-start;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+  /* Quieter than the heading it sits by until it is wanted. */
+  .ins-rename {
+    flex: none;
+    margin-top: -0.25rem;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  .ins-name-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 1.0625rem;
+    font-weight: 650;
+  }
+  .ins-rename-error {
+    margin-top: 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--color-error);
   }
   .ins-head h2 {
     min-width: 0;
