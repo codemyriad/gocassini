@@ -39,7 +39,7 @@
 {#if model}
   <section class="op-tint voice-card" aria-labelledby="voice-separation-heading">
     <div>
-      <h2 id="voice-separation-heading" class="set-row-name op-card-title">Voice separation <span class="optional">Optional</span></h2>
+      <h2 id="voice-separation-heading" class="set-row-name op-card-title">Voice separation <span class="optional">(optional)</span></h2>
       <p class="set-row-sub">When several people share one device in a call, anyone who can read the meeting can split that device's audio into separate voices from the participant list. It runs on this server's CPU, only when someone asks.</p>
     </div>
     <ModelStatusRow name={model.name} size={mebibytes(model.download_bytes)} {state}>
@@ -61,6 +61,6 @@
 <style>
   /* Same inset as the other settings cards (.pipe-step, .hints-card). */
   .voice-card { display: grid; gap: 12px; padding: 14px 16px; }
-  .optional { margin-left: 6px; font-size: 11.5px; font-weight: 500; color: color-mix(in oklch, var(--color-base-content) 60%, transparent); }
+  .optional { margin-left: 4px; font-size: 0.85em; font-weight: 400; color: color-mix(in oklch, var(--color-base-content) 60%, transparent); }
   progress { display: block; width: 100%; }
 </style>

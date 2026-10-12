@@ -478,6 +478,7 @@
     transcriptionEnabled: settings?.transcription_enabled === true,
     quality: savedQuality,
     activeModel: settings?.active_model,
+    activeModelReady: modelInventory === null || !settings?.active_model ? null : modelInventory.models.find((m) => m.id === settings?.active_model)?.ready === true,
     device: savedDevice,
     modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
     download: runningDownload(modelInventory),
@@ -679,8 +680,13 @@
                device is auto-selected; on a host with no usable GPU that is the
                CPU, said out loud (D-702). The facts and the override open under
                "Change". -->
-          <p class="in-use pipe-gap" role="status">
-            {#if transcriptionEnabled && inUseModel}
+          <p class="in-use pipe-gap" class:in-use-warn={transcriptionEnabled && inUseModel && !inUseModel.ready} role="status">
+            {#if transcriptionEnabled && inUseModel && !inUseModel.ready}
+              <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
+              <strong>{inUseModel.name} is not installed.</strong>
+              <span>Recordings get no transcript until it is.</span>
+              <span aria-hidden="true">·</span>
+            {:else if transcriptionEnabled && inUseModel}
               <span class="in-use-label">In use</span>
               <strong>{inUseModel.name}</strong>
               <span aria-hidden="true">·</span>
@@ -761,7 +767,7 @@
               </label>
             {/each}
           </div>
-          {#if !(transcriptionEnabled && inUseModel?.id === speechModelFor(quality, selectedDevice))}
+          {#if !(transcriptionEnabled && inUseModel?.ready && inUseModel.id === speechModelFor(quality, selectedDevice))}
             <p class="model-heading pipe-gap">{QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? "This quality"} model</p>
           {/if}
           <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
@@ -1349,6 +1355,14 @@
     margin: 0;
     padding: 0;
     line-height: inherit;
+  }
+  .in-use-warn {
+    background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-base-100));
+    border: 1px solid var(--color-warning);
+  }
+  .in-use-warn :global(.in-use-warn-icon) {
+    align-self: center;
+    color: var(--color-warning);
   }
   .in-use-label {
     font-size: 11px;

@@ -16,6 +16,8 @@ export interface PipelineInput {
   quality: SettingsQuality;
   /** The saved model new recordings transcribe with; it names the tier when set. */
   activeModel?: string;
+  /** Whether that saved model is installed and ready; null while unknown. */
+  activeModelReady?: boolean | null;
   /** The effective device from the hardware facts: "cuda" or "cpu". */
   device: string;
   /** Whether the model for the saved quality is installed; null while unknown. */
@@ -51,8 +53,11 @@ export function speechModelFor(quality: string, device: string): string {
 
 const FINISHED_JOB_STATES = ["ready", "failed", "cancelled"];
 
+// A transcription model being downloaded. Voice separation's download is not
+// one: nothing in the pipeline waits for it.
 export function runningDownload(inventory: SpeechModelInventory | null): { percent: number | null } | null {
-  const job: SpeechModelJob | undefined = inventory?.jobs.find((j) => !FINISHED_JOB_STATES.includes(j.state));
+  const separation = new Set(inventory?.models.filter((m) => m.kind === "diarization").map((m) => m.id));
+  const job: SpeechModelJob | undefined = inventory?.jobs.find((j) => !separation.has(j.model) && !FINISHED_JOB_STATES.includes(j.state));
   if (!job) return null;
   const { completed_bytes: done, total_bytes: total } = job.progress;
   return { percent: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null };
@@ -72,7 +77,12 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
 
   let transcribe: StepStatus;
   if (transcribing) {
-    transcribe = { state: `On · ${(input.activeModel && MODEL_TIERS[input.activeModel]) || QUALITY_LABELS[input.quality] || input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}`, tone: "on" };
+    const state = `On · ${(input.activeModel && MODEL_TIERS[input.activeModel]) || QUALITY_LABELS[input.quality] || input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}`;
+    // Switched on with a model that is not there: recordings publish without a
+    // transcript, so the strip must not read as healthy.
+    transcribe = input.activeModelReady === false
+      ? { state, tone: "amber", reason: "model not installed" }
+      : { state, tone: "on" };
   } else if (input.download) {
     const percent = input.download.percent;
     transcribe = { state: percent === null ? "Off · downloading" : `Off · downloading ${percent}%`, tone: "busy" };
@@ -102,7 +112,7 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
     publish = {
       state: transcribing ? "Audio + transcript" : "Audio, no transcript",
       tone: "on",
-      ...(downloading ? { badge: "until the model is ready" } : {}),
+      ...(downloading && !transcribing ? { badge: "until the model is ready" } : {}),
     };
   }
 
