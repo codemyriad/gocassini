@@ -214,6 +214,29 @@ describe("InsightDocument", () => {
       expect(html).not.toContain("Open in Files");
     });
 
+    it("keeps Open in Files when the document could not be fetched", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: answered,
+          documentError: "the operator is restarting",
+          filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
+        },
+      }).body;
+      expect(html).toContain("Open in Files");
+      expect(html).not.toMatch(/<button[^>]*>[\s\S]*?Copy\s*<\/button>/);
+      expect(html).not.toMatch(/<button[^>]*>[\s\S]*?Download\s*<\/button>/);
+    });
+
+    it("offers no Files link for a run that has not produced the file", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: { ...answered, status: "running" as const },
+          filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
+        },
+      }).body;
+      expect(html).not.toContain("ins-actions");
+    });
+
     it("offers nothing to copy without an answer on screen", () => {
       for (const props of [
         { insight: { ...answered, status: "running" as const }, documentMarkdown: "The gist." },

@@ -1,7 +1,7 @@
 import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "./catalog";
 import {
-  formatInsightCreated,
   insightHeadline,
+  insightTimestampMs,
   stripInsightFrontMatter,
   type InsightRecord,
 } from "./insights";
@@ -34,7 +34,9 @@ export function renderInsightExport({
   markdown,
   meetingUrl,
 }: InsightExportInput): string {
-  const blocks: string[] = [`# ${insightHeadline(record)}`];
+  // One line: the headline can be a question typed over several, and a line
+  // break in an H1 leaves the rest as a stray paragraph.
+  const blocks: string[] = [`# ${oneLine(insightHeadline(record))}`];
 
   const question = record.question?.trim() ?? "";
   if (question !== "") {
@@ -50,12 +52,13 @@ export function renderInsightExport({
   if (record.model) {
     provenance.push(`Model: ${record.model}`);
   }
-  blocks.push(`Written by Cassini on ${formatInsightCreated(record)}  \n${provenance.join(" · ")}`);
+  blocks.push(`Written by Cassini on ${formatExportCreated(record)}  \n${provenance.join(" · ")}`);
 
   if (sources.length > 0) {
     const noun = sources.length === 1 ? "meeting" : "meetings";
     const items = sources.map((source) => {
-      const label = `${source.title}, ${formatMeetingDateWithDay(source.dateLabel)}`;
+      // A title is free text; a line break in a list item ends the item.
+      const label = `${oneLine(source.title)}, ${formatMeetingDateWithDay(source.dateLabel)}`;
       const url = meetingUrl(source);
       return url ? `- [${escapeLinkText(label)}](${url})` : `- ${label}`;
     });
@@ -74,20 +77,49 @@ function escapeLinkText(text: string): string {
   return text.replace(/[\\[\]]/g, (char) => `\\${char}`);
 }
 
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+// The drawer shows createdAt in the reader's clock with no zone, which is right
+// on screen (formatInsightCreated). A copy is read somewhere else, by someone
+// whose clock this may not be, so here the zone goes with it.
+const EXPORT_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZoneName: "short",
+});
+
+function formatExportCreated(record: InsightRecord): string {
+  const ms = insightTimestampMs(record);
+  return ms === null ? (record.createdAt ?? "") : EXPORT_DATE_FORMAT.format(new Date(ms));
+}
+
 const MAX_FILE_STEM = 100;
+
+// Names Windows reserves whatever the extension: "CON.md" cannot be created.
+const RESERVED_FILE_STEM = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
 
 // exportFileName names the copy after the insight, as something every file
 // system will take: the headline is usually a question, and questions carry
 // the very characters Windows refuses.
 export function exportFileName(record: InsightRecord): string {
-  const stem = insightHeadline(record)
+  const cleaned = insightHeadline(record)
     // eslint-disable-next-line no-control-regex
     .replace(/[/\\:*?"<>|\u0000-\u001f\u007f]/g, " ")
     .replace(/\s+/g, " ")
-    .trim()
+    .trim();
+  // Cut by code point, not by UTF-16 unit: a cut through an emoji leaves a
+  // lone surrogate that browsers replace or refuse in a file name.
+  const stem = Array.from(cleaned)
     .slice(0, MAX_FILE_STEM)
+    .join("")
     .trim()
     // A trailing dot is dropped by Windows, leaving "name..md" or a hidden file.
     .replace(/[.\s]+$/, "");
-  return stem === "" ? "insight.md" : `${stem}.md`;
+  return stem === "" || RESERVED_FILE_STEM.test(stem) ? "insight.md" : `${stem}.md`;
 }

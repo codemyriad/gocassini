@@ -114,10 +114,21 @@
     !documentError &&
     documentHtml !== "";
 
+  // The file in Files needs only to exist — it is the one way to the answer
+  // left when the document cannot be fetched — so the link is not held to the
+  // answer being on screen.
+  $: filesLinkable = insight.status === "succeeded" && filesUrl !== "";
+
   type StatusTone = "ok" | "warn";
   let exportStatus: { tone: StatusTone; text: string } | null = null;
-  // A status line about one insight must not stay up over the next.
-  $: insight.id, (exportStatus = null);
+  // A status line about one insight must not stay up over the next. Keyed on
+  // the id, not the record: the shell hands down a fresh object on every list
+  // refresh, and that is the same insight.
+  let exportStatusFor = "";
+  $: if (insight.id !== exportStatusFor) {
+    exportStatusFor = insight.id;
+    exportStatus = null;
+  }
 
   function exportText(): string {
     return renderInsightExport({ record: insight, sources, markdown: documentMarkdown, meetingUrl });
@@ -135,11 +146,19 @@
       exportStatus = { tone: "warn", text: "Clipboard unavailable here — use Download." };
       return;
     }
+    // The write can wait on a permission prompt, and the sheet can be holding
+    // another insight by the time it settles: its outcome belongs to the one
+    // that was copied, or to nobody.
+    const copied = insight.id;
+    let next: { tone: StatusTone; text: string };
     try {
       await clipboard.writeText(exportText());
-      exportStatus = { tone: "ok", text: "Copied as markdown." };
+      next = { tone: "ok", text: "Copied as markdown." };
     } catch {
-      exportStatus = { tone: "warn", text: "Clipboard blocked here — press Copy again, or use Download." };
+      next = { tone: "warn", text: "Clipboard blocked here — press Copy again, or use Download." };
+    }
+    if (insight.id === copied) {
+      exportStatus = next;
     }
   }
 
@@ -177,20 +196,22 @@
         <code class="ins-head-model">{insight.model}</code>
       {/if}
     </div>
-    {#if exportable}
+    {#if exportable || filesLinkable}
       <!-- Taking the answer out of Cassini (D-792): a markdown copy with a
            header that says what it is, and the file itself in Files, where
            Nextcloud shares it. -->
       <div class="ins-actions">
-        <button type="button" on:click={handleCopy}>
-          <Copy size={14} aria-hidden="true" />
-          Copy
-        </button>
-        <button type="button" on:click={handleDownload}>
-          <Download size={14} aria-hidden="true" />
-          Download
-        </button>
-        {#if filesUrl}
+        {#if exportable}
+          <button type="button" on:click={handleCopy}>
+            <Copy size={14} aria-hidden="true" />
+            Copy
+          </button>
+          <button type="button" on:click={handleDownload}>
+            <Download size={14} aria-hidden="true" />
+            Download
+          </button>
+        {/if}
+        {#if filesLinkable}
           <a href={filesUrl} target="_blank" rel="noopener">
             <ExternalLink size={14} aria-hidden="true" />
             Open in Files

@@ -1,8 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingCatalogEntry } from "./catalog";
 import { formatMeetingDateWithDay } from "./catalog";
-import { formatInsightCreated, type InsightRecord } from "./insights";
+import type { InsightRecord } from "./insights";
 import { exportFileName, renderInsightExport } from "./insightExport";
+
+// The copy's own date format: the drawer's, plus the zone, because the file is
+// read on somebody else's clock.
+function exportCreated(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  }).format(new Date(iso));
+}
 
 function insight(overrides: Partial<InsightRecord> = {}): InsightRecord {
   return {
@@ -51,7 +65,7 @@ describe("renderInsightExport", () => {
         "",
         '> "What did we decide?"',
         "",
-        `Written by Cassini on ${formatInsightCreated(record)}  `,
+        `Written by Cassini on ${exportCreated(record.createdAt)}  `,
         "Template: summarise v3 · Model: gpt-x",
         "",
         "Drawn from 3 meetings:",
@@ -68,6 +82,32 @@ describe("renderInsightExport", () => {
         "",
       ].join("\n"),
     );
+  });
+
+  it("names the zone on the date, which the drawer leaves off", () => {
+    const out = renderInsightExport({ record: insight(), sources: [], markdown: DOCUMENT, meetingUrl: noLink });
+    // "12 Oct 2026, 09:00 UTC", or whatever the test host's zone is called.
+    expect(out).toMatch(/^Written by Cassini on \d{1,2} \w{3,4} \d{4}, \d{2}:\d{2} \S+  $/m);
+  });
+
+  it("keeps a multi-line question on one line in the heading", () => {
+    const out = renderInsightExport({
+      record: insight({ question: "What did we decide?\n\nAnd who owns it?" }),
+      sources: [],
+      markdown: DOCUMENT,
+      meetingUrl: noLink,
+    });
+    expect(out.startsWith("# What did we decide? And who owns it?\n\n> ")).toBe(true);
+  });
+
+  it("keeps a title with a line break on one list item", () => {
+    const out = renderInsightExport({
+      record: insight(),
+      sources: [meeting("m1", "Planning\n\nQ4")],
+      markdown: DOCUMENT,
+      meetingUrl: link,
+    });
+    expect(out).toContain(`- [Planning Q4, ${formatMeetingDateWithDay("2026-10-05 14:30")}](https://cloud.example/viewer#meeting=m1)`);
   });
 
   it("leaves out the quote when the run had no question", () => {
@@ -149,8 +189,16 @@ describe("exportFileName", () => {
     expect(name).toBe(`${"a".repeat(100)}.md`);
   });
 
-  it("falls back when nothing usable is left", () => {
+  it("cuts a long headline between characters, never through one", () => {
+    const name = exportFileName(insight({ question: `${"a".repeat(99)}😀b` }));
+    expect(name).toBe(`${"a".repeat(99)}😀.md`);
+  });
+
+  it("falls back when nothing usable is left, or the name is one Windows reserves", () => {
     expect(exportFileName(insight({ question: "???", workflowId: "" }))).toBe("insight.md");
     expect(exportFileName(insight({ question: "", workflowId: "" }))).toBe("Insight.md");
+    expect(exportFileName(insight({ question: "CON" }))).toBe("insight.md");
+    expect(exportFileName(insight({ question: "nul?" }))).toBe("insight.md");
+    expect(exportFileName(insight({ question: "Console" }))).toBe("Console.md");
   });
 });

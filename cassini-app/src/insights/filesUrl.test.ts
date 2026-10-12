@@ -21,6 +21,17 @@ describe("nextcloudRoot", () => {
     );
   });
 
+  it("takes Nextcloud's own word for the root over the path when it is on the page", () => {
+    // A subpath that itself contains /apps/ is where the guess goes wrong.
+    const page = at("https://host.example/apps/cloud/index.php/apps/app_api/embedded/gocassini/viewer");
+    expect(nextcloudRoot(page, "/apps/cloud")).toBe("https://host.example/apps/cloud");
+    expect(nextcloudRoot(page, "/apps/cloud/")).toBe("https://host.example/apps/cloud");
+    // "" is an answer — the root is "/" — and only null means nobody said.
+    expect(nextcloudRoot(page, "")).toBe("https://host.example");
+    expect(nextcloudRoot(page, null)).toBe("https://host.example");
+    expect(insightFilesUrl(page, PATH, "/apps/cloud")).toBe(`https://host.example/apps/cloud/apps/files/${QUERY}`);
+  });
+
   it("keeps a subpath install's prefix", () => {
     expect(nextcloudRoot(at("https://example.org/nextcloud/apps/app_api/embedded/gocassini/viewer"))).toBe(
       "https://example.org/nextcloud",

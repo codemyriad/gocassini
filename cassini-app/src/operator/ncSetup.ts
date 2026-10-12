@@ -96,6 +96,13 @@ export function nextcloudUrl(path: string): string {
   return `${root.replace(/\/+$/, "")}${path}`;
 }
 
+// nextcloudRootPath is that same web root, or null where Nextcloud's scripts
+// are not on the page — a caller with a fallback of its own (D-792) needs to
+// tell "the root is /" from "nobody said".
+export function nextcloudRootPath(): string | null {
+  return nextcloud()?.getRootPath?.() ?? null;
+}
+
 // confirmPassword asks Nextcloud to confirm the administrator's identity, using
 // Nextcloud's own dialog.
 //

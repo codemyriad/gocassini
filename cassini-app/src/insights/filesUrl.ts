@@ -6,11 +6,21 @@
 // read off the page's own URL rather than configured — and it has to keep any
 // subpath, because Nextcloud is not always installed at "/".
 
-// nextcloudRoot is everything before the first `/index.php/` or `/apps/`,
-// whichever comes first: the embedded page is under `/index.php/apps/...`, and
-// a pretty-URL install serves `/apps/...` directly.
-export function nextcloudRoot(location: Pick<Location, "origin" | "pathname">): string {
+// nextcloudRoot is the origin plus Nextcloud's web root. Nextcloud's own page
+// scripts say what that root is (`OC.getRootPath()`), and when they are on the
+// page their answer wins: a guess from the path is wrong for an install whose
+// subpath itself contains `/apps/`. Without them, it is everything before the
+// first `/index.php/` or `/apps/`, whichever comes first: the embedded page is
+// under `/index.php/apps/...`, and a pretty-URL install serves `/apps/...`
+// directly.
+export function nextcloudRoot(
+  location: Pick<Location, "origin" | "pathname">,
+  knownRootPath: string | null = null,
+): string {
   const { origin, pathname } = location;
+  if (typeof knownRootPath === "string") {
+    return origin + knownRootPath.replace(/\/+$/, "");
+  }
   const cuts = ["/index.php/", "/apps/"]
     .map((marker) => pathname.indexOf(marker))
     .filter((index) => index >= 0);
@@ -26,6 +36,7 @@ export function nextcloudRoot(location: Pick<Location, "origin" | "pathname">): 
 export function insightFilesUrl(
   location: Pick<Location, "origin" | "pathname">,
   documentPath: string,
+  knownRootPath: string | null = null,
 ): string {
   const path = documentPath.replace(/^\/+/, "");
   if (path === "") {
@@ -35,7 +46,7 @@ export function insightFilesUrl(
   const dir = slash >= 0 ? path.slice(0, slash) : "";
   const file = slash >= 0 ? path.slice(slash + 1) : path;
   return (
-    `${nextcloudRoot(location)}/apps/files/` +
+    `${nextcloudRoot(location, knownRootPath)}/apps/files/` +
     `?dir=${encodeURIComponent(`/${dir}`)}&scrollto=${encodeURIComponent(file)}`
   );
 }

@@ -28,6 +28,7 @@ import {
   retryInsight as postInsightRetry,
 } from "./insights/client";
 import { insightFilesUrl } from "./insights/filesUrl";
+import { nextcloudRootPath } from "./operator/ncSetup";
 
 // The in-Nextcloud shell's data provider (D-626).
 //
@@ -169,7 +170,7 @@ export class AppDataProvider extends StaticCatalogProvider {
   // The document's folder in Nextcloud Files (D-792), read off this page's own
   // URL: the app is proxied on Nextcloud's origin, so Files is beside it.
   insightFilesUrl(record: InsightRecord): string {
-    return insightFilesUrl(window.location, record.documentPath);
+    return insightFilesUrl(window.location, record.documentPath, nextcloudRootPath());
   }
 }
 
