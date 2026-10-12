@@ -1348,10 +1348,18 @@
     align-items: baseline;
     gap: 4px 8px;
     margin-bottom: 0;
-    padding: 7px 10px;
+    padding: 6px 10px 5px;
     font-size: 12.5px;
+    line-height: 1.35;
     border-radius: var(--radius-box, 0.5rem);
     background: var(--op-inset, color-mix(in oklch, var(--color-base-content) 5%, transparent));
+  }
+  /* Nextcloud styles every button with a min-height and padding. */
+  .in-use .link {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    line-height: inherit;
   }
   .in-use-label {
     font-size: 11px;
