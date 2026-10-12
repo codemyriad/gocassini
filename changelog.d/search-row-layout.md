@@ -4,3 +4,4 @@
 
 ### Changed
 - Opening a meeting from a search that matched what was said fills the meeting's transcript search with the same words, as opening one of its moments already did.
+- The app asks for its stylesheet by build, not only by app version. An update that keeps the version number (a rebuilt image, a hot-deploy) could leave a browser pairing the new script with an older stylesheet, which unstyled every screen built from components.
