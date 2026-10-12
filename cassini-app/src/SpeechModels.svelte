@@ -4,6 +4,7 @@
   import type { SpeechModel, SpeechModelInventory } from "./operator/types";
   import ModelStatusRow from "./ModelStatusRow.svelte";
   import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
+  import { speechModelFor } from "./operator/pipelineStatus";
   import { jobRunning, modelJob, voiceSeparationModel } from "./speechModels";
   export let client: OperatorClient | null;
   export let quality = "balanced";
@@ -51,7 +52,7 @@
     inventory = null;
     void refresh();
   }
-  $: modelID = device === "cuda" || quality === "best" ? "parakeet-tdt-0.6b-v3" : quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-tdt-0.6b-v3-int8";
+  $: modelID = speechModelFor(quality, device);
   $: model = inventory?.models.find((m) => m.id === modelID);
   $: job = modelJob(inventory, model, device);
   $: running = jobRunning(job);

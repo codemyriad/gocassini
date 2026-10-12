@@ -71,7 +71,7 @@ beforeEach(() => {
         captureWrites.push(body);
         retainVideo = body.retain_video;
       }
-      return Response.json({ quality: "balanced", source: "auto", retain_video: retainVideo, transcription_enabled: false });
+      return Response.json({ quality: "balanced", source: "auto", retain_video: retainVideo, transcription_enabled: true, active_model: "m", active_revision: "r1" });
     }
     if (path === "/operator/settings/workflows") return Response.json([]);
     if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [], downloads_allowed: false, device: "cpu" });
