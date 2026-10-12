@@ -40,6 +40,9 @@
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
+  import { pipelineStatus, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
+  import type { RetentionSettings } from "./operator/retention";
+  import { onRetentionChanged } from "./operator/retentionSignal";
   import type {
     InsightWorkflow,
     LLMModel,
@@ -48,6 +51,7 @@
     Settings,
     SettingsQuality,
     SpeechModel,
+    SpeechModelInventory,
   } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
@@ -87,13 +91,20 @@
   let savedSourceRetention = "storage-policy";
   let savedRetainVideo = false;
   let transcriptionSettings: HTMLElement;
+  let publicationSettings: HTMLElement;
+  let summarySettings: HTMLElement;
+  let keepSettings: HTMLElement;
 
-  function focusTranscriptionSettings() {
-    transcriptionSettings.focus({ preventScroll: true });
-    transcriptionSettings.scrollIntoView({
+  function focusSection(section: HTMLElement | undefined) {
+    if (!section) return;
+    section.focus({ preventScroll: true });
+    section.scrollIntoView({
       block: "start",
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
     });
+  }
+  function focusTranscriptionSettings() {
+    focusSection(transcriptionSettings);
   }
   $: recordingMedia = sourceRetention === "delete-after-processing" ? "nothing" : retainVideo ? "audio-video" : "audio-only";
 
@@ -111,6 +122,7 @@
   let activeModel = "";
   let activeRevision = "";
   let readyModel: SpeechModel | null = null;
+  let modelInventory: SpeechModelInventory | null = null;
   function toggleTranscription(on: boolean) {
     if (on && readyModel) {
       activeModel = readyModel.id;
@@ -157,9 +169,25 @@
   let loadError = "";
   let saveError = "";
 
+  // The Recordings retention policy, for how long kept media stays. Null when
+  // it could not be read: the wording then leaves the span out rather than
+  // guessing one.
+  let retention: RetentionSettings | null = null;
+
   onMount(() => {
     void loadAll();
+    void loadRetention();
+    return onRetentionChanged((next) => { retention = next; });
   });
+
+  async function loadRetention() {
+    if (!operatorClient) return;
+    try {
+      retention = await operatorClient.getRetention();
+    } catch {
+      retention = null;
+    }
+  }
 
   async function loadAll() {
     if (!operatorClient) {
@@ -438,6 +466,32 @@
   $: selectedDevice = deviceOverride === "cpu" || deviceOverride === "cuda" ? deviceOverride : effectiveDevice || "cpu";
   $: runsOnGPU = selectedDevice === "cuda";
 
+  // The status strip reads the SAVED settings — the snapshot the dirty check
+  // compares against — so it says what recordings get today and only moves
+  // after a successful Save or load.
+  $: savedKeep = savedSourceRetention === "delete-after-processing" ? "nothing" as const : savedRetainVideo ? "audio-video" as const : "audio-only" as const;
+  $: savedDevice = settings?.effective?.device ?? "cpu";
+  $: savedModel = modelInventory?.models.find((m) => m.id === speechModelFor(savedQuality, savedDevice));
+  $: status = pipelineStatus({
+    meetingFormat: savedMeetingFormat,
+    transcriptionEnabled: settings?.transcription_enabled === true,
+    quality: savedQuality,
+    device: savedDevice,
+    modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
+    download: runningDownload(modelInventory),
+    summaryEnabled: llm?.summary.enabled === true,
+    providerName: llm ? providerName(llm.summary.provider) : "",
+    hasProvider: llm === null ? null : llm.providers.length > 0,
+    keep: savedKeep,
+    recordingsPolicy: retention?.recordings ?? null,
+  });
+  $: chips = [
+    { name: "Transcribe", step: status.transcribe, target: () => transcriptionSettings },
+    { name: "Summarise", step: status.summarise, target: () => summarySettings },
+    { name: "Publish", step: status.publish, target: () => publicationSettings },
+    { name: "Keep on server", step: status.keep, target: () => keepSettings },
+  ] satisfies { name: string; step: StepStatus; target: () => HTMLElement }[];
+
   $: providers = llm?.providers ?? [];
   // Null while the LLM settings have not been read: three states, and the
   // locked card belongs to exactly one of them.
@@ -559,8 +613,30 @@
   {:else}
     <div class="pipe-body">
       <section class="op-tint p-4 grid gap-4" aria-labelledby="recording-publication-heading">
-        <h2 id="recording-publication-heading" class="set-row-name op-card-title">Publishing</h2>
-        <div class="grid gap-1">
+        <div class="strip-head">
+          <h2 id="recording-publication-heading" class="set-row-name op-card-title">Publishing</h2>
+          <span class="strip-current" title="The saved settings new recordings get">Current</span>
+        </div>
+        <!-- What new recordings get with the SAVED settings, one chip per step;
+             each chip jumps to the setting it describes. -->
+        <ul class="pipe-strip" aria-label="Current settings">
+          {#each chips as chip (chip.name)}
+            <li>
+              <button type="button" class="strip-chip tone-{chip.step.tone}" on:click={() => focusSection(chip.target())}>
+                <span class="chip-box">
+                  <span class="chip-name">{chip.name}</span>
+                  <span class="chip-state">{chip.step.state}</span>
+                </span>
+                {#if chip.step.reason}
+                  <span class="chip-note chip-reason">{chip.step.reason}</span>
+                {:else if chip.step.badge}
+                  <span class="chip-note">{chip.step.badge}</span>
+                {/if}
+              </button>
+            </li>
+          {/each}
+        </ul>
+        <div class="grid gap-1 scroll-mt-4" aria-label="Publication settings" role="group" tabindex="-1" bind:this={publicationSettings}>
           <label class="op-field" for="meeting-format">
             <span class="op-field-label">Published meeting</span>
             <select id="meeting-format" class="op-input" value={meetingFormat} on:change={(event) => selectMeetingFormat(event.currentTarget.value === "json" ? "json" : "opus")} disabled={saving} aria-describedby="publication-help">
@@ -614,10 +690,10 @@
             {/each}
           </div>
           <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
-            bind:readyModel
+            bind:readyModel bind:inventory={modelInventory}
             on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
         </section>
-        <fieldset class="grid gap-3" disabled={saving}>
+        <fieldset class="grid gap-3 scroll-mt-4" disabled={saving} tabindex="-1" bind:this={keepSettings}>
           <legend class="op-field-label mb-2">Keep on the server after publishing</legend>
           <label class="flex items-start gap-3 text-sm" class:keep-unavailable={meetingFormat === "opus"}>
             <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} disabled={meetingFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
@@ -733,7 +809,7 @@
       <!-- Summarisation. The switch belongs to the name, not to the far edge of
            the row: what is being turned on is the step, and the row is the
            step. -->
-      <section class="op-tint pipe-step">
+      <section class="op-tint pipe-step scroll-mt-4" aria-label="Summarisation settings" tabindex="-1" bind:this={summarySettings}>
         <div class="set-row-main">
           <div class="step-head">
             <p class="set-row-name op-card-title" class:off={hasProvider === false}>
@@ -943,6 +1019,135 @@
   {/if}
 
 <style>
+  .strip-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .strip-current {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+  }
+  .pipe-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin: -6px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .strip-chip {
+    display: grid;
+    gap: 4px;
+    justify-items: start;
+    width: 100%;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+    background: none;
+    border: 0;
+  }
+  .chip-box {
+    display: grid;
+    gap: 1px;
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--op-inset-border);
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .strip-chip:hover .chip-box {
+    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
+  }
+  .strip-chip:focus-visible {
+    outline: none;
+  }
+  .strip-chip:focus-visible .chip-box {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  .chip-name {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .chip-state {
+    font-size: 13px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .tone-on .chip-box {
+    background-color: color-mix(in srgb, var(--color-primary) 14%, var(--color-base-100));
+  }
+  .tone-off .chip-state {
+    font-weight: 500;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .tone-busy .chip-box {
+    border-color: var(--color-primary);
+  }
+  .tone-amber .chip-box {
+    background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-base-100));
+    border-color: var(--color-warning);
+  }
+  .chip-note {
+    padding: 2px 6px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+    background-color: var(--op-inset);
+    border: 1px solid var(--op-inset-border);
+    border-radius: var(--radius-selector, 0.25rem);
+  }
+  .chip-reason {
+    color: var(--color-warning);
+    background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-base-100));
+    border-color: var(--color-warning);
+  }
+  /* Phone width: one row per step, name left and state right. */
+  @media (max-width: 560px) {
+    .pipe-strip {
+      grid-template-columns: 1fr;
+      gap: 0;
+      border: 1px solid var(--op-inset-border);
+      border-radius: var(--radius-box, 0.5rem);
+      overflow: hidden;
+    }
+    .pipe-strip li + li {
+      border-top: 1px solid var(--op-inset-border);
+    }
+    .strip-chip {
+      grid-template-columns: auto 1fr;
+      align-items: baseline;
+      gap: 2px 12px;
+      padding: 8px 12px;
+    }
+    .chip-box {
+      display: contents;
+    }
+    .chip-state {
+      text-align: right;
+      justify-self: end;
+    }
+    .chip-note {
+      grid-column: 2;
+      justify-self: end;
+    }
+    .strip-chip.tone-amber {
+      background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-base-100));
+    }
+    .strip-chip.tone-busy .chip-state {
+      color: var(--color-primary);
+    }
+    .strip-chip:focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: -2px;
+    }
+  }
   .keep-unavailable {
     color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }

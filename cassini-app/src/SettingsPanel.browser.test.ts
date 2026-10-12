@@ -151,3 +151,37 @@ it("turns transcription on from the heading switch and shows the model as one ro
   await expect.element(page.getByText("Download cancelled. Retry resumes it.")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
 });
+
+it("shows the saved settings in the status strip and moves only after Save", async () => {
+  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-tdt-0.6b-v3-int8", active_revision: "r1",
+    source_retention: "storage-policy", retain_video: false, effective: { device: "cpu", model: "", min_free_memory_mb: 0, note: "" } };
+  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+    download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") {
+      if (init?.method === "PUT") saved = { ...saved, ...JSON.parse(init.body as string) };
+      return Response.json(saved);
+    }
+    if (path === "/operator/settings/models") return Response.json({ models: [balanced], jobs: [], downloads_allowed: true, device: "cpu" });
+    if (path === "/operator/settings/llm") return Response.json({ providers: [{ id: "or", name: "OpenRouter", base_url: "", model: "" }], summary: { enabled: true, provider: "or", model: "", template: "" }, insights: { enabled: false } });
+    if (path === "/operator/storage/retention") return Response.json({ recordings: { forever: false, count: 30, unit: "days" } });
+    return Response.json({});
+  }));
+  host = document.createElement("div"); document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  const strip = page.getByRole("list", { name: "Current settings" });
+  await expect.element(strip.getByRole("button", { name: /^Transcribe/ })).toHaveTextContent("On · Balanced · CPU");
+  await expect.element(strip.getByRole("button", { name: /^Summarise/ })).toHaveTextContent("On · OpenRouter");
+  await expect.element(strip.getByRole("button", { name: /^Keep on server/ })).toHaveTextContent("Audio only · 30 days");
+  const publish = strip.getByRole("button", { name: /^Publish/ });
+  await expect.element(publish).toHaveTextContent("Audio + transcript");
+
+  await strip.getByRole("button", { name: /^Transcribe/ }).click();
+  await expect.element(page.getByRole("region", { name: "Transcription settings" })).toHaveFocus();
+
+  await page.getByRole("combobox", { name: "Published meeting" }).selectOptions("json");
+  await expect.element(publish).toHaveTextContent("Audio + transcript");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.element(publish).toHaveTextContent("Transcript only");
+});

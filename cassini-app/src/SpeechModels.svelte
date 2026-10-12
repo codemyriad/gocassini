@@ -3,6 +3,7 @@
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModel, SpeechModelInventory } from "./operator/types";
   import ModelStatusRow from "./ModelStatusRow.svelte";
+  import { speechModelFor } from "./operator/pipelineStatus";
   export let client: OperatorClient | null;
   export let quality = "balanced";
   export let device = "cpu";
@@ -11,8 +12,9 @@
   export let activeRevision = "";
   // The model the transcription switch can turn on, if it is ready.
   export let readyModel: SpeechModel | null = null;
+  // The last inventory read, so the panel's status strip can see downloads.
+  export let inventory: SpeechModelInventory | null = null;
   const dispatch = createEventDispatcher<{ select: SpeechModel }>();
-  let inventory: SpeechModelInventory | null = null;
   let error = "";
   let busy = false;
   let mounted = false;
@@ -48,7 +50,7 @@
     inventory = null;
     void refresh();
   }
-  $: modelID = device === "cuda" || quality === "best" ? "parakeet-tdt-0.6b-v3" : quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-tdt-0.6b-v3-int8";
+  $: modelID = speechModelFor(quality, device);
   $: model = inventory?.models.find((m) => m.id === modelID);
   $: job = inventory?.jobs.find((j) => j.model === modelID && j.device === device && j.revision === model?.revision);
   $: running = job && !["ready", "failed", "cancelled"].includes(job.state);
