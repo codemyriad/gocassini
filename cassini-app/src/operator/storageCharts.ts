@@ -2,6 +2,7 @@ import type { StorageUsageCategory } from "./types";
 import { retentionDayPresets } from "./retention";
 
 export const categoryPresentation: Record<string, { label: string; description: string; color: string }> = {
+  published: { label: "In Nextcloud Files", description: "Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup.", color: "#6279b8" },
   recordings: { label: "Recordings", description: "Audio, video and supporting files, dated when recording finished.", color: "#527eac" },
   current: { label: "Published meetings (on this server)", description: "This server's copy of the latest published meeting, dated when it was published.", color: "#588c75" },
   history: { label: "Previous attempts", description: "Failed recordings, failed processing, replaced output and failed publishing.", color: "#aa7840" },
@@ -58,7 +59,6 @@ export function storageBuckets(category: StorageUsageCategory, from: string, to:
   if (end < start) return { buckets: [], error: "The end date must be on or after the start date." };
   if (!Number.isInteger(precision) || precision < 1 || precision > 9999) return { buckets: [], error: "Days per bar must be a whole number from 1 to 9999." };
   const count = Math.floor((end - start) / (DAY * precision)) + 1;
-  if (count > 180) return { buckets: [], error: "This range needs more than 180 bars. Choose a shorter range." };
   const buckets = Array.from({length: count}, (_,i) => ({ from: iso(start+i*precision*DAY), to: iso(Math.min(end,start+((i+1)*precision-1)*DAY)), bytes: 0, files: 0 }));
   for (const day of category.days) {
     const date = utcDay(day.date);

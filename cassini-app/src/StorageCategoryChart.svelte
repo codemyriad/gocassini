@@ -6,15 +6,35 @@
   export let measuredAt: string;
   export let label: string;
   export let color: string;
+  export let dateLabel = "UTC lifecycle date";
   const initialExtent = storageDateExtent(category, measuredAt);
   let range = "all";
   let from = initialExtent.from, to = initialExtent.to;
   let selected = -1;
+  let scroller: HTMLDivElement;
+  let canScrollEarlier = false, canScrollLater = false;
+  function trackScroll(node: HTMLDivElement) {
+    scroller = node;
+    const update = () => {
+      canScrollEarlier = node.scrollLeft > 1;
+      canScrollLater = node.scrollLeft + node.clientWidth < node.scrollWidth - 1;
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    observer.observe(node.firstElementChild!);
+    node.addEventListener("scroll", update);
+    update();
+    return { destroy() { observer.disconnect(); node.removeEventListener("scroll", update); } };
+  }
+  function scrollTimeline(direction: number) {
+    scroller.scrollBy({ left: direction * scroller.clientWidth * 0.8,
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  }
   $: extent = storageDateExtent(category, measuredAt);
   $: window = storageRange(range, extent, from, to);
   $: days = defaultStoragePrecision(window.from, window.to);
   $: result = storageBuckets(category, window.from, window.to, days);
-  $: maximum = Math.max(0, ...result.buckets.map(b => b.bytes));
+  $: maximum = result.buckets.reduce((largest, bucket) => Math.max(largest, bucket.bytes), 0);
   $: rangeBytes = result.buckets.reduce((sum, b) => sum + b.bytes, 0);
   $: active = result.buckets[selected];
   $: if (result) selected = -1;
@@ -43,11 +63,19 @@
   {:else if category.days.length === 0}
     <p class="chart-message">{category.files === 0 ? "No retained files in this category." : "No dated files to plot in this category."}</p>
   {:else}
-    <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>in selected range</span></strong><span>{days === 1 ? "Daily" : `${days} days per bar`} · UTC dates</span></div>
+    <div class="chart-summary"><strong>{formatStorageBytes(rangeBytes)} <span>in selected range</span></strong><span>{days === 1 ? "Daily" : `${days} days per bar`} · {dateLabel}s</span></div>
     {#if rangeBytes === 0}<p class="chart-message">No retained bytes in this date range. Try a wider range.</p>{/if}
+    {#if canScrollEarlier || canScrollLater}
+      <div class="timeline-navigation">
+        <button class="op-btn" type="button" aria-label={`Scroll ${label} earlier`} disabled={!canScrollEarlier} on:click={() => scrollTimeline(-1)}>← Earlier</button>
+        <span>Scroll left or right to explore all {result.buckets.length.toLocaleString()} bars.</span>
+        <button class="op-btn" type="button" aria-label={`Scroll ${label} later`} disabled={!canScrollLater} on:click={() => scrollTimeline(1)}>Later →</button>
+      </div>
+    {/if}
     <div class="plot">
       <div class="y-axis" aria-hidden="true"><span>{formatStorageBytes(maximum)}</span><span>{formatStorageBytes(maximum / 2)}</span><span>0 B</span></div>
-      <div class="plot-scroll" role="region" aria-label={`${label} usage by date`}>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (The scroll region needs keyboard focus for native arrow-key scrolling.) -->
+      <div class="plot-scroll" use:trackScroll role="region" tabindex="0" aria-label={`${label} usage by date`}>
         <div class="chart-timeline" style:min-width={`${Math.max(240,result.buckets.length*14)}px`}>
         <div class="bars">
           {#each result.buckets as bucket, index (bucket.from)}
@@ -65,7 +93,7 @@
     </div>
     <p class="bar-detail" aria-live="polite">{#if active}<strong>{bucketLabel(active)}</strong> · {formatStorageBytes(active.bytes)} · {active.files} file{active.files === 1 ? "" : "s"}{:else}Hover, focus or tap a bar for its dates and exact usage.{/if}</p>
     <details class="values"><summary>View chart data</summary>
-      <div class="table-scroll"><table><caption>{label} · bytes by UTC date</caption><thead><tr><th scope="col">Date range</th><th scope="col">Bytes</th><th scope="col">Files</th></tr></thead><tbody>
+      <div class="table-scroll"><table><caption>{label} · bytes by {dateLabel}</caption><thead><tr><th scope="col">Date range</th><th scope="col">Bytes</th><th scope="col">Files</th></tr></thead><tbody>
         {#each result.buckets as bucket (bucket.from)}<tr><th scope="row">{bucketLabel(bucket)}</th><td>{bucket.bytes.toLocaleString()}</td><td>{bucket.files.toLocaleString()}</td></tr>{/each}
       </tbody></table></div>
     </details>
@@ -82,8 +110,12 @@
   .chart-summary span, .bar-detail, .x-axis, .y-axis { color:color-mix(in oklch,var(--color-base-content) 65%,transparent); }
   .chart-summary strong span { font-weight:400; font-size:12px; }
   .plot { display:flex; gap:10px; }
+  .timeline-navigation { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; font-size:11px; }
+  .timeline-navigation span { text-align:center; }
+  .timeline-navigation button { flex:none; }
   .y-axis { width:58px; flex:none; display:flex; flex-direction:column; justify-content:space-between; font-size:10px; text-align:right; padding-bottom:3px; height:164px; }
   .plot-scroll { flex:1; min-width:0; overflow-x:auto; padding-top:4px; }
+  .chart-timeline { display:block; width:100%; }
   .bars { height:160px; display:flex; align-items:stretch; gap:3px; border-bottom:1px solid var(--op-border, #8993a044); background:repeating-linear-gradient(to top, transparent 0, transparent calc(50% - 1px), color-mix(in oklch,var(--color-base-content) 9%,transparent) calc(50% - 1px), color-mix(in oklch,var(--color-base-content) 9%,transparent) 50%); }
   .bar-target { border:0; background:transparent; padding:0; flex:1; min-width:8px; display:flex; align-items:end; cursor:pointer; border-radius:3px 3px 0 0; }
   .bar { display:block; width:100%; max-width:64px; margin:0 auto; border-radius:3px 3px 0 0; background:var(--chart-color); opacity:.85; min-height:2px; }
