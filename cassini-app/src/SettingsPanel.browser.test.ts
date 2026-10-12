@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
 import SettingsPanel from "./SettingsPanel.svelte";
 import { OperatorClient } from "./operator/client";
+import { notifyRetentionChanged } from "./operator/retentionSignal";
+import type { RetentionSettings } from "./operator/retention";
 import "./app.css";
 
 let app: ReturnType<typeof mount> | undefined;
@@ -184,4 +186,30 @@ it("shows the saved settings in the status strip and moves only after Save", asy
   await expect.element(publish).toHaveTextContent("Audio + transcript");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.element(publish).toHaveTextContent("Transcript only");
+});
+
+it("says how long kept media stays from the Recordings policy and follows the retention editor", async () => {
+  let retention = true;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") return Response.json({ quality: "balanced", meeting_format: "opus", source_retention: "storage-policy", retain_video: false });
+    if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
+    if (path === "/operator/storage/retention") return retention ? Response.json({ recordings: { forever: false, count: 30, unit: "days" } }) : new Response("down", { status: 503 });
+    return Response.json({});
+  }));
+  host = document.createElement("div"); document.body.append(host);
+  const open = () => app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  open();
+  await expect.element(page.getByText("Audio only, for 30 days.")).toBeVisible();
+  await expect.element(page.getByText("Audio and video, for 30 days. Uses the most space.")).toBeVisible();
+  await expect.element(page.getByText("The 30 days come from Storage.")).toBeVisible();
+
+  notifyRetentionChanged({ recordings: { forever: true } } as RetentionSettings);
+  await expect.element(page.getByText("Audio only, kept forever.")).toBeVisible();
+  await expect.element(page.getByText("Kept forever: change this in Storage.")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /^Keep on server/ })).toHaveTextContent("Audio only · forever");
+
+  await unmount(app!); app = undefined; retention = false; open();
+  await expect.element(page.getByText("How long kept media stays is set in Storage.")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /^Keep on server/ })).toHaveTextContent(/Audio only$/);
 });

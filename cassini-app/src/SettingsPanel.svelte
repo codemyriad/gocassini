@@ -40,7 +40,7 @@
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
-  import { pipelineStatus, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
+  import { pipelineStatus, retentionSpan, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
   import type { RetentionSettings } from "./operator/retention";
   import { onRetentionChanged } from "./operator/retentionSignal";
   import type {
@@ -492,6 +492,11 @@
     { name: "Keep on server", step: status.keep, target: () => keepSettings },
   ] satisfies { name: string; step: StepStatus; target: () => HTMLElement }[];
 
+  // How long kept media stays, from the Recordings policy: "for 30 days",
+  // "kept forever", or "" when retention could not be read.
+  $: keptSpan = retentionSpan(retention?.recordings);
+  $: keptFor = keptSpan === null ? "" : keptSpan === "forever" ? "kept forever" : `for ${keptSpan}`;
+
   $: providers = llm?.providers ?? [];
   // Null while the LLM settings have not been read: three states, and the
   // locked card belongs to exactly one of them.
@@ -702,11 +707,11 @@
           </label>
           <label class="flex items-start gap-3 text-sm">
             <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-video" aria-label="Audio and video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
-            <span><strong>Audio and video.</strong> <span id="keep-video-help">Uses the most space.</span></span>
+            <span>{#if keptFor}<strong>Audio and video</strong>, {keptFor}.{:else}<strong>Audio and video.</strong>{/if} <span id="keep-video-help">Uses the most space.</span></span>
           </label>
           <label class="flex items-start gap-3 text-sm">
             <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-only" aria-label="Audio only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
-            <span><strong>Audio only.</strong></span>
+            <span>{#if keptFor}<strong>Audio only</strong>, {keptFor}.{:else}<strong>Audio only.</strong>{/if}</span>
           </label>
         </fieldset>
         {#if recordingMedia === "nothing"}
@@ -714,7 +719,13 @@
             <p class="set-row-sub" role="status"><strong>Transcription must be on to keep nothing.</strong> <button type="button" class="link" on:click={focusTranscriptionSettings}>Set up transcription</button></p>
           {/if}
         {:else}
-          <p class="set-row-sub">How long kept media stays is set in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
+          {#if keptSpan === "forever"}
+            <p class="set-row-sub">Kept forever: change this in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
+          {:else if keptSpan}
+            <p class="set-row-sub">The {keptSpan} {keptSpan === "1 day" ? "comes" : "come"} from <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
+          {:else}
+            <p class="set-row-sub">How long kept media stays is set in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
+          {/if}
         {/if}
         <p class="set-row-sub">Applies to new recordings after saving.</p>
       </section>
