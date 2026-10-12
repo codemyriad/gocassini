@@ -106,10 +106,13 @@
   const AUDIENCE = {
     participants: {
       label: "Shared with participants",
-      detail:
-        // Same words as "Who can see recordings" in Operator › Publish pipeline
-        // (cassini-app DirectShareAccessPanel.svelte); change both together.
-        "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not. Guests without a Nextcloud account can't open it. Cassini never creates a public link; in public rooms, people can reshare the file if this Nextcloud allows it.",
+      // Same points as "Who can see recordings" in Operator › Publish pipeline
+      // (cassini-app DirectShareAccessPanel.svelte); change both together.
+      points: [
+        "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.",
+        "Guests without a Nextcloud account can't open it.",
+        "Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.",
+      ],
     },
   } as const;
   const AUDIENCE_FOOTNOTE = "Nextcloud Files controls who can read each recording.";
@@ -149,7 +152,9 @@
           {AUDIENCE[audience].label}
         </button>
         <span id="audience-detail" role="tooltip" class="tag-popover audience-detail" class:open={audienceOpen}>
-          {AUDIENCE[audience].detail}
+          {#each AUDIENCE[audience].points as point (point)}
+            <span class="audience-point">{point}</span>
+          {/each}
           <span class="audience-foot">{AUDIENCE_FOOTNOTE}</span>
         </span>
       </span>
@@ -467,8 +472,21 @@
     padding-top: 6px;
     border-top: 1px solid var(--color-base-300);
     font-size: 11px;
-    text-wrap: balance;
     color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  /* A tooltip is phrasing content, so these are spans drawn as a list. */
+  .audience-point {
+    position: relative;
+    display: block;
+    padding-left: 12px;
+  }
+  .audience-point + .audience-point {
+    margin-top: 4px;
+  }
+  .audience-point::before {
+    content: "•";
+    position: absolute;
+    left: 2px;
   }
   .audience:hover .audience-detail,
   .audience:focus-within .audience-detail,
