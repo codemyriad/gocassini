@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -473,6 +474,54 @@ func TestBuildUsesRunnerOverrideAndWritesMeetingManifest(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "meeting -> "+outDir) {
 		t.Fatalf("expected meeting output path, got stdout=%q", stdout.String())
+	}
+}
+
+// The operator reruns a published meeting with `cassini build --audio-encode
+// <policy>` so the rebuilt audio, and the marks bound to it, stay the same. The
+// flag has to reach the build, and a policy this build does not know must stop
+// it rather than fall back to the default encode.
+func TestBuildPassesTheAudioEncodePolicyToTheBuild(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	input := filepath.Join(tmp, "source.mkv")
+	if err := os.WriteFile(input, []byte("fake-mkv"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	var policies []string
+	prev := buildArtifactFn
+	fake := fakeSuccessBuildFn(t)
+	buildArtifactFn = func(ctx context.Context, mkvPath, outputDir string, cfg transcribe.BuildConfig, stdout io.Writer) error {
+		policies = append(policies, cfg.AudioEncodePolicy)
+		return fake(ctx, mkvPath, outputDir, cfg, stdout)
+	}
+	t.Cleanup(func() { buildArtifactFn = prev })
+
+	build := func(out string, extra ...string) (int, string) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), append([]string{"build", input, "--out", filepath.Join(tmp, out)}, extra...), &stdout, &stderr)
+		return code, stderr.String()
+	}
+
+	if code, stderr := build("first.meeting"); code != 0 {
+		t.Fatalf("first build failed: code=%d stderr=%q", code, stderr)
+	}
+	if code, stderr := build("rerun.meeting", "--audio-encode", transcribe.AudioEncodeFixed64k); code != 0 {
+		t.Fatalf("rerun with --audio-encode failed: code=%d stderr=%q", code, stderr)
+	}
+	if want := []string{"", transcribe.AudioEncodeFixed64k}; !reflect.DeepEqual(policies, want) {
+		t.Fatalf("builds ran with audio encode policies %q, want %q", policies, want)
+	}
+
+	code, stderr := build("unknown.meeting", "--audio-encode", "no-such-policy")
+	if code == 0 || !strings.Contains(stderr, `invalid --audio-encode "no-such-policy"`) {
+		t.Fatalf("unknown policy: code=%d stderr=%q, want a rejected build", code, stderr)
+	}
+	if len(policies) != 2 {
+		t.Fatalf("a build ran with an unknown audio encode policy: %q", policies)
 	}
 }
 

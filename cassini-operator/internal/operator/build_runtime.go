@@ -411,7 +411,15 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		return meetingPath, err
 	}
 
-	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
+	buildArgs := []string{"build", task.ArtifactRunPath, "--out", meetingPath}
+	policy, err := rt.rebuildAudioEncodePolicy(task.JobID)
+	if err != nil {
+		return meetingPath, err
+	}
+	if policy != "" {
+		buildArgs = append(buildArgs, "--audio-encode", policy)
+	}
+	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, buildArgs...)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	buildEnv, err = rt.mediaScratchEnv(buildEnv, task.JobID, task.AttemptNumber)
@@ -439,7 +447,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		if cleanErr := os.RemoveAll(meetingPath); cleanErr != nil {
 			return meetingPath, fmt.Errorf("preserve audio after transcription failure: %w", cleanErr)
 		}
-		fallback := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath, "--transcription", "off")
+		fallback := exec.CommandContext(ctx, rt.cfg.CassiniBin, append(buildArgs, "--transcription", "off")...)
 		fallback.Stdout, fallback.Stderr = cmd.Stdout, cmd.Stderr
 		fallback.Env = setEnvKey(setEnvKey(buildEnv, "CASSINI_TRANSCRIPTION", "off"), "CASSINI_TRANSCRIPTION_REASON", "transcription_failed")
 		fallback.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
