@@ -505,8 +505,9 @@
   // format select last said.
   $: publishedFormat = transcriptionEnabled ? meetingFormat : "opus" as const;
   $: runsOnLine = savedDevice === "cuda"
-    ? `Runs on the ${deviceLabel("cuda")}.`
-    : settings?.detected_gpu ? "Runs on the CPU." : "Runs on the CPU, no GPU found.";
+    ? deviceLabel("cuda")
+    : settings?.detected_gpu ? "CPU" : "CPU, no GPU found";
+  $: inUseModel = modelInventory?.models.find((m) => m.id === activeModel);
 
   // How long kept media stays, from the Recordings policy: "for 30 days",
   // "kept forever", or "" when retention could not be read.
@@ -684,34 +685,18 @@
           {#if runsOnGPU}
             <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
           {/if}
-          <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
-          <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
-            {#each QUALITY_OPTIONS as option (option.value)}
-              <label class="q-opt" class:selected={quality === option.value}>
-                <input
-                  type="radio"
-                  name="stt-quality"
-                  class="q-radio"
-                  value={option.value}
-                  bind:group={quality}
-                />
-                <span class="q-main">
-                  <span class="q-label">{option.label}</span>
-                  <span class="q-desc">{option.description}</span>
-                </span>
-              </label>
-            {/each}
-          </div>
-          <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
-            bind:readyModel bind:inventory={modelInventory}
-            on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
-          <!-- What the operator found, and what the next build will do with
-               it. The device is auto-selected, and on a host with no usable GPU
-               that answer is the CPU: slower, but a transcript. Saying so here
-               keeps the fallback explicit (D-702). The facts and the override
-               that corrects them open inline under "Change". -->
-          <p class="set-row-sub pipe-gap">
-            {runsOnLine}
+          <!-- What transcribes new recordings, and where. Builds use the saved
+               model, not the quality picked below, so this names it. The
+               device is auto-selected; on a host with no usable GPU that is the
+               CPU, said out loud (D-702). The facts and the override open under
+               "Change". -->
+          <p class="in-use pipe-gap" role="status">
+            {#if transcriptionEnabled && inUseModel}
+              <span class="in-use-label">In use</span>
+              <strong>{inUseModel.name}</strong>
+              <span aria-hidden="true">·</span>
+            {/if}
+            <span>{runsOnLine}</span>
             <button type="button" class="link" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>Change</button>
           </p>
           {#if hardwareOpen}
@@ -769,6 +754,30 @@
               </p>
             </div>
           {/if}
+          <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
+          <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
+            {#each QUALITY_OPTIONS as option (option.value)}
+              <label class="q-opt" class:selected={quality === option.value}>
+                <input
+                  type="radio"
+                  name="stt-quality"
+                  class="q-radio"
+                  value={option.value}
+                  bind:group={quality}
+                />
+                <span class="q-main">
+                  <span class="q-label">{option.label}</span>
+                  <span class="q-desc">{option.description}</span>
+                </span>
+              </label>
+            {/each}
+          </div>
+          {#if !(transcriptionEnabled && inUseModel?.id === speechModelFor(quality, selectedDevice))}
+            <p class="model-heading pipe-gap">{QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? "This quality"} model</p>
+          {/if}
+          <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
+            bind:readyModel bind:inventory={modelInventory}
+            on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
           {#if !savedTranscriptionOn}
             {#if savedTranscriptOnlyWithout}
               <p class="set-row-sub pipe-warn pipe-gap" role="status">Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.</p>
@@ -1332,6 +1341,30 @@
   }
   .pipe-gap {
     margin-top: 8px;
+  }
+  .in-use {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    margin-bottom: 0;
+    padding: 7px 10px;
+    font-size: 12.5px;
+    border-radius: var(--radius-box, 0.5rem);
+    background: var(--op-inset, color-mix(in oklch, var(--color-base-content) 5%, transparent));
+  }
+  .in-use-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .model-heading {
+    margin-bottom: -4px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
   .q-callout {
     display: flex;

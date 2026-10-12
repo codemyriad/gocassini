@@ -57,9 +57,9 @@
   $: running = jobRunning(job);
   $: selected = enabled && activeModel === model?.id && activeRevision === model?.revision;
   $: readyModel = model?.ready ? model : null;
-  // The row follows the quality picked; builds use the saved model. When they
-  // differ, say which one recordings are transcribed with now.
-  $: inUse = enabled && activeModel && activeModel !== model?.id ? inventory?.models.find((m) => m.id === activeModel) : undefined;
+  // The banner above already names the model in use; its row would repeat it.
+  $: redundant = selected && !!model?.ready && !running && !job?.error;
+
   function size(n: number) {
     return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`;
   }
@@ -83,8 +83,10 @@
 
 <div class="speech-models">
   {#if error}<p role="status" class="op-error">{error} {lastUpdate ? `Last updated ${lastUpdate}.` : ""}</p>{/if}
-  {#if model}
-    <ModelStatusRow name={model.name} size={size(model.download_bytes)} {state}>
+  {#if model && redundant}
+    <!-- Named in the "In use" banner. -->
+  {:else if model}
+    <ModelStatusRow name={model.name} size={size(model.download_bytes)} {state} quiet>
       <svelte:fragment slot="action">
         {#if running && job}
           <button type="button" class="op-button" disabled={busy} on:click={() => action("cancel")}>Cancel</button>
@@ -107,9 +109,6 @@
         <p class="set-row-sub">Downloads are disabled. Prepare a package with <code>cassini models pack</code> on a connected machine, copy it here, and run <code>cassini models import</code> inside this server's Cassini runtime. Imported models appear here automatically.</p>
       {/if}
     </ModelStatusRow>
-    {#if inUse}
-      <p class="set-row-sub">In use now: <strong>{inUse.name}</strong>{inUse.ready ? "" : " (not ready)"}. Recordings keep using it until you choose this one.</p>
-    {/if}
   {:else if !error}<p class="set-row-sub">Loading model inventory…</p>{/if}
 </div>
 <style>
