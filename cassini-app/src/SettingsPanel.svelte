@@ -18,6 +18,7 @@
   import { ChevronDown, Info, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import SpeechModels from "./SpeechModels.svelte";
+  import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
   import ModelCombobox from "./ModelCombobox.svelte";
   // D-757: "Who can see recordings" is a section of the Settings panel, above
   // the pipeline it applies to. Its own component because it is a page's worth
@@ -476,6 +477,7 @@
     meetingFormat: savedMeetingFormat,
     transcriptionEnabled: settings?.transcription_enabled === true,
     quality: savedQuality,
+    activeModel: settings?.active_model,
     device: savedDevice,
     modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
     download: runningDownload(modelInventory),
@@ -631,7 +633,7 @@
     <p class="op-state">Settings aren't available.</p>
   {:else}
     <div class="pipe-body">
-      <section class="op-tint p-4 grid gap-4" aria-labelledby="recording-publication-heading">
+      <section class="op-tint p-4 grid gap-4 pipe-card" aria-labelledby="recording-publication-heading">
         <div class="strip-head">
           <h2 id="recording-publication-heading" class="set-row-name op-card-title">After each meeting</h2>
           <span class="strip-current" title="The saved settings new recordings get">Current</span>
@@ -946,6 +948,8 @@
       </section>
 
 
+      <VoiceSeparationModel client={operatorClient} inventory={modelInventory} />
+
       <!-- Both fields steer how names come out: one when transcribing, one when
            searching what was transcribed. -->
       <section class="op-tint pipe-step hints-card" aria-labelledby="transcript-hints-heading">
@@ -1056,8 +1060,18 @@
     padding: 0;
     list-style: none;
   }
+  /* The strip follows the card's width, not the window's: inside Nextcloud
+     the card is much narrower than the viewport. */
+  .pipe-card {
+    container-type: inline-size;
+  }
+  .pipe-strip li {
+    display: flex;
+  }
   .strip-chip {
     display: grid;
+    grid-template-rows: 1fr auto;
+    align-content: start;
     gap: 4px;
     justify-items: start;
     width: 100%;
@@ -1069,6 +1083,7 @@
   }
   .chip-box {
     display: grid;
+    align-content: start;
     gap: 1px;
     width: 100%;
     padding: 7px 10px;
@@ -1124,8 +1139,13 @@
     background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-base-100));
     border-color: var(--color-warning);
   }
-  /* Phone width: one row per step, name left and state right. */
-  @media (max-width: 560px) {
+  @container (max-width: 640px) {
+    .pipe-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  /* Narrow: one row per step, name left and state right. */
+  @container (max-width: 420px) {
     .pipe-strip {
       grid-template-columns: 1fr;
       gap: 0;
@@ -1213,7 +1233,7 @@
   }
   .q-title {
     margin: 0;
-    font-size: 12.5px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1.4;
   }

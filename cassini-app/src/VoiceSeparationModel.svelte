@@ -1,41 +1,66 @@
 <script lang="ts">
-  // The optional speaker separation model in Settings: download, check,
-  // cancel and retry like a speech model, but never selectable for
-  // transcription. Once it is ready, people separate voices from a meeting's
-  // participant list (docs/speaker-separation.md).
-  import { createEventDispatcher } from "svelte";
-  import type { SpeechModel, SpeechModelJob } from "./operator/types";
-  import { jobRunning, mebibytes } from "./speechModels";
-  export let model: SpeechModel;
-  export let job: SpeechModelJob | undefined = undefined;
-  export let downloadsAllowed = false;
-  export let busy = false;
-  const dispatch = createEventDispatcher<{ install: void; cancel: void; retry: void }>();
+  // The optional speaker separation model, as its own Settings card: people
+  // run it from a meeting's participant list, so it is not a step of what
+  // happens after each meeting (docs/speaker-separation.md). Download, check,
+  // cancel and retry work like a speech model; the inventory is the one the
+  // transcript step polls.
+  import type { OperatorClient } from "./operator/client";
+  import type { SpeechModelInventory } from "./operator/types";
+  import ModelStatusRow from "./ModelStatusRow.svelte";
+  import { jobRunning, mebibytes, modelJob, voiceSeparationModel } from "./speechModels";
+  export let client: OperatorClient | null = null;
+  export let inventory: SpeechModelInventory | null = null;
+  let busy = false;
+  let error = "";
+  $: model = voiceSeparationModel(inventory);
+  // It always installs and runs on the CPU, whatever transcribes.
+  $: job = modelJob(inventory, model, "cpu");
   $: running = jobRunning(job);
-  $: unsupported = model.runtime_supported === false;
+  $: unsupported = model?.runtime_supported === false;
+  $: percent = running && job && job.progress.total_bytes > 0 ? Math.min(100, Math.round(job.progress.completed_bytes / job.progress.total_bytes * 100)) : null;
+  $: state = !model ? "" : running && job ? `${job.state}${percent === null ? "" : ` · ${percent}%`}`
+    : model.ready ? "Ready"
+    : unsupported ? "Not available in this server's Cassini build"
+    : model.installed ? "Installed — runtime check needed"
+    : job?.state === "cancelled" ? "Download cancelled. Retry resumes it."
+    : "Not installed";
+  async function act(kind: "install" | "cancel" | "retry") {
+    if (!client || !model || busy) return;
+    busy = true;
+    error = "";
+    try {
+      if (kind === "install") await client.installSpeechModel(model.id, model.revision, "cpu");
+      else if (job) await client.speechModelJobAction(job.id, kind);
+    } catch (e) { error = e instanceof Error ? e.message : String(e); }
+    finally { busy = false; }
+  }
 </script>
 
-<div class="voice-separation">
-  <p class="set-row-name op-card-title">Voice separation (optional)</p>
-  <p class="set-row-sub">When several people share one device in a call, someone who can read the meeting can separate their voices from its participant list. It runs on this server, only when asked. {model.name}: download {mebibytes(model.download_bytes)} · installed {mebibytes(model.installed_bytes)}.</p>
-  {#if running && job}
-    <p role="status">{job.state} {job.progress.file ? `— ${job.progress.file}` : ""}</p>
-    {#if job.progress.total_bytes > 0}
-      <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label="Voice separation download progress"></progress>
-      <p class="set-row-sub">{mebibytes(job.progress.completed_bytes)} / {mebibytes(job.progress.total_bytes)} · {Math.min(100, Math.round(job.progress.completed_bytes / job.progress.total_bytes * 100))}%</p>
-    {/if}
-    <button type="button" class="op-button" disabled={busy} on:click={() => dispatch("cancel")}>Cancel</button>
-  {:else}
-    <p role="status">{model.ready ? "Ready" : unsupported ? "This server's Cassini runtime cannot run voice separation." : model.installed ? "Installed — runtime check needed" : "Not installed"}</p>
-    {#if job?.error}<p class="op-error">{job.error}</p>{/if}
-    {#if model.ready}
-      <p class="set-row-sub">People can now separate voices in a meeting's participant list. Transcription settings are not affected.</p>
-    {:else if !unsupported && (model.installed || downloadsAllowed)}
-      <button type="button" class="op-button" disabled={busy} on:click={() => dispatch(job ? "retry" : "install")}>{model.installed ? "Check model" : job ? "Retry download" : "Download voice separation"}</button>
-    {/if}
-  {/if}
-</div>
+{#if model}
+  <section class="op-tint voice-card" aria-labelledby="voice-separation-heading">
+    <div>
+      <h2 id="voice-separation-heading" class="set-row-name op-card-title">Voice separation <span class="optional">Optional</span></h2>
+      <p class="set-row-sub">When several people share one device in a call, anyone who can read the meeting can split that device's audio into separate voices from the participant list. It runs on this server's CPU, only when someone asks.</p>
+    </div>
+    <ModelStatusRow name={model.name} size={mebibytes(model.download_bytes)} {state}>
+      <svelte:fragment slot="action">
+        {#if running && job}
+          <button type="button" class="op-button" disabled={busy} on:click={() => act("cancel")}>Cancel</button>
+        {:else if !model.ready && !unsupported && (model.installed || inventory?.downloads_allowed)}
+          <button type="button" class="op-button" disabled={busy} on:click={() => act(job ? "retry" : "install")}>{model.installed ? "Check" : job ? "Retry" : "Download"}</button>
+        {/if}
+      </svelte:fragment>
+      {#if running && job && job.progress.total_bytes > 0}
+        <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label="Voice separation download progress"></progress>
+      {/if}
+      {#if error || job?.error}<p class="op-error">{error || job?.error}</p>{/if}
+    </ModelStatusRow>
+  </section>
+{/if}
+
 <style>
-  .voice-separation { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--color-border, #d7dde2); }
-  progress { display: block; width: 100%; margin: .5rem 0; }
+  /* Same inset as the other settings cards (.pipe-step, .hints-card). */
+  .voice-card { display: grid; gap: 12px; padding: 14px 16px; }
+  .optional { margin-left: 6px; font-size: 11.5px; font-weight: 500; color: color-mix(in oklch, var(--color-base-content) 60%, transparent); }
+  progress { display: block; width: 100%; }
 </style>

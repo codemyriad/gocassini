@@ -370,7 +370,7 @@ describe("retention reminder in the app", () => {
     await userEvent.keyboard("{Tab}");
     expect(document.activeElement).toBe(page.getByRole("button", { name: "Confirm Nextcloud password" }).element());
     await page.getByRole("button", { name: "Confirm Nextcloud password" }).click();
-    await expect.element(page.getByText("Nextcloud sharing is ready.", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Recordings account created. Sharing is ready.", { exact: true })).toBeVisible();
     await expect.element(reminder()).toBeVisible();
     expect(puts).toBe(0);
   });

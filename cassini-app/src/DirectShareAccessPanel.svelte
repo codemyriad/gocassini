@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { RefreshCw } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import { accountSteps, isSetupAvailable, runSetupPlan } from "./operator/ncSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
@@ -13,6 +12,8 @@
   export let busy = false;
   export let disabled = false;
   let error = "";
+  // Confirms a fix made from this panel; a healthy setup otherwise says nothing.
+  let fixed = false;
 
   async function load(recheck = false): Promise<void> {
     if (!operatorClient) return;
@@ -34,6 +35,7 @@
     try {
       await runSetupPlan(accountSteps(status));
       status = await operatorClient.recheckStorage();
+      fixed = status.ok;
       notifySetupChanged();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Could not create the recordings account.";
@@ -46,33 +48,30 @@
 </script>
 
 <section class="op-tint access">
-  <header class="access-head">
-    <div class="set-row-main">
-      <h2 class="set-row-name op-card-title">Who can see recordings</h2>
-      <p class="set-row-sub">Cassini uses Nextcloud file shares for every meeting.</p>
-    </div>
-    <button class="icon-btn" type="button" on:click={() => load(true)} disabled={loading || busy || disabled || !operatorClient} aria-label="Check this Nextcloud again">
-      <RefreshCw size={15} aria-hidden="true" />
-    </button>
-  </header>
+  <h2 class="set-row-name op-card-title">Who can see recordings</h2>
   <div class="access-body grid gap-3 text-sm">
-    <p>People who belonged to the Talk room while it was recorded can open the recording. People invited but absent are included. Guests without a Nextcloud account are not.</p>
-    <p>For public meetings, participants may share the file onward when this Nextcloud allows resharing. Cassini does not create a public link.</p>
+    <p>Each recording is shared with the people in the Talk room when it was recorded, including anyone invited who didn't join. Guests without a Nextcloud account can't open it.</p>
+    <p>Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.</p>
     {#if loading}
       <p role="status">Checking recordings setup…</p>
-    {:else if error}
-      <p class="text-error" role="alert">{error}</p>
-    {:else if status && !status.service_account.exists}
-      <p role="status">Cassini needs its recordings account before it can publish.</p>
-      {#if operatorClient && isSetupAvailable() && accountSteps(status).length > 0}
-        <button class="btn btn-sm btn-primary" type="button" on:click={createAccount} disabled={busy || disabled}>
-          {busy ? "Creating…" : "Create recordings account"}
-        </button>
+    {:else if error || (status && (!status.service_account.exists || !status.ok))}
+      {#if error}
+        <p class="text-error" role="alert">{error}</p>
+      {:else if status && !status.service_account.exists}
+        <p role="status">Cassini needs its recordings account before it can publish.</p>
+      {:else if status}
+        <p role="status">{status.detail || "Recordings setup needs attention."}</p>
       {/if}
-    {:else if status && !status.ok}
-      <p role="status">{status.detail || "Recordings setup needs attention."}</p>
-    {:else if status}
-      <p role="status">Nextcloud sharing is ready.</p>
+      <div class="access-actions">
+        {#if status && !status.service_account.exists && operatorClient && isSetupAvailable() && accountSteps(status).length > 0}
+          <button class="btn btn-sm btn-primary" type="button" on:click={createAccount} disabled={busy || disabled}>
+            {busy ? "Creating…" : "Create recordings account"}
+          </button>
+        {/if}
+        <button class="btn btn-sm" type="button" on:click={() => load(true)} disabled={busy || disabled || !operatorClient}>Check again</button>
+      </div>
+    {:else if fixed}
+      <p role="status">Recordings account created. Sharing is ready.</p>
     {/if}
   </div>
 </section>
@@ -84,14 +83,9 @@
     gap: 12px;
     padding: 14px 16px;
   }
-  /* The refresh button belongs to the title row, at its far edge. */
-  .access-head {
+  .access-actions {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 14px;
-  }
-  .access-head .icon-btn {
-    flex: none;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 </style>

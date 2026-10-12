@@ -3,9 +3,8 @@
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModel, SpeechModelInventory } from "./operator/types";
   import ModelStatusRow from "./ModelStatusRow.svelte";
-  import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
   import { speechModelFor } from "./operator/pipelineStatus";
-  import { jobRunning, modelJob, voiceSeparationModel } from "./speechModels";
+  import { jobRunning, modelJob } from "./speechModels";
   export let client: OperatorClient | null;
   export let quality = "balanced";
   export let device = "cpu";
@@ -58,6 +57,9 @@
   $: running = jobRunning(job);
   $: selected = enabled && activeModel === model?.id && activeRevision === model?.revision;
   $: readyModel = model?.ready ? model : null;
+  // The row follows the quality picked; builds use the saved model. When they
+  // differ, say which one recordings are transcribed with now.
+  $: inUse = enabled && activeModel && activeModel !== model?.id ? inventory?.models.find((m) => m.id === activeModel) : undefined;
   function size(n: number) {
     return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`;
   }
@@ -67,9 +69,6 @@
     : model.installed ? "Installed — runtime check needed"
     : job?.state === "cancelled" ? "Download cancelled. Retry resumes it."
     : "Not installed";
-  // Voice separation is installed and run on the CPU whatever transcribes.
-  $: separation = voiceSeparationModel(inventory);
-  $: separationJob = modelJob(inventory, separation, "cpu");
   async function action(kind: "install" | "cancel" | "retry", target = model, targetJob = job, targetDevice = device) {
     if (!client || !target || busy) return;
     busy = true;
@@ -80,7 +79,6 @@
     } catch (e) { error = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
   }
-  function separationAction(kind: "install" | "cancel" | "retry") { return action(kind, separation, separationJob, "cpu"); }
 </script>
 
 <div class="speech-models">
@@ -109,9 +107,8 @@
         <p class="set-row-sub">Downloads are disabled. Prepare a package with <code>cassini models pack</code> on a connected machine, copy it here, and run <code>cassini models import</code> inside this server's Cassini runtime. Imported models appear here automatically.</p>
       {/if}
     </ModelStatusRow>
-    {#if separation}
-      <VoiceSeparationModel model={separation} job={separationJob} downloadsAllowed={!!inventory?.downloads_allowed} {busy}
-        on:install={() => separationAction("install")} on:cancel={() => separationAction("cancel")} on:retry={() => separationAction("retry")} />
+    {#if inUse}
+      <p class="set-row-sub">In use now: <strong>{inUse.name}</strong>{inUse.ready ? "" : " (not ready)"}. Recordings keep using it until you choose this one.</p>
     {/if}
   {:else if !error}<p class="set-row-sub">Loading model inventory…</p>{/if}
 </div>

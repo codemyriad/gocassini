@@ -83,4 +83,9 @@ describe("helpers", () => {
     expect(retentionSpan({ forever: true })).toBe("forever");
     expect(retentionSpan(null)).toBeNull();
   });
+
+  it("names the tier of the saved model, which is what builds use", () => {
+    const status = pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-tdt-0.6b-v3-int8" });
+    expect(status.transcribe.state).toBe("On · Balanced · CPU");
+  });
 });
