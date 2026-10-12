@@ -1146,6 +1146,12 @@
   // Retry is offered exactly where something can perform it: the card and the
   // sheet render the control only when the provider has the method.
   $: canRetryInsight = typeof dataProvider.retryInsight === "function";
+  // The offline copy (D-792). Files is only where there is a Nextcloud to open
+  // it in; a source links to its own sheet in this viewer, wherever this is.
+  $: insightFilesUrl =
+    selectedInsight && dataProvider.insightFilesUrl ? dataProvider.insightFilesUrl(selectedInsight) : "";
+  const insightSourceUrl = (source: MeetingCatalogEntry) =>
+    viewerHref(buildViewerHash({ meeting: source.id }));
   // Resolved against the WHOLE catalog, not the room-narrowed list: an insight
   // spanning rooms names sources in each of them, and counting only the ones in
   // the room being looked at would make the same insight claim a different
@@ -1495,6 +1501,8 @@
             documentLoading={insightDocumentLoading}
             canLoadDocument={canLoadInsightDocument}
             canRetry={canRetryInsight}
+            filesUrl={insightFilesUrl}
+            meetingUrl={insightSourceUrl}
             retrying={retryingInsightId === selectedInsight.id}
             retryError={insightRetryError?.id === selectedInsight.id ? insightRetryError.message : ""}
             on:close={closeSheet}

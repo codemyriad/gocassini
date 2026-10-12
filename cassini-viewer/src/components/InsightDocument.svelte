@@ -2,9 +2,11 @@
   import { createEventDispatcher } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, FileText, MessageSquare } from "@lucide/svelte";
+  import { Calendar, Copy, Download, ExternalLink, FileText, MessageSquare } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
+  import { saveTranscript } from "../viewer/exportTransfer";
+  import { exportFileName, renderInsightExport } from "../viewer/insightExport";
   import { roomLabelOf } from "../viewer/rooms";
   import {
     describeInsightFailure,
@@ -46,6 +48,12 @@
   export let canRetry = false;
   export let retrying = false;
   export let retryError = "";
+  // Where the document's folder opens in Nextcloud Files, or "" in a build
+  // with no Nextcloud. Sharing is Nextcloud's: its share sidebar is there, and
+  // a second share dialog here would be a second answer to who can see it.
+  export let filesUrl = "";
+  // Where a source opens in this Cassini, for the links in the offline copy.
+  export let meetingUrl: (source: MeetingCatalogEntry) => string = () => "";
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -95,6 +103,51 @@
   }
 
   $: documentHtml = renderDocumentHtml(documentMarkdown);
+
+  // The offline copy (D-792) is offered only for an answer that is on screen:
+  // copying a run that has not finished, or one whose file has gone, would
+  // hand over a header with nothing under it.
+  $: exportable =
+    insight.status === "succeeded" &&
+    canLoadDocument &&
+    !documentLoading &&
+    !documentError &&
+    documentHtml !== "";
+
+  type StatusTone = "ok" | "warn";
+  let exportStatus: { tone: StatusTone; text: string } | null = null;
+  // A status line about one insight must not stay up over the next.
+  $: insight.id, (exportStatus = null);
+
+  function exportText(): string {
+    return renderInsightExport({ record: insight, sources, markdown: documentMarkdown, meetingUrl });
+  }
+
+  async function handleCopy() {
+    // The same three outcomes as Prepare's Copy, said out loud for the same
+    // reason: the embedded app lives in a shadow root inside Nextcloud, an
+    // insecure origin has no clipboard, and a Copy that silently did nothing
+    // looks like a copy that came out empty. Unlike Prepare there is nothing to
+    // assemble — the document is already here — so the write is made inside
+    // the click without a promised ClipboardItem.
+    const clipboard = navigator.clipboard;
+    if (!clipboard || typeof clipboard.writeText !== "function") {
+      exportStatus = { tone: "warn", text: "Clipboard unavailable here — use Download." };
+      return;
+    }
+    try {
+      await clipboard.writeText(exportText());
+      exportStatus = { tone: "ok", text: "Copied as markdown." };
+    } catch {
+      exportStatus = { tone: "warn", text: "Clipboard blocked here — press Copy again, or use Download." };
+    }
+  }
+
+  function handleDownload() {
+    const name = exportFileName(insight);
+    saveTranscript(exportText(), name);
+    exportStatus = { tone: "ok", text: `Downloaded ${name}.` };
+  }
 </script>
 
 <section class="ins-doc" aria-label="Insight">
@@ -124,6 +177,32 @@
         <code class="ins-head-model">{insight.model}</code>
       {/if}
     </div>
+    {#if exportable}
+      <!-- Taking the answer out of Cassini (D-792): a markdown copy with a
+           header that says what it is, and the file itself in Files, where
+           Nextcloud shares it. -->
+      <div class="ins-actions">
+        <button type="button" on:click={handleCopy}>
+          <Copy size={14} aria-hidden="true" />
+          Copy
+        </button>
+        <button type="button" on:click={handleDownload}>
+          <Download size={14} aria-hidden="true" />
+          Download
+        </button>
+        {#if filesUrl}
+          <a href={filesUrl} target="_blank" rel="noopener">
+            <ExternalLink size={14} aria-hidden="true" />
+            Open in Files
+          </a>
+        {/if}
+      </div>
+      {#if exportStatus}
+        <p class="ins-export-status" data-tone={exportStatus.tone} role="status">
+          {exportStatus.text}
+        </p>
+      {/if}
+    {/if}
   </header>
 
   <div class="ins-body">
@@ -331,6 +410,42 @@
     font-size: 11.5px;
     overflow-wrap: anywhere;
     color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+  }
+
+  /* The Retry button's treatment (.ins-retry button), so every control the
+     sheet offers is the same control. */
+  .ins-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  .ins-actions button,
+  .ins-actions a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 550;
+    text-decoration: none;
+    background-color: var(--color-base-100);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    color: var(--color-base-content);
+  }
+  .ins-actions button:hover,
+  .ins-actions a:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
+  }
+  .ins-export-status {
+    margin: 0.375rem 0 0;
+    font-size: 0.75rem;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .ins-export-status[data-tone="warn"] {
+    color: var(--color-warning, #b45309);
   }
 
   .ins-body {
