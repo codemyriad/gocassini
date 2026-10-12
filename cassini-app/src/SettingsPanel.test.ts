@@ -111,10 +111,10 @@ describe("SettingsPanel layout", () => {
     // than in a card of its own, which would read as a pipeline step.
     const hardwareAt = settingsPanelSource.indexOf(">Hardware<");
     const deviceAt = settingsPanelSource.indexOf(">Override transcription device<");
-    const qualityAt = settingsPanelSource.indexOf(">Quality<");
+    const summarisationAt = settingsPanelSource.indexOf("Summarisation\n");
     expect(hardwareAt).toBeGreaterThan(-1);
     expect(deviceAt).toBeGreaterThan(hardwareAt);
-    expect(deviceAt).toBeLessThan(qualityAt);
+    expect(deviceAt).toBeLessThan(summarisationAt);
   });
 
   it("gives each pipeline step a card of its own", () => {
@@ -123,8 +123,20 @@ describe("SettingsPanel layout", () => {
     // party — read as one block. Each step is its own tinted card, as each
     // template is on Insight templates.
     const steps = settingsPanelSource.match(/<section\b[^>]*class="[^"\n]*\bpipe-step\b[^"\n]*"[^>]*>/g);
-    expect(steps?.length).toBe(4);
+    expect(steps?.length).toBe(3);
     expect(settingsPanelSource).not.toContain("rounded-box border border-base-300 bg-base-200 p-3");
+  });
+
+  it("asks about transcription inside Publishing, between what is published and what is kept", () => {
+    const publishingAt = settingsPanelSource.indexOf('aria-labelledby="recording-publication-heading"');
+    const formatAt = settingsPanelSource.indexOf('id="meeting-format"');
+    const transcriptionAt = settingsPanelSource.indexOf('aria-label="Transcription settings"');
+    const qualityAt = settingsPanelSource.indexOf(">Quality<");
+    const keepAt = settingsPanelSource.indexOf(">Keep on the server after publishing<");
+    const hardwareAt = settingsPanelSource.indexOf(">Hardware<");
+    expect(publishingAt).toBeGreaterThan(-1);
+    expect([publishingAt, formatAt, transcriptionAt, qualityAt, keepAt, hardwareAt]).toEqual(
+      [...[publishingAt, formatAt, transcriptionAt, qualityAt, keepAt, hardwareAt]].sort((a, b) => a - b));
   });
 });
 

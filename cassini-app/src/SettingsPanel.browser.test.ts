@@ -41,7 +41,13 @@ it("saves the publication format through settings and restores it on reload", as
   await expect.element(format).toHaveValue("opus");
   await format.selectOptions("json");
   expect(writes).toHaveLength(0);
-  await expect.element(page.getByText(/otherwise new meetings will contain neither/)).toBeVisible();
+  await expect.element(page.getByText("Transcription is off. Turn it on above to include a transcript.")).toBeVisible();
+  // Publishing reads: what is published, then transcription, then what stays on the server.
+  const card = host.querySelector('[aria-labelledby="recording-publication-heading"]')!;
+  const order = ["#meeting-format", '[aria-label="Transcription settings"]', "fieldset"].map((selector) => card.querySelector(selector));
+  expect(order.every(Boolean)).toBe(true);
+  expect(order[0]!.compareDocumentPosition(order[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(order[1]!.compareDocumentPosition(order[2]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => saved.meeting_format).toBe("json");
   expect(writes[0].meeting_format).toBe("json");

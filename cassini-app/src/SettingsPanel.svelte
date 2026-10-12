@@ -569,10 +569,54 @@
             </select>
           </label>
           <p id="publication-help" class="set-row-sub">Camera video is never published; it stays on the server.</p>
-          {#if meetingFormat === "json" && !transcriptionEnabled}
-            <p class="set-row-sub">Transcription is off. Enable it below to include a transcript; otherwise new meetings will contain neither a transcript nor playable audio.</p>
-          {/if}
         </div>
+        <!-- Transcription sits between what is published and what stays on
+             the server: whether a transcript is made decides both. The switch
+             sits in the heading, as on Summarisation; turning it on selects
+             the ready model for the chosen quality. -->
+        <section class="pub-transcription scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
+          <div class="step-head">
+            <p class="op-field-label">Transcription</p>
+            <input
+              type="checkbox"
+              class="op-switch"
+              aria-label="Transcribe every recording"
+              disabled={!transcriptionEnabled && !readyModel}
+              checked={transcriptionEnabled}
+              on:change={(event) => toggleTranscription(event.currentTarget.checked)}
+            />
+          </div>
+          {#if meetingFormat === "json" && !transcriptionEnabled}
+            <p class="set-row-sub">Transcription is off. Turn it on above to include a transcript.</p>
+          {/if}
+          {#if !transcriptionEnabled && !readyModel}
+            <p class="set-row-sub">Download the model below to turn transcription on.</p>
+          {/if}
+          {#if runsOnGPU}
+            <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
+          {/if}
+          <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
+          <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
+            {#each QUALITY_OPTIONS as option (option.value)}
+              <label class="q-opt" class:selected={quality === option.value}>
+                <input
+                  type="radio"
+                  name="stt-quality"
+                  class="q-radio"
+                  value={option.value}
+                  bind:group={quality}
+                />
+                <span class="q-main">
+                  <span class="q-label">{option.label}</span>
+                  <span class="q-desc">{option.description}</span>
+                </span>
+              </label>
+            {/each}
+          </div>
+          <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
+            bind:readyModel
+            on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
+        </section>
         <fieldset class="grid gap-3" disabled={saving}>
           <legend class="op-field-label mb-2">Keep on the server after publishing</legend>
           <label class="flex items-start gap-3 text-sm" class:keep-unavailable={meetingFormat === "opus"}>
@@ -591,13 +635,7 @@
         </fieldset>
         {#if recordingMedia === "nothing"}
           {#if !transcriptionEnabled || !activeModel || !activeRevision}
-            <div class="transcription-setup" role="status">
-              <TriangleAlert size={20} class="transcription-setup-icon" aria-hidden="true" />
-              <div class="transcription-setup-copy">
-                <strong>Transcription must be on to keep nothing.</strong>
-              </div>
-              <button class="transcription-setup-action" type="button" on:click={focusTranscriptionSettings}>Set up transcription</button>
-            </div>
+            <p class="set-row-sub" role="status"><strong>Transcription must be on to keep nothing.</strong> <button type="button" class="link" on:click={focusTranscriptionSettings}>Set up transcription</button></p>
           {/if}
         {:else}
           <p class="set-row-sub">How long kept media stays is set in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
@@ -690,56 +728,6 @@
             processed.
           </p>
         </div>
-      </section>
-
-      <!-- One row per step, in pipeline order: transcribe, then summarise.
-           Each step is its own row under a full rule with extra space above,
-           so two independent settings — one of which sends text to a third
-           party — do not read as one block, without a card around each. -->
-      <section class="op-tint pipe-step scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
-        <div class="set-row-main">
-          <!-- The switch sits in the heading, as on Summarisation. Turning it
-               on selects the ready model for the chosen quality. -->
-          <div class="step-head">
-            <p class="set-row-name op-card-title">Transcription</p>
-            <input
-              type="checkbox"
-              class="op-switch"
-              aria-label="Transcribe every recording"
-              disabled={!transcriptionEnabled && !readyModel}
-              checked={transcriptionEnabled}
-              on:change={(event) => toggleTranscription(event.currentTarget.checked)}
-            />
-          </div>
-          {#if !transcriptionEnabled && !readyModel}
-            <p class="set-row-sub">Download the model below to turn transcription on.</p>
-          {/if}
-          {#if runsOnGPU}
-            <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
-          {/if}
-          <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
-          <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
-            {#each QUALITY_OPTIONS as option (option.value)}
-              <label class="q-opt" class:selected={quality === option.value}>
-                <input
-                  type="radio"
-                  name="stt-quality"
-                  class="q-radio"
-                  value={option.value}
-                  bind:group={quality}
-                />
-                <span class="q-main">
-                  <span class="q-label">{option.label}</span>
-                  <span class="q-desc">{option.description}</span>
-                </span>
-              </label>
-            {/each}
-          </div>
-          <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
-            bind:readyModel
-            on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
-        </div>
-
       </section>
 
       <!-- Summarisation. The switch belongs to the name, not to the far edge of
@@ -955,49 +943,14 @@
   {/if}
 
 <style>
-  .transcription-setup {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px;
-    padding: 14px;
-    background-color: color-mix(in srgb, var(--color-primary) 9%, var(--color-base-100));
-    border-radius: var(--radius-box, 0.75rem);
-  }
-  .transcription-setup :global(.transcription-setup-icon) {
-    flex: none;
-    color: var(--color-primary);
-  }
-  .transcription-setup-copy {
-    flex: 1 1 240px;
-    min-width: 0;
-    font-size: 13.5px;
-    line-height: 1.5;
-    color: var(--color-base-content);
-  }
-  .transcription-setup-copy strong {
-    font-weight: 650;
-  }
   .keep-unavailable {
     color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
-  .transcription-setup-action {
-    padding: 9px 12px;
-    cursor: pointer;
-    background-color: var(--color-base-content);
-    color: var(--color-base-100);
-    border: 0;
-    border-radius: var(--radius-field, 0.5rem);
-    font-size: 12.5px;
-    font-weight: 600;
-    line-height: 1.4;
-  }
-  .transcription-setup-action:hover {
-    background-color: color-mix(in oklch, var(--color-base-content) 88%, var(--color-base-100));
-  }
-  .transcription-setup-action:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 3px;
+  .pub-transcription {
+    display: grid;
+    gap: 4px;
+    padding-block: 16px;
+    border-block: 1px solid var(--op-border, color-mix(in oklch, var(--color-base-content) 12%, transparent));
   }
   .pipe-body {
     display: grid;
