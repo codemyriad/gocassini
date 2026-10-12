@@ -27,6 +27,8 @@
   let split = false;
   const supportedZones = (Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
   const timezones = [...new Set(["UTC", Intl.DateTimeFormat().resolvedOptions().timeZone, ...supportedZones])];
+  // A saved zone the browser does not list must stay selectable, or the select would drop it.
+  $: zoneOptions = settings && !timezones.includes(settings.schedule.timezone) ? [settings.schedule.timezone, ...timezones] : timezones;
   async function load() {
     busy = true; error = ""; notice = "";
     try { if (!operatorClient) throw new Error("Operator unavailable"); accept(await operatorClient.getRetention());
@@ -75,54 +77,56 @@
 <svelte:window on:beforeunload={beforeUnload} />
 <section class="retention-panel" id="retention-policies">
   <div class="retention-content">
-  <h2 class="text-xl font-semibold" tabindex="-1">Retention policies</h2>
-  <p>Choose how long Cassini keeps container files and published meetings in Nextcloud Files. Keep forever uses more space as recordings accumulate; shorter windows free space after cleanup. All categories currently default to keep forever.</p>
-  <p class="text-sm">Container policies and Nextcloud Files have separate controls. Job metadata is retained. These settings do not choose whether cameras are captured.</p>
-  <p class="text-sm">Choose 7, 30, 60, 90 or a custom number of days. Retention ages use UTC dates. Cleanup runs at startup and on the daily schedule below. Active jobs are protected; busy or unsafe artefacts are retried on a later pass.</p>
+  <div class="grid gap-1">
+    <h2 class="text-xl font-semibold" tabindex="-1">Retention</h2>
+    <p class="text-sm opacity-80">How long Cassini keeps each kind of file. Saving never deletes anything immediately.</p>
+  </div>
   {#if settings}
     <form id={formId} class="grid gap-4" on:submit|preventDefault={save}>
       <fieldset disabled={busy || disabled || $retentionMutationBusy} class="grid gap-4">
-        <section class="op-tint p-4">
-          <h3 class="font-semibold">Container recordings</h3>
-          <RetentionPolicyField bind:policy={settings.recordings} label="Source recordings" />
-          <p class="text-sm">Original captured audio, any captured video and supporting files can take substantial space. Cleanup deletes the entire source recording. Once deleted, the job cannot be rerun.</p>
+        <section class="op-tint p-4 category">
+          <h3 class="font-semibold">Recordings</h3>
+          <p class="text-sm opacity-80">Audio and video captured on this server. Deleting them means the meeting cannot be reprocessed.</p>
+          <RetentionPolicyField bind:policy={settings.recordings} label="Recordings" hideLabel />
         </section>
-        <section class="op-tint p-4">
-          <h3 class="font-semibold">Attempt history</h3>
-          <p class="text-sm">Failed recordings, intermediate build files and replaced outputs help diagnose problems but can accumulate across retries. Choose one window for all of them or a separate window for each kind.</p>
-          <label class="text-sm">Policy control
-            <select class="select select-bordered" value={settings.history.mode} on:change={e => mode(e.currentTarget.value)}>
-              <option value="group">Whole group</option><option value="fine">Fine-grained</option>
-            </select>
-          </label>
+        <section class="op-tint p-4 category">
+          <h3 class="font-semibold">Published meetings (on this server)</h3>
+          <p class="text-sm opacity-80">The published meeting stays in Nextcloud Files after this copy is removed.</p>
+          <RetentionPolicyField bind:policy={settings.current} label="Published meetings (on this server)" hideLabel />
+        </section>
+        <section class="op-tint p-4 category">
+          <h3 class="font-semibold">Previous attempts</h3>
+          <p class="text-sm opacity-80">Failed recordings, failed processing, replaced output and failed publishing.</p>
           {#if settings.history.mode === "group"}
-            <RetentionPolicyField bind:policy={settings.history.policy} label="Whole group" />
+            <RetentionPolicyField bind:policy={settings.history.policy} label="Previous attempts" hideLabel />
+            <button type="button" class="link text-sm justify-self-start" on:click={() => mode("fine")}>Set each kind separately</button>
           {:else}
-            {#each Object.keys(settings.history.fine) as kind}<RetentionPolicyField bind:policy={settings.history.fine[kind]} label={retentionLabels[kind]} />{/each}
+            {#each Object.keys(settings.history.fine) as kind (kind)}<RetentionPolicyField bind:policy={settings.history.fine[kind]} label={retentionLabels[kind]} />{/each}
+            <button type="button" class="link text-sm justify-self-start" on:click={() => mode("group")}>Use one setting for all kinds</button>
           {/if}
         </section>
-        <section class="op-tint p-4"><RetentionPolicyField bind:policy={settings.current} label="Current output archive" /><p class="text-sm">The latest local build bundle and meeting file expire together. Removing these local copies saves space; recordings already published in Nextcloud remain available.</p></section>
-        <section class="op-tint p-4"><RetentionPolicyField bind:policy={settings.logs} label="Logs" /><p class="text-sm">Processing logs help diagnose failures and grow with each attempt. This does not include operator service logs.</p></section>
+        <section class="op-tint p-4 category">
+          <h3 class="font-semibold">Processing logs</h3>
+          <p class="text-sm opacity-80">Logs from each recording attempt.</p>
+          <RetentionPolicyField bind:policy={settings.logs} label="Processing logs" hideLabel />
+        </section>
         {#if settings.nextcloud}
-        <section class="op-tint p-4 grid gap-3">
-          <h3 class="font-semibold">Nextcloud Files</h3>
-          <RetentionPolicyField bind:policy={settings.nextcloud.meetings} label="Whole meetings" />
-          <p class="text-sm">Deletes the published meeting, including its audio, transcription and meeting notes. The meeting disappears from shared Files and Cassini.</p>
-          <p class="text-sm">Ages use the recorded local date when available, otherwise the published meeting’s creation date. Nextcloud manages previous versions and Deleted files; their storage usage is unknown.</p>
+        <section class="op-tint p-4 category">
+          <h3 class="font-semibold">Published meetings in Nextcloud</h3>
+          <p class="text-sm opacity-80">Deletes the published meeting, including its transcript and notes.</p>
+          <RetentionPolicyField bind:policy={settings.nextcloud.meetings} label="Published meetings in Nextcloud" hideLabel />
         </section>
         {/if}
-        <section class="op-tint p-4 grid gap-3">
-          <h3 class="font-semibold">Daily cleanup schedule</h3>
-          <label class="text-sm">Sweep time
-            <input class="input input-bordered" type="time" step="60" required bind:value={settings.schedule.time} />
-          </label>
-          <label class="text-sm">Timezone
-            <input class="input input-bordered w-full" list="retention-timezones" required bind:value={settings.schedule.timezone} placeholder="UTC or Europe/Zagreb" />
-            <datalist id="retention-timezones">{#each timezones as timezone}<option value={timezone}></option>{/each}</datalist>
-          </label>
-          <p class="text-sm">Default: 02:00 UTC. Saving updates the next scheduled cleanup without restarting. If daylight saving skips the chosen time, cleanup runs at the first available time afterward; if the time repeats, it runs at the first occurrence only.</p>
+        <section class="op-tint p-4 category">
+          <h3 class="font-semibold">Daily cleanup</h3>
+          <div class="flex flex-wrap items-center gap-2 text-sm">
+            <span>Run at</span>
+            <input class="input input-bordered w-32" type="time" step="60" required aria-label="Cleanup time" bind:value={settings.schedule.time} />
+            <select class="select select-bordered w-auto max-w-full" required aria-label="Timezone" bind:value={settings.schedule.timezone}>
+              {#each zoneOptions as timezone (timezone)}<option value={timezone}>{timezone}</option>{/each}
+            </select>
+          </div>
         </section>
-        <p class="text-sm">Saving applies to existing artefacts at the next daily/startup cleanup, using their original lifecycle dates. Saving does not delete files immediately.</p>
       </fieldset>
     </form>
   {:else if busy}
@@ -130,7 +134,7 @@
   {/if}
   </div>
   <div class="retention-footer">
-    <RetentionActions {formId} {error} {notice}
+    <RetentionActions {formId} {error} {notice} dirty={$unsavedChanges}
       disabled={busy || disabled || $retentionMutationBusy} canSave={!!settings && (settings.revision === 0 || JSON.stringify(settings) !== saved)}
       on:reload={() => guardLeave(load)} />
   </div>
@@ -138,4 +142,5 @@
 
 <style>
   .retention-panel, .retention-content { display: grid; gap: 16px; min-width: 0; }
+  .category { display: grid; gap: 4px; }
 </style>

@@ -126,8 +126,9 @@
               />{/if}
           </span>
         {/if}
-        <span class="mark"><TagIcon icon={tag.icon} /></span>
-        <span class="name">{tag.label}</span>
+        <!-- The mark is in the name's line so vertical-align: middle centres
+             it on the name's x-height; as a flex item it sat on the box centre. -->
+        <span class="name"><span class="mark"><TagIcon icon={tag.icon} /></span>{tag.label}</span>
         <span class="uses">{plural(tag.meetings, "meeting")}</span>
       </li>
     {/each}
@@ -225,6 +226,8 @@
   }
   .mark {
     display: inline-flex;
+    margin-right: 8px;
+    vertical-align: middle;
     color: var(--tag);
   }
   .name {

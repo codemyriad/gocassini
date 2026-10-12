@@ -347,7 +347,7 @@ could not use.
 
 Publishing a transcription-only JSON does not by itself delete captured audio.
 By default source media remains under Storage policies and can support reruns.
-Administrators may explicitly select **Nothing** under **Keep after each recording**
+Administrators may explicitly select **Nothing** under **Keep on the server after publishing**
 for future transcription-only recordings. This uses audio-only capture, keeps
 media temporarily through initial processing, and deletes it after publication
 succeeds or processing permanently fails. Failure may leave no usable transcript.

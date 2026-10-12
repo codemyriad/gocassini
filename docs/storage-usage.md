@@ -2,56 +2,57 @@
 
 Open **Cassini → Operator → Storage** as an administrator. The page shows local
 retained bytes, published Nextcloud bytes, category comparisons and date charts.
-Use **Retention policies** at the top to reach the cleanup controls on the same
+The **Retention** editor sits below the report on the same
 page. See [retention behavior](container-retention.md) before changing policies.
 
-The comparison covers all retained dates. Select a category to open its chart.
-**Split attempt history** exposes the four fine-grained history categories; it
-changes only the report, regardless of the saved group/fine policy mode.
+The comparison covers all retained dates, including published Nextcloud files. Select a category to open its chart.
+Expanding **Previous attempts** shows its four kinds; it starts expanded when the
+saved policy sets each kind separately, and changes only the report.
 
 ```text
 Storage totals
     |
-    +-- Retention category comparison
+    +-- Storage category comparison
     |       +-- Select category --> Retained bytes by lifecycle date
-    |                                 +-- Time range / precision
+    |                                 +-- Time range
     |                                 +-- Focus or tap bar / data table
     |
-    +-- Retention policies --> Explicit Save --> Next scheduled cleanup
+    +-- Retention --> Explicit Save --> Next scheduled cleanup
 ```
 
 Each chart has independent controls:
 
-- **Time range:** all retained dates, last 7/30/90 days, last year, or inclusive
-  custom start and end dates. All retained dates adapts to the available data.
-- **Precision:** daily, 7/30/60/90 days, or custom 1–9999 days per bar. These day
-  presets are shared with the retention form. The initial precision adapts to
-  the category's date span. Buckets start at the selected range's start date;
-  the final bucket ends at the selected end date.
+- **Time range:** all time, last 7/30/90 days, last year, or inclusive
+  custom start and end dates. All time adapts to the available data.
+- **Days per bar:** chosen from the range: daily, 7/30/60/90 days, or wider for
+  very long ranges, so a chart never needs more than 60 bars. Buckets start at
+  the selected range's start date; the final bucket ends at the selected end date.
 - **Exact values:** hover, focus or tap a bar, or open **View chart data** for
-  dates, raw bytes and file counts. Wide charts scroll inside the card. Ranges
-  requiring more than 180 bars ask for a shorter range or coarser precision.
+  dates, raw bytes and file counts. Wide charts scroll inside the card. Use the
+  scrollbar, keyboard, or Earlier/Later buttons to explore every bar. Grouping
+  adapts automatically to the selected range.
 
 Chart controls do not save settings, delete files or trigger filesystem scans.
 Changing the time range does not change the all-dates comparison total.
 
 ## What the dates and totals mean
 
-This is a distribution of **files still present at calculation time**, using
-UTC dates from the same lifecycle records as retention. It is not a record of
+This is a distribution of **files still present at calculation time**. Local
+categories use UTC dates from the same lifecycle records as retention. It is not a record of
 how full the disk was in the past, a growth forecast, or an estimate of how many
 bytes a retention change will free.
 
 | Category | Date used |
 | --- | --- |
-| Source recordings | Recording completion, including a remaining capture duplicate |
-| Current output archive | Publication of that output version, including its retained seal/meeting copy |
+| Recordings | Recording completion, including a remaining capture duplicate |
+| Published meetings (on this server) | Publication of that output version, including its retained seal/meeting copy |
 | Failed recordings | Failed/interrupted attempt termination |
-| Failed build / seal output | Failed/interrupted attempt termination |
-| Superseded successful output | The replacing successful publication |
-| Failed publish staging | Failed/interrupted attempt termination |
-| Logs | Attempt termination |
+| Failed processing | Failed/interrupted attempt termination |
+| Replaced output | The replacing successful publication |
+| Failed publishing | Failed/interrupted attempt termination |
+| Processing logs | Attempt termination |
 | Other local files | No date inferred; work in progress and unmatched files remain visible |
+| In Nextcloud Files | Successful publication in UTC; files without a job use `recordedAtLocal`, then `createdAtUtc` |
 
 Unknown lifecycle dates remain in the category total and are reported separately
 from the date chart. File modification times are never substituted. Policy
@@ -68,6 +69,37 @@ legacy roots. These external bytes are shown separately because container-local
 retention does not remove them. Measurement failures show a partial/unavailable
 result; the page never treats a failed remote measurement as zero.
 
+The Nextcloud chart uses the latest successful publication for the matching
+destination and file format. An older copy in another root or format is not
+assigned a newer publication's date. Files with no corresponding job use a valid
+`recordedAtLocal` calendar date without timezone conversion, falling back to
+`createdAtUtc` converted to UTC. Either field alone is sufficient. Files with
+neither usable date, and shared metadata such as legacy catalogs, remain undated.
+
+The scan uses the metadata index or matching lifecycle metadata first. For older
+unindexed meetings it conditionally downloads the file and runs
+`cassini inspect --meeting-times`; successful inspections are cached in memory by
+path, Nextcloud file ID and ETag until the file changes or the operator restarts.
+These reads share the calculation's timeout. Failed date reads preserve measured
+bytes as undated and display an incomplete-breakdown warning; Recalculate retries
+them. Failed root scans are excluded from chart totals and visibly mark the
+measurement incomplete. Successful root totals always equal dated plus undated
+bytes. Chart controls use the snapshot and never initiate downloads.
+
+```text
+Nextcloud file paths + sizes
+    |
+    +-- Matching job/destination/format --> Successful publication date (UTC)
+    |
+    +-- No job --> Indexed timestamps --> Inspect file if needed
+    |                                      |
+    |                         recordedAtLocal -> createdAtUtc -> undated
+    |
+    +-- Unmatched copy / shared metadata --> undated
+                                               |
+                             Published total + daily buckets --> Chart
+```
+
 ## Refreshing and API
 
 Opening Storage first reads the cached report, then recalculates it. **Recalculate**
@@ -82,6 +114,12 @@ The additive `categories` field contains totals, `undated_bytes`,
 `undated_files`, and daily `{date, bytes, files}` entries. `category_error`
 reports lifecycle lookup failures. Existing directory/format fields remain for
 API compatibility; the UI uses categories.
+
+The separate additive `published_category` has the same category shape and sums
+successful current/legacy Nextcloud roots. It never contributes to local category
+totals. `published_category_error` reports date lookup/inspection failures; remote
+measurement failures remain on the corresponding `published` source. An older
+operator that omits the field shows a date-data-unavailable message.
 
 ```text
 Job / attempt lifecycle records --> Exact policy-owned paths

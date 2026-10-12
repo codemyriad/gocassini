@@ -72,11 +72,11 @@ try {
   // Navigate out of the meeting sheet through its normal Close action first.
   await page.locator('button[aria-label="Close the meeting"][title="Close (Esc)"]').click();
   if (retentionAction === "save") {
-    await reminder.getByRole("button", { name: "Review settings", exact: true }).click();
+    await reminder.getByRole("button", { name: "Review", exact: true }).click();
   }
   const [savedResponse] = await Promise.all([
     page.waitForResponse(r => r.url() === retentionURL && r.request().method() === "PUT"),
-    page.getByRole("button", { name: retentionAction === "save" ? "Save retention settings" : "Don't remind again", exact: true }).click(),
+    page.getByRole("button", { name: retentionAction === "save" ? "Save" : "Dismiss", exact: true }).click(),
   ]);
   assert.equal(savedResponse.status(), 200);
   const saved = await savedResponse.json();

@@ -115,9 +115,30 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		}
 		return
 	}
+	var notification *talkNotification
+	var notificationClient *talkNotificationClient
+	if sink, ok := rt.sink().(interface {
+		talkNotificationClient() *talkNotificationClient
+	}); ok {
+		notificationClient = sink.talkNotificationClient()
+		if notificationClient != nil {
+			var err error
+			notification, err = rt.store.prepareTalkNotification(rt.ctx, task.JobID, notificationClient.cfg.AppID)
+			if err != nil {
+				rt.logger.Printf("Talk notification skipped id=%s: %v", task.JobID, err)
+			}
+		}
+	}
 	if err := rt.store.MarkPublishSucceeded(context.Background(), task.JobID, location, attemptArtifactSitePath, finishedAt); err != nil {
 		rt.logger.Printf("publish success update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return
+	}
+	// Best effort: one bounded request, with no retry or restart recovery.
+	// Failure never changes the publication result or stops its cleanup.
+	if notification != nil {
+		if _, err := notificationClient.send(rt.ctx, *notification); err != nil {
+			rt.logger.Printf("Talk notification failed id=%s: %v", task.JobID, err)
+		}
 	}
 	rt.logger.Printf("publish succeeded id=%s attempt=%d sink=%s attempt_site=%s location=%s", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, location)
 

@@ -2,16 +2,20 @@
   import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModel, SpeechModelInventory } from "./operator/types";
+  import ModelStatusRow from "./ModelStatusRow.svelte";
   import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
-  import { jobRunning, mebibytes, modelJob, transcriptionModelId, voiceSeparationModel } from "./speechModels";
+  import { jobRunning, modelJob, voiceSeparationModel } from "./speechModels";
   export let client: OperatorClient | null;
   export let quality = "balanced";
   export let device = "cpu";
   export let enabled = false;
   export let activeModel = "";
   export let activeRevision = "";
-  const dispatch = createEventDispatcher<{ select: SpeechModel; disable: void }>();
-  let inventory: SpeechModelInventory | null = null;
+  // The model the transcription switch can turn on, if it is ready.
+  export let readyModel: SpeechModel | null = null;
+  // The last inventory read, so the panel's status strip can see downloads.
+  export let inventory: SpeechModelInventory | null = null;
+  const dispatch = createEventDispatcher<{ select: SpeechModel }>();
   let error = "";
   let busy = false;
   let mounted = false;
@@ -47,15 +51,24 @@
     inventory = null;
     void refresh();
   }
-  $: modelID = transcriptionModelId(quality, device);
+  $: modelID = device === "cuda" || quality === "best" ? "parakeet-tdt-0.6b-v3" : quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-tdt-0.6b-v3-int8";
   $: model = inventory?.models.find((m) => m.id === modelID);
   $: job = modelJob(inventory, model, device);
   $: running = jobRunning(job);
   $: selected = enabled && activeModel === model?.id && activeRevision === model?.revision;
+  $: readyModel = model?.ready ? model : null;
+  function size(n: number) {
+    return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`;
+  }
+  $: percent = running && job && job.progress.total_bytes > 0 ? Math.min(100, Math.round(job.progress.completed_bytes / job.progress.total_bytes * 100)) : null;
+  $: state = !model ? "" : running && job ? `${job.state}${percent === null ? "" : ` · ${percent}%`}`
+    : model.ready ? "Ready"
+    : model.installed ? "Installed — runtime check needed"
+    : job?.state === "cancelled" ? "Download cancelled. Retry resumes it."
+    : "Not installed";
   // Voice separation is installed and run on the CPU whatever transcribes.
   $: separation = voiceSeparationModel(inventory);
   $: separationJob = modelJob(inventory, separation, "cpu");
-  const size = mebibytes;
   async function action(kind: "install" | "cancel" | "retry", target = model, targetJob = job, targetDevice = device) {
     if (!client || !target || busy) return;
     busy = true;
@@ -70,47 +83,39 @@
 </script>
 
 <div class="speech-models">
-  <div class="step-head">
-    <p class="set-row-name op-card-title">Transcription: {enabled ? "On" : "Off"}</p>
-    {#if enabled}<button type="button" class="op-button" on:click={() => dispatch("disable")}>Turn off</button>{/if}
-  </div>
-  <p class="set-row-sub">{enabled ? "The selected model applies to future recordings after saving." : "Recordings are available as audio. No model is needed."}</p>
   {#if error}<p role="status" class="op-error">{error} {lastUpdate ? `Last updated ${lastUpdate}.` : ""}</p>{/if}
   {#if model}
-    <p><strong>{model.name}</strong></p>
-    <p class="set-row-sub">{model.description}. Download {size(model.download_bytes)} · Installed {size(model.installed_bytes)} including voice activity detection.</p>
-    {#if running && job}
-      <p role="status">{job.state} {job.progress.file ? `— ${job.progress.file}` : ""}</p>
-      {#if job.progress.total_bytes > 0}
-        <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label="Model download progress"></progress>
-        <p class="set-row-sub">{size(job.progress.completed_bytes)} / {size(job.progress.total_bytes)} · {Math.min(100, Math.round(job.progress.completed_bytes / job.progress.total_bytes * 100))}%
-        {#if job.progress.reused_bytes > 0} · {size(job.progress.reused_bytes)} reused{/if}</p>
+    <ModelStatusRow name={model.name} size={size(model.download_bytes)} {state}>
+      <svelte:fragment slot="action">
+        {#if running && job}
+          <button type="button" class="op-button" disabled={busy} on:click={() => action("cancel")}>Cancel</button>
+        {:else if model.ready}
+          {#if enabled && !selected}<button type="button" class="op-button" on:click={() => dispatch("select", model!)}>Use this model</button>{/if}
+        {:else if model.installed || inventory?.downloads_allowed}
+          <button type="button" class="op-button" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? "Check" : job ? "Retry" : "Download"}</button>
+        {/if}
+      </svelte:fragment>
+      {#if running && job}
+        {#if job.progress.total_bytes > 0}
+          <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label="Model download progress"></progress>
+          <p class="set-row-sub">{size(job.progress.completed_bytes)} / {size(job.progress.total_bytes)}{#if job.progress.reused_bytes > 0} · {size(job.progress.reused_bytes)} reused{/if}{job.progress.file ? ` · ${job.progress.file}` : ""}</p>
+        {/if}
+        <p class="set-row-sub">You can close this page while the download continues.</p>
+      {:else if job?.error}
+        <p class="op-error">{job.error}</p>
       {/if}
-      <p class="set-row-sub">Last update: {job.updated_at}. You can close this page while installation continues.</p>
-      <button type="button" class="op-button" disabled={busy} on:click={() => action("cancel")}>Cancel</button>
-    {:else}
-      <p role="status">{model.ready ? "Ready" : model.installed ? "Installed — runtime check needed" : "Not installed"}</p>
-      {#if job?.error}<p class="op-error">{job.error}</p>{/if}
-      {#if job?.state === "cancelled"}<p class="set-row-sub">Cancelled. Retained files can be reused on retry.</p>{/if}
-      {#if model.ready}
-        <button type="button" class="op-button" disabled={selected} on:click={() => dispatch("select", model!)}>{selected ? "Selected" : enabled ? "Use this model" : "Enable transcription"}</button>
-        <p class="set-row-sub">Save settings to apply your choice. Installation never enables transcription automatically.</p>
-      {:else if model.installed || inventory?.downloads_allowed}
-        <button type="button" class="op-button" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? "Check model" : job ? "Retry download" : "Download model"}</button>
+      {#if !inventory?.downloads_allowed}
+        <p class="set-row-sub">Downloads are disabled. Prepare a package with <code>cassini models pack</code> on a connected machine, copy it here, and run <code>cassini models import</code> inside this server's Cassini runtime. Imported models appear here automatically.</p>
       {/if}
-    {/if}
+    </ModelStatusRow>
     {#if separation}
       <VoiceSeparationModel model={separation} job={separationJob} downloadsAllowed={!!inventory?.downloads_allowed} {busy}
         on:install={() => separationAction("install")} on:cancel={() => separationAction("cancel")} on:retry={() => separationAction("retry")} />
     {/if}
-    {#if !inventory?.downloads_allowed}
-      <p class="set-row-sub">Downloads are disabled. Prepare a package with <code>cassini models pack</code> on a connected machine, copy it here, and run <code>cassini models import</code> inside this server's Cassini runtime. Imported models appear here automatically.</p>
-    {/if}
   {:else if !error}<p class="set-row-sub">Loading model inventory…</p>{/if}
 </div>
 <style>
-  .speech-models { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--color-border, #d7dde2); }
-  .step-head { display: flex; align-items: center; gap: 1rem; }
-  progress { display: block; width: 100%; margin: .5rem 0; }
+  .speech-models { display: grid; gap: 8px; margin-top: 1rem; }
+  progress { display: block; width: 100%; }
   code { overflow-wrap: anywhere; }
 </style>
