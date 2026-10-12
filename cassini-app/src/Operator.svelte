@@ -1331,7 +1331,7 @@
                       {#if cleanup.completed_at}<p class="text-sm">Completed: {cleanup.completed_at}</p>{/if}
                       {#if cleanup.last_error}<p class="text-sm text-warning">{cleanup.last_error}</p>{/if}
                       {#if cleanup.status === "error"}
-                        <button class="op-button" type="button" disabled={submittingCleanup} on:click={handleRetryCleanup}>Retry media deletion</button>
+                        <button class="btn btn-sm" type="button" disabled={submittingCleanup} on:click={handleRetryCleanup}>Retry media deletion</button>
                         {#if cleanupQueuedJob === selectedJob.job.id}<p class="text-sm">Retry requested. Cleanup is checked within 30 seconds.</p>{/if}
                       {/if}
                     </div>

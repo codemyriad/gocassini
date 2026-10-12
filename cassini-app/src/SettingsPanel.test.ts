@@ -20,8 +20,10 @@ describe("SettingsPanel device policy", () => {
     // The device is auto-selected, so the tier alone does not tell an admin
     // what will happen. Without this an install with no GPU looks configured
     // and only reveals the CPU path once a build has run (D-702).
-    expect(settingsPanelSource).toContain("deviceLabel(settings.effective.device)");
-    expect(settingsPanelSource).toContain("settings.effective.model");
+    // The "In use" line names the saved model and the effective device.
+    expect(settingsPanelSource).toContain('savedDevice = settings?.effective?.device');
+    expect(settingsPanelSource).toContain("<strong>{inUseModel.name}</strong>");
+    expect(settingsPanelSource).toContain("on {runsOnLine}.");
     expect(settingsPanelSource).toContain("settings.effective.note");
   });
 });
@@ -111,7 +113,7 @@ describe("SettingsPanel layout", () => {
     // own, which would read as a pipeline step.
     const transcriptAt = settingsPanelSource.indexOf('aria-label="Transcription settings"');
     const hardwareAt = settingsPanelSource.indexOf('id="hardware-details"');
-    const deviceAt = settingsPanelSource.indexOf(">Override transcription device<");
+    const deviceAt = settingsPanelSource.indexOf(">Device<");
     const summaryAt = settingsPanelSource.indexOf('aria-labelledby="summary-heading"');
     expect([transcriptAt, hardwareAt, deviceAt, summaryAt].every((at) => at > -1)).toBe(true);
     expect([transcriptAt, hardwareAt, deviceAt, summaryAt]).toEqual(

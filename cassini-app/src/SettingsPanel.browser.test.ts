@@ -295,10 +295,10 @@ it("opens the hardware facts under Change and sends Add one to the providers", a
   const openProviders = vi.fn();
   host = document.createElement("div"); document.body.append(host);
   app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") }, events: { openProviders } });
-  await expect.element(page.getByText("CPU, no GPU found", { exact: true })).toBeVisible();
-  const device = page.getByRole("combobox", { name: "Override transcription device" });
+  await expect.element(page.getByText("Transcription runs on the CPU (no GPU found).", { exact: true })).toBeVisible();
+  const device = page.getByRole("combobox", { name: "Device" });
   expect(host.querySelector("#stt-device")).toBeNull();
-  const change = page.getByRole("button", { name: "Change", exact: true });
+  const change = page.getByRole("button", { name: "Hardware", exact: true });
   await change.click();
   await expect.element(change).toHaveAttribute("aria-expanded", "true");
   await expect.element(device).toBeVisible();

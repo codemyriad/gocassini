@@ -379,16 +379,6 @@
     return `${mb} MB`;
   }
 
-  function sourceLabel(source: string): string {
-    if (source === "user") {
-      return "Set by an administrator";
-    }
-    if (source === "auto") {
-      return "Chosen automatically";
-    }
-    return source || "—";
-  }
-
   // The id the publish pipeline's summary step runs when nothing names one
   // (internal/insight/workflows: SummariseID). Named rather than derived from
   // list order, and it falls back to the first entry: the operator accepts any
@@ -478,6 +468,7 @@
     transcriptionEnabled: settings?.transcription_enabled === true,
     quality: savedQuality,
     activeModel: settings?.active_model,
+    activeModelInstalled: modelInventory === null || !settings?.active_model ? null : modelInventory.models.find((m) => m.id === settings?.active_model)?.installed === true,
     device: savedDevice,
     modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
     download: runningDownload(modelInventory),
@@ -504,10 +495,14 @@
   // Without a transcript the meeting is published as audio, whatever the
   // format select last said.
   $: publishedFormat = transcriptionEnabled ? meetingFormat : "opus" as const;
+  // "the GPU (CUDA)", "the CPU", or "the CPU (no GPU found)": the end of the
+  // sentence that names the model in use.
   $: runsOnLine = savedDevice === "cuda"
-    ? deviceLabel("cuda")
-    : settings?.detected_gpu ? "CPU" : "CPU, no GPU found";
+    ? `the ${deviceLabel("cuda")}`
+    : settings?.detected_gpu ? "the CPU" : "the CPU (no GPU found)";
   $: inUseModel = modelInventory?.models.find((m) => m.id === activeModel);
+  // The model the picked quality runs, which the switch turns on.
+  $: qualityModel = modelInventory?.models.find((m) => m.id === speechModelFor(quality, selectedDevice));
 
   // How long kept media stays, from the Recordings policy: "for 30 days",
   // "kept forever", or "" when retention could not be read.
@@ -669,7 +664,9 @@
             <p class="set-row-sub">Save to set up the summary and what participants receive.</p>
           {/if}
           {#if !transcriptionEnabled && !readyModel}
-            <p class="set-row-sub">Download the model below to turn it on.</p>
+            <!-- The switch needs the picked quality's model installed AND checked
+                 on this build; say which of the two is missing. -->
+            <p class="set-row-sub">{qualityModel?.installed ? "Check the model below to turn it on." : "Download the model below to turn it on."}</p>
           {/if}
           {#if runsOnGPU}
             <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
@@ -679,68 +676,59 @@
                device is auto-selected; on a host with no usable GPU that is the
                CPU, said out loud (D-702). The facts and the override open under
                "Change". -->
-          <p class="in-use pipe-gap" role="status">
-            {#if transcriptionEnabled && inUseModel}
-              <span class="in-use-label">In use</span>
-              <strong>{inUseModel.name}</strong>
-              <span aria-hidden="true">·</span>
-            {/if}
-            <span>{runsOnLine}</span>
-            <button type="button" class="link" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>Change</button>
-          </p>
+          <div class="in-use pipe-gap" class:in-use-warn={transcriptionEnabled && inUseModel && !inUseModel.installed}>
+            <!-- One sentence: what transcribes and where. Installed but not yet
+                 runtime-checked is normal after any new build (the operator
+                 checks it before transcribing); only missing files mean
+                 recordings go without a transcript. -->
+            <p class="in-use-text" role="status">
+              {#if transcriptionEnabled && inUseModel && !inUseModel.installed}
+                <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
+                <span><strong>{inUseModel.name}</strong> isn't installed, so recordings get no transcript.</span>
+              {:else if transcriptionEnabled && inUseModel}
+                <span>Transcribing with <strong>{inUseModel.name}</strong> on {runsOnLine}.</span>
+              {:else}
+                <span>Transcription runs on {runsOnLine}.</span>
+              {/if}
+            </p>
+            <button type="button" class="in-use-toggle" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>
+              Hardware
+              <ChevronDown size={14} class={hardwareOpen ? "in-use-chevron open" : "in-use-chevron"} aria-hidden="true" />
+            </button>
+          </div>
           {#if hardwareOpen}
+            <!-- One box: what the operator found, the device choice, and one tip.
+                 What runs and where is already said in the line above. -->
             <div id="hardware-details" class="hw-details">
               <dl class="hw-facts">
-                <div class="hw-fact">
-                  <dt>GPU</dt>
-                  <dd>
-                    {#if settings.detected_gpu}
-                      <span class="pill yes">Yes</span>
-                    {:else}
-                      <span class="pill">No</span>
-                    {/if}
-                  </dd>
-                </div>
-                <div class="hw-fact">
-                  <dt>CPU cores</dt>
-                  <dd><span class="pill">{settings.cores}</span></dd>
-                </div>
-                <div class="hw-fact">
-                  <dt>Settings</dt>
-                  <dd><span class="pill">{sourceLabel(settings.source)}</span></dd>
-                </div>
+                <dt>GPU</dt>
+                <dd>{settings.detected_gpu ? "Found" : "None found"}</dd>
+                <dt>CPU cores</dt>
+                <dd>{settings.cores}</dd>
+                {#if settings.effective.min_free_memory_mb > 0}
+                  <dt>Memory</dt>
+                  <dd>Each recording waits for {formatMemory(settings.effective.min_free_memory_mb)} free</dd>
+                {/if}
+                <dt><label for="stt-device">Device</label></dt>
+                <dd class="hw-device">
+                  <span class="op-select hw-device-select">
+                    <select id="stt-device" bind:value={deviceOverride} class="op-input">
+                      <option value="">Auto</option>
+                      <option value="cpu">CPU</option>
+                      <option value="cuda">GPU (CUDA)</option>
+                    </select>
+                    <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
+                  </span>
+                  <span class="hw-help">Auto uses the GPU when there is one. Change it only if the hardware above is wrong.</span>
+                </dd>
               </dl>
-              {#if settings.transcription_enabled && settings.effective.model}
-                <p class="set-row-sub">
-                  Transcribes on the <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>
-                  with the <code class="pipe-code">{settings.effective.model}</code> model.
-                </p>
+              {#if deviceOverride === "cuda" && !settings.detected_gpu}
+                <p class="hw-note pipe-warn" role="status">No GPU was found, so recordings won't be processed on this setting.</p>
+              {:else if !settings.detected_gpu}
+                <p class="hw-note">For faster transcription, run Cassini's CUDA image on a server with a GPU.</p>
+              {:else if settings.effective.note}
+                <p class="hw-note">{settings.effective.note}</p>
               {/if}
-              {#if settings.effective.min_free_memory_mb > 0}
-                <p class="set-row-sub">
-                  Each recording is processed once {formatMemory(settings.effective.min_free_memory_mb)}
-                  of memory is free.
-                </p>
-              {/if}
-              {#if settings.effective.note}
-                <p class="set-row-sub">{settings.effective.note}</p>
-              {/if}
-              <label class="op-field hw-device" for="stt-device">
-                <span class="op-field-label">Override transcription device</span>
-              </label>
-              <span class="op-select hw-device-select">
-                <select id="stt-device" bind:value={deviceOverride} class="op-input">
-                  <option value="">Auto</option>
-                  <option value="cpu">CPU</option>
-                  <option value="cuda">GPU (CUDA)</option>
-                </select>
-                <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
-              </span>
-              <p class="set-row-sub">
-                Leave on Auto unless the hardware above is wrong. Auto uses the GPU when one is
-                available. If you choose a device this machine doesn't have, recordings won't be
-                processed.
-              </p>
             </div>
           {/if}
           <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
@@ -761,7 +749,7 @@
               </label>
             {/each}
           </div>
-          {#if !(transcriptionEnabled && inUseModel?.id === speechModelFor(quality, selectedDevice))}
+          {#if !(transcriptionEnabled && inUseModel?.installed && inUseModel.id === speechModelFor(quality, selectedDevice))}
             <p class="model-heading pipe-gap">{QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? "This quality"} model</p>
           {/if}
           <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
@@ -1250,65 +1238,51 @@
   }
   .hw-details {
     display: grid;
-    gap: 6px;
-    margin-top: 4px;
+    gap: 10px;
+    margin-top: 6px;
+    padding: 12px 14px;
+    font-size: 12.5px;
+    background-color: var(--op-inset);
+    border: 1px solid var(--op-inset-border);
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .hw-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: baseline;
+    gap: 8px 20px;
+    margin: 0;
+  }
+  .hw-facts dt {
+    font-weight: 600;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .hw-facts dd {
+    margin: 0;
+  }
+  .hw-device {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+  .hw-device-select {
+    display: block;
+    width: 10rem;
+  }
+  .hw-help,
+  .hw-note {
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .hw-note {
+    margin: 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--op-inset-border);
   }
   .pipe-body {
     display: grid;
     gap: calc(var(--op-x, 20px) + 8px);
     margin-top: calc(var(--op-x, 20px) + 8px - 16px);
-  }
-  .hw-facts {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 22px;
-    margin: 0;
-    padding: 10px 12px;
-    background-color: var(--op-inset);
-    border: 1px solid var(--op-inset-border);
-    border-radius: var(--radius-box, 0.5rem);
-  }
-  .hw-fact {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .hw-fact dt {
-    font-size: 12.5px;
-    line-height: 20px;
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
-  }
-  .hw-fact dd {
-    display: flex;
-    align-items: center;
-    margin: 0;
-  }
-  .pill {
-    display: inline-block;
-    padding: 4px 7px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    font-weight: 500;
-    line-height: 1;
-    color: var(--color-base-content);
-    background-color: color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-200));
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 22%, var(--color-base-200));
-    border-radius: var(--radius-selector, 0.25rem);
-  }
-  .pill.yes {
-    color: var(--color-success);
-    border-color: var(--color-success);
-  }
-  .pipe-code {
-    padding: 1px 5px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    font-weight: 500;
-    overflow-wrap: anywhere;
-    background-color: var(--op-code-bg);
-    border: 1px solid var(--op-code-border);
-    border-radius: var(--radius-selector, 0.25rem);
   }
   .pipe-warn {
     color: var(--color-warning);
@@ -1316,10 +1290,6 @@
   .set-row-sub {
     display: block;
     text-wrap: pretty;
-  }
-  .hw-device-select {
-    display: block;
-    max-width: 20rem;
   }
 
   .pipe-step {
@@ -1334,28 +1304,53 @@
   .in-use {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: 4px 8px;
-    margin-bottom: 0;
-    padding: 6px 10px 5px;
+    align-items: center;
+    gap: 4px 12px;
+    padding: 6px 6px 6px 10px;
     font-size: 12.5px;
     line-height: 1.35;
     border-radius: var(--radius-box, 0.5rem);
     background: var(--op-inset, color-mix(in oklch, var(--color-base-content) 5%, transparent));
   }
-  /* Nextcloud styles every button with a min-height and padding. */
-  .in-use .link {
-    min-height: 0;
+  .in-use-text {
+    display: flex;
+    flex: 1 1 16rem;
+    align-items: center;
+    gap: 6px;
     margin: 0;
-    padding: 0;
-    line-height: inherit;
   }
-  .in-use-label {
-    font-size: 11px;
+  /* Nextcloud styles every button with a min-height and padding. */
+  .in-use-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 0;
+    margin: 0 0 0 auto;
+    padding: 3px 8px;
+    font-size: 12px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+    color: inherit;
+    background: none;
+    border: 1px solid var(--op-inset-border, color-mix(in oklch, var(--color-base-content) 15%, transparent));
+    border-radius: var(--radius-field, 0.375rem);
+    cursor: pointer;
+  }
+  .in-use-toggle:hover {
+    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
+  }
+  .in-use-toggle :global(.in-use-chevron) {
+    transition: transform 0.15s;
+  }
+  .in-use-toggle :global(.in-use-chevron.open) {
+    transform: rotate(180deg);
+  }
+  .in-use-warn {
+    background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-base-100));
+    border: 1px solid var(--color-warning);
+  }
+  .in-use-warn :global(.in-use-warn-icon) {
+    align-self: center;
+    color: var(--color-warning);
   }
   .model-heading {
     margin-bottom: -4px;

@@ -77,6 +77,9 @@ describe("helpers", () => {
     const job = { id: "j", model: "m", revision: "r", device: "cpu", updated_at: "", progress: { phase: "", completed_bytes: 42, total_bytes: 100, reused_bytes: 0 } };
     expect(runningDownload({ models: [], jobs: [{ ...job, state: "downloading" }], downloads_allowed: true, device: "cpu" })).toEqual({ percent: 42 });
     expect(runningDownload({ models: [], jobs: [{ ...job, state: "cancelled" }], downloads_allowed: true, device: "cpu" })).toBeNull();
+    // Voice separation's download holds nothing in the pipeline up.
+    const diarizer = { id: "m", kind: "diarization", name: "", revision: "r", download_bytes: 1, installed_bytes: 1, installed: false, ready: false, device: "cpu" };
+    expect(runningDownload({ models: [diarizer], jobs: [{ ...job, state: "downloading" }], downloads_allowed: true, device: "cpu" })).toBeNull();
   });
   it("says a retention span", () => {
     expect(retentionSpan({ forever: false, count: 1, unit: "days" })).toBe("1 day");
@@ -87,5 +90,12 @@ describe("helpers", () => {
   it("names the tier of the saved model, which is what builds use", () => {
     const status = pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-tdt-0.6b-v3-int8" });
     expect(status.transcribe.state).toBe("On · Balanced · CPU");
+  });
+
+  it("warns when transcription is on but its model is not installed", () => {
+    const status = pipelineStatus({ ...team, activeModel: "parakeet-tdt-0.6b-v3", activeModelInstalled: false, download: { percent: 10 } });
+    expect(status.transcribe).toEqual({ state: "On · Best · CPU", tone: "amber", reason: "model not installed" });
+    // Transcription is on, so publishing does not wait on the download.
+    expect(status.publish.badge).toBeUndefined();
   });
 });

@@ -27,6 +27,5 @@
   .model-action { margin-left: auto; }
   .quiet { padding: 8px 12px; background: none; border: 1px solid var(--op-inset-border, color-mix(in oklch, var(--color-base-content) 12%, transparent)); }
   .quiet .model-name { font-size: 12.5px; font-weight: 600; }
-  .quiet .model-action :global(.op-button) { font-size: 12.5px; }
   .model-detail { display: grid; gap: 6px; font-size: 12.5px; min-width: 0; }
 </style>

@@ -393,6 +393,11 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, wantCT) {
 			t.Fatalf("GET %s: Content-Type %q does not include %q", path, ct, wantCT)
 		}
+		// Same name and ?v= across an update that keeps the app version, so the
+		// browser must revalidate rather than reuse a stale copy.
+		if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
+			t.Fatalf("GET %s: Cache-Control %q, want no-cache", path, cc)
+		}
 		body := w.Body.String()
 		if strings.Contains(body, "iframe") {
 			t.Fatalf("GET %s: must serve the embedded IIFE, not an iframe bootstrap", path)

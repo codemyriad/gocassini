@@ -4,7 +4,7 @@ import { render } from "svelte/server";
 import SpeechModelsSource from "./SpeechModels.svelte?raw";
 import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
 import type { SpeechModel, SpeechModelInventory, SpeechModelJob } from "./operator/types";
-import { modelJob, transcriptionModelId, VOICE_SEPARATION_MODEL_ID, voiceSeparationModel } from "./speechModels";
+import { jobStepText, modelJob, transcriptionModelId, VOICE_SEPARATION_MODEL_ID, voiceSeparationModel } from "./speechModels";
 
 const diarizer: SpeechModel = {
   id: VOICE_SEPARATION_MODEL_ID, kind: "diarization", name: "Nemotron 3 Diarization — int8", description: "Speaker diarization",
@@ -61,7 +61,7 @@ describe("voice separation in the speech models", () => {
   it("says when it is ready, being installed, or cannot run here", () => {
     const ready = card({ model: { ...diarizer, installed: true, ready: true } });
     expect(ready).toContain("Ready");
-    expect(ready).toContain("from the participant list");
+    expect(ready).toContain("from its participant list");
     expect(ready).not.toContain("<button");
 
     expect(card({ model: diarizer, job: job("downloading"), downloadsAllowed: true })).toContain("Voice separation download progress");
@@ -75,3 +75,14 @@ describe("voice separation in the speech models", () => {
     expect(card({ model: diarizer, downloadsAllowed: false })).not.toContain("<button");
   });
 });
+
+describe("model job steps", () => {
+  it("says what happens after the download instead of sitting at 100%", () => {
+    expect(jobStepText(job("downloading"))).toBe("Downloading · 50%");
+    expect(jobStepText(job("installed"))).toBe("Downloaded · checks once no meeting is being processed");
+    expect(jobStepText(job("checking"))).toBe("Checking it runs on this server");
+    // The bar belongs to the download only.
+    expect(card({ model: diarizer, job: job("installed"), downloadsAllowed: true })).not.toContain("download progress");
+  });
+});
+
