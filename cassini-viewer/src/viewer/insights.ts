@@ -341,6 +341,54 @@ export function stripInsightFrontMatter(markdown: string): string {
   return markdown;
 }
 
+// sameHeadlineText says whether two pieces of headline text are the same words:
+// whitespace collapsed, case ignored, and the quotes and end punctuation a
+// question may or may not carry left out. The Ask prompt copies the question
+// into the document's heading verbatim "with a trailing question mark added
+// only if the asker wrote one", and a name is typed by hand, so the comparison
+// forgives exactly that much and no more.
+export function sameHeadlineText(left: string, right: string): boolean {
+  return normaliseHeadline(left) !== "" && normaliseHeadline(left) === normaliseHeadline(right);
+}
+
+function normaliseHeadline(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/[?.!:]+$/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+// stripLeadingHeading removes the document's first heading when it only repeats
+// text already shown above the document — the question, which the Ask template
+// puts at the top of every answer and the drawer prints as the headline and
+// again as the quote. Three copies of one sentence in a column is not emphasis.
+//
+// Only a heading that is the FIRST non-blank line, and only when its words are
+// the title's (sameHeadlineText): a document whose heading says something else
+// keeps it, because then it is information.
+export function stripLeadingHeading(markdown: string, title: string): string {
+  const lines = markdown.split("\n");
+  let first = 0;
+  while (first < lines.length && lines[first].trim() === "") {
+    first += 1;
+  }
+  if (first >= lines.length) {
+    return markdown;
+  }
+  const heading = /^#{1,2}\s+(.+?)\s*#*\s*$/.exec(lines[first].trimEnd());
+  if (!heading || !sameHeadlineText(heading[1], title)) {
+    return markdown;
+  }
+  let next = first + 1;
+  while (next < lines.length && lines[next].trim() === "") {
+    next += 1;
+  }
+  return lines.slice(next).join("\n");
+}
+
 // resolveInsightSources answers, for every insight at once, which of its source
 // meetings this caller can actually see — the entries present in the catalog
 // they were served, in the order the run recorded them.

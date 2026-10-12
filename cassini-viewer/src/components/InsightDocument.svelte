@@ -14,7 +14,9 @@
     formatInsightCreated,
     formatInsightStatus,
     insightHeadline,
+    sameHeadlineText,
     stripInsightFrontMatter,
+    stripLeadingHeading,
     type InsightRecord,
   } from "../viewer/insights";
 
@@ -94,6 +96,17 @@
     savingName = false;
   }
 
+  // Clicking away is leaving, the same as Escape: nothing typed is sent. Not
+  // while a save is in flight, though — the input is disabled for that, and a
+  // disabled input loses focus on its own.
+  function onNameBlur() {
+    if (!editingName || savingName) {
+      return;
+    }
+    stopRename();
+    dispatch("renameCancel");
+  }
+
   function onNameKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -128,6 +141,7 @@
 
   $: question = insight.question?.trim() ?? "";
   $: headline = insightHeadline(insight);
+  $: showQuestion = question !== "" && !sameHeadlineText(question, headline);
   $: pending = insight.status === "queued" || insight.status === "running";
   $: failed = insight.status === "failed";
   // Never `insight.error` raw: the operator records a reason token and this
@@ -156,7 +170,10 @@
     // panel anyway — the header and the provenance list below both read them
     // off the run record — so it is cut here rather than kept as text nobody
     // can use.
-    const body = stripInsightFrontMatter(markdown);
+    // And the document's own first heading goes when it is the question again:
+    // the Ask template copies the question in verbatim, and by this point the
+    // header and the quote have both said it.
+    const body = stripLeadingHeading(stripInsightFrontMatter(markdown), question);
     if (body.trim() === "") {
       return "";
     }
@@ -255,6 +272,7 @@
             autocomplete="off"
             disabled={renaming}
             on:keydown={onNameKeydown}
+            on:blur={onNameBlur}
           />
         {:else}
           <h2>{headline}</h2>
@@ -329,7 +347,10 @@
          "summarise these" — led with a sentence naming the workflow id, which
          is a fact about the run rather than the brief, and the answer below it
          says what it is. -->
-    {#if question}
+    <!-- Not when the header already says it: an Ask run is named after its
+         question unless somebody renames it, and the quote is only for the
+         case where the name and the question are different things. -->
+    {#if showQuestion}
       <p class="ins-question">“{question}”</p>
     {/if}
 
@@ -506,6 +527,11 @@
     flex: none;
     margin-top: -0.25rem;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  /* The close button is the same 32px square as the pencil, so it takes the
+     same lift: the two sit on one line, not one a quarter-rem under the other. */
+  .ins-head-top > :global(.close-button) {
+    margin-top: -0.25rem;
   }
   .ins-name-input {
     flex: 1 1 auto;
