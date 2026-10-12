@@ -76,3 +76,22 @@
     {/if}
   </div>
 </section>
+
+<style>
+  /* Same inset as the other settings cards (.pipe-step, .hw-card). */
+  .access {
+    display: grid;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  /* The refresh button belongs to the title row, at its far edge. */
+  .access-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+  }
+  .access-head .icon-btn {
+    flex: none;
+  }
+</style>

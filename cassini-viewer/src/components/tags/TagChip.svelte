@@ -17,13 +17,16 @@
 <!-- One look wherever a tag is shown. A tag on the whole meeting and a tag on
      sections of it were a block and a pill with a count, a difference nobody
      could read; where the sections are is the transcript's to show. -->
+<!-- The mark sits inside the label's line rather than beside it, so
+     vertical-align: middle centres it on the label's x-height in every browser,
+     whether or not it supports text-box. As a separate flex item it was centred
+     on the label's box instead, which sits higher wherever text-box is not
+     trimming it. -->
 <span class="tag-chip" data-tag-color={color}>
-  {#if icon}
-    <TagIcon {icon} size={11} />
-  {:else}
-    <TagIcon size={8} />
-  {/if}
-  <span class="tag-chip-label">{label}</span>
+  <span class="tag-chip-label"
+    ><span class="tag-chip-mark">{#if icon}<TagIcon {icon} size={11} />{:else}<TagIcon size={8} />{/if}</span
+    >{label}</span
+  >
   {#if removable}
     <button
       type="button"
@@ -57,9 +60,13 @@
     border: 1px solid transparent;
     border-radius: 5px;
   }
-  .tag-chip :global(span.tag-dot) {
+  .tag-chip-mark {
+    display: inline-flex;
+    margin-right: 3px;
+    vertical-align: middle;
+  }
+  .tag-chip-mark :global(span.tag-dot) {
     margin-right: 2px;
-    translate: 0 0.5px;
     background: currentColor;
   }
   .tag-chip-label {

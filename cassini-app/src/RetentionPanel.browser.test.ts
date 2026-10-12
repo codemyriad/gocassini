@@ -11,7 +11,7 @@ const group = (keys: string[]) => ({
   fine: Object.fromEntries(keys.map((key) => [key, forever()])),
 });
 const initialSettings = () => ({
-  version: 4, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
+  version: 4, revision: 0, schedule: { time: "03:42", timezone: "UTC" },
   recordings: forever(), nextcloud: { meetings: forever() },
   history: group(["failed_capture", "failed_build", "superseded", "failed_publish"]),
   current: forever(), logs: forever(),
@@ -57,14 +57,15 @@ describe("retention settings in the browser", () => {
   it("keeps edits local until Save, retains fine controls, and handles stale revisions", async () => {
     saved.revision = 1;
     mountPanel();
-    await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Retention", exact: true })).toBeVisible();
     await expect.element(page.getByText("Keep forever", { exact: true }).first()).toBeVisible();
     expect(page.getByRole("checkbox").all().length).toBe(5);
-    await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeDisabled();
-    await expect.element(page.getByLabelText("Sweep time", { exact: true })).toHaveValue("02:00");
+    await expect.element(page.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(page.getByRole("button", { name: "Discard changes" }).all()).toHaveLength(0);
+    await expect.element(page.getByLabelText("Cleanup time", { exact: true })).toHaveValue("03:42");
     await expect.element(page.getByLabelText("Timezone", { exact: true })).toHaveValue("UTC");
-    await page.getByLabelText("Sweep time", { exact: true }).fill("15:45");
-    await page.getByLabelText("Timezone", { exact: true }).fill("Europe/Zagreb");
+    await page.getByLabelText("Cleanup time", { exact: true }).fill("15:45");
+    await page.getByLabelText("Timezone", { exact: true }).selectOptions("Europe/Zagreb");
 
     await page.getByRole("checkbox").all()[0].click();
     for (const days of [7, 30, 60, 90]) {
@@ -72,59 +73,60 @@ describe("retention settings in the browser", () => {
       await button.click();
       expect(button.element().getAttribute("aria-pressed")).toBe("true");
     }
-    await page.getByRole("button", { name: "Custom days", exact: true }).first().click();
-    await page.getByLabelText("Source recordings days", { exact: true }).fill("45");
+    await page.getByRole("button", { name: "Custom", exact: true }).first().click();
+    await page.getByLabelText("Recordings days", { exact: true }).fill("45");
     expect(page.getByText("Captured audio", { exact: true }).all()).toHaveLength(0);
     expect(page.getByText("Captured video", { exact: true }).all()).toHaveLength(0);
 
-    await page.getByRole("checkbox").all()[1].click();
-    await page.getByRole("button", { name: "60 days", exact: true }).all()[1].click();
-    await page.getByRole("combobox", { name: "Policy control" }).selectOptions("fine");
+    const attempts = page.getByRole("group", { name: "Previous attempts", exact: true });
+    await attempts.getByRole("checkbox").click();
+    await attempts.getByRole("button", { name: "60 days", exact: true }).click();
+    await page.getByRole("button", { name: "Set each kind separately", exact: true }).click();
     const failed = page.getByRole("group", { name: "Failed recordings", exact: true });
     expect(failed.getByRole("button", { name: "60 days", exact: true }).element().getAttribute("aria-pressed")).toBe("true");
     await failed.getByRole("button", { name: "7 days", exact: true }).click();
-    await page.getByRole("combobox", { name: "Policy control" }).selectOptions("group");
-    await page.getByRole("combobox", { name: "Policy control" }).selectOptions("fine");
+    await page.getByRole("button", { name: "Use one setting for all kinds", exact: true }).click();
+    await page.getByRole("button", { name: "Set each kind separately", exact: true }).click();
     expect(failed.getByRole("button", { name: "7 days", exact: true }).element().getAttribute("aria-pressed")).toBe("true");
     expect(puts).toBe(0);
 
-    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await page.getByRole("button", { name: "Save" }).click();
     await expect.element(page.getByRole("status")).toBeVisible();
     expect(saved.schedule).toEqual({ time: "15:45", timezone: "Europe/Zagreb" });
     expect(saved.recordings).toMatchObject({ count: 45, unit: "days" });
     await unmount(app!);
     app = undefined;
     mountPanel();
-    await expect.element(page.getByLabelText("Source recordings days")).toHaveValue(45);
+    await expect.element(page.getByLabelText("Recordings days")).toHaveValue(45);
 
     saved.revision += 1; // Another administrator saves first.
     await page.getByRole("button", { name: "90 days", exact: true }).first().click();
-    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await page.getByRole("button", { name: "Save" }).click();
     await expect.element(page.getByRole("alert")).toHaveTextContent("Settings changed");
-    await page.getByRole("button", { name: "Reload saved settings" }).click();
+    await page.getByRole("button", { name: "Discard changes" }).click();
     await expect.element(page.getByRole("alertdialog")).toBeVisible();
     await page.getByRole("button", { name: "Leave", exact: true }).click();
-    await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeDisabled();
-    await page.getByRole("button", { name: "Custom days", exact: true }).first().click();
-    await page.getByLabelText("Source recordings days").fill("0");
+    await expect.element(page.getByRole("button", { name: "Save" })).toBeDisabled();
+    await page.getByRole("button", { name: "Custom", exact: true }).first().click();
+    await page.getByLabelText("Recordings days").fill("0");
     const previousPuts = puts;
-    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await page.getByRole("button", { name: "Save" }).click();
     expect(puts).toBe(previousPuts);
-    await page.getByLabelText("Source recordings days").fill("1");
-    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await page.getByLabelText("Recordings days").fill("1");
+    await page.getByRole("button", { name: "Save" }).click();
     await expect.element(page.getByRole("status")).toBeVisible();
   });
 
   it("saves the whole-meeting policy without inspection or sweep controls", async () => {
     mountPanel();
-    const meetings = page.getByRole("group", { name: "Whole meetings", exact: true });
+    const meetings = page.getByRole("group", { name: "Published meetings in Nextcloud", exact: true });
     await expect.element(meetings).toBeVisible();
     await meetings.getByRole("checkbox").click();
     await meetings.getByRole("button", { name: "7 days", exact: true }).click();
     expect(puts).toBe(0);
     expect(page.getByRole("button", { name: /preview|sweep|operation/i }).all()).toHaveLength(0);
     await meetings.getByRole("button", { name: "30 days", exact: true }).click();
-    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await page.getByRole("button", { name: "Save" }).click();
     await expect.element(page.getByText("Retention settings saved.")).toBeVisible();
     expect(saved.nextcloud).toEqual({ meetings: { forever: false, count: 30, unit: "days" } });
   });
@@ -134,8 +136,8 @@ describe("retention settings in the browser", () => {
     app = mount(RetentionPanel, { target: host, props: {
       operatorClient: new OperatorClient("/operator"), initialSettings: initialSettings(),
     } });
-    await expect.element(page.getByRole("button", { name: "Save retention settings" })).toBeEnabled();
-    await page.getByRole("button", { name: "Save retention settings" }).click();
+    await expect.element(page.getByRole("button", { name: "Save" })).toBeEnabled();
+    await page.getByRole("button", { name: "Save" }).click();
     expect(puts).toBe(1);
     expect(saved.revision).toBe(1);
   });

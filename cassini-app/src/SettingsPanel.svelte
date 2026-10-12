@@ -47,11 +47,12 @@
     LLMStep,
     Settings,
     SettingsQuality,
+    SpeechModel,
   } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
 
-  const dispatch = createEventDispatcher<{ openProviders: void; openTemplates: void }>();
+  const dispatch = createEventDispatcher<{ openProviders: void; openTemplates: void; openStorage: void }>();
 
   interface QualityOption {
     value: SettingsQuality;
@@ -101,8 +102,22 @@
     retainVideo = value === "audio-video";
     if (value === "nothing") meetingFormat = "json";
   }
+  // Keeping nothing leaves no audio to publish, so publishing audio while
+  // Nothing is chosen falls back to keeping audio only.
+  function selectMeetingFormat(value: "opus" | "json") {
+    meetingFormat = value;
+    if (value === "opus" && sourceRetention === "delete-after-processing") selectRecordingMedia("audio-only");
+  }
   let activeModel = "";
   let activeRevision = "";
+  let readyModel: SpeechModel | null = null;
+  function toggleTranscription(on: boolean) {
+    if (on && readyModel) {
+      activeModel = readyModel.id;
+      activeRevision = readyModel.revision;
+    }
+    transcriptionEnabled = on && !!readyModel;
+  }
   let savedTranscription = "";
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
@@ -544,60 +559,50 @@
   {:else}
     <div class="pipe-body">
       <section class="op-tint p-4 grid gap-4" aria-labelledby="recording-publication-heading">
-        <div>
-          <h2 id="recording-publication-heading" class="set-row-name op-card-title">Recording media and publication</h2>
-          <p class="set-row-sub">Choose which recording media stays on the server after processing, then choose what people receive.</p>
+        <h2 id="recording-publication-heading" class="set-row-name op-card-title">Publishing</h2>
+        <div class="grid gap-1">
+          <label class="op-field" for="meeting-format">
+            <span class="op-field-label">Published meeting</span>
+            <select id="meeting-format" class="op-input" value={meetingFormat} on:change={(event) => selectMeetingFormat(event.currentTarget.value === "json" ? "json" : "opus")} disabled={saving} aria-describedby="publication-help">
+              <option value="opus">Audio and transcript (.opus)</option>
+              <option value="json">Transcript only (.json)</option>
+            </select>
+          </label>
+          <p id="publication-help" class="set-row-sub">Camera video is never published; it stays on the server.</p>
+          {#if meetingFormat === "json" && !transcriptionEnabled}
+            <p class="set-row-sub">Transcription is off. Enable it below to include a transcript; otherwise new meetings will contain neither a transcript nor playable audio.</p>
+          {/if}
         </div>
         <fieldset class="grid gap-3" disabled={saving}>
-          <legend class="op-field-label mb-2">Keep after each recording</legend>
-          <label class="flex items-start gap-3">
-            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
-            <span><strong>Nothing</strong><span id="keep-nothing-help" class="set-row-sub block">Keep no audio, video or raw packet logs. Audio is captured temporarily for a single processing run, then deleted after publication succeeds or processing permanently fails. Transcription artifacts, including the published JSON, are kept. Processing cannot be rerun.</span></span>
+          <legend class="op-field-label mb-2">Keep on the server after publishing</legend>
+          <label class="flex items-start gap-3 text-sm" class:keep-unavailable={meetingFormat === "opus"}>
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} disabled={meetingFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
+            <span><strong>Nothing.</strong> <span id="keep-nothing-help">The recording is deleted after publishing and cannot be reprocessed.</span>
+              {#if meetingFormat === "opus"}<span class="set-row-sub block">Unavailable while audio is published.</span>{/if}</span>
           </label>
-          <label class="flex items-start gap-3">
-            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-video" aria-label="Full audio + video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
-            <span><strong>Full audio + video</strong><span id="keep-video-help" class="set-row-sub block">Capture and keep audio, available camera video and associated recording files on the server. Uses more storage. Transcription can be rerun while the source recording remains.</span></span>
+          <label class="flex items-start gap-3 text-sm">
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-video" aria-label="Audio and video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
+            <span><strong>Audio and video.</strong> <span id="keep-video-help">Uses the most space.</span></span>
           </label>
-          <label class="flex items-start gap-3">
-            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-only" aria-label="Audio-only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} aria-describedby="keep-audio-help" />
-            <span><strong>Audio-only</strong><span id="keep-audio-help" class="set-row-sub block">Capture and keep audio and associated recording files, without camera video. Transcription can be rerun while the source recording remains.</span></span>
+          <label class="flex items-start gap-3 text-sm">
+            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-only" aria-label="Audio only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
+            <span><strong>Audio only.</strong></span>
           </label>
         </fieldset>
         {#if recordingMedia === "nothing"}
-          <p class="set-row-sub">Temporary retries within the initial run remain possible. If transcription permanently fails, there may be no usable transcript. Transcripts, meeting information and diagnostic logs follow their existing retention policies.</p>
           {#if !transcriptionEnabled || !activeModel || !activeRevision}
             <div class="transcription-setup" role="status">
               <TriangleAlert size={20} class="transcription-setup-icon" aria-hidden="true" />
               <div class="transcription-setup-copy">
-                <strong>Set up transcription to keep no recording media</strong>
-                <p>Choose a ready model and enable transcription before saving. This lets Cassini create the transcript before deleting the recording media.</p>
+                <strong>Transcription must be on to keep nothing.</strong>
               </div>
-              <button class="transcription-setup-action" type="button" on:click={focusTranscriptionSettings}>Go to transcription settings</button>
+              <button class="transcription-setup-action" type="button" on:click={focusTranscriptionSettings}>Set up transcription</button>
             </div>
           {/if}
         {:else}
-          <p class="set-row-sub">Storage policies control how long recording media is kept. Your publication choice below does not delete the source recording.</p>
+          <p class="set-row-sub">How long kept media stays is set in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
         {/if}
-        <label class="op-field" for="meeting-format">
-          <span class="op-field-label">Published meeting</span>
-          <select id="meeting-format" class="op-input" bind:value={meetingFormat} disabled={saving} aria-describedby="publication-help">
-            <option value="opus" disabled={recordingMedia === "nothing"}>Include audio (.opus)</option>
-            <option value="json">Transcription only (.json)</option>
-          </select>
-        </label>
-        <p id="publication-help" class="set-row-sub">
-          {#if recordingMedia === "nothing"}
-            Keeping no recording media publishes transcription-only JSON. Audio publication is unavailable with this choice.
-          {:else if meetingFormat === "opus"}
-            Publish playable audio together with the transcript and meeting information. Captured video stays on the server and is not included in the published file.
-          {:else}
-            Publish the transcript, speaker blocks, summaries, metadata, tags and annotations without audio playback. Retained recording media remains available on the server for reruns.
-          {/if}
-        </p>
-        {#if meetingFormat === "json" && !transcriptionEnabled}
-          <p class="set-row-sub">Transcription is off. Enable it below to include a transcript; otherwise new meetings will contain neither a transcript nor playable audio.</p>
-        {/if}
-        <p class="set-row-sub">Changes apply to recordings accepted after Save. Existing and active recordings keep their saved policy. Reruns keep their original publication format.</p>
+        <p class="set-row-sub">Applies to new recordings after saving.</p>
       </section>
       <!-- What the operator found, and — the part the tier alone does not
            answer — what the next build will actually do with it. The device is
@@ -693,23 +698,28 @@
            party — do not read as one block, without a card around each. -->
       <section class="op-tint pipe-step scroll-mt-4" aria-label="Transcription settings" tabindex="-1" bind:this={transcriptionSettings}>
         <div class="set-row-main">
-          <p id="stt-quality-heading" class="set-row-name op-card-title">Quality</p>
-          <p class="set-row-sub">
-            {#if transcriptionEnabled}
-              Applies to every recording on this machine.
-            {:else}
-              Transcription is off. To transcribe, install
-              and enable a model below.
-            {/if}
-            {#if runsOnGPU}
-              On the GPU, every quality setting uses the same full-precision model, so this only
-              changes transcription on the CPU.
-            {:else}
-              Higher quality uses a larger model: more accurate, but slower on this machine.
-            {/if}
-          </p>
+          <!-- The switch sits in the heading, as on Summarisation. Turning it
+               on selects the ready model for the chosen quality. -->
+          <div class="step-head">
+            <p class="set-row-name op-card-title">Transcription</p>
+            <input
+              type="checkbox"
+              class="op-switch"
+              aria-label="Transcribe every recording"
+              disabled={!transcriptionEnabled && !readyModel}
+              checked={transcriptionEnabled}
+              on:change={(event) => toggleTranscription(event.currentTarget.checked)}
+            />
+          </div>
+          {#if !transcriptionEnabled && !readyModel}
+            <p class="set-row-sub">Download the model below to turn transcription on.</p>
+          {/if}
+          {#if runsOnGPU}
+            <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
+          {/if}
+          <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
           <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
-            {#each QUALITY_OPTIONS as option}
+            {#each QUALITY_OPTIONS as option (option.value)}
               <label class="q-opt" class:selected={quality === option.value}>
                 <input
                   type="radio"
@@ -726,7 +736,7 @@
             {/each}
           </div>
           <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
-            on:disable={() => transcriptionEnabled = false}
+            bind:readyModel
             on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
         </div>
 
@@ -968,10 +978,8 @@
   .transcription-setup-copy strong {
     font-weight: 650;
   }
-  .transcription-setup-copy p {
-    margin: 4px 0 0;
-    font-size: 12.5px;
-    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  .keep-unavailable {
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
   .transcription-setup-action {
     padding: 9px 12px;
