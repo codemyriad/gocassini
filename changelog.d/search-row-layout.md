@@ -5,3 +5,5 @@
 ### Changed
 - Opening a meeting from a search that matched what was said fills the meeting's transcript search with the same words, as opening one of its moments already did.
 - The app asks for its stylesheet by build, not only by app version. An update that keeps the version number (a rebuilt image, a hot-deploy) could leave a browser pairing the new script with an older stylesheet, which unstyled every screen built from components.
+- On wide lists the matched transcript lines take more room and start further left, while the meeting's title, date and tags keep about 34rem.
+- The "Shared with participants" note in the rooms rail uses the same words as "Who can see recordings" in Settings.

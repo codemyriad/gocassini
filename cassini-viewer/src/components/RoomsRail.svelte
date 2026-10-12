@@ -107,7 +107,9 @@
     participants: {
       label: "Shared with participants",
       detail:
-        "Cassini shares each recording with the room's captured participants, including invited people who did not join. Guests without a Nextcloud account do not receive a share. Public meeting participants can share onward when Nextcloud permits it.",
+        // Same words as "Who can see recordings" in Operator › Publish pipeline
+        // (cassini-app DirectShareAccessPanel.svelte); change both together.
+        "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not. Guests without a Nextcloud account can't open it. Cassini never creates a public link; in public rooms, people can reshare the file if this Nextcloud allows it.",
     },
   } as const;
   const AUDIENCE_FOOTNOTE = "Nextcloud Files controls who can read each recording.";

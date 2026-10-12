@@ -753,7 +753,7 @@
      .row-snippet; the timestamps are what make each one reachable. */
   /* Under the meeting's details by default. As an extra column its unwrapped
      snippets took all the width and crushed the title to one letter, so it
-     sits beside the details only when the list is wide, at a capped width. */
+     sits beside the details only when the list is wide, at a bounded width. */
   .meeting-row > :not(.row-moments) {
     grid-row: 1;
   }
@@ -778,7 +778,9 @@
     .row-pickable .row-moments {
       grid-row: 1;
       grid-column: auto;
-      width: min(36rem, 45cqw);
+      /* The details keep about 34rem for title, date and tags; the moments
+         take the rest, between 36rem and 60rem. */
+      width: min(60rem, max(36rem, 100cqw - 34rem));
       margin-top: 0;
     }
     /* Last, with room, so "1m" never reads as part of a moment's "0:43". */

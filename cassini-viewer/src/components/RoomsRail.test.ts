@@ -106,7 +106,7 @@ describe("RoomsRail audience notice", () => {
     // The grant is the room's attendee list at publish, not who was present in
     // the call (talk_participants.go, audience_test.go), so the wording must not
     // say "in the call".
-    expect(participants).toContain("including invited people who did not join");
+    expect(participants).toContain("whether they were present on the call or not");
     expect(participants).not.toContain("in each call");
   });
 
