@@ -115,9 +115,16 @@
       ],
     },
   } as const;
-  const AUDIENCE_FOOTNOTE = "Nextcloud Files controls who can read each recording.";
+  const AUDIENCE_LEAD = "Nextcloud Files controls who can read each recording.";
   let audienceEl: HTMLElement;
   let audienceOpen = false;
+  // Placed from the label each time it shows: the rail scrolls, so a popover
+  // positioned inside it would be clipped at its edge.
+  let audienceAt: { top: number; left: number } | null = null;
+  function placeAudience() {
+    const rect = audienceEl?.getBoundingClientRect();
+    if (rect) audienceAt = { top: rect.bottom + 4, left: rect.left + 8 };
+  }
 
   function closeAudienceOutside(event: MouseEvent) {
     if (audienceOpen && !event.composedPath().includes(audienceEl)) audienceOpen = false;
@@ -137,13 +144,16 @@
   <div class="rail-head rail-head-row rooms-head">
     <h2>Rooms</h2>
     {#if audience}
-      <span class="audience" bind:this={audienceEl}>
+      <span class="audience" bind:this={audienceEl} on:mouseenter={placeAudience} on:focusin={placeAudience}>
         <button
           type="button"
           class="audience-note"
           aria-expanded={audienceOpen}
           aria-describedby="audience-detail"
-          on:click={() => (audienceOpen = !audienceOpen)}
+          on:click={() => {
+            placeAudience();
+            audienceOpen = !audienceOpen;
+          }}
           on:keydown={(event) => {
             if (event.key === "Escape") audienceOpen = false;
           }}
@@ -151,11 +161,19 @@
           <Lock size={11} aria-hidden="true" />
           {AUDIENCE[audience].label}
         </button>
-        <span id="audience-detail" role="tooltip" class="tag-popover audience-detail" class:open={audienceOpen}>
+        <span
+          id="audience-detail"
+          role="tooltip"
+          class="tag-popover audience-detail"
+          class:open={audienceOpen}
+          style:top={audienceAt ? `${audienceAt.top}px` : undefined}
+          style:left={audienceAt ? `${audienceAt.left}px` : undefined}
+        >
+          <!-- The rule first, then how it plays out. -->
+          <span class="audience-lead">{AUDIENCE_LEAD}</span>
           {#each AUDIENCE[audience].points as point (point)}
             <span class="audience-point">{point}</span>
           {/each}
-          <span class="audience-foot">{AUDIENCE_FOOTNOTE}</span>
         </span>
       </span>
     {/if}
@@ -453,10 +471,11 @@
   }
   .audience-detail {
     display: none;
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 8px;
-    right: 8px;
+    /* Fixed, at the label (placeAudience), and wider than the rail, over the
+       list beside it: the lead line fits on one line and the points don't
+       stack into a narrow column. */
+    position: fixed;
+    width: min(22rem, calc(100vw - 24px));
     padding: 8px 10px;
     font-size: 12px;
     font-weight: 400;
@@ -466,13 +485,10 @@
     text-wrap: pretty;
     color: var(--color-base-content);
   }
-  .audience-foot {
+  .audience-lead {
     display: block;
-    margin-top: 8px;
-    padding-top: 6px;
-    border-top: 1px solid var(--color-base-300);
-    font-size: 11px;
-    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+    margin-bottom: 6px;
+    font-weight: 600;
   }
   /* A tooltip is phrasing content, so these are spans drawn as a list. */
   .audience-point {

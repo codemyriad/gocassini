@@ -52,6 +52,7 @@
   <div class="access-body grid gap-3 text-sm">
     <!-- Same points as the rooms rail's "Shared with participants" note
          (cassini-viewer RoomsRail.svelte); change both together. -->
+    <p>Nextcloud Files controls who can read each recording.</p>
     <ul class="access-points">
       <li>Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.</li>
       <li>Guests without a Nextcloud account can't open it.</li>
