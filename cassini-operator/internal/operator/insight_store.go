@@ -65,20 +65,23 @@ var insightSweep struct {
 // and a retry of their insight is a retry of the thing they asked for, not of
 // whatever the deployment happens to be pointed at by then.
 type InsightRun struct {
-	ID                string   `json:"id"`
-	CreatedBy         string   `json:"createdBy"`
-	Status            string   `json:"status"`
-	WorkflowID        string   `json:"workflowId"`
-	WorkflowVersion   string   `json:"workflowVersion"`
-	WorkflowSHA256    string   `json:"workflowSha256"`
-	MeetingIDs        []string `json:"meetingIds"`
-	RoomIDs           []string `json:"roomIds"`
-	Question          string   `json:"question"`
-	RequestedProvider string   `json:"requestedProvider"`
-	RequestedModel    string   `json:"requestedModel"`
-	Provider          string   `json:"provider"`
-	Model             string   `json:"model"`
-	DocumentPath      string   `json:"documentPath"`
+	ID              string   `json:"id"`
+	CreatedBy       string   `json:"createdBy"`
+	Status          string   `json:"status"`
+	WorkflowID      string   `json:"workflowId"`
+	WorkflowVersion string   `json:"workflowVersion"`
+	WorkflowSHA256  string   `json:"workflowSha256"`
+	MeetingIDs      []string `json:"meetingIds"`
+	RoomIDs         []string `json:"roomIds"`
+	Question        string   `json:"question"`
+	// Name is what the asker called this insight, "" for none. A label, never
+	// an input: no attempt reads it, which is why it may change in any status.
+	Name              string `json:"name"`
+	RequestedProvider string `json:"requestedProvider"`
+	RequestedModel    string `json:"requestedModel"`
+	Provider          string `json:"provider"`
+	Model             string `json:"model"`
+	DocumentPath      string `json:"documentPath"`
 	// Reason is why the latest attempt failed, as one token from
 	// insight_reasons.go, and "" while the run is anything but failed. The app
 	// owns the words for each token (D-749).
@@ -230,10 +233,10 @@ func (s *insightStore) CreateRun(ctx context.Context, run InsightRun) error {
 INSERT INTO insight_runs (
   id, created_by, status,
   workflow_id, workflow_version, workflow_sha256,
-  meeting_ids, room_ids, question,
+  meeting_ids, room_ids, question, name,
   requested_provider, requested_model,
   attempt_number, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID,
 		createdBy,
 		insightStatusQueued,
@@ -243,6 +246,7 @@ INSERT INTO insight_runs (
 		meetingIDs,
 		roomIDs,
 		run.Question,
+		run.Name,
 		run.RequestedProvider,
 		run.RequestedModel,
 		1,
@@ -299,6 +303,33 @@ ORDER BY created_at DESC, id DESC`, createdBy)
 		return nil, fmt.Errorf("iterate insight runs: %w", err)
 	}
 	return runs, nil
+}
+
+// RenameRun sets a run's name and returns the run, or sql.ErrNoRows when there
+// is none. Whose run it is was decided by the caller (ownRun); the name is a
+// label no attempt reads, so it changes in any status and never takes the
+// attempt lock.
+//
+// updated_at is deliberately left alone. It is the attempt's heartbeat: the
+// sweep reads it as "nothing has written this row", so renaming a stranded run
+// would keep it wedged for another timeout, and the viewer keys the fetched
+// document on it, so a rename would throw away an answer that has not changed.
+func (s *insightStore) RenameRun(ctx context.Context, id, name string) (InsightRun, error) {
+	result, err := s.db.ExecContext(ctx, `
+UPDATE insight_runs
+SET name = ?
+WHERE id = ?`, name, id)
+	if err != nil {
+		return InsightRun{}, fmt.Errorf("rename insight run: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return InsightRun{}, fmt.Errorf("rows affected: %w", err)
+	}
+	if changed == 0 {
+		return InsightRun{}, sql.ErrNoRows
+	}
+	return s.GetRun(ctx, id)
 }
 
 // BeginAttempt moves a queued or failed run to running and returns it, or
@@ -583,7 +614,7 @@ WHERE status = ? AND started_at < ?`,
 const insightRunSelect = `
 SELECT id, created_by, status,
        workflow_id, workflow_version, workflow_sha256,
-       meeting_ids, room_ids, question,
+       meeting_ids, room_ids, question, name,
        requested_provider, requested_model,
        provider, model, document_path, error,
        attempt_number, created_at, updated_at
@@ -595,7 +626,7 @@ func scanInsightRun(scanner rowScanner) (InsightRun, error) {
 	if err := scanner.Scan(
 		&run.ID, &run.CreatedBy, &run.Status,
 		&run.WorkflowID, &run.WorkflowVersion, &run.WorkflowSHA256,
-		&meetingIDs, &roomIDs, &run.Question,
+		&meetingIDs, &roomIDs, &run.Question, &run.Name,
 		&run.RequestedProvider, &run.RequestedModel,
 		&run.Provider, &run.Model, &run.DocumentPath, &run.Error,
 		&run.AttemptNumber, &createdAt, &updatedAt,

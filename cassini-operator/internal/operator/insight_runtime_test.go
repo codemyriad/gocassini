@@ -350,6 +350,51 @@ func TestInsightDocumentNameCarriesTheDayTheWorkflowAndTheRun(t *testing.T) {
 	}
 }
 
+func TestInsightDocumentNameIsTheInsightsNameMadeFileSafe(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	cases := []struct{ name, want string }{
+		{"Design sync · 3 meetings", "Design sync · 3 meetings"},
+		{"Q3/Q4: plans\\notes", "Q3 Q4 plans notes"},
+		{"  spaced \t out  ", "spaced out"},
+		{"bell\x07", "bell"},
+		{"..hidden", "hidden"},
+		{strings.Repeat("a", 150), strings.Repeat("a", maxInsightFileNameRunes)},
+		// Nothing filename-safe left: the dated name, so the file still has one.
+		{"/:/", "2026-09-03-summarise-ins_0123456789abcdef"},
+		{"", "2026-09-03-summarise-ins_0123456789abcdef"},
+	}
+	for _, testCase := range cases {
+		run := insightTestRun()
+		run.Name = testCase.name
+		if got := insightDocumentBaseName(run, now); got != testCase.want {
+			t.Errorf("insightDocumentBaseName(name %q) = %q, want %q", testCase.name, got, testCase.want)
+		}
+	}
+}
+
+// Names repeat, so a named run whose every suffix is taken still delivers: it
+// falls back to the dated name with the run id, which nothing else uses.
+func TestPerformFallsBackToTheDatedNameWhenTheNameIsTaken(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	dav.markExisting("alice/" + ncInsightsRoot + "/Weekly sync.md")
+	for attempt := 2; attempt <= maxInsightDeliveryAttempts; attempt++ {
+		dav.markExisting("alice/" + ncInsightsRoot + "/Weekly sync-" + strconv.Itoa(attempt) + ".md")
+	}
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	service, _ := insightTestService(t, dav.server.URL, bin, nil)
+	run := insightTestRun()
+	run.Name = "Weekly sync"
+
+	outcome := service.perform(context.Background(), run)
+
+	if outcome.Status != insightStatusSucceeded {
+		t.Fatalf("status = %q, want succeeded (error %q)", outcome.Status, outcome.Error)
+	}
+	if want := ncInsightsRoot + "/2026-09-03-summarise-ins_0123456789abcdef.md"; outcome.DocumentPath != want {
+		t.Errorf("documentPath = %q, want %q", outcome.DocumentPath, want)
+	}
+}
+
 // The child that asks the model needs the endpoint credential and nothing else
 // the operator holds. APP_SECRET is the sharpest case: a process carrying it can
 // act as any Nextcloud account.
