@@ -90,6 +90,27 @@ Conceptually:
 - input: `.run` or raw `.mkv`
 - output: an intermediate bundle staged for packing into a portable `.opus`
 
+`meeting.webm` is the meeting's only Opus encode; packing copies its packets
+into the `.opus` unchanged. How it is encoded is set by a named encode policy.
+The default, `match-source`, sizes the encode from the recording's tracks:
+
+- audio bandwidth (the highest frequency kept) stops where the widest track
+  stops: a 16 kHz phone recording holds nothing above 8 kHz, so the mix is
+  coded up to 8 kHz; Talk tracks count as full range (up to 20 kHz);
+- bitrate is a third over what the highest-rate track spent per channel while
+  someone was speaking, never above 64 kb/s. Per channel because the mix is
+  mono (one channel): a participant sending stereo (two channels) at 64 kb/s
+  counts as 32 kb/s, about what their voice needs once the two are mixed into
+  one. The channel count is read from each Opus packet, since a Talk track's
+  header says stereo whether or not the sender codes it. A track with fewer
+  than 50 packets (about a second of Talk audio; often a participant who
+  never unmuted) does not count.
+
+`manifest.json` records the choice as `audioEncode`. A bundle without that
+record was built with the earlier encode, policy `fixed-64k` (64 kb/s whatever
+the sources carried). `cassini build --audio-encode <policy>` rebuilds with a
+named policy.
+
 The `.meeting` bundle is transient build scratch, not a published format. Its
 `cassini.json` and `manifest.json` are internal staging manifests, not a
 consumer contract, and are scheduled for retirement. Prefer the portable `.opus`
@@ -259,6 +280,7 @@ At the attempt level:
   `runs/<job-id>--attempt-NNN.seal/<job-id>.opus`, and `artifact_opus_sha256` is
   its digest
 - rerun attempts typically reuse the canonical `.run` and create fresh attempt-local `.meeting`, `.seal` and `.site` outputs
+- a rerun rebuilds the audio with the encode policy recorded in `current/<job-id>.meeting` (`fixed-64k` when it records none), so the rebuilt `.opus` has the same audio and the marks made on the published one carry over; when that record cannot be read, the rerun fails rather than guess an encode that would discard the marks. Publication promotes that bundle, so it is absent when nothing was published yet or the publication carried no audio (a transcription-only `.json`); those reruns take the default encode. A published `.opus` whose local copy the retention policy expired has no readable record, so its rerun fails
 
 The split is the same one every stage uses, and it is what lets a publish deliver
 a specific attempt's artifact rather than whatever is currently canonical:

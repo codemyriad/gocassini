@@ -27,6 +27,10 @@ type buildOptions struct {
 	device        string
 	keepWork      bool
 	rebuild       bool
+	// audioEncode is the mix's Opus encode policy ("" = the current default).
+	// A rebuild of a meeting that was already published passes the policy it
+	// was built with, so its audio, and the marks bound to it, stay the same.
+	audioEncode string
 }
 
 func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -39,6 +43,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.StringVar(&opts.device, "device", "auto", "transcriber device: auto, cpu, cuda")
 	fs.BoolVar(&opts.keepWork, "keep-work", false, "keep transcriber work files inside the meeting bundle")
 	fs.BoolVar(&opts.rebuild, "rebuild-image", false, "ignored (kept for compatibility)")
+	fs.StringVar(&opts.audioEncode, "audio-encode", "", "meeting audio encode policy: "+transcribe.AudioEncodeMatchSource+" (default, sized from the sources) or "+transcribe.AudioEncodeFixed64k+" (to rebuild a meeting first built with it, before D-850)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini build ./runs/meeting.run --out "./2026-03-11 Weekly Sync.opus"
@@ -188,6 +193,9 @@ func validateBuildOptions(opts buildOptions) error {
 	default:
 		return fmt.Errorf("invalid --device %q", opts.device)
 	}
+	if !transcribe.ValidAudioEncodePolicy(opts.audioEncode) {
+		return fmt.Errorf("invalid --audio-encode %q (known: %s, %s)", opts.audioEncode, transcribe.AudioEncodeMatchSource, transcribe.AudioEncodeFixed64k)
+	}
 	return nil
 }
 
@@ -276,6 +284,7 @@ func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle Meetin
 	if d := strings.ToLower(strings.TrimSpace(opts.device)); d == "cpu" || d == "cuda" {
 		cfg.Device = opts.device
 	}
+	cfg.AudioEncodePolicy = strings.TrimSpace(opts.audioEncode)
 	if err := buildArtifactFn(ctx, input.RecordingPath, bundle.RootDir, cfg, stdout); err != nil {
 		_ = UpdateMeetingBundleStatus(bundle, bundleStateFailed, "build", err.Error())
 		return fmt.Errorf("build failed: %w", err)

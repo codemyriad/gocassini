@@ -82,7 +82,11 @@ func TestCaptureModesPreserveDecodedSoundPlacement(t *testing.T) {
 						}
 					}
 					mix := filepath.Join(dir, "meeting.webm")
-					if err := MixDownToWebM(mkv, streams, mix); err != nil {
+					enc, err := ChooseMeetingAudioEncode(mkv, streams, "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := MixDownToWebM(mkv, streams, mix, enc); err != nil {
 						t.Fatal(err)
 					}
 					mixed, err := ExtractMixedFloats(mix)
