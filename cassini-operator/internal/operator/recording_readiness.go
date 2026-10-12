@@ -114,7 +114,14 @@ type readinessResponse struct {
 	SecretConfigured bool             `json:"secret_configured"`
 	SecretSource     string           `json:"secret_source"`
 	TestRoomURL      string           `json:"test_room_url"`
-	Test             readinessTest    `json:"test"`
+	// TestRoomMine says the test conversation belongs to the administrator who
+	// asked, and so that Talk will let them start a recording in it.
+	//
+	// Sent as an answer rather than an owner id because only the request knows
+	// who is asking: the panel has no identity of its own, and another
+	// administrator's user id is not the panel's business.
+	TestRoomMine bool          `json:"test_room_mine"`
+	Test         readinessTest `json:"test"`
 }
 
 func (rt *Runtime) recordingSetupPath() string {
@@ -516,11 +523,16 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 			// somebody pasted a room URL into a form, which is the one piece of
 			// configuration Cassini can do for itself. Created once and kept,
 			// so the test recording below reuses the same conversation.
-			if created, err := rt.ensureTestRoom(ctx, room, s.state.TestRoomOwner, ""); err == nil {
+			if created, createdOwner, err := rt.ensureTestRoom(ctx, room, s.state.TestRoomOwner, ""); err == nil {
 				s.mu.Lock()
 				next := s.state
 				next.TestRoomURL = created
-				next.TestRoomOwner = ""
+				// Cassini's own provisioning user, when the check made this
+				// room itself. Recorded rather than blanked: it is the truth,
+				// it still does not match the administrator reading the panel,
+				// and it is what lets the room's continued existence be
+				// checked below.
+				next.TestRoomOwner = createdOwner
 				if err := rt.saveRecordingSetupLocked(next); err != nil {
 					rt.logger.Printf("ERROR: could not persist the created test room: %v", err)
 				}
@@ -567,7 +579,24 @@ func (rt *Runtime) checkRecordingReadinessScoped(ctx context.Context, scope read
 		// it, and every future check fails against a conversation that is gone
 		// with no way back. Forgetting it is what lets the next check make a
 		// new one.
-		if roomIsGone(checks) {
+		gone := roomIsGone(checks)
+		// The probe only reports a missing room when it got far enough to read
+		// Talk's recording settings, which needs a High Performance Backend. A
+		// room deleted while there was none was therefore never noticed: the
+		// panel went on offering a link to it, and arming re-armed the test
+		// against a conversation that no longer existed. Asking Talk directly
+		// costs one OCS read and does not care about signaling.
+		if !gone && rt.validTestRoom(room) {
+			s.mu.Lock()
+			owner := s.state.TestRoomOwner
+			s.mu.Unlock()
+			missing, err := rt.testRoomMissing(ctx, room, owner)
+			if err != nil {
+				rt.logger.Printf("ERROR: could not confirm the test room still exists: %v", err)
+			}
+			gone = missing
+		}
+		if gone {
 			s.mu.Lock()
 			next := s.state
 			next.TestRoomURL = ""
@@ -911,6 +940,17 @@ func (rt *Runtime) readinessTest(ctx context.Context, setup recordingSetupState)
 	return result
 }
 
+// adminReadiness is the readiness an administrator's own request answers with.
+//
+// The acting user is only knowable from the request, so the ownership of the
+// test room is resolved here rather than inside readiness(), which several
+// callers share and which has no request to read.
+func (rt *Runtime) adminReadiness(r *http.Request) readinessResponse {
+	resp := rt.readiness(r.Context())
+	resp.TestRoomMine = rt.testRoomMine(actingUser(r))
+	return resp
+}
+
 func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	switch {
@@ -971,7 +1011,7 @@ func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported health operation")
 		return
 	}
-	writeJSON(w, http.StatusOK, rt.readiness(r.Context()))
+	writeJSON(w, http.StatusOK, rt.adminReadiness(r))
 }
 
 func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request) {
@@ -1040,7 +1080,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		owner := actingUser(r)
 		supplied := body.TestRoomURL != nil && strings.TrimSpace(*body.TestRoomURL) != ""
 		if !supplied && (!rt.validTestRoom(next.TestRoomURL) || (owner != "" && next.TestRoomOwner != owner)) {
-			created, err := rt.ensureTestRoom(r.Context(), next.TestRoomURL, next.TestRoomOwner, owner)
+			created, createdOwner, err := rt.ensureTestRoom(r.Context(), next.TestRoomURL, next.TestRoomOwner, owner)
 			if err != nil {
 				s.mu.Unlock()
 				rt.logger.Printf("ERROR: could not prepare a test room: %v", err)
@@ -1048,7 +1088,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 			next.TestRoomURL = created
-			next.TestRoomOwner = owner
+			next.TestRoomOwner = createdOwner
 		} else if supplied {
 			// Whose room it is, is unknown — so do not claim it is the
 			// caller's, or the next arming would reuse a room they may not be
@@ -1085,7 +1125,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		delete(s.probedAt, "talk")
 	}
 	s.mu.Unlock()
-	writeJSON(w, 200, rt.readiness(r.Context()))
+	writeJSON(w, 200, rt.adminReadiness(r))
 }
 
 // Used by both manual and Talk-backed recording admission. Expired or missing

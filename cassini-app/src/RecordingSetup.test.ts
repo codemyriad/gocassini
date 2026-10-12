@@ -54,3 +54,24 @@ describe("the panel never checks on its own", () => {
     expect(panelSource).toContain("disabled={busy}");
   });
 });
+
+// Whose room the link points at.
+//
+// Talk's Start recording action belongs to a conversation's moderators, and the
+// connection check creates this room as Cassini's own provisioning user — it
+// only needs a token to read Talk's recording settings with. Linking to it sent
+// an administrator into a call where the record button was not theirs to press,
+// directly under steps telling them to press it. Reported from staging.
+describe("the test room is offered only to an administrator who can record in it", () => {
+  it("builds no link unless the operator says the room is this reader's", () => {
+    const derivation = panelSource.slice(panelSource.indexOf("$: testRoomHref ="));
+    expect(derivation.slice(0, 260)).toContain("report?.test_room_mine");
+  });
+
+  it("builds the link in one place, so no branch can offer an unowned room", () => {
+    // Both "Open test room" affordances hang off testRoomHref. An href built
+    // straight from test_room_url anywhere would reintroduce the bug.
+    expect(panelSource).toContain("Open test room");
+    expect(panelSource).not.toMatch(/href=\{[^}]*test_room_url/);
+  });
+});

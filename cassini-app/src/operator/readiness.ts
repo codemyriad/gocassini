@@ -55,6 +55,11 @@ export interface RecordingReadiness {
   secret_configured: boolean;
   secret_source: "env" | "setup" | "unset";
   test_room_url: string;
+  // Whether the test conversation is the reading administrator's, and so
+  // whether Talk will let them start a recording in it. A room the connection
+  // check made belongs to Cassini's own account, and offering it invites an
+  // administrator into a call where the record button is not theirs to press.
+  test_room_mine?: boolean;
   test: {
     started_at?: string;
     job_id?: string;
