@@ -501,6 +501,8 @@
     ? `the ${deviceLabel("cuda")}`
     : settings?.detected_gpu ? "the CPU" : "the CPU (no GPU found)";
   $: inUseModel = modelInventory?.models.find((m) => m.id === activeModel);
+  // The model the picked quality runs, which the switch turns on.
+  $: qualityModel = modelInventory?.models.find((m) => m.id === speechModelFor(quality, selectedDevice));
 
   // How long kept media stays, from the Recordings policy: "for 30 days",
   // "kept forever", or "" when retention could not be read.
@@ -662,7 +664,9 @@
             <p class="set-row-sub">Save to set up the summary and what participants receive.</p>
           {/if}
           {#if !transcriptionEnabled && !readyModel}
-            <p class="set-row-sub">Download the model below to turn it on.</p>
+            <!-- The switch needs the picked quality's model installed AND checked
+                 on this build; say which of the two is missing. -->
+            <p class="set-row-sub">{qualityModel?.installed ? "Check the model below to turn it on." : "Download the model below to turn it on."}</p>
           {/if}
           {#if runsOnGPU}
             <p class="set-row-sub">On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.</p>
