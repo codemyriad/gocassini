@@ -495,9 +495,11 @@
   // Without a transcript the meeting is published as audio, whatever the
   // format select last said.
   $: publishedFormat = transcriptionEnabled ? meetingFormat : "opus" as const;
+  // "the GPU (CUDA)", "the CPU", or "the CPU (no GPU found)": the end of the
+  // sentence that names the model in use.
   $: runsOnLine = savedDevice === "cuda"
-    ? deviceLabel("cuda")
-    : settings?.detected_gpu ? "CPU" : "CPU, no GPU found";
+    ? `the ${deviceLabel("cuda")}`
+    : settings?.detected_gpu ? "the CPU" : "the CPU (no GPU found)";
   $: inUseModel = modelInventory?.models.find((m) => m.id === activeModel);
 
   // How long kept media stays, from the Recordings policy: "for 30 days",
@@ -670,23 +672,26 @@
                device is auto-selected; on a host with no usable GPU that is the
                CPU, said out loud (D-702). The facts and the override open under
                "Change". -->
-          <p class="in-use pipe-gap" class:in-use-warn={transcriptionEnabled && inUseModel && !inUseModel.installed} role="status">
-            <!-- Installed but not yet runtime-checked is normal after any new
-                 build: the operator checks it before transcribing. Only missing
-                 files mean recordings go without a transcript. -->
-            {#if transcriptionEnabled && inUseModel && !inUseModel.installed}
-              <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
-              <strong>{inUseModel.name} is not installed.</strong>
-              <span>Recordings get no transcript until it is.</span>
-              <span aria-hidden="true">·</span>
-            {:else if transcriptionEnabled && inUseModel}
-              <span class="in-use-label">In use</span>
-              <strong>{inUseModel.name}</strong>
-              <span aria-hidden="true">·</span>
-            {/if}
-            <span>{runsOnLine}</span>
-            <button type="button" class="link" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>Change</button>
-          </p>
+          <div class="in-use pipe-gap" class:in-use-warn={transcriptionEnabled && inUseModel && !inUseModel.installed}>
+            <!-- One sentence: what transcribes and where. Installed but not yet
+                 runtime-checked is normal after any new build (the operator
+                 checks it before transcribing); only missing files mean
+                 recordings go without a transcript. -->
+            <p class="in-use-text" role="status">
+              {#if transcriptionEnabled && inUseModel && !inUseModel.installed}
+                <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
+                <span><strong>{inUseModel.name}</strong> isn't installed, so recordings get no transcript.</span>
+              {:else if transcriptionEnabled && inUseModel}
+                <span>Transcribing with <strong>{inUseModel.name}</strong> on {runsOnLine}.</span>
+              {:else}
+                <span>Transcription runs on {runsOnLine}.</span>
+              {/if}
+            </p>
+            <button type="button" class="in-use-toggle" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>
+              Hardware
+              <ChevronDown size={14} class={hardwareOpen ? "in-use-chevron open" : "in-use-chevron"} aria-hidden="true" />
+            </button>
+          </div>
           {#if hardwareOpen}
             <!-- One box: what the operator found, the device choice, and one tip.
                  What runs and where is already said in the line above. -->
@@ -1295,21 +1300,45 @@
   .in-use {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: 4px 8px;
-    margin-bottom: 0;
-    padding: 6px 10px 5px;
+    align-items: center;
+    gap: 4px 12px;
+    padding: 6px 6px 6px 10px;
     font-size: 12.5px;
     line-height: 1.35;
     border-radius: var(--radius-box, 0.5rem);
     background: var(--op-inset, color-mix(in oklch, var(--color-base-content) 5%, transparent));
   }
-  /* Nextcloud styles every button with a min-height and padding. */
-  .in-use .link {
-    min-height: 0;
+  .in-use-text {
+    display: flex;
+    flex: 1 1 16rem;
+    align-items: center;
+    gap: 6px;
     margin: 0;
-    padding: 0;
-    line-height: inherit;
+  }
+  /* Nextcloud styles every button with a min-height and padding. */
+  .in-use-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 0;
+    margin: 0 0 0 auto;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: inherit;
+    background: none;
+    border: 1px solid var(--op-inset-border, color-mix(in oklch, var(--color-base-content) 15%, transparent));
+    border-radius: var(--radius-field, 0.375rem);
+    cursor: pointer;
+  }
+  .in-use-toggle:hover {
+    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
+  }
+  .in-use-toggle :global(.in-use-chevron) {
+    transition: transform 0.15s;
+  }
+  .in-use-toggle :global(.in-use-chevron.open) {
+    transform: rotate(180deg);
   }
   .in-use-warn {
     background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-base-100));
@@ -1318,13 +1347,6 @@
   .in-use-warn :global(.in-use-warn-icon) {
     align-self: center;
     color: var(--color-warning);
-  }
-  .in-use-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
   .model-heading {
     margin-bottom: -4px;

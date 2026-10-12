@@ -549,6 +549,10 @@ func (c ExAppConfig) serveEmbeddedAsset(
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
+	// The names never change and Nextcloud's ?v= follows the app version, which
+	// an update that keeps the version (a hot-deploy, a rebuilt image) does not
+	// bump. Revalidate on every load; an unchanged file answers 304.
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, file, info.ModTime(), f)
 }
 

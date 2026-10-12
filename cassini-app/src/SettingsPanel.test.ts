@@ -23,7 +23,7 @@ describe("SettingsPanel device policy", () => {
     // The "In use" line names the saved model and the effective device.
     expect(settingsPanelSource).toContain('savedDevice = settings?.effective?.device');
     expect(settingsPanelSource).toContain("<strong>{inUseModel.name}</strong>");
-    expect(settingsPanelSource).toContain("<span>{runsOnLine}</span>");
+    expect(settingsPanelSource).toContain("on {runsOnLine}.");
     expect(settingsPanelSource).toContain("settings.effective.note");
   });
 });
