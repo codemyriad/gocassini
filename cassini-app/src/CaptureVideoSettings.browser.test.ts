@@ -23,7 +23,8 @@ beforeEach(() => {
         retainVideo = body.retain_video;
         quality = body.quality ?? quality;
       }
-      return Response.json({ quality, retain_video: retainVideo, transcription_enabled: false });
+      // What stays on the server is asked once transcription is saved on.
+      return Response.json({ quality, retain_video: retainVideo, transcription_enabled: true, active_model: "m", active_revision: "r1" });
     }
     if (path === "/operator/settings/workflows") return Response.json([]);
     if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
@@ -40,7 +41,7 @@ afterEach(async () => {
 });
 
 describe("later video settings", () => {
-  it("reads saved consent, protects failed edits and saves with transcription disabled", async () => {
+  it("reads saved consent, protects failed edits and saves the choice", async () => {
     component = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
     const video = page.getByRole("radio", { name: "Audio and video", exact: true });
     await expect.element(video).toBeChecked();
@@ -57,7 +58,7 @@ describe("later video settings", () => {
     await save.click();
     await expect.element(save).not.toBeInTheDocument();
     expect(retainVideo).toBe(false);
-    expect(writes.at(-1)).toMatchObject({ retain_video: false, transcription_enabled: false });
+    expect(writes.at(-1)).toMatchObject({ retain_video: false, transcription_enabled: true });
     expect(writes.at(-1)).not.toHaveProperty("quality");
     await unmount(component); component = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
     await expect.element(video).not.toBeChecked();

@@ -6,16 +6,30 @@
   import type { DetailedStorageUsage } from "./operator/types";
 
   import StorageCategoryChart from "./StorageCategoryChart.svelte";
-  import { categoryPresentation, displayStorageCategories, historyIDs } from "./operator/storageCharts";
+  import { categoryPresentation, chartRetentionPolicy, displayStorageCategories, historyIDs } from "./operator/storageCharts";
   import { onRetentionChanged } from "./operator/retentionSignal";
+  import type { RetentionSettings } from "./operator/retention";
   // Previous attempts is one row that opens onto its four kinds. It starts
   // open when the saved policy sets each kind separately.
   let splitHistory = false;
   let savedFine: boolean | null = null;
-  const stopRetention = onRetentionChanged(settings => {
+  // Saved retention drives the cleanup markers on each date chart.
+  let retention: RetentionSettings | null = null;
+  function applyRetention(settings: RetentionSettings) {
+    retention = settings;
     const fine = settings.history.mode === "fine";
     if (fine !== savedFine) { savedFine = fine; splitHistory = fine; }
-  });
+  }
+  const stopRetention = onRetentionChanged(applyRetention);
+  // The retention editor normally publishes its settings when it loads; read
+  // them once here if it has not, so the markers never depend on the editor.
+  async function loadRetention() {
+    if (retention || !operatorClient) return;
+    try {
+      const settings = await operatorClient.getRetention();
+      if (!retention) applyRetention(settings);
+    } catch { /* Markers are optional; the report stays usable without them. */ }
+  }
   onDestroy(stopRetention);
   let expanded: Record<string, boolean> = {};
   $: publishedCategories = usage?.published_category ? [usage.published_category] : [];
@@ -45,6 +59,7 @@
 
   async function loadThenRebuild() {
     await load();
+    void loadRetention();
     void load(true);
   }
 
@@ -153,7 +168,7 @@
             <summary><span class="category-dot" style:background={info.color}></span><span class="category-name">{info.label}<small>{category.files.toLocaleString()} file{category.files === 1 ? "" : "s"}</small></span><strong>{formatStorageBytes(category.bytes)}</strong></summary>
             <p class="category-description">{info.description}</p>
             {#if category.id === "published" && publishedPartial}<p class="category-description" role="status">Partial result: some files could not be measured or dated.</p>{/if}
-            <StorageCategoryChart {category} measuredAt={usage.measured_at} label={info.label} color={info.color} dateLabel={category.id === "published" ? "publication or recording date" : "UTC lifecycle date"} />
+            <StorageCategoryChart {category} measuredAt={usage.measured_at} label={info.label} color={info.color} dateLabel={category.id === "published" ? "publication or recording date" : "UTC lifecycle date"} policy={chartRetentionPolicy(category.id, retention)} />
           </details>
         {/each}
       </div>

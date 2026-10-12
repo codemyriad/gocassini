@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import Settings from "./Settings.svelte";
 import { formatStorageBytes } from "./operator/storageUsage";
+import { chartDate } from "./operator/storageCharts";
 import "./app.css";
 
 const ids = ["recordings", "current", "failed_capture", "failed_build", "superseded", "failed_publish", "logs", "other"];
@@ -242,5 +243,38 @@ describe("storage charts in the browser", () => {
       await expect.element(page.getByRole("button", { name: /^Previous attempts:/ })).toHaveAttribute("aria-expanded", "true");
       await expect.element(page.getByRole("button", { name: /Explore Replaced output:/ })).toBeVisible();
     } finally { settings.history.mode = "group"; }
+  });
+
+  it("marks what the next cleanup removes and omits the marker for keep-forever policies", async () => {
+    const DAY = 86_400_000;
+    const now = new Date();
+    // Choose the policy length so the cutoff lands on 12 Sep 2026, inside the fixture's dates.
+    const count = Math.round((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - Date.UTC(2026, 8, 12)) / DAY);
+    settings.recordings = { forever: false, count, unit: "days" } as typeof forever;
+    try {
+      app = mount(Settings, { target: host, props: { panel: "storage" } });
+      await expect.element(page.getByRole("button", { name: "Recalculate", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: /Explore Recordings:/ }).click();
+      await expect.poll(() => category("recordings").querySelector(".cutoff-note")?.textContent)
+        .toContain(`on or before ${chartDate("2026-09-12")} are removed at the next cleanup (${count}-day policy)`);
+      const marker = category("recordings").querySelector(".cutoff-marker")!;
+      expect(marker.getAttribute("aria-hidden")).toBe("true");
+      expect(marker.textContent).toContain("removed at next cleanup");
+      expect(marker.parentElement!.classList.contains("chart-timeline")).toBe(true);
+      const bars = [...category("recordings").querySelectorAll(".bar-target")];
+      const cut = bars.findIndex(bar => bar.getAttribute("aria-label")!.startsWith(`${chartDate("2026-09-12")}:`));
+      expect(cut).toBeGreaterThan(0);
+      expect(bars.slice(0, cut + 1).every(bar => bar.classList.contains("removed"))).toBe(true);
+      expect(bars.slice(cut + 1).some(bar => bar.classList.contains("removed"))).toBe(false);
+      const left = marker.getBoundingClientRect().left;
+      expect(left).toBeGreaterThanOrEqual(bars[cut].getBoundingClientRect().right - 1);
+      expect(left).toBeLessThanOrEqual(bars[cut + 1].getBoundingClientRect().left + 1);
+      await page.elementLocator(category("recordings")).screenshot({ path: "../node_modules/.cache/vitest-screenshots/storage-cutoff-desktop.png" });
+      await page.getByRole("button", { name: /Explore Processing logs:/ }).click();
+      await expect.element(page.getByLabelText("Processing logs time range", { exact: true })).toBeVisible();
+      expect(category("logs").querySelector(".cutoff-note")).toBeNull();
+      expect(category("logs").querySelector(".cutoff-marker")).toBeNull();
+      expect(category("logs").querySelector(".bar-target.removed")).toBeNull();
+    } finally { settings.recordings = forever; }
   });
 });

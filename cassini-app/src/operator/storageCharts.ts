@@ -1,5 +1,5 @@
 import type { StorageUsageCategory } from "./types";
-import { retentionDayPresets } from "./retention";
+import { retentionDayPresets, type RetentionPolicy, type RetentionSettings } from "./retention";
 
 export const categoryPresentation: Record<string, { label: string; description: string; color: string }> = {
   published: { label: "In Nextcloud Files", description: "Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup.", color: "#6279b8" },
@@ -73,4 +73,20 @@ export function chartDate(date: string): string {
 }
 export function bucketLabel(bucket: StorageBucket): string {
   return bucket.from === bucket.to ? chartDate(bucket.from) : `${chartDate(bucket.from)} – ${chartDate(bucket.to)}`;
+}
+// The saved policy that governs a chart's files, or null when none applies.
+// The grouped history chart only has one policy while history is grouped.
+export function chartRetentionPolicy(id: string, settings: RetentionSettings | null): RetentionPolicy | null {
+  if (!settings) return null;
+  if (id === "recordings" || id === "current" || id === "logs") return settings[id];
+  if (id === "history") return settings.history.mode === "group" ? settings.history.policy : null;
+  if (historyIDs.includes(id)) return settings.history.mode === "fine" ? settings.history.fine[id] ?? null : settings.history.policy;
+  if (id === "published") return settings.nextcloud?.meetings ?? null;
+  return null;
+}
+// Ages are UTC calendar days: a file dated D is eligible on D + N days, so the
+// next cleanup removes every file dated on or before today (UTC) minus N days.
+export function retentionCutoff(policy: RetentionPolicy | null, now = new Date()): string | null {
+  if (!policy || policy.forever || !Number.isInteger(policy.count) || policy.count! < 0) return null;
+  return iso(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - policy.count! * DAY);
 }
