@@ -50,6 +50,8 @@
 <section class="op-tint access">
   <h2 class="set-row-name op-card-title">Who can see recordings</h2>
   <div class="access-body grid gap-3 text-sm">
+    <!-- Same words as the rooms rail's "Shared with participants" note
+         (cassini-viewer RoomsRail.svelte); change both together. -->
     <p>Each recording is shared with all of the Talk room's participants, whether they were present on the call or not. Guests without a Nextcloud account can't open it.</p>
     <p>Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.</p>
     {#if loading}
