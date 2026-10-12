@@ -93,7 +93,7 @@ describe("helpers", () => {
   });
 
   it("warns when transcription is on but its model is not installed", () => {
-    const status = pipelineStatus({ ...team, activeModel: "parakeet-tdt-0.6b-v3", activeModelReady: false, download: { percent: 10 } });
+    const status = pipelineStatus({ ...team, activeModel: "parakeet-tdt-0.6b-v3", activeModelInstalled: false, download: { percent: 10 } });
     expect(status.transcribe).toEqual({ state: "On · Best · CPU", tone: "amber", reason: "model not installed" });
     // Transcription is on, so publishing does not wait on the download.
     expect(status.publish.badge).toBeUndefined();

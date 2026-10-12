@@ -379,16 +379,6 @@
     return `${mb} MB`;
   }
 
-  function sourceLabel(source: string): string {
-    if (source === "user") {
-      return "Set by an administrator";
-    }
-    if (source === "auto") {
-      return "Chosen automatically";
-    }
-    return source || "—";
-  }
-
   // The id the publish pipeline's summary step runs when nothing names one
   // (internal/insight/workflows: SummariseID). Named rather than derived from
   // list order, and it falls back to the first entry: the operator accepts any
@@ -478,7 +468,7 @@
     transcriptionEnabled: settings?.transcription_enabled === true,
     quality: savedQuality,
     activeModel: settings?.active_model,
-    activeModelReady: modelInventory === null || !settings?.active_model ? null : modelInventory.models.find((m) => m.id === settings?.active_model)?.ready === true,
+    activeModelInstalled: modelInventory === null || !settings?.active_model ? null : modelInventory.models.find((m) => m.id === settings?.active_model)?.installed === true,
     device: savedDevice,
     modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
     download: runningDownload(modelInventory),
@@ -680,8 +670,11 @@
                device is auto-selected; on a host with no usable GPU that is the
                CPU, said out loud (D-702). The facts and the override open under
                "Change". -->
-          <p class="in-use pipe-gap" class:in-use-warn={transcriptionEnabled && inUseModel && !inUseModel.ready} role="status">
-            {#if transcriptionEnabled && inUseModel && !inUseModel.ready}
+          <p class="in-use pipe-gap" class:in-use-warn={transcriptionEnabled && inUseModel && !inUseModel.installed} role="status">
+            <!-- Installed but not yet runtime-checked is normal after any new
+                 build: the operator checks it before transcribing. Only missing
+                 files mean recordings go without a transcript. -->
+            {#if transcriptionEnabled && inUseModel && !inUseModel.installed}
               <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
               <strong>{inUseModel.name} is not installed.</strong>
               <span>Recordings get no transcript until it is.</span>
@@ -695,58 +688,38 @@
             <button type="button" class="link" aria-expanded={hardwareOpen} aria-controls="hardware-details" on:click={() => (hardwareOpen = !hardwareOpen)}>Change</button>
           </p>
           {#if hardwareOpen}
+            <!-- One box: what the operator found, the device choice, and one tip.
+                 What runs and where is already said in the line above. -->
             <div id="hardware-details" class="hw-details">
               <dl class="hw-facts">
-                <div class="hw-fact">
-                  <dt>GPU</dt>
-                  <dd>
-                    {#if settings.detected_gpu}
-                      <span class="pill yes">Yes</span>
-                    {:else}
-                      <span class="pill">No</span>
-                    {/if}
-                  </dd>
-                </div>
-                <div class="hw-fact">
-                  <dt>CPU cores</dt>
-                  <dd><span class="pill">{settings.cores}</span></dd>
-                </div>
-                <div class="hw-fact">
-                  <dt>Settings</dt>
-                  <dd><span class="pill">{sourceLabel(settings.source)}</span></dd>
-                </div>
+                <dt>GPU</dt>
+                <dd>{settings.detected_gpu ? "Found" : "None found"}</dd>
+                <dt>CPU cores</dt>
+                <dd>{settings.cores}</dd>
+                {#if settings.effective.min_free_memory_mb > 0}
+                  <dt>Memory</dt>
+                  <dd>Each recording waits for {formatMemory(settings.effective.min_free_memory_mb)} free</dd>
+                {/if}
+                <dt><label for="stt-device">Device</label></dt>
+                <dd class="hw-device">
+                  <span class="op-select hw-device-select">
+                    <select id="stt-device" bind:value={deviceOverride} class="op-input">
+                      <option value="">Auto</option>
+                      <option value="cpu">CPU</option>
+                      <option value="cuda">GPU (CUDA)</option>
+                    </select>
+                    <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
+                  </span>
+                  <span class="hw-help">Auto uses the GPU when there is one. Change it only if the hardware above is wrong.</span>
+                </dd>
               </dl>
-              {#if settings.transcription_enabled && settings.effective.model}
-                <p class="set-row-sub">
-                  Transcribes on the <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>
-                  with the <code class="pipe-code">{settings.effective.model}</code> model.
-                </p>
+              {#if deviceOverride === "cuda" && !settings.detected_gpu}
+                <p class="hw-note pipe-warn" role="status">No GPU was found, so recordings won't be processed on this setting.</p>
+              {:else if !settings.detected_gpu}
+                <p class="hw-note">For faster transcription, run Cassini's CUDA image on a server with a GPU.</p>
+              {:else if settings.effective.note}
+                <p class="hw-note">{settings.effective.note}</p>
               {/if}
-              {#if settings.effective.min_free_memory_mb > 0}
-                <p class="set-row-sub">
-                  Each recording is processed once {formatMemory(settings.effective.min_free_memory_mb)}
-                  of memory is free.
-                </p>
-              {/if}
-              {#if settings.effective.note}
-                <p class="set-row-sub">{settings.effective.note}</p>
-              {/if}
-              <label class="op-field hw-device" for="stt-device">
-                <span class="op-field-label">Override transcription device</span>
-              </label>
-              <span class="op-select hw-device-select">
-                <select id="stt-device" bind:value={deviceOverride} class="op-input">
-                  <option value="">Auto</option>
-                  <option value="cpu">CPU</option>
-                  <option value="cuda">GPU (CUDA)</option>
-                </select>
-                <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
-              </span>
-              <p class="set-row-sub">
-                Leave on Auto unless the hardware above is wrong. Auto uses the GPU when one is
-                available. If you choose a device this machine doesn't have, recordings won't be
-                processed.
-              </p>
             </div>
           {/if}
           <p id="stt-quality-heading" class="op-field-label pipe-gap">Quality</p>
@@ -767,7 +740,7 @@
               </label>
             {/each}
           </div>
-          {#if !(transcriptionEnabled && inUseModel?.ready && inUseModel.id === speechModelFor(quality, selectedDevice))}
+          {#if !(transcriptionEnabled && inUseModel?.installed && inUseModel.id === speechModelFor(quality, selectedDevice))}
             <p class="model-heading pipe-gap">{QUALITY_OPTIONS.find((o) => o.value === quality)?.label ?? "This quality"} model</p>
           {/if}
           <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
@@ -1256,65 +1229,51 @@
   }
   .hw-details {
     display: grid;
-    gap: 6px;
-    margin-top: 4px;
+    gap: 10px;
+    margin-top: 6px;
+    padding: 12px 14px;
+    font-size: 12.5px;
+    background-color: var(--op-inset);
+    border: 1px solid var(--op-inset-border);
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .hw-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: baseline;
+    gap: 8px 20px;
+    margin: 0;
+  }
+  .hw-facts dt {
+    font-weight: 600;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .hw-facts dd {
+    margin: 0;
+  }
+  .hw-device {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+  .hw-device-select {
+    display: block;
+    width: 10rem;
+  }
+  .hw-help,
+  .hw-note {
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .hw-note {
+    margin: 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--op-inset-border);
   }
   .pipe-body {
     display: grid;
     gap: calc(var(--op-x, 20px) + 8px);
     margin-top: calc(var(--op-x, 20px) + 8px - 16px);
-  }
-  .hw-facts {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 22px;
-    margin: 0;
-    padding: 10px 12px;
-    background-color: var(--op-inset);
-    border: 1px solid var(--op-inset-border);
-    border-radius: var(--radius-box, 0.5rem);
-  }
-  .hw-fact {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .hw-fact dt {
-    font-size: 12.5px;
-    line-height: 20px;
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
-  }
-  .hw-fact dd {
-    display: flex;
-    align-items: center;
-    margin: 0;
-  }
-  .pill {
-    display: inline-block;
-    padding: 4px 7px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    font-weight: 500;
-    line-height: 1;
-    color: var(--color-base-content);
-    background-color: color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-200));
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 22%, var(--color-base-200));
-    border-radius: var(--radius-selector, 0.25rem);
-  }
-  .pill.yes {
-    color: var(--color-success);
-    border-color: var(--color-success);
-  }
-  .pipe-code {
-    padding: 1px 5px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    font-weight: 500;
-    overflow-wrap: anywhere;
-    background-color: var(--op-code-bg);
-    border: 1px solid var(--op-code-border);
-    border-radius: var(--radius-selector, 0.25rem);
   }
   .pipe-warn {
     color: var(--color-warning);
@@ -1322,10 +1281,6 @@
   .set-row-sub {
     display: block;
     text-wrap: pretty;
-  }
-  .hw-device-select {
-    display: block;
-    max-width: 20rem;
   }
 
   .pipe-step {

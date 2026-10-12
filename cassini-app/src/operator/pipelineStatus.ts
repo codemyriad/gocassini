@@ -16,8 +16,9 @@ export interface PipelineInput {
   quality: SettingsQuality;
   /** The saved model new recordings transcribe with; it names the tier when set. */
   activeModel?: string;
-  /** Whether that saved model is installed and ready; null while unknown. */
-  activeModelReady?: boolean | null;
+  /** Whether that saved model's files are installed; null while unknown. Not
+   *  having passed the runtime check yet is fine: builds run it first. */
+  activeModelInstalled?: boolean | null;
   /** The effective device from the hardware facts: "cuda" or "cpu". */
   device: string;
   /** Whether the model for the saved quality is installed; null while unknown. */
@@ -80,7 +81,7 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
     const state = `On · ${(input.activeModel && MODEL_TIERS[input.activeModel]) || QUALITY_LABELS[input.quality] || input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}`;
     // Switched on with a model that is not there: recordings publish without a
     // transcript, so the strip must not read as healthy.
-    transcribe = input.activeModelReady === false
+    transcribe = input.activeModelInstalled === false
       ? { state, tone: "amber", reason: "model not installed" }
       : { state, tone: "on" };
   } else if (input.download) {

@@ -58,7 +58,7 @@
   $: selected = enabled && activeModel === model?.id && activeRevision === model?.revision;
   $: readyModel = model?.ready ? model : null;
   // The banner above already names the model in use; its row would repeat it.
-  $: redundant = selected && !!model?.ready && !running && !job?.error;
+  $: redundant = selected && !!model?.installed && !running && !job?.error;
 
   function size(n: number) {
     return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`;
@@ -66,7 +66,9 @@
   $: percent = running && job && job.progress.total_bytes > 0 ? Math.min(100, Math.round(job.progress.completed_bytes / job.progress.total_bytes * 100)) : null;
   $: state = !model ? "" : running && job ? `${job.state}${percent === null ? "" : ` · ${percent}%`}`
     : model.ready ? "Ready"
-    : model.installed ? "Installed — runtime check needed"
+    // Not checked against this build yet. The model in use is checked before
+    // the next recording on its own; any other one when someone presses Check.
+    : model.installed ? (selected ? "Installed · checked before the next recording" : "Installed · not checked on this build yet")
     : job?.state === "cancelled" ? "Download cancelled. Retry resumes it."
     : "Not installed";
   async function action(kind: "install" | "cancel" | "retry", target = model, targetJob = job, targetDevice = device) {
