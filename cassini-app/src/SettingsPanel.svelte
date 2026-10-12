@@ -620,16 +620,16 @@
         <fieldset class="grid gap-3" disabled={saving}>
           <legend class="op-field-label mb-2">Keep on the server after publishing</legend>
           <label class="flex items-start gap-3 text-sm" class:keep-unavailable={meetingFormat === "opus"}>
-            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} disabled={meetingFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
+            <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="nothing" aria-label="Nothing" checked={recordingMedia === "nothing"} disabled={meetingFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
             <span><strong>Nothing.</strong> <span id="keep-nothing-help">The recording is deleted after publishing and cannot be reprocessed.</span>
               {#if meetingFormat === "opus"}<span class="set-row-sub block">Unavailable while audio is published.</span>{/if}</span>
           </label>
           <label class="flex items-start gap-3 text-sm">
-            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-video" aria-label="Audio and video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
+            <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-video" aria-label="Audio and video" checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
             <span><strong>Audio and video.</strong> <span id="keep-video-help">Uses the most space.</span></span>
           </label>
           <label class="flex items-start gap-3 text-sm">
-            <input class="radio radio-primary mt-1" type="radio" name="recording-media" value="audio-only" aria-label="Audio only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
+            <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-only" aria-label="Audio only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
             <span><strong>Audio only.</strong></span>
           </label>
         </fieldset>
