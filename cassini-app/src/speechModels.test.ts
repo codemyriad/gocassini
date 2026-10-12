@@ -61,7 +61,7 @@ describe("voice separation in the speech models", () => {
   it("says when it is ready, being installed, or cannot run here", () => {
     const ready = card({ model: { ...diarizer, installed: true, ready: true } });
     expect(ready).toContain("Ready");
-    expect(ready).toContain("from the participant list");
+    expect(ready).toContain("from its participant list");
     expect(ready).not.toContain("<button");
 
     expect(card({ model: diarizer, job: job("downloading"), downloadsAllowed: true })).toContain("Voice separation download progress");

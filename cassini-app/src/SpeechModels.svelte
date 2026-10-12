@@ -90,11 +90,11 @@
     <ModelStatusRow name={model.name} size={size(model.download_bytes)} {state} quiet>
       <svelte:fragment slot="action">
         {#if running && job}
-          <button type="button" class="op-button" disabled={busy} on:click={() => action("cancel")}>Cancel</button>
+          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action("cancel")}>Cancel</button>
         {:else if model.ready}
-          {#if enabled && !selected}<button type="button" class="op-button" on:click={() => dispatch("select", model!)}>Use this model</button>{/if}
+          {#if enabled && !selected}<button type="button" class="btn btn-xs btn-primary" on:click={() => dispatch("select", model!)}>Use this model</button>{/if}
         {:else if model.installed || inventory?.downloads_allowed}
-          <button type="button" class="op-button" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? "Check" : job ? "Retry" : "Download"}</button>
+          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? "Check" : job ? "Retry" : "Download"}</button>
         {/if}
       </svelte:fragment>
       {#if running && job}
