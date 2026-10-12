@@ -8,3 +8,4 @@
 - The hardware details under "Change" are one box: GPU, CPU cores, memory and the device choice as label and value, then one tip. The device choice warns only when it names a GPU this server doesn't have.
 - The line above Quality reads as one sentence ("Transcribing with Parakeet TDT 0.6B v3 — fp32 on the CPU (no GPU found).") with a Hardware button that opens the details.
 - Browsers revalidate the app's script and stylesheet on every load, so an update that keeps the version number no longer leaves an old stylesheet in place.
+- A model download says what happens after it finishes: "Downloaded · checks once no meeting is being processed", then "Checking it runs on this server", instead of sitting at "installed · 100%". The progress bar shows only while downloading.

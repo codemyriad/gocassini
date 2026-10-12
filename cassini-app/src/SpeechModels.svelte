@@ -4,7 +4,7 @@
   import type { SpeechModel, SpeechModelInventory } from "./operator/types";
   import ModelStatusRow from "./ModelStatusRow.svelte";
   import { speechModelFor } from "./operator/pipelineStatus";
-  import { jobRunning, modelJob } from "./speechModels";
+  import { jobRunning, jobStepText, modelJob } from "./speechModels";
   export let client: OperatorClient | null;
   export let quality = "balanced";
   export let device = "cpu";
@@ -63,8 +63,7 @@
   function size(n: number) {
     return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : `${(n / 1024 / 1024).toFixed(1)} MiB`;
   }
-  $: percent = running && job && job.progress.total_bytes > 0 ? Math.min(100, Math.round(job.progress.completed_bytes / job.progress.total_bytes * 100)) : null;
-  $: state = !model ? "" : running && job ? `${job.state}${percent === null ? "" : ` · ${percent}%`}`
+  $: state = !model ? "" : running && job ? jobStepText(job)
     : model.ready ? "Ready"
     // Not checked against this build yet. The model in use is checked before
     // the next recording on its own; any other one when someone presses Check.
@@ -99,11 +98,11 @@
         {/if}
       </svelte:fragment>
       {#if running && job}
-        {#if job.progress.total_bytes > 0}
+        {#if job.state === "downloading" && job.progress.total_bytes > 0}
           <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label="Model download progress"></progress>
           <p class="set-row-sub">{size(job.progress.completed_bytes)} / {size(job.progress.total_bytes)}{#if job.progress.reused_bytes > 0} · {size(job.progress.reused_bytes)} reused{/if}{job.progress.file ? ` · ${job.progress.file}` : ""}</p>
         {/if}
-        <p class="set-row-sub">You can close this page while the download continues.</p>
+        <p class="set-row-sub">You can close this page; it carries on.</p>
       {:else if job?.error}
         <p class="op-error">{job.error}</p>
       {/if}

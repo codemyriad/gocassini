@@ -27,3 +27,19 @@ export function jobRunning(job: SpeechModelJob | undefined): boolean {
 export function mebibytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MiB`;
 }
+
+// What a running model job is doing, in words. After the download the job
+// waits for any meeting being processed (they share the same gate), then
+// checks the model runs here; without saying so it looks stuck at 100%.
+export function jobStepText(job: SpeechModelJob): string {
+  const { completed_bytes: done, total_bytes: total } = job.progress;
+  switch (job.state) {
+    case "queued": return "Waiting to start";
+    case "downloading": return total > 0 ? `Downloading · ${Math.min(100, Math.round((done / total) * 100))}%` : "Downloading";
+    case "verifying": return "Verifying the download";
+    case "unpacking": return "Unpacking";
+    case "installed": return "Downloaded · checks once no meeting is being processed";
+    case "checking": return "Checking it runs on this server";
+    default: return job.state;
+  }
+}

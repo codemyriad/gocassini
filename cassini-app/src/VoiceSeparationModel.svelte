@@ -7,7 +7,7 @@
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModelInventory } from "./operator/types";
   import ModelStatusRow from "./ModelStatusRow.svelte";
-  import { jobRunning, mebibytes, modelJob, voiceSeparationModel } from "./speechModels";
+  import { jobRunning, jobStepText, mebibytes, modelJob, voiceSeparationModel } from "./speechModels";
   export let client: OperatorClient | null = null;
   export let inventory: SpeechModelInventory | null = null;
   let busy = false;
@@ -17,8 +17,7 @@
   $: job = modelJob(inventory, model, "cpu");
   $: running = jobRunning(job);
   $: unsupported = model?.runtime_supported === false;
-  $: percent = running && job && job.progress.total_bytes > 0 ? Math.min(100, Math.round(job.progress.completed_bytes / job.progress.total_bytes * 100)) : null;
-  $: state = !model ? "" : running && job ? `${job.state}${percent === null ? "" : ` · ${percent}%`}`
+  $: state = !model ? "" : running && job ? jobStepText(job)
     : model.ready ? "Ready"
     : unsupported ? "Not available in this server's Cassini build"
     : model.installed ? "Installed — runtime check needed"
@@ -50,7 +49,7 @@
           <button type="button" class="op-button" disabled={busy} on:click={() => act(job ? "retry" : "install")}>{model.installed ? "Check" : job ? "Retry" : "Download"}</button>
         {/if}
       </svelte:fragment>
-      {#if running && job && job.progress.total_bytes > 0}
+      {#if running && job && job.state === "downloading" && job.progress.total_bytes > 0}
         <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label="Voice separation download progress"></progress>
       {/if}
       {#if error || job?.error}<p class="op-error">{error || job?.error}</p>{/if}
