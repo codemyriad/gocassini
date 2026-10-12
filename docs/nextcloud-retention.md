@@ -1,6 +1,6 @@
 # Whole-meeting retention in Nextcloud Files
 
-Administrators configure **Nextcloud Files > Whole meetings** in Operator >
+Administrators configure **Published meetings in Nextcloud** in Operator >
 Storage. The default is **Keep forever**. A finite policy deletes the published
 `.opus` or transcription-only `.json`, including all its transcript and meeting notes, and removes the meeting
 from active Files, Cassini lists, search and annotations. Container retention
@@ -29,7 +29,7 @@ deferred. Preview evaluates proposed
 settings without saving settings, lifecycle migrations or deletion intent.
 Saving activates the
 policy for startup and scheduled sweeps; it does not sweep immediately. The
-shared daily schedule defaults to 02:00 UTC.
+shared daily schedule defaults to 03:42 UTC.
 
 The ADMIN-only API is under `/operator/storage/retention`:
 

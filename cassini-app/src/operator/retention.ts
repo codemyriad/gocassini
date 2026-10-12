@@ -4,7 +4,7 @@ export interface RetentionGroup { mode: "group" | "fine"; fine_initialized?: boo
 export interface RetentionSettings { nextcloud?: {meetings:RetentionPolicy}; version: number; revision: number; schedule: { time: string; timezone: string }; recordings: RetentionPolicy; history: RetentionGroup; current: RetentionPolicy; logs: RetentionPolicy }
 export const retentionLabels: Record<string, string> = {
   failed_capture: "Failed recordings",
-  failed_build: "Failed build / seal output", superseded: "Superseded successful output", failed_publish: "Failed publish staging",
+  failed_build: "Failed processing", superseded: "Replaced output", failed_publish: "Failed publishing",
 };
 // Undefined fine policies are first-split drafts; persisted policies preserve inactive values.
 export function changeRetentionMode(group: RetentionGroup, mode: "group" | "fine", firstSplit = false): RetentionGroup {

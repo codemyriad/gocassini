@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { StorageUsageCategory } from "./operator/types";
-  import { retentionDayPresets } from "./operator/retention";
   import { formatStorageBytes } from "./operator/storageUsage";
   import { bucketLabel, chartDate, defaultStoragePrecision, storageBuckets, storageDateExtent, storageRange } from "./operator/storageCharts";
   export let category: StorageUsageCategory;
@@ -8,15 +7,12 @@
   export let label: string;
   export let color: string;
   const initialExtent = storageDateExtent(category, measuredAt);
-  const initialPrecision = defaultStoragePrecision(initialExtent.from, initialExtent.to);
   let range = "all";
   let from = initialExtent.from, to = initialExtent.to;
-  let precision = [1, ...retentionDayPresets].includes(initialPrecision) ? String(initialPrecision) : "custom";
-  let customPrecision = initialPrecision;
   let selected = -1;
   $: extent = storageDateExtent(category, measuredAt);
   $: window = storageRange(range, extent, from, to);
-  $: days = precision === "custom" ? customPrecision : Number(precision);
+  $: days = defaultStoragePrecision(window.from, window.to);
   $: result = storageBuckets(category, window.from, window.to, days);
   $: maximum = Math.max(0, ...result.buckets.map(b => b.bytes));
   $: rangeBytes = result.buckets.reduce((sum, b) => sum + b.bytes, 0);
@@ -28,29 +24,19 @@
   <div class="controls">
     <label>Time range
       <select class="select select-bordered" aria-label={`${label} time range`} bind:value={range}>
-        <option value="all">All retained dates</option>
+        <option value="all">All time</option>
         <option value="7">Last 7 days</option><option value="30">Last 30 days</option>
         <option value="90">Last 90 days</option><option value="365">Last year</option>
         <option value="custom">Custom range</option>
       </select>
     </label>
-    <label>Precision
-      <select class="select select-bordered" aria-label={`${label} precision`} bind:value={precision}>
-        <option value="1">Daily</option>
-        {#each retentionDayPresets as preset}<option value={String(preset)}>{preset} days</option>{/each}
-        <option value="custom">Custom days</option>
-      </select>
-    </label>
-    {#if precision === "custom"}
-      <label>Days per bar<input class="input input-bordered" aria-label={`${label} days per bar`} type="number" min="1" max="9999" step="1" bind:value={customPrecision} /></label>
-    {/if}
     {#if range === "custom"}
       <label>From<input class="input input-bordered" aria-label={`${label} from date`} type="date" bind:value={from} /></label>
       <label>Through<input class="input input-bordered" aria-label={`${label} through date`} type="date" bind:value={to} /></label>
     {/if}
   </div>
   {#if category.undated_files > 0}
-    <p class="undated">{formatStorageBytes(category.undated_bytes)} in {category.undated_files} file{category.undated_files === 1 ? "" : "s"} without a known lifecycle date. Included in the category total, excluded from the date chart.</p>
+    <p class="undated">{formatStorageBytes(category.undated_bytes)} in {category.undated_files} file{category.undated_files === 1 ? "" : "s"} without a known date. Included in the total, not in the chart.</p>
   {/if}
   {#if result.error}
     <p class="chart-message" role="alert">{result.error}</p>
@@ -62,7 +48,7 @@
     <div class="plot">
       <div class="y-axis" aria-hidden="true"><span>{formatStorageBytes(maximum)}</span><span>{formatStorageBytes(maximum / 2)}</span><span>0 B</span></div>
       <div class="plot-scroll" role="region" aria-label={`${label} usage by date`}>
-        <div class="timeline" style:min-width={`${Math.max(240,result.buckets.length*14)}px`}>
+        <div class="chart-timeline" style:min-width={`${Math.max(240,result.buckets.length*14)}px`}>
         <div class="bars">
           {#each result.buckets as bucket, index (bucket.from)}
             <button type="button" class="bar-target" class:active={selected === index}
@@ -79,8 +65,8 @@
     </div>
     <p class="bar-detail" aria-live="polite">{#if active}<strong>{bucketLabel(active)}</strong> · {formatStorageBytes(active.bytes)} · {active.files} file{active.files === 1 ? "" : "s"}{:else}Hover, focus or tap a bar for its dates and exact usage.{/if}</p>
     <details class="values"><summary>View chart data</summary>
-      <div class="table-scroll"><table><caption>{label} · retained bytes by UTC lifecycle date</caption><thead><tr><th scope="col">Date range</th><th scope="col">Bytes</th><th scope="col">Files</th></tr></thead><tbody>
-        {#each result.buckets as bucket}<tr><th scope="row">{bucketLabel(bucket)}</th><td>{bucket.bytes.toLocaleString()}</td><td>{bucket.files.toLocaleString()}</td></tr>{/each}
+      <div class="table-scroll"><table><caption>{label} · bytes by UTC date</caption><thead><tr><th scope="col">Date range</th><th scope="col">Bytes</th><th scope="col">Files</th></tr></thead><tbody>
+        {#each result.buckets as bucket (bucket.from)}<tr><th scope="row">{bucketLabel(bucket)}</th><td>{bucket.bytes.toLocaleString()}</td><td>{bucket.files.toLocaleString()}</td></tr>{/each}
       </tbody></table></div>
     </details>
   {/if}
@@ -91,7 +77,6 @@
   .controls { display:flex; flex-wrap:wrap; gap:12px; margin:8px 0 18px; }
   .controls label { display:grid; gap:6px; font-size:12px; font-weight:600; }
   .controls select, .controls input { font-weight:400; font-size:13px; min-height:36px; height:36px; max-width:100%; }
-  .controls input[type=number] { width:110px; }
   .chart-summary { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:12px; margin-bottom:16px; }
   .chart-summary strong { font-size:16px; font-variant-numeric:tabular-nums; }
   .chart-summary span, .bar-detail, .x-axis, .y-axis { color:color-mix(in oklch,var(--color-base-content) 65%,transparent); }

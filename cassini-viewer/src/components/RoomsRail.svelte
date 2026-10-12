@@ -371,9 +371,6 @@
   .rail-tag :global(span.tag-chip) {
     flex: 0 1 auto;
   }
-  .rail-tag :global(.tag-chip span.tag-dot) {
-    translate: none;
-  }
 
   .tag-match {
     display: flex;

@@ -22,7 +22,7 @@ const fixture = {
 };
 const forever = { forever: true };
 const settings = {
-  version: 3, revision: 0, schedule: { time: "02:00", timezone: "UTC" },
+  version: 3, revision: 0, schedule: { time: "03:42", timezone: "UTC" },
   recordings: forever, current: forever, logs: forever,
   history: { mode: "group", policy: forever, fine: Object.fromEntries(ids.slice(2, 6).map((id) => [id, forever])) },
 };
@@ -84,43 +84,49 @@ describe("storage charts in the browser", () => {
     app = mount(Settings, { target: host, props: { panel: "storage" } });
     await expect.element(page.getByRole("button", { name: "Recalculate", exact: true })).toBeEnabled();
     await expect.poll(() => posts).toBe(1);
-    await expect.element(page.getByRole("heading", { name: "Retention policies", exact: true })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Retention", exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: /Explore Source recordings:/ }).click();
-    await page.getByLabelText("Source recordings precision", { exact: true }).selectOptions("7");
+    await expect.element(page.getByText("Last calculated", { exact: false })).toBeVisible();
+    expect(page.getByRole("button", { name: "Retention policies" }).all()).toHaveLength(0);
+    expect(page.getByLabelText(/precision/i).all()).toHaveLength(0);
+
+    await page.getByRole("button", { name: /Explore Recordings:/ }).click();
+    await expect.element(page.getByLabelText("Recordings time range", { exact: true })).toHaveValue("all");
+    expect(barCount("recordings")).toBe(45);
+    await page.getByLabelText("Recordings time range", { exact: true }).selectOptions("7");
     expect(barCount("recordings")).toBe(7);
     (category("recordings").querySelector(".bar-target") as HTMLElement).focus();
     await expect.poll(() => category("recordings").querySelector(".bar-detail")?.textContent).toMatch(/2026/);
     await page.getByText("View chart data", { exact: true }).first().click();
     expect(category("recordings").querySelectorAll("tbody tr")).toHaveLength(7);
 
-    await page.getByLabelText("Source recordings time range", { exact: true }).selectOptions("custom");
-    await page.getByLabelText("Source recordings from date").fill("2026-09-01");
-    await page.getByLabelText("Source recordings through date").fill("2026-09-07");
-    expect(barCount("recordings")).toBe(1);
-    await page.getByLabelText("Source recordings through date").fill("2026-08-31");
+    await page.getByLabelText("Recordings time range", { exact: true }).selectOptions("custom");
+    await page.getByLabelText("Recordings from date").fill("2026-09-01");
+    await page.getByLabelText("Recordings through date").fill("2026-09-07");
+    expect(barCount("recordings")).toBe(7);
+    await page.getByLabelText("Recordings through date").fill("2026-08-31");
     await expect.element(page.getByRole("alert")).toHaveTextContent("end date");
-    await page.getByLabelText("Source recordings through date").fill("2026-09-07");
-    await page.getByLabelText("Source recordings precision", { exact: true }).selectOptions("custom");
-    await page.getByLabelText("Source recordings days per bar").fill("0");
-    await expect.element(page.getByRole("alert")).toHaveTextContent("whole number");
-    await page.getByLabelText("Source recordings days per bar").fill("3");
-    expect(barCount("recordings")).toBe(3);
+    // A long custom range picks a wider bar instead of exceeding the cap.
+    await page.getByLabelText("Recordings from date").fill("2000-01-01");
+    await page.getByLabelText("Recordings through date").fill("2026-09-07");
+    expect(barCount("recordings")).toBeGreaterThan(0);
+    expect(barCount("recordings")).toBeLessThanOrEqual(180);
 
-    await page.getByRole("button", { name: /Explore Logs:/ }).click();
-    await expect.element(page.getByLabelText("Logs time range", { exact: true })).toHaveValue("all");
-    await expect.element(page.getByLabelText("Source recordings time range", { exact: true })).toHaveValue("custom");
-    await page.getByLabelText("Split attempt history").click();
-    await expect.element(page.getByRole("button", { name: /Explore Failed recordings:/ })).toBeVisible();
-    expect(document.querySelectorAll(".comparison-row")).toHaveLength(8);
+    await page.getByRole("button", { name: /Explore Processing logs:/ }).click();
+    await expect.element(page.getByLabelText("Processing logs time range", { exact: true })).toHaveValue("all");
+    await expect.element(page.getByLabelText("Recordings time range", { exact: true })).toHaveValue("custom");
+    const attempts = page.getByRole("button", { name: /^Previous attempts:/ });
+    await expect.element(attempts).toHaveAttribute("aria-expanded", "false");
+    await attempts.click();
+    await expect.element(page.getByRole("button", { name: /Explore Failed processing:/ })).toBeVisible();
+    expect(document.querySelectorAll(".comparison-row")).toHaveLength(9);
     await page.getByRole("button", { name: /Explore Other local files:/ }).click();
     await expect.element(page.getByText("No dated files to plot in this category.")).toBeVisible();
     expect(puts).toBe(0);
     expect(posts).toBe(1);
 
-    await page.getByLabelText("Split attempt history").click();
-    await page.getByLabelText("Source recordings time range", { exact: true }).selectOptions("all");
-    await page.getByLabelText("Source recordings precision", { exact: true }).selectOptions("1");
+    await attempts.click();
+    await page.getByLabelText("Recordings time range", { exact: true }).selectOptions("all");
     await page.getByText("View chart data", { exact: true }).first().click();
     window.scrollTo(0, 0);
     await page.screenshot({ path: "../node_modules/.cache/vitest-screenshots/storage-charts-desktop.png" });
@@ -136,5 +142,14 @@ describe("storage charts in the browser", () => {
     empty = true;
     await page.getByRole("button", { name: "Recalculate", exact: true }).click();
     await expect.element(page.getByText("No retained files in this category.").first()).toBeVisible();
+  });
+
+  it("opens Previous attempts on its four kinds when the saved policy sets each kind separately", async () => {
+    settings.history.mode = "fine";
+    try {
+      app = mount(Settings, { target: host, props: { panel: "storage" } });
+      await expect.element(page.getByRole("button", { name: /^Previous attempts:/ })).toHaveAttribute("aria-expanded", "true");
+      await expect.element(page.getByRole("button", { name: /Explore Replaced output:/ })).toBeVisible();
+    } finally { settings.history.mode = "group"; }
   });
 });

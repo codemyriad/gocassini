@@ -5,6 +5,7 @@
   export let formId: string;
   export let disabled = false;
   export let canSave = false;
+  export let dirty = false;
   export let error = "";
   export let notice = "";
   const dispatch = createEventDispatcher<{ reload: void }>();
@@ -14,9 +15,12 @@
   {#if error}<p class="alert alert-error" role="alert">{error}</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
   <div class="buttons">
-    <button class="btn btn-ghost" type="button" {disabled} on:click={() => dispatch("reload")}>Reload saved settings</button>
-    <!-- Native form association preserves validation when actions sit outside the scroller. -->
-    <button class="btn btn-primary" type="submit" form={formId} disabled={disabled || !canSave}>Save retention settings</button>
+    <p class="text-sm opacity-80">Changes take effect at the next cleanup. Saving never deletes files immediately.</p>
+    <div class="button-row">
+      {#if dirty}<button class="btn btn-ghost" type="button" {disabled} on:click={() => dispatch("reload")}>Discard changes</button>{/if}
+      <!-- Native form association preserves validation when actions sit outside the scroller. -->
+      <button class="btn btn-primary" type="submit" form={formId} disabled={disabled || !canSave}>Save</button>
+    </div>
   </div>
   {#if $leavePrompt}
     <div class="alert" role="alertdialog" tabindex="-1" aria-label="Leave without saving?">
@@ -29,8 +33,11 @@
 
 <style>
   .retention-actions { display: grid; gap: 12px; }
-  .buttons { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+  .buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+  .buttons > p { flex: 1 1 260px; min-width: 0; }
+  .button-row { display: flex; gap: 8px; margin-left: auto; }
   @media (max-width: 480px) {
-    .buttons > button { flex: 1 1 auto; }
+    .button-row { flex: 1 1 100%; }
+    .button-row > button { flex: 1 1 auto; }
   }
 </style>
