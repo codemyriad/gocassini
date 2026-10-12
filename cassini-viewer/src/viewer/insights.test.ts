@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sameHeadlineText, stripLeadingHeading } from "./insights";
 import type { MeetingCatalogEntry } from "./catalog";
 import { NO_ROOM_KEY, UNDATED_MONTH_LABEL } from "./rooms";
 import {
@@ -496,5 +497,31 @@ describe("what a failed run says (D-749)", () => {
       expect(copy.title, reason).not.toBe(copy.line);
       expect(`${copy.title} ${copy.line}`, reason).not.toContain(reason);
     }
+  });
+});
+
+describe("sameHeadlineText", () => {
+  it("forgives whitespace, case, quotes and end punctuation, and nothing else", () => {
+    expect(sameHeadlineText("What did we decide?", "what did we  decide")).toBe(true);
+    expect(sameHeadlineText("“What did we decide?”", "What did we decide")).toBe(true);
+    expect(sameHeadlineText("What did we decide?", "What did we decide about pricing?")).toBe(false);
+    expect(sameHeadlineText("", "")).toBe(false);
+  });
+});
+
+describe("stripLeadingHeading", () => {
+  const body = "# What did we decide?\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n";
+
+  it("drops a first heading that repeats the title, and the blank lines under it", () => {
+    expect(stripLeadingHeading(body, "What did we decide?")).toBe("Drawn from 3 meetings.\n\n## Answer\n\nYes.\n");
+    expect(stripLeadingHeading(`\n\n${body}`, "what did we decide")).toBe("Drawn from 3 meetings.\n\n## Answer\n\nYes.\n");
+  });
+
+  it("keeps a heading that says something else, and a document with no heading", () => {
+    expect(stripLeadingHeading(body, "Riverside Clinic")).toBe(body);
+    expect(stripLeadingHeading("Drawn from 3 meetings.\n\n# What did we decide?\n", "What did we decide?")).toBe(
+      "Drawn from 3 meetings.\n\n# What did we decide?\n",
+    );
+    expect(stripLeadingHeading("", "What did we decide?")).toBe("");
   });
 });

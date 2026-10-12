@@ -200,10 +200,57 @@ describe("InsightDocument", () => {
       expect(insightDocumentSource).toContain('event.key === "Enter"');
       expect(insightDocumentSource).toContain('dispatch("rename", name)');
     });
+
+    it("leaves the editor when focus leaves it, without saving", () => {
+      expect(insightDocumentSource).toContain("on:blur={onNameBlur}");
+      expect(insightDocumentSource).toMatch(/function onNameBlur\(\) \{[\s\S]*?stopRename\(\);[\s\S]*?dispatch\("renameCancel"\)/);
+    });
   });
 
   it("dispatches retry rather than performing one", () => {
     expect(insightDocumentSource).toContain('dispatch("retry")');
     expect(insightDocumentSource).not.toContain("fetch(");
+  });
+});
+
+describe("InsightDocument says the question once", () => {
+  const asked: InsightRecord = {
+    id: "ins_0123456789abcdef",
+    status: "succeeded",
+    createdBy: "alice",
+    attemptNumber: 1,
+    workflowId: "ask",
+    workflowVersion: "v0",
+    workflowSha256: "abc",
+    meetingIds: [],
+    roomIds: [],
+    question: "What did we decide?",
+    provider: "",
+    model: "",
+    documentPath: "",
+    reason: "",
+    error: "",
+    createdAt: "2026-09-03T10:00:00Z",
+    updatedAt: "2026-09-03T10:00:00Z",
+  };
+
+  it("leaves out the quote while the headline is the question", () => {
+    expect(render(InsightDocument, { props: { insight: asked } }).body).not.toContain("ins-question");
+    expect(render(InsightDocument, { props: { insight: { ...asked, name: "what did we decide" } } }).body).not.toContain(
+      "ins-question",
+    );
+  });
+
+  it("quotes the question under a name that says something else", () => {
+    expect(render(InsightDocument, { props: { insight: { ...asked, name: "Riverside Clinic" } } }).body).toContain(
+      "ins-question",
+    );
+  });
+
+  it("drops the document's own heading when it is the question again", () => {
+    // Rendering the answer needs a DOM for the sanitiser, which this suite has
+    // none of; the cut itself is tested on stripLeadingHeading, and this pins
+    // that the drawer applies it to the question.
+    expect(insightDocumentSource).toContain("stripLeadingHeading(stripInsightFrontMatter(markdown), question)");
   });
 });
