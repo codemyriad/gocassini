@@ -34,6 +34,9 @@ export default defineConfig({
   publicDir: false,
   define: {
     __CASSINI_OPERATOR_BASE_PATH__: JSON.stringify("/operator"),
+    // Appended to the shadow stylesheet's URL (src/embedded.ts) so every build
+    // asks for its own stylesheet; see viewerStylesheetHref.
+    __CASSINI_BUILD_ID__: JSON.stringify(Date.now().toString(36)),
   },
   build: {
     outDir: "dist/embedded",
