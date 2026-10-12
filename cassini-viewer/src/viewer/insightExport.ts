@@ -2,7 +2,9 @@ import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "./catalog";
 import {
   insightHeadline,
   insightTimestampMs,
+  sameHeadlineText,
   stripInsightFrontMatter,
+  stripLeadingHeading,
   type InsightRecord,
 } from "./insights";
 
@@ -38,8 +40,11 @@ export function renderInsightExport({
   // break in an H1 leaves the rest as a stray paragraph.
   const blocks: string[] = [`# ${oneLine(insightHeadline(record))}`];
 
+  // Quoted only when the title above it says something else: an Ask run is
+  // named after its question unless somebody renamed it, and the drawer makes
+  // the same call.
   const question = record.question?.trim() ?? "";
-  if (question !== "") {
+  if (question !== "" && !sameHeadlineText(question, insightHeadline(record))) {
     const quoted = `"${question}"`.split(/\r?\n/).map((line) => `> ${line}`.trimEnd());
     blocks.push(quoted.join("\n"));
   }
@@ -66,7 +71,9 @@ export function renderInsightExport({
   }
 
   blocks.push("---");
-  blocks.push(stripInsightFrontMatter(markdown).trim());
+  // The document's own first heading is the question again (the Ask template
+  // copies it in verbatim), and the header above has said it.
+  blocks.push(stripLeadingHeading(stripInsightFrontMatter(markdown), question).trim());
 
   return `${blocks.join("\n\n")}\n`;
 }

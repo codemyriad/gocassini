@@ -2,8 +2,9 @@
   import { createEventDispatcher, tick } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, Copy, Download, ExternalLink, FileText, MessageSquare, Pencil } from "@lucide/svelte";
+  import { Calendar, ExternalLink, FileText, MessageSquare, Pencil } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
+  import ExportMenu from "./ExportMenu.svelte";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
   import { saveTranscript } from "../viewer/exportTransfer";
   import { exportFileName, renderInsightExport } from "../viewer/insightExport";
@@ -225,7 +226,7 @@
     // the click without a promised ClipboardItem.
     const clipboard = navigator.clipboard;
     if (!clipboard || typeof clipboard.writeText !== "function") {
-      exportStatus = { tone: "warn", text: "Clipboard unavailable here — use Download." };
+      exportStatus = { tone: "warn", text: "Clipboard unavailable here — download the markdown instead." };
       return;
     }
     // The write can wait on a permission prompt, and the sheet can be holding
@@ -237,7 +238,7 @@
       await clipboard.writeText(exportText());
       next = { tone: "ok", text: "Copied as markdown." };
     } catch {
-      next = { tone: "warn", text: "Clipboard blocked here — press Copy again, or use Download." };
+      next = { tone: "warn", text: "Clipboard blocked here — try Copy again, or download the markdown." };
     }
     if (insight.id === copied) {
       exportStatus = next;
@@ -294,48 +295,52 @@
     {#if editingName && renameError}
       <p class="ins-rename-error" role="status">{renameError}</p>
     {/if}
-    <div class="ins-head-meta">
-      {#if room}
-        <span class="ins-head-fact">
-          <MessageSquare size={13} aria-hidden="true" />
-          {room}
-        </span>
-      {/if}
-      <span class="ins-head-fact">
-        <Calendar size={13} aria-hidden="true" />
-        {formatInsightCreated(insight)}
-      </span>
-      {#if insight.model}
-        <code class="ins-head-model">{insight.model}</code>
-      {/if}
-    </div>
-    {#if exportable || filesLinkable}
-      <!-- Taking the answer out of Cassini (D-792): a markdown copy with a
-           header that says what it is, and the file itself in Files, where
-           Nextcloud shares it. -->
-      <div class="ins-actions">
-        {#if exportable}
-          <button type="button" on:click={handleCopy}>
-            <Copy size={14} aria-hidden="true" />
-            Copy
-          </button>
-          <button type="button" on:click={handleDownload}>
-            <Download size={14} aria-hidden="true" />
-            Download
-          </button>
+    <!-- The run's facts on the left and, on the same row, the ways out of
+         Cassini (D-792): a markdown copy under one Export control, as the
+         meeting sheet has, and the file itself in Files, where Nextcloud
+         shares it. Where the sheet is narrow the facts stack on the left and
+         the controls stack on the right, still side by side. -->
+    <div class="ins-head-row">
+      <div class="ins-head-meta">
+        {#if room}
+          <span class="ins-head-fact">
+            <MessageSquare size={13} aria-hidden="true" />
+            {room}
+          </span>
         {/if}
-        {#if filesLinkable}
-          <a href={filesUrl} target="_blank" rel="noopener">
-            <ExternalLink size={14} aria-hidden="true" />
-            Open in Files
-          </a>
+        <span class="ins-head-fact">
+          <Calendar size={13} aria-hidden="true" />
+          {formatInsightCreated(insight)}
+        </span>
+        {#if insight.model}
+          <code class="ins-head-model">{insight.model}</code>
         {/if}
       </div>
-      {#if exportStatus}
-        <p class="ins-export-status" data-tone={exportStatus.tone} role="status">
-          {exportStatus.text}
-        </p>
+      {#if exportable || filesLinkable}
+        <div class="ins-actions">
+          {#if exportable}
+            <ExportMenu
+              label="Export this insight"
+              copyLabel="Copy as markdown"
+              transcriptLabel="Download markdown"
+              includeAudio={false}
+              on:copy={handleCopy}
+              on:transcript={handleDownload}
+            />
+          {/if}
+          {#if filesLinkable}
+            <a class="btn btn-sm btn-quiet gap-1.5" href={filesUrl} target="_blank" rel="noopener">
+              <ExternalLink size={14} aria-hidden="true" />
+              Open in Files
+            </a>
+          {/if}
+        </div>
       {/if}
+    </div>
+    {#if exportStatus}
+      <p class="ins-export-status" data-tone={exportStatus.tone} role="status">
+        {exportStatus.text}
+      </p>
     {/if}
   </header>
 
@@ -551,12 +556,24 @@
     line-height: 1.3;
     color: var(--color-base-content);
   }
+  /* Facts left, controls right, on one row. */
+  .ins-head-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-top: 0.375rem;
+    min-width: 0;
+  }
   .ins-head-meta {
     display: flex;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.25rem 1rem;
-    margin-top: 0.375rem;
+    min-width: 0;
+    /* Level with the 32px controls beside it. */
+    min-height: 2rem;
     font-size: 0.8125rem;
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
@@ -578,32 +595,30 @@
     color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
   }
 
-  /* The Retry button's treatment (.ins-retry button), so every control the
-     sheet offers is the same control. */
+  /* The meeting sheet's Export control and a link dressed as its sibling, so
+     the two sheets offer the same control for the same thing. */
   .ins-actions {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
-  }
-  .ins-actions button,
-  .ins-actions a {
-    display: inline-flex;
+    flex: none;
     align-items: center;
-    gap: 0.375rem;
-    padding: 4px 12px;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 550;
-    text-decoration: none;
-    background-color: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-field, 0.5rem);
-    color: var(--color-base-content);
+    gap: 0.5rem;
   }
-  .ins-actions button:hover,
-  .ins-actions a:hover {
-    background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
+  .ins-actions a {
+    text-decoration: none;
+  }
+  /* A narrow sheet: the facts stack on the left and the controls on the
+     right, each its own column, rather than a row that wraps into a tangle. */
+  @media (max-width: 720px) {
+    .ins-head-meta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.375rem;
+      min-height: 0;
+    }
+    .ins-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
   }
   .ins-export-status {
     margin: 0.375rem 0 0;

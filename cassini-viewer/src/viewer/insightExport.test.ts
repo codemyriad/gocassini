@@ -63,8 +63,6 @@ describe("renderInsightExport", () => {
       [
         "# What did we decide?",
         "",
-        '> "What did we decide?"',
-        "",
         `Written by Cassini on ${exportCreated(record.createdAt)}  `,
         "Template: summarise v3 · Model: gpt-x",
         "",
@@ -97,7 +95,7 @@ describe("renderInsightExport", () => {
       markdown: DOCUMENT,
       meetingUrl: noLink,
     });
-    expect(out.startsWith("# What did we decide? And who owns it?\n\n> ")).toBe(true);
+    expect(out.startsWith("# What did we decide? And who owns it?\n\nWritten by Cassini")).toBe(true);
   });
 
   it("keeps a title with a line break on one list item", () => {
@@ -118,7 +116,7 @@ describe("renderInsightExport", () => {
 
   it("quotes every line of a multi-line question", () => {
     const out = renderInsightExport({
-      record: insight({ question: "First?\nSecond?" }),
+      record: insight({ name: "Riverside", question: "First?\nSecond?" }),
       sources: [],
       markdown: "Body",
       meetingUrl: link,
@@ -200,5 +198,35 @@ describe("exportFileName", () => {
     expect(exportFileName(insight({ question: "CON" }))).toBe("insight.md");
     expect(exportFileName(insight({ question: "nul?" }))).toBe("insight.md");
     expect(exportFileName(insight({ question: "Console" }))).toBe("Console.md");
+  });
+});
+
+describe("renderInsightExport says the question once", () => {
+  it("quotes the question only under a name that says something else", () => {
+    const named = renderInsightExport({
+      record: insight({ name: "Riverside Clinic", question: "What did we decide?" }),
+      sources: [],
+      markdown: DOCUMENT,
+      meetingUrl: noLink,
+    });
+    expect(named.startsWith('# Riverside Clinic\n\n> "What did we decide?"\n\n')).toBe(true);
+    const unnamed = renderInsightExport({
+      record: insight({ question: "What did we decide?" }),
+      sources: [],
+      markdown: DOCUMENT,
+      meetingUrl: noLink,
+    });
+    expect(unnamed).not.toContain("> ");
+  });
+
+  it("drops the document's own heading when it is the question again", () => {
+    const out = renderInsightExport({
+      record: insight({ question: "What did we decide?" }),
+      sources: [],
+      markdown: "# What did we decide?\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n",
+      meetingUrl: noLink,
+    });
+    expect(out.endsWith("---\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n")).toBe(true);
+    expect(out.match(/What did we decide\?/g)).toHaveLength(1);
   });
 });

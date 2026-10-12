@@ -233,7 +233,7 @@ describe("InsightDocument", () => {
     };
     const FILES = "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&amp;scrollto=answer.md";
 
-    it("offers Copy, Download and Open in Files for an answer on screen", () => {
+    it("offers Export and Open in Files for an answer on screen", () => {
       const html = render(InsightDocument, {
         props: {
           insight: answered,
@@ -241,8 +241,8 @@ describe("InsightDocument", () => {
           filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
         },
       }).body;
-      expect(html).toMatch(/<button[^>]*>[\s\S]*?Copy\s*<\/button>/);
-      expect(html).toMatch(/<button[^>]*>[\s\S]*?Download\s*<\/button>/);
+      // The meeting sheet's Export menu, closed: one control, not two buttons.
+      expect(html).toMatch(/aria-haspopup="menu"[^>]*>\s*Export/);
       expect(html).toContain(`href="${FILES}"`);
       expect(html).toContain('target="_blank"');
       expect(html).toContain('rel="noopener"');
@@ -268,8 +268,7 @@ describe("InsightDocument", () => {
         },
       }).body;
       expect(html).toContain("Open in Files");
-      expect(html).not.toMatch(/<button[^>]*>[\s\S]*?Copy\s*<\/button>/);
-      expect(html).not.toMatch(/<button[^>]*>[\s\S]*?Download\s*<\/button>/);
+      expect(html).not.toContain('aria-haspopup="menu"');
     });
 
     it("offers no Files link for a run that has not produced the file", () => {
