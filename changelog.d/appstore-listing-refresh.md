@@ -1,0 +1,2 @@
+### Changed
+- Refreshed the App Store listing: a new description with a live demo link, release-candidate install note, rough hardware guide and Ethical AI rating; the Social & communication category; gocassini.com as the homepage; and the Codemyriad author link.
