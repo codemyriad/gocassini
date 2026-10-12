@@ -31,6 +31,9 @@ Each chart has independent controls:
   dates, raw bytes and file counts. Wide charts scroll inside the card. Use the
   scrollbar, keyboard, or Earlier/Later buttons to explore every bar. Grouping
   adapts automatically to the selected range.
+- **Next cleanup:** when a saved policy covers the chart, a line under it names
+  the latest date the next cleanup removes, and a dashed marker separates the
+  faded bars it removes from the bars it keeps. Keep-forever policies show neither.
 
 Chart controls do not save settings, delete files or trigger filesystem scans.
 Changing the time range does not change the all-dates comparison total.

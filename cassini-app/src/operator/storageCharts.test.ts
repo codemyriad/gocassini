@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { defaultStoragePrecision, displayStorageCategories, storageBuckets, storageDateExtent, storageRange, utcDay } from "./storageCharts";
+import { chartRetentionPolicy, defaultStoragePrecision, displayStorageCategories, retentionCutoff, storageBuckets, storageDateExtent, storageRange, utcDay } from "./storageCharts";
 import type { StorageUsageCategory } from "./types";
+import type { RetentionSettings } from "./retention";
 const category = (id = "recordings"): StorageUsageCategory => ({ id, bytes: 100, files: 4, undated_bytes: 10, undated_files: 1, days: [
   { date: "2024-02-28", bytes: 20, files: 1 }, { date: "2024-02-29", bytes: 30, files: 1 }, { date: "2024-03-02", bytes: 40, files: 1 },
 ] });
@@ -50,5 +51,31 @@ describe("storage chart dates and totals", () => {
     expect(history.days.map(d => d.bytes)).toEqual([40,60,80]);
     expect(combined.reduce((n,c) => n+c.bytes,0)).toBe(input.reduce((n,c) => n+c.bytes,0));
     expect(displayStorageCategories(input,true)).toBe(input);
+  });
+  it("dates the next cleanup's cutoff in UTC calendar days", () => {
+    const now = new Date("2026-10-12T23:30:00Z");
+    expect(retentionCutoff({ forever: false, count: 30, unit: "days" }, now)).toBe("2026-09-12");
+    expect(retentionCutoff({ forever: false, count: 30, unit: "days" }, new Date("2026-03-02T00:10:00Z"))).toBe("2026-01-31");
+    expect(retentionCutoff({ forever: true }, now)).toBeNull();
+    expect(retentionCutoff(null, now)).toBeNull();
+  });
+  it("picks the policy that governs each chart", () => {
+    const days = (count: number) => ({ forever: false, count, unit: "days" as const });
+    const settings: RetentionSettings = { version: 3, revision: 1, schedule: { time: "03:42", timezone: "UTC" },
+      recordings: days(7), current: days(30), logs: days(60), nextcloud: { meetings: days(90) },
+      history: { mode: "group", policy: days(14), fine: { failed_capture: days(1), failed_build: days(2), superseded: days(3), failed_publish: days(4) } } };
+    expect(chartRetentionPolicy("recordings", settings)?.count).toBe(7);
+    expect(chartRetentionPolicy("current", settings)?.count).toBe(30);
+    expect(chartRetentionPolicy("logs", settings)?.count).toBe(60);
+    expect(chartRetentionPolicy("published", settings)?.count).toBe(90);
+    expect(chartRetentionPolicy("history", settings)?.count).toBe(14);
+    expect(chartRetentionPolicy("superseded", settings)?.count).toBe(14);
+    expect(chartRetentionPolicy("other", settings)).toBeNull();
+    const fine = { ...settings, history: { ...settings.history, mode: "fine" as const } };
+    expect(chartRetentionPolicy("history", fine)).toBeNull();
+    expect(chartRetentionPolicy("superseded", fine)?.count).toBe(3);
+    expect(chartRetentionPolicy("failed_publish", fine)?.count).toBe(4);
+    expect(chartRetentionPolicy("published", { ...settings, nextcloud: undefined })).toBeNull();
+    expect(chartRetentionPolicy("recordings", null)).toBeNull();
   });
 });
