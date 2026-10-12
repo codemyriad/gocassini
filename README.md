@@ -19,7 +19,7 @@ Meetings are where decisions get made, and these are easily lost unless someone 
 
 Cassini is an ExApp which can be installed from the Nextcloud App Store. Once it's running, it shows up as a new app icon inside your Nextcloud suite:
 
-![Browsing recorded meetings inside Nextcloud](img/screenshots/gocassini-browse.png)
+![Browsing recorded meetings inside Nextcloud](img/screenshots/03-meetings.png)
 
 - Works with any Nextcloud Talk room, group calls and 1:1 calls. Just press _Record_ and Cassini is listening.
 - Transcripts and synced audio playback with speaker IDs.

@@ -91,8 +91,12 @@ Summaries and questions use whichever language model you connect, so their ratin
        fetches these URLs at listing time (they are not bundled in the tarball).
        Committed under img/screenshots/, served via raw.githubusercontent.com
        from main — so they resolve once this lands on main. -->
-  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-browse.png</screenshot>
-  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-operator.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/01-meeting.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/02-summary.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/03-meetings.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/04-insight.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/05-publish.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/06-doctor.png</screenshot>
 
   <dependencies>
     <!-- Support bounds are enforced by ci/nextcloud-compatibility.json. -->
