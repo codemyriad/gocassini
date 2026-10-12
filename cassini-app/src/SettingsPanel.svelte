@@ -15,7 +15,7 @@
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import { fly } from "svelte/transition";
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
-  import { ChevronDown, Info, RefreshCw, TriangleAlert } from "@lucide/svelte";
+  import { ChevronDown, Info, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import SpeechModels from "./SpeechModels.svelte";
   import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
@@ -603,17 +603,6 @@
         Every step between the call ending and the meeting being published. These apply to
         every room.
       </p>
-    </div>
-    <div class="op-panel-actions">
-      <button
-        class="icon-btn"
-        type="button"
-        on:click={loadAll}
-        disabled={loading || !operatorClient}
-        aria-label="Reload the publish pipeline"
-      >
-        <RefreshCw size={15} aria-hidden="true" />
-      </button>
     </div>
   </header>
 
