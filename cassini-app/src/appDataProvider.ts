@@ -25,6 +25,7 @@ import {
 import {
   listInsights as fetchInsightRuns,
   readInsight,
+  renameInsight as postInsightName,
   retryInsight as postInsightRetry,
 } from "./insights/client";
 
@@ -163,6 +164,12 @@ export class AppDataProvider extends StaticCatalogProvider {
   // answer rather than a failure.
   async retryInsight(id: string): Promise<InsightRecord> {
     return postInsightRetry(id);
+  }
+
+  // POST insights/<id>/name (D-791). Answers the run with its new name; an
+  // empty name clears it.
+  async renameInsight(id: string, name: string): Promise<InsightRecord> {
+    return postInsightName(id, name);
   }
 }
 
