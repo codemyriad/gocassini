@@ -714,6 +714,21 @@ func TestRenameInsightAnswersTheRunWithItsNewName(t *testing.T) {
 	}
 }
 
+// The joiner inside an emoji sequence is an invisible format character and
+// part of what was typed; refusing every such character would refuse the name.
+func TestRenameInsightKeepsTheJoinersInsideWhatWasTyped(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded, Name: "Old", MeetingIDs: []string{"MEETING1"}},
+	)
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/name", "alice", `{"name":"Team \ud83d\udc69\u200d\ud83d\udcbb sync"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	if got := harness.store.runs["ins_00000000000000a1"].Name; got != "Team \U0001F469\u200D\U0001F4BB sync" {
+		t.Errorf("name = %q, want the sequence kept whole", got)
+	}
+}
+
 func TestRenameInsightWithAnEmptyNameClearsIt(t *testing.T) {
 	harness := newInsightHandlerHarness(t,
 		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded, Name: "Old", MeetingIDs: []string{"MEETING1"}},
@@ -750,6 +765,10 @@ func TestRenameInsightRefusesANameThatCannotBeATitle(t *testing.T) {
 	for _, body := range []string{
 		`{"name":"` + strings.Repeat("x", maxInsightNameRunes+1) + `"}`,
 		`{"name":"tab\there"}`,
+		// Zero-width only: a blank title nothing can search for.
+		`{"name":"\u200b\u200d"}`,
+		// A right-to-left override reverses the title on screen.
+		`{"name":"\u202eevil"}`,
 		`{"name":"x","extra":true}`,
 		`not json`,
 	} {
