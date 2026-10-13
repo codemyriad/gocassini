@@ -66,6 +66,33 @@ describe("the shell's insight retry", () => {
   });
 });
 
+describe("the shell's insight rename", () => {
+  it("is offered exactly where the provider can perform one", () => {
+    expect(appSource).toContain('$: canRenameInsight = typeof dataProvider.renameInsight === "function";');
+    expect(appSource).toContain("canRename={canRenameInsight}");
+  });
+
+  it("sends the sheet's name and puts the answered record in the list", () => {
+    expect(appSource).toContain("on:rename={renameSelectedInsight}");
+    const handler = appSource.slice(
+      appSource.indexOf("async function renameInsightRun"),
+      appSource.indexOf("function renameSelectedInsight"),
+    );
+    expect(handler).toContain("const updated = await provider.renameInsight(record.id, name);");
+    expect(handler).toContain("insights = insights.map((row) => (row.id === updated.id ? updated : row));");
+  });
+
+  it("says, rather than swallows, a rename asked while another is saving", () => {
+    expect(appSource).toContain('if (renamingInsightId !== "") {');
+    expect(appSource).toContain("Another rename is still saving. Try again in a moment.");
+  });
+
+  it("keeps a refusal only while the sheet it was shown in is open", () => {
+    expect(appSource).toContain("on:renameCancel={() => (insightRenameError = null)}");
+    expect(appSource).toContain("$: if (insightRenameError && insightRenameError.id !== selectedInsightId) {");
+  });
+});
+
 describe("the shell's answer to a created insight", () => {
   it("puts the record at the top of the list, closes Prepare, and re-reads", () => {
     // The panel's subject was the set the question was asked of; once asked,
