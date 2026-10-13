@@ -72,7 +72,7 @@ Negative:
 - part of the training data is licensed from third parties and not freely available
 
 Summaries and questions use whichever language model you connect, so their rating depends on that model. Learn more about the [Nextcloud Ethical AI Rating](https://nextcloud.com/blog/nextcloud-ethical-ai-rating/).]]></description>
-  <version>0.2.0-beta.8</version>
+  <version>0.2.0</version>
   <licence>agpl</licence>
   <author homepage="https://codemyriad.io">Codemyriad</author>
   <namespace>Cassini</namespace>
@@ -111,7 +111,7 @@ Summaries and questions use whichever language model you connect, so their ratin
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.8</image-tag>
+      <image-tag>0.2.0</image-tag>
     </docker-install>
 
     <!--
