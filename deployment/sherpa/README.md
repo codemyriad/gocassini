@@ -14,13 +14,22 @@ its SHA-256. It applies no local patches. ONNX Runtime archives are pinned by
 that release's CMake files. No model weights change.
 
 The frontend activates only for the exact NVIDIA Parakeet TDT 0.6B v3 metadata
-URL, 128 features, 16 kHz and per-feature normalization. It uses centered Hann
+URL, 128 features, 16 kHz and per-feature normalization. Since
+`v1.13.7-cassini.7` it also activates for the four known Moondream Parakeet
+Ultra URLs (`https://huggingface.co/moondream/parakeet-ultra`, alone or with a
+` (parakeet-tdt architecture)`, ` (parakeet-tdt-0.6b-v3 architecture)` or
+` (retrained nvidia/parakeet-tdt-0.6b-v3)` suffix), and any Ultra URL selects
+TDT decoding. Earlier runtimes run such exports on the legacy frontend, and the
+plain Ultra URL exits the process at load. The frontend uses centered Hann
 framing, global preemphasis, Nyquist mel filters, an additive log guard and
 sample-variance normalization. Other model frontends retain upstream behavior.
 The Cassini release reports `+cassini-parakeet-v3-reference-v1`; libraries
 without that marker use the standard decode policy instead of preventing startup.
+The `.7` version appends `.parakeet-ultra-v1` after the existing markers, so v3
+behavior and the existing marker checks are unchanged. Its native source is retained by
+the [`v1.13.7-cassini-parakeet-ultra-v1` tag](https://github.com/codemyriad/sherpa-onnx/tree/v1.13.7-cassini-parakeet-ultra-v1).
 
-With `v1.13.7-cassini.6` the native library also carries NVIDIA
+Since `v1.13.7-cassini.6` the native library also carries NVIDIA
 Nemotron-3-Diarization (end-to-end speaker diarization for up to 8 speakers).
 The stock Go wrapper reaches it through `OfflineSpeakerDiarization`: pass the
 model as `Segmentation.Pyannote.Model`; no embedding model or clustering is

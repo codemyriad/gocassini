@@ -255,6 +255,14 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 
 const parakeetReferenceRuntimeMarker = "+cassini-parakeet-v3-reference-v1"
 
+// parakeetUltraRuntimeMarker is in the native version string of a Cassini
+// runtime (v1.13.7-cassini.7 or later) that also selects the reference frontend
+// for Moondream Parakeet Ultra exports whose encoder metadata carries the
+// Ultra model URL. Earlier runtimes run such exports on the legacy frontend, or
+// exit at load for the plain Ultra URL. It is appended after the v3 marker, so
+// the v3 check above is unaffected.
+const parakeetUltraRuntimeMarker = ".parakeet-ultra-v1"
+
 var unpatchedWarnOnce sync.Once
 
 // RuntimeVersion returns the dynamic library version string reported by sherpa-onnx.
@@ -266,6 +274,12 @@ func RuntimeVersion() string {
 // Cassini Parakeet v3 reference frontend patch.
 func HasReferenceRuntime() bool {
 	return strings.Contains(sherpa.GetVersion(), parakeetReferenceRuntimeMarker)
+}
+
+// HasParakeetUltraRuntime reports whether the active sherpa runtime selects the
+// reference frontend for Parakeet Ultra exports identified by their own URL.
+func HasParakeetUltraRuntime() bool {
+	return strings.Contains(sherpa.GetVersion(), parakeetUltraRuntimeMarker)
 }
 
 // checkReferenceRuntime returns whether the given runtime version satisfies the
