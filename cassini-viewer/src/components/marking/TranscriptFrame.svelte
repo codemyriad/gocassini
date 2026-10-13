@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
 
+  import type { ViewerTimeRange } from "../../viewer/hashRouting";
   import type { FindStop } from "../../core/find";
   import {
     formatPreciseTime,
@@ -34,6 +35,8 @@
   // the left and the brackets on the right. Words are decorated through their
   // attributes, so a drag never re-renders the transcript.
   export let session: MarksSession;
+  export let selectionRequest: { range: ViewerTimeRange | null } | null = null;
+  export let selectionHref: ((range: ViewerTimeRange) => string) | null = null;
   export let vocabulary: readonly VocabularyTag[] = [];
   export let words: readonly TimedWord[] = [];
   export let rows: readonly { startMs: number; endMs: number }[] = [];
@@ -101,7 +104,8 @@
   const painted = new Map<string, Map<HTMLElement, string>>();
 
   $: marking = $session.status === "ready";
-  $: framed = $session.status !== "off";
+  $: selectable = editing || selectionHref !== null;
+  $: framed = $session.status !== "off" || selectable;
   // Seeing marks and making them are separate (D-775). `marking` still governs
   // everything that DRAWS — the rail, the brackets, the marks list — so a
   // published export shows exactly what the recording carries. `editing` governs
@@ -113,7 +117,7 @@
   // What the sticky bars cover of the view: the tag bar at the top where the
   // screen is wide, the dock above the player where it is not.
   $: coverTop = barOffset + (marking && wide ? tagbarHeight : 0);
-  $: coverBottom = marking && !wide ? dockHeight + 8 : 0;
+  $: coverBottom = (marking || stretchProps) && !wide ? dockHeight + 8 : 0;
   $: bracketColumns = Math.max(0, ...(view?.placed.map((mark) => mark.column) ?? [])) + 1;
   // Where a tag chip begins, measured the way MarkBrackets measures it: the
   // bracket column's 10px inset, one step per overlapping bracket, and the gap
@@ -149,7 +153,7 @@
   $: hoverMark = view?.placed.find((mark) => mark.item.id === hoverId) ?? null;
   $: selColor = selectedMark?.color ?? "slate";
   $: viewingMark = Boolean(selectedMark && !selection?.unlocked);
-  $: stretchProps = editing &&
+  $: stretchProps = selectable &&
     range && {
       startMs: range.startMs,
       endMs: range.endMs,
@@ -160,12 +164,24 @@
       busy: $session.busy,
       error: $session.errorFrom === "stretch" ? $session.error : "",
       copied,
+      editable: editing,
+      shareUrl: selectionHref?.(range) ?? "",
     };
 
   let seenWords = words;
   $: if (words !== seenWords) {
     seenWords = words;
     selection = null;
+  }
+
+  let consumedRequest: typeof selectionRequest = null;
+  $: if (selectionRequest !== consumedRequest && (!selectionRequest?.range || words.length > 0) && page.length > 0) {
+    consumedRequest = selectionRequest;
+    if (selection?.native) document.getSelection()?.removeAllRanges();
+    selection = selectionRequest?.range
+      ? spanForRange(words, selectionRequest.range.startMs, selectionRequest.range.endMs)
+      : null;
+    if (selection) void tick().then(() => revealWord(selection?.from, "center"));
   }
 
   $: void reindex(rows, words, marking);
@@ -435,7 +451,7 @@
       const live = readerRange();
       const ends = live && touched(live);
       nativeLive = Boolean(ends);
-      if (!editing) return;
+      if (!selectable) return;
       const span = ends && spanForPage(page.map((element) => element.dataset.wordId!), indexById, ends[0], ends[1]);
       if (!span || (selection?.native && selection.from === span.from && selection.to === span.to)) return;
       selection = { ...span, native: true };
@@ -515,7 +531,7 @@
   function textDown(event: PointerEvent) {
     textDrag = null;
     dragClick = false;
-    if (!editing || event.pointerType !== "mouse" || event.button !== 0 || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!selectable || event.pointerType !== "mouse" || event.button !== 0 || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
     const word = (event.target as Element | null)?.closest?.<HTMLElement>(".cassini-word");
     const anchor = word ? pageAt.get(word.dataset.wordId ?? "") : undefined;
     if (anchor !== undefined) textDrag = { anchor, x: event.clientX, y: event.clientY, moved: false };
@@ -650,6 +666,7 @@
   }
 
   function write(request: AnnotationRequest) {
+    if (!editing) return false;
     const written = session.write(request, "stretch");
     if (written) void clearSelection();
     return written;
@@ -676,7 +693,7 @@
   }
 
   function onCopy(event: ClipboardEvent) {
-    if (!editing || !selection || (selection.native && !selection.moved) || !event.clipboardData) return;
+    if (!selectable || !selection || (selection.native && !selection.moved) || !event.clipboardData) return;
     const target = event.composedPath()[0];
     if (target instanceof HTMLElement && target.matches("input, textarea")) return;
     const text = selectedText();
@@ -738,14 +755,14 @@
     }
     if (!visible) return;
     const inField = path.some((node) => node instanceof HTMLElement && node.matches("input, textarea, select, [role='dialog']"));
-    if (!editing || inField) return;
+    if (!selectable || inField) return;
     if (event.key === "Escape") {
       if (selection) void clearSelection();
       else return;
       const active = (root.getRootNode() as Document | ShadowRoot).activeElement;
       if (active instanceof HTMLElement && active.matches(".cassini-word, [data-pin]")) active.blur();
       event.preventDefault();
-    } else if (event.key === "Enter" && selection) {
+    } else if (event.key === "Enter" && selection && editing) {
       // A word is a button, and the one a drag began on keeps the focus; its
       // own Enter would seek, where the reader means the selection.
       const inText = path.some(
@@ -860,7 +877,7 @@
             stops={stops.map((found) => found.ms)}
             current={stop}
             labels={wide}
-            grabbing={editing && !viewingMark}
+            grabbing={selectable && !viewingMark}
             visible={seen}
             on:grab={(event) => grab(event.detail.aMs, event.detail.bMs, event.detail.handle)}
             on:pick={(event) => pickTurn(event.detail)}
@@ -886,7 +903,7 @@
       on:click={textClick}
     >
       <slot {chips} openMark={selectMark} />
-      {#if editing && pins && range && !viewingMark && !(nativeLive && !wide)}
+      {#if selectable && pins && range && !viewingMark && !(nativeLive && !wide)}
         {#each EDGES as edge (edge)}
           {@const ms = edge === "from" ? range.startMs : range.endMs}
           <span
@@ -921,7 +938,7 @@
         {/each}
       {/if}
     </div>
-    {#if marking && wide}
+    {#if framed && wide}
       <!-- Inset, so the brackets and their tags sit clear of the floating
            tagged-sections controls above them. -->
       <div class="relative pl-2.5" data-keep-selection>
@@ -957,7 +974,7 @@
       </div>
     {/if}
   </div>
-  {#if marking && !wide}
+  {#if (marking || stretchProps) && !wide}
     <!-- Where the screen is narrow, the tagged sections sit in a card of their
          own above the player, over the text and clear of the rail beside it,
          its right edge on the player's controls' (the footer's 8px, the

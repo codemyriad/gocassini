@@ -86,7 +86,7 @@
     type InsightRecord,
   } from "../viewer/insights";
   import type { DataProvider } from "../viewer/dataProvider";
-  import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "../viewer/hashRouting";
+  import { buildViewerHash, readViewerHash, readViewerRange, viewerUrlWithHash, type ViewerTimeRange } from "../viewer/hashRouting";
   import { eventIsInside, followScrollTop, ownsLocationHash } from "../viewer/embedHost";
 
   // The single-meeting reading surface (D-420 V1). It is "smart": given a
@@ -328,6 +328,48 @@
     return readViewerHash(hostHash());
   }
 
+  let selectionRequest: { range: ViewerTimeRange | null } | null = null;
+  let lastSharedHash = "";
+  let locationRequest = 0;
+
+  function selectionHref(range: ViewerTimeRange): string {
+    return viewerHref(buildViewerHash({ meeting: meeting?.id, tx: currentTranscriptId, range }));
+  }
+
+  function restoreSharedSelection() {
+    if (!ownsHash) return;
+    const hash = hostHash();
+    lastSharedHash = hash;
+    const range = readViewerRange(hash);
+    selectionRequest = { range };
+    if (range) {
+      transcriptQuery = "";
+      onlyMatching = false;
+      activeTab = "transcript";
+      audioEl?.pause();
+      playing = false;
+      seekTo(range.startMs);
+    }
+  }
+
+  async function handleSharedLocation() {
+    const request = ++locationRequest;
+    await tick();
+    if (!ownsHash || loading || hostHash() === lastSharedHash) return;
+    const current = currentViewerHash();
+    if (!bundled && current.meeting !== meeting?.id) return;
+    if (meeting) await maybeApplyUrlTranscript(meeting);
+    if (request !== locationRequest) return;
+    restoreSharedSelection();
+    if (!readViewerRange(hostHash())) {
+      const time = parseTimeHash(hostHash());
+      if (time !== null) {
+        activeTab = "transcript";
+        seekTo(time);
+      }
+    }
+  }
+
   function viewerHref(hash: string): string {
     return viewerUrlWithHash(window.location.href, hash);
   }
@@ -389,6 +431,8 @@
   }
 
   function resetLoadedArtifact() {
+    selectionRequest = null;
+    locationRequest += 1;
     exportRequestId += 1;
     audioRequestId += 1;
     copyRequestId += 1;
@@ -510,6 +554,7 @@
       const artifact = await dataProvider.loadMeetingForEntry(entry);
       applyArtifact(artifact);
       await maybeApplyUrlTranscript(entry);
+      restoreSharedSelection();
       // Real speaker/segment/duration counts → shell updates the list card.
       dispatch("enriched", mergeMeetingRuntimeSummary(entry, artifact));
     } catch (error) {
@@ -574,6 +619,7 @@
     try {
       const artifact = await dataProvider.loadBundledArtifact();
       applyArtifact(artifact);
+      restoreSharedSelection();
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
@@ -596,6 +642,8 @@
       const next = await dataProvider.switchTranscript(meeting, targetId);
       applySwitchedTranscript(next);
       writeTranscriptUrlParam(targetId);
+      selectionRequest = null;
+      lastSharedHash = hostHash();
     } catch (error) {
       // Surface inline next to the switcher; previous transcript stays visible.
       transcriptSwitchError = `Couldn't load that transcript: ${
@@ -628,7 +676,7 @@
       window.history.replaceState(
         {},
         "",
-        viewerHref(buildViewerHash({ meeting: current.meeting })),
+        viewerHref(buildViewerHash({ meeting: current.meeting, range: readViewerRange(hostHash()), timeMs: parseTimeHash(hostHash()) })),
       );
     }
   }
@@ -1130,6 +1178,8 @@
 
   onMount(() => {
     window.addEventListener("keydown", handleWindowKeydown);
+    window.addEventListener("hashchange", handleSharedLocation);
+    window.addEventListener("popstate", handleSharedLocation);
     if (bundled) {
       void loadBundled();
     }
@@ -1137,6 +1187,8 @@
 
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
+    window.removeEventListener("hashchange", handleSharedLocation);
+    window.removeEventListener("popstate", handleSharedLocation);
     stopPlaybackClock();
     void localMarks.close();
   });
@@ -1544,6 +1596,8 @@
       <TranscriptFrame
         bind:this={transcriptFrame}
         session={marks}
+        {selectionRequest}
+        selectionHref={ownsHash ? selectionHref : null}
         vocabulary={tagVocabulary}
         words={timedWords}
         rows={transcriptRows}
