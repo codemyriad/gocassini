@@ -16,7 +16,7 @@ having backed up what was there before.
 
 ## Requirements
 
-- Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
+- Nextcloud 33.0.9 to 35 with AppAPI and a HaRP deploy daemon.
 - Talk with the High-performance backend (standalone signalling). Cassini joins
   calls as an internal signalling client, so it needs the signalling server's
   `internalsecret`. This is the one value you have to supply by hand.
@@ -26,8 +26,8 @@ having backed up what was there before.
 - _Optional_: an NVIDIA GPU with the Container Toolkit (x86_64) for faster
   transcription. CPU is the default and runs on amd64 and arm64.
 
-Cassini's manifest declares Nextcloud 32 as its minimum and 35 as its maximum;
-it is developed and tested against 33 and later.
+Cassini's manifest declares Nextcloud 33.0.9 as its minimum and 35 as its
+maximum, and CI tests it against Nextcloud 33, 34 and 35.
 
 ## The five steps
 
@@ -37,7 +37,7 @@ it is developed and tested against 33 and later.
    can stay empty.
 2. **Open Cassini as an administrator.** It creates the `cassini` service
    account that owns the meeting archive.
-3. **Check recording sharing**, under Operator › Settings.
+3. **Check recording sharing**, under Operator › Settings › Publish pipeline.
 4. **Point Talk at Cassini.** Back up Talk's current `recording_servers` value,
    then apply the one Cassini generates for you.
 5. **Record a test call** in a private room and watch it arrive in Cassini.
@@ -275,7 +275,7 @@ administrator or picks the wrong account.
 
 ## Step 3 — Check recording sharing
 
-Open **Operator › Settings › Who can see recordings**. Once the `cassini`
+Open **Operator › Settings › Publish pipeline › Who can see recordings**. Once the `cassini`
 account exists and Nextcloud file sharing works, the section has nothing to
 report. Otherwise it says what is missing, and offers **Create recordings
 account** or **Check again**.

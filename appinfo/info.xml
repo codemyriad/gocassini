@@ -4,7 +4,7 @@
   <id>gocassini</id>
   <name>Cassini</name>
   <summary>Record, transcribe and search Nextcloud Talk meetings on your own hardware.</summary>
-  <description><![CDATA[> 🧪 **Release candidate.** Nextcloud lists pre-releases only on servers set to the beta update channel. On a stable server, the [install guide](https://gocassini.com/docs/getting-started/install/) shows how to register Cassini by hand.
+  <description><![CDATA[> 🌱 **Early release, feedback welcome.** We run Cassini daily on our own Nextcloud, but expect rough edges. Tell us what works and what breaks in [GitHub issues](https://github.com/codemyriad/gocassini/issues).
 
 > 👀 **Try it first.** Start a call with friends or colleagues on [demo.gocassini.com](https://demo.gocassini.com), press Record, and explore what was said.
 
@@ -151,7 +151,7 @@ Summaries and questions use whichever language model you connect, so their ratin
       <variable>
         <name>CASSINI_ARTIFACT_RETENTION</name>
         <display-name>Deprecated working-file retention</display-name>
-        <description>Deprecated and ignored. Configure container-local retention in Operator → Storage. All categories default to keep forever; choose 7, 30, 60, 90 or custom days, evaluated on UTC dates. Successful duplicate working copies are cleaned independently. Published Nextcloud files and job metadata are not evicted.</description>
+        <description>Deprecated and ignored. Configure container-local retention in Operator → Storage. All categories default to keep forever; choose 7, 30, 60, 90 or custom days, evaluated on UTC dates. Successful duplicate working copies are cleaned independently. Job metadata is not evicted; expiry of published meetings in Nextcloud Files is a separate setting in Operator → Storage.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>

@@ -64,9 +64,8 @@ recording behavior separately; older versions can capture video by default.
 
 ## Prerequisites
 
-- Nextcloud **32 or newer** (the manifest's `min-version`; Cassini targets and
-  is tested against Nextcloud 33+) with the **AppAPI** app installed and
-  enabled.
+- Nextcloud **33.0.9 to 35** (the manifest's `min-version` and `max-version`)
+  with the **AppAPI** app installed and enabled.
 - A registered AppAPI **deploy daemon** (next section).
 - **Required.** A `cassini` service account. Every recording is written and
   read as it, in either storage mode. Cassini tries to create it and its
@@ -322,7 +321,7 @@ Options).
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
 | `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used to CHECK how this instance is set up — which apps are enabled, whether the `cassini` account exists. That check creates nothing; the only write made as this account is the attempt to create the `cassini` service account and its group when the app is enabled. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
-| `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in Nextcloud Files; `local` keeps them on the app's own volume. Set `local` only deliberately. Under `nextcloud-files`, *who can see* a recording is a separate setting, in **Operator › Settings › Who can see recordings**, not here |
+| `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in Nextcloud Files; `local` keeps them on the app's own volume. Set `local` only deliberately. Under `nextcloud-files`, each recording is shared directly with the people, groups and Teams of its Talk room |
 | `CASSINI_STT_BACKEND` | No | Which registered speech-to-text engine transcription uses; empty selects the default (`sherpa-onnx`). An unknown value fails transcription while preserving the prepared audio |
 | `CASSINI_DISALLOW_MODEL_DOWNLOAD` | No | Set `1` on a host with no outbound network access. Images contain no models. This forbids model downloads and resumed network jobs. Local `cassini models import`, runtime checks, activation, and already installed models remain available; missing models never block audio publication |
 | `CASSINI_ATTRIBUTION_DISABLED` | No | Set `1` to skip the cross-track speaker-attribution stage. By default every word is annotated with acoustic evidence; no words are changed or removed either way |
