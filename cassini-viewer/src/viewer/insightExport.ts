@@ -58,14 +58,16 @@ export function renderInsightExport({
   blocks.push(`Written by Cassini on ${formatExportCreated(record)}  \n${provenance.join(" · ")}`);
 
   if (sources.length > 0) {
-    const noun = sources.length === 1 ? "meeting" : "meetings";
     const items = sources.map((source) => {
       // A title is free text; a line break in a list item ends the item.
       const label = `${oneLine(source.title)}, ${formatMeetingDateWithDay(source.dateLabel)}`;
       const url = meetingUrl(source);
       return url ? `- [${escapeLinkText(label)}](${url})` : `- ${label}`;
     });
-    blocks.push(`Drawn from ${sources.length} ${noun}:\n\n${items.join("\n")}`);
+    // "these", not a count: the list is the meetings THIS reader can see, and
+    // on screen that convention is understood, but the file leaves Cassini and
+    // a number in it reads as the run's total.
+    blocks.push(`Drawn from these meetings:\n\n${items.join("\n")}`);
   }
 
   if (quoted) {
@@ -74,11 +76,13 @@ export function renderInsightExport({
   }
 
   blocks.push("---");
-  // The document's own first heading is the question again (the Ask template
-  // copies it in verbatim). Under the quote it is a repeat and goes; with no
-  // quote it is the document's title and stays.
+  // The document's own first heading repeats what this file already says at
+  // its top: the question (the Ask template copies it in verbatim), which is
+  // the quote above when there is one and the H1 itself when there is not.
+  // Either way it goes; a heading that says something else is information
+  // and stays.
   const body = stripInsightFrontMatter(markdown);
-  blocks.push((quoted ? stripLeadingHeading(body, question) : body).trim());
+  blocks.push(stripLeadingHeading(body, quoted ? question : insightHeadline(record)).trim());
 
   return `${blocks.join("\n\n")}\n`;
 }

@@ -259,7 +259,11 @@
     try {
       await clipboard.writeText(exportText());
       next = { tone: "ok", text: "Copied as markdown." };
-    } catch {
+    } catch (error) {
+      // Said on screen and logged: a permission the browser refused, a
+      // document that would not render and an insecure context all read the
+      // same to the person, and differently to whoever is asked why.
+      console.warn("insight copy: clipboard write failed", error);
       next = { tone: "warn", text: "Clipboard blocked here — try Copy again, or download the markdown." };
     }
     if (insight.id === copied) {

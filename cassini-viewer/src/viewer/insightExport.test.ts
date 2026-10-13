@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MeetingCatalogEntry } from "./catalog";
 import { formatMeetingDateWithDay } from "./catalog";
 import type { InsightRecord } from "./insights";
+import { buildViewerHash, viewerUrlWithHash } from "./hashRouting";
 import { exportFileName, renderInsightExport } from "./insightExport";
 
 // The copy's own date format: the drawer's, plus the zone, because the file is
@@ -66,7 +67,7 @@ describe("renderInsightExport", () => {
         `Written by Cassini on ${exportCreated(record.createdAt)}  `,
         "Template: summarise v3 · Model: gpt-x",
         "",
-        "Drawn from 3 meetings:",
+        "Drawn from these meetings:",
         "",
         `- [Meeting m1, ${day}](https://cloud.example/viewer#meeting=m1)`,
         `- [Meeting m2, ${day}](https://cloud.example/viewer#meeting=m2)`,
@@ -132,7 +133,7 @@ describe("renderInsightExport", () => {
 
   it("counts one source in the singular", () => {
     const out = renderInsightExport({ record: insight(), sources: [meeting("m1")], markdown: "Body", meetingUrl: link });
-    expect(out).toContain("Drawn from 1 meeting:\n");
+    expect(out).toContain("Drawn from these meetings:\n");
   });
 
   it("names a source as plain text where it has no link", () => {
@@ -212,14 +213,17 @@ describe("renderInsightExport says the question once", () => {
       meetingUrl: noLink,
     });
     const quoteAt = named.indexOf('> "What did we decide?"');
-    expect(quoteAt).toBeGreaterThan(named.indexOf("Drawn from 1 meeting:"));
+    expect(quoteAt).toBeGreaterThan(named.indexOf("Drawn from these meetings:"));
     expect(quoteAt).toBeLessThan(named.indexOf("\n---\n"));
     // The document's own heading would repeat the quote right under it.
     expect(named.endsWith("---\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n")).toBe(true);
     expect(named.match(/What did we decide\?/g)).toHaveLength(1);
   });
 
-  it("keeps the document's heading as its title when there is no quote", () => {
+  it("drops the document's heading when it repeats the file's own title", () => {
+    // The commonest Ask run: no name, so the headline IS the question, and
+    // the document opens with it again. Two H1s a few lines apart say it
+    // twice; the export's own is the one that stays.
     const unnamed = renderInsightExport({
       record: insight({ question: "What did we decide?" }),
       sources: [],
@@ -227,6 +231,37 @@ describe("renderInsightExport says the question once", () => {
       meetingUrl: noLink,
     });
     expect(unnamed).not.toContain("> ");
-    expect(unnamed.endsWith("---\n\n# What did we decide?\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n")).toBe(true);
+    expect(unnamed.startsWith("# What did we decide?\n")).toBe(true);
+    expect(unnamed.endsWith("---\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n")).toBe(true);
+    expect(unnamed.match(/What did we decide\?/g)).toHaveLength(1);
+  });
+
+  it("keeps a document heading that says something else", () => {
+    const out = renderInsightExport({
+      record: insight({ name: "Riverside Clinic", question: "" }),
+      sources: [],
+      markdown: "# Decisions\n\nYes.\n",
+      meetingUrl: noLink,
+    });
+    expect(out.endsWith("---\n\n# Decisions\n\nYes.\n")).toBe(true);
+  });
+});
+
+describe("renderInsightExport with the viewer's own meeting links", () => {
+  it("links each source to its meeting in this viewer, as the shell builds them", () => {
+    // The shell's insightSourceUrl is viewerUrlWithHash(location.href,
+    // buildViewerHash({ meeting })): the same two helpers, fed a proxy page URL.
+    const page = "https://cloud.example/index.php/apps/app_api/proxy/gocassini/viewer#meeting=m0&t=12";
+    const out = renderInsightExport({
+      record: insight({ name: "Design sync" }),
+      sources: [meeting("m1", "Design review"), meeting("m2")],
+      markdown: "Yes.\n",
+      meetingUrl: (source) => viewerUrlWithHash(page, buildViewerHash({ meeting: source.id })),
+    });
+    expect(out).toContain(
+      `- [Design review, ${formatMeetingDateWithDay("2026-10-05 14:30")}](https://cloud.example/index.php/apps/app_api/proxy/gocassini/viewer#meeting=m1)`,
+    );
+    expect(out).toContain("#meeting=m2)");
+    expect(out).not.toContain("t=12");
   });
 });
