@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -164,7 +165,11 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 			}
 			dav.put = append(dav.put, insightPut{path: rel, body: string(body)})
 			dav.existing[rel] = true
+			fileID := len(dav.put)
 			dav.mu.Unlock()
+			// As Nextcloud answers: the id zero-padded to eight digits, with the
+			// instance id appended (OCP\Files\DavUtil::getDavFileId).
+			w.Header().Set("OC-FileId", fmt.Sprintf("%08doctestinst", 4000+fileID))
 			w.WriteHeader(http.StatusCreated)
 		default:
 			t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
@@ -417,6 +422,39 @@ func TestInsightFileSafeNameCapsByBytesOnARuneBoundary(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.Repeat("語", 100), name) || utf8.RuneCountInString(name) < 60 {
 		t.Errorf("name = %q, want a prefix of the original that keeps most of it", name)
+	}
+}
+
+// The Files app selects a file by its numeric id, which Nextcloud reports on
+// the delivery PUT; the run keeps it beside the path so Open in Files can land
+// on the document rather than its folder (D-792).
+func TestPerformKeepsTheDeliveredDocumentsFileID(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	service, logs := insightTestService(t, dav.server.URL, bin, nil)
+
+	outcome := service.perform(context.Background(), insightTestRun())
+
+	if outcome.Status != insightStatusSucceeded {
+		t.Fatalf("status = %q, want succeeded (error %q); log:\n%s", outcome.Status, outcome.Error, logs)
+	}
+	if outcome.DocumentFileID != "4001" {
+		t.Errorf("documentFileId = %q, want the digits of OC-FileId without the padding or the instance id", outcome.DocumentFileID)
+	}
+}
+
+func TestDAVFileIDDigits(t *testing.T) {
+	for header, want := range map[string]string{
+		"00000042ocm7d2xq3ckw": "42",
+		" 00123456789ocabc ":   "123456789",
+		"123456789":            "123456789",
+		"":                     "",
+		"ocm7d2xq3ckw":         "",
+		"00000000oc":           "",
+	} {
+		if got := davFileIDDigits(header); got != want {
+			t.Errorf("davFileIDDigits(%q) = %q, want %q", header, got, want)
+		}
 	}
 }
 

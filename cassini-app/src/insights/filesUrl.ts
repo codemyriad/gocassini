@@ -10,9 +10,10 @@
 // scripts say what that root is (`OC.getRootPath()`), and when they are on the
 // page their answer wins: a guess from the path is wrong for an install whose
 // subpath itself contains `/apps/`. Without them, it is everything before the
-// first `/index.php/` or `/apps/`, whichever comes first: the embedded page is
-// under `/index.php/apps/...`, and a pretty-URL install serves `/apps/...`
-// directly.
+// first `/index.php/`, `/apps/` or `/exapps/`, whichever comes first: the
+// embedded page is under `/index.php/apps/...`, a pretty-URL install serves
+// `/apps/...` directly, and HaRP serves an ExApp's own pages under
+// `/exapps/<appid>/`.
 export function nextcloudRoot(
   location: Pick<Location, "origin" | "pathname">,
   knownRootPath: string | null = null,
@@ -21,7 +22,7 @@ export function nextcloudRoot(
   if (typeof knownRootPath === "string") {
     return origin + knownRootPath.replace(/\/+$/, "");
   }
-  const cuts = ["/index.php/", "/apps/"]
+  const cuts = ["/index.php/", "/apps/", "/exapps/"]
     .map((marker) => pathname.indexOf(marker))
     .filter((index) => index >= 0);
   if (cuts.length === 0) {
@@ -30,13 +31,21 @@ export function nextcloudRoot(
   return origin + pathname.slice(0, Math.min(...cuts));
 }
 
-// insightFilesUrl opens the document's folder scrolled to the document.
+// insightFilesUrl opens the document in Nextcloud Files. The Files app since
+// Nextcloud 28 (every version in info.xml's range) selects a file only by its
+// numeric id in the route, `/apps/files/files/<id>`, and `opendetails` then
+// opens the sidebar on it, where sharing is; the legacy `scrollto=` query is
+// read by nothing it ships. With the id the document is selected and its
+// details open; without one (a run delivered before the id was kept) the
+// folder opens, and the file is in it.
+//
 // documentPath is relative to the requester's home, as the operator records it
 // ("Cassini Insights/<file>.md").
 export function insightFilesUrl(
   location: Pick<Location, "origin" | "pathname">,
   documentPath: string,
   knownRootPath: string | null = null,
+  documentFileId = "",
 ): string {
   const path = documentPath.replace(/^\/+/, "");
   if (path === "") {
@@ -44,9 +53,7 @@ export function insightFilesUrl(
   }
   const slash = path.lastIndexOf("/");
   const dir = slash >= 0 ? path.slice(0, slash) : "";
-  const file = slash >= 0 ? path.slice(slash + 1) : path;
-  return (
-    `${nextcloudRoot(location, knownRootPath)}/apps/files/` +
-    `?dir=${encodeURIComponent(`/${dir}`)}&scrollto=${encodeURIComponent(file)}`
-  );
+  const query = `?dir=${encodeURIComponent(`/${dir}`)}`;
+  const files = `${nextcloudRoot(location, knownRootPath)}/apps/files/files`;
+  return /^[1-9]\d*$/.test(documentFileId) ? `${files}/${documentFileId}${query}&opendetails` : `${files}${query}`;
 }

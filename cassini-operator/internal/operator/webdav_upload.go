@@ -131,15 +131,16 @@ func (c ExAppConfig) davPutFileIfMatch(ctx context.Context, client *http.Client,
 // davPutNewFile uploads localPath as davPutFileStatus does, but only where
 // nothing is at relPath yet: `If-None-Match: *` has Nextcloud answer 412 rather
 // than overwrite, reported as errDAVExists. Two writers racing for one name
-// both pass a HEAD; only one of them passes this.
-func (c ExAppConfig) davPutNewFile(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, error) {
+// both pass a HEAD; only one of them passes this. On success it answers the
+// file's Nextcloud id too, when Nextcloud reports one.
+func (c ExAppConfig) davPutNewFile(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, string, error) {
 	answer, err := c.davPut(ctx, client, userID, relPath, localPath, contentType, func(req *http.Request) {
 		req.Header.Set("If-None-Match", "*")
 	})
 	if answer.Status == http.StatusPreconditionFailed {
-		return answer.Status, fmt.Errorf("PUT %s: %w", relPath, errDAVExists)
+		return answer.Status, "", fmt.Errorf("PUT %s: %w", relPath, errDAVExists)
 	}
-	return answer.Status, err
+	return answer.Status, answer.FileID, err
 }
 
 // davPutAnswer is what a PUT came back with: the status, and what Nextcloud
@@ -147,6 +148,21 @@ func (c ExAppConfig) davPutNewFile(ctx context.Context, client *http.Client, use
 type davPutAnswer struct {
 	Status int
 	ETag   string
+	// FileID is the file's numeric Nextcloud id, as the Files app addresses it;
+	// "" where Nextcloud did not say.
+	FileID string
+}
+
+// davFileIDDigits reads the numeric id out of an OC-FileId header. Nextcloud
+// writes the id zero-padded to eight digits with the instance id appended
+// ("00000042ocm7d2xq3ckw"); the digits before the instance id are the id.
+func davFileIDDigits(header string) string {
+	digits := strings.TrimLeftFunc(strings.TrimSpace(header), func(r rune) bool { return r == '0' })
+	end := 0
+	for end < len(digits) && digits[end] >= '0' && digits[end] <= '9' {
+		end++
+	}
+	return digits[:end]
 }
 
 // davPut is the upload the wrappers above share; condition adds the
@@ -182,6 +198,7 @@ func (c ExAppConfig) davPut(ctx context.Context, client *http.Client, userID, re
 	answer := davPutAnswer{Status: resp.StatusCode}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		answer.ETag = strings.TrimSpace(resp.Header.Get("ETag"))
+		answer.FileID = davFileIDDigits(resp.Header.Get("OC-FileId"))
 		return answer, nil
 	}
 	return answer, fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)

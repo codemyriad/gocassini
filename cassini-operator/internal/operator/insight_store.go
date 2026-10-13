@@ -82,6 +82,10 @@ type InsightRun struct {
 	Provider          string `json:"provider"`
 	Model             string `json:"model"`
 	DocumentPath      string `json:"documentPath"`
+	// DocumentFileID is the Nextcloud file id of the delivered document (the
+	// digits of the PUT's OC-FileId), which is what the Files app selects a
+	// file by (D-792). "" for a run delivered before it was kept.
+	DocumentFileID string `json:"documentFileId"`
 	// Reason is why the latest attempt failed, as one token from
 	// insight_reasons.go, and "" while the run is anything but failed. The app
 	// owns the words for each token (D-749).
@@ -118,11 +122,12 @@ type InsightRunAttempt struct {
 // happened, what to do", and a blank one renders as a spinner that merely
 // stopped.
 type InsightOutcome struct {
-	Status       string
-	Provider     string
-	Model        string
-	DocumentPath string
-	Error        string
+	Status         string
+	Provider       string
+	Model          string
+	DocumentPath   string
+	DocumentFileID string
+	Error          string
 }
 
 type insightStore struct {
@@ -378,7 +383,7 @@ WHERE id = ?`, id).Scan(&status, &attemptNumber); err != nil {
 	result, err := tx.ExecContext(ctx, `
 UPDATE insight_runs
 SET status = ?, attempt_number = ?,
-    provider = '', model = '', document_path = '', error = '',
+    provider = '', model = '', document_path = '', document_file_id = '', error = '',
     updated_at = ?
 WHERE id = ? AND status = ?`, insightStatusRunning, attemptNumber, startedAt, id, status)
 	if err != nil {
@@ -491,9 +496,9 @@ WHERE id = ?`, id).Scan(&status, &attemptNumber); err != nil {
 	finishedAt := nowUTCString()
 	result, err := tx.ExecContext(ctx, `
 UPDATE insight_runs
-SET status = ?, provider = ?, model = ?, document_path = ?, error = ?, updated_at = ?
+SET status = ?, provider = ?, model = ?, document_path = ?, document_file_id = ?, error = ?, updated_at = ?
 WHERE id = ? AND status = ?`,
-		outcome.Status, outcome.Provider, outcome.Model, outcome.DocumentPath, outcome.Error,
+		outcome.Status, outcome.Provider, outcome.Model, outcome.DocumentPath, outcome.DocumentFileID, outcome.Error,
 		finishedAt, id, insightStatusRunning)
 	if err != nil {
 		return fmt.Errorf("finish insight run: %w", err)
@@ -616,7 +621,7 @@ SELECT id, created_by, status,
        workflow_id, workflow_version, workflow_sha256,
        meeting_ids, room_ids, question, name,
        requested_provider, requested_model,
-       provider, model, document_path, error,
+       provider, model, document_path, document_file_id, error,
        attempt_number, created_at, updated_at
 FROM insight_runs`
 
@@ -628,7 +633,7 @@ func scanInsightRun(scanner rowScanner) (InsightRun, error) {
 		&run.WorkflowID, &run.WorkflowVersion, &run.WorkflowSHA256,
 		&meetingIDs, &roomIDs, &run.Question, &run.Name,
 		&run.RequestedProvider, &run.RequestedModel,
-		&run.Provider, &run.Model, &run.DocumentPath, &run.Error,
+		&run.Provider, &run.Model, &run.DocumentPath, &run.DocumentFileID, &run.Error,
 		&run.AttemptNumber, &createdAt, &updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -200,6 +200,59 @@ func TestMigrateDownRemovesTheInsightNameAndKeepsTheRun(t *testing.T) {
 	}
 }
 
+// A rollback past 0018 drops the document's file id and keeps the run; the
+// re-upgrade brings the column back empty, which opens the folder rather than
+// the file.
+func TestMigrateDownRemovesTheInsightDocumentFileIDAndKeepsTheRun(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "insight_document_file_id")
+	if at < 0 {
+		t.Fatal("no insight_document_file_id migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	runs := newInsightStore(store)
+	ctx := context.Background()
+	if err := runs.CreateRun(ctx, InsightRun{
+		ID: "ins_0123456789abcdef", CreatedBy: "alice", WorkflowID: "summarise",
+		MeetingIDs: []string{"mtg_1111111111111111"}, Name: "Design sync",
+	}); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if _, err := runs.BeginAttempt(ctx, "ins_0123456789abcdef"); err != nil {
+		t.Fatalf("BeginAttempt() error = %v", err)
+	}
+	if err := runs.FinishAttempt(ctx, "ins_0123456789abcdef", InsightOutcome{
+		Status: insightStatusSucceeded, DocumentPath: ncInsightsRoot + "/Design sync.md", DocumentFileID: "4242",
+	}); err != nil {
+		t.Fatalf("FinishAttempt() error = %v", err)
+	}
+	if run, err := runs.GetRun(ctx, "ins_0123456789abcdef"); err != nil || run.DocumentFileID != "4242" {
+		t.Fatalf("GetRun() = %+v, %v; want the file id kept", run, err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT document_file_id FROM insight_runs`); err == nil {
+		t.Fatal("insight_runs.document_file_id survived the down migration")
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	run, err := runs.GetRun(ctx, "ins_0123456789abcdef")
+	if err != nil || run.DocumentFileID != "" || run.DocumentPath != ncInsightsRoot+"/Design sync.md" {
+		t.Fatalf("GetRun() after re-upgrade = %+v, %v; want the run back with its path and no file id", run, err)
+	}
+}
+
 // TestNewestMigrationHasARollbackTest is the tripwire: a rollback to the last
 // release is only known to work for a migration that has a down-and-up test in
 // this file. Adding a migration means adding its test and naming it here, or
@@ -210,8 +263,9 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
 	covered := map[string]bool{
-		"speaker_edits": true,
-		"insight_name":  true,
+		"speaker_edits":            true,
+		"insight_name":             true,
+		"insight_document_file_id": true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {

@@ -47,6 +47,10 @@ export interface InsightRecord {
   provider: string;
   model: string;
   documentPath: string;
+  // The document's Nextcloud file id (D-792), which is how the Files app is
+  // pointed at a file; "" for a run delivered before it was kept, and absent
+  // from an older operator, which read the same.
+  documentFileId?: string;
   // Why the latest attempt failed, as one of the operator's reason tokens;
   // "" for a run that did not fail. See InsightReason.
   reason: string;
