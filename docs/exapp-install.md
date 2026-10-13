@@ -89,13 +89,11 @@ recording behavior separately; older versions can capture video by default.
   each Talk room. No additional Nextcloud app is required. See
   [Recording permissions](./direct-shares-cutover.md).
 - An administrator account Cassini can act as, to check how the instance is set
-  up: which apps are enabled, whether the `cassini` account exists, whether
-  there is a Team folder. That check is read-only, and the archive itself is
-  never touched as an administrator — every recording is written, read and
-  moved as `cassini`, including when the storage mode is switched. The writes
-  the operator may attempt as the administrator are creating the `cassini`
-  account and its group when the app is enabled, and installing the two native
-  apps when you ask it to from the settings section. See
+  up: which apps are enabled and whether the `cassini` account exists. That
+  check is read-only, and the archive itself is never touched as an
+  administrator — every recording is written and shared as `cassini`. The only
+  write the operator may attempt as the administrator is creating the `cassini`
+  account and its group when the app is enabled. See
   [Administrator discovery](#administrator-discovery) — in almost all cases this
   needs no configuration.
 - A Docker engine for the ExApp container. For GPU transcription it needs the
@@ -323,7 +321,7 @@ Options).
 | `CASSINI_TALK_RECORDING_SECRET` | No (auto-generated) | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). **Since D-447, if omitted the operator generates and persists one** — read it back from the provisioning endpoint (Step 5). An explicit value wins and is treated as externally managed |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
-| `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used to CHECK how this instance is set up — which apps are enabled, whether the `cassini` account exists, whether there is a Team folder. That check creates nothing; the only writes made as this account are the attempt to create the `cassini` service account and its group when the app is enabled, and the app-install attempt when you pick meeting participants in the settings, and switching audiences moves nothing as it — the archive is copied by WebDAV as `cassini`, in both directions. A switch does re-run that same read-only check before it writes, so it still needs an administrator to be resolvable. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
+| `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used to CHECK how this instance is set up — which apps are enabled, whether the `cassini` account exists. That check creates nothing; the only write made as this account is the attempt to create the `cassini` service account and its group when the app is enabled. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
 | `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in Nextcloud Files; `local` keeps them on the app's own volume. Set `local` only deliberately. Under `nextcloud-files`, *who can see* a recording is a separate setting, in **Operator › Settings › Who can see recordings**, not here |
 | `CASSINI_STT_BACKEND` | No | Which registered speech-to-text engine transcription uses; empty selects the default (`sherpa-onnx`). An unknown value fails transcription while preserving the prepared audio |
 | `CASSINI_DISALLOW_MODEL_DOWNLOAD` | No | Set `1` on a host with no outbound network access. Images contain no models. This forbids model downloads and resumed network jobs. Local `cassini models import`, runtime checks, activation, and already installed models remain available; missing models never block audio publication |

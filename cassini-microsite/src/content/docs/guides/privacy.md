@@ -116,11 +116,9 @@ artifacts:
   document and the speaker turns it applied).
 - **Room audience** — for each Talk recording, the accounts, groups and teams
   that had access to the conversation while it was being recorded, captured when
-  the recording starts and again when it stops. It is what lets Cassini later
-  explicitly narrow an already-published recording from Operator settings to its
-  captured audience rather than whoever is in the room today. This stored roster
-  is frozen; initial participant-mode publication separately resolves the room’s
-  audience at publish time. Guests, email invitees and federated participants are not recorded: they have no local
+  the recording starts and again when it stops. It is who Cassini shares the
+  published recording with, so people added to the room later do not gain access
+  to it. Guests, email invitees and federated participants are not recorded: they have no local
   account to grant, so there is nothing to keep. It lives on the job row, which
   outlives the recording itself — job history is kept after artifacts are pruned.
 - **Operator database** — job and attempt history, the room audience above,
