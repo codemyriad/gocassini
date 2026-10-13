@@ -102,6 +102,10 @@ func (c ExAppConfig) davMkcol(ctx context.Context, client *http.Client, userID, 
 // it is contention, not a failure of the request (D-737).
 var errDAVPreconditionFailed = errors.New("the file changed since it was read")
 
+// errDAVExists is a PUT that asked for a new file (If-None-Match: *) and found
+// one already there (412). Nothing was written; the caller chooses another name.
+var errDAVExists = errors.New("a file is already there")
+
 func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, error) {
 	status, _, err := c.davPutFileIfMatch(ctx, client, userID, relPath, localPath, contentType, "")
 	return status, err
@@ -113,42 +117,91 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 // refusal wraps errDAVPreconditionFailed. On success it answers the new ETag
 // when Nextcloud reports one.
 func (c ExAppConfig) davPutFileIfMatch(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType, ifMatch string) (int, string, error) {
+	answer, err := c.davPut(ctx, client, userID, relPath, localPath, contentType, func(req *http.Request) {
+		if ifMatch != "" {
+			req.Header.Set("If-Match", ifMatch)
+		}
+	})
+	if answer.Status == http.StatusPreconditionFailed && ifMatch != "" {
+		return answer.Status, "", fmt.Errorf("PUT %s: %w", relPath, errDAVPreconditionFailed)
+	}
+	return answer.Status, answer.ETag, err
+}
+
+// davPutNewFile uploads localPath as davPutFileStatus does, but only where
+// nothing is at relPath yet: `If-None-Match: *` has Nextcloud answer 412 rather
+// than overwrite, reported as errDAVExists. Two writers racing for one name
+// both pass a HEAD; only one of them passes this. On success it answers the
+// file's Nextcloud id too, when Nextcloud reports one.
+func (c ExAppConfig) davPutNewFile(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, string, error) {
+	answer, err := c.davPut(ctx, client, userID, relPath, localPath, contentType, func(req *http.Request) {
+		req.Header.Set("If-None-Match", "*")
+	})
+	if answer.Status == http.StatusPreconditionFailed {
+		return answer.Status, "", fmt.Errorf("PUT %s: %w", relPath, errDAVExists)
+	}
+	return answer.Status, answer.FileID, err
+}
+
+// davPutAnswer is what a PUT came back with: the status, and what Nextcloud
+// says about the file it now holds.
+type davPutAnswer struct {
+	Status int
+	ETag   string
+	// FileID is the file's numeric Nextcloud id, as the Files app addresses it;
+	// "" where Nextcloud did not say.
+	FileID string
+}
+
+// davFileIDDigits reads the numeric id out of an OC-FileId header. Nextcloud
+// writes the id zero-padded to eight digits with the instance id appended
+// ("00000042ocm7d2xq3ckw"); the digits before the instance id are the id.
+func davFileIDDigits(header string) string {
+	digits := strings.TrimLeftFunc(strings.TrimSpace(header), func(r rune) bool { return r == '0' })
+	end := 0
+	for end < len(digits) && digits[end] >= '0' && digits[end] <= '9' {
+		end++
+	}
+	return digits[:end]
+}
+
+// davPut is the upload the wrappers above share; condition adds the
+// precondition header each of them sends.
+func (c ExAppConfig) davPut(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string, condition func(*http.Request)) (davPutAnswer, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
-		return 0, "", err
-	}
-	digest, err := fileSHA256(localPath)
-	if err != nil {
-		return 0, "", err
+		return davPutAnswer{}, err
 	}
 	defer f.Close()
+	digest, err := fileSHA256(localPath)
+	if err != nil {
+		return davPutAnswer{}, err
+	}
 	info, err := f.Stat()
 	if err != nil {
-		return 0, "", err
+		return davPutAnswer{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.davFileURL(userID, relPath), f)
 	if err != nil {
-		return 0, "", err
+		return davPutAnswer{}, err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("OC-Checksum", "SHA256:"+digest)
-	if ifMatch != "" {
-		req.Header.Set("If-Match", ifMatch)
-	}
+	condition(req)
 	req.ContentLength = info.Size()
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", err
+		return davPutAnswer{}, err
 	}
 	defer drainClose(resp.Body)
-	if resp.StatusCode == http.StatusPreconditionFailed && ifMatch != "" {
-		return resp.StatusCode, "", fmt.Errorf("PUT %s: %w", relPath, errDAVPreconditionFailed)
-	}
+	answer := davPutAnswer{Status: resp.StatusCode}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return resp.StatusCode, strings.TrimSpace(resp.Header.Get("ETag")), nil
+		answer.ETag = strings.TrimSpace(resp.Header.Get("ETag"))
+		answer.FileID = davFileIDDigits(resp.Header.Get("OC-FileId"))
+		return answer, nil
 	}
-	return resp.StatusCode, "", fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
+	return answer, fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
 }
 
 // davDownloadFile streams relPath, read as userID, into destPath, and answers

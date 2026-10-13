@@ -107,6 +107,18 @@ func (f *fakeInsightStore) ListRuns(_ context.Context, createdBy string) ([]Insi
 	return runs, nil
 }
 
+func (f *fakeInsightStore) RenameRun(_ context.Context, id, name string) (InsightRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	run, ok := f.runs[id]
+	if !ok {
+		return InsightRun{}, sql.ErrNoRows
+	}
+	run.Name = name
+	f.runs[id] = run
+	return run, nil
+}
+
 func (f *fakeInsightStore) BeginAttempt(_ context.Context, id string) (InsightRun, error) {
 	if f.beginErr != nil {
 		return InsightRun{}, f.beginErr
@@ -234,6 +246,8 @@ func TestCreateInsightRefusesABadRequestBeforeTouchingNextcloud(t *testing.T) {
 		{"a question no workflow slot holds", `{"meetingIds":["MEETING1"],"question":"why?"}`, "takes none of yours"},
 		{"a workflow with no question", `{"meetingIds":["MEETING1"],"workflow":"ask"}`, "needs a question"},
 		{"a field nobody declared", `{"meetingIds":["MEETING1"],"timestamps":true}`, "could not be read"},
+		{"a name over the limit", `{"meetingIds":["MEETING1"],"name":"` + strings.Repeat("é", maxInsightNameRunes+1) + `"}`, "a name is at most"},
+		{"a name with a control character", `{"meetingIds":["MEETING1"],"name":"line\nbreak"}`, "control characters"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -660,5 +674,113 @@ func TestCreateRefusesAModelWithNoProvider(t *testing.T) {
 	// And naming neither is the ordinary case: the deployment's own endpoint.
 	if err := s.checkRequestedEndpoint(insightCreateRequest{}); err != nil {
 		t.Fatalf("naming no endpoint was refused: %v", err)
+	}
+}
+
+// The name is stored as asked, trimmed. A name of exactly the limit in
+// multi-byte characters is a name, not an over-long one: the bound is on what a
+// person typed, not on its encoding.
+func TestCreateInsightStoresItsName(t *testing.T) {
+	harness := newInsightHandlerHarness(t)
+	name := strings.Repeat("é", maxInsightNameRunes)
+	w := harness.do(t, http.MethodPost, "/insights", "alice", `{"meetingIds":["MEETING1"],"name":"  `+name+`  "}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code = %d, want 201 (%s)", w.Code, w.Body.String())
+	}
+	if len(harness.store.created) != 1 || harness.store.created[0].Name != name {
+		t.Errorf("created = %+v, want the trimmed name stored", harness.store.created)
+	}
+}
+
+func TestRenameInsightAnswersTheRunWithItsNewName(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusRunning, Name: "summarise", MeetingIDs: []string{"MEETING1"}},
+	)
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/name", "alice", `{"name":"  Design sync, Oct  "}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	var run InsightRun
+	if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode the renamed run: %v (%s)", err, w.Body.String())
+	}
+	if run.Name != "Design sync, Oct" || run.ID != "ins_00000000000000a1" {
+		t.Errorf("run = %+v, want the trimmed name on the same run", run)
+	}
+	// A running attempt reads nothing from the name, so a rename neither waits
+	// for it nor starts another.
+	if harness.store.status("ins_00000000000000a1") != insightStatusRunning || harness.store.claims() != 0 || len(harness.launched) != 0 {
+		t.Error("a rename touched the run's attempt")
+	}
+}
+
+// The joiner inside an emoji sequence is an invisible format character and
+// part of what was typed; refusing every such character would refuse the name.
+func TestRenameInsightKeepsTheJoinersInsideWhatWasTyped(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded, Name: "Old", MeetingIDs: []string{"MEETING1"}},
+	)
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/name", "alice", `{"name":"Team \ud83d\udc69\u200d\ud83d\udcbb sync"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	if got := harness.store.runs["ins_00000000000000a1"].Name; got != "Team \U0001F469\u200D\U0001F4BB sync" {
+		t.Errorf("name = %q, want the sequence kept whole", got)
+	}
+}
+
+func TestRenameInsightWithAnEmptyNameClearsIt(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded, Name: "Old", MeetingIDs: []string{"MEETING1"}},
+	)
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/name", "alice", `{"name":"   "}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	if got := harness.store.runs["ins_00000000000000a1"].Name; got != "" {
+		t.Errorf("name = %q, want it cleared", got)
+	}
+}
+
+// Somebody else's run answers exactly as an absent one, for a rename as for a
+// read: the id must not confirm that the run exists.
+func TestRenameInsightHidesAnotherCallersRun(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000b2", CreatedBy: "bob", Status: insightStatusSucceeded, Name: "Bob's", MeetingIDs: []string{"MEETING1"}},
+	)
+	theirs := harness.do(t, http.MethodPost, "/insights/ins_00000000000000b2/name", "alice", `{"name":"Mine now"}`)
+	absent := harness.do(t, http.MethodPost, "/insights/ins_0000000000000fff/name", "alice", `{"name":"Mine now"}`)
+	if theirs.Code != http.StatusNotFound || absent.Code != http.StatusNotFound {
+		t.Errorf("another caller's run = %d, an absent one = %d; both must be 404", theirs.Code, absent.Code)
+	}
+	if got := harness.store.runs["ins_00000000000000b2"].Name; got != "Bob's" {
+		t.Errorf("name = %q, want another caller's rename refused", got)
+	}
+}
+
+func TestRenameInsightRefusesANameThatCannotBeATitle(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded, Name: "Kept", MeetingIDs: []string{"MEETING1"}},
+	)
+	for _, body := range []string{
+		`{"name":"` + strings.Repeat("x", maxInsightNameRunes+1) + `"}`,
+		`{"name":"tab\there"}`,
+		// Zero-width only: a blank title nothing can search for.
+		`{"name":"\u200b\u200d"}`,
+		// A right-to-left override reverses the title on screen.
+		`{"name":"\u202eevil"}`,
+		`{"name":"x","extra":true}`,
+		`not json`,
+	} {
+		w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/name", "alice", body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %s: code = %d, want 400 (%s)", body, w.Code, w.Body.String())
+		}
+	}
+	if got := harness.store.runs["ins_00000000000000a1"].Name; got != "Kept" {
+		t.Errorf("name = %q, want a refused rename to change nothing", got)
+	}
+	if w := harness.do(t, http.MethodGet, "/insights/ins_00000000000000a1/name", "alice", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET name = %d, want 405", w.Code)
 	}
 }

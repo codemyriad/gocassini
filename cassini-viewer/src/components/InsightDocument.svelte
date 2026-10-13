@@ -1,17 +1,23 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, tick } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, FileText, MessageSquare } from "@lucide/svelte";
+  import { Calendar, ExternalLink, FileText, MessageSquare, Pencil } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
+  import ExportMenu from "./ExportMenu.svelte";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
+  import { saveTranscript } from "../viewer/exportTransfer";
+  import { exportFileName, renderInsightExport } from "../viewer/insightExport";
   import { roomLabelOf } from "../viewer/rooms";
+  import { INSIGHT_NAME_MAX } from "../viewer/insightName";
   import {
     describeInsightFailure,
     formatInsightCreated,
     formatInsightStatus,
     insightHeadline,
+    sameHeadlineText,
     stripInsightFrontMatter,
+    stripLeadingHeading,
     type InsightRecord,
   } from "../viewer/insights";
 
@@ -46,15 +52,117 @@
   export let canRetry = false;
   export let retrying = false;
   export let retryError = "";
+  // Whether the name can be changed from here (D-791), in the same shape as
+  // retry: the provider offers it, the shell sends it. This is the one place an
+  // insight is renamed; the card and the list only show the name.
+  export let canRename = false;
+  export let renaming = false;
+  export let renameError = "";
+  // Where the document's folder opens in Nextcloud Files, or "" in a build
+  // with no Nextcloud. Sharing is Nextcloud's: its share sidebar is there, and
+  // a second share dialog here would be a second answer to who can see it.
+  export let filesUrl = "";
+  // Where a source opens in this Cassini, for the links in the offline copy.
+  export let meetingUrl: (source: MeetingCatalogEntry) => string = () => "";
 
   const dispatch = createEventDispatcher<{
     close: void;
     openSource: MeetingCatalogEntry;
     retry: void;
+    rename: string;
+    // The editor was closed without a save, so a refusal shown in it is over:
+    // the shell drops it, and the next opening starts clean.
+    renameCancel: void;
   }>();
+
+  // The heading turns into its own input, pre-filled with what it says, with
+  // Cancel and Save beside it as the tag manager's row has: this viewer's two
+  // inline editors should not behave differently from each other. Enter saves
+  // and Escape cancels, and nothing else leaves the editor, so clicking away to
+  // check something does not throw a half-typed name out. It stays an input
+  // until the save has landed, so a refused name is still there to fix next to
+  // the reason it was refused.
+  let editingName = false;
+  let editingId = "";
+  let draftName = "";
+  let savingName = false;
+  let nameInput: HTMLInputElement | undefined;
+  let renameButton: HTMLButtonElement | undefined;
+
+  async function startRename() {
+    draftName = headline;
+    editingId = insight.id;
+    editingName = true;
+    await tick();
+    nameInput?.select();
+  }
+
+  // leaveRename closes the editor and puts the keyboard back on the pencil it
+  // was opened from. The pencil is not rendered while editing, so without this
+  // focus fell to the document body.
+  async function leaveRename() {
+    editingName = false;
+    savingName = false;
+    await tick();
+    renameButton?.focus();
+  }
+
+  function cancelRename() {
+    void leaveRename();
+    dispatch("renameCancel");
+  }
+
+  // An empty name cannot be saved, as an empty tag name cannot: the button is
+  // disabled rather than the request refused.
+  $: nameSaveable = draftName.trim() !== "" && !renaming;
+
+  function saveRename() {
+    if (!nameSaveable) {
+      return;
+    }
+    const name = draftName.trim();
+    if (name === headline) {
+      // Nothing changed. Saving it would turn a headline that is only
+      // standing in for a name — the question — into a name.
+      cancelRename();
+      return;
+    }
+    savingName = true;
+    dispatch("rename", name);
+  }
+
+  function onNameKeydown(event: KeyboardEvent) {
+    if (event.key !== "Enter" && event.key !== "Escape") {
+      return;
+    }
+    event.preventDefault();
+    if (event.key === "Enter") {
+      saveRename();
+    } else {
+      cancelRename();
+    }
+  }
+
+  // Another insight in the same sheet is not the one being renamed.
+  $: if (editingName && insight.id !== editingId) {
+    editingName = false;
+    savingName = false;
+  }
+  $: if (savingName && !renaming) {
+    if (renameError) {
+      // Refused: the input is enabled again, and the keyboard goes back to it
+      // so that Enter and Escape mean something without a click first.
+      savingName = false;
+      void tick().then(() => nameInput?.focus());
+    } else {
+      void leaveRename();
+    }
+  }
+  $: renameErrorId = `ins-rename-error-${insight.id}`;
 
   $: question = insight.question?.trim() ?? "";
   $: headline = insightHeadline(insight);
+  $: showQuestion = question !== "" && !sameHeadlineText(question, headline);
   $: pending = insight.status === "queued" || insight.status === "running";
   $: failed = insight.status === "failed";
   // Never `insight.error` raw: the operator records a reason token and this
@@ -75,7 +183,7 @@
         ? `${roomLabels.length} rooms`
         : "";
 
-  function renderDocumentHtml(markdown: string): string {
+  function renderDocumentHtml(markdown: string, quoted: boolean): string {
     // The recorder writes its provenance as YAML front matter, and to markdown
     // `---` is a horizontal rule: rendered as-is it became two rules with a
     // run-on paragraph of quoted hashes and IDs between them, sitting above the
@@ -83,7 +191,12 @@
     // panel anyway — the header and the provenance list below both read them
     // off the run record — so it is cut here rather than kept as text nobody
     // can use.
-    const body = stripInsightFrontMatter(markdown);
+    // The document's own first heading goes only when the quote sits right
+    // above it saying the same thing (the Ask template copies the question in
+    // verbatim). With no quote — the name IS the question — the heading stays:
+    // it is the document's title, in the place the question is read.
+    const front = stripInsightFrontMatter(markdown);
+    const body = quoted ? stripLeadingHeading(front, question) : front;
     if (body.trim() === "") {
       return "";
     }
@@ -94,7 +207,75 @@
     return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
   }
 
-  $: documentHtml = renderDocumentHtml(documentMarkdown);
+  $: documentHtml = renderDocumentHtml(documentMarkdown, showQuestion);
+
+  // The offline copy (D-792) is offered only for an answer that is on screen:
+  // copying a run that has not finished, or one whose file has gone, would
+  // hand over a header with nothing under it.
+  $: exportable =
+    insight.status === "succeeded" &&
+    canLoadDocument &&
+    !documentLoading &&
+    !documentError &&
+    documentHtml !== "";
+
+  // The file in Files needs only to exist — it is the one way to the answer
+  // left when the document cannot be fetched — so the link is not held to the
+  // answer being on screen.
+  $: filesLinkable = insight.status === "succeeded" && filesUrl !== "";
+
+  type StatusTone = "ok" | "warn";
+  let exportStatus: { tone: StatusTone; text: string } | null = null;
+  // A status line about one insight must not stay up over the next. Keyed on
+  // the id, not the record: the shell hands down a fresh object on every list
+  // refresh, and that is the same insight.
+  let exportStatusFor = "";
+  $: if (insight.id !== exportStatusFor) {
+    exportStatusFor = insight.id;
+    exportStatus = null;
+  }
+
+  function exportText(): string {
+    return renderInsightExport({ record: insight, sources, markdown: documentMarkdown, meetingUrl });
+  }
+
+  async function handleCopy() {
+    // The same three outcomes as Prepare's Copy, said out loud for the same
+    // reason: the embedded app lives in a shadow root inside Nextcloud, an
+    // insecure origin has no clipboard, and a Copy that silently did nothing
+    // looks like a copy that came out empty. Unlike Prepare there is nothing to
+    // assemble — the document is already here — so the write is made inside
+    // the click without a promised ClipboardItem.
+    const clipboard = navigator.clipboard;
+    if (!clipboard || typeof clipboard.writeText !== "function") {
+      exportStatus = { tone: "warn", text: "Clipboard unavailable here — download the markdown instead." };
+      return;
+    }
+    // The write can wait on a permission prompt, and the sheet can be holding
+    // another insight by the time it settles: its outcome belongs to the one
+    // that was copied, or to nobody.
+    const copied = insight.id;
+    let next: { tone: StatusTone; text: string };
+    try {
+      await clipboard.writeText(exportText());
+      next = { tone: "ok", text: "Copied as markdown." };
+    } catch (error) {
+      // Said on screen and logged: a permission the browser refused, a
+      // document that would not render and an insecure context all read the
+      // same to the person, and differently to whoever is asked why.
+      console.warn("insight copy: clipboard write failed", error);
+      next = { tone: "warn", text: "Clipboard blocked here — try Copy again, or download the markdown." };
+    }
+    if (insight.id === copied) {
+      exportStatus = next;
+    }
+  }
+
+  function handleDownload() {
+    const name = exportFileName(insight);
+    saveTranscript(exportText(), name);
+    exportStatus = { tone: "ok", text: `Downloaded ${name}.` };
+  }
 </script>
 
 <section class="ins-doc" aria-label="Insight">
@@ -105,40 +286,113 @@
        bottom of the page, under the answer, where they are provenance nobody
        reaches. The three that identify this run are here. -->
   <header class="ins-head">
-    <div class="ins-head-top">
-      <h2>{headline}</h2>
-      <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
+    <div class="ins-head-top" class:editing={editingName}>
+      <div class="ins-head-title">
+        {#if editingName}
+          <input
+            bind:this={nameInput}
+            bind:value={draftName}
+            type="text"
+            class="input input-sm ins-name-input"
+            aria-label="Insight name"
+            aria-invalid={renameError ? "true" : undefined}
+            aria-describedby={renameError ? renameErrorId : undefined}
+            maxlength={INSIGHT_NAME_MAX}
+            autocomplete="off"
+            spellcheck="false"
+            disabled={renaming}
+            on:keydown={onNameKeydown}
+          />
+        {:else}
+          <h2>{headline}</h2>
+        {/if}
+      </div>
+      <!-- The pencil keeps the close button's company at the right edge,
+           whatever the title's length: a control that trailed the last word
+           of the title landed somewhere different on every insight. While
+           renaming, Cancel and Save take its place, as the tag manager's
+           strip has them, so they share the X's line rather than the
+           input's. -->
+      <div class="ins-head-controls">
+        {#if editingName}
+          <button type="button" class="ins-name-cancel" on:click={cancelRename}>Cancel</button>
+          <button
+            type="button"
+            class="btn btn-neutral btn-sm px-4 font-semibold"
+            disabled={!nameSaveable}
+            on:click={saveRename}
+          >
+            {renaming ? "Saving…" : "Save"}
+          </button>
+        {:else if canRename}
+          <button
+            bind:this={renameButton}
+            type="button"
+            class="ins-rename btn btn-sm btn-square btn-quiet"
+            aria-label="Rename the insight"
+            title="Rename"
+            on:click={startRename}
+          >
+            <Pencil size={14} aria-hidden="true" />
+          </button>
+        {/if}
+        <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
+      </div>
     </div>
-    <div class="ins-head-meta">
-      {#if room}
+    {#if editingName && renameError}
+      <p class="ins-rename-error" id={renameErrorId} role="status">{renameError}</p>
+    {/if}
+    <!-- The run's facts on the left and, on the same row, the ways out of
+         Cassini (D-792): a markdown copy under one Export control, as the
+         meeting sheet has, and the file itself in Files, where Nextcloud
+         shares it. Where the sheet is narrow the facts stack on the left and
+         the controls stack on the right, still side by side. -->
+    <div class="ins-head-row">
+      <div class="ins-head-meta">
+        {#if room}
+          <span class="ins-head-fact">
+            <MessageSquare size={13} aria-hidden="true" />
+            {room}
+          </span>
+        {/if}
         <span class="ins-head-fact">
-          <MessageSquare size={13} aria-hidden="true" />
-          {room}
+          <Calendar size={13} aria-hidden="true" />
+          {formatInsightCreated(insight)}
         </span>
-      {/if}
-      <span class="ins-head-fact">
-        <Calendar size={13} aria-hidden="true" />
-        {formatInsightCreated(insight)}
-      </span>
-      {#if insight.model}
-        <code class="ins-head-model">{insight.model}</code>
+        {#if insight.model}
+          <code class="ins-head-model">{insight.model}</code>
+        {/if}
+      </div>
+      {#if exportable || filesLinkable}
+        <div class="ins-actions">
+          {#if exportable}
+            <ExportMenu
+              label="Export this insight"
+              copyLabel="Copy as markdown"
+              transcriptLabel="Download markdown"
+              includeAudio={false}
+              on:copy={handleCopy}
+              on:transcript={handleDownload}
+            />
+          {/if}
+          {#if filesLinkable}
+            <a class="btn btn-sm btn-quiet gap-1.5" href={filesUrl} target="_blank" rel="noopener">
+              <ExternalLink size={14} aria-hidden="true" />
+              Open in Files
+            </a>
+          {/if}
+        </div>
       {/if}
     </div>
+    {#if exportStatus}
+      <p class="ins-export-status" data-tone={exportStatus.tone} role="status">
+        {exportStatus.text}
+      </p>
+    {/if}
   </header>
 
   <div class="ins-body">
-    <!-- 1. The question the panel exists to answer, so it reads as the heading
-         of the brief rather than as a caption on it. A workflow can be run with
-         no question of its own, and then there is no quote to show. -->
-    <!-- A template with a question of its own leads with it. One without —
-         "summarise these" — led with a sentence naming the workflow id, which
-         is a fact about the run rather than the brief, and the answer below it
-         says what it is. -->
-    {#if question}
-      <p class="ins-question">“{question}”</p>
-    {/if}
-
-    <!-- 2. The material. -->
+    <!-- 1. The material. -->
     {#if sources.length > 0}
       <!-- One card: the count heads the list it counts, inside it. -->
       <section class="ins-sources ins-card">
@@ -162,6 +416,16 @@
           {/each}
         </ul>
       </section>
+    {/if}
+
+    <!-- 2. The question, where it is a different thing from the name above:
+         an Ask run is named after its question unless somebody renames it. It
+         sits under the material and over the answer, which is where the
+         document puts its own heading — and when the two say the same thing
+         the document's heading gives way to this. A workflow with no question
+         of its own ("summarise these") has no quote to show. -->
+    {#if showQuestion}
+      <p class="ins-question">“{question}”</p>
     {/if}
 
     <!-- 3. The answer, or the honest reason there is not one yet. -->
@@ -299,6 +563,58 @@
     gap: 0.75rem;
     min-width: 0;
   }
+  .ins-head-title {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: flex-start;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+  /* The two 32px squares, lifted together so they sit on the title's first
+     line rather than a quarter-rem under it. */
+  .ins-head-controls {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.25rem;
+    margin-top: -0.25rem;
+  }
+  /* Quieter than the heading it sits by until it is wanted. */
+  .ins-rename {
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  /* Renaming: the input and the 32px controls are the same height, so the
+     row centres them on one line and the controls drop their lift. */
+  .ins-head-top.editing {
+    align-items: center;
+  }
+  .ins-head-top.editing .ins-head-controls {
+    margin-top: 0;
+  }
+  .ins-name-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 1.0625rem;
+    font-weight: 650;
+  }
+  /* The tag editor's Cancel: a quiet word beside Save, not a second button. */
+  .ins-name-cancel {
+    margin: 0 0.25rem 0 0.5rem;
+    background: none;
+    border: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+    cursor: pointer;
+  }
+  .ins-name-cancel:hover {
+    color: var(--color-base-content);
+  }
+  .ins-rename-error {
+    margin-top: 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--color-error);
+  }
   .ins-head h2 {
     min-width: 0;
     font-size: 1.0625rem;
@@ -306,12 +622,24 @@
     line-height: 1.3;
     color: var(--color-base-content);
   }
+  /* Facts left, controls right, on one row. */
+  .ins-head-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-top: 0.375rem;
+    min-width: 0;
+  }
   .ins-head-meta {
     display: flex;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.25rem 1rem;
-    margin-top: 0.375rem;
+    min-width: 0;
+    /* Level with the 32px controls beside it. */
+    min-height: 2rem;
     font-size: 0.8125rem;
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
@@ -331,6 +659,40 @@
     font-size: 11.5px;
     overflow-wrap: anywhere;
     color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+  }
+
+  /* The meeting sheet's Export control and a link dressed as its sibling, so
+     the two sheets offer the same control for the same thing. */
+  .ins-actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .ins-actions a {
+    text-decoration: none;
+  }
+  /* A narrow sheet: the facts stack on the left and the controls on the
+     right, each its own column, rather than a row that wraps into a tangle. */
+  @media (max-width: 720px) {
+    .ins-head-meta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.375rem;
+      min-height: 0;
+    }
+    .ins-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
+  .ins-export-status {
+    margin: 0.375rem 0 0;
+    font-size: 0.75rem;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .ins-export-status[data-tone="warn"] {
+    color: var(--color-warning, #b45309);
   }
 
   .ins-body {

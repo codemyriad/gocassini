@@ -13,6 +13,13 @@
   export let canExportContext = true;
   export let plural = false;
   export let label = "Export this meeting";
+  // Labels for the two items every caller has, for one whose thing is not a
+  // transcript: the insight drawer exports markdown. Empty keeps the transcript
+  // wording, singular or plural.
+  export let copyLabel = "";
+  export let transcriptLabel = "";
+  // The audio item is a meeting's; an insight has no audio to offer.
+  export let includeAudio = true;
 
   const dispatch = createEventDispatcher<{ copy: void; transcript: void; audio: void; copyContext: void; context: void }>();
 
@@ -76,14 +83,16 @@
       </button>
     {/if}
     <button type="button" role="menuitem" class="em-item" disabled={!canCopy} on:click={() => choose("copy")}>
-      <Copy size={14} aria-hidden="true" />Copy {plural ? "transcripts" : "transcript"}
+      <Copy size={14} aria-hidden="true" />{copyLabel || `Copy ${plural ? "transcripts" : "transcript"}`}
     </button>
     <button type="button" role="menuitem" class="em-item" disabled={!canDownloadTranscript} on:click={() => choose("transcript")}>
-      <FileText size={14} aria-hidden="true" />Download {plural ? "transcripts" : "transcript"}
+      <FileText size={14} aria-hidden="true" />{transcriptLabel || `Download ${plural ? "transcripts" : "transcript"}`}
     </button>
-    <button type="button" role="menuitem" class="em-item" disabled={!canDownloadAudio} on:click={() => choose("audio")}>
-      <FileAudio size={14} aria-hidden="true" />{audioLabel}
-    </button>
+    {#if includeAudio}
+      <button type="button" role="menuitem" class="em-item" disabled={!canDownloadAudio} on:click={() => choose("audio")}>
+        <FileAudio size={14} aria-hidden="true" />{audioLabel}
+      </button>
+    {/if}
   </div>
 {/if}
 
