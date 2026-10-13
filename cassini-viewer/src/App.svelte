@@ -760,7 +760,10 @@
     notFoundMessage = "";
     pushMeetingUrl(meeting.id);
     selectedMeetingId = meeting.id;
-    transcriptQueryForMeeting = "";
+    // Opened from a search that matched what was said: carry the words into
+    // the transcript's own search, as opening one of its moments does. A
+    // meeting found by its title only would open on "nothing matches".
+    transcriptQueryForMeeting = (transcriptHits.get(meeting.id)?.length ?? 0) > 0 ? searchQuery : "";
   }
 
   // MeetingView reports the real speaker/segment/duration counts once a meeting
