@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build the public embed and put it where the microsite publishes it (D-775).
 //
-// The built pair lands in cassini-microsite/public/embed/v1/ and is COMMITTED.
+// The bundle, stylesheet, and source map land in cassini-microsite/public/embed/v1/ and is COMMITTED.
 // Astro copies public/ verbatim, so local microsite builds can serve the
 // embed without installing and compiling the viewer workspace. CI verifies
 // these committed assets against a fresh viewer build before deployment.
@@ -30,7 +30,7 @@ const builtDir = join(viewerDir, "dist", "public");
 // this, which is why they are not here yet.
 const CHANNEL = "v1";
 const publishedDir = join(micrositeDir, "public", "embed", CHANNEL);
-const FILES = ["viewer.js", "viewer.css"];
+const FILES = ["viewer.js", "viewer.css", "viewer.js.map"];
 
 const check = process.argv.includes("--check");
 

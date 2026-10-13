@@ -23,6 +23,8 @@ export default defineConfig(({ mode }) => {
     // diverging into multi-chunk output if a future dependency introduces a
     // dynamic import.
     build: {
+      // External maps keep production code minified and make installed builds debuggable.
+      sourcemap: true,
       cssCodeSplit: false,
       rollupOptions: {
         output: {
