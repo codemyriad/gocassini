@@ -136,7 +136,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// Best effort: one bounded request, with no retry or restart recovery.
 	// Failure never changes the publication result or stops its cleanup.
 	if notification != nil {
-		notification.enrich(attemptArtifactSitePath, attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber))
+		notification.enrich(attemptArtifactSitePath)
 		if _, err := notificationClient.send(rt.ctx, *notification); err != nil {
 			rt.logger.Printf("Talk notification failed id=%s: %v", task.JobID, err)
 		}

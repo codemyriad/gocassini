@@ -81,7 +81,7 @@ func TestTalkNotificationBestEffortPublication(t *testing.T) {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 				var metadata map[string]string
-				if json.Unmarshal([]byte(r.FormValue("metaData")), &metadata) != nil || metadata["link"] != "https://cloud.example/nc/index.php/apps/app_api/embedded/gocassini/viewer#meeting=one" || metadata["name"] != "Cassini · Meeting available" || r.FormValue("objectType") != "highlight" || r.FormValue("objectId") != "one" || r.FormValue("message") != "" {
+				if json.Unmarshal([]byte(r.FormValue("metaData")), &metadata) != nil || metadata["link"] != "https://cloud.example/nc/index.php/apps/app_api/embedded/gocassini/viewer#meeting=one" || metadata["name"] != "Meeting available" || r.FormValue("objectType") != "highlight" || r.FormValue("objectId") != "one" || r.FormValue("message") != "" {
 					t.Error("wrong recording link")
 				}
 				job, err := rt.store.GetJob(context.Background(), "one")
@@ -180,23 +180,20 @@ func TestTalkNotificationMetadata(t *testing.T) {
 				}
 			}
 			write("catalog.json", `{"meetings":[{"id":"other","title":"Wrong meeting"},{"id":"one","title":"Weekly\nplanning","dateLabel":"2026-10-13 10:00","digestDurationMs":1920000,"meetingPath":"./meetings/one.`+extension+`"}]}`)
-			write("transcript.words.v1.json", `{"speakers":[{"label":"Ivan"},{"label":"Chris"},{"label":"Alex"},{"label":"Silvio"},{"label":"Ivan"},{"label":" "}]}`)
 			n := talkNotification{MeetingID: "one", Link: "https://cloud.example/viewer#meeting=one"}
-			n.enrich(dir, dir)
-			want := "Cassini · Weekly planning · 2026-10-13 10:00 · 32 min · Speakers: Alex, Chris, Ivan +1"
+			n.enrich(dir)
+			want := "Weekly planning · 13 Oct · 32 min"
 			if n.Message != want {
 				t.Fatalf("label=%q want=%q", n.Message, want)
 			}
 			write("catalog.json", `{"meetings":[{"id":"other","title":"Private unrelated meeting"}]}`)
-			write("transcript.words.v1.json", `{"speakers":[]}`)
-			n.enrich(dir, dir)
-			if n.Message != "Cassini · Meeting available" {
+			n.enrich(dir)
+			if n.Message != "Meeting available" {
 				t.Fatalf("unrelated metadata leaked: %q", n.Message)
 			}
 			write("catalog.json", `{`)
-			write("transcript.words.v1.json", `{`)
-			n.enrich(dir, dir)
-			if n.Message != "Cassini · Meeting available" {
+			n.enrich(dir)
+			if n.Message != "Meeting available" {
 				t.Fatalf("malformed fallback: %q", n.Message)
 			}
 		})

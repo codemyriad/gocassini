@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
+	"time"
 )
 
 type talkNotification struct {
@@ -55,13 +53,13 @@ func (s *Store) prepareTalkNotification(ctx context.Context, jobID, appID string
 	if err != nil {
 		return nil, err
 	}
-	return &talkNotification{Owner: strings.TrimSpace(b.Owner), RoomToken: strings.TrimSpace(b.RoomToken), MeetingID: jobID, Link: link, Message: "Cassini · Meeting available"}, nil
+	return &talkNotification{Owner: strings.TrimSpace(b.Owner), RoomToken: strings.TrimSpace(b.RoomToken), MeetingID: jobID, Link: link, Message: "Meeting available"}, nil
 }
 
-// Metadata is best effort and comes only from this published attempt, never
-// from the room's invited audience. The label is visible to everyone in chat.
-func (n *talkNotification) enrich(sitePath, bundlePath string) {
-	parts := []string{"Cassini"}
+// Metadata is best effort and comes only from this published attempt.
+// Keep the shared-items label compact; Talk renders it as a single link.
+func (n *talkNotification) enrich(sitePath string) {
+	parts := []string{}
 	type notificationCatalogEntry struct {
 		ID         string `json:"id"`
 		Title      string `json:"title"`
@@ -78,12 +76,12 @@ func (n *talkNotification) enrich(sitePath, bundlePath string) {
 			entry = notificationCatalogEntry{}
 		}
 	}
-	if title := notificationText(entry.Title, 100); title != "" {
+	if title := notificationText(entry.Title, 80); title != "" {
 		parts = append(parts, title)
 	} else {
 		parts = append(parts, "Meeting available")
 	}
-	if date := notificationText(entry.Date, 40); date != "" {
+	if date := notificationDate(entry.Date); date != "" {
 		parts = append(parts, date)
 	}
 	if entry.DurationMS > 0 {
@@ -94,31 +92,18 @@ func (n *talkNotification) enrich(sitePath, bundlePath string) {
 			parts = append(parts, fmt.Sprintf("%d min", minutes))
 		}
 	}
-	var transcript struct {
-		Speakers []struct {
-			Label string `json:"label"`
-		} `json:"speakers"`
-	}
-	if raw, err := os.ReadFile(filepath.Join(bundlePath, "transcript.words.v1.json")); err == nil && json.Unmarshal(raw, &transcript) == nil {
-		names := []string{}
-		seen := map[string]bool{}
-		for _, speaker := range transcript.Speakers {
-			name := notificationText(speaker.Label, 40)
-			if name != "" && !seen[name] {
-				names = append(names, name)
-				seen[name] = true
-			}
-		}
-		sort.Strings(names)
-		if len(names) > 0 {
-			label := strings.Join(names[:min(3, len(names))], ", ")
-			if len(names) > 3 {
-				label += fmt.Sprintf(" +%d", len(names)-3)
-			}
-			parts = append(parts, "Speakers: "+label)
-		}
-	}
 	n.Message = strings.Join(parts, " · ")
+}
+
+// Preserve the recorded calendar date rather than converting it to server time.
+func notificationDate(value string) string {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02", time.RFC3339} {
+		if date, err := time.Parse(layout, value); err == nil {
+			return date.Format("2 Jan")
+		}
+	}
+	return notificationText(value, 40)
 }
 
 func notificationText(value string, limit int) string {
