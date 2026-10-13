@@ -154,7 +154,7 @@
         ? `${roomLabels.length} rooms`
         : "";
 
-  function renderDocumentHtml(markdown: string): string {
+  function renderDocumentHtml(markdown: string, quoted: boolean): string {
     // The recorder writes its provenance as YAML front matter, and to markdown
     // `---` is a horizontal rule: rendered as-is it became two rules with a
     // run-on paragraph of quoted hashes and IDs between them, sitting above the
@@ -162,10 +162,12 @@
     // panel anyway — the header and the provenance list below both read them
     // off the run record — so it is cut here rather than kept as text nobody
     // can use.
-    // And the document's own first heading goes when it is the question again:
-    // the Ask template copies the question in verbatim, and by this point the
-    // header and the quote have both said it.
-    const body = stripLeadingHeading(stripInsightFrontMatter(markdown), question);
+    // The document's own first heading goes only when the quote sits right
+    // above it saying the same thing (the Ask template copies the question in
+    // verbatim). With no quote — the name IS the question — the heading stays:
+    // it is the document's title, in the place the question is read.
+    const front = stripInsightFrontMatter(markdown);
+    const body = quoted ? stripLeadingHeading(front, question) : front;
     if (body.trim() === "") {
       return "";
     }
@@ -176,7 +178,7 @@
     return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
   }
 
-  $: documentHtml = renderDocumentHtml(documentMarkdown);
+  $: documentHtml = renderDocumentHtml(documentMarkdown, showQuestion);
 </script>
 
 <section class="ins-doc" aria-label="Insight">
@@ -240,21 +242,7 @@
   </header>
 
   <div class="ins-body">
-    <!-- 1. The question the panel exists to answer, so it reads as the heading
-         of the brief rather than as a caption on it. A workflow can be run with
-         no question of its own, and then there is no quote to show. -->
-    <!-- A template with a question of its own leads with it. One without —
-         "summarise these" — led with a sentence naming the workflow id, which
-         is a fact about the run rather than the brief, and the answer below it
-         says what it is. -->
-    <!-- Not when the header already says it: an Ask run is named after its
-         question unless somebody renames it, and the quote is only for the
-         case where the name and the question are different things. -->
-    {#if showQuestion}
-      <p class="ins-question">“{question}”</p>
-    {/if}
-
-    <!-- 2. The material. -->
+    <!-- 1. The material. -->
     {#if sources.length > 0}
       <!-- One card: the count heads the list it counts, inside it. -->
       <section class="ins-sources ins-card">
@@ -278,6 +266,16 @@
           {/each}
         </ul>
       </section>
+    {/if}
+
+    <!-- 2. The question, where it is a different thing from the name above:
+         an Ask run is named after its question unless somebody renames it. It
+         sits under the material and over the answer, which is where the
+         document puts its own heading — and when the two say the same thing
+         the document's heading gives way to this. A workflow with no question
+         of its own ("summarise these") has no quote to show. -->
+    {#if showQuestion}
+      <p class="ins-question">“{question}”</p>
     {/if}
 
     <!-- 3. The answer, or the honest reason there is not one yet. -->

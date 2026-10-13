@@ -9,13 +9,13 @@ import type { InsightRecord } from "../viewer/insights";
 // runs in node with no DOM harness.
 
 describe("InsightDocument", () => {
-  it("reads in the order the panel exists in: question, material, answer", () => {
-    const question = insightDocumentSource.indexOf('class="ins-question"');
+  it("reads in the order the panel exists in: material, question, answer", () => {
     const sources = insightDocumentSource.indexOf('class="ins-sources');
+    const question = insightDocumentSource.indexOf('class="ins-question"');
     const answer = insightDocumentSource.indexOf("documentHtml}");
-    expect(question).toBeGreaterThan(-1);
-    expect(sources).toBeGreaterThan(question);
-    expect(answer).toBeGreaterThan(sources);
+    expect(sources).toBeGreaterThan(-1);
+    expect(question).toBeGreaterThan(sources);
+    expect(answer).toBeGreaterThan(question);
   });
 
   it("renders the stored source set rather than deriving one", () => {
@@ -247,10 +247,11 @@ describe("InsightDocument says the question once", () => {
     );
   });
 
-  it("drops the document's own heading when it is the question again", () => {
+  it("drops the document's own heading only when the quote stands in for it", () => {
     // Rendering the answer needs a DOM for the sanitiser, which this suite has
     // none of; the cut itself is tested on stripLeadingHeading, and this pins
-    // that the drawer applies it to the question.
-    expect(insightDocumentSource).toContain("stripLeadingHeading(stripInsightFrontMatter(markdown), question)");
+    // that the drawer applies it to the question, and only under a quote.
+    expect(insightDocumentSource).toContain("quoted ? stripLeadingHeading(front, question) : front");
+    expect(insightDocumentSource).toContain("renderDocumentHtml(documentMarkdown, showQuestion)");
   });
 });
