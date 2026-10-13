@@ -206,20 +206,25 @@
           />
         {:else}
           <h2>{headline}</h2>
-          {#if canRename}
-            <button
-              type="button"
-              class="ins-rename btn btn-sm btn-square btn-quiet"
-              aria-label="Rename the insight"
-              title="Rename"
-              on:click={startRename}
-            >
-              <Pencil size={14} aria-hidden="true" />
-            </button>
-          {/if}
         {/if}
       </div>
-      <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
+      <!-- The pencil keeps the close button's company at the right edge,
+           whatever the title's length: a control that trailed the last word
+           of the title landed somewhere different on every insight. -->
+      <div class="ins-head-controls">
+        {#if canRename && !editingName}
+          <button
+            type="button"
+            class="ins-rename btn btn-sm btn-square btn-quiet"
+            aria-label="Rename the insight"
+            title="Rename"
+            on:click={startRename}
+          >
+            <Pencil size={14} aria-hidden="true" />
+          </button>
+        {/if}
+        <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
+      </div>
     </div>
     {#if editingName && renameError}
       <p class="ins-rename-error" role="status">{renameError}</p>
@@ -420,16 +425,18 @@
     gap: 0.25rem;
     min-width: 0;
   }
+  /* The two 32px squares, lifted together so they sit on the title's first
+     line rather than a quarter-rem under it. */
+  .ins-head-controls {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.25rem;
+    margin-top: -0.25rem;
+  }
   /* Quieter than the heading it sits by until it is wanted. */
   .ins-rename {
-    flex: none;
-    margin-top: -0.25rem;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
-  }
-  /* The close button is the same 32px square as the pencil, so it takes the
-     same lift: the two sit on one line, not one a quarter-rem under the other. */
-  .ins-head-top > :global(.close-button) {
-    margin-top: -0.25rem;
   }
   .ins-name-input {
     flex: 1 1 auto;
