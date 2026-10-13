@@ -35,6 +35,7 @@
   // the left and the brackets on the right. Words are decorated through their
   // attributes, so a drag never re-renders the transcript.
   export let session: MarksSession;
+  // Identity marks a new navigation, including one that clears the selection.
   export let selectionRequest: { range: ViewerTimeRange | null } | null = null;
   export let selectionHref: ((range: ViewerTimeRange) => string) | null = null;
   export let vocabulary: readonly VocabularyTag[] = [];
@@ -104,10 +105,11 @@
   const painted = new Map<string, Map<HTMLElement, string>>();
 
   $: marking = $session.status === "ready";
+  // Sharing and adjusting a local selection never require annotation writes.
   $: selectable = editing || selectionHref !== null;
   $: framed = $session.status !== "off" || selectable;
   // Seeing marks and making them are separate (D-775). `marking` still governs
-  // everything that DRAWS — the rail, the brackets, the marks list — so a
+  // everything that draws saved marks — the brackets and marks list — so a
   // published export shows exactly what the recording carries. `editing` governs
   // everything that would CHANGE a mark, and a session with nowhere to write has
   // none of it: not disabled, absent.

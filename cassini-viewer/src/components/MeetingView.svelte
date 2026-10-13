@@ -328,9 +328,12 @@
     return readViewerHash(hostHash());
   }
 
+  // A new request restores once; subsequent edits and clearing stay local.
   let selectionRequest: { range: ViewerTimeRange | null } | null = null;
   let lastSharedHash = "";
   let locationRequest = 0;
+  let artifactRequest = 0;
+  let urlTranscriptRequest = 0;
 
   function selectionHref(range: ViewerTimeRange): string {
     return viewerHref(buildViewerHash({ meeting: meeting?.id, tx: currentTranscriptId, range }));
@@ -433,6 +436,8 @@
   function resetLoadedArtifact() {
     selectionRequest = null;
     locationRequest += 1;
+    artifactRequest += 1;
+    urlTranscriptRequest += 1;
     exportRequestId += 1;
     audioRequestId += 1;
     copyRequestId += 1;
@@ -546,22 +551,27 @@
     // state for *this* meeting rather than the previous meeting's transcript
     // bleeding through.
     resetLoadedArtifact();
+    const request = artifactRequest;
     loading = true;
     errorMessage = "";
     pendingSeekMs = parseTimeHash(hostHash());
     resetTabs();
     try {
       const artifact = await dataProvider.loadMeetingForEntry(entry);
+      if (request !== artifactRequest) return;
       applyArtifact(artifact);
       await maybeApplyUrlTranscript(entry);
+      if (request !== artifactRequest) return;
       restoreSharedSelection();
       // Real speaker/segment/duration counts → shell updates the list card.
       dispatch("enriched", mergeMeetingRuntimeSummary(entry, artifact));
     } catch (error) {
+      if (request !== artifactRequest) return;
       resetLoadedArtifact();
+      loading = false;
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
-      loading = false;
+      if (request === artifactRequest) loading = false;
     }
   }
 
@@ -612,18 +622,21 @@
   }
 
   async function loadBundled() {
+    const request = ++artifactRequest;
     loading = true;
     errorMessage = "";
     pendingSeekMs = parseTimeHash(hostHash());
     resetTabs();
     try {
       const artifact = await dataProvider.loadBundledArtifact();
+      if (request !== artifactRequest) return;
       applyArtifact(artifact);
       restoreSharedSelection();
     } catch (error) {
+      if (request !== artifactRequest) return;
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
-      loading = false;
+      if (request === artifactRequest) loading = false;
     }
   }
 
@@ -682,25 +695,35 @@
   }
 
   async function maybeApplyUrlTranscript(entry: MeetingCatalogEntry) {
-    const requested = currentViewerHash().tx;
+    const request = ++urlTranscriptRequest;
+    const generation = artifactRequest;
+    transcriptSwitchPending = false;
+    let requested = currentViewerHash().tx || defaultTranscriptId;
     if (!requested || !(entry.meetingPath ?? entry.audioPath)) {
       return;
     }
     if (!availableTranscripts.some((descriptor) => descriptor.id === requested)) {
       clearTranscriptUrlParam();
-      return;
+      requested = defaultTranscriptId;
     }
-    if (requested === currentTranscriptId) {
+    if (!requested || requested === currentTranscriptId) {
       return;
     }
     transcriptSwitchPending = true;
     try {
       const next = await dataProvider.switchTranscript(entry, requested);
+      if (request !== urlTranscriptRequest || generation !== artifactRequest) return;
+      // Navigation during the initial load is picked up here: the location
+      // listener leaves that load responsible for applying the latest URL.
+      if (requested !== (currentViewerHash().tx || defaultTranscriptId)) {
+        await maybeApplyUrlTranscript(entry);
+        return;
+      }
       applySwitchedTranscript(next);
     } catch {
-      clearTranscriptUrlParam();
+      if (request === urlTranscriptRequest && generation === artifactRequest) clearTranscriptUrlParam();
     } finally {
-      transcriptSwitchPending = false;
+      if (request === urlTranscriptRequest) transcriptSwitchPending = false;
     }
   }
 
@@ -1186,6 +1209,9 @@
   });
 
   onDestroy(() => {
+    artifactRequest += 1;
+    urlTranscriptRequest += 1;
+    locationRequest += 1;
     window.removeEventListener("keydown", handleWindowKeydown);
     window.removeEventListener("hashchange", handleSharedLocation);
     window.removeEventListener("popstate", handleSharedLocation);

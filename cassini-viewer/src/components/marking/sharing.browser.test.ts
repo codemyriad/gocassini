@@ -132,3 +132,77 @@ it("supports bundled standalone recordings while leaving host-page embeds alone"
   await expect.element(page.getByRole("button", { name: "Copy link", exact: true })).not.toBeInTheDocument();
   expect(location.hash).toBe("#range=1000,3000");
 });
+
+it("restores the requested transcript and returns to the default through history", async () => {
+  const originalLoad = fixture.provider.loadMeetingForEntry;
+  const catalog = await fixture.provider.loadCatalog();
+  const base = await originalLoad(catalog!.meetings[0]);
+  const availableTranscripts = ["original", "alternate"].map(id => ({ id, label: id, description: "", isDefault: id === "original" }));
+  const loadCatalog = fixture.provider.loadCatalog;
+  fixture.provider.loadCatalog = async () => {
+    const catalog = await loadCatalog();
+    return { ...catalog!, meetings: catalog!.meetings.map(entry => ({ ...entry, meetingPath: `${entry.id}.meeting` })) };
+  };
+  fixture.provider.loadMeetingForEntry = async () => ({ ...base, availableTranscripts, currentTranscriptId: "original" });
+  fixture.provider.switchTranscript = vi.fn(async (_entry, id) => ({ ...base, availableTranscripts, currentTranscriptId: id }));
+  open("#meeting=m1&tx=alternate&range=1000,3000");
+  await expect.poll(selected).toEqual(["second", "third"]);
+  await page.getByRole("button", { name: "Copy link", exact: true }).click();
+  expect(new URL(writeText.mock.calls[0][0]).hash).toContain("tx=alternate");
+  await navigate("#meeting=m1&range=3000,5000");
+  await expect.poll(selected).toEqual(["fourth", "fifth"]);
+  expect(fixture.provider.switchTranscript).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m1" }), "original");
+  history.back();
+  await expect.poll(selected).toEqual(["second", "third"]);
+  history.forward();
+  await expect.poll(selected).toEqual(["fourth", "fifth"]);
+  await navigate("#meeting=m1&tx=missing&range=0,1000");
+  await expect.poll(selected).toEqual(["First"]);
+  expect(location.hash).toBe("#meeting=m1&range=0,1000");
+});
+
+
+it("does not let an older meeting load replace a newly opened selection", async () => {
+  const load = fixture.provider.loadMeetingForEntry;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  fixture.provider.loadMeetingForEntry = async entry => {
+    if (entry.id === "m1") await gate;
+    return load(entry);
+  };
+  open();
+  await navigate("#meeting=m2&range=4000,6000");
+  await expect.poll(selected).toEqual(["fifth", "sixth"]);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  expect(selected()).toEqual(["fifth", "sixth"]);
+  await page.getByRole("button", { name: "Copy link", exact: true }).click();
+  expect(new URL(writeText.mock.calls[0][0]).hash).toBe("#meeting=m2&range=4000,6000");
+});
+
+it("seeks to the selection start without autoplay and retains timestamp links", async () => {
+  // Six seconds of silent PCM, so the real media element can load and seek.
+  const bytes = new Uint8Array(44 + 6 * 8000 * 2);
+  const view = new DataView(bytes.buffer);
+  const text = (at: number, value: string) => bytes.set(new TextEncoder().encode(value), at);
+  text(0, "RIFF"); view.setUint32(4, bytes.length - 8, true);
+  text(8, "WAVEfmt "); view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, 8000, true); view.setUint32(28, 16000, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  text(36, "data"); view.setUint32(40, bytes.length - 44, true);
+  const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+  const load = fixture.provider.loadMeetingForEntry;
+  fixture.provider.loadMeetingForEntry = async entry => ({ ...await load(entry), audioSrc: url });
+  try {
+    open("#meeting=m1&range=2000,4000");
+    await expect.poll(selected).toEqual(["third", "fourth"]);
+    await expect.poll(() => host.querySelector("audio")?.currentTime).toBe(2);
+    expect(host.querySelector("audio")?.paused).toBe(true);
+    await navigate("#meeting=m1&t=4500ms");
+    await expect.poll(() => host.querySelector("audio")?.currentTime).toBe(4.5);
+    expect(selected()).toEqual([]);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
