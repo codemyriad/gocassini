@@ -163,7 +163,7 @@
         ? `${roomLabels.length} rooms`
         : "";
 
-  function renderDocumentHtml(markdown: string): string {
+  function renderDocumentHtml(markdown: string, quoted: boolean): string {
     // The recorder writes its provenance as YAML front matter, and to markdown
     // `---` is a horizontal rule: rendered as-is it became two rules with a
     // run-on paragraph of quoted hashes and IDs between them, sitting above the
@@ -171,10 +171,12 @@
     // panel anyway — the header and the provenance list below both read them
     // off the run record — so it is cut here rather than kept as text nobody
     // can use.
-    // And the document's own first heading goes when it is the question again:
-    // the Ask template copies the question in verbatim, and by this point the
-    // header and the quote have both said it.
-    const body = stripLeadingHeading(stripInsightFrontMatter(markdown), question);
+    // The document's own first heading goes only when the quote sits right
+    // above it saying the same thing (the Ask template copies the question in
+    // verbatim). With no quote — the name IS the question — the heading stays:
+    // it is the document's title, in the place the question is read.
+    const front = stripInsightFrontMatter(markdown);
+    const body = quoted ? stripLeadingHeading(front, question) : front;
     if (body.trim() === "") {
       return "";
     }
@@ -185,7 +187,7 @@
     return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
   }
 
-  $: documentHtml = renderDocumentHtml(documentMarkdown);
+  $: documentHtml = renderDocumentHtml(documentMarkdown, showQuestion);
 
   // The offline copy (D-792) is offered only for an answer that is on screen:
   // copying a run that has not finished, or one whose file has gone, would
@@ -277,20 +279,25 @@
           />
         {:else}
           <h2>{headline}</h2>
-          {#if canRename}
-            <button
-              type="button"
-              class="ins-rename btn btn-sm btn-square btn-quiet"
-              aria-label="Rename the insight"
-              title="Rename"
-              on:click={startRename}
-            >
-              <Pencil size={14} aria-hidden="true" />
-            </button>
-          {/if}
         {/if}
       </div>
-      <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
+      <!-- The pencil keeps the close button's company at the right edge,
+           whatever the title's length: a control that trailed the last word
+           of the title landed somewhere different on every insight. -->
+      <div class="ins-head-controls">
+        {#if canRename && !editingName}
+          <button
+            type="button"
+            class="ins-rename btn btn-sm btn-square btn-quiet"
+            aria-label="Rename the insight"
+            title="Rename"
+            on:click={startRename}
+          >
+            <Pencil size={14} aria-hidden="true" />
+          </button>
+        {/if}
+        <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
+      </div>
     </div>
     {#if editingName && renameError}
       <p class="ins-rename-error" role="status">{renameError}</p>
@@ -345,21 +352,7 @@
   </header>
 
   <div class="ins-body">
-    <!-- 1. The question the panel exists to answer, so it reads as the heading
-         of the brief rather than as a caption on it. A workflow can be run with
-         no question of its own, and then there is no quote to show. -->
-    <!-- A template with a question of its own leads with it. One without —
-         "summarise these" — led with a sentence naming the workflow id, which
-         is a fact about the run rather than the brief, and the answer below it
-         says what it is. -->
-    <!-- Not when the header already says it: an Ask run is named after its
-         question unless somebody renames it, and the quote is only for the
-         case where the name and the question are different things. -->
-    {#if showQuestion}
-      <p class="ins-question">“{question}”</p>
-    {/if}
-
-    <!-- 2. The material. -->
+    <!-- 1. The material. -->
     {#if sources.length > 0}
       <!-- One card: the count heads the list it counts, inside it. -->
       <section class="ins-sources ins-card">
@@ -383,6 +376,16 @@
           {/each}
         </ul>
       </section>
+    {/if}
+
+    <!-- 2. The question, where it is a different thing from the name above:
+         an Ask run is named after its question unless somebody renames it. It
+         sits under the material and over the answer, which is where the
+         document puts its own heading — and when the two say the same thing
+         the document's heading gives way to this. A workflow with no question
+         of its own ("summarise these") has no quote to show. -->
+    {#if showQuestion}
+      <p class="ins-question">“{question}”</p>
     {/if}
 
     <!-- 3. The answer, or the honest reason there is not one yet. -->
@@ -527,16 +530,18 @@
     gap: 0.25rem;
     min-width: 0;
   }
+  /* The two 32px squares, lifted together so they sit on the title's first
+     line rather than a quarter-rem under it. */
+  .ins-head-controls {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.25rem;
+    margin-top: -0.25rem;
+  }
   /* Quieter than the heading it sits by until it is wanted. */
   .ins-rename {
-    flex: none;
-    margin-top: -0.25rem;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
-  }
-  /* The close button is the same 32px square as the pencil, so it takes the
-     same lift: the two sit on one line, not one a quarter-rem under the other. */
-  .ins-head-top > :global(.close-button) {
-    margin-top: -0.25rem;
   }
   .ins-name-input {
     flex: 1 1 auto;
