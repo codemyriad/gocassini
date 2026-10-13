@@ -295,6 +295,16 @@ describe("renameInsight", () => {
       "Cassini could not rename the insight.",
     );
   });
+
+  it("does not blame creating on a 404, which an operator without the route also answers", async () => {
+    // A deploy by image sha without a version bump leaves AppAPI's allowlist
+    // without this route: creating works, every save 404s.
+    const fetchMock = respondWith("404 page not found\n", { status: 404 });
+
+    await expect(renameInsight("ins_0123456789abcdef", "x", fetchMock)).rejects.toThrow(
+      "That insight is not available to you, or this deployment cannot rename insights.",
+    );
+  });
 });
 
 describe("readRun", () => {

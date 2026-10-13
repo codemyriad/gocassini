@@ -366,16 +366,45 @@ func decodeInsightCreateRequest(w http.ResponseWriter, r *http.Request) (insight
 // normaliseInsightName trims a name and refuses one that cannot be a title.
 // Control characters are refused rather than stripped: a name is printed on a
 // card and becomes a file name, and silently editing what somebody typed would
-// leave them a title they did not write.
+// leave them a title they did not write. So are the bidirectional controls,
+// which reorder what a title shows, and a name with nothing visible in it —
+// zero-width characters only — which rendered as a blank title that nothing
+// could search for and delivered under the dated file name without a word.
+// Other invisible format characters stay: the joiner inside an emoji sequence
+// and the non-joiner inside a Persian word are part of what was typed.
 func normaliseInsightName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if utf8.RuneCountInString(name) > maxInsightNameRunes {
 		return "", fmt.Errorf("a name is at most %d characters", maxInsightNameRunes)
 	}
-	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+	if strings.IndexFunc(name, isInsightNameControl) >= 0 {
 		return "", errors.New("a name cannot contain control characters")
 	}
+	if name != "" && strings.IndexFunc(name, isVisibleRune) < 0 {
+		return "", errors.New("a name needs at least one visible character")
+	}
 	return name, nil
+}
+
+// isInsightNameControl is what a name is refused for: a control character, or
+// one of the bidirectional format characters (U+061C, U+200E, U+200F,
+// U+202A–U+202E, U+2066–U+2069) that reorder the text around them.
+func isInsightNameControl(r rune) bool {
+	switch {
+	case unicode.IsControl(r):
+		return true
+	case r == 0x061C, r == 0x200E, r == 0x200F:
+		return true
+	case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069:
+		return true
+	}
+	return false
+}
+
+// isVisibleRune is a rune a title can be seen by: neither whitespace nor one
+// of the invisible characters the file name drops (isInvisibleRune).
+func isVisibleRune(r rune) bool {
+	return !unicode.IsSpace(r) && !isInvisibleRune(r)
 }
 
 // insightRegistryUnavailableError separates "this deployment does not ship that

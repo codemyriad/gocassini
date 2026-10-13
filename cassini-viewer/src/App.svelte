@@ -1044,6 +1044,14 @@
     }
   }
 
+  // A refusal is about the sheet it was shown in. Closing the sheet, a hash
+  // navigation or a listing that no longer carries the run all tear the editor
+  // down without a cancel, and the next pencil on that insight must not open
+  // on a stale reason under an untouched draft.
+  $: if (insightRenameError && insightRenameError.id !== selectedInsightId) {
+    insightRenameError = null;
+  }
+
   // handleInsightCreated is what Generate does once the operator has answered
   // (D-749): the new record goes to the top of the list, where every insight
   // is shown, and the Prepare panel closes — the question has been asked, and

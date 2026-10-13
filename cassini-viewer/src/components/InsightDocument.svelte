@@ -75,14 +75,19 @@
     renameCancel: void;
   }>();
 
-  // The heading turns into its own input, pre-filled with what it says. It
-  // stays an input until the save has landed, so a refused name is still
-  // there to fix next to the reason it was refused.
+  // The heading turns into its own input, pre-filled with what it says, with
+  // Cancel and Save beside it as the tag manager's row has: this viewer's two
+  // inline editors should not behave differently from each other. Enter saves
+  // and Escape cancels, and nothing else leaves the editor, so clicking away to
+  // check something does not throw a half-typed name out. It stays an input
+  // until the save has landed, so a refused name is still there to fix next to
+  // the reason it was refused.
   let editingName = false;
   let editingId = "";
   let draftName = "";
   let savingName = false;
   let nameInput: HTMLInputElement | undefined;
+  let renameButton: HTMLButtonElement | undefined;
 
   async function startRename() {
     draftName = headline;
@@ -92,53 +97,68 @@
     nameInput?.select();
   }
 
-  function stopRename() {
+  // leaveRename closes the editor and puts the keyboard back on the pencil it
+  // was opened from. The pencil is not rendered while editing, so without this
+  // focus fell to the document body.
+  async function leaveRename() {
     editingName = false;
     savingName = false;
+    await tick();
+    renameButton?.focus();
   }
 
-  // Clicking away is leaving, the same as Escape: nothing typed is sent. Not
-  // while a save is in flight, though — the input is disabled for that, and a
-  // disabled input loses focus on its own.
-  function onNameBlur() {
-    if (!editingName || savingName) {
-      return;
-    }
-    stopRename();
+  function cancelRename() {
+    void leaveRename();
     dispatch("renameCancel");
   }
 
+  // An empty name cannot be saved, as an empty tag name cannot: the button is
+  // disabled rather than the request refused.
+  $: nameSaveable = draftName.trim() !== "" && !renaming;
+
+  function saveRename() {
+    if (!nameSaveable) {
+      return;
+    }
+    const name = draftName.trim();
+    if (name === headline) {
+      // Nothing changed. Saving it would turn a headline that is only
+      // standing in for a name — the question — into a name.
+      cancelRename();
+      return;
+    }
+    savingName = true;
+    dispatch("rename", name);
+  }
+
   function onNameKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      stopRename();
-      dispatch("renameCancel");
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      const name = draftName.trim();
-      if (name === headline) {
-        // Nothing changed. Saving it would turn a headline that is only
-        // standing in for a name — the question — into a name.
-        stopRename();
-        dispatch("renameCancel");
-        return;
-      }
-      savingName = true;
-      dispatch("rename", name);
+    if (event.key !== "Enter" && event.key !== "Escape") {
+      return;
+    }
+    event.preventDefault();
+    if (event.key === "Enter") {
+      saveRename();
+    } else {
+      cancelRename();
     }
   }
 
   // Another insight in the same sheet is not the one being renamed.
   $: if (editingName && insight.id !== editingId) {
-    stopRename();
+    editingName = false;
+    savingName = false;
   }
   $: if (savingName && !renaming) {
     if (renameError) {
+      // Refused: the input is enabled again, and the keyboard goes back to it
+      // so that Enter and Escape mean something without a click first.
       savingName = false;
+      void tick().then(() => nameInput?.focus());
     } else {
-      stopRename();
+      void leaveRename();
     }
   }
+  $: renameErrorId = `ins-rename-error-${insight.id}`;
 
   $: question = insight.question?.trim() ?? "";
   $: headline = insightHeadline(insight);
@@ -265,18 +285,33 @@
     <div class="ins-head-top">
       <div class="ins-head-title">
         {#if editingName}
-          <input
-            bind:this={nameInput}
-            bind:value={draftName}
-            type="text"
-            class="input input-sm ins-name-input"
-            aria-label="Insight name"
-            maxlength={INSIGHT_NAME_MAX}
-            autocomplete="off"
-            disabled={renaming}
-            on:keydown={onNameKeydown}
-            on:blur={onNameBlur}
-          />
+          <!-- One strip, as the tag manager's: the name, then Cancel and
+               Save, in that order and at those sizes. -->
+          <div class="ins-name-editor">
+            <input
+              bind:this={nameInput}
+              bind:value={draftName}
+              type="text"
+              class="input input-sm ins-name-input"
+              aria-label="Insight name"
+              aria-invalid={renameError ? "true" : undefined}
+              aria-describedby={renameError ? renameErrorId : undefined}
+              maxlength={INSIGHT_NAME_MAX}
+              autocomplete="off"
+              spellcheck="false"
+              disabled={renaming}
+              on:keydown={onNameKeydown}
+            />
+            <button type="button" class="ins-name-cancel" on:click={cancelRename}>Cancel</button>
+            <button
+              type="button"
+              class="btn btn-neutral btn-sm px-4 font-semibold"
+              disabled={!nameSaveable}
+              on:click={saveRename}
+            >
+              {renaming ? "Saving…" : "Save"}
+            </button>
+          </div>
         {:else}
           <h2>{headline}</h2>
         {/if}
@@ -287,6 +322,7 @@
       <div class="ins-head-controls">
         {#if canRename && !editingName}
           <button
+            bind:this={renameButton}
             type="button"
             class="ins-rename btn btn-sm btn-square btn-quiet"
             aria-label="Rename the insight"
@@ -300,7 +336,7 @@
       </div>
     </div>
     {#if editingName && renameError}
-      <p class="ins-rename-error" role="status">{renameError}</p>
+      <p class="ins-rename-error" id={renameErrorId} role="status">{renameError}</p>
     {/if}
     <!-- The run's facts on the left and, on the same row, the ways out of
          Cassini (D-792): a markdown copy under one Export control, as the
@@ -543,11 +579,32 @@
   .ins-rename {
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
-  .ins-name-input {
+  .ins-name-editor {
+    display: flex;
     flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+  .ins-name-input {
+    flex: 1 1 10rem;
     min-width: 0;
     font-size: 1.0625rem;
     font-weight: 650;
+  }
+  /* The tag editor's Cancel: a quiet word beside Save, not a second button. */
+  .ins-name-cancel {
+    margin: 0 0.25rem 0 0.5rem;
+    background: none;
+    border: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+    cursor: pointer;
+  }
+  .ins-name-cancel:hover {
+    color: var(--color-base-content);
   }
   .ins-rename-error {
     margin-top: 0.375rem;

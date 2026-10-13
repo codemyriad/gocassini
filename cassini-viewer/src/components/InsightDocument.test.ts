@@ -200,14 +200,33 @@ describe("InsightDocument", () => {
     });
 
     it("saves on Enter, cancels on Escape, and dispatches rather than performing one", () => {
-      expect(insightDocumentSource).toContain('event.key === "Escape"');
-      expect(insightDocumentSource).toContain('event.key === "Enter"');
+      expect(insightDocumentSource).toContain('if (event.key !== "Enter" && event.key !== "Escape") {');
+      expect(insightDocumentSource).toMatch(/if \(event\.key === "Enter"\) \{\s*saveRename\(\);\s*\} else \{\s*cancelRename\(\);/);
       expect(insightDocumentSource).toContain('dispatch("rename", name)');
+      expect(insightDocumentSource).not.toContain("fetch(");
     });
 
-    it("leaves the editor when focus leaves it, without saving", () => {
-      expect(insightDocumentSource).toContain("on:blur={onNameBlur}");
-      expect(insightDocumentSource).toMatch(/function onNameBlur\(\) \{[\s\S]*?stopRename\(\);[\s\S]*?dispatch\("renameCancel"\)/);
+    it("has Cancel and Save beside the name, as the tag editor does, and does not leave on blur", () => {
+      expect(insightDocumentSource).toContain("on:click={cancelRename}>Cancel</button>");
+      expect(insightDocumentSource).toContain("on:click={saveRename}");
+      expect(insightDocumentSource).not.toContain("on:blur");
+    });
+
+    it("cannot save an empty name", () => {
+      expect(insightDocumentSource).toContain('$: nameSaveable = draftName.trim() !== "" && !renaming;');
+      expect(insightDocumentSource).toContain("disabled={!nameSaveable}");
+    });
+
+    it("puts the keyboard back: on the input after a refusal, on the pencil after leaving", () => {
+      expect(insightDocumentSource).toContain("void tick().then(() => nameInput?.focus());");
+      expect(insightDocumentSource).toContain("renameButton?.focus();");
+      expect(insightDocumentSource).toContain("bind:this={renameButton}");
+    });
+
+    it("links the refusal to the input it is about", () => {
+      expect(insightDocumentSource).toContain("aria-describedby={renameError ? renameErrorId : undefined}");
+      expect(insightDocumentSource).toContain('aria-invalid={renameError ? "true" : undefined}');
+      expect(insightDocumentSource).toContain('id={renameErrorId} role="status"');
     });
   });
 

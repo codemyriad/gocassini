@@ -43,8 +43,10 @@
   //
   // The NAME is filled in for everybody (D-791): an insight titled by its
   // workflow id made every summary in the list read "summarise". It follows
-  // the template, the question and the selection until somebody edits it, and
-  // after that it is theirs. Renaming later happens in the insight's own sheet.
+  // the template and the selection until somebody edits it, and after that it
+  // is theirs; cleared, it shows the suggestion as a placeholder and sends it,
+  // so no run is created unnamed. Renaming later happens in the insight's own
+  // sheet.
   import { createEventDispatcher } from "svelte";
   import { ChevronDown } from "@lucide/svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
@@ -177,10 +179,10 @@
   $: questionMissing = questionAccepted && question.trim() === "";
 
   // A non-admin cannot read the registry, so their default says "Insight"
-  // rather than guessing which template the deployment runs.
+  // rather than guessing which template the deployment runs. The question is
+  // not part of it: it is quoted in the insight instead (see insightName.ts).
   $: suggestedName = defaultInsightName({
     templateName: chosenWorkflowEntry?.name ?? null,
-    question: questionAccepted ? question : "",
     entries,
   });
   $: if (!nameTouched) {
@@ -283,7 +285,9 @@
         // choose from, which the operator reads as "this deployment's own".
         provider: chosenProvider,
         model: chosenModel,
-        name,
+        // A cleared box falls back to the suggestion it shows as its
+        // placeholder, rather than creating the one run with no name.
+        name: name.trim() || suggestedName,
       });
       // Handed up and done. The record exists before its content does, and
       // the shell shows it where every insight is shown — at the top of the
@@ -312,6 +316,7 @@
       type="text"
       maxlength={INSIGHT_NAME_MAX}
       autocomplete="off"
+      placeholder={suggestedName}
       bind:value={name}
       on:input={() => (nameTouched = true)}
     />

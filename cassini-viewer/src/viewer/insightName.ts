@@ -7,6 +7,13 @@ import { NO_ROOM_KEY, roomKeyOf, roomLabelOf } from "./rooms";
 // The point is a list that can be told apart. Every unnamed summary used to be
 // titled "summarise", so the default says what the insight is and what it read,
 // in the words the browse list already uses for a meeting's room and date.
+//
+// It is the template and the selection for EVERY template, a question run
+// included. The question is not the name: it is typed in a box that takes
+// several lines, it can be a paragraph, and the operator refuses a name with a
+// line break in it — so a question-as-name was a 400 for a name the asker never
+// typed. The question is still shown, quoted under the sources, wherever the
+// name says something else.
 
 // The operator's bound on a name; a default longer than it would be refused.
 export const INSIGHT_NAME_MAX = 120;
@@ -15,21 +22,14 @@ export interface DefaultInsightNameInput {
   // The template's display name, or null where the caller cannot read the
   // registry (a non-admin), which then says "Insight".
   templateName?: string | null;
-  // The question as typed, for a template that takes one.
-  question?: string;
   entries: readonly MeetingCatalogEntry[];
 }
 
-// defaultInsightName suggests a name. A question is already what the asker
-// wants to know, so it is the name as typed. Anything else is the template and
-// what it read: "Summary · Design review, 3 Oct 2026",
-// "Summary · Design, 4 meetings, 28 Sept – 12 Oct 2026".
-export function defaultInsightName({ templateName, question, entries }: DefaultInsightNameInput): string {
-  const asked = question?.trim() ?? "";
-  if (asked !== "") {
-    return capName(asked);
-  }
-  const template = templateName?.trim() || "Insight";
+// defaultInsightName suggests a name: the template and what it read.
+// "Summary · Design review, 3 Oct 2026",
+// "Ask · Design, 4 meetings, 28 Sept – 12 Oct 2026".
+export function defaultInsightName({ templateName, entries }: DefaultInsightNameInput): string {
+  const template = oneLine(templateName ?? "") || "Insight";
   const read = describeSources(entries);
   return capName(read === "" ? template : `${template} · ${read}`);
 }
@@ -41,7 +41,7 @@ function describeSources(entries: readonly MeetingCatalogEntry[]): string {
   if (entries.length === 1) {
     const [entry] = entries;
     const day = dayOf(entry.dateLabel);
-    const title = entry.title?.trim() || "1 meeting";
+    const title = oneLine(entry.title ?? "") || "1 meeting";
     return day === "" ? title : `${title}, ${formatMeetingDateShort(day)}`;
   }
   const parts: string[] = [];
@@ -49,7 +49,7 @@ function describeSources(entries: readonly MeetingCatalogEntry[]): string {
   // One room is worth naming; "No room" is not a room, so a set of roomless
   // meetings is described by count and dates alone.
   if (rooms.size === 1 && !rooms.has(NO_ROOM_KEY)) {
-    parts.push(roomLabelOf(entries[0]));
+    parts.push(oneLine(roomLabelOf(entries[0])));
   }
   parts.push(`${entries.length} meetings`);
   const range = formatDateRange(entries.map((entry) => entry.dateLabel));
@@ -57,6 +57,14 @@ function describeSources(entries: readonly MeetingCatalogEntry[]): string {
     parts.push(range);
   }
   return parts.join(", ");
+}
+
+// oneLine makes free text fit a name: a meeting title or a template name can
+// carry a line break or a tab, and the operator refuses a name with a control
+// character in it. Whitespace runs become one space; control and invisible
+// format characters go.
+function oneLine(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
 }
 
 // The day a label names, without the time: a name is about which meetings,
