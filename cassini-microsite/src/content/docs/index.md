@@ -66,8 +66,8 @@ There is no telemetry.
 
 - [Install on Nextcloud](/docs/getting-started/install) — the requirements and
   the five install steps in full.
-- [Who can see a recording](/docs/guides/who-can-see-a-recording) — the two
-  audiences, and how to switch.
+- [Who can see a recording](/docs/guides/who-can-see-a-recording) — how each
+  recording is shared with its Talk room, and how to change that.
 - [AI providers, summaries and insights](/docs/guides/ai-providers) — what to
   configure, and what a model then sees.
 - [The meeting file](/docs/guides/meeting-file) — what is inside the `.opus`.

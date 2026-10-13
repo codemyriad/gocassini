@@ -27,7 +27,7 @@ curl -sS -u alice:<app-password> \
 `/operator/status` reports the app version, the transcription device and whether
 it is usable, whether the Talk secrets are configured (never the values), the
 storage state, and DB health. `/operator/setup` carries `ok`, a `state`, the
-audience and a one-sentence cause, and nothing an unprivileged reader should not
+sharing mode and a one-sentence cause, and nothing an unprivileged reader should not
 see.
 
 In the app itself, an administrator gets the cause in words with **Try again**
@@ -64,8 +64,8 @@ an update.
 ## Recording
 
 **The Record button in Talk answers "The recording failed".** Either Talk cannot
-reach Cassini, or a prerequisite of the audience in force is missing, so the call
-would be captured and then not publishable. Open Cassini as an administrator; the
+reach Cassini, or the recordings account or file sharing is not ready, so the
+call would be captured and then not publishable. Open Cassini as an administrator; the
 notice names the cause, and **Show details** carries the missing thing and its
 command.
 
@@ -84,21 +84,18 @@ These come from `recordings_access` on `/operator/status`.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/operator/status` answers 503 | The storage the selected audience needs is not ready | Read `recordings_access.state` and `.step`. `unavailable` names a thing to install or set and carries the command in `.detail`; `degraded` means a call failed |
-| `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | `occ group:add cassini` and `occ user:add --group=cassini cassini`, then re-enable Cassini |
-| `state=unavailable`, `step=app_missing:<id>` | That native app is not enabled | `occ app:install <id> && occ app:enable <id>`, then re-enable Cassini |
-| `state=unavailable`, `step=administrator` | No probed account is an administrator Cassini may act as | Set `CASSINI_NC_ADMIN_USER` to one, then re-enable Cassini |
-| `state=unavailable`, `step=group_folder` | There is no `Cassini` Team folder | Pick **Meeting participants** in **Operator › Settings › Who can see recordings**, which creates and maps it as you; or run the `occ` recipe in [Who can see a recording](/docs/guides/who-can-see-a-recording) |
-| `state=unavailable`, `step=mode_mismatch:default_root_shadowed` | A Team folder is mounted at `CassiniNoACL`, which is where the "anyone with an account" audience keeps recordings | `occ groupfolders:list`, then unmap it — or switch the audience to meeting participants if that is what this instance was meant to be |
-| `state=unknown` | No preflight has completed in this process, usually just after a restart | Look again after a few seconds. If it sticks, disable and re-enable Cassini |
-| Publishes fail with "the recordings storage is not ready" | Deliberate: writing somewhere the read path is not looking would leave recordings nobody can open | Fix the state above |
-| The settings section says "A switch didn't finish" | A switch stopped between copying and tidying up. The archive is complete at the audience shown; the other root holds a copy nothing reads | Press **Resume** |
-| Cassini says N recordings aren't shown yet | The instance is settled, but the root the audience in force does not name still has an archive | Press **Move them in**, or leave them — they are not at risk |
-| A granted user sees an empty list | Their account cannot traverse the Team folder | Confirm with `occ groupfolders:list` that the folder has advanced ACL and the `everyone: read` mount, and that `occ user:info <user>` reports `everyone` |
-| Everyone sees a private recording | The file lacks an explicit `everyone` deny, or advanced ACLs were disabled | Re-enable Cassini to re-run protection, then inspect the file's Advanced permissions |
+| `/operator/status` answers 503 | Recordings cannot be published or served yet | Read `recordings_access.state` and `.step`. `unavailable` names a thing to create or enable; `degraded` means a call failed |
+| `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | Press **Create recordings account** in **Operator › Settings › Who can see recordings**, or run `occ group:add cassini` and `occ user:add --group=cassini cassini`, then re-enable Cassini |
+| `state=unavailable`, `step=sharing_api` | Nextcloud file sharing is unavailable to the `cassini` account | Check that the Files sharing app is enabled and that sharing is allowed under **Administration settings › Sharing** |
+| `state=degraded`, `step=private_archive` | Cassini could not confirm its `CassiniRecordings` folder is private and writable | Check that nothing is mounted or shared at `CassiniRecordings` in the `cassini` account's Files, then press **Check again** |
+| `state=degraded`, `step=nextcloud_probe` | Nextcloud did not answer the setup check | Check container-to-Nextcloud connectivity, then press **Check again** |
+| `state=unknown` | No check has completed in this process, usually just after a restart | Look again after a few seconds. If it sticks, disable and re-enable Cassini |
+| Publishes fail with "Nextcloud recording shares are not ready" | Deliberate: a recording that cannot be shared would be one nobody can open | Fix the state above |
+| `recordings_access.warning` names a person | One recipient's share was refused. Everyone else still has access | Share the file with that person from Files, signed in as `cassini` |
+| Someone who was in the room sees an empty list | They were a guest, email or federated participant, or the room was captured before they were added | Share the recording with them from Files, signed in as `cassini` |
 | The viewer returns 502 | Nextcloud Files is unreachable from the container | Check container-to-Nextcloud connectivity and the service account |
 
-Catalog scans fail closed: a mis-configured instance degrades to "no meetings",
+Listings fail closed: a misconfigured instance degrades to "no meetings",
 never to "everyone's meetings".
 
 ## Transcription

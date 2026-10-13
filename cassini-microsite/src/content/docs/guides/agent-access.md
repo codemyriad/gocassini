@@ -34,13 +34,11 @@ checkout; for other agents, point them at the file.
 ## How it works
 
 What the commands return depends on
-[who can see recordings](/docs/guides/who-can-see-a-recording) on that Nextcloud.
-Where recordings are visible to **anyone with a Nextcloud account**, every
-account gets every recording, fetched as the `cassini` service account. Where
-they are visible to **meeting participants**, the app fetches from Nextcloud
-Files **as the calling user**, so Nextcloud decides per recording. Either way
-Cassini keeps no separate list of who may see what, and never returns more than
-the account is entitled to.
+[who can see a recording](/docs/guides/who-can-see-a-recording): the recordings
+shared with the calling account, through its Talk rooms or by hand. The app
+reads each one from Nextcloud Files **as the calling user**, so Nextcloud decides
+per recording. Cassini keeps no separate list of who may see what, and never
+returns more than the account is entitled to.
 
 ```text
   cassini meetings list --from 2026-08-01
@@ -142,8 +140,8 @@ newest first, in the order the app shows them:
 meeting=01JZ8K… date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes
 ```
 
-`source=nextcloud-files` confirms the bytes came from Nextcloud Files, under
-whichever audience that instance is set to. Anything else also prints a warning
+`source=nextcloud-files` confirms the bytes came from Nextcloud Files, read as
+the calling account. Anything else also prints a warning
 on stderr. `fetchable=no` marks a meeting recorded before the single-file format:
 it has no portable `.opus`, so `fetch` and `context` cannot serve it.
 
