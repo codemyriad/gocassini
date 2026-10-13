@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // An insight is a document somebody asked for by name, so the two properties
@@ -58,6 +59,12 @@ type insightDAV struct {
 	// apart from a denial and from a full disk.
 	failFetch bool
 	failPut   bool
+	// refusePut is Nextcloud's file name validator: a path here is answered
+	// with that status by PUT, as a reserved or forbidden name is.
+	refusePut map[string]int
+	// raced is a file that appears between the run's HEAD and its PUT: HEAD says
+	// 404, and a PUT that asked for a new file (If-None-Match: *) finds it.
+	raced map[string]bool
 }
 
 type insightPut struct {
@@ -67,7 +74,7 @@ type insightPut struct {
 
 func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV {
 	t.Helper()
-	dav := &insightDAV{existing: map[string]bool{}, documents: map[string]string{}}
+	dav := &insightDAV{existing: map[string]bool{}, documents: map[string]string{}, refusePut: map[string]int{}, raced: map[string]bool{}}
 	allowed := make(map[string]bool, len(visible))
 	for _, name := range visible {
 		allowed[name] = true
@@ -142,6 +149,17 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 			if dav.failPut {
 				dav.mu.Unlock()
 				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if status, refused := dav.refusePut[rel]; refused {
+				dav.mu.Unlock()
+				w.WriteHeader(status)
+				return
+			}
+			// Sabre's answer to If-None-Match: * on a file that is there.
+			if r.Header.Get("If-None-Match") == "*" && (dav.existing[rel] || dav.raced[rel]) {
+				dav.mu.Unlock()
+				w.WriteHeader(http.StatusPreconditionFailed)
 				return
 			}
 			dav.put = append(dav.put, insightPut{path: rel, body: string(body)})
@@ -364,10 +382,19 @@ func TestInsightDocumentNameIsTheInsightsNameMadeFileSafe(t *testing.T) {
 		{"zero​width‎", "zerowidth"},
 		{"..hidden", "hidden"},
 		{"trailing. ", "trailing"},
-		{strings.Repeat("a", 150), strings.Repeat("a", maxInsightFileNameRunes)},
+		{strings.Repeat("a", 250), strings.Repeat("a", maxInsightFileNameBytes)},
 		// Nothing filename-safe left: the dated name, so the file still has one.
 		{"/:/", "2026-09-03-summarise-ins_0123456789abcdef"},
 		{"", "2026-09-03-summarise-ins_0123456789abcdef"},
+		// A stem Windows reserves whatever follows the first dot, which a
+		// Nextcloud enforcing Windows-compatible names refuses as well.
+		{"CON", "2026-09-03-summarise-ins_0123456789abcdef"},
+		{"nul.", "2026-09-03-summarise-ins_0123456789abcdef"},
+		{"Con.fidential", "2026-09-03-summarise-ins_0123456789abcdef"},
+		{"com1", "2026-09-03-summarise-ins_0123456789abcdef"},
+		{"lpt¹", "2026-09-03-summarise-ins_0123456789abcdef"},
+		{"Console", "Console"},
+		{"com10", "com10"},
 	}
 	for _, testCase := range cases {
 		run := insightTestRun()
@@ -375,6 +402,94 @@ func TestInsightDocumentNameIsTheInsightsNameMadeFileSafe(t *testing.T) {
 		if got := insightDocumentBaseName(run, now); got != testCase.want {
 			t.Errorf("insightDocumentBaseName(name %q) = %q, want %q", testCase.name, got, testCase.want)
 		}
+	}
+}
+
+// The cap is in bytes because Nextcloud's validator and ext4 count bytes: a
+// name of 100 three-byte characters would be 300 of them, refused at 250.
+func TestInsightFileSafeNameCapsByBytesOnARuneBoundary(t *testing.T) {
+	name := insightFileSafeName(strings.Repeat("語", 100))
+	if !utf8.ValidString(name) {
+		t.Fatalf("the cap cut through a character: %q", name)
+	}
+	if got := len(name + "-5.md"); got > 250 {
+		t.Errorf("len(name + \"-5.md\") = %d, want at most 250", got)
+	}
+	if !strings.HasPrefix(strings.Repeat("語", 100), name) || utf8.RuneCountInString(name) < 60 {
+		t.Errorf("name = %q, want a prefix of the original that keeps most of it", name)
+	}
+}
+
+// Nextcloud refuses a file NAME with a 4xx that the sanitiser cannot predict —
+// a basename its configuration forbids — and the model has already answered.
+// The run delivers under the dated name rather than failing, and the refusal
+// is in the log.
+func TestPerformDeliversUnderTheDatedNameWhenNextcloudRefusesTheName(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	dav.refusePut["alice/"+ncInsightsRoot+"/Weekly sync.md"] = http.StatusBadRequest
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	service, logs := insightTestService(t, dav.server.URL, bin, nil)
+	run := insightTestRun()
+	run.Name = "Weekly sync"
+
+	outcome := service.perform(context.Background(), run)
+
+	if outcome.Status != insightStatusSucceeded {
+		t.Fatalf("status = %q, want succeeded (error %q); log:\n%s", outcome.Status, outcome.Error, logs)
+	}
+	if want := ncInsightsRoot + "/2026-09-03-summarise-ins_0123456789abcdef.md"; outcome.DocumentPath != want {
+		t.Errorf("documentPath = %q, want %q", outcome.DocumentPath, want)
+	}
+	for _, put := range dav.delivered() {
+		if strings.Contains(put.path, "Weekly sync-") {
+			t.Errorf("a suffix on a refused stem was tried: %s", put.path)
+		}
+	}
+	if !strings.Contains(logs.String(), "refused the file name") {
+		t.Errorf("the refusal must be in the log:\n%s", logs)
+	}
+}
+
+// The dated name has the run id in it, so a 4xx there is a real failure, not a
+// name to move on from.
+func TestPerformFailsWhenNextcloudRefusesTheDatedName(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	dav.refusePut["alice/"+ncInsightsRoot+"/2026-09-03-summarise-ins_0123456789abcdef.md"] = http.StatusForbidden
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	service, _ := insightTestService(t, dav.server.URL, bin, nil)
+
+	outcome := service.perform(context.Background(), insightTestRun())
+
+	if outcome.Status != insightStatusFailed || outcome.Error != insightReasonDeliverFailed {
+		t.Fatalf("outcome = %+v, want deliver-failed", outcome)
+	}
+}
+
+// Two runs named alike can finish together (maxConcurrentInsightRuns is 2):
+// both HEAD the same name and see nothing. The PUT asks for a new file, so the
+// second finds the first's and takes the next suffix rather than overwriting.
+func TestPerformDoesNotOverwriteAFileThatAppearedAfterTheHead(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	dav.raced["alice/"+ncInsightsRoot+"/Weekly sync.md"] = true
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	service, logs := insightTestService(t, dav.server.URL, bin, nil)
+	run := insightTestRun()
+	run.Name = "Weekly sync"
+
+	outcome := service.perform(context.Background(), run)
+
+	if outcome.Status != insightStatusSucceeded {
+		t.Fatalf("status = %q, want succeeded (error %q); log:\n%s", outcome.Status, outcome.Error, logs)
+	}
+	want := ncInsightsRoot + "/Weekly sync-2.md"
+	if outcome.DocumentPath != want {
+		t.Errorf("documentPath = %q, want %q", outcome.DocumentPath, want)
+	}
+	if puts := dav.delivered(); len(puts) != 1 || puts[0].path != "alice/"+want {
+		t.Errorf("delivered = %+v, want exactly the suffixed file", puts)
+	}
+	if !strings.Contains(logs.String(), "was not overwritten") {
+		t.Errorf("the near miss must be in the log:\n%s", logs)
 	}
 }
 

@@ -14,11 +14,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Insights: one question asked of several meetings, answered by the model this
@@ -95,9 +97,11 @@ const (
 	// short enough to sit on one card line and in a file name.
 	maxInsightNameRunes = 120
 
-	// maxInsightFileNameRunes caps the part of a delivered file name taken from
-	// the insight's name.
-	maxInsightFileNameRunes = 100
+	// maxInsightFileNameBytes caps the part of a delivered file name taken from
+	// the insight's name. Bytes, not runes: Nextcloud's file name validator and
+	// ext4 count UTF-8 bytes (250 and 255), and 84 CJK characters are already
+	// 252 of them. 200 leaves room for a "-5" suffix and ".md" under either.
+	maxInsightFileNameBytes = 200
 
 	// maxInsightDocumentBytes bounds what one run may produce. An insight is
 	// prose over a handful of meetings; four megabytes is orders of magnitude
@@ -573,7 +577,10 @@ func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPa
 	if unnamed := insightUnnamedBaseName(run, now); unnamed != bases[0] {
 		bases = append(bases, unnamed)
 	}
-	for _, base := range bases {
+	for i, base := range bases {
+		// The first base is the insight's name where it has a usable one; the
+		// last is the dated run-id name, which nothing else chooses.
+		named := i == 0 && len(bases) > 1
 		for attempt := 1; attempt <= maxInsightDeliveryAttempts; attempt++ {
 			name := base + ".md"
 			if attempt > 1 {
@@ -588,10 +595,27 @@ func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPa
 				s.logf("insights: run=%s found %s already in caller=%s's files; it was not overwritten", run.ID, relPath, run.CreatedBy)
 				continue
 			}
-			if _, err := s.exapp.davPutFileStatus(ctx, s.client, run.CreatedBy, relPath, documentPath, "text/markdown; charset=utf-8"); err != nil {
-				return "", err
+			// Created, never replaced: the PUT carries If-None-Match, so a file
+			// that appeared between the HEAD and now — two runs named alike
+			// finishing together — is found rather than overwritten.
+			status, err := s.exapp.davPutNewFile(ctx, s.client, run.CreatedBy, relPath, documentPath, "text/markdown; charset=utf-8")
+			if err == nil {
+				return relPath, nil
 			}
-			return relPath, nil
+			if errors.Is(err, errDAVExists) {
+				s.logf("insights: run=%s found %s appear in caller=%s's files as it was about to write it; it was not overwritten", run.ID, relPath, run.CreatedBy)
+				continue
+			}
+			if named && status >= 400 && status < 500 {
+				// Nextcloud refused the NAME, not the write: a stem its file name
+				// rules reserve, or a character its configuration forbids that
+				// insightFileSafeName did not know to drop. A suffix on the same
+				// stem would be refused the same way; the dated name is not. The
+				// model has answered, and a file name is no reason to fail the run.
+				s.logf("insights: run=%s Nextcloud refused the file name %s (%d); delivering under the dated name instead", run.ID, relPath, status)
+				break
+			}
+			return "", err
 		}
 	}
 	return "", fmt.Errorf("%s already holds %d files named like this insight", ncInsightsRoot, len(bases)*maxInsightDeliveryAttempts)
@@ -638,27 +662,62 @@ func insightUnnamedBaseName(run InsightRun, now time.Time) string {
 // insightFileSafeName turns a name into something every client of the
 // requester's files can hold: none of the characters Windows refuses in a file
 // name — which a Nextcloud with Windows-compatible names enforced refuses too,
-// and a question mark is on that list, so the default name of every question
-// run carries one — no control or invisible format characters, whitespace
-// collapsed to single spaces, no leading dot (a hidden file) and no trailing
-// dot or space (dropped by Windows, so the name on disk would not be the one
-// chosen). Capped so that a suffix and ".md" still fit comfortably inside any
-// file system's name limit.
+// and a question mark is on that list, so a question is never a file name as
+// typed — no control or invisible format characters, whitespace collapsed to
+// single spaces, no leading dot (a hidden file) and no trailing dot or space
+// (dropped by Windows, so the name on disk would not be the one chosen). Capped
+// in bytes so that a suffix and ".md" still fit inside any file system's name
+// limit. A stem Windows reserves whatever the extension (CON, AUX, COM1, ...)
+// is "" — the dated name is used — because that Nextcloud refuses it too, and
+// deliver has no way to make "aux" writable.
 func insightFileSafeName(name string) string {
 	cleaned := strings.Map(func(r rune) rune {
 		switch {
 		case strings.ContainsRune(`/\:*?"<>|`, r):
 			return ' '
-		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+		case isInvisibleRune(r):
 			return -1
 		}
 		return r
 	}, name)
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
-	if runes := []rune(cleaned); len(runes) > maxInsightFileNameRunes {
-		cleaned = strings.TrimSpace(string(runes[:maxInsightFileNameRunes]))
+	cleaned = strings.TrimSpace(truncateUTF8(cleaned, maxInsightFileNameBytes))
+	cleaned = strings.TrimRight(strings.TrimLeft(cleaned, ". "), ". ")
+	if isReservedFileStem(cleaned) {
+		return ""
 	}
-	return strings.TrimRight(strings.TrimLeft(cleaned, ". "), ". ")
+	return cleaned
+}
+
+// isInvisibleRune is a control character (Cc) or an invisible format character
+// (Cf: zero-width spaces and joiners, bidirectional marks, the byte order mark).
+// A file name drops them all; the name validator refuses a name made only of
+// them (isVisibleRune).
+func isInvisibleRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+}
+
+// truncateUTF8 cuts s to at most limit bytes, on a rune boundary.
+func truncateUTF8(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+// windowsReservedStem is the set of base names Windows refuses whatever the
+// extension, as Nextcloud's forbidden_filename_basenames lists them, superscript
+// digits included. Nextcloud matches the part before the FIRST dot, so
+// "Con.fidential.md" is refused as "con" is.
+var windowsReservedStem = regexp.MustCompile(`(?i)^(?:con|prn|aux|nul|(?:com|lpt)[0-9¹²³])$`)
+
+func isReservedFileStem(name string) bool {
+	stem, _, _ := strings.Cut(name, ".")
+	return windowsReservedStem.MatchString(strings.TrimSpace(stem))
 }
 
 // davExists reports whether relPath is already a file in userID's home. A HEAD
