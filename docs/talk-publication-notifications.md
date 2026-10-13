@@ -1,15 +1,19 @@
 # Talk publication notifications
 
 After the first successful publication of a Talk recording, Cassini posts
-`Recording available: <meeting link>` in its originating room. The author is the
-moderator who started recording (`start.owner`), with that person's name and
+a named viewer link in its originating room and in **Shared items → Other**.
+For example: `Cassini · Weekly planning · 2026-10-13 10:00 · 32 min · Speakers: Alex, Chris, Ivan +1`.
+The author is the moderator who started recording (`start.owner`), with that person's name and
 avatar. Posting uses the existing AppAPI credentials; no bot, account, app
 password, extra membership, or new manifest route is required.
 
 The message opens Cassini's embedded meeting viewer. Its public Nextcloud base
 comes from the original recording request, not an internal callback/OCS host.
 Nextcloud Files continues to decide who can open the recording. Posting the
-message creates no shares and grants no new access. The wording makes no claim
+message creates no Files shares and grants no new access. Talk indexes the same
+rich-object message in its sidebar; it is not a native recording attachment.
+The label is visible to room members, including later joiners, but the viewer
+still checks their Files access. The wording makes no claim
 that transcription succeeded: recordings without transcripts also get a link.
 
 Delivery is best effort. After the first successful publication, the publish
@@ -23,7 +27,7 @@ Upload recording + establish Files permissions
                     |
         Record publication success
                     |
-       One bounded POST as moderator
+       One bounded rich-object POST as moderator
                /           \
           accepted         failed/unconfirmed
                |                 |
@@ -43,8 +47,12 @@ delivery guarantee.
 
 If a notification is missing, a participant can copy the meeting URL from
 Cassini and post it manually. A notification failure does not change publication
-success or trigger a fallback to another sender. No native Shared items
-attachment is created (D-833).
+success or trigger a fallback to another sender.
+
+The `highlight` rich object is sent through `/chat/{token}/share` with a
+meeting ID, a display name and the existing viewer link. Talk renders a bold
+link in chat and a named link under Shared items → Other. It does not provide
+a custom metadata card.
 
 ## Validation
 
@@ -59,8 +67,8 @@ path mismatch, use `TMPDIR=/private/tmp go test -race ./...`.
 
 An opt-in API test creates disposable private, public and one-to-one rooms on
 an **already installed local ExApp fixture**, sends as its administrator, checks
-the author via chat history, and cleans up the rooms and temporary
-peer account. It refuses non-loopback URLs. Supply these environment variables
+the author via chat history and the same message ID/link in Shared items,
+and cleans up the rooms and temporary peer account. It refuses non-loopback URLs. Supply these environment variables
 from the local fixture without writing credentials into source control:
 
 - `CASSINI_TEST_TALK_URL`: for example `http://127.0.0.1:28080`.
@@ -79,5 +87,18 @@ To validate the complete product flow after deployment, record a short call,
 stop it, wait for publication, and check that the room receives one link authored
 by the recording moderator. Open the link as a permitted reader, and verify an
 unshared account cannot read the meeting. Republish the job and confirm there is
-no second message. Native file attachments and transcript-range links are
-separate work (D-833 and D-811).
+no second message. Verify the same link appears under Shared items → Other. Native file
+attachments and transcript-range links remain separate work.
+
+## Label metadata
+
+The title, date label and duration come from the matching published catalog entry.
+Speaker names come from that attempt's transcript speaker labels, not the room's
+invited audience. Names are sorted, deduplicated and limited to three plus a
+remaining count. These are labelled “Speakers”, not a complete attendance list.
+Missing or unreadable metadata is omitted; the fallback is “Cassini · Meeting
+available”. Text is whitespace-normalized and bounded. This works for both Opus
+and JSON publications and does not claim a transcript or summary exists.
+
+The change applies to future publication messages. Existing chat messages are
+not edited or backfilled. Delivery remains one best-effort request with no retry.
