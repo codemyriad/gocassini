@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const talkNotificationTitlePrefix = "Meeting recording available: "
+
 type talkNotification struct {
 	Owner     string
 	RoomToken string
@@ -56,7 +58,7 @@ func (s *Store) prepareTalkNotification(ctx context.Context, jobID, appID string
 	if err != nil {
 		return nil, err
 	}
-	return &talkNotification{Owner: strings.TrimSpace(b.Owner), RoomToken: strings.TrimSpace(b.RoomToken), MeetingID: jobID, Link: link, Message: "Meeting available"}, nil
+	return &talkNotification{Owner: strings.TrimSpace(b.Owner), RoomToken: strings.TrimSpace(b.RoomToken), MeetingID: jobID, Link: link, Message: talkNotificationTitlePrefix + "Untitled meeting"}, nil
 }
 
 // Metadata is best effort and comes only from this published attempt.
@@ -86,7 +88,7 @@ func (n *talkNotification) enrich(sitePath, bundlePath, roomName string) {
 	if title != "" {
 		parts = append(parts, title)
 	} else {
-		parts = append(parts, "Meeting available")
+		parts = append(parts, "Untitled meeting")
 	}
 	if date := notificationDate(entry.Date); date != "" {
 		parts = append(parts, date)
@@ -123,7 +125,7 @@ func (n *talkNotification) enrich(sitePath, bundlePath, roomName string) {
 			parts = append(parts, "Speakers: "+label)
 		}
 	}
-	n.Message = strings.Join(parts, " · ")
+	n.Message = talkNotificationTitlePrefix + strings.Join(parts, " · ")
 }
 
 // Preserve the recorded calendar date rather than converting it to server time.

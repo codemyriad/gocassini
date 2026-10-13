@@ -104,7 +104,7 @@ func TestTalkNotificationInstalledExApp(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			n := talkNotification{Owner: owner, RoomToken: room.Token, MeetingID: "d833-test", Link: cfg.NextcloudURL + "/index.php/apps/app_api/embedded/" + cfg.AppID + "/viewer#meeting=d833-test", Message: "Integration check · 13 Oct · 2 min · Speakers: Test"}
+			n := talkNotification{Owner: owner, RoomToken: room.Token, MeetingID: "d833-test", Link: cfg.NextcloudURL + "/index.php/apps/app_api/embedded/" + cfg.AppID + "/viewer#meeting=d833-test", Message: "Meeting recording available: Integration check · 13 Oct · 2 min · Speakers: Test"}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			// Joining a call/chat session is deliberately unnecessary.
