@@ -2,7 +2,7 @@
 
 After the first successful publication of a Talk recording, Cassini posts
 a named viewer link in its originating room and in **Shared items → Other**.
-For example: `Weekly planning · 13 Oct · 32 min`.
+For example: `Weekly planning · 13 Oct · 32 min · Speakers: Alex, Chris, Ivan +1`.
 The author is the moderator who started recording (`start.owner`), with that person's name and
 avatar. Posting uses the existing AppAPI credentials; no bot, account, app
 password, extra membership, or new manifest route is required.
@@ -92,10 +92,14 @@ attachments and transcript-range links remain separate work.
 
 ## Label metadata
 
-The title, date and duration come from the matching published catalog entry.
+The title prefers the saved Talk room name, falling back to the matching
+published catalog title. Date and duration come from that catalog entry.
 Dates use a compact day/month label (for example, “13 Oct”) without converting
 the recorded date to server time. The same compact label appears in chat and
-Shared items. The Cassini prefix and speaker list are omitted to keep it short.
+Shared items. Speaker labels come from the published attempt’s transcript, not the invited
+room audience. Names are sorted, deduplicated and limited to three plus a
+remaining count. Missing speaker labels are omitted; they do not represent
+a complete attendance list.
 Missing or unreadable metadata is omitted; the fallback is “Meeting available”.
 Text is whitespace-normalized and bounded. This works for both Opus and JSON
 publications and does not claim a transcript or summary exists. Talk supplies

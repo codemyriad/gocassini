@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -58,7 +61,7 @@ func (s *Store) prepareTalkNotification(ctx context.Context, jobID, appID string
 
 // Metadata is best effort and comes only from this published attempt.
 // Keep the shared-items label compact; Talk renders it as a single link.
-func (n *talkNotification) enrich(sitePath string) {
+func (n *talkNotification) enrich(sitePath, bundlePath, roomName string) {
 	parts := []string{}
 	type notificationCatalogEntry struct {
 		ID         string `json:"id"`
@@ -76,7 +79,11 @@ func (n *talkNotification) enrich(sitePath string) {
 			entry = notificationCatalogEntry{}
 		}
 	}
-	if title := notificationText(entry.Title, 80); title != "" {
+	title := notificationText(roomName, 80)
+	if title == "" {
+		title = notificationText(entry.Title, 80)
+	}
+	if title != "" {
 		parts = append(parts, title)
 	} else {
 		parts = append(parts, "Meeting available")
@@ -90,6 +97,30 @@ func (n *talkNotification) enrich(sitePath string) {
 			parts = append(parts, "<1 min")
 		} else {
 			parts = append(parts, fmt.Sprintf("%d min", minutes))
+		}
+	}
+	var transcript struct {
+		Speakers []struct {
+			Label string `json:"label"`
+		} `json:"speakers"`
+	}
+	if raw, err := os.ReadFile(filepath.Join(bundlePath, "transcript.words.v1.json")); err == nil && json.Unmarshal(raw, &transcript) == nil {
+		names := []string{}
+		seen := map[string]bool{}
+		for _, speaker := range transcript.Speakers {
+			name := notificationText(speaker.Label, 40)
+			if name != "" && !seen[name] {
+				names = append(names, name)
+				seen[name] = true
+			}
+		}
+		sort.Strings(names)
+		if len(names) > 0 {
+			label := strings.Join(names[:min(3, len(names))], ", ")
+			if len(names) > 3 {
+				label += fmt.Sprintf(" +%d", len(names)-3)
+			}
+			parts = append(parts, "Speakers: "+label)
 		}
 	}
 	n.Message = strings.Join(parts, " · ")
