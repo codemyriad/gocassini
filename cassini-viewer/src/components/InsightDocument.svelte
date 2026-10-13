@@ -209,45 +209,45 @@
        bottom of the page, under the answer, where they are provenance nobody
        reaches. The three that identify this run are here. -->
   <header class="ins-head">
-    <div class="ins-head-top">
+    <div class="ins-head-top" class:editing={editingName}>
       <div class="ins-head-title">
         {#if editingName}
-          <!-- One strip, as the tag manager's: the name, then Cancel and
-               Save, in that order and at those sizes. -->
-          <div class="ins-name-editor">
-            <input
-              bind:this={nameInput}
-              bind:value={draftName}
-              type="text"
-              class="input input-sm ins-name-input"
-              aria-label="Insight name"
-              aria-invalid={renameError ? "true" : undefined}
-              aria-describedby={renameError ? renameErrorId : undefined}
-              maxlength={INSIGHT_NAME_MAX}
-              autocomplete="off"
-              spellcheck="false"
-              disabled={renaming}
-              on:keydown={onNameKeydown}
-            />
-            <button type="button" class="ins-name-cancel" on:click={cancelRename}>Cancel</button>
-            <button
-              type="button"
-              class="btn btn-neutral btn-sm px-4 font-semibold"
-              disabled={!nameSaveable}
-              on:click={saveRename}
-            >
-              {renaming ? "Saving…" : "Save"}
-            </button>
-          </div>
+          <input
+            bind:this={nameInput}
+            bind:value={draftName}
+            type="text"
+            class="input input-sm ins-name-input"
+            aria-label="Insight name"
+            aria-invalid={renameError ? "true" : undefined}
+            aria-describedby={renameError ? renameErrorId : undefined}
+            maxlength={INSIGHT_NAME_MAX}
+            autocomplete="off"
+            spellcheck="false"
+            disabled={renaming}
+            on:keydown={onNameKeydown}
+          />
         {:else}
           <h2>{headline}</h2>
         {/if}
       </div>
       <!-- The pencil keeps the close button's company at the right edge,
            whatever the title's length: a control that trailed the last word
-           of the title landed somewhere different on every insight. -->
+           of the title landed somewhere different on every insight. While
+           renaming, Cancel and Save take its place, as the tag manager's
+           strip has them, so they share the X's line rather than the
+           input's. -->
       <div class="ins-head-controls">
-        {#if canRename && !editingName}
+        {#if editingName}
+          <button type="button" class="ins-name-cancel" on:click={cancelRename}>Cancel</button>
+          <button
+            type="button"
+            class="btn btn-neutral btn-sm px-4 font-semibold"
+            disabled={!nameSaveable}
+            on:click={saveRename}
+          >
+            {renaming ? "Saving…" : "Save"}
+          </button>
+        {:else if canRename}
           <button
             bind:this={renameButton}
             type="button"
@@ -474,16 +474,16 @@
   .ins-rename {
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
-  .ins-name-editor {
-    display: flex;
-    flex: 1 1 auto;
-    flex-wrap: wrap;
+  /* Renaming: the input and the 32px controls are the same height, so the
+     row centres them on one line and the controls drop their lift. */
+  .ins-head-top.editing {
     align-items: center;
-    gap: 0.375rem;
-    min-width: 0;
+  }
+  .ins-head-top.editing .ins-head-controls {
+    margin-top: 0;
   }
   .ins-name-input {
-    flex: 1 1 10rem;
+    flex: 1 1 auto;
     min-width: 0;
     font-size: 1.0625rem;
     font-weight: 650;
