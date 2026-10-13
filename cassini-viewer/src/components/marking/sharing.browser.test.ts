@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import App from "../../App.svelte";
 import MeetingView from "../MeetingView.svelte";
+import { buildTranscriptIndex } from "../../core/transcript";
 import { readViewerRange } from "../../viewer/hashRouting";
 import "../../app.css";
 import { annotationFixture, focusTag, savedMark } from "./annotations.fixture";
@@ -144,16 +145,25 @@ it("restores the requested transcript and returns to the default through history
     return { ...catalog!, meetings: catalog!.meetings.map(entry => ({ ...entry, meetingPath: `${entry.id}.meeting` })) };
   };
   fixture.provider.loadMeetingForEntry = async () => ({ ...base, availableTranscripts, currentTranscriptId: "original" });
-  fixture.provider.switchTranscript = vi.fn(async (_entry, id) => ({ ...base, availableTranscripts, currentTranscriptId: id }));
+  const alternate = structuredClone(base.transcript);
+  for (const segment of alternate.segments) {
+    segment.text = segment.text.toUpperCase();
+    for (const word of segment.words ?? []) word.text = word.text.toUpperCase();
+  }
+  fixture.provider.switchTranscript = vi.fn(async (_entry, id) => ({
+    ...base, availableTranscripts, currentTranscriptId: id,
+    transcript: id === "alternate" ? alternate : base.transcript,
+    index: buildTranscriptIndex(id === "alternate" ? alternate : base.transcript),
+  }));
   open("#meeting=m1&tx=alternate&range=1000,3000");
-  await expect.poll(selected).toEqual(["second", "third"]);
+  await expect.poll(selected).toEqual(["SECOND", "THIRD"]);
   await page.getByRole("button", { name: "Copy link", exact: true }).click();
   expect(new URL(writeText.mock.calls[0][0]).hash).toContain("tx=alternate");
   await navigate("#meeting=m1&range=3000,5000");
   await expect.poll(selected).toEqual(["fourth", "fifth"]);
   expect(fixture.provider.switchTranscript).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m1" }), "original");
   history.back();
-  await expect.poll(selected).toEqual(["second", "third"]);
+  await expect.poll(selected).toEqual(["SECOND", "THIRD"]);
   history.forward();
   await expect.poll(selected).toEqual(["fourth", "fifth"]);
   await navigate("#meeting=m1&tx=missing&range=0,1000");
