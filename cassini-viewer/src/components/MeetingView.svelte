@@ -890,7 +890,9 @@
   }
 
   function resetTabs() {
-    activeTab = pendingSeekMs === null ? "summary" : "transcript";
+    // A moment to seek to, or words carried in from a search, are both about
+    // the transcript: open there, where they show.
+    activeTab = pendingSeekMs === null && !initialQuery.trim() ? "summary" : "transcript";
     searchOpen = false;
     tabScrollTop = { summary: 0, transcript: 0 };
   }

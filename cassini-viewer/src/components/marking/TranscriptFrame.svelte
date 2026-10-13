@@ -560,6 +560,11 @@
       return;
     }
     if (!selection || selection !== selectionAtClick) return;
+    // The click that ends a drag the browser itself selected (one started off
+    // a word, so `dragClick` never armed): the reader's text is still selected
+    // here. A click beside a selection collapses it on the press, so this only
+    // spares the release.
+    if (readerRange()) return;
     const kept = event
       .composedPath()
       .some((node) => node instanceof HTMLElement && node.matches("[data-pin], [data-keep-selection]"));

@@ -204,7 +204,18 @@ function viewerStylesheetHref(win: Window, doc: Document): string {
       break;
     }
   }
-  return base + "ui/viewer.css" + versionQuery;
+  return base + "ui/viewer.css" + withBuildId(versionQuery);
+}
+
+// Nextcloud's ?v= follows the app version, which an update that keeps it (a
+// hot-deploy, a rebuilt image) does not bump, so a browser could pair this
+// script with a stylesheet from an older build: every component style then
+// misses, because Svelte's scoped class names differ between builds. The
+// build id makes each build's stylesheet a URL of its own.
+function withBuildId(query: string): string {
+  const id = typeof __CASSINI_BUILD_ID__ === "string" ? __CASSINI_BUILD_ID__ : "";
+  if (!id) return query;
+  return query ? `${query}&build=${id}` : `?build=${id}`;
 }
 
 // applyNextcloudTheme bridges Nextcloud's user colour/accessibility preferences

@@ -50,8 +50,14 @@
 <section class="op-tint access">
   <h2 class="set-row-name op-card-title">Who can see recordings</h2>
   <div class="access-body grid gap-3 text-sm">
-    <p>Each recording is shared with all of the Talk room's participants, whether they were present on the call or not. Guests without a Nextcloud account can't open it.</p>
-    <p>Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.</p>
+    <!-- Same points as the rooms rail's "Shared with participants" note
+         (cassini-viewer RoomsRail.svelte); change both together. -->
+    <p>Nextcloud Files controls who can read each recording.</p>
+    <ul class="access-points">
+      <li>Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.</li>
+      <li>Guests without a Nextcloud account can't open it.</li>
+      <li>Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.</li>
+    </ul>
     {#if loading}
       <p role="status">Checking recordings setup…</p>
     {:else if error || (status && (!status.service_account.exists || !status.ok))}
@@ -82,6 +88,13 @@
     display: grid;
     gap: 12px;
     padding: 14px 16px;
+  }
+  .access-points {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding-left: 1.1rem;
+    list-style: disc;
   }
   .access-actions {
     display: flex;
