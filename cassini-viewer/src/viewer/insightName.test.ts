@@ -12,10 +12,22 @@ function meeting(overrides: Partial<MeetingCatalogEntry> & { id: string }): Meet
 }
 
 describe("defaultInsightName", () => {
-  it("is the question as typed, for a template that takes one", () => {
+  it("names a question run by its template and what it read, never by the question", () => {
+    // A question is typed over several lines and can be a paragraph; the
+    // operator refuses a line break in a name. The question is quoted in the
+    // drawer instead, under a name that says something else.
     expect(
-      defaultInsightName({ templateName: "Ask", question: "  What did we decide?  ", entries: [meeting({ id: "a" })] }),
-    ).toBe("What did we decide?");
+      defaultInsightName({ templateName: "Ask", entries: [meeting({ id: "a", title: "Design review" })] }),
+    ).toBe("Ask · Design review, 3 Oct 2026");
+  });
+
+  it("folds a title's line breaks, tabs and invisible characters into one line", () => {
+    expect(
+      defaultInsightName({
+        templateName: " Summary\n",
+        entries: [meeting({ id: "a", title: "Design\treview\n\nnotes\u200b" })],
+      }),
+    ).toBe("Summary · Design review notes, 3 Oct 2026");
   });
 
   it("names one meeting by its title and day", () => {
@@ -65,7 +77,7 @@ describe("defaultInsightName", () => {
   });
 
   it("stays inside the operator's bound", () => {
-    const name = defaultInsightName({ templateName: "Summary", question: "x".repeat(300), entries: [] });
+    const name = defaultInsightName({ templateName: "Summary", entries: [meeting({ id: "a", title: "x".repeat(300) })] });
     expect(Array.from(name)).toHaveLength(INSIGHT_NAME_MAX);
     expect(name.endsWith("…")).toBe(true);
   });

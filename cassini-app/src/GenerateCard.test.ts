@@ -73,13 +73,29 @@ describe("GenerateCard", () => {
 
   it("fills in a name, keeps it until somebody edits it, and sends it", () => {
     // Titled by its workflow id, every summary in the list read "summarise"
-    // (D-791). The default follows the template, question and selection only
-    // while untouched; after an edit it is the asker's.
+    // (D-791). The default follows the template and selection only while
+    // untouched; after an edit it is the asker's.
     expect(generateCardSource).toContain("defaultInsightName(");
     expect(generateCardSource).toContain("$: if (!nameTouched) {");
     expect(generateCardSource).toContain("on:input={() => (nameTouched = true)}");
-    expect(generateCardSource).toMatch(/createInsight\(\{[\s\S]*\bname,\n\s*\}\)/);
     expect(generateCardSource).toContain("You can rename it later from the insight.");
+  });
+
+  it("never names an insight after the question", () => {
+    // The question box takes several lines and the operator refuses a line
+    // break in a name: a question-as-name was a 400 for a name nobody typed.
+    const suggestion = generateCardSource.slice(
+      generateCardSource.indexOf("$: suggestedName = defaultInsightName({"),
+      generateCardSource.indexOf("$: if (!nameTouched) {"),
+    );
+    expect(suggestion).not.toContain("question");
+  });
+
+  it("falls back to the suggestion when the box is cleared", () => {
+    // Shown as the placeholder of the empty box, and sent in its place: the
+    // one way to create a run with no name was to clear this box.
+    expect(generateCardSource).toContain("placeholder={suggestedName}");
+    expect(generateCardSource).toMatch(/createInsight\(\{[\s\S]*name: name\.trim\(\) \|\| suggestedName,\n/);
   });
 
   it("offers the name to admins in the template box and to everybody else under the template line", () => {
