@@ -389,3 +389,33 @@ describe("AppDataProvider.retryInsight", () => {
     );
   });
 });
+
+describe("AppDataProvider.renameInsight", () => {
+  it("posts the name to the run's own name path and returns the run the operator answered with", async () => {
+    // The viewer puts this record in the list in place of the old one, so the
+    // headline every surface shows is the operator's answer (D-791).
+    const fetchMock = respondWith(
+      JSON.stringify({
+        id: "ins_0123456789abcdef",
+        status: "succeeded",
+        attemptNumber: 1,
+        meetingIds: ["m1"],
+        name: "Design sync",
+        error: "",
+      }),
+    );
+    const run = await new AppDataProvider().renameInsight("ins_0123456789abcdef", " Design sync ");
+    expect(run.name).toBe("Design sync");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${PROXY_BASE}insights/ins_0123456789abcdef/name`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ name: "Design sync" });
+  });
+
+  it("repeats the operator's reason for refusing a name", async () => {
+    respondWith(JSON.stringify({ error: "a name cannot contain control characters" }), { status: 400 });
+    await expect(new AppDataProvider().renameInsight("ins_0123456789abcdef", "a\tb")).rejects.toThrow(
+      "a name cannot contain control characters",
+    );
+  });
+});

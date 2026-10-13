@@ -475,6 +475,11 @@ export function describeRequestFailure(
           // here is an operator that does not serve these routes. That is not
           // "you have no insights", and it must not read as it.
           return "Insights could not be listed.";
+        case "rename":
+          // The route is newer than the others: an operator that creates and
+          // reads insights can still lack it, and "cannot create insights"
+          // would be false in exactly that case.
+          return "That insight is not available to you, or this deployment cannot rename insights.";
         default:
           return "That insight is not available to you, or this deployment cannot create insights.";
       }
