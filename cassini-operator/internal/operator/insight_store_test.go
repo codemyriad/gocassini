@@ -77,6 +77,50 @@ func TestInsightStoreCreatesARecordBeforeItsContentExists(t *testing.T) {
 	}
 }
 
+// The name is stored on create, served by both reads, and survives a retry,
+// which is another attempt on the same row rather than a new insight.
+func TestInsightStoreKeepsTheNameAcrossReadsRenamesAndRetries(t *testing.T) {
+	ctx := context.Background()
+	store := newInsightTestStore(t)
+	run := InsightRun{
+		ID: "ins_0123456789abcdef", CreatedBy: "alice", WorkflowID: "summarise",
+		MeetingIDs: []string{"mtg_1111111111111111"}, Name: "Design sync",
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	if got := mustGetInsightRun(t, store, run.ID).Name; got != "Design sync" {
+		t.Fatalf("GetRun().Name = %q", got)
+	}
+	listed, err := store.ListRuns(ctx, "alice")
+	if err != nil || len(listed) != 1 || listed[0].Name != "Design sync" {
+		t.Fatalf("ListRuns() = %+v, %v; want the name listed", listed, err)
+	}
+
+	before := mustGetInsightRun(t, store, run.ID)
+	renamed, err := store.RenameRun(ctx, run.ID, "Design sync, October")
+	if err != nil || renamed.Name != "Design sync, October" {
+		t.Fatalf("RenameRun() = %+v, %v", renamed, err)
+	}
+	if !renamed.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Errorf("updated_at moved from %v to %v; it is the attempt's heartbeat, and a rename is not an attempt", before.UpdatedAt, renamed.UpdatedAt)
+	}
+	if _, err := store.RenameRun(ctx, "ins_0000000000000fff", "x"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("RenameRun(absent) error = %v, want sql.ErrNoRows", err)
+	}
+
+	if _, err := store.BeginAttempt(ctx, run.ID); err != nil {
+		t.Fatalf("BeginAttempt() error = %v", err)
+	}
+	if err := store.FinishAttempt(ctx, run.ID, InsightOutcome{Status: insightStatusFailed, Error: insightReasonInterrupted}); err != nil {
+		t.Fatalf("FinishAttempt() error = %v", err)
+	}
+	retried, err := store.BeginAttempt(ctx, run.ID)
+	if err != nil || retried.AttemptNumber != 2 || retried.Name != "Design sync, October" {
+		t.Fatalf("retry = %+v, %v; want attempt 2 under the same name", retried, err)
+	}
+}
+
 func TestInsightStoreRefusesARequestItCouldNotList(t *testing.T) {
 	store := newInsightTestStore(t)
 	valid := func() InsightRun {

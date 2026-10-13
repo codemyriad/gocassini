@@ -164,6 +164,23 @@ export interface DataProvider {
   // rather than only from the panel that started it.
   retryInsight?(id: string): Promise<InsightRecord>;
 
+  // OPTIONAL (D-791): rename a run — `POST insights/<id>/name` — and return the
+  // run as it now stands. An empty name clears it, and the headline falls back
+  // to the question. Only the run's creator may, which every run this caller
+  // can list already is. Optional for the reason retry is: the name is stored
+  // by the operator, so a build with none offers no rename rather than one that
+  // fails.
+  renameInsight?(id: string, name: string): Promise<InsightRecord>;
+
+  // OPTIONAL (D-792): where an insight's document opens in Nextcloud Files —
+  // its folder, scrolled to the file — or "" when it has no document.
+  //
+  // Optional because only a build inside Nextcloud has a Files app to open. A
+  // standalone export does not implement it, and the document sheet offers no
+  // "Open in Files" rather than a link to nowhere. Sharing is left to Files'
+  // own share sidebar, so Cassini needs no share dialog of its own.
+  insightFilesUrl?(record: InsightRecord): string;
+
   // OPTIONAL: people's edits to a meeting's speakers — `GET|POST
   // annotations/meetings/<id>/speakers`. Saying that several people used one
   // participant's device separates the voices in that device's own audio, and

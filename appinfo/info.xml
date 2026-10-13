@@ -383,10 +383,10 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
 
       <!--
-        USER: insights. Four operations over three paths — create a run
+        USER: insights. Five operations over four paths — create a run
         (POST insights), list the caller's own runs (GET insights), read one
         with its document (GET insights/<id>), retry a failed one
-        (POST insights/<id>/retry).
+        (POST insights/<id>/retry), rename one (POST insights/<id>/name).
 
         Declared as one block, and deliberately not folded into
         `^published\/.+$`, because create and retry are the app's FIRST
@@ -403,7 +403,7 @@ Summaries and questions use whichever language model you connect, so their ratin
 
         The id pattern must not swallow the retry path: `[^\/]+` cannot cross a
         `/`, so `^insights\/[^\/]+\/?$` matches `insights/ins_0123…` and leaves
-        `insights/ins_0123…/retry` to the route below it. See
+        `insights/ins_0123…/retry` and `…/name` to the routes below it. See
         docs/exapp-update-constraints.md §5a for the command that checks a
         pattern against the paths it must and must not match — and for why a
         release that changes this block must bump <version>.
@@ -420,6 +420,13 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
       <route>
         <url>^insights\/[^\/]+\/retry\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- Rename (D-791). The operator answers 404 for anyone but the run's
+           creator, the same rule as every other insights/<id> route. -->
+      <route>
+        <url>^insights\/[^\/]+\/name\/?$</url>
         <verb>POST</verb>
         <access_level>USER</access_level>
       </route>

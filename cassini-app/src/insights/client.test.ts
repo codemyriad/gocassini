@@ -10,6 +10,7 @@ import {
   pollDelayMs,
   readInsight,
   readRun,
+  renameInsight,
   resolveInsightsUrl,
   retryInsight,
   workflowTakesQuestion,
@@ -116,6 +117,21 @@ describe("createInsight", () => {
     expect(JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body))).toEqual({
       meetingIds: ["a"],
       question: "What did we decide?",
+    });
+  });
+
+  it("sends a name, trimmed, and leaves out an empty one", async () => {
+    const named = respondWith(JSON.stringify(run()), { status: 201 });
+    await createInsight({ meetingIds: ["a"], name: "  Design sync  " }, named);
+    expect(JSON.parse(String((named.mock.calls[0] as [string, RequestInit])[1].body))).toEqual({
+      meetingIds: ["a"],
+      name: "Design sync",
+    });
+
+    const unnamed = respondWith(JSON.stringify(run()), { status: 201 });
+    await createInsight({ meetingIds: ["a"], name: "   " }, unnamed);
+    expect(JSON.parse(String((unnamed.mock.calls[0] as [string, RequestInit])[1].body))).toEqual({
+      meetingIds: ["a"],
     });
   });
 
@@ -245,6 +261,49 @@ describe("retryInsight", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`${PROXY_BASE}insights/ins_0123456789abcdef/retry`);
     expect(init.method).toBe("POST");
+  });
+});
+
+describe("renameInsight", () => {
+  it("posts the trimmed name to the run's own name path and reads the run back", async () => {
+    const fetchMock = respondWith(JSON.stringify(run({ name: "Design sync" })));
+
+    await expect(renameInsight("ins_0123456789abcdef", "  Design sync ", fetchMock)).resolves.toMatchObject({
+      name: "Design sync",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${PROXY_BASE}insights/ins_0123456789abcdef/name`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ name: "Design sync" });
+  });
+
+  it("repeats what the operator said was wrong with the name", async () => {
+    const fetchMock = respondWith(JSON.stringify({ error: "a name is at most 120 characters" }), {
+      status: 400,
+    });
+
+    await expect(renameInsight("ins_0123456789abcdef", "x", fetchMock)).rejects.toThrow(
+      "a name is at most 120 characters",
+    );
+  });
+
+  it("names the operation a 502 stopped", async () => {
+    const fetchMock = respondWith("", { status: 502 });
+
+    await expect(renameInsight("ins_0123456789abcdef", "x", fetchMock)).rejects.toThrow(
+      "Cassini could not rename the insight.",
+    );
+  });
+
+  it("does not blame creating on a 404, which an operator without the route also answers", async () => {
+    // A deploy by image sha without a version bump leaves AppAPI's allowlist
+    // without this route: creating works, every save 404s.
+    const fetchMock = respondWith("404 page not found\n", { status: 404 });
+
+    await expect(renameInsight("ins_0123456789abcdef", "x", fetchMock)).rejects.toThrow(
+      "That insight is not available to you, or this deployment cannot rename insights.",
+    );
   });
 });
 

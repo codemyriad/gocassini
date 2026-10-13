@@ -1,12 +1,13 @@
 // The insight routes, from the app (D-700).
 //
 // One question asked of several meetings, and the run record that answers it
-// over the minutes it takes. Four calls:
+// over the minutes it takes. Five calls:
 //
 //	POST insights            create a run          201 {run}
 //	GET  insights            the caller's runs     200 {"insights":[{run}, …]}
 //	GET  insights/<id>       one run + document    200 {run, "document": "…"}
 //	POST insights/<id>/retry retry a FAILED run    200 {run}   409 otherwise
+//	POST insights/<id>/name  rename a run          200 {run}
 //
 // They live under `insights` and not under `published/`, which is the archive's
 // prefix and is declared GET,HEAD: these are the app's first mutating USER
@@ -42,6 +43,9 @@ export interface InsightRun {
   meetingIds: string[];
   roomIds: string[];
   question: string;
+  // What the asker called it; "" for none, which is every run made before
+  // names existed. The viewer's headline falls back to the question.
+  name: string;
   // What the asker CHOSE in Prepare. Empty when they chose nothing, which is
   // every run made before the picker existed and any caller who sent none —
   // then the deployment's configured endpoint answers. A retry re-runs THIS,
@@ -56,6 +60,10 @@ export interface InsightRun {
   // Where the document landed in the requester's own Nextcloud files. Empty
   // until the run succeeds; a failed run wrote nothing.
   documentPath: string;
+  // Its Nextcloud file id, from the delivery's OC-FileId (D-792): what the
+  // Files app selects a file by. Empty for a run delivered before it was
+  // kept, and from an operator older than it.
+  documentFileId: string;
   // Why the latest attempt failed, as one of the operator's reason tokens
   // ("" while it has not). The words for each token live in the viewing
   // layer (cassini-viewer/insights, INSIGHT_FAILURE_COPY), so the browse card
@@ -80,6 +88,7 @@ export interface CreateInsightRequest {
   // a non-admin can ask for: the template registry is ADMIN at the proxy.
   workflow?: string;
   question?: string;
+  name?: string;
   // The endpoint this run should reach, chosen by the asker. Empty means the
   // deployment's own. Unlike the template, this IS offered to everybody: the
   // provider list is served by a USER route carrying ids and display names
@@ -243,7 +252,7 @@ export function resolveInsightsUrl(path = ""): string {
   return new URL(relative, publishedRoot).toString();
 }
 
-type InsightAction = "create" | "list" | "read" | "retry";
+type InsightAction = "create" | "list" | "read" | "retry" | "rename";
 
 export async function createInsight(
   request: CreateInsightRequest,
@@ -263,6 +272,10 @@ export async function createInsight(
   const question = request.question?.trim() ?? "";
   if (question !== "") {
     body.question = question;
+  }
+  const name = request.name?.trim() ?? "";
+  if (name !== "") {
+    body.name = name;
   }
   // Sent only when chosen. Absent means "whatever this deployment is
   // configured with", which is the honest default and what the operator reads
@@ -313,6 +326,22 @@ export async function retryInsight(
   return readRun(
     await send("retry", resolveInsightsUrl(`${insightIDSegment(id)}/retry`), fetchImpl, {
       method: "POST",
+    }),
+  );
+}
+
+// renameInsight sets a run's name; an empty name clears it. Only the run's
+// creator may, and anybody else is told the run is not there (404).
+export async function renameInsight(
+  id: string,
+  name: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<InsightRun> {
+  return readRun(
+    await send("rename", resolveInsightsUrl(`${insightIDSegment(id)}/name`), fetchImpl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() }),
     }),
   );
 }
@@ -383,9 +412,11 @@ export function readRun(value: unknown): InsightRun {
     meetingIds: asStrings(value.meetingIds),
     roomIds: asStrings(value.roomIds),
     question: asString(value.question),
+    name: asString(value.name),
     provider: asString(value.provider),
     model: asString(value.model),
     documentPath: asString(value.documentPath),
+    documentFileId: asString(value.documentFileId),
     reason: asString(value.reason),
     error: asString(value.error),
     createdAt: asString(value.createdAt),
@@ -422,6 +453,7 @@ const VERBS: Record<InsightAction, string> = {
   list: "list your insights",
   read: "read the insight",
   retry: "retry the insight",
+  rename: "rename the insight",
 };
 
 export function describeRequestFailure(
@@ -448,6 +480,11 @@ export function describeRequestFailure(
           // here is an operator that does not serve these routes. That is not
           // "you have no insights", and it must not read as it.
           return "Insights could not be listed.";
+        case "rename":
+          // The route is newer than the others: an operator that creates and
+          // reads insights can still lack it, and "cannot create insights"
+          // would be false in exactly that case.
+          return "That insight is not available to you, or this deployment cannot rename insights.";
         default:
           return "That insight is not available to you, or this deployment cannot create insights.";
       }
