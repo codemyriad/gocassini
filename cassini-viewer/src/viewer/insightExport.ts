@@ -40,14 +40,12 @@ export function renderInsightExport({
   // break in an H1 leaves the rest as a stray paragraph.
   const blocks: string[] = [`# ${oneLine(insightHeadline(record))}`];
 
-  // Quoted only when the title above it says something else: an Ask run is
-  // named after its question unless somebody renamed it, and the drawer makes
-  // the same call.
   const question = record.question?.trim() ?? "";
-  if (question !== "" && !sameHeadlineText(question, insightHeadline(record))) {
-    const quoted = `"${question}"`.split(/\r?\n/).map((line) => `> ${line}`.trimEnd());
-    blocks.push(quoted.join("\n"));
-  }
+  // Quoted only when the title above says something else (an Ask run is named
+  // after its question unless somebody renamed it), and under the sources
+  // rather than over them, as the drawer places it: in the spot the document's
+  // own heading takes, which gives way to the quote.
+  const quoted = question !== "" && !sameHeadlineText(question, insightHeadline(record));
 
   // Template and model, and not the provider or the attempt: those say how the
   // run was carried out, not what produced the words, and mean nothing to
@@ -70,10 +68,17 @@ export function renderInsightExport({
     blocks.push(`Drawn from ${sources.length} ${noun}:\n\n${items.join("\n")}`);
   }
 
+  if (quoted) {
+    const lines = `"${question}"`.split(/\r?\n/).map((line) => `> ${line}`.trimEnd());
+    blocks.push(lines.join("\n"));
+  }
+
   blocks.push("---");
   // The document's own first heading is the question again (the Ask template
-  // copies it in verbatim), and the header above has said it.
-  blocks.push(stripLeadingHeading(stripInsightFrontMatter(markdown), question).trim());
+  // copies it in verbatim). Under the quote it is a repeat and goes; with no
+  // quote it is the document's title and stays.
+  const body = stripInsightFrontMatter(markdown);
+  blocks.push((quoted ? stripLeadingHeading(body, question) : body).trim());
 
   return `${blocks.join("\n\n")}\n`;
 }

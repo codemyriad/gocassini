@@ -202,31 +202,31 @@ describe("exportFileName", () => {
 });
 
 describe("renderInsightExport says the question once", () => {
-  it("quotes the question only under a name that says something else", () => {
+  const body = "# What did we decide?\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n";
+
+  it("quotes the question under the sources, only under a name that says something else", () => {
     const named = renderInsightExport({
       record: insight({ name: "Riverside Clinic", question: "What did we decide?" }),
-      sources: [],
-      markdown: DOCUMENT,
+      sources: [meeting("m1")],
+      markdown: body,
       meetingUrl: noLink,
     });
-    expect(named.startsWith('# Riverside Clinic\n\n> "What did we decide?"\n\n')).toBe(true);
+    const quoteAt = named.indexOf('> "What did we decide?"');
+    expect(quoteAt).toBeGreaterThan(named.indexOf("Drawn from 1 meeting:"));
+    expect(quoteAt).toBeLessThan(named.indexOf("\n---\n"));
+    // The document's own heading would repeat the quote right under it.
+    expect(named.endsWith("---\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n")).toBe(true);
+    expect(named.match(/What did we decide\?/g)).toHaveLength(1);
+  });
+
+  it("keeps the document's heading as its title when there is no quote", () => {
     const unnamed = renderInsightExport({
       record: insight({ question: "What did we decide?" }),
       sources: [],
-      markdown: DOCUMENT,
+      markdown: body,
       meetingUrl: noLink,
     });
     expect(unnamed).not.toContain("> ");
-  });
-
-  it("drops the document's own heading when it is the question again", () => {
-    const out = renderInsightExport({
-      record: insight({ question: "What did we decide?" }),
-      sources: [],
-      markdown: "# What did we decide?\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n",
-      meetingUrl: noLink,
-    });
-    expect(out.endsWith("---\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n")).toBe(true);
-    expect(out.match(/What did we decide\?/g)).toHaveLength(1);
+    expect(unnamed.endsWith("---\n\n# What did we decide?\n\nDrawn from 3 meetings.\n\n## Answer\n\nYes.\n")).toBe(true);
   });
 });
