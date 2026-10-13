@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render } from "svelte/server";
 
 import InsightDocument from "./InsightDocument.svelte";
@@ -7,6 +7,10 @@ import type { InsightRecord } from "../viewer/insights";
 
 // Source-level assertions, for the reason MeetingList.test.ts gives: the suite
 // runs in node with no DOM harness.
+//
+// DOMPurify needs a DOM to sanitise against, so a rendered answer passes
+// through untouched here; what is under test is the controls around it.
+vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
 
 describe("InsightDocument", () => {
   it("reads in the order the panel exists in: material, question, answer", () => {
@@ -223,6 +227,89 @@ describe("InsightDocument", () => {
       expect(insightDocumentSource).toContain("aria-describedby={renameError ? renameErrorId : undefined}");
       expect(insightDocumentSource).toContain('aria-invalid={renameError ? "true" : undefined}');
       expect(insightDocumentSource).toContain('id={renameErrorId} role="status"');
+    });
+  });
+
+  describe("the offline copy (D-792), rendered", () => {
+    const answered: InsightRecord = {
+      id: "ins_0123456789abcdef",
+      status: "succeeded",
+      createdBy: "alice",
+      attemptNumber: 1,
+      workflowId: "summarise",
+      workflowVersion: "v0",
+      workflowSha256: "abc",
+      meetingIds: ["m1"],
+      roomIds: ["r1"],
+      question: "",
+      provider: "hosted",
+      model: "",
+      documentPath: "Cassini Insights/answer.md",
+      reason: "",
+      error: "",
+      createdAt: "2026-09-03T10:00:00Z",
+      updatedAt: "2026-09-03T10:00:00Z",
+    };
+    const FILES = "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&amp;scrollto=answer.md";
+
+    it("offers Export and Open in Files for an answer on screen", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: answered,
+          documentMarkdown: "The gist.",
+          filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
+        },
+      }).body;
+      // The meeting sheet's Export menu, closed: one control, not two buttons.
+      expect(html).toMatch(/aria-haspopup="menu"[^>]*>\s*Export/);
+      expect(html).toContain(`href="${FILES}"`);
+      expect(html).toContain('target="_blank"');
+      expect(html).toContain('rel="noopener"');
+      // In the header, after the run's facts.
+      expect(html.indexOf("ins-actions")).toBeGreaterThan(html.indexOf("ins-head-meta"));
+      expect(html.indexOf("ins-actions")).toBeLessThan(html.indexOf("ins-body"));
+    });
+
+    it("leaves out Open in Files where there is no Nextcloud", () => {
+      const html = render(InsightDocument, {
+        props: { insight: answered, documentMarkdown: "The gist." },
+      }).body;
+      expect(html).toContain("ins-actions");
+      expect(html).not.toContain("Open in Files");
+    });
+
+    it("keeps Open in Files when the document could not be fetched", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: answered,
+          documentError: "the operator is restarting",
+          filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
+        },
+      }).body;
+      expect(html).toContain("Open in Files");
+      expect(html).not.toContain('aria-haspopup="menu"');
+    });
+
+    it("offers no Files link for a run that has not produced the file", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: { ...answered, status: "running" as const },
+          filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
+        },
+      }).body;
+      expect(html).not.toContain("ins-actions");
+    });
+
+    it("offers nothing to copy without an answer on screen", () => {
+      for (const props of [
+        { insight: { ...answered, status: "running" as const }, documentMarkdown: "The gist." },
+        { insight: answered, documentMarkdown: "" },
+        { insight: answered, documentMarkdown: "The gist.", documentLoading: true },
+        { insight: answered, documentMarkdown: "The gist.", documentError: "gone" },
+        { insight: answered, documentMarkdown: "---\nmodel: x\n---\n" },
+      ]) {
+        expect(render(InsightDocument, { props }).body).not.toContain("ins-actions");
+      }
     });
   });
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppDataProvider } from "./appDataProvider";
+import type { InsightRecord } from "cassini-viewer/insights";
 
 // The provider's whole job is the request it builds and the answer it reports
 // (D-626): the bundle itself is produced by the operator, from the same
@@ -416,6 +417,37 @@ describe("AppDataProvider.renameInsight", () => {
     respondWith(JSON.stringify({ error: "a name cannot contain control characters" }), { status: 400 });
     await expect(new AppDataProvider().renameInsight("ins_0123456789abcdef", "a\tb")).rejects.toThrow(
       "a name cannot contain control characters",
+    );
+  });
+});
+
+describe("AppDataProvider.insightFilesUrl", () => {
+  const record = {
+    id: "ins_0123456789abcdef",
+    status: "succeeded",
+    documentPath: "Cassini Insights/Design sync · 3 meetings #2.md",
+    documentFileId: "4242",
+  } as unknown as InsightRecord;
+
+  it("takes Nextcloud's own root from the page's scripts when they are there", () => {
+    vi.stubGlobal("window", {
+      location: { origin: "https://host.example", pathname: "/apps/cloud/index.php/apps/app_api/embedded/gocassini/viewer" },
+    });
+    vi.stubGlobal("OC", { getRootPath: () => "/apps/cloud" });
+    expect(new AppDataProvider().insightFilesUrl(record)).toBe(
+      "https://host.example/apps/cloud/apps/files/files/4242?dir=%2FCassini%20Insights&opendetails",
+    );
+  });
+
+  it("falls back to the page's own URL without them, and to the folder without a file id", () => {
+    vi.stubGlobal("window", {
+      location: { origin: "https://cloud.example", pathname: "/index.php/apps/app_api/proxy/gocassini/viewer" },
+    });
+    expect(new AppDataProvider().insightFilesUrl(record)).toBe(
+      "https://cloud.example/apps/files/files/4242?dir=%2FCassini%20Insights&opendetails",
+    );
+    expect(new AppDataProvider().insightFilesUrl({ ...record, documentFileId: undefined })).toBe(
+      "https://cloud.example/apps/files/files?dir=%2FCassini%20Insights",
     );
   });
 });

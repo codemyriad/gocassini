@@ -60,6 +60,10 @@ export interface InsightRun {
   // Where the document landed in the requester's own Nextcloud files. Empty
   // until the run succeeds; a failed run wrote nothing.
   documentPath: string;
+  // Its Nextcloud file id, from the delivery's OC-FileId (D-792): what the
+  // Files app selects a file by. Empty for a run delivered before it was
+  // kept, and from an operator older than it.
+  documentFileId: string;
   // Why the latest attempt failed, as one of the operator's reason tokens
   // ("" while it has not). The words for each token live in the viewing
   // layer (cassini-viewer/insights, INSIGHT_FAILURE_COPY), so the browse card
@@ -412,6 +416,7 @@ export function readRun(value: unknown): InsightRun {
     provider: asString(value.provider),
     model: asString(value.model),
     documentPath: asString(value.documentPath),
+    documentFileId: asString(value.documentFileId),
     reason: asString(value.reason),
     error: asString(value.error),
     createdAt: asString(value.createdAt),

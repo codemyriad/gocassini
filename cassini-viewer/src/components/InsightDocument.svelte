@@ -2,9 +2,12 @@
   import { createEventDispatcher, tick } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, FileText, MessageSquare, Pencil } from "@lucide/svelte";
+  import { Calendar, ExternalLink, FileText, MessageSquare, Pencil } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
+  import ExportMenu from "./ExportMenu.svelte";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
+  import { saveTranscript } from "../viewer/exportTransfer";
+  import { exportFileName, renderInsightExport } from "../viewer/insightExport";
   import { roomLabelOf } from "../viewer/rooms";
   import { INSIGHT_NAME_MAX } from "../viewer/insightName";
   import {
@@ -55,6 +58,12 @@
   export let canRename = false;
   export let renaming = false;
   export let renameError = "";
+  // Where the document's folder opens in Nextcloud Files, or "" in a build
+  // with no Nextcloud. Sharing is Nextcloud's: its share sidebar is there, and
+  // a second share dialog here would be a second answer to who can see it.
+  export let filesUrl = "";
+  // Where a source opens in this Cassini, for the links in the offline copy.
+  export let meetingUrl: (source: MeetingCatalogEntry) => string = () => "";
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -199,6 +208,74 @@
   }
 
   $: documentHtml = renderDocumentHtml(documentMarkdown, showQuestion);
+
+  // The offline copy (D-792) is offered only for an answer that is on screen:
+  // copying a run that has not finished, or one whose file has gone, would
+  // hand over a header with nothing under it.
+  $: exportable =
+    insight.status === "succeeded" &&
+    canLoadDocument &&
+    !documentLoading &&
+    !documentError &&
+    documentHtml !== "";
+
+  // The file in Files needs only to exist — it is the one way to the answer
+  // left when the document cannot be fetched — so the link is not held to the
+  // answer being on screen.
+  $: filesLinkable = insight.status === "succeeded" && filesUrl !== "";
+
+  type StatusTone = "ok" | "warn";
+  let exportStatus: { tone: StatusTone; text: string } | null = null;
+  // A status line about one insight must not stay up over the next. Keyed on
+  // the id, not the record: the shell hands down a fresh object on every list
+  // refresh, and that is the same insight.
+  let exportStatusFor = "";
+  $: if (insight.id !== exportStatusFor) {
+    exportStatusFor = insight.id;
+    exportStatus = null;
+  }
+
+  function exportText(): string {
+    return renderInsightExport({ record: insight, sources, markdown: documentMarkdown, meetingUrl });
+  }
+
+  async function handleCopy() {
+    // The same three outcomes as Prepare's Copy, said out loud for the same
+    // reason: the embedded app lives in a shadow root inside Nextcloud, an
+    // insecure origin has no clipboard, and a Copy that silently did nothing
+    // looks like a copy that came out empty. Unlike Prepare there is nothing to
+    // assemble — the document is already here — so the write is made inside
+    // the click without a promised ClipboardItem.
+    const clipboard = navigator.clipboard;
+    if (!clipboard || typeof clipboard.writeText !== "function") {
+      exportStatus = { tone: "warn", text: "Clipboard unavailable here — download the markdown instead." };
+      return;
+    }
+    // The write can wait on a permission prompt, and the sheet can be holding
+    // another insight by the time it settles: its outcome belongs to the one
+    // that was copied, or to nobody.
+    const copied = insight.id;
+    let next: { tone: StatusTone; text: string };
+    try {
+      await clipboard.writeText(exportText());
+      next = { tone: "ok", text: "Copied as markdown." };
+    } catch (error) {
+      // Said on screen and logged: a permission the browser refused, a
+      // document that would not render and an insecure context all read the
+      // same to the person, and differently to whoever is asked why.
+      console.warn("insight copy: clipboard write failed", error);
+      next = { tone: "warn", text: "Clipboard blocked here — try Copy again, or download the markdown." };
+    }
+    if (insight.id === copied) {
+      exportStatus = next;
+    }
+  }
+
+  function handleDownload() {
+    const name = exportFileName(insight);
+    saveTranscript(exportText(), name);
+    exportStatus = { tone: "ok", text: `Downloaded ${name}.` };
+  }
 </script>
 
 <section class="ins-doc" aria-label="Insight">
@@ -265,21 +342,53 @@
     {#if editingName && renameError}
       <p class="ins-rename-error" id={renameErrorId} role="status">{renameError}</p>
     {/if}
-    <div class="ins-head-meta">
-      {#if room}
+    <!-- The run's facts on the left and, on the same row, the ways out of
+         Cassini (D-792): a markdown copy under one Export control, as the
+         meeting sheet has, and the file itself in Files, where Nextcloud
+         shares it. Where the sheet is narrow the facts stack on the left and
+         the controls stack on the right, still side by side. -->
+    <div class="ins-head-row">
+      <div class="ins-head-meta">
+        {#if room}
+          <span class="ins-head-fact">
+            <MessageSquare size={13} aria-hidden="true" />
+            {room}
+          </span>
+        {/if}
         <span class="ins-head-fact">
-          <MessageSquare size={13} aria-hidden="true" />
-          {room}
+          <Calendar size={13} aria-hidden="true" />
+          {formatInsightCreated(insight)}
         </span>
-      {/if}
-      <span class="ins-head-fact">
-        <Calendar size={13} aria-hidden="true" />
-        {formatInsightCreated(insight)}
-      </span>
-      {#if insight.model}
-        <code class="ins-head-model">{insight.model}</code>
+        {#if insight.model}
+          <code class="ins-head-model">{insight.model}</code>
+        {/if}
+      </div>
+      {#if exportable || filesLinkable}
+        <div class="ins-actions">
+          {#if exportable}
+            <ExportMenu
+              label="Export this insight"
+              copyLabel="Copy as markdown"
+              transcriptLabel="Download markdown"
+              includeAudio={false}
+              on:copy={handleCopy}
+              on:transcript={handleDownload}
+            />
+          {/if}
+          {#if filesLinkable}
+            <a class="btn btn-sm btn-quiet gap-1.5" href={filesUrl} target="_blank" rel="noopener">
+              <ExternalLink size={14} aria-hidden="true" />
+              Open in Files
+            </a>
+          {/if}
+        </div>
       {/if}
     </div>
+    {#if exportStatus}
+      <p class="ins-export-status" data-tone={exportStatus.tone} role="status">
+        {exportStatus.text}
+      </p>
+    {/if}
   </header>
 
   <div class="ins-body">
@@ -513,12 +622,24 @@
     line-height: 1.3;
     color: var(--color-base-content);
   }
+  /* Facts left, controls right, on one row. */
+  .ins-head-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-top: 0.375rem;
+    min-width: 0;
+  }
   .ins-head-meta {
     display: flex;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.25rem 1rem;
-    margin-top: 0.375rem;
+    min-width: 0;
+    /* Level with the 32px controls beside it. */
+    min-height: 2rem;
     font-size: 0.8125rem;
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
@@ -538,6 +659,40 @@
     font-size: 11.5px;
     overflow-wrap: anywhere;
     color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+  }
+
+  /* The meeting sheet's Export control and a link dressed as its sibling, so
+     the two sheets offer the same control for the same thing. */
+  .ins-actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .ins-actions a {
+    text-decoration: none;
+  }
+  /* A narrow sheet: the facts stack on the left and the controls on the
+     right, each its own column, rather than a row that wraps into a tangle. */
+  @media (max-width: 720px) {
+    .ins-head-meta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.375rem;
+      min-height: 0;
+    }
+    .ins-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
+  .ins-export-status {
+    margin: 0.375rem 0 0;
+    font-size: 0.75rem;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .ins-export-status[data-tone="warn"] {
+    color: var(--color-warning, #b45309);
   }
 
   .ins-body {

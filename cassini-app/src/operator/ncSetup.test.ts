@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { accountSteps, isSetupAvailable, runSetupPlan } from "./ncSetup";
+import { accountSteps, isSetupAvailable, nextcloudRootPath, runSetupPlan } from "./ncSetup";
 import type { StorageSetupStep, StorageStatus } from "./types";
 
 const create: StorageSetupStep = {
@@ -22,6 +22,18 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.unstubAllGlobals());
+
+describe("nextcloudRootPath", () => {
+  it("is Nextcloud's own root when its scripts are on the page, and null when they are not", () => {
+    // null, not "": a caller with a fallback of its own (D-792) has to tell
+    // "the root is /" from "nobody said".
+    expect(nextcloudRootPath()).toBe("/nextcloud");
+    vi.stubGlobal("OC", { getRootPath: () => "" });
+    expect(nextcloudRootPath()).toBe("");
+    vi.unstubAllGlobals();
+    expect(nextcloudRootPath()).toBeNull();
+  });
+});
 
 describe("browser account setup", () => {
   it("only runs the account creation step", () => {

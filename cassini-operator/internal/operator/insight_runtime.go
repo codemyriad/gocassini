@@ -432,7 +432,7 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 		model = recorded
 	}
 
-	delivered, err := s.deliver(ctx, run, documentPath)
+	delivered, fileID, err := s.deliver(ctx, run, documentPath)
 	if err != nil {
 		s.logf("insights: deliver run=%s for caller=%s: %v", run.ID, run.CreatedBy, err)
 		return InsightOutcome{
@@ -443,10 +443,11 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 		}
 	}
 	return InsightOutcome{
-		Status:       insightStatusSucceeded,
-		Provider:     provider.id,
-		Model:        model,
-		DocumentPath: delivered,
+		Status:         insightStatusSucceeded,
+		Provider:       provider.id,
+		Model:          model,
+		DocumentPath:   delivered,
+		DocumentFileID: fileID,
 	}
 }
 
@@ -545,19 +546,19 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 // run tries its name first, and names repeat ("Weekly sync" every week), so when
 // every suffix of it is taken it falls back to the dated name with the run id in
 // it, which only a file placed there out of band can collide with.
-func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPath string) (string, error) {
+func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPath string) (string, string, error) {
 	info, err := os.Stat(documentPath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if info.Size() == 0 {
 		// An exit 0 with no bytes would read as "these meetings say nothing",
 		// which is a claim no failure is allowed to make.
-		return "", errors.New("the insight document is empty")
+		return "", "", errors.New("the insight document is empty")
 	}
 	for _, dir := range insightFolderChain() {
 		if err := s.exapp.davMkcol(ctx, s.client, run.CreatedBy, dir); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	// The name is read now, not off the snapshot the attempt began with: the
@@ -589,7 +590,7 @@ func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPa
 			relPath := ncInsightsRoot + "/" + name
 			taken, err := s.davExists(ctx, run.CreatedBy, relPath)
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 			if taken {
 				s.logf("insights: run=%s found %s already in caller=%s's files; it was not overwritten", run.ID, relPath, run.CreatedBy)
@@ -598,9 +599,9 @@ func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPa
 			// Created, never replaced: the PUT carries If-None-Match, so a file
 			// that appeared between the HEAD and now — two runs named alike
 			// finishing together — is found rather than overwritten.
-			status, err := s.exapp.davPutNewFile(ctx, s.client, run.CreatedBy, relPath, documentPath, "text/markdown; charset=utf-8")
+			status, fileID, err := s.exapp.davPutNewFile(ctx, s.client, run.CreatedBy, relPath, documentPath, "text/markdown; charset=utf-8")
 			if err == nil {
-				return relPath, nil
+				return relPath, fileID, nil
 			}
 			if errors.Is(err, errDAVExists) {
 				s.logf("insights: run=%s found %s appear in caller=%s's files as it was about to write it; it was not overwritten", run.ID, relPath, run.CreatedBy)
@@ -615,10 +616,10 @@ func (s *insightService) deliver(ctx context.Context, run InsightRun, documentPa
 				s.logf("insights: run=%s Nextcloud refused the file name %s (%d); delivering under the dated name instead", run.ID, relPath, status)
 				break
 			}
-			return "", err
+			return "", "", err
 		}
 	}
-	return "", fmt.Errorf("%s already holds %d files named like this insight", ncInsightsRoot, len(bases)*maxInsightDeliveryAttempts)
+	return "", "", fmt.Errorf("%s already holds %d files named like this insight", ncInsightsRoot, len(bases)*maxInsightDeliveryAttempts)
 }
 
 // insightFolderChain is the collections that must exist before the PUT, outermost
