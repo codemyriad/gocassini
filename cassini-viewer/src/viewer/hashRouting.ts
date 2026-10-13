@@ -12,6 +12,25 @@
 // core/transcript.ts parseTimeHash() — which anchors `#t=…` at end-of-string —
 // keeps matching.
 
+export interface ViewerTimeRange {
+  startMs: number;
+  endMs: number;
+}
+
+function validRange(range: ViewerTimeRange): boolean {
+  return Number.isSafeInteger(range.startMs) && Number.isSafeInteger(range.endMs) &&
+    range.startMs >= 0 && range.endMs > range.startMs;
+}
+
+export function readViewerRange(hash: string): ViewerTimeRange | null {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const values = params.getAll("range");
+  if (values.length !== 1 || !/^\d+,\d+$/.test(values[0]!)) return null;
+  const [startMs, endMs] = values[0]!.split(",").map(Number);
+  const range = { startMs: startMs!, endMs: endMs! };
+  return validRange(range) ? range : null;
+}
+
 export interface ViewerHashState {
   meeting: string;
   tx: string;
@@ -30,6 +49,7 @@ export function buildViewerHash(state: {
   meeting?: string;
   tx?: string;
   timeMs?: number | null;
+  range?: ViewerTimeRange | null;
 }): string {
   const parts: string[] = [];
   if (state.meeting) {
@@ -37,6 +57,9 @@ export function buildViewerHash(state: {
   }
   if (state.tx) {
     parts.push(`tx=${encodeURIComponent(state.tx)}`);
+  }
+  if (state.range && validRange(state.range)) {
+    parts.push(`range=${state.range.startMs},${state.range.endMs}`);
   }
   // Keep t= last so parseTimeHash (anchored at end-of-string) still matches.
   if (typeof state.timeMs === "number" && Number.isFinite(state.timeMs)) {
