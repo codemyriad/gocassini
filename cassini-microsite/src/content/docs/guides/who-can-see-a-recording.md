@@ -73,8 +73,8 @@ and annotation goes through Nextcloud as the person asking.
 - One person's share being refused is a warning, and everybody else keeps
   access.
 
-The warning and the state of the setup are under **Operator › Settings › Who
-can see recordings**, and on `/operator/status` as `recordings_access`.
+The warning and the state of the setup are under **Operator › Settings › Publish
+pipeline › Who can see recordings**, and on `/operator/status` as `recordings_access`.
 
 ## Recordings from before direct shares
 

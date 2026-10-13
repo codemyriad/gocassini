@@ -7,7 +7,7 @@ recordings remain available when the recording connection needs attention.
 
 ## Before installation
 
-The Nextcloud ExApp requires Nextcloud 32–35, administrator access, and a working
+The Nextcloud ExApp requires Nextcloud 33.0.9–35, administrator access, and a working
 AppAPI deploy daemon. Published images are multi-arch: linux/amd64 and
 linux/arm64 (D-764). CPU transcription is supported on both; NVIDIA/CUDA is
 optional and x86_64-only. Live Talk capture requires

@@ -85,8 +85,8 @@ These come from `recordings_access` on `/operator/status`.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/operator/status` answers 503 | Recordings cannot be published or served yet | Read `recordings_access.state` and `.step`. `unavailable` names a thing to create or enable; `degraded` means a call failed |
-| `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | Press **Create recordings account** in **Operator › Settings › Who can see recordings**, or run `occ group:add cassini` and `occ user:add --group=cassini cassini`, then re-enable Cassini |
-| `state=unavailable`, `step=sharing_api` | Nextcloud file sharing is unavailable to the `cassini` account | Check that the Files sharing app is enabled and that sharing is allowed under **Administration settings › Sharing** |
+| `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | Press **Create recordings account** in **Operator › Settings › Publish pipeline › Who can see recordings**, or run `occ group:add cassini` and `occ user:add --group=cassini cassini`, then re-enable Cassini |
+| `state=unavailable`, `step=sharing_api` | Nextcloud file sharing is unavailable to the `cassini` account | Enable the Files sharing app (`occ app:enable files_sharing`) and allow sharing under **Administration settings › Sharing**, then press **Check again** |
 | `state=degraded`, `step=private_archive` | Cassini could not confirm its `CassiniRecordings` folder is private and writable | Check that nothing is mounted or shared at `CassiniRecordings` in the `cassini` account's Files, then press **Check again** |
 | `state=degraded`, `step=nextcloud_probe` | Nextcloud did not answer the setup check | Check container-to-Nextcloud connectivity, then press **Check again** |
 | `state=unknown` | No check has completed in this process, usually just after a restart | Look again after a few seconds. If it sticks, disable and re-enable Cassini |
