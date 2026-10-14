@@ -28,7 +28,7 @@ mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md)
 - Administrators can schedule whole-meeting expiry from Nextcloud Files independently of container storage. Expiry removes published audio, transcripts and notes together, with conditional deletion, durable recovery and protection against reruns or indexes recreating expired meetings. Nextcloud versions, trash and backups remain separate.
 - ADMIN-only APIs provide on-demand sweeps and eviction previews with the meeting name, creation and recording timestamps, age in calendar days and an evict/keep decision.
 - ADMIN-only `POST /operator/storage/retention/sweep` to run the scheduled expiry logic on demand, with overlap protection and synchronous results.
-- Configurable daily retention sweep time and timezone in Operator → Storage, defaulting to 02:00 UTC. Saved schedule changes take effect without restarting.
+- Configurable daily retention sweep time and timezone in Operator → Storage, defaulting to 03:42 UTC. Saved schedule changes take effect without restarting.
 - Operator → Storage retention configuration for container recordings, attempt history, current output archives and stage logs. Policies default to keep forever, with 7, 30, 60, 90 or custom days evaluated on UTC dates.
 - Startup/daily cleanup with restart recovery, whole-recording expiry (audio, video and supporting files together), and unavailable-source rerun protection. Only successful publication replaces the current local archive.
 - Storage insights now includes published Nextcloud files in the category comparison and temporal charts, with the same time range and exact-value controls as local assets.
@@ -87,7 +87,6 @@ mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md)
 - Retention settings use plainer names on every screen: Recordings, Published meetings (on this server), Previous attempts, Processing logs and Published meetings in Nextcloud. The reminder banner is one sentence with Review and Dismiss.
 - The Storage report shows two totals, On this server and In Nextcloud Files, then space by type and by date. Previous attempts opens onto its four kinds, and each date chart picks its own bar width.
 - The retention editor shows each category as a heading, one line and its control. Previous attempts splits into its four kinds with a link, the daily cleanup is one row with a timezone list, and Discard changes appears only when there are unsaved edits.
-- New installations run the daily cleanup at 03:42 UTC instead of 02:00 UTC. A saved cleanup time is kept.
 - Publishing asks what people receive first, then what stays on the server. Keeping nothing is unavailable while audio is published.
 - Transcription has its on/off switch in the heading, and the model shows as one row with its size, state and one action.
 - Opening a meeting from a search that matched what was said fills the meeting's transcript search with the same words, as opening one of its moments already did.
