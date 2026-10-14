@@ -34,7 +34,9 @@ const (
 	ModelParakeet06BV3Int8 ModelID = "parakeet-tdt-0.6b-v3-int8"
 
 	// ModelParakeet06BV3 is the NeMo Parakeet TDT 0.6B v3 fp32 transducer model.
-	// CUDA-bundled default; same architecture as v3 int8. Exported from the
+	// The CPU "best" tier, and the CUDA default until Parakeet Ultra replaced it
+	// in 2026-10; still installable on CUDA for pinned installs and rollback.
+	// Same architecture as v3 int8. Exported from the
 	// official .nemo via scripts/nemo/parakeet-tdt-0.6b-v3/export_onnx.py.
 	// Runs ~2× faster than CPU at fp32 on CUDA; int8 fragments under CUDA EP.
 	ModelParakeet06BV3 ModelID = "parakeet-tdt-0.6b-v3"
