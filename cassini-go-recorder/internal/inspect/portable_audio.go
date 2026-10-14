@@ -884,35 +884,35 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 			return portable.TranscriptBody{}, warnings, err
 		}
 		if part == "" {
-			return portable.TranscriptBody{}, warnings, fmt.Errorf("missing transcript chunk %s", key)
+			return portable.TranscriptBody{}, warnings, transcriptIntegrityError{fmt.Errorf("missing transcript chunk %s", key)}
 		}
 		encoded.WriteString(part)
 	}
 
 	compressed, err := decodeCassiniBase64URL(encoded.String())
 	if err != nil {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("decode base64url transcript payload: %w", err)
+		return portable.TranscriptBody{}, warnings, transcriptIntegrityError{fmt.Errorf("decode base64url transcript payload: %w", err)}
 	}
 	reader, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("open gzip transcript payload: %w", err)
+		return portable.TranscriptBody{}, warnings, transcriptIntegrityError{fmt.Errorf("open gzip transcript payload: %w", err)}
 	}
 	defer func() { _ = reader.Close() }()
 	rawJSON, err := io.ReadAll(reader)
 	if err != nil {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("decompress gzip transcript payload: %w", err)
+		return portable.TranscriptBody{}, warnings, transcriptIntegrityError{fmt.Errorf("decompress gzip transcript payload: %w", err)}
 	}
 
 	if entry.PayloadRef.RawBytes != len(rawJSON) {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript raw byte count mismatch: manifest=%d decoded=%d", entry.PayloadRef.RawBytes, len(rawJSON))
+		return portable.TranscriptBody{}, warnings, transcriptIntegrityError{fmt.Errorf("transcript raw byte count mismatch: manifest=%d decoded=%d", entry.PayloadRef.RawBytes, len(rawJSON))}
 	}
 	if entry.PayloadRef.GzipBytes != len(compressed) {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript compressed byte count mismatch: manifest=%d decoded=%d", entry.PayloadRef.GzipBytes, len(compressed))
+		return portable.TranscriptBody{}, warnings, transcriptIntegrityError{fmt.Errorf("transcript compressed byte count mismatch: manifest=%d decoded=%d", entry.PayloadRef.GzipBytes, len(compressed))}
 	}
 	sum := sha256.Sum256(rawJSON)
 	actualSHA := hex.EncodeToString(sum[:])
 	if actualSHA != entry.PayloadRef.SHA256 {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript payload sha256 mismatch: manifest=%s decoded=%s", entry.PayloadRef.SHA256, actualSHA)
+		return portable.TranscriptBody{}, warnings, transcriptIntegrityError{fmt.Errorf("transcript payload sha256 mismatch: manifest=%s decoded=%s", entry.PayloadRef.SHA256, actualSHA)}
 	}
 
 	for _, mirror := range []struct {
@@ -999,4 +999,13 @@ func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) er
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+// transcriptIntegrityError marks a transcript body that does not match its
+// manifest entry, keeping the underlying message.
+type transcriptIntegrityError struct{ err error }
+
+func (e transcriptIntegrityError) Error() string { return e.err.Error() }
+func (e transcriptIntegrityError) Unwrap() []error {
+	return []error{e.err, ErrTranscriptIntegrity}
 }

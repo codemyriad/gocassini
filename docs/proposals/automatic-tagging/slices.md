@@ -71,10 +71,10 @@ S6 and S7 are independent of each other.
 **Files touched**
 
 - `rec/topics/chunk.go` (new): `natural-1` with the 512-token split rule, `ChunkerVersion`.
-- `rec/topics/language.go` (new): text language identification; choose the detector and its confidence floor; `DetectorVersion`.
-- `rec/cassini/topics.go`: `cassini topics embed --input <bundle|file.opus> [--known-key K] [--threads N] --out <file>`. It chunks and embeds a whole meeting, detects its language, and prints `{"locked":true}` once it holds `.inference.lock`.
+- `rec/topics/language.go` (new): text language identification (`github.com/abadojack/whatlanggo` v1.0.1, MIT, added to `cassini-go-recorder/go.mod`): a per-passage vote weighted by words, floor 0.6; `DetectorVersion`.
+- `rec/cassini/topics_embed.go` (new): `cassini topics embed --input <bundle|file.opus> [--known-key K] [--threads N] --out <file>`, and `--words <file>` instead of `--input` for evaluation. It chunks and embeds a whole meeting, detects its language, and prints `{"locked":true}` once it holds `.inference.lock`.
 - `op/topics_score.go` (new): support gate, spans, meeting rule, controls, `ScorerVersion = 1`, validated-language list.
-- `op/topics_eval_cmd.go` (new): `cassini-operator topics-eval --vectors <dir> [--labels <file>] --sweep`.
+- `op/topics_eval_cmd.go` (new): `cassini-operator topics-eval --vectors <dir> --definitions <file> [--reference <file>] [--sweep] [--out <file>]` (`--labels` comes with S8).
 - `docs/proposals/automatic-tagging/evaluation.md` (new): aggregate numbers only.
 
 **Acceptance criteria**

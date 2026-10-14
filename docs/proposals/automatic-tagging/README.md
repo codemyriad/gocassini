@@ -7,6 +7,7 @@ shaping: true
 Date: 2026-10-14 · Status: Proposed
 
 - [Implementation slices](slices.md)
+- [Evaluation](evaluation.md) (Gate 1: passed)
 - Prototype record: `docs/proposals/automatic-tagging-poc.md` on the `feat/automatic-tagging-poc` branch
 
 ## TL;DR
@@ -110,7 +111,7 @@ promotion done (:177) ───────────────────�
 | `internal/topics/tokenizer.go` | `go-sentencepiece` over `tokenizer.model`. Adds BOS=2 and EOS=1. Prepends the prompt `task: clustering \| query: `. |
 | `internal/topics/recipe.go` | Exports `EmbedRecipeVersion = "r1"`. It names everything outside the model and the chunker that changes a vector: the prompt prefix, the 512-token cap and the batching policy. Any change to one of them bumps it. |
 | `internal/topics/embed.go` | `onnxruntime_go` v1.31.0 session over `$CASSINI_LIB_DIR/libonnxruntime.so`. Feeds empty `[0,512]` image, video and audio tensors and reads `sentence_embedding [B,768]`. |
-| `internal/topics/language.go` | Text language identification over the passages (a pure-Go detector; the choice is made in S2). Outputs a language code, a confidence and `DetectorVersion`. Below the confidence floor the answer is `unknown`. |
+| `internal/topics/language.go` | Text language identification over the passages: `abadojack/whatlanggo` (pure Go, MIT) on each passage of at least 12 words, then a vote weighted by words. The confidence is the winning language's share of those words; below 0.6 the answer is `unknown`. `DetectorVersion = "whatlanggo-1.0.1/vote-1"`. Known limits: Han-script text is always `zh`, so kanji-heavy Japanese can read as Chinese; the floors are untested on real multilingual meetings (Gate 2); the library has been unmaintained since 2019. |
 | `internal/cassini/topics_source.go` | Reads the default `cassini.words.v1` transcript from a `.opus` (verifying `payloadRef.sha256`) or rebuilds the same body from a bundle with the pack code (`assembleTranscriptInputs`, `internal/cassini/portable_meeting_tags.go:31`; `EncodeTranscriptBody`, `internal/portable/manifest_transcripts.go:275`). It lives in package `cassini`, because `assembleTranscriptInputs`, `flattenPortableTranscriptItems` and `portableMeetingSource` are unexported there, and `internal/topics` must not import `cassini` (the CLI imports `topics`, so that would be an import cycle). It hands `internal/topics` a plain word list. |
 | `internal/cassini/topics.go` | `cassini topics embed`, `cassini topics embed-texts`. Wired into the CLI dispatch. |
 | `internal/cassini/models.go` | An embedding branch next to the diarizer one. `listModelView` (`:43-52`) computes the embedding model's readiness diarizer-style (see "Model catalogue"). The CLI refuses a non-CPU device (`:167`) and dispatches the probe to the new embedder probe, not the speech probe (`:206-210`). |
@@ -203,7 +204,7 @@ The `.opus` carries only raw words and the bundle carries the producer's segment
 
 ### 4. Idempotency
 
-`embed_key = sha256(payload_sha256 ‖ model_revision ‖ ChunkerVersion ‖ EmbedRecipeVersion)`.
+`embed_key = sha256(payload_sha256 ‖ model_revision ‖ ChunkerVersion ‖ EmbedRecipeVersion)`, concretely the lowercase hex sha256 of the four strings joined by `\n` (`topics.EmbedKey`).
 
 `EmbedRecipeVersion` covers the prompt prefix, the token cap and the batching policy, which all change the vectors. Definition and control vectors carry the same `model_revision` and recipe in their key, so passages and definitions are always compared in one vector space.
 
@@ -217,7 +218,8 @@ Ported exactly from `refine_daily.py:16-47`:
 
 - Drop empty words. Sort by `(startMs, endMs, index)`.
 - Close the passage at the first matching rule: end of meeting; ≥ 25 words and a gap to the next word of ≥ 2000 ms; ≥ 25 words and the next word has a different speaker; ≥ 40 words and the word ends a sentence (`[.!?]["'’”]*$`); 120 words.
-- **Token cap.** Prefix plus passage must fit 512 tokens. The chunker closes the passage at the word before it would exceed the cap. It splits; it never truncates, because truncation drops content silently. This rarely fires in English (120 words is about 160 to 250 tokens) but matters for some languages.
+- **Token cap.** Prefix plus passage must fit 512 tokens. The chunker closes the passage at the word before it would exceed the cap (boundary `token cap`). It splits; it never truncates, because truncation drops content silently. This rarely fires in English (120 words is about 160 to 250 tokens) but matters for some languages. A single word over the cap is split at rune boundaries into pieces that each count as one word (boundary `long word split`), so none can support a topic.
+- **Equal times.** Words with the same start and end keep their transcript order. The prototype broke such ties by word id as a string (`w_10` before `w_2`); on the prototype corpus that reorders words in 3 of 60 meetings, so Gate 1 feeds the Go chunker words pre-sorted the prototype's way.
 - Words are whitespace tokens. This holds for the languages the shipped speech models produce. A script without spaces would need a different counter (open question 3).
 - Passages under 12 words are kept but never support a topic.
 
@@ -225,7 +227,7 @@ Ported exactly from `refine_daily.py:16-47`:
 
 - Passages are sorted by token count. Batching (at most 16 rows or 1024 padded tokens) ships only if a test shows that padded vectors equal single vectors (cosine ≥ 0.99999). Otherwise batch size is 1, which is what was measured (about 7 to 8 s per 30-minute meeting at 8 threads).
 - **Guards.** A vector that is not finite, has the wrong dimension, or has a norm outside 1 ± 1e-3 makes the CLI exit with a distinct "model fault" code. The meeting becomes `blocked` with reason `model-fault`.
-- **Output.** JSON lines `{ordinal, startMs, endMs, wordCount, tokenCount, boundary, vector}` plus a header `{embedKey, payloadSha256, language, languageConfidence, detectorVersion, audioSha256, modelRevision, chunkerVersion, recipeVersion, truncatedNone: true}`. No passage text leaves the CLI.
+- **Output.** JSON lines `{ordinal, startMs, endMs, wordCount, tokenCount, boundary, vector}` plus a header `{format, embedKey, payloadSha256, modelRevision, chunkerVersion, recipeVersion, dimensions, count, language, languageConfidence, detectorVersion, recordedLanguage?, truncatedNone: true}`. No passage text leaves the CLI. The audio digest is not in the header: the operator already holds the delivered digest. Exit codes: 0, 1 runtime, 2 usage, 3 no usable model or runtime, 4 model fault, 5 no usable transcript (stderr names `no-transcript`, `transcript-has-no-words` or `transcript-integrity`). `--words <file>` reads a plain word list instead of a meeting, for evaluation.
 - **Language.** Production builds record no transcript language: `WriteManifest` never sets one (`transcribe/format.go:346-362`), and the single-transcript pack path copies none (`portable_meeting_tags.go:36-51`). So the CLI detects the language itself from the passage text (`internal/topics/language.go`) and reports it in the header. A language recorded in the bundle, when one exists, is reported next to it but does not replace it. A meeting below the confidence floor is `unknown`. `unknown` counts as not validated, and coverage shows it as "language unknown", never as a named language.
 - The operator writes the meeting's `passage` rows in one sidecar transaction, under the rules in "Concurrent writers" and "Retirement".
 
@@ -702,7 +704,7 @@ Suggestions never reach the `.opus`, copies, search, the static viewer, or agent
 - Embed with the Go int8 runtime. Report the per-passage cosine to fp32 and the per-passage score delta distribution.
 - Run the Go scorer at 0.83/0.04, 0.85/0.05 and 0.87/0.06. Compare (meeting, topic) decisions with the 163 fp32 assignments at 0.85/0.05.
 - **Accept** at ≥ 97% decision agreement at the chosen gate, with every flip inspected and written down. Otherwise choose `T` and `M` again on int8 and record why.
-- The corpus and per-meeting outputs stay private. The repository gets the harness (`cassini topics embed` over a local folder, then `cassini-operator topics-eval --vectors <dir> --labels <file>`) and aggregate numbers in `docs/proposals/automatic-tagging/evaluation.md`.
+- The corpus and per-meeting outputs stay private. The repository gets the harness (`cassini topics embed` over a local folder, then `cassini-operator topics-eval --vectors <dir> --definitions <file> --reference <file>`) and aggregate numbers in `docs/proposals/automatic-tagging/evaluation.md`.
 
 ### Gate 2: labelled review set (before the feature leaves preview)
 
@@ -731,7 +733,7 @@ Suggestions never reach the `.opus`, copies, search, the static viewer, or agent
 
 1. **Which database.** The design puts the queue and verdicts in `annotations.sqlite3` so a confirm is one transaction. Does that match "the operator's database"? If that database is lost, the archive seeds a replacement and the library and rejections are gone. Backups must include it.
 2. **Model licence.** Resolved 2026-10-14: the linked licence page is the plain Apache License 2.0. Google's prohibited-use policy is a separate page; the docs should link it as guidance.
-3. **Languages.** The control definitions are English prose, and the chunker counts whitespace words. Production records no transcript language, so this design detects it in the CLI; which detector, and its confidence floor, is decided in S2. Should meetings in unvalidated or unknown languages get suggestions with a warning (this design), or only appear in coverage? Should the build record the language too? Should the margin use the other library topics instead of fixed controls?
+3. **Languages.** The control definitions are English prose, and the chunker counts whitespace words. Production records no transcript language, so this design detects it in the CLI; S2 chose `whatlanggo` with a per-passage vote and a 0.6 floor (see `language.go`). Should meetings in unvalidated or unknown languages get suggestions with a warning (this design), or only appear in coverage? Should the build record the language too? Should the margin use the other library topics instead of fixed controls?
 4. **Merge.** This design copies A's rejections to B on a merge. Confirm, or keep them as A's history only?
 5. **Private 1:1 calls.** The room type is not stored per meeting (`talk_backend.go:132-136`). Should proposals leave them out? That needs a stored room-type field.
 6. **Proposal window.** A rolling 90 days per room, or the whole history?
