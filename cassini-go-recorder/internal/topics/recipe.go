@@ -26,8 +26,12 @@ const Dimensions = 768
 // The batching policy. Texts are sorted by token count and grouped into
 // batches of at most MaxBatchRows rows and MaxBatchTokens padded tokens; a
 // padded row embeds to the same vector as the text alone (the padding parity
-// test), so batching changes only the speed.
+// test), so batching changes only the speed and the memory. Measured at 4
+// threads on 600 natural passages (about 66 tokens each): 1.7 times as fast
+// as one text at a time, with the same speed at 1024 and 4096 tokens per
+// batch. On texts near the cap the peak RSS is 0.58 GB at 1024 and 1.78 GB at
+// 4096, so 1024 it is.
 const (
 	MaxBatchRows   = 16
-	MaxBatchTokens = 4096
+	MaxBatchTokens = 1024
 )

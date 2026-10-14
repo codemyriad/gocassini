@@ -62,8 +62,8 @@ func probeMemoryFloor(model ModelID, device string) int {
 	case "nemotron-3-diarization":
 		return 1536
 	case "embeddinggemma-2-text-int8":
-		// Topic suggestions: a measured peak of 0.96 GiB embedding a
-		// 512-token passage, with room for the native runtime.
+		// Topic suggestions: a measured peak RSS of 0.58 GB embedding
+		// batches of texts near the 512-token cap, 0.31 GB for the probe.
 		return 1536
 	default:
 		return 4608

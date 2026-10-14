@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"gocassini/internal/modelstore"
 	"gocassini/internal/topics"
@@ -52,10 +51,24 @@ func (f *fakeEmbedder) Close() error { return nil }
 
 func stubTopicsEmbedder(t *testing.T, embedder textEmbedder) {
 	t.Helper()
+	stubTopicsTokenizer(t)
 	prevCheck, prevOpen := topicsRuntimeCheckFn, openTopicsEmbedderFn
 	topicsRuntimeCheckFn = func() error { return nil }
 	openTopicsEmbedderFn = func(modelstore.EmbeddingFiles, topics.Options) (textEmbedder, error) { return embedder, nil }
 	t.Cleanup(func() { topicsRuntimeCheckFn, openTopicsEmbedderFn = prevCheck, prevOpen })
+}
+
+// fakeTokenCounter counts one token per byte plus the prompt: a text over
+// topics.MaxTokens bytes is over the cap.
+type fakeTokenCounter struct{}
+
+func (fakeTokenCounter) Encode(text string) []int64 { return make([]int64, len(text)) }
+
+func stubTopicsTokenizer(t *testing.T) {
+	t.Helper()
+	prev := loadTopicsTokenizerFn
+	loadTopicsTokenizerFn = func(string) (topics.TokenCounter, error) { return fakeTokenCounter{}, nil }
+	t.Cleanup(func() { loadTopicsTokenizerFn = prev })
 }
 
 func writeTopicsInput(t *testing.T, lines ...string) string {
@@ -145,7 +158,7 @@ func TestTopicsEmbedTextsExitCodes(t *testing.T) {
 		{"not finite", &fakeEmbedder{vector: nan}, good, root, topicsExitModelFault},
 		{"767 dimensions", &fakeEmbedder{vector: short}, good, root, topicsExitModelFault},
 		{"guard in the runtime", &fakeEmbedder{err: fmt.Errorf("%w: input 0", topics.ErrModelFault)}, good, root, topicsExitModelFault},
-		{"text over the cap", &fakeEmbedder{err: fmt.Errorf("%w: text 1", topics.ErrTooLong)}, good, root, topicsExitUsage},
+		{"text over the cap in the runtime", &fakeEmbedder{err: fmt.Errorf("%w: text 1", topics.ErrTooLong)}, good, root, topicsExitUsage},
 		{"runtime error", &fakeEmbedder{err: fmt.Errorf("boom")}, good, root, topicsExitRuntime},
 		{"model not installed", &fakeEmbedder{}, good, t.TempDir(), topicsExitUnavailable},
 		{"repeated id", &fakeEmbedder{}, writeTopicsInput(t, `{"id":"a","text":"one"}`, `{"id":"a","text":"two"}`), root, topicsExitUsage},
@@ -174,15 +187,77 @@ func TestTopicsEmbedTextsExitCodes(t *testing.T) {
 	if code, _, _ := runEmbedTexts(root, "--in", good); code != topicsExitUsage {
 		t.Fatalf("no --out: code %d", code)
 	}
+	topicsRuntimeCheckFn = func() error { return nil }
+	openTopicsEmbedderFn = func(modelstore.EmbeddingFiles, topics.Options) (textEmbedder, error) {
+		return nil, fmt.Errorf("load model_quantized.onnx: protobuf parsing failed")
+	}
+	if code, _, _ := runEmbedTexts(root, "--in", good, "--out", filepath.Join(t.TempDir(), "v")); code != topicsExitUnavailable {
+		t.Fatalf("model files that do not load: code %d, want unavailable", code)
+	}
+}
+
+// What would only fail after the model ran is refused first, without taking
+// the inference lock or loading the model: a text over the token cap and an
+// output directory that does not exist.
+func TestTopicsEmbedTextsRefusesBeforeTheLock(t *testing.T) {
+	root := t.TempDir()
+	fakeInstallShipped(t, root, DefaultEmbeddingModelID)
+	stubTopicsTokenizer(t)
+	prevCheck, prevOpen := topicsRuntimeCheckFn, openTopicsEmbedderFn
+	t.Cleanup(func() { topicsRuntimeCheckFn, openTopicsEmbedderFn = prevCheck, prevOpen })
+	topicsRuntimeCheckFn = func() error { return nil }
+	openTopicsEmbedderFn = func(modelstore.EmbeddingFiles, topics.Options) (textEmbedder, error) {
+		t.Fatal("loaded the model for a request it should have refused")
+		return nil, nil
+	}
+	// The lock is held: a refusal that waited for it would hang here.
+	unlock, err := transcribe.LockModelRuntime(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	long := writeTopicsInput(t, `{"id":"a","text":"one"}`, fmt.Sprintf(`{"id":"b","text":%q}`, strings.Repeat("x", topics.MaxTokens+1)))
+	code, stdout, stderr := runEmbedTexts(root, "--in", long, "--out", filepath.Join(t.TempDir(), "v"))
+	if code != topicsExitUsage || !strings.Contains(stderr, `"b"`) || strings.Contains(stdout, "locked") {
+		t.Fatalf("over the cap: code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	good := writeTopicsInput(t, `{"id":"a","text":"one"}`)
+	code, stdout, stderr = runEmbedTexts(root, "--in", good, "--out", filepath.Join(t.TempDir(), "missing", "v"))
+	if code != topicsExitUsage || !strings.Contains(stderr, "--out") || strings.Contains(stdout, "locked") {
+		t.Fatalf("unwritable output: code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+}
+
+func TestTopicsEmbedTextsClampsThreads(t *testing.T) {
+	root := t.TempDir()
+	fakeInstallShipped(t, root, DefaultEmbeddingModelID)
+	stubTopicsTokenizer(t)
+	var got []int
+	prevCheck, prevOpen := topicsRuntimeCheckFn, openTopicsEmbedderFn
+	t.Cleanup(func() { topicsRuntimeCheckFn, openTopicsEmbedderFn = prevCheck, prevOpen })
+	topicsRuntimeCheckFn = func() error { return nil }
+	openTopicsEmbedderFn = func(_ modelstore.EmbeddingFiles, opts topics.Options) (textEmbedder, error) {
+		got = append(got, opts.Threads)
+		return &fakeEmbedder{}, nil
+	}
+	in := writeTopicsInput(t, `{"id":"a","text":"one"}`)
+	for _, threads := range []string{"100", "3"} {
+		if code, _, stderr := runEmbedTexts(root, "--in", in, "--out", filepath.Join(t.TempDir(), "v"), "--threads", threads); code != 0 {
+			t.Fatalf("--threads %s: code %d: %s", threads, code, stderr)
+		}
+	}
+	if fmt.Sprint(got) != "[16 3]" {
+		t.Fatalf("threads %v, want [16 3]", got)
+	}
 }
 
 // A second embed waits for the first: both take the model store's inference
 // lock, as builds, probes and diarization do.
 func TestTopicsEmbedTextsWaitsForTheInferenceLock(t *testing.T) {
 	first := &fakeEmbedder{started: make(chan struct{}), release: make(chan struct{})}
-	second := &fakeEmbedder{started: make(chan struct{})}
 	root := t.TempDir()
 	fakeInstallShipped(t, root, DefaultEmbeddingModelID)
+	stubTopicsTokenizer(t)
 	var mu sync.Mutex
 	opened := 0
 	prevCheck, prevOpen := topicsRuntimeCheckFn, openTopicsEmbedderFn
@@ -194,47 +269,62 @@ func TestTopicsEmbedTextsWaitsForTheInferenceLock(t *testing.T) {
 		if opened == 1 {
 			return first, nil
 		}
-		return second, nil
+		return &fakeEmbedder{}, nil
 	}
 	t.Cleanup(func() { topicsRuntimeCheckFn, openTopicsEmbedderFn = prevCheck, prevOpen })
+	openedCount := func() int { mu.Lock(); defer mu.Unlock(); return opened }
 	in := writeTopicsInput(t, `{"id":"a","text":"one"}`)
-	done := make(chan int, 2)
-	go func() { code, _, _ := runEmbedTexts(root, "--in", in, "--out", filepath.Join(t.TempDir(), "1")); done <- code }()
-	<-first.started
-	go func() { code, _, _ := runEmbedTexts(root, "--in", in, "--out", filepath.Join(t.TempDir(), "2")); done <- code }()
-	select {
-	case <-second.started:
-		t.Fatal("the second embed ran while the first held the lock")
-	case <-time.After(400 * time.Millisecond):
+	// A run whose context is already given up takes the lock only if it is
+	// free: the lock tries once before it looks at the context. So it fails
+	// exactly when someone else holds the lock, and never needs a timer.
+	givenUp := func(name string) (int, string, string, string) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		out := filepath.Join(t.TempDir(), name)
+		var stdout, stderr bytes.Buffer
+		code := Run(ctx, []string{"topics", "embed-texts", "--cache-root", root, "--in", in, "--out", out}, &stdout, &stderr)
+		return code, stdout.String(), stderr.String(), out
 	}
-	close(first.release)
-	for range 2 {
-		if code := <-done; code != 0 {
-			t.Fatalf("code %d", code)
+	assertWaited := func(holder string) {
+		t.Helper()
+		before := openedCount()
+		code, stdout, stderr, out := givenUp("waited")
+		if code != topicsExitRuntime || !strings.Contains(stderr, "model runtime lock") {
+			t.Fatalf("while %s held the lock: exit %d stderr %q, want a runtime failure waiting for it", holder, code, stderr)
 		}
+		if strings.Contains(stdout, "locked") || openedCount() != before {
+			t.Fatalf("while %s held the lock the embed loaded the model: stdout %q", holder, stdout)
+		}
+		assertNotExist(t, out)
 	}
-	select {
-	case <-second.started:
-	default:
-		t.Fatal("the second embed never ran")
+
+	// Another embed holds the lock while it runs.
+	done := make(chan int, 1)
+	go func() {
+		code, _, _ := runEmbedTexts(root, "--in", in, "--out", filepath.Join(t.TempDir(), "1"))
+		done <- code
+	}()
+	<-first.started
+	assertWaited("another embed")
+	close(first.release)
+	if code := <-done; code != 0 {
+		t.Fatalf("first embed: code %d", code)
 	}
-	// And a build holding the lock keeps it waiting too.
+	// Free again: the same given-up run now goes through, so the failure
+	// above was the lock and not the cancelled context.
+	if code, stdout, stderr, out := givenUp("free"); code != 0 || !strings.Contains(stdout, `{"locked":true}`) {
+		t.Fatalf("with the lock free: exit %d stdout %q stderr %q", code, stdout, stderr)
+	} else if _, err := os.Stat(out); err != nil {
+		t.Fatal(err)
+	}
+
+	// A build, a model check or a diarization holding it keeps it waiting too.
 	unlock, err := transcribe.LockModelRuntime(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	third := &fakeEmbedder{started: make(chan struct{})}
-	stubTopicsEmbedder(t, third)
-	go func() { code, _, _ := runEmbedTexts(root, "--in", in, "--out", filepath.Join(t.TempDir(), "3")); done <- code }()
-	select {
-	case <-third.started:
-		t.Fatal("embed ran while a build held the lock")
-	case <-time.After(400 * time.Millisecond):
-	}
+	assertWaited("a build")
 	unlock()
-	if code := <-done; code != 0 {
-		t.Fatalf("code %d", code)
-	}
 }
 
 // The real model, from a directory of its files (CASSINI_TOPICS_MODEL_DIR).

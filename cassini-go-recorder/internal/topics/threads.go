@@ -33,5 +33,10 @@ func Threads(cpus int) (int, error) {
 	if n == 0 {
 		return fallback, nil
 	}
-	return min(max(n, 1), maxThreads), nil
+	return ClampThreads(n), nil
+}
+
+// ClampThreads keeps an explicit thread count within 1..16.
+func ClampThreads(n int) int {
+	return min(max(n, 1), maxThreads)
 }

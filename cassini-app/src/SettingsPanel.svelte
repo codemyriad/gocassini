@@ -19,6 +19,7 @@
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import SpeechModels from "./SpeechModels.svelte";
   import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
+  import TopicSuggestionsModel from "./TopicSuggestionsModel.svelte";
   import ModelCombobox from "./ModelCombobox.svelte";
   // D-757: "Who can see recordings" is a section of the Settings panel, above
   // the pipeline it applies to. Its own component because it is a page's worth
@@ -937,6 +938,7 @@
 
 
       <VoiceSeparationModel client={operatorClient} inventory={modelInventory} />
+      <TopicSuggestionsModel client={operatorClient} inventory={modelInventory} />
 
       <!-- Both fields steer how names come out: one when transcribing, one when
            searching what was transcribed. -->
