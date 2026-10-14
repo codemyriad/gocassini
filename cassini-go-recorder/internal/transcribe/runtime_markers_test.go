@@ -6,7 +6,7 @@ import (
 )
 
 // cassiniRuntimeVersion is the native version of sherpa-onnx-go-linux
-// v1.13.7-cassini.7 (codemyriad/sherpa-onnx v1.13.7-cassini).
+// v1.13.7-cassini.7 and .8 (codemyriad/sherpa-onnx v1.13.7-cassini).
 const cassiniRuntimeVersion = "1.13.7+cassini-parakeet-v3-reference-v1.nemotron-diarization-v2.parakeet-ultra-v1"
 
 // A Cassini runtime must select the reference frontend for Parakeet Ultra

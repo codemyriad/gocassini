@@ -28,6 +28,8 @@ without that marker use the standard decode policy instead of preventing startup
 The `.7` version appends `.parakeet-ultra-v1` after the existing markers, so v3
 behavior and the existing marker checks are unchanged. Its native source is retained by
 the [`v1.13.7-cassini-parakeet-ultra-v1` tag](https://github.com/codemyriad/sherpa-onnx/tree/v1.13.7-cassini-parakeet-ultra-v1).
+Cassini pins `.8`: the same source and amd64 library as `.7`, with the arm64
+library rebuilt natively on an arm64 runner instead of cross-compiled.
 
 Since `v1.13.7-cassini.6` the native library also carries NVIDIA
 Nemotron-3-Diarization (end-to-end speaker diarization for up to 8 speakers).
