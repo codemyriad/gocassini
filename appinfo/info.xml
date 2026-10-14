@@ -455,6 +455,14 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>GET,POST</verb>
         <access_level>USER</access_level>
       </route>
+      <!-- USER: topic suggestions (docs/topic-suggestions.md): the topic
+           library anyone who can tag may edit, and review. Every answer is
+           limited to the meetings the caller can read. -->
+      <route>
+        <url>^annotations\/topics(\/.*)?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
       <route>
         <url>^annotations\/meetings\/[^\/]+\/?$</url>
         <verb>GET,POST</verb>

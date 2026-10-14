@@ -5,19 +5,40 @@
   import { Ellipsis, History } from "@lucide/svelte";
   import CloseButton from "../ui/CloseButton.svelte";
 
-  import { plural, type TagPick, type TagUpdate, type VocabularyTag } from "../../viewer/annotations";
+  import { AnnotationError, plural, type TagPick, type TagUpdate, type VocabularyTag } from "../../viewer/annotations";
   import { changedLine, confirmLine, countsLine, createJobTracker, jobStatus, type TagAction, type TagProvider } from "../../viewer/tagManager";
   import { colorFor } from "../../viewer/tagPalette";
   import TagChip from "./TagChip.svelte";
   import TagPicker from "./TagPicker.svelte";
   import TagEditor from "./manager/TagEditor.svelte";
   import { popover, stepIndex } from "./popover";
+  import TopicsPanel from "../topics/TopicsPanel.svelte";
+  import type { DataProvider } from "../../viewer/dataProvider";
+  import type { TopicLibrary } from "../../viewer/topics";
 
   export let tags: VocabularyTag[] = [];
-  export let provider: TagProvider;
+  export let provider: TagProvider & Partial<Pick<DataProvider, "loadTopicLibrary" | "saveTopic" | "loadTopicHistory" | "redactTopicRevision" | "loadTopicTagRooms">>;
   export let open = false;
 
-  const MENU = [["rename", "Rename"], ["color", "Change colour"], ["merge", "Merge into…"], ["delete", "Delete…"]] as const;
+  const MENU = [["rename", "Rename"], ["color", "Change colour"], ["describe", "Describe as topic…"], ["merge", "Merge into…"], ["delete", "Delete…"]] as const;
+  // The topic library, when this operator serves one with suggestions on.
+  let library: TopicLibrary | null = null;
+  let tab: "tags" | "topics" = "tags";
+  let describing: VocabularyTag | null = null;
+  // Also retire the topic of a tag being deleted.
+  let retireToo = true;
+  let retireFailed = "";
+  $: topicsOn = !!library?.enabled;
+  $: topicIds = new Set((library?.library ?? []).filter((t) => t.status === "active").map((t) => t.tagId));
+
+  async function loadLibrary() {
+    if (!provider.loadTopicLibrary) return;
+    try {
+      library = await provider.loadTopicLibrary();
+    } catch {
+      library = null;
+    }
+  }
   const dispatch = createEventDispatcher<{ close: void; changed: void }>();
   const jobs = createJobTracker(provider, () => dispatch("changed"));
   onDestroy(jobs.stop);
@@ -30,15 +51,23 @@
   let editing: { tagId: string; choosing: "color" | null; conflict: { tagId: string; label: string } | null } | null = null;
   let confirming: { action: TagAction; title: string; verb: string } | null = null;
 
-  $: if (open) void jobs.refresh();
+  $: if (open) void opened();
   else menu = merging = editing = confirming = null;
+
+  function opened() {
+    void loadLibrary();
+    return jobs.refresh();
+  }
 
   function choose(id: (typeof MENU)[number][0]) {
     if (!menu) return;
     const { tag, anchor } = menu;
     menu = null;
     if (id === "merge") merging = { tag, anchor };
-    else if (id === "delete") confirming = { action: { kind: "delete", tagId: tag.tagId }, title: `Delete “${tag.label}”?`, verb: "Delete" };
+    else if (id === "describe") {
+      describing = tag;
+      tab = "topics";
+    } else if (id === "delete") confirming = { action: { kind: "delete", tagId: tag.tagId }, title: `Delete “${tag.label}”?`, verb: "Delete" };
     else editing = { tagId: tag.tagId, choosing: id === "color" ? "color" : null, conflict: null };
   }
 
@@ -51,6 +80,22 @@
 
   async function run(action: TagAction) {
     confirming = null;
+    // Deleting a described tag keeps its topic unless asked to retire it.
+    if (action.kind === "delete" && retireToo && topicIds.has(action.tagId) && provider.saveTopic) {
+      const topic = library?.library?.find((t) => t.tagId === action.tagId);
+      if (topic) {
+        try {
+          await provider.saveTopic({ tagId: topic.tagId, expectRevision: topic.revision, status: "retired" });
+        } catch {
+          // Asked to retire it too: nothing is deleted when that fails.
+          retireFailed = `“${topic.label}” could not be retired, so the tag was not deleted. Try again.`;
+          void loadLibrary();
+          return new AnnotationError(0, "retire-failed");
+        }
+        void loadLibrary();
+      }
+    }
+    retireFailed = "";
     const error = await jobs.run(action);
     if (!error) {
       editing = null;
@@ -145,7 +190,20 @@
       </h2>
       <CloseButton label="Close" data-close on:click={() => dispatch("close")} />
     </header>
+    {#if topicsOn}
+      <div role="tablist" aria-label="Manage" class="tabs tabs-border px-3">
+        <button type="button" role="tab" class="tab" class:tab-active={tab === "tags"} aria-selected={tab === "tags"} on:click={() => (tab = "tags")}>Tags</button>
+        <button type="button" role="tab" class="tab" class:tab-active={tab === "topics"} aria-selected={tab === "topics"} on:click={() => (tab = "topics")}>Topics</button>
+      </div>
+    {/if}
+    {#if topicsOn && tab === "topics" && library}
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-8 pt-1.5 max-[720px]:px-2">
+        <TopicsPanel {library} {provider} {tags} describe={describing} on:describeDone={() => (describing = null)}
+          on:changed={() => { void loadLibrary(); dispatch("changed"); }} />
+      </div>
+    {:else}
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-8 pt-1.5 max-[720px]:px-2">
+      {#if retireFailed}<p role="alert" class="alert alert-error alert-soft my-1.5 py-2 text-sm">{retireFailed}</p>{/if}
       {#if $jobs.notice}<p role="alert" class="alert alert-warning alert-soft sticky top-0 z-10 my-1.5 py-2 text-sm">{$jobs.notice}</p>{/if}
       {#if tags.length === 0}<p class="px-2.5 py-6 text-sm text-base-content/60">No tags yet.</p>{/if}
       <ul>
@@ -191,6 +249,12 @@
               <div class="order-2 my-1 grid basis-full gap-1 rounded-box border border-base-300 bg-base-200 p-3">
                 <p class="font-medium">{pending.title}</p>
                 <p class="text-xs text-base-content/65">{confirmLine(tag.meetings)}</p>
+                {#if pending.action.kind === "merge" && topicIds.has(tag.tagId)}
+                  <p class="text-xs text-base-content/65">“{tag.label}” is a topic: it is retired into the tag you merge it into, which takes its definition if it has none.</p>
+                {/if}
+                {#if pending.action.kind === "delete" && topicIds.has(tag.tagId)}
+                  <label class="flex items-center gap-2 text-xs"><input type="checkbox" class="checkbox checkbox-xs" bind:checked={retireToo} /> Also retire this topic, so it is no longer suggested</label>
+                {/if}
                 <div class="mt-1 flex justify-end gap-2">
                   <button type="button" class="btn btn-ghost btn-sm" on:click={dismiss}>Cancel</button>
                   <button type="button" use:focus class="btn btn-sm {pending.action.kind === 'delete' ? 'btn-error' : 'btn-neutral'}"
@@ -202,10 +266,11 @@
         {/each}
       </ul>
     </div>
+    {/if}
     {#if menu}
       <div bind:this={menuEl} use:popover={{ anchor: menu.anchor, close: () => (menu = null) }} role="menu" tabindex="-1"
         aria-label={`Actions for ${menu.tag.label}`} class="tag-popover grid w-44 p-1" on:keydown={onMenuKeydown}>
-        {#each MENU as [id, text], index (id)}
+        {#each MENU.filter(([id]) => id !== "describe" || (topicsOn && menu && !topicIds.has(menu.tag.tagId))) as [id, text], index (id)}
           <button type="button" role="menuitem" use:focus={index === 0} disabled={id === "merge" && tags.length < 2} class:text-error={id === "delete"}
             class="rounded-field px-2.5 py-1.5 text-left text-sm hover:bg-base-content/8 focus-visible:bg-base-content/8 focus-visible:outline-none disabled:opacity-40"
             on:click={() => choose(id)}>{text}</button>

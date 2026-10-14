@@ -38,7 +38,18 @@ type topicsStatus struct {
 	Blocked                 []topicBlockedRow `json:"blocked"`
 	VectorsBytes            int64             `json:"vectorsBytes"`
 	Worker                  topicsWorkerStats `json:"worker"`
+	// Audit is the library's recent edits with who made them: admins only.
+	Audit []topicAuditRow `json:"audit"`
 	EstimateSecondsPerCheck int               `json:"estimateSecondsPerMeeting"`
+}
+
+type topicAuditRow struct {
+	TagID    string `json:"tagId"`
+	Revision int    `json:"revision"`
+	Kind     string `json:"kind"`
+	Actor    string `json:"actor"`
+	At       string `json:"at"`
+	Redacted bool   `json:"redacted"`
 }
 
 type topicBlockedRow struct {
@@ -70,7 +81,7 @@ func (rt *Runtime) topicsSettingsHandler(w http.ResponseWriter, r *http.Request)
 func (rt *Runtime) topicsStatus(ctx context.Context) topicsStatus {
 	settings := rt.currentSettings().TopicSuggestions
 	st := topicsStatus{Enabled: settings.Enabled, Threads: settings.Threads, ScorerVersion: topicsScorerVersion,
-		Counts: map[string]int{}, Unavailable: map[string]int{}, Blocked: []topicBlockedRow{}, EstimateSecondsPerCheck: topicSecondsPerMeeting}
+		Counts: map[string]int{}, Unavailable: map[string]int{}, Blocked: []topicBlockedRow{}, Audit: []topicAuditRow{}, EstimateSecondsPerCheck: topicSecondsPerMeeting}
 	s := rt.topics
 	if s == nil {
 		st.Reason = "unavailable"
@@ -109,6 +120,17 @@ func (rt *Runtime) topicsStatus(ctx context.Context) topicsStatus {
 			var b topicBlockedRow
 			if rows.Scan(&b.Meeting, &b.Reason, &b.Error) == nil {
 				st.Blocked = append(st.Blocked, b)
+			}
+		}
+		rows.Close()
+	}
+	if rows, err := s.store.db.QueryContext(ctx, `SELECT tag_id,revision,COALESCE(json_extract(change_json,'$.kind'),''),actor,at,redacted_at IS NOT NULL FROM topic_library_event ORDER BY id DESC LIMIT 50`); err == nil {
+		for rows.Next() {
+			var a topicAuditRow
+			var at int64
+			if rows.Scan(&a.TagID, &a.Revision, &a.Kind, &a.Actor, &at, &a.Redacted) == nil {
+				a.At = time.Unix(at, 0).UTC().Format(time.RFC3339)
+				st.Audit = append(st.Audit, a)
 			}
 		}
 		rows.Close()

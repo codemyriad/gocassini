@@ -108,6 +108,9 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusN
 		if err := store.prepareInitialTagAppearance(ctx, &batch, visible); err != nil {
 			return annotateResult{}, err
 		}
+		if err := s.libraryTagAppearance(ctx, &batch); err != nil {
+			return annotateResult{}, err
+		}
 	}
 	var result annotateResult
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
