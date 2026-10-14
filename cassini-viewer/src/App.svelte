@@ -72,6 +72,7 @@
   import MeetingView from "./components/MeetingView.svelte";
   import PreparePanel from "./components/PreparePanel.svelte";
   import TagManager from "./components/tags/TagManager.svelte";
+  import NeedsReview from "./components/topics/NeedsReview.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
   import { focusLayer } from "./components/ui/focusLayer";
@@ -167,12 +168,12 @@
   // else, so an overlay covers the app rather than most of it.
   // The rooms drawer is not one of them: it is a part of this surface sliding
   // into view, not a thing over it, and the tabs stay usable while it is open.
-  $: overlayOpen = prepareOpen || tagManagerOpen || Boolean(selectedInsight || selectedMeetingId);
+  $: overlayOpen = prepareOpen || tagManagerOpen || needsReviewOpen || Boolean(selectedInsight || selectedMeetingId);
   // Which layer is on top, in the order they stack: the meeting sheet, then
   // Prepare, then the rooms drawer (only ever open on a phone), then Manage
   // tags. Everything under it is inert, so neither Tab nor a screen reader
   // wanders into a page the reader cannot see for the drawer over it.
-  $: topLayer = tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  $: topLayer = tagManagerOpen || needsReviewOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
   $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
@@ -240,6 +241,25 @@
   let tagNotice = "";
   let tagRetryable = false;
   let tagManagerOpen = false;
+  // Topic suggestions waiting for review: total and per meeting, over the
+  // caller's meetings; null where the operator offers none.
+  let needsReviewOpen = false;
+  let reviewCounts: { total: number; byMeeting: Record<string, number> } | null = null;
+  async function refreshReviewCounts() {
+    if (!dataProvider.loadReviewQueue) return;
+    try {
+      const queue = await dataProvider.loadReviewQueue({ limit: 1 });
+      reviewCounts = queue.enabled === false ? null : { total: queue.total, byMeeting: queue.byMeeting ?? {} };
+    } catch {
+      // A failed refresh keeps the last counts rather than hiding the queue.
+    }
+  }
+  function openReviewedMeeting(meetingId: string) {
+    const found = catalogMeetings.find((meeting) => meeting.id === meetingId);
+    if (!found) return;
+    needsReviewOpen = false;
+    loadCatalogMeeting(found);
+  }
 
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
@@ -541,6 +561,10 @@
       tagManagerOpen = false;
       return;
     }
+    if (needsReviewOpen) {
+      needsReviewOpen = false;
+      return;
+    }
     if (prepareOpen) {
       prepareOpen = false;
       return;
@@ -555,6 +579,11 @@
       return;
     }
     if (rootEl?.querySelector("dialog[open]")) {
+      return;
+    }
+    if (needsReviewOpen) {
+      needsReviewOpen = false;
+      void refreshReviewCounts();
       return;
     }
     if (railOpen) {
@@ -884,6 +913,7 @@
       catalogMeetings = catalog.meetings;
       catalogPending = false;
       listError = "";
+      void refreshReviewCounts();
       void hydrateCatalogMeetingMetadata(catalog.meetings);
       // A deep link that could not be satisfied at mount is satisfied here, the
       // first time a catalog actually arrives.
@@ -1118,6 +1148,7 @@
   // caller's searches (annotations/tags shares search's rate budget).
   function refreshOnReturn() {
     refreshCatalogWhenVisible();
+    if (document.visibilityState === "visible") void refreshReviewCounts();
     if (document.visibilityState === "visible") {
       refreshTags();
     }
@@ -1250,6 +1281,13 @@
       ? "Cassini Meetings"
       : "Cassini Viewer";
 
+  onMount(() => void refreshReviewCounts());
+  // A meeting's decisions change the counts: refresh when its sheet closes.
+  let reviewedMeeting: string | null = null;
+  $: if (selectedMeetingId !== reviewedMeeting) {
+    if (reviewedMeeting) void refreshReviewCounts();
+    reviewedMeeting = selectedMeetingId;
+  }
   onMount(async () => {
     window.addEventListener("popstate", handlePopState);
     // Back/forward across hash-only history entries fires popstate; some paths
@@ -1427,11 +1465,14 @@
       on:toggleTag={(event) => toggleTagFilter(event.detail)}
       on:tagMatch={(event) => (tagMatch = event.detail)}
       on:manageTags={() => (tagManagerOpen = true)}
+      reviewCount={reviewCounts ? reviewCounts.total : null}
+      on:needsReview={() => (needsReviewOpen = true)}
     />
     </div>
 
     <div class="contents" inert={topLayer > 0}>
     <MeetingList
+      suggestedCounts={reviewCounts?.byMeeting ?? {}}
       meetings={roomMeetings}
       types={browseTypes}
       totalCount={catalogMeetings.length}
@@ -1640,6 +1681,13 @@
       </aside>
     {/if}
 
+    {#if dataProvider.loadReviewQueue && dataProvider.decideSuggestionBatch}
+      <NeedsReview open={needsReviewOpen} provider={dataProvider}
+        room={selectedRoomKey ?? ""} roomLabel={roomBuckets.find((bucket) => bucket.key === selectedRoomKey)?.name ?? ""}
+        on:close={() => { needsReviewOpen = false; void refreshReviewCounts(); }}
+        on:changed={() => { void refreshReviewCounts(); void refreshTags(true); }}
+        on:openMeeting={(event) => openReviewedMeeting(event.detail)} />
+    {/if}
     <!-- Kept mounted while closed, so a job started before closing still reports. -->
     {#if dataProvider.updateTag}
       <TagManager

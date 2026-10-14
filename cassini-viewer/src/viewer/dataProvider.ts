@@ -40,7 +40,7 @@ import type {
   VocabularyTag,
 } from "./annotations";
 import type { SpeakerEditsDoc, SpeakerEditsState } from "./speakerEdits";
-import type { MeetingSuggestions, Topic, TopicCoverage, TopicDecision, TopicLibrary, TopicRevision, TopicSave, TopicTagRooms } from "./topics";
+import type { MeetingSuggestions, Topic, TopicBatchResult, TopicCoverage, TopicDecision, TopicLibrary, TopicQueue, TopicQueueQuery, TopicRevision, TopicSave, TopicTagRooms } from "./topics";
 import {
   searchMeetingTranscripts,
   type MeetingSearchOptions,
@@ -161,6 +161,12 @@ export interface DataProvider {
   loadMeetingSuggestions?(entry: MeetingCatalogEntry): Promise<MeetingSuggestions>;
   decideSuggestion?(entry: MeetingCatalogEntry, tagId: string, decision: TopicDecision, requestId: string): Promise<{ annotations?: AnnotationResult; replayed?: boolean }>;
   loadTopicCoverage?(room?: string): Promise<TopicCoverage>;
+
+  // OPTIONAL: the review queue across the caller's meetings and a decision
+  // of one topic on many of them (at most 100), each as a single decision
+  // would be made.
+  loadReviewQueue?(query?: TopicQueueQuery): Promise<TopicQueue>;
+  decideSuggestionBatch?(request: { requestId: string; tagId: string; meetingIds: string[]; decision: "confirm" | "reject" }): Promise<{ results: TopicBatchResult[] }>;
 
   // OPTIONAL (D-736): what was SAID across the meetings this caller can read —
   // `GET published/search`.

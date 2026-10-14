@@ -21,7 +21,7 @@ import {
   type TagVocabulary,
   type VocabularyTag,
 } from "cassini-viewer/annotations";
-import { newRequestId, type MeetingSuggestions, type Topic, type TopicCoverage, type TopicDecision, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "cassini-viewer/topics";
+import { newRequestId, type MeetingSuggestions, type Topic, type TopicBatchResult, type TopicCoverage, type TopicDecision, type TopicQueue, type TopicQueueQuery, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "cassini-viewer/topics";
 
 import {
   listInsights as fetchInsightRuns,
@@ -179,6 +179,17 @@ export class AppDataProvider extends StaticCatalogProvider {
 
   decideSuggestion(entry: MeetingCatalogEntry, tagId: string, decision: TopicDecision, requestId: string): Promise<{ annotations?: AnnotationResult; replayed?: boolean }> {
     return requestAnnotations(`topics/meetings/${encodeURIComponent(entry.id)}/${encodeURIComponent(tagId)}`, { requestId, decision });
+  }
+
+  loadReviewQueue(query: TopicQueueQuery = {}): Promise<TopicQueue> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
+    const search = params.toString();
+    return requestAnnotations(search ? `topics/review?${search}` : "topics/review");
+  }
+
+  decideSuggestionBatch(request: { requestId: string; tagId: string; meetingIds: string[]; decision: "confirm" | "reject" }): Promise<{ results: TopicBatchResult[] }> {
+    return requestAnnotations("topics/review/batch", request);
   }
 
   loadTopicCoverage(room?: string): Promise<TopicCoverage> {

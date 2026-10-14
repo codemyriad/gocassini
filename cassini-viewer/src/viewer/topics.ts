@@ -211,3 +211,51 @@ export function coverageLine(c: TopicCoverage): string {
 }
 
 export const COVERAGE_LIMITS = "A missing suggestion does not mean the topic was absent: short mentions are missed, and speech-recognition errors carry through.";
+
+// The cross-meeting review queue (S6).
+
+export interface TopicQueueItem {
+  meetingId: string;
+  title: string;
+  date: string;
+  room?: string;
+  rule: "supporting-words" | "short-strong";
+  supportWords: number;
+  quote?: string;
+}
+
+export interface TopicQueueGroup {
+  tagId: string;
+  label: string;
+  color: TagColorId | null;
+  icon: TagIconId | null;
+  total: number;
+  items: TopicQueueItem[];
+}
+
+export interface TopicQueue {
+  enabled?: boolean;
+  groups: TopicQueueGroup[];
+  next: string;
+  total: number;
+  byMeeting: Record<string, number>;
+  coverage: TopicCoverage;
+}
+
+export interface TopicQueueQuery {
+  tag?: string;
+  room?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface TopicBatchResult {
+  meetingId: string;
+  status: "confirmed" | "rejected" | "not-found" | "error";
+  error?: string;
+}
+
+export const MAX_BATCH = 100;
+
+// suggestedBadge is a list row's "2 suggested", or "".
+export const suggestedBadge = (n: number | undefined) => (n ? `${n} suggested` : "");
