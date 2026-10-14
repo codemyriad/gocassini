@@ -236,8 +236,8 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 400, "Speaker separation runs on the CPU; install it with device cpu")
 			return
 		}
-		if in.Device == "cuda" && in.Model != "parakeet-tdt-0.6b-v3" {
-			writeJSONError(w, 400, "CUDA requires the fp32 model")
+		if in.Device == "cuda" && !modelSupportsCUDA(in.Model) {
+			writeJSONError(w, 400, "CUDA requires an fp32 model")
 			return
 		}
 		if rt.cfg.DisallowModelDownload && !m.Installed {

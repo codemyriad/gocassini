@@ -16,8 +16,12 @@ const (
 	deviceCPU  = "cpu"
 	deviceCUDA = "cuda"
 
-	// modelParakeetV3Fp32 is the accuracy ceiling on both devices, and the only
-	// precision the onnxruntime CUDA EP runs without fragmenting back to CPU.
+	// modelParakeetUltraFp32 is Moondream's post-trained Parakeet v3 in fp32,
+	// the CUDA default since 2026-10. fp32 is the only precision the
+	// onnxruntime CUDA EP runs without fragmenting back to CPU.
+	modelParakeetUltraFp32 = "parakeet-ultra-0.6b"
+	// modelParakeetV3Fp32 is the CPU accuracy ceiling, and stays installable
+	// on CUDA so an install pinned to it keeps working and can roll back.
 	modelParakeetV3Fp32 = "parakeet-tdt-0.6b-v3"
 	// modelParakeetV3Int8 is the balanced CPU model.
 	modelParakeetV3Int8 = "parakeet-tdt-0.6b-v3-int8"
@@ -46,12 +50,76 @@ func cudaCapableHost() bool {
 	return capable && probeNVIDIADevice()
 }
 
+// speechModelSpec is what the operator needs to know about a speech model. The
+// gates below read it instead of comparing ids, so a model that shares another
+// one's treatment (Parakeet Ultra and v3 fp32) shares it by declaration.
+type speechModelSpec struct {
+	// cuda: an fp32 model the CUDA path installs and runs.
+	cuda bool
+	// referenceMarkers are the native runtime markers that select the
+	// Parakeet reference frontend for this model; empty for a model without it.
+	// They mirror ReferenceRuntimeMarkers in the recorder's models.go.
+	referenceMarkers []string
+	// buildPeakMB and downloadMB: see modelBuildPeakMB and modelDownloadMB.
+	buildPeakMB, downloadMB int
+}
+
+const (
+	parakeetV3ReferenceMarker    = "+cassini-parakeet-v3-reference-v1"
+	parakeetUltraReferenceMarker = ".parakeet-ultra-v1"
+)
+
+var speechModelSpecs = map[string]speechModelSpec{
+	modelParakeet110M:   {buildPeakMB: 512, downloadMB: 100},
+	modelParakeetV3Int8: {referenceMarkers: []string{parakeetV3ReferenceMarker}, buildPeakMB: 2048, downloadMB: 465},
+	modelParakeetV3Fp32: {cuda: true, referenceMarkers: []string{parakeetV3ReferenceMarker}, buildPeakMB: 3584, downloadMB: 2300},
+	// Same architecture, files and peak as v3 fp32; needs the Ultra runtime
+	// selection (sherpa-onnx-go-linux v1.13.7-cassini.7) on top of the v3 patch.
+	// Its post-trained weights compress better: 1,485 MB against v3's 2,365.
+	modelParakeetUltraFp32: {cuda: true, referenceMarkers: []string{parakeetV3ReferenceMarker, parakeetUltraReferenceMarker}, buildPeakMB: 3584, downloadMB: 1485},
+}
+
+// modelSupportsCUDA reports whether the CUDA path installs and runs a model.
+func modelSupportsCUDA(model string) bool {
+	return speechModelSpecs[strings.TrimSpace(model)].cuda
+}
+
+// usesReferenceFrontend reports whether a model runs on the Parakeet reference
+// frontend when the runtime has it.
+func usesReferenceFrontend(model string) bool {
+	return len(speechModelSpecs[strings.TrimSpace(model)].referenceMarkers) > 0
+}
+
+// runtimeSelectsReferenceFrontend reports whether a native runtime version
+// string carries every marker this model's reference frontend needs.
+func runtimeSelectsReferenceFrontend(model, version string) bool {
+	markers := speechModelSpecs[strings.TrimSpace(model)].referenceMarkers
+	for _, marker := range markers {
+		if !strings.Contains(version, marker) {
+			return false
+		}
+	}
+	return len(markers) > 0
+}
+
+// modelServesQuality reports whether a prepared model may transcribe for a
+// tier on a device. On the CPU only the tier's own model does. On CUDA every
+// tier runs fp32, and any fp32 model the CUDA path supports serves it: the
+// default moved from v3 to Ultra in 2026-10, and an install prepared with v3
+// must keep it, and be able to go back to it, without being refused.
+func modelServesQuality(quality, device, model string) bool {
+	if isCUDA(device) {
+		return modelSupportsCUDA(model)
+	}
+	return modelForQuality(quality, device) == model
+}
+
 // modelForQuality returns the model an admitted build will load for a quality
-// tier on a resolved device. Every CUDA tier is fp32 v3; the CPU tiers trade
-// accuracy for speed.
+// tier on a resolved device. Every CUDA tier is fp32 Parakeet Ultra; the CPU
+// tiers trade accuracy for speed.
 func modelForQuality(quality, device string) string {
 	if isCUDA(device) {
-		return modelParakeetV3Fp32
+		return modelParakeetUltraFp32
 	}
 	switch normalizeQuality(quality) {
 	case sttQualityBest:
@@ -75,6 +143,12 @@ func modelForQuality(quality, device string) string {
 //	parakeet-tdt-0.6b-v3-int8      1740 MiB   0.09x realtime
 //	parakeet-tdt-0.6b-v3 (fp32)    3446 MiB   1.41x realtime
 //
+// Remeasured 2026-10-13 over 19 real `cassini build` runs (6 threads), the
+// int8 peak was 1807 MiB, above the 1792 this table held; it now charges 2048.
+// Parakeet Ultra fp32 measured within 2% of v3 fp32 (2105 vs 2146 MiB in the
+// same runs), so it is charged the same. An Ultra int8 measured 1933 MiB, for
+// when that tier exists.
+//
 // The fp32 figure is why "best" is not the CPU default: it is the only tier
 // that transcribes slower than the meeting it is transcribing.
 //
@@ -83,13 +157,10 @@ func modelForQuality(quality, device string) string {
 // refusing to start a build that would have fitted is recoverable, admitting
 // one that OOMs the host running Nextcloud and Talk is not.
 func modelBuildPeakMB(model string) int {
+	if spec, ok := speechModelSpecs[strings.TrimSpace(model)]; ok {
+		return spec.buildPeakMB
+	}
 	switch strings.TrimSpace(model) {
-	case modelParakeet110M:
-		return 512
-	case modelParakeetV3Int8:
-		return 1792
-	case modelParakeetV3Fp32:
-		return 3584
 	case defaultDiarizationModel:
 		// Its runtime check, the only "build" a diarizer has: about 200 MB
 		// measured, with room for the native runtime.
@@ -106,14 +177,5 @@ func modelBuildPeakMB(model string) int {
 // build of a tier the image does not bake, so an administrator knows whether
 // the wait is seconds or minutes (D-704).
 func modelDownloadMB(model string) int {
-	switch strings.TrimSpace(model) {
-	case modelParakeet110M:
-		return 100
-	case modelParakeetV3Int8:
-		return 465
-	case modelParakeetV3Fp32:
-		return 2300
-	default:
-		return 0
-	}
+	return speechModelSpecs[strings.TrimSpace(model)].downloadMB
 }

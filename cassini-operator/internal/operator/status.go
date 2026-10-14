@@ -161,7 +161,10 @@ const (
 // falling back to buildinfo metadata if the binary is absent or unexecutable.
 // Probing is cached across requests so repeated /status polling does not fork
 // doctor subprocesses.
-func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
+//
+// The answer is per model: Parakeet Ultra needs a runtime marker on top of the
+// one v3 needs, so a runtime can be reference for one and not the other.
+func (rt *Runtime) probeReferenceFrontend(model string) (known bool, isReference bool) {
 	if rt.referenceFrontendProbe != nil {
 		return rt.referenceFrontendProbe()
 	}
@@ -170,18 +173,22 @@ func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
 	defer rt.refFrontendMu.Unlock()
 	// Coalesce concurrent callers and cache unknown results too. Retry after
 	// a short TTL so a repaired binary/runtime is detected without a restart.
-	if rt.refFrontendBin == bin && time.Since(rt.refFrontendChecked) < 30*time.Second {
+	if rt.refFrontendBin == bin && rt.refFrontendModel == model && time.Since(rt.refFrontendChecked) < 30*time.Second {
 		return rt.refFrontendKnown, rt.refFrontendIsRef
 	}
-	known, isReference = rt.doProbeReferenceFrontend(bin)
+	known, isReference = rt.doProbeReferenceFrontend(bin, model)
 	rt.refFrontendBin = bin
+	rt.refFrontendModel = model
 	rt.refFrontendKnown = known
 	rt.refFrontendIsRef = isReference
 	rt.refFrontendChecked = time.Now()
 	return known, isReference
 }
 
-func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference bool) {
+// doProbeReferenceFrontend asks doctor, which runs with the operator's child
+// environment and so checks the selected model, and falls back to the native
+// build-info version string checked against this model's markers.
+func (rt *Runtime) doProbeReferenceFrontend(bin, model string) (known bool, isReference bool) {
 	if bin != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -235,7 +242,17 @@ func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference
 	if err != nil {
 		return false, false
 	}
-	return true, strings.Contains(string(data), "+cassini-parakeet-v3-reference-v1")
+	return true, runtimeSelectsReferenceFrontend(model, string(data))
+}
+
+// referenceFrontendWarning says what a missing reference frontend means for
+// the selected model. For v3 it is a slower, less accurate fallback. Parakeet
+// Ultra needs the newer runtime outright: the recorder refuses to load it.
+func referenceFrontendWarning(model string) string {
+	if strings.Contains(strings.Join(speechModelSpecs[model].referenceMarkers, ""), parakeetUltraReferenceMarker) {
+		return "Parakeet Ultra needs sherpa runtime v1.13.7-cassini.7 or later (upstream sherpa runtime or an older Cassini runtime found); builds with this model will fail to transcribe"
+	}
+	return "Parakeet v3 running on upstream sherpa runtime; reference frontend optimization is inactive; falling back to standard decode profile"
 }
 
 type statusCheck struct {
@@ -294,11 +311,11 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
 	}
-	if effective.Model == modelParakeetV3Fp32 || effective.Model == modelParakeetV3Int8 {
-		if known, isRef := rt.probeReferenceFrontend(); known {
+	if usesReferenceFrontend(effective.Model) {
+		if known, isRef := rt.probeReferenceFrontend(effective.Model); known {
 			resp.STT.ReferenceFrontend = &isRef
 			if !isRef {
-				resp.STT.Warning = "Parakeet v3 running on upstream sherpa runtime; reference frontend optimization is inactive; falling back to standard decode profile"
+				resp.STT.Warning = referenceFrontendWarning(effective.Model)
 			}
 		}
 	}

@@ -767,7 +767,7 @@ func TestMinFreeMemForBuild(t *testing.T) {
 	}{
 		{deviceCUDA, modelParakeetV3Fp32, 6144},
 		{deviceCPU, modelParakeet110M, 512 + 1024},
-		{deviceCPU, modelParakeetV3Int8, 1792 + 1024},
+		{deviceCPU, modelParakeetV3Int8, 2048 + 1024},
 		{deviceCPU, modelParakeetV3Fp32, 3584 + 1024},
 		// An unrecognised model is charged the largest known footprint: the
 		// governor exists to keep a build from OOMing Nextcloud and Talk.

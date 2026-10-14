@@ -946,7 +946,7 @@ func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if known, _ := rt.probeReferenceFrontend(); known {
+			if known, _ := rt.probeReferenceFrontend(modelParakeetV3Fp32); known {
 				t.Error("unknown runtime reported as known")
 			}
 		}()
@@ -960,7 +960,7 @@ func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
 		t.Fatalf("concurrent unknown probes: got %d subprocesses, want 1", got)
 	}
 	rt.refFrontendChecked = time.Now().Add(-time.Minute)
-	rt.probeReferenceFrontend()
+	rt.probeReferenceFrontend(modelParakeetV3Fp32)
 	data, err = os.ReadFile(calls)
 	if err != nil {
 		t.Fatal(err)
@@ -979,13 +979,13 @@ func TestReferenceFrontendProbeReadsTheCheckByID(t *testing.T) {
 	bin := writeFakeDoctor(t, `[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
 	  {"id":"speech.runtime","status":"ok","summary":"wording nothing may depend on"}]`)
 	rt := &Runtime{}
-	known, isReference := rt.doProbeReferenceFrontend(bin)
+	known, isReference := rt.doProbeReferenceFrontend(bin, modelParakeetV3Fp32)
 	if !known || !isReference {
 		t.Fatalf("ok on speech.runtime should mean the reference frontend is active: known=%v ref=%v", known, isReference)
 	}
 
 	bin = writeFakeDoctor(t, `[{"id":"speech.runtime","status":"warn","summary":"different wording again"}]`)
-	known, isReference = rt.doProbeReferenceFrontend(bin)
+	known, isReference = rt.doProbeReferenceFrontend(bin, modelParakeetV3Fp32)
 	if !known || isReference {
 		t.Fatalf("warn on speech.runtime should mean it is inactive: known=%v ref=%v", known, isReference)
 	}
@@ -998,7 +998,7 @@ func TestReferenceFrontendProbeLeavesAnAbsentCheckUnknown(t *testing.T) {
 	rt := &Runtime{}
 	// Falls through to the build-info file, which is absent here.
 	t.Setenv(envNativeBuildInfo, filepath.Join(t.TempDir(), "absent"))
-	if known, _ := rt.doProbeReferenceFrontend(bin); known {
+	if known, _ := rt.doProbeReferenceFrontend(bin, modelParakeetV3Fp32); known {
 		t.Error("an absent speech.runtime check was treated as an answer")
 	}
 }
