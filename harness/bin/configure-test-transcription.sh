@@ -7,9 +7,8 @@ DEVICE="${DEVICE:-cpu}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-model-setup-$$}"
 mkdir -p "$LOG_DIR"
 case "$DEVICE" in
-  cpu) model=parakeet-tdt-0.6b-v3-int8; quality=balanced ;;
-  # The CUDA default; CUDA_MODEL=parakeet-tdt-0.6b-v3 exercises the rollback.
-  cuda) model="${CUDA_MODEL:-parakeet-ultra-0.6b}"; quality=best ;;
+  cpu) model=parakeet-ultra-0.6b-int8; quality=balanced ;;
+  cuda) model=parakeet-ultra-0.6b; quality=best ;;
   *) echo "Unsupported test device: $DEVICE" >&2; exit 1 ;;
 esac
 

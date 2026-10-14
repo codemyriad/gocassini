@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Targeted regression test for the Parakeet TDT v3 short-clip transcription
-# bug. Clean speech clips of ~6–9s without trailing silence return zero
+# Targeted regression test for the Parakeet TDT short-clip transcription
+# bug, first seen with Parakeet v3 and kept for Parakeet Ultra, which replaced it. Clean speech clips of ~6–9s without trailing silence return zero
 # tokens — the decoder treats the abrupt end as mid-utterance and emits
 # nothing. cassini-go-recorder/internal/transcribe pads short chunks with
 # synthetic silence to give the decoder an utterance boundary; this
@@ -13,13 +13,17 @@
 # (cassini-go-recorder/internal/transcribe/stt.go transcribeSegment
 # pad-tail logic):
 #
-#   length   words (no fix)   observed with fix   asserts ≥
-#   5s       1                11                  1
-#   6s       0                14                  1
-#   7s       0                17                  0   (informational only)
-#   8s       0                20                  5
-#   9s       0                23                  5
-#   10s+     15               24                  5
+#   length   words (v3, no fix)   v3 with fix   Ultra int8 (CPU)   asserts ≥
+#   5s       1                    11            11                 1
+#   6s       0                    14            13                 1
+#   7s       0                    17            17                 0   (informational only)
+#   8s       0                    20            20                 5
+#   9s       0                    23            23                 5
+#   10s+     15                   24            24                 5
+#
+# The Ultra column was measured 2026-10-14 with a native `cassini build` on
+# sherpa-onnx-go-linux v1.13.7-cassini.8 (greedy decoding, as the int8 bundle
+# ships without bpe.vocab).
 #
 # Without the fix the 6s/8s/9s rows would print "0" and the script
 # would exit non-zero. The 7s row is informational because the model
@@ -90,9 +94,9 @@ if ! docker exec "$CONTAINER_NAME" sh -c 'command -v ffmpeg' >/dev/null 2>&1; th
 fi
 docker cp "$SOURCE_OGG" "$CONTAINER_NAME:/tmp/source.ogg" >/dev/null
 
-model=parakeet-tdt-0.6b-v3-int8
-# The CUDA default; CUDA_MODEL=parakeet-tdt-0.6b-v3 exercises the rollback.
-if [[ "$DEVICE" == cuda ]]; then model="${CUDA_MODEL:-parakeet-ultra-0.6b}"; fi
+# The balanced tier's model on each device: int8 on the CPU, fp32 on CUDA.
+model=parakeet-ultra-0.6b-int8
+if [[ "$DEVICE" == cuda ]]; then model=parakeet-ultra-0.6b; fi
 docker exec "$CONTAINER_NAME" cassini models install "$model" --device "$DEVICE"
 
 # Cases: length_seconds:min_words. Words is the lower bound at which the

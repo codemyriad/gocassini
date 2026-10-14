@@ -227,8 +227,8 @@ jobs:
           CASSINI_CACHE_ROOT: ${{ runner.temp }}/synthetic-asr-models
         run: |
           set -euo pipefail
-          if [[ ! -d "$CASSINI_CACHE_ROOT/models/parakeet-tdt-0.6b-v3" ]]; then
-            ./deployment/models/fetch-models.sh "$CASSINI_CACHE_ROOT" parakeet-tdt-0.6b-v3
+          if [[ ! -d "$CASSINI_CACHE_ROOT/models/parakeet-ultra-0.6b" ]]; then
+            ./deployment/models/fetch-models.sh "$CASSINI_CACHE_ROOT" parakeet-ultra-0.6b
           fi
           mkdir -p "$CASSINI_CACHE_ROOT/vad"
           if [[ ! -s "$CASSINI_CACHE_ROOT/vad/silero_vad.onnx" ]]; then
@@ -260,7 +260,7 @@ jobs:
         env:
           CASSINI_CACHE_ROOT: ${{ runner.temp }}/synthetic-asr-models
           CASSINI_BUNDLED_MODEL_ROOT: ${{ runner.temp }}/synthetic-asr-models
-          CASSINI_BUNDLED_MODELS: parakeet-tdt-0.6b-v3
+          CASSINI_BUNDLED_MODELS: parakeet-ultra-0.6b
           CASSINI_DISALLOW_MODEL_DOWNLOAD: "1"
           CASSINI_ASR_REGRESSION_DEVICE: cpu
           ASR_TEST_BINARY: ${{ runner.temp }}/synthetic-asr.test

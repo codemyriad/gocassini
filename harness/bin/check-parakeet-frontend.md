@@ -6,12 +6,13 @@ recognizer, install dependencies, download models, call an API, or publish data.
 
 Use a separate Python environment with `numpy`, `kaldi-native-fbank==1.22.3`,
 and `onnxruntime`. The initial diagnostic used ONNX Runtime 1.30.0 on CPU. Supply
-the FP32 Parakeet TDT v3 model directory containing `encoder.onnx`, its external
-weights, `decoder.onnx`, `joiner.onnx`, and `tokens.txt`.
+the FP32 Parakeet Ultra (or Parakeet TDT v3) model directory containing
+`encoder.onnx`, its external weights, `decoder.onnx`, `joiner.onnx`, and
+`tokens.txt`.
 
 ```sh
 python harness/bin/check-parakeet-frontend.py \
-  --model-dir /private/parakeet-tdt-0.6b-v3 \
+  --model-dir /private/parakeet-ultra-0.6b \
   --audio /private/exact-participant-crop.wav \
   --output /private/frontend-results.jsonl
 ```
