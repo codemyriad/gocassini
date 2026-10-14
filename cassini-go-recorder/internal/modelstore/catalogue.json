@@ -106,7 +106,7 @@
       "description": "Multilingual speech recognition, Parakeet v3 post-trained by Moondream, full precision weights",
       "license": "CC-BY-4.0",
       "source_url": "https://huggingface.co/moondream/parakeet-ultra",
-      "source_sha256": "c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc",
+      "source_sha256": "5030173982bf58c7975b4b26bd47cc4612f54c5c93846756f5c27cbff27f94f6",
       "files": [
         {
           "path": "encoder.onnx",

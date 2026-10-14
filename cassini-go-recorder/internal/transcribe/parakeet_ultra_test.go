@@ -1,7 +1,10 @@
 package transcribe
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -145,8 +148,34 @@ func TestParakeetUltraCatalogueEntry(t *testing.T) {
 	if ultra.Kind != modelstore.KindSpeech || ultra.License != "CC-BY-4.0" || ultra.VADRevision != v3.VADRevision {
 		t.Fatalf("catalogue entry %+v", ultra)
 	}
-	if ultra.Revision != "c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc" {
-		t.Fatalf("revision %s is not Moondream's model.safetensors at 73175eb7", ultra.Revision)
+	// The revision is Cassini's export, as dist.gocassini.com publishes it:
+	// the SHA-256 of the `sha256sum` listing of the six files sorted by name,
+	// not Moondream's model.safetensors (c9608f36…, credited in the NOTICE).
+	if ultra.Revision != "5030173982bf58c7975b4b26bd47cc4612f54c5c93846756f5c27cbff27f94f6" {
+		t.Fatalf("revision %s is not the published Cassini export", ultra.Revision)
+	}
+	listing := map[string]string{}
+	for _, f := range ultra.Files {
+		a, err := c.Artifact(f.Artifact)
+		if err != nil {
+			t.Fatal(err)
+		}
+		listing[f.Path] = a.UncompressedSHA256
+	}
+	names := make([]string, 0, len(listing))
+	for name := range listing {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var sums strings.Builder
+	for _, name := range names {
+		fmt.Fprintf(&sums, "%s  %s\n", listing[name], name)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(sums.String()))); got != ultra.Revision {
+		t.Fatalf("revision %s, but the files' sha256sum listing hashes to %s", ultra.Revision, got)
+	}
+	if !strings.Contains(modelstore.Notices, "c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc") {
+		t.Fatal("NOTICE lacks Moondream's model.safetensors sha256")
 	}
 	if len(ultra.Files) != len(v3.Files) {
 		t.Fatalf("Ultra has %d files, v3 fp32 %d", len(ultra.Files), len(v3.Files))
