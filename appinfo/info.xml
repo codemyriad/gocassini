@@ -269,6 +269,14 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: topic suggestions' two actions, queueing past meetings and
+           retrying blocked ones (docs/topic-suggestions.md). The settings
+           wildcard below allows only GET and PUT. -->
+      <route>
+        <url>^operator\/settings\/topics\/(backfill|retry)$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: STT quality settings (read + update) driven by the operator
            surface's Settings panel (D-420 V3). Kept ADMIN like the rest of the
            operator API — a non-admin's PUT/GET 403s at the proxy boundary. -->

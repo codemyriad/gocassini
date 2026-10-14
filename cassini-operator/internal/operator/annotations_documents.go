@@ -123,6 +123,13 @@ CREATE TABLE annotation_batch_target (
 		if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS annotation_tag_by_id ON annotation_tag(tag_id, opus_name)`); err != nil {
 			return err
 		}
+		// Topic suggestions (docs/proposals/automatic-tagging). One-way: an
+		// older image refuses schema 8, whether or not the feature is on.
+		if version < 8 {
+			if _, err := tx.Exec(topicsSchemaSQL); err != nil {
+				return err
+			}
+		}
 		_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", annotationsSchemaVersion))
 		return err
 	})

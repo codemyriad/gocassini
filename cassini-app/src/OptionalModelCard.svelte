@@ -55,6 +55,7 @@
       {/if}
       {#if error || job?.error}<p class="op-error">{error || job?.error}</p>{/if}
     </ModelStatusRow>
+    <slot name="after" />
   </section>
 {/if}
 

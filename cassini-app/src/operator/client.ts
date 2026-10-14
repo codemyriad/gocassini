@@ -14,6 +14,8 @@ import type {
   Settings,
   SpeechModelInventory,
   SpeechModelJob,
+  TopicBackfillResult,
+  TopicSettingsStatus,
   SettingsEffective,
   SettingsQuality,
   SettingsUpdate,
@@ -155,6 +157,19 @@ export class OperatorClient {
   }
   async speechModelJobAction(id: string, action: "cancel" | "retry"): Promise<unknown> {
     return this.#request(`/settings/models/jobs/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+  }
+
+  async getTopicSettings(): Promise<TopicSettingsStatus> {
+    return this.#request<TopicSettingsStatus>("/settings/topics");
+  }
+  async putTopicSettings(payload: { enabled?: boolean; threads?: number }): Promise<TopicSettingsStatus> {
+    return this.#request<TopicSettingsStatus>("/settings/topics", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  }
+  async startTopicBackfill(since?: string): Promise<TopicBackfillResult> {
+    return this.#request<TopicBackfillResult>("/settings/topics/backfill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(since ? { since } : {}) });
+  }
+  async retryTopicMeetings(meetings?: string[]): Promise<{ retried: number }> {
+    return this.#request<{ retried: number }>("/settings/topics/retry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(meetings ? { meetings } : {}) });
   }
 
   async getSettings(): Promise<Settings> {
