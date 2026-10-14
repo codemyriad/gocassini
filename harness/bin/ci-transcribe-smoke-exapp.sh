@@ -84,7 +84,8 @@ MODEL_ID=parakeet-tdt-0.6b-v3-int8
 DEVICE=$(read_env CASSINI_STT_DEVICE)
 
 : "${DEVICE:=cpu}"
-if [[ "$DEVICE" == cuda ]]; then MODEL_ID=parakeet-tdt-0.6b-v3; fi
+# The CUDA default; CUDA_MODEL=parakeet-tdt-0.6b-v3 exercises the rollback.
+if [[ "$DEVICE" == cuda ]]; then MODEL_ID="${CUDA_MODEL:-parakeet-ultra-0.6b}"; fi
 
 # CUDA images need GPU exposed via CDI. Set DOCKER_RUN_GPU=1 to opt-in (or
 # set CASSINI_STT_DEVICE=cuda in the image ENV — we honor either).

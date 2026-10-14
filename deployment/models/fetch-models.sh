@@ -1,8 +1,8 @@
 #!/bin/sh
 # Download and unpack the sherpa-onnx model bundles an image ships with.
 # Upstream int8 bundles come from the sherpa-onnx release archives. The fp32
-# v3 model has no upstream archive: it comes file by file from the seekable
-# Zstandard objects on dist.gocassini.com, pinned in
+# models (v3 and Parakeet Ultra) have no upstream archive: they come file by
+# file from the seekable Zstandard objects on dist.gocassini.com, pinned in
 # cassini-go-recorder/internal/modelstore/catalogue.json.
 #
 #   fetch-models.sh <out-dir> <model-id>...
@@ -40,7 +40,7 @@ model_url() {
       echo "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2" ;;
     parakeet-tdt-0.6b-v3-int8)
       echo "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2" ;;
-    parakeet-tdt-0.6b-v3)
+    parakeet-tdt-0.6b-v3|parakeet-ultra-0.6b)
       echo "https://dist.gocassini.com/manifest.json" ;;
     *) return 1 ;;
   esac
@@ -58,6 +58,14 @@ dist_artifacts() {
       echo "encoder.weights models/files/23a61cdbca1f606128fa9c2c05aa81457d3d0cce1aa7414a29f53ed5c626244d/encoder.weights.zst 3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8"
       echo "decoder.onnx models/files/e8038c3ce024db1f304cbdd59775ad1b063a6f2e8e49ea59e318721de4d606f4/decoder.onnx.zst cf13741631f0d3ae2f1bae07d9368af48aa314916eada9f96be68f09589f5eab"
       echo "joiner.onnx models/files/d74aa2809fe0186d99f961acfadceff72a7e42d9d56b51bd79f636d40609eeac/joiner.onnx.zst 24c96f15bc55f8a72039e0d4683983ae66d17d47432c26e147f4f8d945d63192"
+      echo "tokens.txt models/files/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"
+      echo "bpe.vocab models/files/4e074536b073a7d18ca034e3be779868696d67784765e4ac18511e8f607d4193/bpe.vocab.zst 41d5e71b3591642eff088151efd7acd4e750124cc0054c8ba9fa3245187a4804"
+      ;;
+    parakeet-ultra-0.6b)
+      echo "encoder.onnx models/files/798e8acbe511295581a102819634a1d0025ba0e937d0ada29b7d2e5e9f0b7dba/encoder.onnx.zst 198042e45120cb9e03aac09bc5e47efb0024092866c0128973a13078a5f61ce2"
+      echo "encoder.weights models/files/8509e45b901c712d2f627e1c4137d397833300e32474f96a0ce03eff938452f1/encoder.weights.zst 1209bc92c87a2f596767ae080aec04702d94a2a41eaba4cee5a89f69a9c22c12"
+      echo "decoder.onnx models/files/e1bcde0da4b11cb2fc62ce70740ebb7afa14027f0873ad6565e5d25347ef9ff1/decoder.onnx.zst f0b644799b0a26286aecf82d4922ea344e8a6b782aedc846c2c8be29a2236403"
+      echo "joiner.onnx models/files/6ba4dd9943a6088b33560b5ae65262f4fefe33bb83659b12b94849d1d86bbb2a/joiner.onnx.zst d15f8689b13d520a138ecfe440e6cb999cfd096c2a1a6fd27054c1dd61bcc302"
       echo "tokens.txt models/files/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"
       echo "bpe.vocab models/files/4e074536b073a7d18ca034e3be779868696d67784765e4ac18511e8f607d4193/bpe.vocab.zst 41d5e71b3591642eff088151efd7acd4e750124cc0054c8ba9fa3245187a4804"
       ;;
@@ -92,7 +100,7 @@ model_files() {
     # encoder without it, so it is required, not a sidecar to copy if present.
     # A missing one must fail this build rather than bake a model that only
     # fails when a meeting is being transcribed.
-    parakeet-tdt-0.6b-v3)          echo "encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt" ;;
+    parakeet-tdt-0.6b-v3|parakeet-ultra-0.6b) echo "encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt" ;;
     *) return 1 ;;
   esac
 }
@@ -102,7 +110,17 @@ model_title() {
     parakeet-tdt-ctc-110m-en-int8) echo "NeMo Parakeet TDT CTC 110M en int8 (sherpa-onnx repack)" ;;
     parakeet-tdt-0.6b-v3-int8)     echo "NeMo Parakeet TDT 0.6B v3 int8 (sherpa-onnx repack)" ;;
     parakeet-tdt-0.6b-v3)          echo "NeMo Parakeet TDT 0.6B v3 fp32 (sherpa-onnx repack)" ;;
+    parakeet-ultra-0.6b)           echo "Moondream Parakeet Ultra 0.6B fp32 (Cassini ONNX export)" ;;
     *) return 1 ;;
+  esac
+}
+
+model_license() {
+  case "$1" in
+    parakeet-ultra-0.6b)
+      echo "License: cc-by-4.0 (Moondream Parakeet Ultra, https://huggingface.co/moondream/parakeet-ultra, post-trained from NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" ;;
+    *)
+      echo "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" ;;
   esac
 }
 
@@ -126,7 +144,7 @@ for id in "$@"; do
     printf '%s\n' \
       "$title" \
       "Source: $url (seekable Zstandard files, decompressed)" \
-      "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" \
+      "$(model_license "$id")" \
       "Bundled in: ghcr.io/codemyriad/gocassini" \
       > "$model_dir/NOTICE"
     ls -la "$model_dir/"
@@ -155,7 +173,7 @@ for id in "$@"; do
   printf '%s\n' \
     "$title" \
     "Source: $url" \
-    "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" \
+    "$(model_license "$id")" \
     "Bundled in: ghcr.io/codemyriad/gocassini" \
     > "$model_dir/NOTICE"
 

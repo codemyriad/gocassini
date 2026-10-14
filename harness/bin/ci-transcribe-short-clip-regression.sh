@@ -91,7 +91,8 @@ fi
 docker cp "$SOURCE_OGG" "$CONTAINER_NAME:/tmp/source.ogg" >/dev/null
 
 model=parakeet-tdt-0.6b-v3-int8
-if [[ "$DEVICE" == cuda ]]; then model=parakeet-tdt-0.6b-v3; fi
+# The CUDA default; CUDA_MODEL=parakeet-tdt-0.6b-v3 exercises the rollback.
+if [[ "$DEVICE" == cuda ]]; then model="${CUDA_MODEL:-parakeet-ultra-0.6b}"; fi
 docker exec "$CONTAINER_NAME" cassini models install "$model" --device "$DEVICE"
 
 # Cases: length_seconds:min_words. Words is the lower bound at which the
