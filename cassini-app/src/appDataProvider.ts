@@ -21,7 +21,7 @@ import {
   type TagVocabulary,
   type VocabularyTag,
 } from "cassini-viewer/annotations";
-import { newRequestId, type Topic, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "cassini-viewer/topics";
+import { newRequestId, type MeetingSuggestions, type Topic, type TopicCoverage, type TopicDecision, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "cassini-viewer/topics";
 
 import {
   listInsights as fetchInsightRuns,
@@ -171,6 +171,18 @@ export class AppDataProvider extends StaticCatalogProvider {
 
   loadTopicTagRooms(tagId: string): Promise<TopicTagRooms> {
     return requestAnnotations(`topics/library/${encodeURIComponent(tagId)}/rooms`);
+  }
+
+  loadMeetingSuggestions(entry: MeetingCatalogEntry): Promise<MeetingSuggestions> {
+    return requestAnnotations(`topics/meetings/${encodeURIComponent(entry.id)}`);
+  }
+
+  decideSuggestion(entry: MeetingCatalogEntry, tagId: string, decision: TopicDecision, requestId: string): Promise<{ annotations?: AnnotationResult; replayed?: boolean }> {
+    return requestAnnotations(`topics/meetings/${encodeURIComponent(entry.id)}/${encodeURIComponent(tagId)}`, { requestId, decision });
+  }
+
+  loadTopicCoverage(room?: string): Promise<TopicCoverage> {
+    return requestAnnotations(room ? `topics/coverage?room=${encodeURIComponent(room)}` : "topics/coverage");
   }
 
   // The speakers route: people's edits to one meeting's speakers, beside its

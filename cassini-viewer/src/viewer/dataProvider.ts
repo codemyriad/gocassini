@@ -40,7 +40,7 @@ import type {
   VocabularyTag,
 } from "./annotations";
 import type { SpeakerEditsDoc, SpeakerEditsState } from "./speakerEdits";
-import type { Topic, TopicLibrary, TopicRevision, TopicSave, TopicTagRooms } from "./topics";
+import type { MeetingSuggestions, Topic, TopicCoverage, TopicDecision, TopicLibrary, TopicRevision, TopicSave, TopicTagRooms } from "./topics";
 import {
   searchMeetingTranscripts,
   type MeetingSearchOptions,
@@ -153,6 +153,14 @@ export interface DataProvider {
   loadTopicHistory?(tagId: string): Promise<TopicRevision[]>;
   redactTopicRevision?(tagId: string, revision: number): Promise<void>;
   loadTopicTagRooms?(tagId: string): Promise<TopicTagRooms>;
+
+  // OPTIONAL: suggestions for one meeting and the decisions on them —
+  // `GET|POST annotations/topics/meetings/<id>…`. A static export has none,
+  // so the public viewer never shows a suggestion. A confirm answers the
+  // meeting's new annotations, as applyAnnotationOps does.
+  loadMeetingSuggestions?(entry: MeetingCatalogEntry): Promise<MeetingSuggestions>;
+  decideSuggestion?(entry: MeetingCatalogEntry, tagId: string, decision: TopicDecision, requestId: string): Promise<{ annotations?: AnnotationResult; replayed?: boolean }>;
+  loadTopicCoverage?(room?: string): Promise<TopicCoverage>;
 
   // OPTIONAL (D-736): what was SAID across the meetings this caller can read —
   // `GET published/search`.

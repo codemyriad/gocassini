@@ -127,6 +127,10 @@ artifacts:
   meeting is read again. The work queue (which meetings were checked, when, and
   why one could not be) lives in the annotations database. See
   [Topic suggestions](./topic-suggestions.md).
+- **Topic review decisions** — who confirmed or rejected which topic on which
+  meeting, and when. Shown to the people who can read that meeting; deleted
+  with the meeting. A confirm is also an ordinary tag in the recording,
+  credited to that person.
 - **Topic library** — the names and definitions people write for topics, and
   every revision of them with who saved it. Everyone who can read at least one
   meeting sees the names and definitions; who wrote them is shown to
