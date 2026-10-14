@@ -23,32 +23,20 @@ const (
 	// Kept for reference; superseded by 0.6B.
 	ModelParakeet110M ModelID = "parakeet-tdt-ctc-110m-en-int8"
 
-	// ModelParakeet06B is the NeMo Parakeet TDT 0.6B v2 int8 transducer model.
-	// Kept for reference; superseded by v3.
-	ModelParakeet06B ModelID = "parakeet-tdt-0.6b-v2-int8"
-
-	// ModelParakeet06BV3Int8 is the NeMo Parakeet TDT 0.6B v3 int8 transducer
-	// model. CPU-bundled default in the gocassini ExApp image. Uses
-	// encoder+decoder+joiner architecture with feature dim 128 (v3 quirk;
-	// v2 used 80).
-	ModelParakeet06BV3Int8 ModelID = "parakeet-tdt-0.6b-v3-int8"
-
-	// ModelParakeet06BV3 is the NeMo Parakeet TDT 0.6B v3 fp32 transducer model.
-	// The CPU "best" tier, and the CUDA default until Parakeet Ultra replaced it
-	// in 2026-10; still installable on CUDA for pinned installs and rollback.
-	// Same architecture as v3 int8. Exported from the
-	// official .nemo via scripts/nemo/parakeet-tdt-0.6b-v3/export_onnx.py.
-	// Runs ~2× faster than CPU at fp32 on CUDA; int8 fragments under CUDA EP.
-	ModelParakeet06BV3 ModelID = "parakeet-tdt-0.6b-v3"
-
 	// ModelParakeetUltra is Moondream's Parakeet Ultra in fp32: parakeet-tdt-
 	// 0.6b-v3 post-trained by Moondream (same architecture, tokenizer and
 	// feature dim), exported by Cassini with the Moondream URL in its encoder
-	// metadata. The CUDA default since 2026-10. v3 fp32 stays installable on
-	// CUDA for rollback, and a pinned v3 install keeps running v3.
+	// metadata. Every CUDA tier and the CPU "best" tier run it. fp32 is the
+	// only precision the onnxruntime CUDA EP runs without fragmenting
+	// dynamic-int8 ops back to the CPU.
 	ModelParakeetUltra ModelID = "parakeet-ultra-0.6b"
 
-	defaultModelID = ModelParakeet06BV3Int8
+	// ModelParakeetUltraInt8 is Cassini's dynamic int8 quantization of the
+	// same export: the balanced CPU tier and the default. It is published
+	// without bpe.vocab, so it decodes greedily.
+	ModelParakeetUltraInt8 ModelID = "parakeet-ultra-0.6b-int8"
+
+	defaultModelID = ModelParakeetUltraInt8
 
 	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
 	sileroVADURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
@@ -105,13 +93,10 @@ type modelSpec struct {
 	ProbeMemoryMB int
 }
 
-// The runtime markers of the Parakeet reference frontend. Parakeet v3 needs the
-// v3 patch; Parakeet Ultra needs the v3 patch plus the Ultra URL selection that
-// sherpa-onnx-go-linux v1.13.7-cassini.7 added.
-var (
-	parakeetV3ReferenceMarkers    = []string{parakeetReferenceRuntimeMarker}
-	parakeetUltraReferenceMarkers = []string{parakeetReferenceRuntimeMarker, parakeetUltraRuntimeMarker}
-)
+// The runtime markers of the Parakeet reference frontend for Parakeet Ultra:
+// the v3 patch plus the Ultra URL selection that sherpa-onnx-go-linux
+// v1.13.7-cassini.7 added.
+var parakeetUltraReferenceMarkers = []string{parakeetReferenceRuntimeMarker, parakeetUltraRuntimeMarker}
 
 var knownModels = map[ModelID]modelSpec{
 	ModelParakeet110M: {
@@ -124,51 +109,23 @@ var knownModels = map[ModelID]modelSpec{
 		FeatureDim:    80,
 		ProbeMemoryMB: 1536,
 	},
-	ModelParakeet06B: {
-		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
-		EncoderFile:  "encoder.int8.onnx",
-		DecoderFile:  "decoder.int8.onnx",
-		JoinerFile:   "joiner.int8.onnx",
-		TokensFile:   "tokens.txt",
-		BpeVocabFile: "bpe.vocab",
-		ModelType:    "nemo_transducer",
-		SampleRate:   16000,
-		FeatureDim:   80,
-	},
-	ModelParakeet06BV3Int8: {
-		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
-		EncoderFile:  "encoder.int8.onnx",
-		DecoderFile:  "decoder.int8.onnx",
-		JoinerFile:   "joiner.int8.onnx",
-		TokensFile:   "tokens.txt",
-		BpeVocabFile: "bpe.vocab",
-		ModelType:    "nemo_transducer",
-		SampleRate:   16000,
-		FeatureDim:   128,
+	// Same files and treatment as the v3 int8 bundle it replaces, published
+	// without bpe.vocab: on this model greedy search omits less speech than the
+	// unbiased beam decoder, at less CPU and half the peak memory.
+	ModelParakeetUltraInt8: {
+		EncoderFile: "encoder.int8.onnx",
+		DecoderFile: "decoder.int8.onnx",
+		JoinerFile:  "joiner.int8.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  128,
 
-		ReferenceRuntimeMarkers: parakeetV3ReferenceMarkers,
-		GreedyWithoutBpeVocab:   true,
-		ProbeMemoryMB:           2816,
+		ReferenceRuntimeMarkers:       parakeetUltraReferenceMarkers,
+		RefuseWithoutReferenceRuntime: true,
+		GreedyWithoutBpeVocab:         true,
+		ProbeMemoryMB:                 2816,
 	},
-	ModelParakeet06BV3: {
-		EncoderFile:  "encoder.onnx",
-		DecoderFile:  "decoder.onnx",
-		JoinerFile:   "joiner.onnx",
-		WeightsFile:  "encoder.weights",
-		TokensFile:   "tokens.txt",
-		BpeVocabFile: "bpe.vocab",
-		ModelType:    "nemo_transducer",
-		SampleRate:   16000,
-		FeatureDim:   128,
-
-		ReferenceRuntimeMarkers: parakeetV3ReferenceMarkers,
-		CUDA:                    true,
-		ProbeMemoryMB:           4608,
-	},
-	// Same files, sizes and treatment as v3 fp32; only the weights and the
-	// encoder metadata URL differ.
 	ModelParakeetUltra: {
 		EncoderFile:  "encoder.onnx",
 		DecoderFile:  "decoder.onnx",

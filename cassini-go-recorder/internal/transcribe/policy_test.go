@@ -28,12 +28,12 @@ func TestModelForQuality(t *testing.T) {
 		{QualityBest, "cuda", ModelParakeetUltra},
 		{QualityBalanced, "cuda", ModelParakeetUltra},
 		{QualityFast, "cuda", ModelParakeetUltra},
-		// CPU trades accuracy for speed across tiers.
-		{QualityBest, "cpu", ModelParakeet06BV3},
-		{QualityBalanced, "cpu", ModelParakeet06BV3Int8},
+		// CPU trades accuracy for speed across tiers; v3 is gone from all of them.
+		{QualityBest, "cpu", ModelParakeetUltra},
+		{QualityBalanced, "cpu", ModelParakeetUltraInt8},
 		{QualityFast, "cpu", ModelParakeet110M},
 		// Unset quality behaves as balanced.
-		{"", "cpu", ModelParakeet06BV3Int8},
+		{"", "cpu", ModelParakeetUltraInt8},
 	}
 	for _, c := range cases {
 		if got := ModelForQuality(c.q, c.device); got != c.want {
@@ -69,9 +69,9 @@ func TestResolveModelID(t *testing.T) {
 	if got := ResolveModelID("", "fast", "cuda"); got != ModelParakeetUltra {
 		t.Errorf("ResolveModelID(fast,cuda) = %q, want Ultra fp32 (cuda overrides tier)", got)
 	}
-	// An install pinned to v3 fp32 on CUDA keeps it: the pin is explicit.
-	if got := ResolveModelID(string(ModelParakeet06BV3), "balanced", "cuda"); got != ModelParakeet06BV3 {
-		t.Errorf("pinned v3 fp32 on cuda resolved to %q", got)
+	// A pin to retired v3 fp32 moves to Ultra fp32, whatever the tier says.
+	if got := ResolveModelID("parakeet-tdt-0.6b-v3", "fast", "cpu"); got != ModelParakeetUltra {
+		t.Errorf("pinned v3 fp32 resolved to %q", got)
 	}
 }
 

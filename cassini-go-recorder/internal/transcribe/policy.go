@@ -3,6 +3,8 @@ package transcribe
 import (
 	"os"
 	"strings"
+
+	"gocassini/internal/modelstore"
 )
 
 // STTQuality selects a hardware-adaptive (device, model, threads) policy. It
@@ -80,36 +82,73 @@ func ResolveDevice(explicit string) string {
 // ModelForQuality picks the STT model for a quality tier on the resolved device.
 //
 // fp32 is the only precision the onnxruntime CUDA EP runs without fragmenting
-// the dynamic-int8 ops back to CPU, so every GPU tier uses fp32 — it is both the
-// accuracy ceiling and the fastest real option on a GPU. Since 2026-10 that is
-// Parakeet Ultra, which matched or beat v3 fp32 on every set evaluated; v3 fp32
-// stays installable on CUDA for rollback. On CPU the tiers trade accuracy for
-// speed and are unchanged: best=v3 fp32, balanced=v3 int8, fast=110M CTC.
+// the dynamic-int8 ops back to CPU, so every GPU tier uses fp32 Parakeet Ultra:
+// it is both the accuracy ceiling and the fastest real option on a GPU. On CPU
+// the tiers trade accuracy for speed: best=Ultra fp32, balanced=Ultra int8,
+// fast=110M CTC.
 //
 // The operator (cassini-operator/internal/operator/device.go) and the app
 // (cassini-app src/speechModels.ts, src/operator/pipelineStatus.ts) keep copies
 // of this map; change all four together.
 func ModelForQuality(q STTQuality, device string) ModelID {
 	if strings.EqualFold(device, "cuda") {
-		return ModelParakeetUltra // fp32 Parakeet Ultra
+		return ModelParakeetUltra
 	}
 	switch NormalizeQuality(string(q)) {
 	case QualityBest:
-		return ModelParakeet06BV3 // fp32 on CPU = highest accuracy
+		return ModelParakeetUltra
 	case QualityFast:
-		return ModelParakeet110M // small CTC = fastest on CPU
+		return ModelParakeet110M
 	default: // balanced
-		return ModelParakeet06BV3Int8
+		return ModelParakeetUltraInt8
 	}
 }
 
-// ResolveModelID returns the model to use: an explicit CASSINI_STT_MODEL value
+// ResolvedModel is the model a build or a check uses.
+type ResolvedModel struct {
+	ID ModelID
+	// Revision is the pinned revision, or empty for the catalogue's current one.
+	Revision string
+	// Replaces is the retired id the configuration named, when ID stands in
+	// for it; empty otherwise.
+	Replaces ModelID
+}
+
+// ResolveModel returns the model to use: an explicit CASSINI_STT_MODEL value
 // always wins; otherwise it is derived from the quality tier and device.
-func ResolveModelID(explicitModel, quality, device string) ModelID {
-	if m := ModelID(strings.TrimSpace(explicitModel)); m != "" {
-		return m
+//
+// An explicit id that an earlier version shipped and the catalogue has since
+// retired (Parakeet v3) resolves to the model that replaced it, at the same
+// precision, and its revision pin is dropped: it named the retired model's
+// files. An id the catalogue never knew stays as it is, so the build reports it
+// as unavailable instead of quietly transcribing with something else.
+func ResolveModel(explicitModel, explicitRevision, quality, device string) ResolvedModel {
+	id := ModelID(strings.TrimSpace(explicitModel))
+	revision := strings.TrimSpace(explicitRevision)
+	if id == "" {
+		return ResolvedModel{ID: ModelForQuality(NormalizeQuality(quality), device), Revision: revision}
 	}
-	return ModelForQuality(NormalizeQuality(quality), device)
+	if replacement, ok := ReplacementModelID(id); ok {
+		return ResolvedModel{ID: replacement, Replaces: id}
+	}
+	return ResolvedModel{ID: id, Revision: revision}
+}
+
+// ResolveModelID is ResolveModel without a revision pin.
+func ResolveModelID(explicitModel, quality, device string) ModelID {
+	return ResolveModel(explicitModel, "", quality, device).ID
+}
+
+// ReplacementModelID returns the shipped model that replaced a retired id, and
+// whether id is retired. A model this binary knows is never retired.
+func ReplacementModelID(id ModelID) (ModelID, bool) {
+	if _, known := knownModels[id]; known {
+		return id, false
+	}
+	if m, ok := modelstore.Shipped().Replacement(string(id)); ok {
+		return ModelID(m.ID), true
+	}
+	return id, false
 }
 
 // DefaultNumThreads returns a sensible intra-op thread count for sequential

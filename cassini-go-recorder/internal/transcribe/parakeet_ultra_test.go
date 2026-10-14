@@ -3,6 +3,8 @@ package transcribe
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -16,50 +18,48 @@ const (
 	stockRuntimeVersion    = "1.13.7"
 )
 
-// Parakeet Ultra is v3 post-trained: same files, tokenizer and features. It must
-// get exactly v3 fp32's treatment from every gate, which used to key on the v3
-// ids and gave any other id the default policy.
-func TestParakeetUltraSharesV3Fp32Spec(t *testing.T) {
-	ultra, v3 := knownModels[ModelParakeetUltra], knownModels[ModelParakeet06BV3]
-	if ultra.URL != "" {
-		t.Fatalf("Ultra has an archive URL %q; it installs from dist.gocassini.com only", ultra.URL)
+// Parakeet Ultra is v3 post-trained: same architecture, tokenizer and
+// features. Both precisions get the reference boundary policy; only fp32 runs
+// on CUDA. The gates read these spec fields, never the ids.
+func TestParakeetUltraSpecs(t *testing.T) {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
+		spec := knownModels[id]
+		if spec.URL != "" {
+			t.Fatalf("%s has an archive URL %q; it installs from dist.gocassini.com only", id, spec.URL)
+		}
+		if spec.ModelType != "nemo_transducer" || spec.SampleRate != 16000 || spec.FeatureDim != 128 {
+			t.Fatalf("%s spec %+v", id, spec)
+		}
+		if !usesParakeetV3ReferencePolicy(id) || !spec.RefuseWithoutReferenceRuntime {
+			t.Fatalf("%s does not get the Parakeet reference policy, or loads without it", id)
+		}
 	}
-	if !reflect.DeepEqual(RequiredModelFileNames(ModelParakeetUltra), RequiredModelFileNames(ModelParakeet06BV3)) {
-		t.Fatalf("Ultra files %v, v3 fp32 files %v", RequiredModelFileNames(ModelParakeetUltra), RequiredModelFileNames(ModelParakeet06BV3))
+	if vadDecodePolicyForModel(ModelParakeetUltra) != vadDecodePolicyForModel(ModelParakeetUltraInt8) {
+		t.Fatal("the two Ultra precisions get different boundary policies")
 	}
-	if ultra.BpeVocabFile != v3.BpeVocabFile || ultra.ModelType != v3.ModelType || ultra.SampleRate != v3.SampleRate || ultra.FeatureDim != v3.FeatureDim {
-		t.Fatalf("Ultra spec %+v differs from v3 fp32 %+v", ultra, v3)
+	if !SupportsCUDA(ModelParakeetUltra) {
+		t.Fatal("Ultra fp32 must install and probe on CUDA")
 	}
-	if !usesParakeetV3ReferencePolicy(ModelParakeetUltra) {
-		t.Fatal("Ultra does not get the Parakeet reference boundary policy")
-	}
-	if vadDecodePolicyForModel(ModelParakeetUltra) != vadDecodePolicyForModel(ModelParakeet06BV3) {
-		t.Fatal("Ultra's boundary policy differs from v3's")
-	}
-	if !SupportsCUDA(ModelParakeetUltra) || !SupportsCUDA(ModelParakeet06BV3) {
-		t.Fatal("both fp32 models must install and probe on CUDA")
-	}
-	for _, id := range []ModelID{ModelParakeet06BV3Int8, ModelParakeet110M, ModelParakeet06B, "unknown"} {
+	for _, id := range []ModelID{ModelParakeetUltraInt8, ModelParakeet110M, "parakeet-tdt-0.6b-v3", "unknown"} {
 		if SupportsCUDA(id) {
 			t.Fatalf("%s must not run on CUDA", id)
 		}
 	}
-	for _, device := range []string{"cpu", "cuda"} {
-		if got, want := probeMemoryFloor(ModelParakeetUltra, device), probeMemoryFloor(ModelParakeet06BV3, device); got != want {
-			t.Fatalf("%s probe floor: Ultra %d, v3 fp32 %d", device, got, want)
-		}
+	if !reflect.DeepEqual(RequiredModelFileNames(ModelParakeetUltraInt8), []string{"encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"}) {
+		t.Fatalf("Ultra int8 files %v", RequiredModelFileNames(ModelParakeetUltraInt8))
 	}
-	// The table moved into the spec; the values must not move with it.
-	for id, want := range map[ModelID]int{ModelParakeet110M: 1536, ModelParakeet06BV3Int8: 2816, ModelParakeet06BV3: 4608, "nemotron-3-diarization-int8": 1024, "nemotron-3-diarization": 1536, "unknown": 4608} {
+	// The int8 peak measured 1,893 MiB over 19 real builds; its check is
+	// charged what v3 int8's was. An unknown id gets the largest floor.
+	for id, want := range map[ModelID]int{ModelParakeet110M: 1536, ModelParakeetUltraInt8: 2816, ModelParakeetUltra: 4608, "nemotron-3-diarization-int8": 1024, "nemotron-3-diarization": 1536, "unknown": 4608} {
 		if got := probeMemoryFloor(id, "cpu"); got != want {
 			t.Fatalf("probeMemoryFloor(%s, cpu) = %d, want %d", id, got, want)
 		}
 	}
 }
 
-// v3 keeps its marker; Ultra needs the Ultra selection too. A runtime without
-// it would run an honest-URL Ultra export on the legacy frontend (or exit while
-// loading it), so Ultra is refused before sherpa sees it, and v3 is not.
+// Both Ultra precisions need the Ultra selection on top of the v3 patch. A
+// runtime without it would run an honest-URL Ultra export on the legacy
+// frontend (or exit while loading it), so Ultra is refused before sherpa sees it.
 func TestParakeetUltraNeedsUltraRuntimeMarker(t *testing.T) {
 	cases := []struct {
 		id      ModelID
@@ -67,12 +67,12 @@ func TestParakeetUltraNeedsUltraRuntimeMarker(t *testing.T) {
 		isRef   bool
 		refuse  bool
 	}{
-		{ModelParakeet06BV3, cassini6RuntimeVersion, true, false},
-		{ModelParakeet06BV3, cassiniRuntimeVersion, true, false},
-		{ModelParakeet06BV3, stockRuntimeVersion, false, false},
 		{ModelParakeetUltra, cassiniRuntimeVersion, true, false},
 		{ModelParakeetUltra, cassini6RuntimeVersion, false, true},
 		{ModelParakeetUltra, stockRuntimeVersion, false, true},
+		{ModelParakeetUltraInt8, cassiniRuntimeVersion, true, false},
+		{ModelParakeetUltraInt8, cassini6RuntimeVersion, false, true},
+		{ModelParakeetUltraInt8, stockRuntimeVersion, false, true},
 		{ModelParakeet110M, stockRuntimeVersion, false, false},
 	}
 	for _, c := range cases {
@@ -97,113 +97,152 @@ func TestParakeetUltraNeedsUltraRuntimeMarker(t *testing.T) {
 	}
 }
 
-// Ultra ships bpe.vocab like v3 fp32, so it beam-searches with hints exactly as
-// v3 fp32 does, and a vocabulary-less Ultra bundle behaves like a
-// vocabulary-less v3 fp32 one. Only the v3 int8 archive keeps greedy for lack
-// of bpe.vocab.
-func TestParakeetUltraDecoderMatchesV3Fp32(t *testing.T) {
+// Ultra fp32 ships bpe.vocab and beam-searches with hints. Ultra int8 decodes
+// greedily, as v3 int8 did: on it greedy search omitted less speech than the
+// unbiased beam decoder, at 22% less CPU and half the peak memory. Its spec
+// names no vocabulary, so even a bpe.vocab that ends up in its directory
+// cannot switch it to beam search.
+func TestParakeetUltraDecoders(t *testing.T) {
 	t.Setenv(envHintsDisabled, "")
-	for _, withVocab := range []bool{true, false} {
-		methods := map[ModelID]string{}
-		for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeetUltra, ModelParakeet06BV3Int8} {
-			paths := transducerPaths(t)
-			paths.ModelID = id
-			if !withVocab {
-				paths.BpeVocabFile = ""
-			}
-			dec, _, err := resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{}, paths)
-			if err != nil {
-				t.Fatalf("%s vocab=%v: %v", id, withVocab, err)
-			}
-			methods[id] = dec.Method
+	fp32 := transducerPaths(t)
+	fp32.ModelID = ModelParakeetUltra
+	dec, _, err := resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{}, fp32)
+	if err != nil || dec.Method != decodingModifiedBeamSearch {
+		t.Fatalf("Ultra fp32 with bpe.vocab decodes with %+v, %v", dec, err)
+	}
+
+	dir := t.TempDir()
+	for _, name := range append(RequiredModelFileNames(ModelParakeetUltraInt8), "bpe.vocab") {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		if methods[ModelParakeetUltra] != methods[ModelParakeet06BV3] {
-			t.Fatalf("vocab=%v: Ultra decodes with %s, v3 fp32 with %s", withVocab, methods[ModelParakeetUltra], methods[ModelParakeet06BV3])
-		}
-		if withVocab && methods[ModelParakeetUltra] != decodingModifiedBeamSearch {
-			t.Fatalf("Ultra with bpe.vocab decodes with %s", methods[ModelParakeetUltra])
-		}
-		if !withVocab && methods[ModelParakeet06BV3Int8] != decodingGreedySearch {
-			t.Fatalf("v3 int8 without bpe.vocab decodes with %s", methods[ModelParakeet06BV3Int8])
-		}
+	}
+	int8Paths := resolveModelPaths(dir, knownModels[ModelParakeetUltraInt8], ModelParakeetUltraInt8)
+	if int8Paths.BpeVocabFile != "" {
+		t.Fatalf("Ultra int8 resolved a vocabulary: %s", int8Paths.BpeVocabFile)
+	}
+	dec, hints, err := resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{Terms: []string{"Cassini"}}, int8Paths)
+	if err != nil || dec.Method != decodingGreedySearch {
+		t.Fatalf("Ultra int8 decodes with %+v, %v", dec, err)
+	}
+	if hints == nil || hints.Applied {
+		t.Fatalf("Ultra int8 claims hints it cannot apply: %+v", hints)
 	}
 }
 
-// The catalogue entry installs exactly the files the spec loads, laid out like
-// v3 fp32, sharing v3's tokenizer files (Ultra keeps v3's tokenizer), and the
-// shipped NOTICE credits both Moondream and NVIDIA.
-func TestParakeetUltraCatalogueEntry(t *testing.T) {
+// Each catalogue entry installs exactly the files its spec loads, under the
+// revision dist.gocassini.com publishes (the SHA-256 of the `sha256sum`
+// listing of the files sorted by name, not Moondream's model.safetensors,
+// credited in the NOTICE). Both share v3's tokenizer file.
+func TestParakeetUltraCatalogueEntries(t *testing.T) {
 	c := modelstore.Shipped()
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	ultra, err := c.Model(string(ModelParakeetUltra), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	v3, err := c.Model(string(ModelParakeet06BV3), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ultra.Kind != modelstore.KindSpeech || ultra.License != "CC-BY-4.0" || ultra.VADRevision != v3.VADRevision {
-		t.Fatalf("catalogue entry %+v", ultra)
-	}
-	// The revision is Cassini's export, as dist.gocassini.com publishes it:
-	// the SHA-256 of the `sha256sum` listing of the six files sorted by name,
-	// not Moondream's model.safetensors (c9608f36…, credited in the NOTICE).
-	if ultra.Revision != "5030173982bf58c7975b4b26bd47cc4612f54c5c93846756f5c27cbff27f94f6" {
-		t.Fatalf("revision %s is not the published Cassini export", ultra.Revision)
-	}
-	listing := map[string]string{}
-	for _, f := range ultra.Files {
-		a, err := c.Artifact(f.Artifact)
+	tokens := ""
+	for id, revision := range map[ModelID]string{
+		ModelParakeetUltra:     "5030173982bf58c7975b4b26bd47cc4612f54c5c93846756f5c27cbff27f94f6",
+		ModelParakeetUltraInt8: "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9",
+	} {
+		m, err := c.Model(string(id), "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		listing[f.Path] = a.UncompressedSHA256
-	}
-	names := make([]string, 0, len(listing))
-	for name := range listing {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var sums strings.Builder
-	for _, name := range names {
-		fmt.Fprintf(&sums, "%s  %s\n", listing[name], name)
-	}
-	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(sums.String()))); got != ultra.Revision {
-		t.Fatalf("revision %s, but the files' sha256sum listing hashes to %s", ultra.Revision, got)
-	}
-	if !strings.Contains(modelstore.Notices, "c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc") {
-		t.Fatal("NOTICE lacks Moondream's model.safetensors sha256")
-	}
-	if len(ultra.Files) != len(v3.Files) {
-		t.Fatalf("Ultra has %d files, v3 fp32 %d", len(ultra.Files), len(v3.Files))
-	}
-	for i, f := range ultra.Files {
-		g := v3.Files[i]
-		if f.Path != g.Path || f.Required != g.Required {
-			t.Fatalf("file %d: Ultra %+v, v3 %+v", i, f, g)
+		if m.Kind != modelstore.KindSpeech || m.License != "CC-BY-4.0" || m.SourceURL != "https://huggingface.co/moondream/parakeet-ultra" {
+			t.Fatalf("catalogue entry %+v", m)
 		}
-		shared := f.Path == "tokens.txt" || f.Path == "bpe.vocab"
-		if shared != (f.Artifact == g.Artifact) {
-			t.Fatalf("%s: Ultra artifact %s, v3 %s", f.Path, f.Artifact, g.Artifact)
+		if m.Revision != revision {
+			t.Fatalf("%s revision %s is not the published Cassini export %s", id, m.Revision, revision)
+		}
+		listing := map[string]string{}
+		required := map[string]bool{}
+		for _, f := range m.Files {
+			a, err := c.Artifact(f.Artifact)
+			if err != nil {
+				t.Fatal(err)
+			}
+			listing[f.Path] = a.UncompressedSHA256
+			required[f.Path] = f.Required
+			if f.Path == "tokens.txt" {
+				if tokens != "" && tokens != f.Artifact {
+					t.Fatalf("the Ultra models ship different tokens.txt objects")
+				}
+				tokens = f.Artifact
+			}
+		}
+		names := make([]string, 0, len(listing))
+		for name := range listing {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		var sums strings.Builder
+		for _, name := range names {
+			fmt.Fprintf(&sums, "%s  %s\n", listing[name], name)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256([]byte(sums.String()))); got != m.Revision {
+			t.Fatalf("%s revision %s, but the files' sha256sum listing hashes to %s", id, m.Revision, got)
+		}
+		for _, name := range RequiredModelFileNames(id) {
+			if !required[name] {
+				t.Fatalf("%s spec requires %s, the catalogue does not install it as required", id, name)
+			}
+		}
+		if spec := knownModels[id]; spec.BpeVocabFile != "" {
+			if _, ok := listing[spec.BpeVocabFile]; !ok || required[spec.BpeVocabFile] {
+				t.Fatalf("%s: bpe.vocab must be an optional catalogue file", id)
+			}
+		} else if _, ok := listing["bpe.vocab"]; ok {
+			t.Fatalf("%s installs a bpe.vocab its spec never loads", id)
 		}
 	}
-	required := map[string]bool{}
-	for _, f := range ultra.Files {
-		if f.Required {
-			required[f.Path] = true
-		}
-	}
-	for _, name := range RequiredModelFileNames(ModelParakeetUltra) {
-		if !required[name] {
-			t.Fatalf("spec requires %s, the catalogue does not install it as required", name)
-		}
-	}
-	for _, want := range []string{"https://huggingface.co/moondream/parakeet-ultra", "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", "Post-trained by Moondream", "No endorsement by Moondream"} {
+	for _, want := range []string{"c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc", "https://huggingface.co/moondream/parakeet-ultra", "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", "Post-trained by Moondream", "int8 variant by Cassini", "No endorsement by Moondream"} {
 		if !strings.Contains(modelstore.Notices, want) {
 			t.Fatalf("NOTICE lacks %q", want)
 		}
+	}
+}
+
+// Parakeet v3 is retired: a configuration that still names it resolves to the
+// Ultra model of the same precision, drops the revision it pinned (that was
+// v3's), and says so. An id no catalogue ever shipped is left alone, so the
+// build reports it unavailable rather than transcribing with another model.
+func TestRetiredModelResolvesToItsReplacement(t *testing.T) {
+	cases := []struct {
+		explicit, revision, device string
+		want                       ResolvedModel
+	}{
+		{"parakeet-tdt-0.6b-v3", "9125e6a7beb392821f19a3633b80bb2847599580e34ed42a4128732978ad759c", "cuda",
+			ResolvedModel{ID: ModelParakeetUltra, Replaces: "parakeet-tdt-0.6b-v3"}},
+		{"parakeet-tdt-0.6b-v3-int8", "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf", "cpu",
+			ResolvedModel{ID: ModelParakeetUltraInt8, Replaces: "parakeet-tdt-0.6b-v3-int8"}},
+		{"parakeet-ultra-0.6b-int8", "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9", "cpu",
+			ResolvedModel{ID: ModelParakeetUltraInt8, Revision: "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9"}},
+		{"no-such-model", "abc", "cpu", ResolvedModel{ID: "no-such-model", Revision: "abc"}},
+	}
+	for _, c := range cases {
+		if got := ResolveModel(c.explicit, c.revision, "balanced", c.device); got != c.want {
+			t.Errorf("ResolveModel(%s) = %+v, want %+v", c.explicit, got, c.want)
+		}
+	}
+}
+
+// The environment the operator, an image or an administrator sets is where a
+// v3 pin survives an upgrade. The build moves to Ultra and its log says why.
+func TestBuildConfigMovesARetiredEnvPinToUltra(t *testing.T) {
+	t.Setenv("CASSINI_STT_MODEL", "parakeet-tdt-0.6b-v3-int8")
+	t.Setenv("CASSINI_STT_REVISION", "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf")
+	t.Setenv("CASSINI_STT_ADDITIONAL_MODELS", "parakeet-tdt-0.6b-v3, parakeet-tdt-ctc-110m-en-int8")
+	cfg := DefaultBuildConfig()
+	if cfg.ModelID != ModelParakeetUltraInt8 || cfg.ModelRevision != "" || cfg.ReplacedModelID != "parakeet-tdt-0.6b-v3-int8" {
+		t.Fatalf("model %s revision %q replaced %q", cfg.ModelID, cfg.ModelRevision, cfg.ReplacedModelID)
+	}
+	if !reflect.DeepEqual(cfg.AdditionalModels, []ModelID{ModelParakeetUltra, ModelParakeet110M}) {
+		t.Fatalf("additional models %v", cfg.AdditionalModels)
+	}
+
+	t.Setenv("CASSINI_STT_MODEL", "no-such-model")
+	t.Setenv("CASSINI_STT_REVISION", "")
+	if cfg := DefaultBuildConfig(); cfg.ModelID != "no-such-model" || cfg.ReplacedModelID != "" {
+		t.Fatalf("an unknown id became %s (replaced %q)", cfg.ModelID, cfg.ReplacedModelID)
 	}
 }

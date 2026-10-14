@@ -287,9 +287,9 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 	// code path is the point: the decoder does not change under the operator
 	// depending on whether a text box happens to be empty.
 	cfg := &DecoderConfig{Method: decodingModifiedBeamSearch, MaxActivePaths: hotwordsMaxActivePaths}
-	// The validated INT8 archive lacks the tokenizer needed for hints. Its
-	// unbiased beam decoder omits more speech than greedy in recorded tests.
-	// Keep greedy for that bundle; a hint-capable bundle retains beam search.
+	// The int8 bundle is published without the vocabulary hints need, and on
+	// it the unbiased beam decoder omits more speech than greedy in recorded
+	// tests. Keep greedy for it; a hint-capable bundle retains beam search.
 	if knownModels[paths.ModelID].GreedyWithoutBpeVocab && paths.BpeVocabFile == "" {
 		cfg = &DecoderConfig{Method: decodingGreedySearch}
 	}

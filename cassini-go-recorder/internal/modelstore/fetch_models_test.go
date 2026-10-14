@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// deployment/models/fetch-models.sh restates the dist artifacts of the fp32
-// models so an image or CI job can fetch them without the Go binary. Every line
+// deployment/models/fetch-models.sh restates the dist artifacts of the Parakeet
+// Ultra models so an image or CI job can fetch them without the Go binary. Every line
 // it carries must be the catalogue's own mapping, or a fetch verifies against
 // digests the app would reject.
 func TestFetchModelsScriptMatchesCatalogue(t *testing.T) {
@@ -45,7 +45,7 @@ func TestFetchModelsScriptMatchesCatalogue(t *testing.T) {
 		}
 		seen[id] = true
 	}
-	for _, id := range []string{"parakeet-tdt-0.6b-v3", "parakeet-ultra-0.6b"} {
+	for _, id := range []string{"parakeet-ultra-0.6b", "parakeet-ultra-0.6b-int8"} {
 		if !seen[id] {
 			t.Fatalf("fetch-models.sh does not list %s", id)
 		}

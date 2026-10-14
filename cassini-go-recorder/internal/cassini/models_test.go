@@ -142,3 +142,57 @@ func TestModelsProbeChecksADiarizerWithTheDiarizationRuntime(t *testing.T) {
 		t.Fatal("the VAD was installable on its own")
 	}
 }
+
+// Parakeet Ultra replaces v3. Its files go only after Ultra passes its runtime
+// check: an upgrade whose new model fails to run must not also lose the old
+// files, and one that succeeds reclaims them (about 2.5 GB for v3 fp32).
+func TestModelsProbeRemovesTheReplacedModelOnlyAfterItRuns(t *testing.T) {
+	stubModelRuntime(t, true)
+	root := t.TempDir()
+	for _, id := range []string{"silero-vad", "parakeet-ultra-0.6b-int8"} {
+		fakeInstallShipped(t, root, id)
+	}
+	retired := filepath.Join(root, "models", "parakeet-tdt-0.6b-v3-int8")
+	if err := os.MkdirAll(filepath.Join(retired, strings.Repeat("a", 64)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(retired, "encoder.int8.onnx"), []byte("old archive layout"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(root, "models", "parakeet-tdt-0.6b-v3")
+	if err := os.MkdirAll(unrelated, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if row := listModels(t, root, "cpu")["parakeet-ultra-0.6b-int8"]; len(row.Replaces) != 1 || row.Replaces[0] != "parakeet-tdt-0.6b-v3-int8" {
+		t.Fatalf("listed replaces = %v", row.Replaces)
+	}
+
+	failing := probeInstalledModelFn
+	probeInstalledModelFn = func(context.Context, *modelstore.Store, modelstore.Model, string) error {
+		return os.ErrInvalid
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runModels(context.Background(), []string{"probe", "parakeet-ultra-0.6b-int8", "--cache-root", root}, &stdout, &stderr); code == 0 {
+		t.Fatal("failing probe succeeded")
+	}
+	if _, err := os.Stat(retired); err != nil {
+		t.Fatalf("a failed runtime check removed the replaced model: %v", err)
+	}
+
+	probeInstalledModelFn = failing
+	stderr.Reset()
+	if code := runModels(context.Background(), []string{"probe", "parakeet-ultra-0.6b-int8", "--cache-root", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("probe = %d: %s", code, stderr.String())
+	}
+	if _, err := os.Stat(retired); !os.IsNotExist(err) {
+		t.Fatalf("replaced model still present: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "removed parakeet-tdt-0.6b-v3-int8") {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+	// fp32 v3 is replaced by fp32 Ultra, not by this model.
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Fatalf("removed a model the probed one does not replace: %v", err)
+	}
+}

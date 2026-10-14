@@ -11,16 +11,11 @@ https://creativecommons.org/licenses/by/4.0/legalcode.en
 Parakeet TDT-CTC 110M (English):
 https://huggingface.co/nvidia/parakeet-tdt_ctc-110m
 
-Parakeet TDT 0.6B v3:
-https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
-
-The ONNX exports and int8 quantized variants are distributed for sherpa-onnx:
+The ONNX export and its int8 quantized variant are distributed for sherpa-onnx:
 https://github.com/k2-fsa/sherpa-onnx
 https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models
 
-Cassini obtains the two int8 models from the sherpa-onnx release. The fp32
-model is Cassini's own ONNX export of NVIDIA's original checkpoint; the files
-published here are its only distribution.
+Cassini obtains the int8 model from the sherpa-onnx release.
 For this distribution, Cassini compresses each model file independently using
 seekable Zstandard. Decompressed file contents are
 unchanged. ONNX conversion and int8 quantization are changes from NVIDIA's
@@ -46,6 +41,9 @@ Changes from the original model:
   checkpoint layout and exported with the sherpa-onnx script
   scripts/nemo/parakeet-tdt-0.6b-v3/export_onnx.py; only the transducer is
   exported, and the preprocessor, tokenizer and vocabulary are v3's.
+- int8 variant by Cassini: the exported encoder, decoder and joiner quantized
+  with onnxruntime's dynamic quantization (uint8 encoder weights, int8 decoder
+  and joiner weights), as the sherpa-onnx script does for v3.
 - Each model file is compressed independently using seekable Zstandard;
   decompressed contents are the exported files.
 No endorsement by Moondream, NVIDIA or sherpa-onnx is implied.

@@ -284,16 +284,21 @@ func sttModelCacheChecks() []doctorCheck {
 	// Report the *resolved* device+model the build will actually use, so doctor
 	// reflects GPU auto-detection and the quality-tier model choice.
 	device := transcribe.ResolveDevice(os.Getenv("CASSINI_STT_DEVICE"))
-	modelID := transcribe.ResolveModelID(os.Getenv("CASSINI_STT_MODEL"), os.Getenv("CASSINI_STT_QUALITY"), device)
+	resolved := transcribe.ResolveModel(os.Getenv("CASSINI_STT_MODEL"), os.Getenv("CASSINI_STT_REVISION"), os.Getenv("CASSINI_STT_QUALITY"), device)
+	modelID := resolved.ID
+	idSummary := fmt.Sprintf("STT model id: %s", modelID)
+	if resolved.Replaces != "" {
+		idSummary += fmt.Sprintf(" (configured %s is retired; %s replaces it)", resolved.Replaces, modelID)
+	}
 
 	checks := []doctorCheck{
-		{ID: "model.id", Status: doctorOK, Summary: fmt.Sprintf("STT model id: %s", modelID)},
+		{ID: "model.id", Status: doctorOK, Summary: idSummary},
 		{ID: "model.device", Status: doctorOK, Summary: fmt.Sprintf("STT device: %s (quality=%s)", device, transcribe.NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")))},
 		parentWritableCheck("cache.root", cacheRoot, "cassini cache root"),
 	}
 
 	s := modelstore.New(cacheRoot)
-	m, err := s.Catalogue.Model(string(modelID), os.Getenv("CASSINI_STT_REVISION"))
+	m, err := s.Catalogue.Model(string(modelID), resolved.Revision)
 	if err == nil {
 		err = s.Complete(m)
 	}

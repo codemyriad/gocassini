@@ -25,15 +25,15 @@ func TestLinkedCassiniRuntimeSelectsParakeetUltra(t *testing.T) {
 	}
 }
 
-// The Ultra marker is appended after the v3 marker: Parakeet v3 keeps its
-// reference boundary policy, and the diarization check still passes.
-func TestUltraRuntimeKeepsV3ReferencePolicy(t *testing.T) {
+// The Ultra marker is appended after the v3 marker: both Ultra precisions get
+// the reference boundary policy, and the diarization check still passes.
+func TestUltraRuntimeSelectsReferencePolicy(t *testing.T) {
 	for _, marker := range []string{parakeetReferenceRuntimeMarker, nemotronDiarizationRuntimeMarker, parakeetUltraRuntimeMarker} {
 		if !strings.Contains(cassiniRuntimeVersion, marker) {
 			t.Fatalf("%q lacks %s", cassiniRuntimeVersion, marker)
 		}
 	}
-	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
 		policy, isRef, warn := effectiveVADPolicy(id, cassiniRuntimeVersion, true)
 		if !isRef || warn != "" || policy != vadDecodePolicyForModel(id) {
 			t.Fatalf("%s on %q: isRef=%v warn=%q policy=%+v", id, cassiniRuntimeVersion, isRef, warn, policy)
