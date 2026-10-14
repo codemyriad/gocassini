@@ -23,10 +23,11 @@ func TestModelForQuality(t *testing.T) {
 		device string
 		want   ModelID
 	}{
-		// GPU always uses fp32 (int8 fragments under the CUDA EP).
-		{QualityBest, "cuda", ModelParakeet06BV3},
-		{QualityBalanced, "cuda", ModelParakeet06BV3},
-		{QualityFast, "cuda", ModelParakeet06BV3},
+		// GPU always uses fp32 (int8 fragments under the CUDA EP): Parakeet
+		// Ultra since 2026-10.
+		{QualityBest, "cuda", ModelParakeetUltra},
+		{QualityBalanced, "cuda", ModelParakeetUltra},
+		{QualityFast, "cuda", ModelParakeetUltra},
 		// CPU trades accuracy for speed across tiers.
 		{QualityBest, "cpu", ModelParakeet06BV3},
 		{QualityBalanced, "cpu", ModelParakeet06BV3Int8},
@@ -65,8 +66,12 @@ func TestResolveModelID(t *testing.T) {
 	if got := ResolveModelID("", "fast", "cpu"); got != ModelParakeet110M {
 		t.Errorf("ResolveModelID(fast,cpu) = %q", got)
 	}
-	if got := ResolveModelID("", "fast", "cuda"); got != ModelParakeet06BV3 {
-		t.Errorf("ResolveModelID(fast,cuda) = %q, want fp32 (cuda overrides tier)", got)
+	if got := ResolveModelID("", "fast", "cuda"); got != ModelParakeetUltra {
+		t.Errorf("ResolveModelID(fast,cuda) = %q, want Ultra fp32 (cuda overrides tier)", got)
+	}
+	// An install pinned to v3 fp32 on CUDA keeps it: the pin is explicit.
+	if got := ResolveModelID(string(ModelParakeet06BV3), "balanced", "cuda"); got != ModelParakeet06BV3 {
+		t.Errorf("pinned v3 fp32 on cuda resolved to %q", got)
 	}
 }
 

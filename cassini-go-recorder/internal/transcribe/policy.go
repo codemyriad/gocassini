@@ -81,11 +81,17 @@ func ResolveDevice(explicit string) string {
 //
 // fp32 is the only precision the onnxruntime CUDA EP runs without fragmenting
 // the dynamic-int8 ops back to CPU, so every GPU tier uses fp32 — it is both the
-// accuracy ceiling and the fastest real option on a GPU. On CPU the tiers trade
-// accuracy for speed: best=fp32, balanced=int8 0.6B, fast=110M CTC.
+// accuracy ceiling and the fastest real option on a GPU. Since 2026-10 that is
+// Parakeet Ultra, which matched or beat v3 fp32 on every set evaluated; v3 fp32
+// stays installable on CUDA for rollback. On CPU the tiers trade accuracy for
+// speed and are unchanged: best=v3 fp32, balanced=v3 int8, fast=110M CTC.
+//
+// The operator (cassini-operator/internal/operator/device.go) and the app
+// (cassini-app src/speechModels.ts, src/operator/pipelineStatus.ts) keep copies
+// of this map; change all four together.
 func ModelForQuality(q STTQuality, device string) ModelID {
 	if strings.EqualFold(device, "cuda") {
-		return ModelParakeet06BV3 // fp32 v3
+		return ModelParakeetUltra // fp32 Parakeet Ultra
 	}
 	switch NormalizeQuality(string(q)) {
 	case QualityBest:

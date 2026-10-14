@@ -185,7 +185,14 @@ const (
 )
 
 func nativeRuntimeCheck(modelID transcribe.ModelID) doctorCheck {
-	return nativeRuntimeCheckWithState(modelID, transcribe.RuntimeVersion(), transcribe.HasReferenceRuntime())
+	return nativeRuntimeCheckForVersion(modelID, transcribe.RuntimeVersion())
+}
+
+// nativeRuntimeCheckForVersion asks the model's own spec which runtime markers
+// it needs: Parakeet Ultra needs the Ultra selection on top of the v3 patch, so
+// a runtime that is "reference" for v3 is not necessarily reference for Ultra.
+func nativeRuntimeCheckForVersion(modelID transcribe.ModelID, ver string) doctorCheck {
+	return nativeRuntimeCheckWithState(modelID, ver, transcribe.ReferenceFrontendActive(modelID, ver))
 }
 
 func nativeRuntimeCheckWithState(modelID transcribe.ModelID, ver string, hasRef bool) doctorCheck {

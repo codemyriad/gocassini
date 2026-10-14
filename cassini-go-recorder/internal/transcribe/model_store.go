@@ -158,8 +158,8 @@ func ProbeInstalledModel(ctx context.Context, s *modelstore.Store, m modelstore.
 	if device != "cpu" && device != "cuda" {
 		return fmt.Errorf("device must be cpu or cuda")
 	}
-	if device == "cuda" && ModelID(m.ID) != ModelParakeet06BV3 {
-		return fmt.Errorf("CUDA requires the fp32 Parakeet revision")
+	if device == "cuda" && !SupportsCUDA(ModelID(m.ID)) {
+		return fmt.Errorf("CUDA requires an fp32 Parakeet model")
 	}
 	if err := ctx.Err(); err != nil {
 		return err

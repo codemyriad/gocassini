@@ -191,14 +191,36 @@ func defaultVADDecodePolicy() vadDecodePolicy {
 // silence changes every frame; retaining the detected utterance and the source
 // context avoids both that perturbation and arbitrary mid-utterance resets.
 // 30ms is Silero's reference speech-boundary margin, not an ASR score optimum.
+// Parakeet Ultra shares the architecture and frontend, so it shares the policy;
+// the model spec, not the id, decides (ReferenceRuntimeMarkers).
 func usesParakeetV3ReferencePolicy(id ModelID) bool {
-	return id == ModelParakeet06BV3 || id == ModelParakeet06BV3Int8
+	return len(knownModels[id].ReferenceRuntimeMarkers) > 0
 }
 
 // UsesParakeetV3ReferencePolicy reports whether the given model uses the Parakeet v3
 // reference frontend policy.
 func UsesParakeetV3ReferencePolicy(id ModelID) bool {
 	return usesParakeetV3ReferencePolicy(id)
+}
+
+// ReferenceFrontendActive reports whether the given runtime version selects the
+// reference frontend for this model: every marker its spec requires is present.
+// False for a model without the reference policy.
+func ReferenceFrontendActive(id ModelID, version string) bool {
+	isRef, _ := checkReferenceRuntime(id, version)
+	return isRef
+}
+
+// missingReferenceMarkers lists the markers this model needs that the runtime
+// version lacks.
+func missingReferenceMarkers(id ModelID, version string) []string {
+	var missing []string
+	for _, marker := range knownModels[id].ReferenceRuntimeMarkers {
+		if !strings.Contains(version, marker) {
+			missing = append(missing, marker)
+		}
+	}
+	return missing
 }
 
 func vadDecodePolicyForModel(id ModelID) vadDecodePolicy {
@@ -289,10 +311,23 @@ func checkReferenceRuntime(id ModelID, version string) (isReference bool, warnMs
 	if !usesParakeetV3ReferencePolicy(id) {
 		return false, ""
 	}
-	if strings.Contains(version, parakeetReferenceRuntimeMarker) {
+	missing := missingReferenceMarkers(id, version)
+	if len(missing) == 0 {
 		return true, ""
 	}
-	return false, fmt.Sprintf("Parakeet v3 running on upstream sherpa runtime (version %q); reference frontend optimization (%s) is inactive; falling back to standard decode profile", version, parakeetReferenceRuntimeMarker)
+	return false, fmt.Sprintf("%s running on a sherpa runtime without its reference frontend (version %q lacks %s); reference frontend optimization is inactive; falling back to standard decode profile", id, version, strings.Join(missing, ", "))
+}
+
+// refuseWithoutReferenceRuntime is the load-time guard for a model whose
+// export the runtime cannot run without its reference frontend selection.
+func refuseWithoutReferenceRuntime(id ModelID, version string) error {
+	if !knownModels[id].RefuseWithoutReferenceRuntime {
+		return nil
+	}
+	if missing := missingReferenceMarkers(id, version); len(missing) > 0 {
+		return fmt.Errorf("model %s needs a Cassini sherpa runtime with %s (sherpa-onnx-go-linux v1.13.7-cassini.7 or later); runtime %q would run it on the legacy frontend or exit while loading it", id, strings.Join(missing, ", "), version)
+	}
+	return nil
 }
 
 func effectiveVADPolicy(id ModelID, version string, referenceProfile bool) (vadDecodePolicy, bool, string) {
@@ -309,6 +344,9 @@ func effectiveVADPolicy(id ModelID, version string, referenceProfile bool) (vadD
 
 // The legacy profile is private and exists only for recorded-audio comparisons.
 func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, referenceProfile bool) (*Recognizer, error) {
+	if err := refuseWithoutReferenceRuntime(paths.ModelID, sherpa.GetVersion()); err != nil {
+		return nil, err
+	}
 	policy, isRef, warn := effectiveVADPolicy(paths.ModelID, sherpa.GetVersion(), referenceProfile)
 	if warn != "" {
 		unpatchedWarnOnce.Do(func() {

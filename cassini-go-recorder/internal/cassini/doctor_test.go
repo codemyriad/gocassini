@@ -206,3 +206,30 @@ func TestDoctorTextOutputIsUnchangedByTheJSONFlag(t *testing.T) {
 		t.Error("text output became JSON")
 	}
 }
+
+// The speech.runtime check reads the markers the model needs from its spec:
+// the .6 runtime is reference for Parakeet v3 but not for Parakeet Ultra.
+func TestNativeRuntimeCheckIsModelAware(t *testing.T) {
+	const cassini6 = "1.13.7+cassini-parakeet-v3-reference-v1.nemotron-diarization-v2"
+	const cassini7 = cassini6 + ".parakeet-ultra-v1"
+	cases := []struct {
+		model   transcribe.ModelID
+		version string
+		want    doctorStatus
+	}{
+		{transcribe.ModelParakeet06BV3, cassini6, doctorOK},
+		{transcribe.ModelParakeet06BV3, cassini7, doctorOK},
+		{transcribe.ModelParakeetUltra, cassini6, doctorWarn},
+		{transcribe.ModelParakeetUltra, cassini7, doctorOK},
+		{transcribe.ModelParakeetUltra, "1.13.7", doctorWarn},
+	}
+	for _, c := range cases {
+		check := nativeRuntimeCheckForVersion(c.model, c.version)
+		if check.Status != c.want {
+			t.Errorf("%s on %q: status %s, want %s (%s)", c.model, c.version, check.Status, c.want, check.Summary)
+		}
+		if c.want == doctorOK && !strings.Contains(check.Summary, SpeechEngineRefActiveMarker) {
+			t.Errorf("%s on %q: summary %q lacks %q", c.model, c.version, check.Summary, SpeechEngineRefActiveMarker)
+		}
+	}
+}

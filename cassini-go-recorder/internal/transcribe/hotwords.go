@@ -290,7 +290,7 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 	// The validated INT8 archive lacks the tokenizer needed for hints. Its
 	// unbiased beam decoder omits more speech than greedy in recorded tests.
 	// Keep greedy for that bundle; a hint-capable bundle retains beam search.
-	if paths.ModelID == ModelParakeet06BV3Int8 && paths.BpeVocabFile == "" {
+	if knownModels[paths.ModelID].GreedyWithoutBpeVocab && paths.BpeVocabFile == "" {
 		cfg = &DecoderConfig{Method: decodingGreedySearch}
 	}
 
