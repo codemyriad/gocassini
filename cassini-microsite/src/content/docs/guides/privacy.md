@@ -294,7 +294,8 @@ could not use.
 ## What is _not_ sent anywhere
 
 - **Transcription is 100% local.** Speech-to-text runs in-process using local
-  Parakeet models (NVIDIA Parakeet; on a GPU, Moondream's Parakeet Ultra) and
+  Parakeet models (Moondream's Parakeet Ultra; NVIDIA Parakeet on the CPU's
+  Fast tier) and
   Silero VAD (ONNX Runtime). No audio and no transcript
   leaves your infrastructure for transcription.
 - **Speaker labels come from Talk, not from audio.** Each participant's label

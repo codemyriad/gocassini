@@ -17,7 +17,8 @@ The WIP notes identify gaps in installation and configuration coverage.
 ## Current behavior
 
 - **Transcription is 100% local.** Speech-to-text runs in-process via
-  sherpa-onnx / ONNX Runtime with NVIDIA **Parakeet** models and **Silero VAD**.
+  sherpa-onnx / ONNX Runtime with **Parakeet** models (Moondream's Parakeet
+  Ultra, post-trained from NVIDIA Parakeet) and **Silero VAD**.
   There is **no third-party or remote transcription** — no audio and no
   transcript leaves the host for the transcription step.
 - **Transcription runs on the GPU when there is one, and on the CPU when there

@@ -4,9 +4,9 @@ Linux amd64/arm64 CPU builds use the prebuilt libraries from
 [codemyriad/sherpa-onnx-go-linux](https://github.com/codemyriad/sherpa-onnx-go-linux).
 The Go wrapper and platform declarations match upstream v1.13.7. Standard
 `go build`, `go run` and `go test` work without compiling sherpa-onnx.
-macOS, Windows and Linux arm32 use stock v1.13.7 libraries: Parakeet v3 remains
-usable with a warning and the standard decode policy. The patched frontend is
-reported in doctor, operator status and transcription provenance.
+macOS, Windows and Linux arm32 use stock v1.13.7 libraries, which cannot load
+Parakeet Ultra: there only the fast tier's 110M model transcribes. The patched
+frontend is reported in doctor, operator status and transcription provenance.
 
 CUDA still requires native compilation. `build.sh` downloads the immutable
 commit recorded in that script from the `v1.13.7-cassini` source fork and verifies
