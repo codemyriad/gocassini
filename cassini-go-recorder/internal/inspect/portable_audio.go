@@ -756,6 +756,10 @@ type ExtractedTranscript struct {
 	Language     string
 	WordCount    int
 	Words        []TranscriptWord
+	// PayloadSHA256 is the transcript body's payloadRef.sha256, which the
+	// decode checked against the decoded bytes. Marks rewrite the OpusTags
+	// around it but never this body, so it identifies the words.
+	PayloadSHA256 string
 }
 
 // ExtractTranscriptWords reads the default raw-ASR ("words") transcript back
