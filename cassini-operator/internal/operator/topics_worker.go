@@ -252,6 +252,9 @@ func (s *topicsService) runOnce(ctx context.Context) bool {
 	if !s.settings().Enabled {
 		return false
 	}
+	if err := s.rescorePending(workCtx, versions); err != nil && workCtx.Err() == nil {
+		s.recordError(fmt.Errorf("rescore: %w", err))
+	}
 	row, ok, err := s.store.claimNext(ctx, !s.buildsWaiting(ctx))
 	if err != nil {
 		s.logf("claim: %v", err)

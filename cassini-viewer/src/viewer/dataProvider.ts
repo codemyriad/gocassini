@@ -44,6 +44,7 @@ import type {
   VocabularyTag,
 } from "./annotations";
 import type { SpeakerEditsDoc, SpeakerEditsState } from "./speakerEdits";
+import type { Topic, TopicLibrary, TopicRevision, TopicSave, TopicTagRooms } from "./topics";
 import {
   searchMeetingTranscripts,
   type MeetingSearchOptions,
@@ -149,6 +150,19 @@ export interface DataProvider {
   mergeTag?(tagId: string, intoTagId: string): Promise<TagJob>;
   deleteTag?(tagId: string): Promise<TagJob>;
   loadTagJob?(): Promise<TagJob | null>;
+
+  // OPTIONAL: the topic library (docs/topic-suggestions.md) — `GET|POST
+  // annotations/topics/library…`. Only an operator with topic suggestions
+  // switched on serves it; loadTopicLibrary answers {enabled:false}
+  // otherwise, and the Topics tab stays hidden. Writes reject with an
+  // AnnotationError whose code the editor acts on: label-taken,
+  // topic-retired (with the retired topic's tagId), revision-conflict,
+  // rate-limited, library-full, disabled.
+  loadTopicLibrary?(): Promise<TopicLibrary>;
+  saveTopic?(save: TopicSave): Promise<{ topic: Topic; job?: TagJob | null }>;
+  loadTopicHistory?(tagId: string): Promise<TopicRevision[]>;
+  redactTopicRevision?(tagId: string, revision: number): Promise<void>;
+  loadTopicTagRooms?(tagId: string): Promise<TopicTagRooms>;
 
   // OPTIONAL (D-736): what was SAID across the meetings this caller can read —
   // `GET published/search`.

@@ -212,6 +212,31 @@ describe("AppDataProvider annotations", () => {
       cache: init.cache,
     }));
 
+  it("reads and writes the topic library with a fresh request id per write", async () => {
+    const fetchMock = respondWith(JSON.stringify({ topic: {}, revisions: [], rooms: [] }));
+    const provider = new AppDataProvider();
+    await provider.loadTopicLibrary();
+    await provider.saveTopic({ label: "hiring", definition: "Recruiting." });
+    await provider.saveTopic({ tagId: "tag_h", expectRevision: 2, status: "retired" });
+    await provider.loadTopicHistory("tag_h");
+    await provider.redactTopicRevision("tag_h", 1);
+    await provider.loadTopicTagRooms("tag_h");
+    const got = calls(fetchMock).map(({ path, method, body, cache }) => ({ path, method, body: body ? JSON.parse(String(body)) : undefined, cache }));
+    expect(got.map((c) => [c.path, c.method])).toEqual([
+      ["annotations/topics", "GET"],
+      ["annotations/topics/library", "POST"],
+      ["annotations/topics/library/tag_h", "POST"],
+      ["annotations/topics/library/tag_h/history", "GET"],
+      ["annotations/topics/library/tag_h/history/1", "POST"],
+      ["annotations/topics/library/tag_h/rooms", "GET"],
+    ]);
+    expect(got.every((c) => c.cache === "no-store")).toBe(true);
+    expect(got[1].body).toMatchObject({ label: "hiring", definition: "Recruiting.", requestId: expect.stringMatching(/^req_/) });
+    expect(got[2].body).toEqual({ requestId: expect.stringMatching(/^req_/), expectRevision: 2, status: "retired" });
+    expect(got[2].body.requestId).not.toBe(got[1].body.requestId);
+    expect(got[4].body).toEqual({ requestId: expect.stringMatching(/^req_/), action: "redact" });
+  });
+
   it("reads the vocabulary beside the published archive, past the proxy's cache", async () => {
     const fetchMock = respondWith(JSON.stringify({ tags: [], meetings: [], coverage: { visible: 0, indexed: 0 } }));
 

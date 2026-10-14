@@ -13,6 +13,7 @@
     "./tagPalette": "./src/viewer/tagPalette.ts",
     "./tags/*": "./src/components/tags/*",
     "./insights": "./src/viewer/insights.ts",
+    "./topics": "./src/viewer/topics.ts",
     "./insightName": "./src/viewer/insightName.ts",
     "./imports": "./src/viewer/imports.ts",
     "./meetingSummary": "./src/viewer/meetingSummary.ts",

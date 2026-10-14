@@ -5,10 +5,10 @@ was about. A person confirms or rejects every suggestion; only a confirm writes
 a tag into the recording. This page is for the administrator who runs it. The
 design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.md).
 
-> **Status.** The model and the work queue are in place. Describing topics and
-> reviewing suggestions come in later releases, so for now Cassini only reads
-> meetings and stores what it needs to score them later. With no topics
-> described it suggests nothing.
+> **Status.** The model, the work queue and the topic library are in place.
+> Reviewing suggestions comes in a later release, so for now Cassini reads
+> meetings, keeps what it needs, and scores them against the topics people
+> describe without showing anyone the result yet.
 
 ## Words used on this page
 
@@ -18,6 +18,43 @@ design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.
   ends, pauses and speaker changes. Each passage gets one vector.
 - **Vector** (embedding): 768 numbers that place a text by meaning, so similar
   subjects end up close together.
+
+## Describing topics
+
+Anyone who can read at least one meeting can describe topics, in **Manage tags
+→ Topics** (the tab appears once suggestions are switched on):
+
+- **New topic**: a name and a definition of up to 1,000 characters, written in
+  your own words as you would explain the subject to a new colleague. Never
+  paste text from a meeting: everyone who can tag sees the name and the
+  definition.
+- **Describe as topic…** on an existing tag keeps that tag, so meetings that
+  already carry it count as the topic's. When the tag is on meetings from only
+  one conversation you can read, the editor warns that describing it shows its
+  name to everyone.
+- **Edit** changes the name, colour or definition. A new name is also written
+  into your own meetings, as a rename in the Tags tab is; meetings you cannot
+  read keep the old name. A new definition is compared with every checked
+  meeting again, from the stored vectors, without reading the meetings again.
+- **Retire** stops suggestions for the topic; its tags stay on meetings, and
+  **Restore** brings it back. A topic whose name you want again for something
+  else can be restored or left retired, in which case a new topic gets a new
+  id.
+- **History** lists every revision. Whoever wrote a revision, or an
+  administrator, can remove it from the history (for text that should never
+  have been saved); the current revision cannot be removed.
+
+Limits: at most 200 active topics, and at most 30 new topics or definition
+changes per person per hour, because each one is compared with the whole
+archive. Counts on the tab ("On 4 meetings · 2 to review") are over the
+meetings you can read. **Very common** marks a topic suggested or confirmed on
+most of them: its definition is probably too general.
+
+Typing a topic's name in the tag picker uses the topic's tag, with its
+colour, rather than starting a second tag with the same name. Renaming,
+recolouring or merging a tag in the Tags tab updates its topic too; merging a
+topic into another tag retires it into that tag, which takes its definition if
+it has none, and keeps the rejections people made.
 
 ## Switching it on
 
@@ -64,6 +101,7 @@ operator does the work.
 | Where | What | Disposable? |
 |---|---|---|
 | `topics.sqlite3`, beside the operator database | For each checked meeting: passage times, word counts and vectors. No text, titles, rooms or user ids. About 280 KiB per meeting. | Yes. If it is deleted, Cassini reads every meeting again. |
+| `annotations.sqlite3` | The topic library: names, definitions, colours and every revision with who made it (shown to administrators only, in the topic suggestions status). |  No. |
 | `annotations.sqlite3` | The work queue: which meetings were checked, when, why one could not be, and which model read it. The vectors of the built-in control texts. | No: back it up with the rest of the annotations database. |
 
 Settings shows the size of `topics.sqlite3` in the status.
