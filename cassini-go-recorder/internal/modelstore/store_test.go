@@ -85,6 +85,7 @@ func TestShippedCatalogue(t *testing.T) {
 		"silero-vad":                    KindVAD,
 		"nemotron-3-diarization-int8":   KindDiarization,
 		"nemotron-3-diarization":        KindDiarization,
+		"embeddinggemma-2-text-int8":    KindEmbedding,
 	}
 	for id, kind := range want {
 		if kinds[id] != kind {
@@ -128,7 +129,7 @@ func TestShippedCatalogue(t *testing.T) {
 	}
 	// Every installed model directory gets the embedded notice; each licence
 	// in the catalogue must be in it.
-	for licence, needle := range map[string]string{"CC-BY-4.0": "CC BY 4.0", "MIT": "MIT License", "OpenMDW-1.1": "OpenMDW License Agreement, version 1.1"} {
+	for licence, needle := range map[string]string{"CC-BY-4.0": "CC BY 4.0", "MIT": "MIT License", "OpenMDW-1.1": "OpenMDW License Agreement, version 1.1", "Apache-2.0": "Apache License\n                           Version 2.0, January 2004"} {
 		for _, m := range c.Models {
 			if m.License == licence && !strings.Contains(Notices, needle) {
 				t.Errorf("NOTICE.txt lacks the %s licence of %s", licence, m.ID)
@@ -137,7 +138,7 @@ func TestShippedCatalogue(t *testing.T) {
 	}
 	for _, m := range c.Models {
 		switch m.License {
-		case "CC-BY-4.0", "MIT", "OpenMDW-1.1":
+		case "CC-BY-4.0", "MIT", "OpenMDW-1.1", "Apache-2.0":
 		default:
 			t.Errorf("%s has licence %q, which this test does not know", m.ID, m.License)
 		}
@@ -160,7 +161,7 @@ func TestValidateChecksEachKindsDependencies(t *testing.T) {
 		"speech model without VAD": func(c *Catalogue) { c.Models[0].VADRevision = "" },
 		"diarizer pinning a VAD":   func(c *Catalogue) { c.Models[2].VADRevision = c.Models[1].Revision },
 		"model without a kind":     func(c *Catalogue) { c.Models[2].Kind = "" },
-		"unknown kind":             func(c *Catalogue) { c.Models[2].Kind = "embedding" },
+		"unknown kind":             func(c *Catalogue) { c.Models[2].Kind = "reranker" },
 		"VAD under another id":     func(c *Catalogue) { c.Models[2].Kind = KindVAD },
 	}
 	for name, breakIt := range cases {
