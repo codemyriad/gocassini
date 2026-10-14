@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gocassini/internal/modelstore"
 )
 
 const (
@@ -120,6 +122,59 @@ func TestParakeetUltraDecoderMatchesV3Fp32(t *testing.T) {
 		}
 		if !withVocab && methods[ModelParakeet06BV3Int8] != decodingGreedySearch {
 			t.Fatalf("v3 int8 without bpe.vocab decodes with %s", methods[ModelParakeet06BV3Int8])
+		}
+	}
+}
+
+// The catalogue entry installs exactly the files the spec loads, laid out like
+// v3 fp32, sharing v3's tokenizer files (Ultra keeps v3's tokenizer), and the
+// shipped NOTICE credits both Moondream and NVIDIA.
+func TestParakeetUltraCatalogueEntry(t *testing.T) {
+	c := modelstore.Shipped()
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	ultra, err := c.Model(string(ModelParakeetUltra), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v3, err := c.Model(string(ModelParakeet06BV3), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ultra.Kind != modelstore.KindSpeech || ultra.License != "CC-BY-4.0" || ultra.VADRevision != v3.VADRevision {
+		t.Fatalf("catalogue entry %+v", ultra)
+	}
+	if ultra.Revision != "c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc" {
+		t.Fatalf("revision %s is not Moondream's model.safetensors at 73175eb7", ultra.Revision)
+	}
+	if len(ultra.Files) != len(v3.Files) {
+		t.Fatalf("Ultra has %d files, v3 fp32 %d", len(ultra.Files), len(v3.Files))
+	}
+	for i, f := range ultra.Files {
+		g := v3.Files[i]
+		if f.Path != g.Path || f.Required != g.Required {
+			t.Fatalf("file %d: Ultra %+v, v3 %+v", i, f, g)
+		}
+		shared := f.Path == "tokens.txt" || f.Path == "bpe.vocab"
+		if shared != (f.Artifact == g.Artifact) {
+			t.Fatalf("%s: Ultra artifact %s, v3 %s", f.Path, f.Artifact, g.Artifact)
+		}
+	}
+	required := map[string]bool{}
+	for _, f := range ultra.Files {
+		if f.Required {
+			required[f.Path] = true
+		}
+	}
+	for _, name := range RequiredModelFileNames(ModelParakeetUltra) {
+		if !required[name] {
+			t.Fatalf("spec requires %s, the catalogue does not install it as required", name)
+		}
+	}
+	for _, want := range []string{"https://huggingface.co/moondream/parakeet-ultra", "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3", "Post-trained by Moondream", "No endorsement by Moondream"} {
+		if !strings.Contains(modelstore.Notices, want) {
+			t.Fatalf("NOTICE lacks %q", want)
 		}
 	}
 }

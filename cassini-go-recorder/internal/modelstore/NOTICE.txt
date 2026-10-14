@@ -26,6 +26,30 @@ seekable Zstandard. Decompressed file contents are
 unchanged. ONNX conversion and int8 quantization are changes from NVIDIA's
 original model format. No endorsement by NVIDIA or sherpa-onnx is implied.
 
+Parakeet Ultra 0.6B
+===================
+Moondream Parakeet Ultra, licensed under Creative Commons Attribution 4.0
+International (CC BY 4.0):
+https://huggingface.co/moondream/parakeet-ultra
+(revision 73175eb7aeb0d82f1e2a6b53b3aabc10a90bcd0b, model.safetensors sha256
+c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc)
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode.en
+
+It is a post-trained version of NVIDIA's Parakeet TDT 0.6B v3, licensed under
+CC BY 4.0: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+
+Changes from the original model:
+- Post-trained by Moondream from NVIDIA's Parakeet TDT 0.6B v3 (Moondream's
+  change; its training data and code are not published).
+- ONNX export by Cassini: Moondream's weights mapped onto the NeMo v3
+  checkpoint layout and exported with the sherpa-onnx script
+  scripts/nemo/parakeet-tdt-0.6b-v3/export_onnx.py; only the transducer is
+  exported, and the preprocessor, tokenizer and vocabulary are v3's.
+- Each model file is compressed independently using seekable Zstandard;
+  decompressed contents are the exported files.
+No endorsement by Moondream, NVIDIA or sherpa-onnx is implied.
+
 Nemotron 3 Diarization
 ======================
 Original model by NVIDIA, licensed under the OpenMDW License Agreement,
