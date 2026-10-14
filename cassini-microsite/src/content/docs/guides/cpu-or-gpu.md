@@ -13,8 +13,9 @@ A GPU is optional: an NVIDIA card with the Container Toolkit, on x86_64, for
 faster transcription.
 
 Transcription runs inside your own infrastructure either way: sherpa-onnx with
-NVIDIA Parakeet models and Silero VAD, in-process, with no audio and no
-transcript leaving the host.
+Parakeet models (NVIDIA's Parakeet on a CPU, Moondream's Parakeet Ultra on a
+GPU) and Silero VAD, in-process, with no audio and no transcript leaving the
+host.
 
 ## Two images, one setting
 
@@ -23,7 +24,7 @@ transcript leaving the host.
 | Tag | `X.Y.Z` | `X.Y.Z-cuda` |
 | Architectures | `linux/amd64` and `linux/arm64` | x86_64 only |
 | Needs | any Docker engine | NVIDIA driver + Container Toolkit |
-| Bundled model | int8 Parakeet 0.6B v3 | fp32 Parakeet 0.6B v3 |
+| Default model | int8 Parakeet 0.6B v3 | fp32 Parakeet Ultra 0.6B |
 
 You do not pick the tag by hand. **The compute device is a property of the
 deploy daemon**: set its **Compute device** to CUDA and AppAPI tries
@@ -44,13 +45,19 @@ actually running on.
 
 | Tier | On a CPU | On a GPU |
 |---|---|---|
-| Fast | a small English model (110M CTC) | fp32 Parakeet 0.6B v3 |
-| **Balanced** (the default) | int8 Parakeet 0.6B v3, bundled in the image | fp32 Parakeet 0.6B v3 |
-| Best | fp32 Parakeet 0.6B v3, downloaded once when selected | fp32 Parakeet 0.6B v3 |
+| Fast | a small English model (110M CTC) | fp32 Parakeet Ultra 0.6B |
+| **Balanced** (the default) | int8 Parakeet 0.6B v3 | fp32 Parakeet Ultra 0.6B |
+| Best | fp32 Parakeet 0.6B v3 | fp32 Parakeet Ultra 0.6B |
 
 fp32 is the only precision the CUDA execution provider runs without falling back
 to the CPU for parts of the graph, so every GPU tier resolves to the same fp32
-model — which is why the CUDA image bundles it.
+model. Since October 2026 that is
+[Parakeet Ultra](https://huggingface.co/moondream/parakeet-ultra): Moondream's
+post-training of Parakeet 0.6B v3, with the same architecture and languages. It
+matched or beat v3 on all eleven public test sets we ran, and on recorded
+meetings it dropped far fewer passages under the GPU's decoder. A GPU install that already
+uses fp32 Parakeet 0.6B v3 keeps it until an administrator installs and selects
+Ultra in Settings; v3 stays available on the GPU to go back to.
 
 Each image bundles the model of its own default tier. Another tier downloads once
 into the model cache on the persistent volume. On a host with no outbound
@@ -60,9 +67,9 @@ starting and failing at the network.
 
 ## What the GPU buys, and what it does not
 
-- **The device does not decide the transcript; the tier does.** At Balanced and
-  Best both devices run Parakeet 0.6B v3, at a different precision. Pick a
-  device by how long you are willing to wait.
+- **The device changes the model as well as the speed.** A GPU runs Parakeet
+  Ultra at every tier; a CPU runs Parakeet 0.6B v3 at Balanced and Best. Both
+  stay in the same model family, with the same languages.
 - **It accelerates transcription only.** Live capture is CPU-bound either way,
   so recording a call is not the part a GPU helps with.
 - **arm64 is CPU only.** There is no ARM CUDA image; a 64-bit ARM server runs

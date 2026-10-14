@@ -53,7 +53,7 @@ Questions and bugs: [GitHub issues](https://github.com/codemyriad/gocassini/issu
 
 ## Ethical AI rating
 
-### Speech-to-text (NVIDIA Parakeet): 🟡
+### Speech-to-text on a CPU (NVIDIA Parakeet): 🟡
 
 Positive:
 - the software for training and inference of this model is open source
@@ -61,6 +61,18 @@ Positive:
 
 Negative:
 - the training data is only partly available: the Granary corpus is open, but NVIDIA's NeMo ASR Set 3.0 includes licensed corpora
+
+### Speech-to-text on a GPU (Moondream Parakeet Ultra): 🟠
+
+Moondream's post-training of NVIDIA Parakeet v3 (rated above). A GPU install can keep using Parakeet v3 instead.
+
+Positive:
+- the trained model is freely available (CC-BY-4.0), and runs on your own hardware
+- the software for inference is open source
+
+Negative:
+- Moondream has not published the code it post-trained the model with
+- Moondream has not published its post-training data, apart from naming the MUSAN noise corpus; the NVIDIA training data underneath is only partly available
 
 ### Voice separation (NVIDIA Nemotron 3 Diarization): 🟡
 
