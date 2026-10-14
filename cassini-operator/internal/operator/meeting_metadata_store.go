@@ -2,7 +2,9 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"path"
@@ -123,6 +125,22 @@ func (s *meetingMetadataStore) EntriesFor(ctx context.Context, fileIDs []int64) 
 		}
 	}
 	return out, nil
+}
+
+// FileIDFor is the Nextcloud file id of the delivered meeting named opusName,
+// or 0 when the index has none. A meeting re-delivered after its file was
+// removed by hand gets a new id while the old row may linger, so the most
+// recently indexed row wins.
+func (s *meetingMetadataStore) FileIDFor(ctx context.Context, opusName string) (int64, error) {
+	if s == nil {
+		return 0, nil
+	}
+	var fileID int64
+	err := s.db.QueryRowContext(ctx, `SELECT file_id FROM meeting_metadata WHERE opus_name = ? ORDER BY indexed_at DESC, file_id DESC LIMIT 1`, opusName).Scan(&fileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return fileID, err
 }
 
 func (s *meetingMetadataStore) Forget(ctx context.Context, fileID int64) error {
