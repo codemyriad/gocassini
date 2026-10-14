@@ -244,18 +244,20 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			if warn != nil {
 				fmt.Fprintln(stderr, "models:", warn)
 			}
-			err = probeInstalledEmbedder(ctx, s, m, threads)
 			// The probe is the model's quality gate: only a pass makes it
 			// ready, and a failure takes readiness away. Waiting (memory, a
-			// cancelled wait for the lock) says nothing about the model.
-			switch {
-			case err == nil:
-				err = s.MarkReady(m, "cpu", topics.ReadyFingerprint)
-			case !errors.Is(err, transcribe.ErrRuntimeCheckDeferred) && ctx.Err() == nil:
-				if clearErr := s.ClearReady(m, "cpu"); clearErr != nil {
-					fmt.Fprintln(stderr, "models:", clearErr)
+			// cancelled wait for the lock) says nothing about the model. The
+			// receipt changes under the inference lock, so probes record in
+			// the order they ran.
+			err = probeInstalledEmbedder(ctx, s, m, threads, func(err error) error {
+				switch {
+				case err == nil:
+					return s.MarkReady(m, "cpu", topics.ReadyFingerprint)
+				case !errors.Is(err, transcribe.ErrRuntimeCheckDeferred) && ctx.Err() == nil:
+					return s.ClearReady(m, "cpu")
 				}
-			}
+				return nil
+			})
 		default:
 			err = probeInstalledModelFn(ctx, s, m, *device)
 		}

@@ -241,13 +241,15 @@ func TestTopicsEmbedTextsClampsThreads(t *testing.T) {
 		return &fakeEmbedder{}, nil
 	}
 	in := writeTopicsInput(t, `{"id":"a","text":"one"}`)
-	for _, threads := range []string{"100", "3"} {
+	// A negative value is clamped too; only 0 means the environment.
+	t.Setenv(topics.ThreadsEnv, "16")
+	for _, threads := range []string{"100", "3", "-1"} {
 		if code, _, stderr := runEmbedTexts(root, "--in", in, "--out", filepath.Join(t.TempDir(), "v"), "--threads", threads); code != 0 {
 			t.Fatalf("--threads %s: code %d: %s", threads, code, stderr)
 		}
 	}
-	if fmt.Sprint(got) != "[16 3]" {
-		t.Fatalf("threads %v, want [16 3]", got)
+	if fmt.Sprint(got) != "[16 3 1]" {
+		t.Fatalf("threads %v, want [16 3 1]", got)
 	}
 }
 

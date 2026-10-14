@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,7 +90,10 @@ func stubEmbeddingRuntime(t *testing.T, supported bool) (probes *int) {
 	n := 0
 	prevRuntime, prevProbe := embeddingRuntimeFn, probeInstalledEmbedder
 	embeddingRuntimeFn = func() bool { return supported }
-	probeInstalledEmbedder = func(context.Context, *modelstore.Store, modelstore.Model, int) error { n++; return nil }
+	probeInstalledEmbedder = func(_ context.Context, _ *modelstore.Store, _ modelstore.Model, _ int, record func(error) error) error {
+		n++
+		return record(nil)
+	}
 	t.Cleanup(func() { embeddingRuntimeFn, probeInstalledEmbedder = prevRuntime, prevProbe })
 	return &n
 }
@@ -453,7 +457,9 @@ func TestModelsProbeFailureTakesTheEmbeddingModelOutOfReady(t *testing.T) {
 	root := t.TempDir()
 	m := fakeInstallShipped(t, root, DefaultEmbeddingModelID)
 	probe := func(err error) int {
-		probeInstalledEmbedder = func(context.Context, *modelstore.Store, modelstore.Model, int) error { return err }
+		probeInstalledEmbedder = func(_ context.Context, _ *modelstore.Store, _ modelstore.Model, _ int, record func(error) error) error {
+			return errors.Join(err, record(err))
+		}
 		var stdout, stderr bytes.Buffer
 		return runModels(context.Background(), []string{"probe", m.ID, "--cache-root", root}, &stdout, &stderr)
 	}
