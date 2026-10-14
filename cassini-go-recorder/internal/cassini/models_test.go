@@ -59,7 +59,19 @@ func stubModelRuntime(t *testing.T, diarization bool) (asrProbes, diarizerProbes
 	t.Cleanup(func() {
 		diarizationRuntimeFn, probeInstalledModelFn, probeInstalledDiarizer = prevRuntime, prevASR, prevDiar
 	})
+	stubEmbeddingRuntime(t, true)
 	return &asr, &diar
+}
+
+// stubEmbeddingRuntime replaces the ONNX Runtime check and the embedder probe.
+func stubEmbeddingRuntime(t *testing.T, supported bool) (probes *int) {
+	t.Helper()
+	n := 0
+	prevRuntime, prevProbe := embeddingRuntimeFn, probeInstalledEmbedder
+	embeddingRuntimeFn = func() bool { return supported }
+	probeInstalledEmbedder = func(context.Context, *modelstore.Store, modelstore.Model, int) error { n++; return nil }
+	t.Cleanup(func() { embeddingRuntimeFn, probeInstalledEmbedder = prevRuntime, prevProbe })
+	return &n
 }
 
 func listModels(t *testing.T, root, device string) map[string]modelView {
@@ -140,5 +152,88 @@ func TestModelsProbeChecksADiarizerWithTheDiarizationRuntime(t *testing.T) {
 	}
 	if code := runModels(context.Background(), []string{"install", "silero-vad", "--cache-root", root}, &stdout, &stderr); code == 0 {
 		t.Fatal("the VAD was installable on its own")
+	}
+}
+
+// The topic suggestions model is listed as its own kind, on the CPU, and is
+// ready from its installed files plus the runtime check: no readiness
+// receipt, so a reboot or an image upgrade (a new runtime fingerprint) leaves
+// it ready while a speech model needs a new probe.
+func TestModelsListEmbeddingModelReadyWithoutAReceipt(t *testing.T) {
+	stubModelRuntime(t, true)
+	root := t.TempDir()
+	views := listModels(t, root, "cuda")
+	e, ok := views[DefaultEmbeddingModelID]
+	if !ok {
+		t.Fatalf("no embedding model in %v", views)
+	}
+	if e.Kind != modelstore.KindEmbedding || e.DownloadBytes != 288733465 || e.InstalledBytes != 318909106 || e.Device != "cpu" || e.Installed || e.Ready || e.RuntimeSupported == nil || !*e.RuntimeSupported {
+		t.Fatalf("embedding row = %+v", e)
+	}
+
+	m := fakeInstallShipped(t, root, DefaultEmbeddingModelID)
+	speech := fakeInstallShipped(t, root, "parakeet-tdt-ctc-110m-en-int8")
+	fakeInstallShipped(t, root, "silero-vad")
+	s := modelstore.New(root)
+	if err := s.MarkReady(speech, "cpu", transcribe.ModelRuntimeFingerprint()); err != nil {
+		t.Fatal(err)
+	}
+	views = listModels(t, root, "cpu")
+	if e = views[m.ID]; !e.Installed || !e.Ready {
+		t.Fatalf("installed embedding model = %+v, want ready", e)
+	}
+	if !views[speech.ID].Ready {
+		t.Fatal("the speech model's receipt did not count")
+	}
+	if receipts, _ := filepath.Glob(filepath.Join(s.Dir(m), ".probe-*")); len(receipts) != 0 {
+		t.Fatalf("embedding model has readiness receipts %v", receipts)
+	}
+
+	// A new native library changes the runtime fingerprint, as a reboot (a
+	// new boot_id) or an image upgrade does.
+	lib := t.TempDir()
+	if err := os.WriteFile(filepath.Join(lib, "libonnxruntime.so"), []byte("new runtime"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CASSINI_LIB_DIR", lib)
+	views = listModels(t, root, "cpu")
+	if views[speech.ID].Ready {
+		t.Fatal("the fingerprint did not change; the test proves nothing")
+	}
+	if e = views[m.ID]; !e.Ready {
+		t.Fatalf("after a runtime change the embedding model = %+v, want still ready", e)
+	}
+
+	// A runtime the binding cannot load: installed, never ready.
+	stubEmbeddingRuntime(t, false)
+	if e = listModels(t, root, "cpu")[m.ID]; !e.Installed || e.Ready || *e.RuntimeSupported {
+		t.Fatalf("unsupported runtime = %+v", e)
+	}
+}
+
+func TestModelsProbeChecksTheEmbeddingModelWithTheEmbedderProbe(t *testing.T) {
+	asr, diar := stubModelRuntime(t, true)
+	embed := stubEmbeddingRuntime(t, true)
+	root := t.TempDir()
+	m := fakeInstallShipped(t, root, DefaultEmbeddingModelID)
+
+	var stdout, stderr bytes.Buffer
+	if code := runModels(context.Background(), []string{"probe", m.ID, "--cache-root", root, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("probe = %d: %s", code, stderr.String())
+	}
+	if *asr != 0 || *diar != 0 || *embed != 1 {
+		t.Fatalf("probes: asr=%d diarizer=%d embedder=%d, want the embedder's only", *asr, *diar, *embed)
+	}
+	if !strings.Contains(stdout.String(), `"ready":true`) {
+		t.Fatalf("result: %s", stdout.String())
+	}
+	for _, command := range []string{"install", "probe"} {
+		stderr.Reset()
+		if code := runModels(context.Background(), []string{command, m.ID, "--cache-root", root, "--device", "cuda"}, &stdout, &stderr); code == 0 || !strings.Contains(stderr.String(), "CPU only") {
+			t.Fatalf("cuda %s = %d: %s", command, code, stderr.String())
+		}
+	}
+	if *embed != 1 {
+		t.Fatalf("a refused cuda request ran the probe (%d)", *embed)
 	}
 }
