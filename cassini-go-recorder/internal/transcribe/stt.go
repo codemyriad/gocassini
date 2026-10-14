@@ -1362,6 +1362,7 @@ func (r *Recognizer) Close() {
 // word-level timings. Handles both BPE (▁ word-start marker) and
 // character-level CTC (space as delimiter).
 func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
+	tokens, timestamps, durations = withoutUnknownTokens(tokens, timestamps, durations)
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -1466,6 +1467,50 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 	}
 	flush()
 	return splitMultiWordTokens(words)
+}
+
+// unknownToken is the SentencePiece placeholder a Parakeet decoder emits for a
+// sound it cannot spell. It is not speech: Parakeet Ultra writes it as literal
+// text on greedy paths (19 hypotheses in the 2026-10 evaluation, against 2 for
+// v3), and left in, it glues onto a neighbouring word ("hello<unk>") or stands
+// as a word of its own in the transcript, the captions and the summary input.
+const unknownToken = "<unk>"
+
+// withoutUnknownTokens removes every <unk> from a decoder result, keeping the
+// three parallel slices aligned so each surviving token keeps its own
+// timestamp and duration. A token that is <unk> plus a word-start marker
+// ("▁<unk>") keeps the marker: the boundary it carries is still real, and only
+// the placeholder text goes. A token with nothing left is dropped with its
+// timing, so it can neither start a word nor extend one.
+func withoutUnknownTokens(tokens []string, timestamps, durations []float32) ([]string, []float32, []float32) {
+	found := false
+	for _, tok := range tokens {
+		if strings.Contains(tok, unknownToken) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return tokens, timestamps, durations
+	}
+	outTokens := make([]string, 0, len(tokens))
+	var outTimestamps, outDurations []float32
+	for i, tok := range tokens {
+		if strings.Contains(tok, unknownToken) {
+			tok = strings.ReplaceAll(tok, unknownToken, "")
+			if tok == "" {
+				continue
+			}
+		}
+		outTokens = append(outTokens, tok)
+		if i < len(timestamps) {
+			outTimestamps = append(outTimestamps, timestamps[i])
+		}
+		if i < len(durations) {
+			outDurations = append(outDurations, durations[i])
+		}
+	}
+	return outTokens, outTimestamps, outDurations
 }
 
 // tokenIsNonAcousticPunctuation reports whether a decoder token is nothing but
