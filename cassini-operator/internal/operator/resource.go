@@ -148,9 +148,12 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 	}
 	m, err := findModel(inventory, settings.ActiveModel, settings.ActiveRevision)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("speech model %s is not one this version can run; select a quality in Settings: %w", settings.ActiveModel, err)
 	}
 	if !m.Installed {
+		if job, ok := rt.runningModelJob(ctx, m.ID, m.Revision, device); ok {
+			return "", fmt.Errorf("speech model %s is being installed (%s); recordings wait for it", m.ID, modelJobProgressText(job))
+		}
 		return "", fmt.Errorf("speech model %s is not installed; install it in Settings", m.ID)
 	}
 	if !m.Ready {

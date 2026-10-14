@@ -246,13 +246,14 @@ func (rt *Runtime) doProbeReferenceFrontend(bin, model string) (known bool, isRe
 }
 
 // referenceFrontendWarning says what a missing reference frontend means for
-// the selected model. For v3 it is a slower, less accurate fallback. Parakeet
-// Ultra needs the newer runtime outright: the recorder refuses to load it.
+// the selected model. Parakeet Ultra needs the newer runtime outright: the
+// recorder refuses to load it. For any other reference model it is a slower,
+// less accurate fallback.
 func referenceFrontendWarning(model string) string {
 	if strings.Contains(strings.Join(speechModelSpecs[model].referenceMarkers, ""), parakeetUltraReferenceMarker) {
 		return "Parakeet Ultra needs sherpa runtime v1.13.7-cassini.7 or later (upstream sherpa runtime or an older Cassini runtime found); builds with this model will fail to transcribe"
 	}
-	return "Parakeet v3 running on upstream sherpa runtime; reference frontend optimization is inactive; falling back to standard decode profile"
+	return model + " running on upstream sherpa runtime; reference frontend optimization is inactive; falling back to standard decode profile"
 }
 
 type statusCheck struct {

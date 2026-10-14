@@ -33,6 +33,10 @@ type modelInfo struct {
 	Kind string `json:"kind"`
 	// RuntimeSupported is set for diarizers: whether the runtime can run one.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
+	// Replaces lists retired model ids this model supersedes (Parakeet Ultra
+	// replaces Parakeet v3). Settings pinned to one of them move to the model
+	// their tier now uses; see migrateRetiredSpeechModel.
+	Replaces []string `json:"replaces,omitempty"`
 }
 type modelProgress struct {
 	Version   int    `json:"version"`
@@ -339,6 +343,13 @@ func (rt *Runtime) startModelWorker() {
 			rt.logger.Printf("model job recovery: %v", err)
 			return
 		}
+		// An upgrade can retire the pinned model. Move the pin and queue the
+		// replacement before the readiness recheck below looks at it.
+		migrated, migrationErr := rt.migrateRetiredSpeechModel(rt.ctx)
+		if migrationErr != nil {
+			rt.logger.Printf("stt_settings: retired speech model check: %v", migrationErr)
+		}
+		lastMigrationAttempt := time.Now()
 		// App/native-runtime changes invalidate readiness, not the model bytes.
 		settings := rt.currentSettings()
 		if settings.TranscriptionEnabled && settings.ActiveModel != "" {
@@ -359,6 +370,15 @@ func (rt *Runtime) startModelWorker() {
 		for {
 			if rt.ctx.Err() != nil {
 				return
+			}
+			// The check needs the model inventory; retry one that failed (a slow
+			// first start) rather than leave the install on a retired model.
+			if !migrated && migrationErr != nil && time.Since(lastMigrationAttempt) > retiredModelRetry {
+				migrated, migrationErr = rt.migrateRetiredSpeechModel(rt.ctx)
+				lastMigrationAttempt = time.Now()
+				if migrationErr != nil {
+					rt.logger.Printf("stt_settings: retired speech model check: %v", migrationErr)
+				}
 			}
 			jobs, err := rt.modelJobs(rt.ctx)
 			if err == nil {
