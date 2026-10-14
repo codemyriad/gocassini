@@ -2,7 +2,7 @@ import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
 import TagManager from "../tags/TagManager.svelte";
-import { AnnotationError, type VocabularyTag } from "../../viewer/annotations";
+import { AnnotationError, type TagJob, type VocabularyTag } from "../../viewer/annotations";
 import type { Topic, TopicLibrary, TopicSave } from "../../viewer/topics";
 import "../../app.css";
 
@@ -21,7 +21,7 @@ let saveError: AnnotationError | null;
 function provider() {
   return {
     updateTag: vi.fn(), mergeTag: vi.fn(), loadTagJob: vi.fn(async () => null),
-    deleteTag: vi.fn(async (tagId: string) => ({ id: "j", kind: "delete", tagId, state: "finished", total: 1, done: 1, failed: [], actor: "a", startedAtUtc: "" })),
+    deleteTag: vi.fn(async (tagId: string) => ({ id: "j", kind: "delete" as const, tagId, state: "finished", total: 1, done: 1, failed: [], actor: "a", startedAtUtc: "" }) as TagJob),
     loadTopicLibrary: vi.fn(async () => library),
     saveTopic: vi.fn(async (save: TopicSave) => {
       saves.push(save);

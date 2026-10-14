@@ -75,6 +75,7 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusN
 	var raw []byte
 	var namespace string
 	if request.Accepted {
+		namespace = request.Namespace
 		raw, err = json.Marshal(struct {
 			Ops       []json.RawMessage  `json:"ops"`
 			TagStyles []annotateTagStyle `json:"tagStyles,omitempty"`
@@ -134,6 +135,11 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusN
 		}
 		if err := mutateAnnotationDocument(ctx, tx, name, relPath, caller, namespace, request, batch, &result); err != nil {
 			return err
+		}
+		if request.InTx != nil {
+			if err := request.InTx(ctx, tx, result); err != nil {
+				return err
+			}
 		}
 		if request.RequestID != "" {
 			receipt, err := json.Marshal(result)
