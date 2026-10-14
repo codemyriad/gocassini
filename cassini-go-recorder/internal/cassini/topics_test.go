@@ -359,3 +359,24 @@ func TestTopicsEmbedTextsWithTheModel(t *testing.T) {
 		t.Fatalf("translation cosine %.3f is not above the unrelated text's %.3f", same, other)
 	}
 }
+
+func TestTopicsVersionsNamesTheInstalledModelWithoutLoadingIt(t *testing.T) {
+	root := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := runTopics(context.Background(), []string{"versions", "--cache-root", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("code %d: %s", code, stderr.String())
+	}
+	want := fmt.Sprintf(`{"chunkerVersion":%q,"detectorVersion":%q,"modelRevision":"","recipeVersion":%q}`+"\n", topics.ChunkerVersion, topics.DetectorVersion, topics.EmbedRecipeVersion)
+	if stdout.String() != want {
+		t.Fatalf("without a model: %s", stdout.String())
+	}
+	m := fakeInstallShipped(t, root, DefaultEmbeddingModelID)
+	stdout.Reset()
+	if code := runTopics(context.Background(), []string{"versions", "--cache-root", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("code %d: %s", code, stderr.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got["modelRevision"] != m.ID+"@"+m.Revision {
+		t.Fatalf("installed: %s %v", stdout.String(), err)
+	}
+}

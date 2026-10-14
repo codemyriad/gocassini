@@ -3,7 +3,7 @@ import { render } from "svelte/server";
 
 import SpeechModelsSource from "./SpeechModels.svelte?raw";
 import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
-import TopicSuggestionsModel from "./TopicSuggestionsModel.svelte";
+import TopicSuggestionsSettings from "./TopicSuggestionsSettings.svelte";
 import type { SpeechModel, SpeechModelInventory, SpeechModelJob } from "./operator/types";
 import { jobStepText, modelJob, TOPIC_SUGGESTIONS_MODEL_ID, topicSuggestionsModel, transcriptionModelId, VOICE_SEPARATION_MODEL_ID, voiceSeparationModel } from "./speechModels";
 
@@ -103,12 +103,12 @@ const embedder: SpeechModel = {
 };
 function topicCard(model: SpeechModel, jobs: SpeechModelJob[] = [], downloadsAllowed = true) {
   const inv = { ...inventory([speech, diarizer, model], jobs), downloads_allowed: downloadsAllowed };
-  return render(TopicSuggestionsModel, { props: { inventory: inv } }).body;
+  return render(TopicSuggestionsSettings, { props: { inventory: inv } }).body;
 }
 
 describe("the topic suggestions model card", () => {
   it("renders nothing without the embedding model", () => {
-    expect(render(TopicSuggestionsModel, { props: { inventory: inventory([speech, diarizer]) } }).body).not.toContain("Topic suggestions");
+    expect(render(TopicSuggestionsSettings, { props: { inventory: inventory([speech, diarizer]) } }).body).not.toContain("Topic suggestions");
   });
 
   it("is found by its kind, never as voice separation or the transcription model", () => {
@@ -116,7 +116,7 @@ describe("the topic suggestions model card", () => {
     expect(topicSuggestionsModel(inv)).toEqual(embedder);
     expect(voiceSeparationModel(inv)).toEqual(diarizer);
     expect(topicSuggestionsModel(inventory([speech, { ...embedder, kind: undefined }]))).toBeUndefined();
-    expect(SpeechModelsSource).not.toContain("TopicSuggestionsModel");
+    expect(SpeechModelsSource).not.toContain("TopicSuggestionsSettings");
   });
 
   it("offers the download with its size and says it does not switch suggestions on", () => {

@@ -880,3 +880,14 @@ func TestMeetingFormatSurvivesHardwareRefresh(t *testing.T) {
 		t.Fatalf("legacy settings: %+v %v", loaded, err)
 	}
 }
+
+func TestTopicSuggestionsSurviveHardwareRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := Save(path, STTSettings{Source: "auto", Quality: "balanced", HardwareFingerprint: "old-host", TopicSuggestions: topicSettings{Enabled: true, Threads: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadOrInitSettings(path)
+	if err != nil || loaded.TopicSuggestions != (topicSettings{Enabled: true, Threads: 3}) {
+		t.Fatalf("hardware refresh switched topic suggestions off: %+v %v", loaded.TopicSuggestions, err)
+	}
+}

@@ -19,7 +19,7 @@
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import SpeechModels from "./SpeechModels.svelte";
   import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
-  import TopicSuggestionsModel from "./TopicSuggestionsModel.svelte";
+  import TopicSuggestionsSettings from "./TopicSuggestionsSettings.svelte";
   import ModelCombobox from "./ModelCombobox.svelte";
   // D-757: "Who can see recordings" is a section of the Settings panel, above
   // the pipeline it applies to. Its own component because it is a page's worth
@@ -951,7 +951,7 @@
 
 
       <VoiceSeparationModel client={operatorClient} inventory={modelInventory} />
-      <TopicSuggestionsModel client={operatorClient} inventory={modelInventory} />
+      <TopicSuggestionsSettings client={operatorClient} inventory={modelInventory} />
 
       <section class="op-tint pipe-step search-spellings-card" aria-labelledby="search-spellings-heading">
         <h2 id="search-spellings-heading" class="set-row-name op-card-title">Search spellings</h2>

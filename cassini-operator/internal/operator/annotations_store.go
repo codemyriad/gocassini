@@ -22,7 +22,7 @@ const (
 	annotationsStoreFilename = "annotations.sqlite3"
 
 	// annotationsSchemaVersion is upgraded through managed migrations.
-	annotationsSchemaVersion = 8
+	annotationsSchemaVersion = 9
 
 	annotationsStateIndexed = "indexed"
 	// annotationsStateUnavailable: the meeting is known but its marks could not

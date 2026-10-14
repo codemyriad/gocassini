@@ -106,6 +106,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
 - **[Recording permissions](./direct-shares-cutover.md)** — built-in Nextcloud Files shares for each recording, the one-user cutover, and the metadata cache.
+- **[Topic suggestions](./topic-suggestions.md)** — the optional model that reads transcripts on the CPU to suggest topics, how to switch it on, what it stores and what Settings shows.
 - **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the optional LLM operations that can send text off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Production data → local harness](../harness/README.md#95-seeding-published-recordings)** — pull Nextcloud recordings, capture the operator volume, and seed an installed ExApp.

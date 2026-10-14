@@ -175,8 +175,8 @@ func (rt *Runtime) startProcessingMonitor() {
 			rt.autoCanStart = startSamples >= 2
 			// A fresh recording is allowed to overlap only a currently healthy build.
 			rt.autoCanContinue = keep
-			if len(rt.recordSlots) > 0 && badSamples >= 3 && rt.priorityBuildCancel != nil {
-				rt.priorityBuildCancel(errRecordingPriority)
+			if len(rt.recordSlots) > 0 && badSamples >= 3 {
+				rt.cancelPriorityWorkLocked()
 			}
 			rt.priorityMu.Unlock()
 		}

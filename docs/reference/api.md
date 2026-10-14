@@ -216,6 +216,30 @@ accounting scope and chart controls.
 The operator also rebuilds this index on fixed five-minute UTC boundaries. A
 `POST` does not move or reset that schedule.
 
+## Topic suggestions settings
+
+```http
+GET  /settings/topics
+PUT  /settings/topics            {"enabled": true, "threads": 0}
+POST /settings/topics/backfill   {"since": "2026-06-01"}
+POST /settings/topics/retry      {"meetings": ["<name>.opus"]}
+```
+
+ADMIN. `GET` returns the switch and content-free work status:
+`{enabled, threads, available, ready, reason?, modelRevision, scorerVersion,
+enabledAt, backfillSince, counts, unavailable, oldestWaitingSeconds, blocked,
+vectorsBytes, worker}`. `counts` are meetings by work state (`queued`,
+`running`, `done`, `unavailable`, `blocked`), `unavailable` the meetings that
+could not be checked by reason. It never carries suggestion or verdict counts.
+
+`PUT` answers 409 when it would switch suggestions on before the topic
+suggestions model is installed and its check passed. `threads` is 0 for the
+default (4, or fewer on a smaller host) or 1 to 16. `backfill` queues every
+archived meeting not checked yet, optionally only those recorded on or after
+`since`, and answers `{queued, estimateSeconds}`; it needs suggestions on.
+`retry` queues blocked meetings again, the named ones or all. See
+[Topic suggestions](../topic-suggestions.md).
+
 ## Summary of stage and state values
 
 Stage values:
