@@ -1,8 +1,8 @@
-# Distributing the topic suggestions model (maintainer step)
+# Distributing the topic suggestions model
 
 Date: 2026-10-14 · Parent: [README](README.md), slice S1
 
-The catalogue entry `embeddinggemma-2-text-int8` (`cassini-go-recorder/internal/modelstore/catalogue.json`) points at three artifacts under `https://dist.gocassini.com/models/files/<sha>/`. Uploading them is a maintainer step. Until they are uploaded, `cassini models install` and the Settings download fail with a 404, and the model can only be installed with `cassini models import` from the upstream files.
+The catalogue entry `embeddinggemma-2-text-int8` (`cassini-go-recorder/internal/modelstore/catalogue.json`) points at three artifacts under `https://dist.gocassini.com/models/files/<sha>/`. They were published on 2026-10-14 and are listed in the public [manifest](https://dist.gocassini.com/manifest.json), with the attribution and Apache-2.0 text in its [NOTICE.txt](https://dist.gocassini.com/NOTICE.txt). `cassini models install` and the Settings download fetch them from there. Publishing to dist.gocassini.com is a maintainer step, done with the maintainers' distribution tooling, not from this repository.
 
 ## Sources
 
@@ -23,18 +23,18 @@ sha256sum model_quantized.onnx model_quantized.onnx_data tokenizer.model | sha25
 
 ## Artifacts
 
-Each file is compressed on its own as seekable Zstandard, level 6, 262144-byte frames, like every other catalogue file. The catalogue records, for each artifact, the compressed `sha256` (also its id and key prefix), sizes, frame count and seek-table size. The entries in `catalogue.json` were computed on 2026-10-14. If the compressor gives different bytes, publish what it gives and update the three artifact entries (id, key, url, size, sha256, frame and seek-table fields); the uncompressed sizes and sha256 and the model revision do not change.
+Each file is compressed on its own as seekable Zstandard, level 6, 262144-byte frames, like every other catalogue file. The catalogue records, for each artifact, the compressed `sha256` (also its id and key prefix), sizes, frame count and seek-table size. The published objects are byte-identical to the entries in `catalogue.json`. Addresses on dist.gocassini.com are immutable: a new export or a different compression gets new artifact entries, never new bytes at an existing address.
 
-## Steps
+## Checking the published model
 
-1. Download the three files at the pinned commits and check the uncompressed sha256 above.
-2. Compress each one and upload it to `models/files/<compressed sha256>/<name>.zst` on dist.gocassini.com.
-3. Check the install from the CDN on a scratch cache root:
-   ```sh
-   cassini models install embeddinggemma-2-text-int8 --cache-root /tmp/cassini-models-check
-   cassini models list --json --cache-root /tmp/cassini-models-check   # ready: true
-   ```
-   The install runs the probe: it embeds four pinned sentences and compares them with `internal/topics/probe_golden.json` (cosine ≥ 0.9995).
+Install from the CDN on a scratch cache root:
+
+```sh
+cassini models install embeddinggemma-2-text-int8 --cache-root /tmp/cassini-models-check
+cassini models list --json --cache-root /tmp/cassini-models-check   # ready: true
+```
+
+The install runs the probe: it embeds four pinned sentences and compares them with `internal/topics/probe_golden.json` (cosine ≥ 0.9995).
 
 Offline hosts can import the upstream files directly:
 
