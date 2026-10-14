@@ -5,9 +5,8 @@ was about. A person confirms or rejects every suggestion; only a confirm writes
 a tag into the recording. This page is for the administrator who runs it. The
 design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.md).
 
-> **Status.** Topics are suggested on the meeting page and confirmed or
-> rejected there. Reviewing many meetings at once and proposals for new
-> topics come in later releases.
+> **Status.** Topics are suggested on the meeting page and in a review queue
+> across meetings. Proposals for new topics come in a later release.
 
 ## Words used on this page
 
@@ -17,6 +16,23 @@ design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.
   ends, pauses and speaker changes. Each passage gets one vector.
 - **Vector** (embedding): 768 numbers that place a text by meaning, so similar
   subjects end up close together.
+
+## Reviewing many meetings
+
+**Needs review** in the rooms list opens the queue: every suggestion waiting
+on the meetings you can read (in the selected room, when one is), grouped by
+topic, each with a short quote. Confirm or reject one meeting at a time, or
+select several (up to 100) and **Confirm selected**: each meeting is decided
+exactly as it would be on its own page. From the keyboard, the arrows move
+between meetings, Space selects, C confirms and R says "not this meeting".
+
+The queue opens with one line of coverage, for example "Checked 112 of the
+130 meetings you can see · 12 waiting · 6 could not be checked (no
+transcript) · 9 in languages not yet validated", and its limits: a missing
+suggestion does not mean the topic was absent. List rows carry a dashed
+"2 suggested" badge. Tag filters and search never match a suggestion. Like
+search, the queue lists the meetings your current shares let you read; opening
+or deciding one checks your access to that recording again.
 
 ## Describing topics
 

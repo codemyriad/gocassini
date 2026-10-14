@@ -237,6 +237,23 @@ describe("AppDataProvider annotations", () => {
     expect(got[4].body).toEqual({ requestId: expect.stringMatching(/^req_/), action: "redact" });
   });
 
+  it("reads the review queue with its filters and sends a batch decision", async () => {
+    const fetchMock = respondWith(JSON.stringify({ groups: [], results: [] }));
+    const provider = new AppDataProvider();
+    await provider.loadReviewQueue();
+    await provider.loadReviewQueue({ room: "r 1", cursor: "50", limit: 10 });
+    await provider.decideSuggestionBatch({ requestId: "req_1", tagId: "tag_a", meetingIds: ["m1", "m2"], decision: "confirm" });
+    await provider.loadMeetingSuggestions(entry("m 1"));
+    await provider.decideSuggestion(entry("m 1"), "tag_a", "reject", "req_2");
+    expect(calls(fetchMock).map(({ path, method, body }) => [path, method, body])).toEqual([
+      ["annotations/topics/review", "GET", undefined],
+      ["annotations/topics/review?room=r+1&cursor=50&limit=10", "GET", undefined],
+      ["annotations/topics/review/batch", "POST", JSON.stringify({ requestId: "req_1", tagId: "tag_a", meetingIds: ["m1", "m2"], decision: "confirm" })],
+      ["annotations/topics/meetings/m%201", "GET", undefined],
+      ["annotations/topics/meetings/m%201/tag_a", "POST", JSON.stringify({ requestId: "req_2", decision: "reject" })],
+    ]);
+  });
+
   it("reads the vocabulary beside the published archive, past the proxy's cache", async () => {
     const fetchMock = respondWith(JSON.stringify({ tags: [], meetings: [], coverage: { visible: 0, indexed: 0 } }));
 

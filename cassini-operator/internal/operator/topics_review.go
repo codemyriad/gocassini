@@ -5,11 +5,15 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base32"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -684,7 +688,7 @@ func (s *annotationService) serveTopicCoverage(w http.ResponseWriter, r *http.Re
 	room := r.URL.Query().Get("room")
 	var names []string
 	for _, entry := range scope.entries {
-		if entry.opusName != "" && (room == "" || entry.roomID == room) {
+		if entry.opusName != "" && topicRoomMatches(entry, room) {
 			names = append(names, entry.opusName)
 		}
 	}
@@ -746,8 +750,462 @@ func (t *topicsService) coverage(ctx context.Context, names []string) (topicCove
 	return c, nil
 }
 
-// routeTopicQueue serves the cross-meeting review routes (S6).
+// routeTopicQueue serves the cross-meeting review routes: the queue of
+// pending suggestions over the caller's visible meetings, grouped by topic,
+// and a batch decision of one topic on many meetings.
 func (s *annotationService) routeTopicQueue(w http.ResponseWriter, r *http.Request, caller string, parts []string) bool {
-	return false
+	switch {
+	case len(parts) == 1 && parts[0] == "review" && r.Method == http.MethodGet:
+		s.serveReviewQueue(w, r, caller)
+	case len(parts) == 2 && parts[0] == "review" && parts[1] == "batch" && r.Method == http.MethodPost:
+		s.decideSuggestionBatch(w, r, caller)
+	case len(parts) >= 1 && parts[0] == "review":
+		writeMethodNotAllowed(w, "GET, POST")
+	default:
+		return false
+	}
+	return true
 }
 
+// topicRoomKey is the viewer's room key for a meeting (rooms.ts roomKeyOf):
+// "id:<roomId>", else "name:<roomName>", else "no-room".
+func topicRoomKey(e catalogHydration) string {
+	switch {
+	case e.roomID != "":
+		return "id:" + e.roomID
+	case e.roomName != "":
+		return "name:" + e.roomName
+	}
+	return "no-room"
+}
+
+// topicRoomMatches says whether entry is in room, given as a room key or a
+// bare room id; "" matches every meeting.
+func topicRoomMatches(e catalogHydration, room string) bool {
+	return room == "" || topicRoomKey(e) == room || (e.roomID != "" && e.roomID == room)
+}
+
+// The queue's cursor names the last row served, so a page starts after it
+// even when rows before it were decided or added meanwhile.
+type topicQueueCursor struct {
+	Label, TagID, Opus string
+}
+
+func encodeTopicCursor(c topicQueueCursor) string {
+	raw, _ := json.Marshal([]string{c.Label, c.TagID, c.Opus})
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeTopicCursor(text string) (topicQueueCursor, bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(text)
+	var parts []string
+	if err != nil || json.Unmarshal(raw, &parts) != nil || len(parts) != 3 {
+		return topicQueueCursor{}, false
+	}
+	return topicQueueCursor{parts[0], parts[1], parts[2]}, true
+}
+
+const (
+	topicQueuePageMax = 50
+	topicBatchMax     = 100
+	topicQuoteRunes   = 200
+)
+
+type topicQueueItem struct {
+	MeetingID    string `json:"meetingId"`
+	Title        string `json:"title"`
+	Date         string `json:"date"`
+	Room         string `json:"room,omitempty"`
+	Rule         string `json:"rule"`
+	SupportWords int    `json:"supportWords"`
+	Quote        string `json:"quote,omitempty"`
+}
+
+type topicQueueGroup struct {
+	TagID string           `json:"tagId"`
+	Label string           `json:"label"`
+	Color *string          `json:"color"`
+	Icon  *string          `json:"icon"`
+	Total int              `json:"total"`
+	Items []topicQueueItem `json:"items"`
+}
+
+type topicQueue struct {
+	Groups []topicQueueGroup `json:"groups"`
+	// Next is the cursor of the next page, "" at the end.
+	Next string `json:"next"`
+	// Total is every pending suggestion over the caller's visible meetings
+	// (in the room, when one is asked for); ByMeeting the same per meeting.
+	Total     int            `json:"total"`
+	ByMeeting map[string]int `json:"byMeeting"`
+	Coverage  topicCoverage  `json:"coverage"`
+}
+
+func (s *annotationService) serveReviewQueue(w http.ResponseWriter, r *http.Request, caller string) {
+	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	scope, ok := s.topicCaller(w, r, caller)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	limit := topicQueuePageMax
+	if v, err := strconv.Atoi(q.Get("limit")); err == nil && v > 0 && v < limit {
+		limit = v
+	}
+	var after *topicQueueCursor
+	if text := q.Get("cursor"); text != "" {
+		c, ok := decodeTopicCursor(text)
+		if !ok {
+			writeJSONError(w, http.StatusBadRequest, "that is not a cursor from this queue")
+			return
+		}
+		after = &c
+	}
+	queue, err := s.rt.topics.reviewQueue(r.Context(), scope.entries, q.Get("room"), q.Get("tag"), after, limit, s.rt.searchStore)
+	if err != nil {
+		s.tagIndexFailed(w, caller, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, queue)
+}
+
+// reviewQueue pages pending suggestions over the given visible entries.
+func (t *topicsService) reviewQueue(ctx context.Context, entries []catalogHydration, room, tag string, after *topicQueueCursor, limit int, search *searchStore) (topicQueue, error) {
+	out := topicQueue{Groups: []topicQueueGroup{}, ByMeeting: map[string]int{}}
+	byName := map[string]catalogHydration{}
+	var names []string
+	for _, e := range entries {
+		if e.opusName == "" || !topicRoomMatches(e, room) {
+			continue
+		}
+		byName[e.opusName] = e
+		names = append(names, e.opusName)
+	}
+	coverage, err := t.coverage(ctx, names)
+	if err != nil {
+		return out, err
+	}
+	out.Coverage = coverage
+	set, _ := json.Marshal(uniqueNames(names))
+	const pending = `FROM topic_suggestion s JOIN topic_library l ON l.tag_id=s.tag_id AND l.status='active'
+ WHERE s.state='pending' AND s.opus_name IN (SELECT value FROM json_each(?1))
+ AND NOT EXISTS(SELECT 1 FROM topic_verdict v WHERE v.opus_name=s.opus_name AND v.tag_id=s.tag_id)`
+	counts, err := t.store.db.QueryContext(ctx, `SELECT s.opus_name,COUNT(*) `+pending+` GROUP BY s.opus_name`, string(set))
+	if err != nil {
+		return out, err
+	}
+	for counts.Next() {
+		var name string
+		var n int
+		if err := counts.Scan(&name, &n); err != nil {
+			counts.Close()
+			return out, err
+		}
+		out.ByMeeting[byName[name].id] = n
+		out.Total += n
+	}
+	if err := counts.Close(); err != nil {
+		return out, err
+	}
+	var c topicQueueCursor
+	if after != nil {
+		c = *after
+	}
+	rows, err := t.store.db.QueryContext(ctx, `SELECT s.tag_id,l.label,l.color,l.icon,s.opus_name,s.rule,s.support_words,l.label_folded,
+ (SELECT COUNT(*) FROM topic_suggestion s2 WHERE s2.tag_id=s.tag_id AND s2.state='pending' AND s2.opus_name IN (SELECT value FROM json_each(?1))
+   AND NOT EXISTS(SELECT 1 FROM topic_verdict v2 WHERE v2.opus_name=s2.opus_name AND v2.tag_id=s2.tag_id))
+ `+pending+` AND (?2='' OR s.tag_id=?2) AND (?5=0 OR (l.label_folded,s.tag_id,s.opus_name)>(?6,?7,?8))
+ ORDER BY l.label_folded,s.tag_id,s.opus_name LIMIT ?3`,
+		string(set), tag, limit+1, 0, after != nil, c.Label, c.TagID, c.Opus)
+	if err != nil {
+		return out, err
+	}
+	type row struct {
+		group topicQueueGroup
+		item  topicQueueItem
+		name  string
+		fold  string
+	}
+	// Read the page whole first: the database has one connection, and the
+	// quotes below need it.
+	var page []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.group.TagID, &r.group.Label, &r.group.Color, &r.group.Icon, &r.name, &r.item.Rule, &r.item.SupportWords, &r.fold, &r.group.Total); err != nil {
+			rows.Close()
+			return out, err
+		}
+		page = append(page, r)
+	}
+	if err := rows.Close(); err != nil {
+		return out, err
+	}
+	if len(page) > limit {
+		page = page[:limit]
+		last := page[limit-1]
+		out.Next = encodeTopicCursor(topicQueueCursor{last.fold, last.group.TagID, last.name})
+	}
+	for _, r := range page {
+		entry := byName[r.name]
+		item := r.item
+		item.MeetingID, item.Title, item.Date, item.Room = entry.id, entry.title, entry.dateLabel, entry.roomName
+		item.Quote = t.queueQuote(ctx, search, r.name, r.group.TagID)
+		if last := len(out.Groups) - 1; last >= 0 && out.Groups[last].TagID == r.group.TagID {
+			out.Groups[last].Items = append(out.Groups[last].Items, item)
+			continue
+		}
+		g := r.group
+		g.Items = []topicQueueItem{item}
+		out.Groups = append(out.Groups, g)
+	}
+	return out, nil
+}
+
+// queueQuote is one short quote from a suggestion's strongest evidence, read
+// from the search index of a meeting the caller can read; "" when search
+// does not hold it.
+func (t *topicsService) queueQuote(ctx context.Context, search *searchStore, opusName, tagID string) string {
+	if search == nil {
+		return ""
+	}
+	var start, end int64
+	if err := t.store.db.QueryRowContext(ctx, `SELECT start_ms,end_ms FROM topic_evidence WHERE opus_name=? AND tag_id=? ORDER BY counted DESC,word_count DESC,ordinal LIMIT 1`, opusName, tagID).Scan(&start, &end); err != nil {
+		return ""
+	}
+	rows, err := search.db.QueryContext(ctx, `SELECT text FROM segment_ref WHERE opus_name=? AND end_ms>? AND start_ms<? ORDER BY start_ms LIMIT 4`, opusName, start, end)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var text string
+		if rows.Scan(&text) != nil {
+			return ""
+		}
+		if b.Len() > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(strings.TrimSpace(text))
+	}
+	quote := []rune(b.String())
+	if len(quote) > topicQuoteRunes {
+		return strings.TrimSpace(string(quote[:topicQuoteRunes])) + "…"
+	}
+	return string(quote)
+}
+
+type topicBatchRequest struct {
+	RequestID  string   `json:"requestId"`
+	TagID      string   `json:"tagId"`
+	MeetingIDs []string `json:"meetingIds"`
+	Decision   string   `json:"decision"`
+}
+
+type topicBatchResult struct {
+	MeetingID string `json:"meetingId"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+// decideSuggestionBatch confirms or rejects one topic on many meetings, each
+// through the same path a single decision takes.
+func (s *annotationService) decideSuggestionBatch(w http.ResponseWriter, r *http.Request, caller string) {
+	var in topicBatchRequest
+	if !readTopicRequest(w, r, &in) {
+		return
+	}
+	if !annotateOpIDPattern.MatchString(in.RequestID) || !annotateOpIDPattern.MatchString(in.TagID) {
+		writeJSONError(w, http.StatusBadRequest, "requestId and tagId are required")
+		return
+	}
+	if in.Decision != topicDecisionConfirm && in.Decision != topicDecisionReject {
+		writeJSONError(w, http.StatusBadRequest, "decision must be confirm or reject")
+		return
+	}
+	if len(in.MeetingIDs) == 0 || len(in.MeetingIDs) > topicBatchMax {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("meetingIds must name 1-%d meetings", topicBatchMax))
+		return
+	}
+	seen := map[string]bool{}
+	for _, id := range in.MeetingIDs {
+		if !isPlainMeetingID(id) || seen[id] {
+			writeJSONError(w, http.StatusBadRequest, "meetingIds must be distinct meeting ids")
+			return
+		}
+		seen[id] = true
+	}
+	if !s.topicsOn(w) {
+		return
+	}
+	scope, ok := s.topicCaller(w, r, caller)
+	if !ok {
+		return
+	}
+	byID := map[string]catalogHydration{}
+	for _, e := range scope.entries {
+		byID[e.id] = e
+	}
+	ctx := r.Context()
+	t := s.rt.topics
+	hash := topicRequestHash("batch", in.TagID, in.Decision, in.MeetingIDs)
+	// Claim the request id before any work: a concurrent request with the same
+	// id waits for this one's answer or is refused, never runs as well.
+	var replay []byte
+	err := t.store.inTx(ctx, func(tx *sql.Tx) error {
+		var stored string
+		var created int64
+		err := tx.QueryRowContext(ctx, `SELECT request_hash,response,created_at FROM topic_receipt WHERE caller=? AND request_id=?`, caller, in.RequestID).Scan(&stored, &replay, &created)
+		if err == nil && string(replay) == `{"pending":true}` && created < t.store.unix()-int64(2*annotateRequestTimeout/time.Second) {
+			// A batch that died before it answered: run it again.
+			if _, err := tx.ExecContext(ctx, `DELETE FROM topic_receipt WHERE caller=? AND request_id=?`, caller, in.RequestID); err != nil {
+				return err
+			}
+			err = sql.ErrNoRows
+		}
+		if err == nil {
+			if stored != hash {
+				return refuseTopic(http.StatusConflict, "request-collision")
+			}
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		replay = nil
+		_, err = tx.ExecContext(ctx, `INSERT INTO topic_receipt(caller,request_id,request_hash,response,created_at) VALUES(?,?,?,?,?)`, caller, in.RequestID, hash, []byte(`{"pending":true}`), t.store.unix())
+		return err
+	})
+	if err != nil {
+		s.writeTopicFailure(w, caller, err)
+		return
+	}
+	if replay != nil {
+		var stored struct {
+			Pending bool               `json:"pending"`
+			Results []topicBatchResult `json:"results"`
+		}
+		_ = json.Unmarshal(replay, &stored)
+		if stored.Pending {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "in-progress"})
+			return
+		}
+		// What the caller can no longer read is not reported back.
+		for i := range stored.Results {
+			if _, visible := byID[stored.Results[i].MeetingID]; !visible {
+				stored.Results[i] = topicBatchResult{MeetingID: stored.Results[i].MeetingID, Status: "not-found"}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"results": stored.Results, "replayed": true})
+		return
+	}
+
+	batchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), annotateRequestTimeout)
+	defer cancel()
+	results := make([]topicBatchResult, len(in.MeetingIDs))
+	sem := make(chan struct{}, topicBatchParallel)
+	var wg sync.WaitGroup
+	for i, id := range in.MeetingIDs {
+		entry, visible := byID[id]
+		if !visible || !isMeetingFile(entry.opusName) {
+			results[i] = topicBatchResult{MeetingID: id, Status: "not-found"}
+			continue
+		}
+		wg.Add(1)
+		go func(i int, entry catalogHydration) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = s.batchResult(batchCtx, caller, entry, scope.visible, in)
+		}(i, entry)
+	}
+	wg.Wait()
+
+	transient := false
+	for _, r := range results {
+		if r.Status == "error" && r.Error != "marks-unresolved" && r.Error != "not-pending" && r.Error != "already-decided" && r.Error != "topic-retired" {
+			transient = true
+		}
+	}
+	err = t.store.inTx(context.WithoutCancel(ctx), func(tx *sql.Tx) error {
+		if transient {
+			// Not cached: a retry with this id runs the failed meetings
+			// again, and replays the decided ones by their derived ids.
+			_, err := tx.ExecContext(ctx, `DELETE FROM topic_receipt WHERE caller=? AND request_id=?`, caller, in.RequestID)
+			return err
+		}
+		stored := make([]topicBatchResult, len(results))
+		copy(stored, results)
+		for i, r := range stored {
+			entry, ok := byID[r.MeetingID]
+			if !ok || r.Status == "not-found" {
+				continue
+			}
+			// A meeting retired meanwhile was already scrubbed: its entry
+			// is stored expired, with no target left to find.
+			if errors.Is(t.store.notRetired(ctx, entry.opusName), errMeetingRetired) {
+				stored[i] = topicBatchResult{MeetingID: r.MeetingID, Status: "expired"}
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO topic_receipt_target(caller,request_id,opus_name) VALUES(?,?,?)`, caller, in.RequestID, entry.opusName); err != nil {
+				return err
+			}
+		}
+		raw, _ := json.Marshal(map[string]any{"results": stored})
+		_, err := tx.ExecContext(ctx, `UPDATE topic_receipt SET response=? WHERE caller=? AND request_id=?`, raw, caller, in.RequestID)
+		return err
+	})
+	if err != nil {
+		s.logf("topics: batch receipt: %v", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+// topicBatchParallel bounds how many meetings of a batch are decided at once.
+const topicBatchParallel = 4
+
+func (s *annotationService) batchResult(ctx context.Context, caller string, entry catalogHydration, visible []string, in topicBatchRequest) topicBatchResult {
+	result := topicBatchResult{MeetingID: entry.id}
+	err := s.batchDecideOne(ctx, caller, entry, visible, in)
+	switch {
+	case err == nil && in.Decision == topicDecisionConfirm:
+		result.Status = "confirmed"
+	case err == nil:
+		result.Status = "rejected"
+	default:
+		result.Status = "error"
+		var refusal *topicError
+		var failure *annotateFailure
+		switch {
+		case errors.As(err, &refusal):
+			result.Error = fmt.Sprint(refusal.body["error"])
+		case errors.As(err, &failure) && failure.status == http.StatusNotFound:
+			result.Status = "not-found"
+		case errors.As(err, &failure):
+			result.Error = failure.public
+		default:
+			result.Error = "unavailable"
+		}
+	}
+	return result
+}
+
+// batchDecideOne decides one meeting of a batch as a single decision would,
+// with ids derived from the batch's, so a retried batch replays per meeting.
+func (s *annotationService) batchDecideOne(ctx context.Context, caller string, entry catalogHydration, visible []string, in topicBatchRequest) error {
+	// The decision paths check the caller's access to the file themselves.
+	relPath, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
+	if err != nil {
+		return annotateUnavailable(err)
+	}
+	perMeeting := topicDerivedID(false, "topic-batch", in.RequestID, entry.opusName)
+	if in.Decision == topicDecisionConfirm {
+		_, err = s.confirmSuggestion(ctx, caller, entry.id, entry.opusName, relPath, visible, in.TagID, perMeeting)
+		return err
+	}
+	_, err = s.recordVerdictChange(ctx, caller, entry.id, entry.opusName, relPath, in.TagID, topicDecisionRequest{RequestID: perMeeting, Decision: topicDecisionReject})
+	return err
+}

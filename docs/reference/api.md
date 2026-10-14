@@ -266,6 +266,8 @@ answer. See [Topic suggestions](../topic-suggestions.md).
 GET  annotations/topics/meetings/<meetingId>
 POST annotations/topics/meetings/<meetingId>/<tagId>   {requestId, decision: "confirm" | "reject" | "undo" | "reopen"}
 GET  annotations/topics/coverage[?room=<roomId>]
+GET  annotations/topics/review[?tag=&room=&cursor=&limit=]
+POST annotations/topics/review/batch                    {requestId, tagId, meetingIds[≤100], decision: "confirm" | "reject"}
 ```
 
 USER. The meeting must be one the caller can read now (404 otherwise). `GET`
@@ -281,6 +283,14 @@ Refusals: `marks-unresolved`, `not-pending`, `already-decided`, `confirmed`
 counts the caller's visible meetings: `{visible, checked, waiting, notChecked,
 unavailable:{reason:n}, blocked, checkedSince, unvalidatedLanguage,
 unknownLanguage}`.
+
+The review queue pages pending suggestions over the caller's visible meetings
+(at most 50 a page): `{groups:[{tagId, label, color, icon, total,
+items:[{meetingId, title, date, room, rule, supportWords, quote?}]}], next,
+total, byMeeting, coverage}`. A quote comes from the search index, for a
+meeting the caller can read. A batch decides each named meeting as a single
+decision would and answers `{results:[{meetingId, status, error?}]}`, where
+status is `confirmed`, `rejected`, `not-found` or `error`.
 
 ## Summary of stage and state values
 
