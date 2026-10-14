@@ -45,6 +45,10 @@ type Model struct {
 	Revision    string `json:"source_sha256"`
 	VADRevision string `json:"vad_revision,omitempty"`
 	Files       []File `json:"files"`
+	// Replaces lists model ids that earlier catalogues shipped and this model
+	// supersedes. An install pinned to one of them moves to this model, and
+	// once this model passes its runtime check their files are removed.
+	Replaces []string `json:"replaces,omitempty"`
 }
 type Artifact struct {
 	Key                string `json:"key"`
@@ -75,6 +79,18 @@ func (c Catalogue) Model(id, revision string) (Model, error) {
 		}
 	}
 	return Model{}, fmt.Errorf("unsupported model/revision %q/%q; use a matching Cassini catalogue", id, revision)
+}
+
+// Replacement returns the catalogue model that supersedes a retired id.
+func (c Catalogue) Replacement(retired string) (Model, bool) {
+	for _, m := range c.Models {
+		for _, r := range m.Replaces {
+			if r == retired {
+				return m, true
+			}
+		}
+	}
+	return Model{}, false
 }
 func (c Catalogue) Artifact(key string) (Artifact, error) {
 	for _, a := range c.Artifacts {
@@ -120,6 +136,11 @@ func (c Catalogue) Validate() error {
 			return fmt.Errorf("catalogue model %s has unknown kind %q", m.ID, m.Kind)
 		}
 		seen[key] = true
+		for _, r := range m.Replaces {
+			if !safeName(r) || r == m.ID || r == VADModelID {
+				return fmt.Errorf("invalid replaced model %q for %s", r, m.ID)
+			}
+		}
 		paths := map[string]bool{}
 		for _, f := range m.Files {
 			a, err := c.Artifact(f.Artifact)
@@ -133,6 +154,20 @@ func (c Catalogue) Validate() error {
 				return fmt.Errorf("unexpected catalogue origin for %s", f.Path)
 			}
 			paths[f.Path] = true
+		}
+	}
+	// A retired id names models that no longer exist: replacing a current one
+	// would delete its files, and two replacements would make the move ambiguous.
+	replacedBy := map[string]string{}
+	for _, m := range c.Models {
+		for _, r := range m.Replaces {
+			if _, err := c.Model(r, ""); err == nil {
+				return fmt.Errorf("%s replaces %s, which the catalogue still ships", m.ID, r)
+			}
+			if other, ok := replacedBy[r]; ok && other != m.ID {
+				return fmt.Errorf("%s is replaced by both %s and %s", r, other, m.ID)
+			}
+			replacedBy[r] = m.ID
 		}
 	}
 	_, err := c.Model(VADModelID, "")

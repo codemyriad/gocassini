@@ -695,3 +695,28 @@ func TestPinnedDependencySurvivesNewCatalogueDefault(t *testing.T) {
 		t.Fatal("new dependency default changed active model")
 	}
 }
+
+func TestValidateRejectsAmbiguousReplacement(t *testing.T) {
+	cases := map[string]func(c *Catalogue){
+		"replaces a shipped model": func(c *Catalogue) { c.Models[0].Replaces = []string{"test-diarizer"} },
+		"replaces itself":          func(c *Catalogue) { c.Models[0].Replaces = []string{"test-model"} },
+		"replaces a path":          func(c *Catalogue) { c.Models[0].Replaces = []string{"../vad"} },
+		"two replacements": func(c *Catalogue) {
+			c.Models[0].Replaces = []string{"old-model"}
+			c.Models[2].Replaces = []string{"old-model"}
+		},
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := fixture(t)
+			s.Catalogue.Models[0].Replaces = []string{"old-model"}
+			if err := s.Catalogue.Validate(); err != nil {
+				t.Fatalf("fixture invalid: %v", err)
+			}
+			breakIt(&s.Catalogue)
+			if err := s.Catalogue.Validate(); err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+}
