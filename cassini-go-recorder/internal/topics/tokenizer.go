@@ -14,6 +14,12 @@ const (
 	bosID = 2
 )
 
+// TokenCounter counts the ids the model would read for a text, prompt prefix,
+// BOS and EOS included. *Tokenizer is one.
+type TokenCounter interface {
+	Encode(text string) []int64
+}
+
 // Tokenizer turns text into EmbeddingGemma input ids, matching the Hugging
 // Face tokenizer the model was published with (the parity test).
 type Tokenizer struct {

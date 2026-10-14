@@ -247,3 +247,49 @@ func TestDiarizerInstallsOnTheCPUAndNeverTranscribes(t *testing.T) {
 		t.Fatalf("diarizer probe floor = %d MB, not below an Ultra int8 build's %d MB", got, int8)
 	}
 }
+
+// The topic suggestions model is an optional download like the diarizer: CPU
+// only, never the transcription model, and its probe is admitted at its own
+// 1536 MiB rather than the 3584 MiB an unknown model is charged.
+func TestEmbeddingModelInstallsOnTheCPUAndNeverTranscribes(t *testing.T) {
+	rt := modelTestRuntime(t)
+	supported := true
+	embedder := modelInfo{ID: defaultEmbeddingModel, Kind: modelKindEmbedding, Revision: strings.Repeat("e", 64), Installed: true, Ready: true, Device: "cpu", RuntimeSupported: &supported}
+	speech := modelInfo{ID: modelParakeet110M, Kind: "speech", Revision: strings.Repeat("a", 64), Device: "cpu"}
+	b, _ := json.Marshal([]modelInfo{speech, embedder})
+	if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "inventory.json"), b, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := modelRequest(rt, "GET", "/settings/models?device=cpu", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"kind":"embedding"`) || !strings.Contains(rec.Body.String(), `"runtime_supported":true`) {
+		t.Fatalf("inventory lost the kind: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = modelRequest(rt, "POST", "/settings/models/install", fmt.Sprintf(`{"model":%q,"device":"cuda"}`, embedder.ID))
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "CPU") {
+		t.Fatalf("cuda install: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = modelRequest(rt, "POST", "/settings/models/install", fmt.Sprintf(`{"model":%q,"device":"cpu"}`, embedder.ID))
+	if rec.Code != 202 {
+		t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
+	}
+	rt.startModelWorker()
+	if j := awaitModelState(t, rt, "ready"); j.Model != embedder.ID || j.Device != "cpu" {
+		t.Fatalf("job = %+v", j)
+	}
+
+	update := fmt.Sprintf(`{"quality":"fast","transcription_enabled":true,"active_model":%q,"active_revision":%q,"device_override":"cpu"}`, embedder.ID, embedder.Revision)
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest("PUT", "/settings", strings.NewReader(update)))
+	if rec.Code != 409 || rt.currentSettings().TranscriptionEnabled {
+		t.Fatalf("embedding model activated as the transcription model: %d %s", rec.Code, rec.Body.String())
+	}
+
+	if got := modelBuildPeakMB(embedder.ID); got != 1536 {
+		t.Fatalf("modelBuildPeakMB(%s) = %d, want 1536", embedder.ID, got)
+	}
+	limits := resourceLimitsFromEnv()
+	if got, unknown := limits.minFreeMemForBuild("cpu", embedder.ID), limits.minFreeMemForBuild("cpu", "some-unknown-model"); got >= unknown {
+		t.Fatalf("embedding probe floor = %d MB, not below an unknown model's %d MB", got, unknown)
+	}
+}

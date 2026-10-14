@@ -37,10 +37,12 @@ type modelView struct {
 // diarizer always runs on the CPU, has nothing to pair with, and is ready when
 // it is installed and the runtime supports Nemotron: that is cheap to check
 // on every listing and, unlike a receipt, survives a reboot. An embedding
-// model is the same: CPU only, ready when installed and the ONNX Runtime
-// library loads with the API version the binding needs. A receipt bound to
-// the runtime fingerprint would turn topic suggestions off after every
-// reboot and every image upgrade.
+// model is CPU only too, and ready when installed, the ONNX Runtime library
+// loads with the API version the binding needs, and its probe passed: a
+// receipt bound to topics.ReadyFingerprint, never to the boot or the image,
+// whose probe compares vectors with a reference and so is a quality gate. A
+// receipt bound to the runtime fingerprint would turn topic suggestions off
+// after every reboot and every image upgrade.
 func listModelView(s *modelstore.Store, m modelstore.Model, device string) modelView {
 	var dl, installed int64
 	for _, c := range s.Components(m) {
@@ -60,7 +62,7 @@ func listModelView(s *modelstore.Store, m modelstore.Model, device string) model
 		supported := embeddingRuntimeFn()
 		view.RuntimeSupported = &supported
 		view.Device = "cpu"
-		view.Ready = view.Installed && supported
+		view.Ready = view.Installed && supported && s.Ready(m, "cpu", topics.ReadyFingerprint)
 		return view
 	}
 	view.Ready = s.Ready(m, device, transcribe.ModelRuntimeFingerprint())
@@ -243,6 +245,17 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 				fmt.Fprintln(stderr, "models:", warn)
 			}
 			err = probeInstalledEmbedder(ctx, s, m, threads)
+			// The probe is the model's quality gate: only a pass makes it
+			// ready, and a failure takes readiness away. Waiting (memory, a
+			// cancelled wait for the lock) says nothing about the model.
+			switch {
+			case err == nil:
+				err = s.MarkReady(m, "cpu", topics.ReadyFingerprint)
+			case !errors.Is(err, transcribe.ErrRuntimeCheckDeferred) && ctx.Err() == nil:
+				if clearErr := s.ClearReady(m, "cpu"); clearErr != nil {
+					fmt.Fprintln(stderr, "models:", clearErr)
+				}
+			}
 		default:
 			err = probeInstalledModelFn(ctx, s, m, *device)
 		}

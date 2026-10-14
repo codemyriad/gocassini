@@ -31,7 +31,7 @@ S6 and S7 are independent of each other.
 - `rec/topics/tokenizer.go`, `rec/topics/embed.go`, `rec/topics/recipe.go` (`EmbedRecipeVersion`) (new).
 - `rec/cassini/topics_source.go` (new, package `cassini`, next to the pack code): the `.opus` read and the bundle-to-body rebuild. It must sit in `cassini` because `assembleTranscriptInputs` (`portable_meeting_tags.go:31`), `flattenPortableTranscriptItems` (`portable_meeting.go:588`) and `portableMeetingSource` are unexported there, and `rec/topics` cannot import `cassini` without an import cycle. It hands `rec/topics` a plain word list.
 - `rec/cassini/topics.go` (new) and the CLI dispatch: `cassini topics embed-texts --in <jsonl> --out <file>`. `cassini topics embed` lands in S2, with the chunker.
-- `rec/cassini/models.go`: an embedding branch next to the diarizer one. `listModelView` (`:43-52`) reports Ready from installed files plus a runtime check, with no receipt; the CLI refuses a non-CPU device (`:167`) and dispatches the probe to the embedder probe, not `probeInstalledModelFn` (`:206-210`).
+- `rec/cassini/models.go`: an embedding branch next to the diarizer one. `listModelView` (`:43-52`) reports Ready from installed files, a runtime check and a probe receipt that is not bound to the boot or the image; the CLI refuses a non-CPU device (`:167`) and dispatches the probe to the embedder probe, not `probeInstalledModelFn` (`:206-210`).
 - `rec/modelstore/catalogue.go`, `catalogue.json`: `KindEmbedding`, `Validate` rules for the three files, the entry `embeddinggemma-2-text-int8`.
 - `rec/modelstore` or `rec/transcribe/model_store.go`: `InstalledEmbedder` for several files.
 - `rec/transcribe/model_admission.go:51`: probe floor 1536 MiB; probe embeds 4 pinned strings and compares with committed golden vectors.
@@ -53,11 +53,11 @@ S6 and S7 are independent of each other.
 **Tests**
 
 - Tokenizer ids against HF `tokenizers` output on public multilingual text plus synthetic edge cases.
-- Golden-vector test behind a model-cache build tag (cosine ≥ 0.9995).
+- Golden-vector test behind the model-cache environment variables `CASSINI_TOPICS_MODEL_DIR` and `CASSINI_LIB_DIR` (cosine ≥ 0.9995).
 - Padded batch equals batch size 1 (cosine ≥ 0.99999).
 - Bundle-rebuilt payload sha equals the packed one.
 - `Validate` accepts the new kind and still rejects bad URLs and nested names.
-- `models list` Ready for the embedding kind with no readiness receipt and a changed `boot_id`; `models install|probe` for the embedding kind calls the embedder probe and refuses `--device cuda`.
+- `models list` Ready for the embedding kind after its probe passed, still Ready with a changed runtime fingerprint (`boot_id`, image), and not Ready after a failing probe; `models install|probe` for the embedding kind calls the embedder probe and refuses `--device cuda`.
 - `modelBuildPeakMB` case for the embedding model.
 - Lock contention: a second `embed-texts` waits for the first.
 - Vitest: the model card; `runningDownload` ignores an embedding job.

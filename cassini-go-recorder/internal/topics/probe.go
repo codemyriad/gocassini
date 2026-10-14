@@ -23,6 +23,14 @@ var probeGoldenJSON []byte
 // reference. Measured: at least 0.99994.
 const ProbeMinCosine = 0.9995
 
+// ReadyFingerprint is what an embedding model's readiness receipt is bound
+// to: its probe passed, with these probe sentences and vectors. Unlike a
+// speech model's receipt it names neither the boot nor the image, so the
+// model stays ready across a reboot and an app upgrade
+// (docs/proposals/automatic-tagging, "Model catalogue"), and only a failing
+// probe takes it away. Bump it when probe_golden.json or the probe changes.
+const ReadyFingerprint = "embedding-probe-1"
+
 // ShippedModelRevision is the catalogue revision the embedded probe vectors
 // were made for.
 const ShippedModelRevision = "89cef0454bc6e723f9f7fc53df0e2c881ba672fd00d8678c02d677f0b1ebee2c"
@@ -77,10 +85,8 @@ func Probe(ctx context.Context, e *Embedder, revision string) error {
 }
 
 // ProbeInstalled is the runtime check of an installed embedding model, the
-// one `cassini models install|probe` runs. It writes no readiness receipt:
-// `models list` reports an embedding model ready when its files are
-// installed and RuntimeCheck passes, which survives a reboot or an image
-// upgrade. Like every inference it holds the model store's inference lock,
+// one `cassini models install|probe` runs; the caller records the result as
+// a receipt bound to ReadyFingerprint. Like every inference it holds the model store's inference lock,
 // and it refuses to start without the memory its probe floor asks for.
 func ProbeInstalled(ctx context.Context, s *modelstore.Store, m modelstore.Model, threads int) error {
 	if m.Kind != modelstore.KindEmbedding {

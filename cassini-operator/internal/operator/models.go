@@ -27,11 +27,12 @@ type modelInfo struct {
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
 	Device         string `json:"device"`
-	// Kind is speech or diarization (the CLI never lists the VAD). Settings
-	// shows a diarizer as an optional download, never as a transcription
-	// model.
+	// Kind is speech, diarization or embedding (the CLI never lists the
+	// VAD). Settings shows a diarizer and an embedding model as optional
+	// downloads, never as a transcription model.
 	Kind string `json:"kind"`
-	// RuntimeSupported is set for diarizers: whether the runtime can run one.
+	// RuntimeSupported is set for diarizers and embedding models: whether the
+	// runtime can run one.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
 	// Replaces lists retired model ids this model supersedes (Parakeet Ultra
 	// replaces Parakeet v3). Settings pinned to one of them move to the model
@@ -271,6 +272,10 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if m.Kind == modelKindDiarization && in.Device != "cpu" {
 			writeJSONError(w, 400, "Speaker separation runs on the CPU; install it with device cpu")
+			return
+		}
+		if m.Kind == modelKindEmbedding && in.Device != "cpu" {
+			writeJSONError(w, 400, "Topic suggestions run on the CPU; install the model with device cpu")
 			return
 		}
 		if in.Device == "cuda" && !modelSupportsCUDA(in.Model) {
@@ -559,7 +564,7 @@ func (rt *Runtime) modelCommand(ctx context.Context, job *modelJob, action strin
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) && exitErr.ExitCode() == modelExitTempFail {
 			// The recorder refused for lack of RAM or VRAM. Waiting can fix that.
-			return &resourceUnavailableError{resource: "memory for the speech model check", detail: detail}
+			return &resourceUnavailableError{resource: "memory for the model check", detail: detail}
 		}
 		return fmt.Errorf("%s: %w: %s", action, waitErr, detail)
 	}
