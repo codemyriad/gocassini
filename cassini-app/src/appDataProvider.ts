@@ -27,6 +27,7 @@ import {
   type SpeakerSummaryChoice,
   type SummaryRequestState,
 } from "cassini-viewer/meetingSummary";
+import { newRequestId, type Topic, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "cassini-viewer/topics";
 
 import {
   listInsights as fetchInsightRuns,
@@ -173,6 +174,30 @@ export class AppDataProvider extends StaticCatalogProvider {
 
   async loadTagJob(): Promise<TagJob | null> {
     return (await requestAnnotations<{ job: TagJob | null }>("tags/job")).job;
+  }
+
+  // The topic library (docs/topic-suggestions.md), under the same caller
+  // check as the tag routes.
+  loadTopicLibrary(): Promise<TopicLibrary> {
+    return requestAnnotations("topics");
+  }
+
+  saveTopic(save: TopicSave): Promise<{ topic: Topic; job?: TagJob | null }> {
+    const { tagId, ...body } = save;
+    const path = tagId ? `topics/library/${encodeURIComponent(tagId)}` : "topics/library";
+    return requestAnnotations(path, { requestId: newRequestId(), ...body });
+  }
+
+  async loadTopicHistory(tagId: string): Promise<TopicRevision[]> {
+    return (await requestAnnotations<{ revisions: TopicRevision[] }>(`topics/library/${encodeURIComponent(tagId)}/history`)).revisions;
+  }
+
+  async redactTopicRevision(tagId: string, revision: number): Promise<void> {
+    await requestAnnotations(`topics/library/${encodeURIComponent(tagId)}/history/${revision}`, { requestId: newRequestId(), action: "redact" });
+  }
+
+  loadTopicTagRooms(tagId: string): Promise<TopicTagRooms> {
+    return requestAnnotations(`topics/library/${encodeURIComponent(tagId)}/rooms`);
   }
 
   // The speakers route: people's edits to one meeting's speakers, beside its

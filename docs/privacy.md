@@ -127,6 +127,11 @@ artifacts:
   meeting is read again. The work queue (which meetings were checked, when, and
   why one could not be) lives in the annotations database. See
   [Topic suggestions](./topic-suggestions.md).
+- **Topic library** — the names and definitions people write for topics, and
+  every revision of them with who saved it. Everyone who can read at least one
+  meeting sees the names and definitions; who wrote them is shown to
+  administrators only. A past revision can be removed from the history by its
+  author or an administrator.
 - **Operator database** — job and attempt history, the room audience above,
   insight-run records including any typed question, and speaker edits (the
   names people typed, who saved them, a snapshot per saved revision, and the

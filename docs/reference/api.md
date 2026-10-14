@@ -240,6 +240,26 @@ archived meeting not checked yet, optionally only those recorded on or after
 `retry` queues blocked meetings again, the named ones or all. See
 [Topic suggestions](../topic-suggestions.md).
 
+## Topic library
+
+```http
+GET  annotations/topics
+POST annotations/topics/library                         {requestId, label, definition, color?, icon?, fromTagId?, separate?}
+POST annotations/topics/library/<tagId>                 {requestId, expectRevision, label?, definition?, color?, icon?, status?}
+GET  annotations/topics/library/<tagId>/history
+POST annotations/topics/library/<tagId>/history/<rev>   {requestId, action: "redact"}
+GET  annotations/topics/library/<tagId>/rooms
+```
+
+USER, beside the tag routes, and answered over the caller's visible meetings:
+404 when they can read none, 502 when that cannot be worked out. `GET` answers
+`{enabled:false}` while topic suggestions are off, and every `POST` 409
+`disabled`. Responses carry no user ids. Refusals carry an `error` code:
+`label-taken` and `topic-retired` (both with the `tagId` that holds the label),
+`revision-conflict`, `rate-limited` (429), `library-full`, `current-revision`,
+`not-allowed` (403). A `requestId` reused with the same body replays the first
+answer. See [Topic suggestions](../topic-suggestions.md).
+
 ## Summary of stage and state values
 
 Stage values:

@@ -193,6 +193,9 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 	if err := store.prepareInitialTagAppearance(ctx, &batch, visible); err != nil {
 		return response, err
 	}
+	if err := s.libraryTagAppearance(ctx, &batch); err != nil {
+		return response, err
+	}
 	if namespace == "" {
 		namespace, err = ann.NewNamespace()
 		if err != nil {
