@@ -106,6 +106,7 @@ func extractMeetingTags(path string, tags map[string]string) (ExtractedMeeting, 
 	if transcript.Format == "" {
 		transcript.Format = entry.Format
 	}
+	transcript.PayloadSHA256 = entry.PayloadRef.SHA256
 	extracted.Transcript = transcript
 	return extracted, nil
 }
