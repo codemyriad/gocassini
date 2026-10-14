@@ -43,12 +43,14 @@ const MODEL_TIERS: Record<string, string> = {
   "parakeet-tdt-ctc-110m-en-int8": "Fast",
   "parakeet-tdt-0.6b-v3-int8": "Balanced",
   "parakeet-tdt-0.6b-v3": "Best",
+  "parakeet-ultra-0.6b": "Best",
 };
 
 // The model a quality tier runs on a device. On the GPU every tier runs the
-// full-precision model.
+// full-precision Parakeet Ultra; a GPU install pinned to v3 fp32 keeps it.
 export function speechModelFor(quality: string, device: string): string {
-  if (device === "cuda" || quality === "best") return "parakeet-tdt-0.6b-v3";
+  if (device === "cuda") return "parakeet-ultra-0.6b";
+  if (quality === "best") return "parakeet-tdt-0.6b-v3";
   return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-tdt-0.6b-v3-int8";
 }
 

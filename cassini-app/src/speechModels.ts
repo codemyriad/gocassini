@@ -4,10 +4,14 @@ import type { SpeechModel, SpeechModelInventory, SpeechModelJob } from "./operat
 // It always installs and runs on the CPU, whatever device transcribes.
 export const VOICE_SEPARATION_MODEL_ID = "nemotron-3-diarization-int8";
 
-// The speech model a quality tier and device transcribe with. Only these
-// three are ever offered as the transcription model.
+// The speech model a quality tier and device transcribe with. Every GPU tier
+// runs fp32 Parakeet Ultra; the CPU tiers are unchanged. An install pinned to
+// v3 fp32 on the GPU keeps it: builds use the saved model, not this.
+// Copies: speechModelFor in operator/pipelineStatus.ts, modelForQuality in the
+// operator's device.go, ModelForQuality in the recorder's policy.go.
 export function transcriptionModelId(quality: string, device: string): string {
-  if (device === "cuda" || quality === "best") return "parakeet-tdt-0.6b-v3";
+  if (device === "cuda") return "parakeet-ultra-0.6b";
+  if (quality === "best") return "parakeet-tdt-0.6b-v3";
   return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-tdt-0.6b-v3-int8";
 }
 

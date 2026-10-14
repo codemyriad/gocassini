@@ -61,6 +61,13 @@ describe("pipelineStatus", () => {
     expect(status.summarise).toEqual({ state: "On · OpenRouter", tone: "amber", reason: "needs a transcript" });
   });
 
+  it("names the tier of the saved GPU model, Ultra or a pinned v3", () => {
+    for (const activeModel of ["parakeet-ultra-0.6b", "parakeet-tdt-0.6b-v3"]) {
+      const status = pipelineStatus({ ...team, device: "cuda", quality: "balanced", activeModel });
+      expect(status.transcribe.state).toBe("On · Best · GPU");
+    }
+  });
+
   it("omits the policy part when retention is unknown and names the GPU", () => {
     const status = pipelineStatus({ ...team, keep: "audio-video", recordingsPolicy: null, device: "cuda", quality: "best" });
     expect(status.keep.state).toBe("Audio + video");
@@ -71,7 +78,10 @@ describe("pipelineStatus", () => {
 describe("helpers", () => {
   it("names the model a tier runs", () => {
     expect(speechModelFor("balanced", "cpu")).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(speechModelFor("fast", "cuda")).toBe("parakeet-tdt-0.6b-v3");
+    expect(speechModelFor("best", "cpu")).toBe("parakeet-tdt-0.6b-v3");
+    for (const quality of ["fast", "balanced", "best"]) {
+      expect(speechModelFor(quality, "cuda")).toBe("parakeet-ultra-0.6b");
+    }
   });
   it("reads a running download", () => {
     const job = { id: "j", model: "m", revision: "r", device: "cpu", updated_at: "", progress: { phase: "", completed_bytes: 42, total_bytes: 100, reused_bytes: 0 } };
