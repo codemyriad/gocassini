@@ -655,6 +655,18 @@
         },
         "referenceFrontend": {
           "type": "boolean"
+        },
+        "encoder": {
+          "type": "object",
+          "description": "The url and comment from the speech model encoder's ONNX metadata: which export actually loaded.",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "comment": {
+              "type": "string"
+            }
+          }
         }
       }
     },

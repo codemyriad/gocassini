@@ -350,6 +350,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		Attribution:       attrProv,
 		WordTimings:       wordEnds.provenance(),
 		ReferenceFrontend: refGuarantee.provenance(cfg.ModelID),
+		Encoder:           encoderProvenance(modelPaths.EncoderFile),
 	}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
