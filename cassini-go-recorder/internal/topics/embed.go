@@ -83,6 +83,8 @@ type Embedder struct {
 	tok     *Tokenizer
 	session *ort.DynamicAdvancedSession
 	batch   bool
+	// runRows replaces run in tests.
+	runRows func(rows [][]int64) ([][]float32, error)
 }
 
 var (
@@ -167,7 +169,11 @@ func (e *Embedder) EmbedIDs(ctx context.Context, ids [][]int64) ([]Embedding, er
 		for i, index := range group {
 			rows[i] = ids[index]
 		}
-		vectors, err := e.run(rows)
+		run := e.run
+		if e.runRows != nil {
+			run = e.runRows
+		}
+		vectors, err := run(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -177,6 +183,12 @@ func (e *Embedder) EmbedIDs(ctx context.Context, ids [][]int64) ([]Embedding, er
 			}
 			out[index] = Embedding{Vector: vectors[i], TokenCount: len(ids[index])}
 		}
+	}
+	// A native run cannot be interrupted: a cancellation that arrived during
+	// the last one still fails the call, so no caller reports a run it was
+	// asked to stop as a success.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

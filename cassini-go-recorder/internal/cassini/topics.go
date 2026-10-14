@@ -126,6 +126,20 @@ type topicsTextInput struct {
 	Text string `json:"text"`
 }
 
+// topicsThreads is the thread count for an explicit --threads value: clamped
+// to 1..16, with 0 (the flag's default) meaning $CASSINI_TOPICS_THREADS, else
+// min(4, CPUs). A negative value is clamped like any other.
+func topicsThreads(flag int, stderr io.Writer, command string) int {
+	if flag != 0 {
+		return topics.ClampThreads(flag)
+	}
+	n, warn := topics.Threads(transcribe.DefaultNumThreads())
+	if warn != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", command, warn)
+	}
+	return n
+}
+
 func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini topics embed-texts", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -173,14 +187,7 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 	if err := checkWritableDir(filepath.Dir(*out)); err != nil {
 		return fail(topicsExitUsage, "--out: %v", err)
 	}
-	n := topics.ClampThreads(*threads)
-	if *threads <= 0 {
-		var warn error
-		n, warn = topics.Threads(transcribe.DefaultNumThreads())
-		if warn != nil {
-			fmt.Fprintf(stderr, "cassini topics embed-texts: %v\n", warn)
-		}
-	}
+	n := topicsThreads(*threads, stderr, "cassini topics embed-texts")
 	// Embedding is inference: it waits for a build, a model check or a
 	// diarization using the same store, and they wait for it.
 	unlock, err := lockModelRuntimeFn(ctx, *root)

@@ -115,3 +115,25 @@ func TestTopicsEvalRefusesMixedVectorSpaces(t *testing.T) {
 		t.Fatalf("code %d: %s", code, stderr.String())
 	}
 }
+
+// A reference the inputs do not cover is refused, not scored: a meeting
+// without vectors would agree with every negative, and an assignment to an
+// undefined topic would never be compared.
+func TestTopicsEvalRefusesAReferenceTheInputsDoNotCover(t *testing.T) {
+	vectors, definitions := writeTopicsEvalFixture(t)
+	for _, tc := range []struct{ name, ref, want string }{
+		{"meeting without vectors", `{"meetings":["meeting-a","meeting-c"],"assignments":[]}`, "meeting-c has no vectors file"},
+		{"undefined topic", `{"meetings":["meeting-a"],"assignments":[{"meeting":"meeting-a","topic":"cooking"}]}`, "topic cooking"},
+		{"assignment outside the meetings", `{"meetings":["meeting-a"],"assignments":[{"meeting":"meeting-b","topic":"build"}]}`, "meeting-b, which is not in its meetings"},
+	} {
+		reference := filepath.Join(t.TempDir(), "reference.json")
+		if err := os.WriteFile(reference, []byte(tc.ref), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), []string{topicsEvalCommand, "--vectors", vectors, "--definitions", definitions, "--reference", reference}, &stdout, &stderr)
+		if code != 1 || !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("%s: code %d stderr %q, want %q", tc.name, code, stderr.String(), tc.want)
+		}
+	}
+}

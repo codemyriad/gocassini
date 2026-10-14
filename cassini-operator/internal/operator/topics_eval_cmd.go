@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -173,6 +174,9 @@ func topicsEval(vectorsDir, definitionsPath, referencePath string, sweep bool) (
 		if err := json.Unmarshal(raw, ref); err != nil {
 			return topicsEvalReport{}, fmt.Errorf("%s: %v", referencePath, err)
 		}
+		if err := checkTopicsEvalReference(ref, meetings, topicIDs); err != nil {
+			return topicsEvalReport{}, fmt.Errorf("%s: %v", referencePath, err)
+		}
 		report.ReferenceTopics = len(ref.Assignments)
 	}
 	gates := [][2]float64{{topicScorerV1.Threshold, topicScorerV1.Margin}}
@@ -209,6 +213,33 @@ func topicsEval(vectorsDir, definitionsPath, referencePath string, sweep bool) (
 		report.Gates = append(report.Gates, result)
 	}
 	return report, nil
+}
+
+// checkTopicsEvalReference refuses a reference the vectors and definitions do
+// not cover. A meeting without a vectors file would score no topic and so
+// agree with every negative, and an assignment to a topic without a
+// definition would never be compared.
+func checkTopicsEvalReference(ref *topicsEvalReference, meetings []topicsEvalMeeting, topicIDs []string) error {
+	loaded := map[string]bool{}
+	for _, m := range meetings {
+		loaded[m.ID] = true
+	}
+	listed := map[string]bool{}
+	for _, meeting := range ref.Meetings {
+		if !loaded[meeting] {
+			return fmt.Errorf("meeting %s has no vectors file", meeting)
+		}
+		listed[meeting] = true
+	}
+	for _, a := range ref.Assignments {
+		if !listed[a.Meeting] {
+			return fmt.Errorf("an assignment names meeting %s, which is not in its meetings", a.Meeting)
+		}
+		if !slices.Contains(topicIDs, a.Topic) {
+			return fmt.Errorf("an assignment names topic %s, which has no definition", a.Topic)
+		}
+	}
+	return nil
 }
 
 // compareTopicsEval counts agreement over the reference's meetings times

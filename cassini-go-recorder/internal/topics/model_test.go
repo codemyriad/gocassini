@@ -248,7 +248,7 @@ func TestProbeInstalledWithTheModel(t *testing.T) {
 	if err := s.Import(context.Background(), m, modelstore.ImportOptions{From: filepath.Dir(files.Graph)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ProbeInstalled(context.Background(), s, m, 2); err != nil {
+	if err := ProbeInstalled(context.Background(), s, m, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 }
