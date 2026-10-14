@@ -55,8 +55,9 @@ type textEmbedder interface {
 
 // Seams so the command can be tested without the model.
 var (
-	topicsRuntimeCheckFn = topics.RuntimeCheck
-	openTopicsEmbedderFn = func(files modelstore.EmbeddingFiles, opts topics.Options) (textEmbedder, error) {
+	loadTopicsTokenizerFn = func(path string) (topics.TokenCounter, error) { return topics.LoadTokenizer(path) }
+	topicsRuntimeCheckFn  = topics.RuntimeCheck
+	openTopicsEmbedderFn  = func(files modelstore.EmbeddingFiles, opts topics.Options) (textEmbedder, error) {
 		return topics.Open(files, opts)
 	}
 )
@@ -141,8 +142,22 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 	if err := topicsRuntimeCheckFn(); err != nil {
 		return fail(topicsExitUnavailable, "%v", err)
 	}
-	n := *threads
-	if n <= 0 {
+	// Refuse what would fail after the model ran, before waiting for the lock:
+	// a text over the token cap, and an output nobody can write.
+	tok, err := loadTopicsTokenizerFn(files.Tokenizer)
+	if err != nil {
+		return fail(topicsExitUnavailable, "%v", err)
+	}
+	for _, input := range inputs {
+		if n := len(tok.Encode(input.Text)); n > topics.MaxTokens {
+			return fail(topicsExitUsage, "%v: text %q has %d tokens; the limit is %d", topics.ErrTooLong, input.ID, n, topics.MaxTokens)
+		}
+	}
+	if err := checkWritableDir(filepath.Dir(*out)); err != nil {
+		return fail(topicsExitUsage, "--out: %v", err)
+	}
+	n := topics.ClampThreads(*threads)
+	if *threads <= 0 {
 		var warn error
 		n, warn = topics.Threads(transcribe.DefaultNumThreads())
 		if warn != nil {
@@ -160,10 +175,9 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 	_ = enc.Encode(map[string]bool{"locked": true})
 	embedder, err := openTopicsEmbedderFn(files, topics.Options{Threads: n, Batch: true})
 	if err != nil {
-		if errors.Is(err, topics.ErrUnsupportedRuntime) {
-			return fail(topicsExitUnavailable, "%v", err)
-		}
-		return fail(topicsExitRuntime, "%v", err)
+		// A runtime that cannot run it, or installed files that do not load:
+		// retrying will not help until an administrator acts.
+		return fail(topicsExitUnavailable, "%v", err)
 	}
 	defer embedder.Close()
 	texts := make([]string, len(inputs))
@@ -187,6 +201,18 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 	}
 	_ = enc.Encode(map[string]int{"count": len(inputs)})
 	return 0
+}
+
+// checkWritableDir makes sure the output can be written before an embed
+// spends the model's time on it.
+func checkWritableDir(dir string) error {
+	f, err := os.CreateTemp(dir, ".topic-vectors-check-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	f.Close()
+	return os.Remove(name)
 }
 
 func readTopicsTextInputs(path string) ([]topicsTextInput, error) {

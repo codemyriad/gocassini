@@ -286,9 +286,10 @@ export interface SpeechModel {
   id: string; name: string; description: string; revision: string;
   download_bytes: number; installed_bytes: number; installed: boolean; ready: boolean; device: string;
   // "speech" transcribes; "diarization" separates the voices on a shared
-  // device and is never the transcription model. Absent from older operators.
-  kind?: "speech" | "diarization";
-  // Diarization only: whether this server's runtime can run it at all.
+  // device and "embedding" reads transcripts for topic suggestions; neither
+  // is ever the transcription model. Absent from older operators.
+  kind?: "speech" | "diarization" | "embedding";
+  // Diarization and embedding only: whether this server's runtime can run it.
   runtime_supported?: boolean;
 }
 export interface SpeechModelJob {

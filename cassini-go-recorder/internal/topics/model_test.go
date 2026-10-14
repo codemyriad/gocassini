@@ -6,10 +6,24 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"gocassini/internal/modelstore"
 )
+
+// udhrArticle1 is Article 1 of the Universal Declaration of Human Rights, a
+// public text, in a few languages (Japanese with spaces between words, as a
+// transcript has them).
+var udhrArticle1 = map[string]string{
+	"en": "All human beings are born free and equal in dignity and rights. They are endowed with reason and conscience and should act towards one another in a spirit of brotherhood.",
+	"it": "Tutti gli esseri umani nascono liberi ed eguali in dignità e diritti. Essi sono dotati di ragione e di coscienza e devono agire gli uni verso gli altri in spirito di fratellanza.",
+	"de": "Alle Menschen sind frei und gleich an Würde und Rechten geboren. Sie sind mit Vernunft und Gewissen begabt und sollen einander im Geist der Brüderlichkeit begegnen.",
+	"fr": "Tous les êtres humains naissent libres et égaux en dignité et en droits. Ils sont doués de raison et de conscience et doivent agir les uns envers les autres dans un esprit de fraternité.",
+	"es": "Todos los seres humanos nacen libres e iguales en dignidad y derechos y, dotados como están de razón y conciencia, deben comportarse fraternalmente los unos con los otros.",
+	"ru": "Все люди рождаются свободными и равными в своем достоинстве и правах. Они наделены разумом и совестью и должны поступать в отношении друг друга в духе братства.",
+	"ja": "すべての 人間 は 、 生まれ ながら に して 自由 で あり 、 かつ 、 尊厳 と 権利 と に ついて 平等 で ある 。 人間 は 、 理性 と 良心 と を 授け られて おり 、 互い に 同胞 の 精神 を もって 行動 しなければ ならない 。",
+}
 
 // The tests in this file need the real model. Point CASSINI_TOPICS_MODEL_DIR
 // at a directory holding the decompressed model_quantized.onnx,
@@ -155,6 +169,21 @@ func TestPaddedBatchEqualsSingle(t *testing.T) {
 	single := openEmbedder(t, false)
 	ref := readReference(t, "testdata/golden_vectors.json")
 	texts := append(slices.Clone(ref.Texts), "Short.", "Two words", "A slightly longer sentence about the release plan.")
+	// And long texts of mixed lengths up to the cap, so rows are padded by
+	// hundreds of tokens: public UDHR sentences, concatenated.
+	var udhr []string
+	for _, code := range []string{"en", "it", "de", "fr", "es", "ru", "ja"} {
+		udhr = append(udhr, udhrArticle1[code])
+	}
+	for n := 3; n <= 16; n++ {
+		var parts []string
+		for i := range n {
+			parts = append(parts, udhr[i%len(udhr)])
+		}
+		if text := strings.Join(parts, " "); len(single.Tokenizer().Encode(text)) <= MaxTokens {
+			texts = append(texts, text)
+		}
+	}
 	want, err := single.EmbedTexts(context.Background(), texts)
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +195,13 @@ func TestPaddedBatchEqualsSingle(t *testing.T) {
 	got, err := batched.EmbedTexts(context.Background(), texts)
 	if err != nil {
 		t.Fatal(err)
+	}
+	longest := 0
+	for _, w := range want {
+		longest = max(longest, w.TokenCount)
+	}
+	if longest < 400 {
+		t.Fatalf("the longest text has %d tokens; the test needs texts near the cap", longest)
 	}
 	for i := range texts {
 		if c := Cosine(got[i].Vector, want[i].Vector); c < 0.99999 {

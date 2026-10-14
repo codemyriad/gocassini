@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"gocassini/internal/modelstore"
+	"gocassini/internal/topics"
 	"gocassini/internal/transcribe"
 )
 
@@ -156,10 +158,11 @@ func TestModelsProbeChecksADiarizerWithTheDiarizationRuntime(t *testing.T) {
 }
 
 // The topic suggestions model is listed as its own kind, on the CPU, and is
-// ready from its installed files plus the runtime check: no readiness
-// receipt, so a reboot or an image upgrade (a new runtime fingerprint) leaves
-// it ready while a speech model needs a new probe.
-func TestModelsListEmbeddingModelReadyWithoutAReceipt(t *testing.T) {
+// ready once its files are installed, the runtime check passes and its probe
+// passed. The probe's receipt names neither the boot nor the image, so a
+// reboot or an image upgrade (a new runtime fingerprint) leaves it ready while
+// a speech model needs a new probe.
+func TestModelsListEmbeddingModelReadyAcrossARuntimeChange(t *testing.T) {
 	stubModelRuntime(t, true)
 	root := t.TempDir()
 	views := listModels(t, root, "cuda")
@@ -175,18 +178,21 @@ func TestModelsListEmbeddingModelReadyWithoutAReceipt(t *testing.T) {
 	speech := fakeInstallShipped(t, root, "parakeet-tdt-ctc-110m-en-int8")
 	fakeInstallShipped(t, root, "silero-vad")
 	s := modelstore.New(root)
+	if e = listModels(t, root, "cpu")[m.ID]; !e.Installed || e.Ready {
+		t.Fatalf("installed but never probed = %+v, want not ready", e)
+	}
 	if err := s.MarkReady(speech, "cpu", transcribe.ModelRuntimeFingerprint()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkReady(m, "cpu", topics.ReadyFingerprint); err != nil {
 		t.Fatal(err)
 	}
 	views = listModels(t, root, "cpu")
 	if e = views[m.ID]; !e.Installed || !e.Ready {
-		t.Fatalf("installed embedding model = %+v, want ready", e)
+		t.Fatalf("probed embedding model = %+v, want ready", e)
 	}
 	if !views[speech.ID].Ready {
 		t.Fatal("the speech model's receipt did not count")
-	}
-	if receipts, _ := filepath.Glob(filepath.Join(s.Dir(m), ".probe-*")); len(receipts) != 0 {
-		t.Fatalf("embedding model has readiness receipts %v", receipts)
 	}
 
 	// A new native library changes the runtime fingerprint, as a reboot (a
@@ -208,6 +214,33 @@ func TestModelsListEmbeddingModelReadyWithoutAReceipt(t *testing.T) {
 	stubEmbeddingRuntime(t, false)
 	if e = listModels(t, root, "cpu")[m.ID]; !e.Installed || e.Ready || *e.RuntimeSupported {
 		t.Fatalf("unsupported runtime = %+v", e)
+	}
+}
+
+// The probe is the embedding model's quality gate: a failing probe makes a
+// ready model not ready, and a probe that only had to wait changes nothing.
+func TestModelsProbeFailureTakesTheEmbeddingModelOutOfReady(t *testing.T) {
+	stubModelRuntime(t, true)
+	stubEmbeddingRuntime(t, true)
+	root := t.TempDir()
+	m := fakeInstallShipped(t, root, DefaultEmbeddingModelID)
+	probe := func(err error) int {
+		probeInstalledEmbedder = func(context.Context, *modelstore.Store, modelstore.Model, int) error { return err }
+		var stdout, stderr bytes.Buffer
+		return runModels(context.Background(), []string{"probe", m.ID, "--cache-root", root}, &stdout, &stderr)
+	}
+	ready := func() bool { return listModels(t, root, "cpu")[m.ID].Ready }
+	if code := probe(nil); code != 0 || !ready() {
+		t.Fatalf("passing probe: exit %d, ready %v", code, ready())
+	}
+	if code := probe(transcribe.ErrRuntimeCheckDeferred); code != exitTempFail || !ready() {
+		t.Fatalf("deferred probe: exit %d, ready %v; waiting must not change readiness", code, ready())
+	}
+	if code := probe(fmt.Errorf("%w: probe text 0 has cosine 0.9", topics.ErrModelFault)); code == 0 || ready() {
+		t.Fatalf("failing probe: exit %d, ready %v; want a failure and not ready", code, ready())
+	}
+	if code := probe(nil); code != 0 || !ready() {
+		t.Fatalf("passing again: exit %d, ready %v", code, ready())
 	}
 }
 

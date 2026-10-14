@@ -75,13 +75,15 @@ func TestShippedEmbeddingModel(t *testing.T) {
 
 func TestValidateEmbeddingModels(t *testing.T) {
 	cases := map[string]func(m *Model, c *Catalogue){
-		"pins a VAD":          func(m *Model, c *Catalogue) { m.VADRevision = c.Models[1].Revision },
-		"no data file":        func(m *Model, c *Catalogue) { m.Files = m.Files[:1:1] },
-		"no tokenizer":        func(m *Model, c *Catalogue) { m.Files = m.Files[:2:2] },
-		"renamed data file":   func(m *Model, c *Catalogue) { m.Files[1].Path = "weights.bin" },
-		"optional file":       func(m *Model, c *Catalogue) { m.Files[2].Required = false },
-		"nested name":         func(m *Model, c *Catalogue) { m.Files[2].Path = "sub/tokenizer.model" },
-		"foreign origin":      func(m *Model, c *Catalogue) { c.Artifacts[len(c.Artifacts)-1].URL = "https://example.com/tokenizer.model.zst" },
+		"pins a VAD":        func(m *Model, c *Catalogue) { m.VADRevision = c.Models[1].Revision },
+		"no data file":      func(m *Model, c *Catalogue) { m.Files = m.Files[:1:1] },
+		"no tokenizer":      func(m *Model, c *Catalogue) { m.Files = m.Files[:2:2] },
+		"renamed data file": func(m *Model, c *Catalogue) { m.Files[1].Path = "weights.bin" },
+		"optional file":     func(m *Model, c *Catalogue) { m.Files[2].Required = false },
+		"nested name":       func(m *Model, c *Catalogue) { m.Files[2].Path = "sub/tokenizer.model" },
+		"foreign origin": func(m *Model, c *Catalogue) {
+			c.Artifacts[len(c.Artifacts)-1].URL = "https://example.com/tokenizer.model.zst"
+		},
 		"plain zstd encoding": func(m *Model, c *Catalogue) { c.Artifacts[len(c.Artifacts)-1].Encoding = "zstd" },
 	}
 	for name, breakIt := range cases {

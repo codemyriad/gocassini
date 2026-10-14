@@ -3,8 +3,9 @@ import { render } from "svelte/server";
 
 import SpeechModelsSource from "./SpeechModels.svelte?raw";
 import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
+import TopicSuggestionsModel from "./TopicSuggestionsModel.svelte";
 import type { SpeechModel, SpeechModelInventory, SpeechModelJob } from "./operator/types";
-import { jobStepText, modelJob, transcriptionModelId, VOICE_SEPARATION_MODEL_ID, voiceSeparationModel } from "./speechModels";
+import { jobStepText, modelJob, TOPIC_SUGGESTIONS_MODEL_ID, topicSuggestionsModel, transcriptionModelId, VOICE_SEPARATION_MODEL_ID, voiceSeparationModel } from "./speechModels";
 
 const diarizer: SpeechModel = {
   id: VOICE_SEPARATION_MODEL_ID, kind: "diarization", name: "Nemotron 3 Diarization — int8", description: "Speaker diarization",
@@ -86,3 +87,51 @@ describe("model job steps", () => {
   });
 });
 
+
+const embedder: SpeechModel = {
+  id: TOPIC_SUGGESTIONS_MODEL_ID, kind: "embedding", name: "EmbeddingGemma 2 (text) — int8", description: "Multilingual text embeddings",
+  revision: "e".repeat(64), download_bytes: 288733465, installed_bytes: 318909106, installed: false, ready: false, device: "cpu", runtime_supported: true,
+};
+function topicCard(model: SpeechModel, jobs: SpeechModelJob[] = [], downloadsAllowed = true) {
+  const inv = { ...inventory([speech, diarizer, model], jobs), downloads_allowed: downloadsAllowed };
+  return render(TopicSuggestionsModel, { props: { inventory: inv } }).body;
+}
+
+describe("the topic suggestions model card", () => {
+  it("renders nothing without the embedding model", () => {
+    expect(render(TopicSuggestionsModel, { props: { inventory: inventory([speech, diarizer]) } }).body).not.toContain("Topic suggestions");
+  });
+
+  it("is found by its kind, never as voice separation or the transcription model", () => {
+    const inv = inventory([speech, diarizer, embedder]);
+    expect(topicSuggestionsModel(inv)).toEqual(embedder);
+    expect(voiceSeparationModel(inv)).toEqual(diarizer);
+    expect(topicSuggestionsModel(inventory([speech, { ...embedder, kind: undefined }]))).toBeUndefined();
+    expect(SpeechModelsSource).not.toContain("TopicSuggestionsModel");
+  });
+
+  it("offers the download with its size and says it does not switch suggestions on", () => {
+    const html = topicCard(embedder);
+    expect(html).toContain("Topic suggestions");
+    expect(html).toContain("275.4 MiB");
+    expect(html).toContain(">Download<");
+    expect(html).toContain("Not installed");
+    expect(html).toContain("does not switch suggestions on");
+    expect(html).not.toContain("Voice separation");
+  });
+
+  it("follows its own CPU job: progress, check, ready, unsupported", () => {
+    const own = { ...job("downloading"), model: embedder.id, revision: embedder.revision };
+    // A voice separation download is not this card's.
+    expect(topicCard(embedder, [job("downloading")])).not.toContain("download progress");
+    expect(topicCard(embedder, [own])).toContain("Topic suggestions download progress");
+    expect(topicCard(embedder, [{ ...own, state: "checking" }])).toContain("Checking it runs on this server");
+    const ready = topicCard({ ...embedder, installed: true, ready: true });
+    expect(ready).toContain("Ready");
+    expect(ready).not.toContain("<button");
+    const unsupported = topicCard({ ...embedder, installed: true, runtime_supported: false });
+    expect(unsupported).toContain("Not available in this server's Cassini build");
+    expect(unsupported).not.toContain("<button");
+    expect(topicCard(embedder, [], false)).not.toContain("<button");
+  });
+});
