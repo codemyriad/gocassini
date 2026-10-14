@@ -131,7 +131,7 @@ func TestTopicsEmbedTextsWritesVectorsInInputOrder(t *testing.T) {
 		t.Fatalf("stdout = %q", stdout)
 	}
 	got := readTopicsVectors(t, out)
-	want := topicsVectorsHeader{Format: topicsVectorsFormat, ModelRevision: m.ID + "@" + m.Revision, RecipeVersion: topics.EmbedRecipeVersion, Dimensions: 768, Count: 2}
+	want := topicsVectorsHeader{Format: topicsVectorsFormat, ModelRevision: m.ID + "@" + m.Revision, RecipeVersion: topics.EmbedRecipeVersion, ChunkerVersion: topics.ChunkerVersion, Dimensions: 768, Count: 2}
 	if got.header != want {
 		t.Fatalf("header = %+v, want %+v", got.header, want)
 	}

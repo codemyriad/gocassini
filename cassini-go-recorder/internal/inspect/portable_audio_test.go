@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -402,4 +403,35 @@ func runCommand(name string, args ...string) error {
 		return fmt.Errorf("%s %v: %w: %s", name, args, err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// Callers tell a file with no usable transcript from one they could not read
+// by these errors (cassini topics embed retries only the latter).
+func TestExtractMeetingWrapsTranscriptErrors(t *testing.T) {
+	tags := buildPublishedPortableTags(t, portableFixtureOptions{words: []string{"Hello", "team", "lantern"}}, nil)
+	if _, err := extractMeetingTags("meeting.opus", tags); err != nil {
+		t.Fatalf("intact file: %v", err)
+	}
+	prefix := portable.TranscriptIDToTagPrefix(portable.DefaultWordsTranscriptID)
+	count, _ := strconv.Atoi(tags[prefix+"CHUNK_COUNT"])
+	chunk := fmt.Sprintf("%s%03d", prefix, count-1)
+	saved := tags[chunk]
+	delete(tags, chunk)
+	if _, err := extractMeetingTags("meeting.opus", tags); !errors.Is(err, ErrTranscriptIntegrity) || !strings.Contains(err.Error(), "missing transcript chunk") {
+		t.Fatalf("missing chunk: %v, want ErrTranscriptIntegrity with its message", err)
+	}
+	// A body that decodes but is not the one the manifest names.
+	tags[chunk] = saved
+	other := buildPublishedPortableTags(t, portableFixtureOptions{words: []string{"Goodbye", "team", "lantern"}}, nil)
+	for key, value := range other {
+		if strings.HasPrefix(key, prefix) {
+			tags[key] = value
+		}
+	}
+	if _, err := extractMeetingTags("meeting.opus", tags); !errors.Is(err, ErrTranscriptIntegrity) {
+		t.Fatalf("swapped body: %v, want ErrTranscriptIntegrity", err)
+	}
+	if _, err := extractMeetingTags("song.opus", map[string]string{}); !errors.Is(err, ErrNotPortableMeeting) {
+		t.Fatalf("plain audio: %v, want ErrNotPortableMeeting", err)
+	}
 }

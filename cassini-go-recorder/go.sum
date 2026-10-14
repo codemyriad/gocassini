@@ -1,3 +1,5 @@
+github.com/abadojack/whatlanggo v1.0.1 h1:19N6YogDnf71CTHm3Mp2qhYfkRdyvbgwWdd2EPxJRG4=
+github.com/abadojack/whatlanggo v1.0.1/go.mod h1:66WiQbSbJBIlOZMsvbKe5m6pzQovxCH9B/K8tQB2uoc=
 github.com/codemyriad/sherpa-onnx-go-linux/v2 v2.0.1-cassini.3 h1:Yl4NFAl7scIdlWPT5LurJSsMNmolJFdsf2x0AsGGLEw=
 github.com/codemyriad/sherpa-onnx-go-linux/v2 v2.0.1-cassini.3/go.mod h1:zfoI5ANNAiKCZFyWC9NfZATijClmbT1UqZ+ycvcMKCY=
 github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.3 h1:QncbWfDVliopEgyuGx5hbjhfAVN0ZunKA2e0hqXJSn0=
