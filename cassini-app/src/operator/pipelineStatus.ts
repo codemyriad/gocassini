@@ -25,6 +25,9 @@ export interface PipelineInput {
   modelInstalled: boolean | null;
   /** A model download in progress, if any; percent is null when its size is unknown. */
   download: { percent: number | null } | null;
+  /** The saved model's own download, if it is being installed (an upgrade
+   *  that replaced the model queues one); recordings wait for it. */
+  activeModelDownload?: { percent: number | null } | null;
   summaryEnabled: boolean;
   /** Display name of the saved summary provider. */
   providerName: string;
@@ -41,26 +44,27 @@ const QUALITY_LABELS: Record<SettingsQuality, string> = { fast: "Fast", balanced
 // quality setting, so the strip names what actually transcribes.
 const MODEL_TIERS: Record<string, string> = {
   "parakeet-tdt-ctc-110m-en-int8": "Fast",
-  "parakeet-tdt-0.6b-v3-int8": "Balanced",
-  "parakeet-tdt-0.6b-v3": "Best",
+  "parakeet-ultra-0.6b-int8": "Balanced",
   "parakeet-ultra-0.6b": "Best",
 };
 
 // The model a quality tier runs on a device. On the GPU every tier runs the
-// full-precision Parakeet Ultra; a GPU install pinned to v3 fp32 keeps it.
+// full-precision Parakeet Ultra; on the CPU, best is Ultra fp32, balanced its
+// int8 build and fast the small 110M model.
 export function speechModelFor(quality: string, device: string): string {
   if (device === "cuda") return "parakeet-ultra-0.6b";
-  if (quality === "best") return "parakeet-tdt-0.6b-v3";
-  return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-tdt-0.6b-v3-int8";
+  if (quality === "best") return "parakeet-ultra-0.6b";
+  return quality === "fast" ? "parakeet-tdt-ctc-110m-en-int8" : "parakeet-ultra-0.6b-int8";
 }
 
 const FINISHED_JOB_STATES = ["ready", "failed", "cancelled"];
 
 // A transcription model being downloaded. Voice separation's download is not
 // one: nothing in the pipeline waits for it.
-export function runningDownload(inventory: SpeechModelInventory | null): { percent: number | null } | null {
+// With a model id, only that model's download counts.
+export function runningDownload(inventory: SpeechModelInventory | null, model?: string): { percent: number | null } | null {
   const separation = new Set(inventory?.models.filter((m) => m.kind === "diarization").map((m) => m.id));
-  const job: SpeechModelJob | undefined = inventory?.jobs.find((j) => !separation.has(j.model) && !FINISHED_JOB_STATES.includes(j.state));
+  const job: SpeechModelJob | undefined = inventory?.jobs.find((j) => !separation.has(j.model) && (model === undefined || j.model === model) && !FINISHED_JOB_STATES.includes(j.state));
   if (!job) return null;
   const { completed_bytes: done, total_bytes: total } = job.progress;
   return { percent: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null };
@@ -82,10 +86,17 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
   if (transcribing) {
     const state = `On · ${(input.activeModel && MODEL_TIERS[input.activeModel]) || QUALITY_LABELS[input.quality] || input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}`;
     // Switched on with a model that is not there: recordings publish without a
-    // transcript, so the strip must not read as healthy.
-    transcribe = input.activeModelInstalled === false
-      ? { state, tone: "amber", reason: "model not installed" }
-      : { state, tone: "on" };
+    // transcript, so the strip must not read as healthy. One being installed
+    // is different: recordings wait for it.
+    const installing = input.activeModelDownload;
+    if (input.activeModelInstalled === false && installing) {
+      const reason = installing.percent === null ? "downloading the model" : `downloading the model · ${installing.percent}%`;
+      transcribe = { state, tone: "busy", reason };
+    } else {
+      transcribe = input.activeModelInstalled === false
+        ? { state, tone: "amber", reason: "model not installed" }
+        : { state, tone: "on" };
+    }
   } else if (input.download) {
     const percent = input.download.percent;
     transcribe = { state: percent === null ? "Off · downloading" : `Off · downloading ${percent}%`, tone: "busy" };

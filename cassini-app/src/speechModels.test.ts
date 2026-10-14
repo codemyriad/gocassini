@@ -41,12 +41,12 @@ describe("voice separation in the speech models", () => {
     }
   });
 
-  it("runs Parakeet Ultra on every GPU tier and keeps the CPU tiers", () => {
+  it("runs Parakeet Ultra on every tier but the CPU fast one", () => {
     for (const quality of ["fast", "balanced", "best"]) {
       expect(transcriptionModelId(quality, "cuda")).toBe("parakeet-ultra-0.6b");
     }
-    expect(transcriptionModelId("best", "cpu")).toBe("parakeet-tdt-0.6b-v3");
-    expect(transcriptionModelId("balanced", "cpu")).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(transcriptionModelId("best", "cpu")).toBe("parakeet-ultra-0.6b");
+    expect(transcriptionModelId("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8");
     expect(transcriptionModelId("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8");
   });
 

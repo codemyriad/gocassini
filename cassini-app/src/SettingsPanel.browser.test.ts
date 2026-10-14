@@ -137,9 +137,9 @@ it("requires prepared transcription before saving deletion", async () => {
 it("turns transcription on from the heading switch and shows the model as one row", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
-  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 700 * 1024 * 1024, installed_bytes: 0, installed: true, ready: true, device: "cpu" };
-  const best = { ...balanced, id: "parakeet-tdt-0.6b-v3", name: "Parakeet best", download_bytes: 2.2 * 1024 ** 3, installed: false, ready: false };
+  const best = { ...balanced, id: "parakeet-ultra-0.6b", name: "Parakeet best", download_bytes: 2.2 * 1024 ** 3, installed: false, ready: false };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
     if (path === "/operator/settings") {
@@ -168,9 +168,9 @@ it("turns transcription on from the heading switch and shows the model as one ro
 });
 
 it("shows the saved settings in the status strip and moves only after Save", async () => {
-  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-tdt-0.6b-v3-int8", active_revision: "r1",
+  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8", active_revision: "r1",
     source_retention: "storage-policy", retain_video: false, effective: { device: "cpu", model: "", min_free_memory_mb: 0, note: "" } };
-  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -234,7 +234,7 @@ it("says how long kept media stays from the Recordings policy and follows the re
 it("lets everything after the transcript change only once transcription is saved on", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
-  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
