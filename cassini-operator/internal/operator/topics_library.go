@@ -1054,10 +1054,6 @@ func (s *annotationService) serveTopicRooms(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"rooms": names, "roomCount": len(rooms)})
 }
 
-// routeTopicReview serves the review routes; false when the path is not one.
-func (s *annotationService) routeTopicReview(w http.ResponseWriter, r *http.Request, caller string, parts []string) bool {
-	return false
-}
 
 // libraryOn: the library shapes tagging only while topic suggestions are on.
 func (s *annotationService) libraryOn() bool {

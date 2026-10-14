@@ -5,10 +5,9 @@ was about. A person confirms or rejects every suggestion; only a confirm writes
 a tag into the recording. This page is for the administrator who runs it. The
 design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.md).
 
-> **Status.** The model, the work queue and the topic library are in place.
-> Reviewing suggestions comes in a later release, so for now Cassini reads
-> meetings, keeps what it needs, and scores them against the topics people
-> describe without showing anyone the result yet.
+> **Status.** Topics are suggested on the meeting page and confirmed or
+> rejected there. Reviewing many meetings at once and proposals for new
+> topics come in later releases.
 
 ## Words used on this page
 
@@ -55,6 +54,37 @@ colour, rather than starting a second tag with the same name. Renaming,
 recolouring or merging a tag in the Tags tab updates its topic too; merging a
 topic into another tag retires it into that tag, which takes its definition if
 it has none, and keeps the rejections people made.
+
+## Reviewing suggestions
+
+On a meeting's page, after its tags, a **Suggested** group shows the topics
+Cassini suggests for it, with a dashed outline. Opening one shows:
+
+- the topic's definition;
+- why it was suggested, in words ("Discussed for about 3 minutes across 2
+  passages", or "One short, focused discussion");
+- up to four passages it rests on, quoted from the transcript, each with its
+  time; a click plays from there. While it is open, those passages are
+  underlined with dots in the transcript;
+- "Suggested from the transcript. Not saved to the recording until someone
+  confirms it.", and, until the meeting's language has been validated,
+  "Suggestions have not been checked for this meeting's language."
+
+**Confirm** writes the topic into the recording as an ordinary tag on the
+whole meeting, credited to you, exactly as if you had added it yourself. Where
+the recording already has a tag with the same name, that tag is used, so the
+meeting never shows two chips with one name. **Not this meeting** records a
+rejection: the topic is never suggested for that meeting again, whatever
+changes later (a rerun, a new model, a new definition). Both can be undone
+from the message that follows, and a rejection can be **reopened** later from
+"Decided for this meeting".
+
+A meeting whose audio changed after it was tagged must have its old tags
+sorted out before a topic can be confirmed; rejecting still works.
+
+Scores are never shown, only the rule in words and the number of supporting
+words. Suggestions are not in the recording, its copies, search or the public
+viewer until someone confirms them.
 
 ## Switching it on
 

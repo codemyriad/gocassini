@@ -260,6 +260,28 @@ USER, beside the tag routes, and answered over the caller's visible meetings:
 `not-allowed` (403). A `requestId` reused with the same body replays the first
 answer. See [Topic suggestions](../topic-suggestions.md).
 
+## Topic review
+
+```http
+GET  annotations/topics/meetings/<meetingId>
+POST annotations/topics/meetings/<meetingId>/<tagId>   {requestId, decision: "confirm" | "reject" | "undo" | "reopen"}
+GET  annotations/topics/coverage[?room=<roomId>]
+```
+
+USER. The meeting must be one the caller can read now (404 otherwise). `GET`
+answers `{enabled, state, reason?, language, validatedLanguage, confirmable,
+blockedReason?, suggestions:[{tagId, label, definition, color, icon, rule,
+supportWords, evidence:[{startMs, endMs, wordCount, counted}]}],
+decided:[{tagId, label, verdict, source, by, at}]}`; no score is served. A
+confirm writes a whole-meeting mark credited to the caller and the verdict in
+one transaction, and answers `{verdict, annotations}` with the meeting's new
+annotations; a retry with the same `requestId` replays the first answer.
+Refusals: `marks-unresolved`, `not-pending`, `already-decided`, `confirmed`
+(reopen of a confirm: remove the tag instead), `topic-retired`. Coverage
+counts the caller's visible meetings: `{visible, checked, waiting, notChecked,
+unavailable:{reason:n}, blocked, checkedSince, unvalidatedLanguage,
+unknownLanguage}`.
+
 ## Summary of stage and state values
 
 Stage values:

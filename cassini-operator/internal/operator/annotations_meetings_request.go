@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,13 @@ type annotateWriteRequest struct {
 	OperationID    string            `json:"operationId"`
 	// TagStyles colour the tags this batch creates, and nothing else.
 	TagStyles []annotateTagStyle `json:"tagStyles"`
+	// Namespace is the deployment's tag namespace for a trusted write, which
+	// otherwise passes none and lets a file with no annotations mint one.
+	Namespace string `json:"-"`
+	// InTx runs inside the mutation's transaction, after the document is
+	// written: a topic confirm records its verdict there, so the mark and
+	// the verdict commit together.
+	InTx func(ctx context.Context, tx *sql.Tx, result annotateResult) error `json:"-"`
 }
 
 type annotateTagStyle struct {
