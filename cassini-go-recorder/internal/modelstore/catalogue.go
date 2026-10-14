@@ -27,13 +27,21 @@ type File struct {
 
 // Model kinds. The catalogue says what each model is for, so nothing has to
 // guess it from an id: a speech model transcribes and needs its pinned VAD,
-// the VAD is that dependency, and a diarization model separates the voices
-// on one participant's track (docs/speaker-separation.md) and needs neither.
+// the VAD is that dependency, a diarization model separates the voices on one
+// participant's track (docs/speaker-separation.md) and needs neither, and an
+// embedding model turns transcript passages into vectors for topic
+// suggestions (docs/proposals/automatic-tagging) and needs neither either.
 const (
 	KindSpeech      = "speech"
 	KindVAD         = "vad"
 	KindDiarization = "diarization"
+	KindEmbedding   = "embedding"
 )
+
+// EmbeddingTokenizerFile is the SentencePiece model every embedding model
+// ships next to its graph. The graph is the one .onnx file, and its external
+// weights are the file the graph names: the graph's own name plus "_data".
+const EmbeddingTokenizerFile = "tokenizer.model"
 
 type Model struct {
 	ID          string `json:"id"`
@@ -217,6 +225,13 @@ func (c Catalogue) validateModel(m Model) error {
 		if m.VADRevision != "" {
 			return fmt.Errorf("diarization model %s pins a VAD revision", m.ID)
 		}
+	case KindEmbedding:
+		if m.VADRevision != "" {
+			return fmt.Errorf("embedding model %s pins a VAD revision", m.ID)
+		}
+		if _, err := embeddingFiles(m); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("catalogue model %s has unknown kind %q", m.ID, m.Kind)
 	}
@@ -247,6 +262,46 @@ func digest(s string) bool {
 func safeName(s string) bool {
 	return s != "" && s != "." && s != ".." && filepath.Base(s) == s && !strings.ContainsAny(s, "/\\\x00")
 }
+
+// EmbeddingFiles names the three files of an embedding model, relative to its
+// installed directory.
+type EmbeddingFiles struct {
+	Graph     string
+	Data      string
+	Tokenizer string
+}
+
+// embeddingFiles checks the shape every embedding model has: exactly a graph,
+// its external weights under the name the graph refers to, and the
+// tokenizer, all required. ONNX Runtime resolves the weights by that name
+// next to the graph, so a renamed data file loads nothing.
+func embeddingFiles(m Model) (EmbeddingFiles, error) {
+	var out EmbeddingFiles
+	if len(m.Files) != 3 {
+		return out, fmt.Errorf("embedding model %s needs a graph, its data file and %s", m.ID, EmbeddingTokenizerFile)
+	}
+	for _, f := range m.Files {
+		if strings.HasSuffix(f.Path, ".onnx") {
+			out.Graph = f.Path
+		}
+	}
+	for _, f := range m.Files {
+		switch {
+		case !f.Required:
+			return EmbeddingFiles{}, fmt.Errorf("embedding model %s: %s must be required", m.ID, f.Path)
+		case f.Path == out.Graph:
+		case out.Graph != "" && f.Path == out.Graph+"_data":
+			out.Data = f.Path
+		case f.Path == EmbeddingTokenizerFile:
+			out.Tokenizer = f.Path
+		}
+	}
+	if out.Graph == "" || out.Data == "" || out.Tokenizer == "" {
+		return EmbeddingFiles{}, fmt.Errorf("embedding model %s needs a graph, its data file and %s", m.ID, EmbeddingTokenizerFile)
+	}
+	return out, nil
+}
+
 func (c Catalogue) Sizes(m Model) (download, installed int64) {
 	for _, f := range m.Files {
 		a, _ := c.Artifact(f.Artifact)
