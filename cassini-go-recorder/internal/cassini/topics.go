@@ -75,6 +75,8 @@ func runTopics(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return runTopicsEmbed(ctx, args[1:], stdout, stderr)
 	case "embed-texts":
 		return runTopicsEmbedTexts(ctx, args[1:], stdout, stderr)
+	case "versions":
+		return runTopicsVersions(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown topics subcommand %q\n\n", args[0])
 		printTopicsUsage(stderr)
@@ -87,6 +89,7 @@ func printTopicsUsage(w io.Writer) {
   cassini topics embed (--input <file.opus|bundle.meeting> | --words <words.json>) --out <passages.jsonl>
       [--known-key KEY] [--threads N] [--model-dir DIR]
   cassini topics embed-texts --in <texts.jsonl> --out <vectors.jsonl> [--threads N] [--model-dir DIR]
+  cassini topics versions [--model-dir DIR]
 
 Embed text for topic suggestions with the embedding model installed in the
 model store (Settings, or cassini models install `+DefaultEmbeddingModelID+`).
@@ -111,6 +114,10 @@ never truncated: a text over 512 tokens, the prompt prefix included, is
 refused. Once it holds the model store's inference lock it prints
 {"locked":true}; at the end {"count":N}.
 
+versions prints {"modelRevision", "chunkerVersion", "recipeVersion",
+"detectorVersion"} without loading the model, so the caller can tell which
+stored vectors are current. modelRevision is "" when no model is installed.
+
 The model runs on the CPU with --threads threads, else $CASSINI_TOPICS_THREADS,
 else min(4, CPUs). --model-dir names a directory with the decompressed model
 files instead of the model store, for development.
@@ -119,6 +126,25 @@ Exit codes: 0 ok, 1 runtime, 2 usage or a refused input, 3 no usable
 embedding model or runtime, 4 model fault, 5 no usable transcript (embed;
 stderr names no-transcript, transcript-has-no-words or transcript-integrity).
 `)
+}
+
+func runTopicsVersions(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cassini topics versions", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	modelDir := fs.String("model-dir", "", "directory with the decompressed model files (development)")
+	root := fs.String("cache-root", defaultCassiniCacheRoot(), "persistent operator model cache root")
+	if _, code := parseAnnotateArgs(fs, args, 0); code >= 0 {
+		return code
+	}
+	revision := ""
+	if _, r, err := resolveTopicsModel(*root, *modelDir); err == nil {
+		revision = r
+	}
+	_ = json.NewEncoder(stdout).Encode(map[string]string{
+		"modelRevision": revision, "chunkerVersion": topics.ChunkerVersion,
+		"recipeVersion": topics.EmbedRecipeVersion, "detectorVersion": topics.DetectorVersion,
+	})
+	return 0
 }
 
 type topicsTextInput struct {

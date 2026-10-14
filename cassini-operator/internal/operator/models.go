@@ -359,6 +359,20 @@ func (rt *Runtime) startModelWorker() {
 				}
 			}
 		}
+		// The embedding model's readiness survives restarts, so it is
+		// checked again in the background; a failure pauses suggestions.
+		if settings.TopicSuggestions.Enabled {
+			if models, e := rt.modelInventory(rt.ctx, deviceCPU); e == nil {
+				for _, m := range models {
+					if m.Kind == modelKindEmbedding && m.Installed {
+						j, e := rt.enqueueModel(rt.ctx, m, deviceCPU)
+						if e == nil && j.State == "ready" {
+							_, _ = rt.store.db.ExecContext(rt.ctx, `UPDATE model_install_jobs SET state='queued' WHERE id=? AND state='ready'`, j.ID)
+						}
+					}
+				}
+			}
+		}
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
