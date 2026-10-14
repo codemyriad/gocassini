@@ -5,6 +5,11 @@
 // meetings: callers hand it plain text.
 package topics
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+)
+
 // EmbedRecipeVersion names everything outside the model and the chunker that
 // changes a vector: the prompt prefix, the token cap and the batching policy.
 // A change to any of them must bump it, because stored vectors made under an
@@ -35,3 +40,17 @@ const (
 	MaxBatchRows   = 16
 	MaxBatchTokens = 1024
 )
+
+// EmbedKey identifies one meeting's passage vectors: the transcript body, the
+// model, the chunker and this recipe. Equal keys mean equal vectors, so an
+// embed whose key is unchanged is skipped. It is the lowercase hex sha256 of
+// the four values joined by newlines:
+//
+//	payloadSHA256 "\n" modelRevision "\n" ChunkerVersion "\n" EmbedRecipeVersion
+//
+// cassini-operator computes the same key from stored values; change both
+// together.
+func EmbedKey(payloadSHA256, modelRevision string) string {
+	sum := sha256.Sum256([]byte(payloadSHA256 + "\n" + modelRevision + "\n" + ChunkerVersion + "\n" + EmbedRecipeVersion))
+	return hex.EncodeToString(sum[:])
+}

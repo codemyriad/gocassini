@@ -21,9 +21,9 @@ import (
 )
 
 // `cassini topics` embeds text for topic suggestions
-// (docs/proposals/automatic-tagging). embed-texts embeds short texts such as
-// topic definitions; `cassini topics embed`, which chunks and embeds a whole
-// meeting, comes with the chunker.
+// (docs/proposals/automatic-tagging). embed chunks and embeds a whole meeting
+// (topics_embed.go); embed-texts embeds short texts such as topic
+// definitions.
 //
 // The operator runs this binary rather than importing it, so the exit codes,
 // the stdout events and the output file are a contract with cassini-operator.
@@ -71,6 +71,8 @@ func runTopics(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	case "help", "-h", "--help":
 		printTopicsUsage(stdout)
 		return 0
+	case "embed":
+		return runTopicsEmbed(ctx, args[1:], stdout, stderr)
 	case "embed-texts":
 		return runTopicsEmbedTexts(ctx, args[1:], stdout, stderr)
 	default:
@@ -82,14 +84,28 @@ func runTopics(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 func printTopicsUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
+  cassini topics embed (--input <file.opus|bundle.meeting> | --words <words.json>) --out <passages.jsonl>
+      [--known-key KEY] [--threads N] [--model-dir DIR]
   cassini topics embed-texts --in <texts.jsonl> --out <vectors.jsonl> [--threads N] [--model-dir DIR]
 
 Embed text for topic suggestions with the embedding model installed in the
 model store (Settings, or cassini models install `+DefaultEmbeddingModelID+`).
 
+embed reads the default words transcript of a meeting, splits it into
+natural passages (`+topics.ChunkerVersion+`), detects its language and embeds every
+passage. Its key is sha256(payload sha256, model revision, chunker, recipe);
+with --known-key equal to it, embed prints {"unchanged":true} and stops
+before it loads or locks anything. It writes a header line {"format",
+"embedKey", "payloadSha256", "modelRevision", "chunkerVersion",
+"recipeVersion", "dimensions", "count", "language", "languageConfidence",
+"detectorVersion", "truncatedNone"} and then one {"ordinal", "startMs",
+"endMs", "wordCount", "tokenCount", "boundary", "vector"} line per passage.
+No transcript text is written. --words reads {"words": [{"text", "startMs",
+"endMs", "speaker"}]} instead of a meeting, for evaluation.
+
 embed-texts reads one JSON object per line, {"id": "...", "text": "..."}, and
 writes a header line {"format", "modelRevision", "recipeVersion",
-"dimensions", "count"} and then one {"id", "tokenCount", "vector"} line per
+"chunkerVersion", "dimensions", "count"} and then one {"id", "tokenCount", "vector"} line per
 input, in input order. Each vector is 768 float32 values, unit-norm. Text is
 never truncated: a text over 512 tokens, the prompt prefix included, is
 refused. Once it holds the model store's inference lock it prints
@@ -100,7 +116,8 @@ else min(4, CPUs). --model-dir names a directory with the decompressed model
 files instead of the model store, for development.
 
 Exit codes: 0 ok, 1 runtime, 2 usage or a refused input, 3 no usable
-embedding model or runtime, 4 model fault.
+embedding model or runtime, 4 model fault, 5 no usable transcript (embed;
+stderr names no-transcript, transcript-has-no-words or transcript-integrity).
 `)
 }
 
@@ -319,8 +336,11 @@ type topicsVectorsHeader struct {
 	Format        string `json:"format"`
 	ModelRevision string `json:"modelRevision"`
 	RecipeVersion string `json:"recipeVersion"`
-	Dimensions    int    `json:"dimensions"`
-	Count         int    `json:"count"`
+	// ChunkerVersion is the chunker this binary would use for a meeting, so
+	// the operator can tell a chunker change without embedding one.
+	ChunkerVersion string `json:"chunkerVersion"`
+	Dimensions     int    `json:"dimensions"`
+	Count          int    `json:"count"`
 }
 
 type topicsVectorLine struct {
@@ -342,7 +362,7 @@ func writeTopicsVectors(path, revision string, inputs []topicsTextInput, embeddi
 	defer os.Remove(tmp.Name())
 	w := bufio.NewWriter(tmp)
 	enc := json.NewEncoder(w)
-	err = enc.Encode(topicsVectorsHeader{Format: topicsVectorsFormat, ModelRevision: revision, RecipeVersion: topics.EmbedRecipeVersion, Dimensions: topics.Dimensions, Count: len(inputs)})
+	err = enc.Encode(topicsVectorsHeader{Format: topicsVectorsFormat, ModelRevision: revision, RecipeVersion: topics.EmbedRecipeVersion, ChunkerVersion: topics.ChunkerVersion, Dimensions: topics.Dimensions, Count: len(inputs)})
 	for i := 0; err == nil && i < len(inputs); i++ {
 		if guard := topics.CheckVector(embeddings[i].Vector); guard != nil {
 			err = fmt.Errorf("%w: vector %d: %v", topics.ErrModelFault, i, guard)

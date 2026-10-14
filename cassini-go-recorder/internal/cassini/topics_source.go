@@ -70,7 +70,7 @@ func readTopicsTranscriptFromBundle(dir string) (topicsTranscript, error) {
 		}
 		body, ok := input.Body.(portable.TranscriptBody)
 		if !ok {
-			return topicsTranscript{}, fmt.Errorf("default transcript %q is not a words body", input.ID)
+			return topicsTranscript{}, fmt.Errorf("default transcript %q is not a words body: %w", input.ID, inspect.ErrNoDefaultTranscript)
 		}
 		_, ref, err := portable.EncodeTranscriptBody(body, input.ID, input.Role, portable.DefaultPayloadChunkSize)
 		if err != nil {
@@ -85,5 +85,5 @@ func readTopicsTranscriptFromBundle(dir string) (topicsTranscript, error) {
 		}
 		return out, nil
 	}
-	return topicsTranscript{}, fmt.Errorf("bundle %s has no default words transcript", dir)
+	return topicsTranscript{}, fmt.Errorf("bundle %s has %w", dir, inspect.ErrNoDefaultTranscript)
 }
