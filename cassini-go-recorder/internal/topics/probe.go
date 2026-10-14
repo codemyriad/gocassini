@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -85,21 +86,39 @@ func Probe(ctx context.Context, e *Embedder, revision string) error {
 }
 
 // ProbeInstalled is the runtime check of an installed embedding model, the
-// one `cassini models install|probe` runs; the caller records the result as
-// a receipt bound to ReadyFingerprint. Like every inference it holds the model store's inference lock,
-// and it refuses to start without the memory its probe floor asks for.
-func ProbeInstalled(ctx context.Context, s *modelstore.Store, m modelstore.Model, threads int) error {
+// one `cassini models install|probe` runs. Like every inference it holds the
+// model store's inference lock, and it refuses to start without the memory
+// its probe floor asks for.
+//
+// record, when not nil, gets the probe's result while the lock is still held,
+// so the caller can update the readiness receipt (bound to ReadyFingerprint)
+// before another probe can run: a pass recorded after a later failure would
+// otherwise make a failing model ready again. A probe that never got the lock
+// records nothing. ProbeInstalled returns the probe's result joined with
+// record's error.
+func ProbeInstalled(ctx context.Context, s *modelstore.Store, m modelstore.Model, threads int, record func(error) error) error {
 	if m.Kind != modelstore.KindEmbedding {
 		return fmt.Errorf("%s is not an embedding model", m.ID)
-	}
-	if err := RuntimeCheck(); err != nil {
-		return err
 	}
 	unlock, err := transcribe.LockModelRuntime(ctx, s.Root)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	err = probeLockedFn(ctx, s, m, threads)
+	if record != nil {
+		err = errors.Join(err, record(err))
+	}
+	return err
+}
+
+// probeLockedFn is a seam for tests of the locking around the probe.
+var probeLockedFn = probeLocked
+
+func probeLocked(ctx context.Context, s *modelstore.Store, m modelstore.Model, threads int) error {
+	if err := RuntimeCheck(); err != nil {
+		return err
+	}
 	files, err := s.InstalledEmbedder(m)
 	if err != nil {
 		return err

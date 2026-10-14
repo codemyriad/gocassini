@@ -16,7 +16,6 @@ import (
 
 	"gocassini/internal/inspect"
 	"gocassini/internal/topics"
-	"gocassini/internal/transcribe"
 )
 
 // topicsExitTranscript: the meeting has no transcript to embed, or none with
@@ -125,14 +124,7 @@ func runTopicsEmbed(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err := checkWritableDir(filepath.Dir(*out)); err != nil {
 		return fail(topicsExitUsage, "--out: %v", err)
 	}
-	n := topics.ClampThreads(*threads)
-	if *threads <= 0 {
-		var warn error
-		n, warn = topics.Threads(transcribe.DefaultNumThreads())
-		if warn != nil {
-			fmt.Fprintf(stderr, "cassini topics embed: %v\n", warn)
-		}
-	}
+	n := topicsThreads(*threads, stderr, "cassini topics embed")
 	unlock, err := lockModelRuntimeFn(ctx, *root)
 	if err != nil {
 		return fail(topicsExitRuntime, "model runtime lock: %v", err)
