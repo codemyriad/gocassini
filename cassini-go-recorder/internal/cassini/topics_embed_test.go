@@ -269,6 +269,7 @@ func TestTopicsTranscriptReason(t *testing.T) {
 	cases := map[string]error{
 		"transcript-integrity": fmt.Errorf("decode transcript body: %w", inspect.ErrTranscriptIntegrity),
 		"no-transcript":        fmt.Errorf("bundle x has %w", inspect.ErrNoDefaultTranscript),
+		"unsupported-format":   fmt.Errorf("unsupported CASSINI_FORMAT=org.cassini.portable-meeting/2: %w", inspect.ErrUnsupportedFormat),
 		"":                     fmt.Errorf("compressed Opus sha256 mismatch between manifest and tag"),
 	}
 	for want, err := range cases {

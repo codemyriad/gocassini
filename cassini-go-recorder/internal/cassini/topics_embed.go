@@ -183,6 +183,9 @@ func topicsTranscriptReason(err error) string {
 	switch {
 	case errors.Is(err, inspect.ErrTranscriptIntegrity):
 		return "transcript-integrity"
+	case errors.Is(err, inspect.ErrUnsupportedFormat):
+		// A draft-era file: reading it again will not help.
+		return "unsupported-format"
 	case errors.Is(err, inspect.ErrNoDefaultTranscript), errors.Is(err, inspect.ErrNotPortableMeeting), errors.Is(err, errTopicsWordsFile):
 		return "no-transcript"
 	}
