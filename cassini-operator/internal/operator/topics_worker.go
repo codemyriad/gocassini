@@ -330,7 +330,7 @@ func (s *topicsService) process(ctx context.Context, row topicMeetingRow, versio
 		return
 	}
 	defer os.RemoveAll(tmp)
-	input, unavailable, err := s.transcriptSource(ctx, row, tmp)
+	input, local, unavailable, err := s.transcriptSource(ctx, row, tmp)
 	switch {
 	case ctx.Err() != nil:
 		s.countPreemption()
@@ -354,9 +354,10 @@ func (s *topicsService) process(ctx context.Context, row topicMeetingRow, versio
 	out := filepath.Join(tmp, "passages.jsonl")
 	started := time.Now()
 	run, err := s.runEmbed(ctx, input, out, knownKey)
-	if draftFormat(err) {
+	if draftFormat(err) && local {
 		// Published in a pre-publication draft of the format, which this
-		// build does not read: the job's own bundle still has the transcript.
+		// build does not read. The promoted copy is the delivered build, so
+		// the job's bundle beside it is the one that produced it.
 		bundle, ok, linkErr := s.linkBundle(row, tmp)
 		if linkErr != nil {
 			s.failRow(base, row, linkErr)
@@ -364,6 +365,15 @@ func (s *topicsService) process(ctx context.Context, row topicMeetingRow, versio
 		}
 		if ok {
 			run, err = s.runEmbed(ctx, bundle, out, knownKey)
+		}
+	}
+	if draftFormat(err) && knownKey != "" {
+		// Read from its bundle before, which retention has removed since:
+		// the stored vectors still hold it, in the current vector space.
+		stored, ok, verr := s.vectors.meeting(ctx, row.OpusName)
+		if verr == nil && ok && stored.EmbedKey == knownKey && stored.ModelRevision == versions.ModelRevision &&
+			stored.RecipeVersion == versions.RecipeVersion && stored.ChunkerVersion == versions.ChunkerVersion {
+			run, err = topicsEmbedRun{unchanged: true, embedKey: knownKey}, nil
 		}
 	}
 	if err != nil {
@@ -518,34 +528,34 @@ func (s *topicsService) failRow(ctx context.Context, row topicMeetingRow, err er
 }
 
 // transcriptSource puts the delivered recording's transcript at a private
-// path under dir: the promoted local copy when it is the delivered build,
-// else the archive's own copy. unavailable names a meeting that has no
-// delivered recording to read.
-func (s *topicsService) transcriptSource(ctx context.Context, row topicMeetingRow, dir string) (path, unavailable string, err error) {
+// path under dir: the promoted local copy when it is the delivered build
+// (local), else the archive's own copy. unavailable names a meeting that has
+// no delivered recording to read.
+func (s *topicsService) transcriptSource(ctx context.Context, row topicMeetingRow, dir string) (path string, local bool, unavailable string, err error) {
 	digest := row.DeliveredDigest
 	if digest == "" && s.delivered != nil {
 		var exists bool
 		digest, exists, err = s.delivered(ctx, row.OpusName)
 		if err != nil {
-			return "", "", fmt.Errorf("read delivered state: %w", err)
+			return "", false, "", fmt.Errorf("read delivered state: %w", err)
 		}
 		if !exists {
-			return "", "recording-missing", nil
+			return "", false, "recording-missing", nil
 		}
 	}
 	if digest != "" {
 		if path, ok, err := s.localCopy(row, digest, dir); err != nil || ok {
-			return path, "", err
+			return path, ok, "", err
 		}
 	}
 	if s.archive == nil {
-		return "", "", fmt.Errorf("the local copy is not the delivered build and the archive cannot be read")
+		return "", false, "", fmt.Errorf("the local copy is not the delivered build and the archive cannot be read")
 	}
 	path, _, err = s.archive(ctx, row.OpusName, dir)
 	if err != nil {
-		return "", "", err
+		return "", false, "", err
 	}
-	return path, "", nil
+	return path, false, "", nil
 }
 
 // localCopy links the promoted recording into dir when its digest is the
