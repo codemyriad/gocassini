@@ -144,6 +144,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runRecord(ctx, args[1:], stdout, stderr)
 	case "retag":
 		return runRetag(ctx, args[1:], stdout, stderr)
+	case "upgrade-format":
+		return runUpgradeFormat(ctx, args[1:], stdout, stderr)
 	case "annotate":
 		return runAnnotate(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "serve":
@@ -428,6 +430,7 @@ Usage:
   cassini record --call <CALL_URL> --out "./Meeting.opus"
   cassini record --simulate --out ./runs/demo.run
   cassini retag ./Meeting.opus --out ./Retagged.opus --room-id rm_9f2a1c3d4e5b6a70
+  cassini upgrade-format ./Draft.opus --out ./Meeting.opus
   cassini annotate show ./Meeting.opus
   cassini annotate apply ./Meeting.opus --ops ./ops.json --actor-id alice
   cassini serve ./site
@@ -450,6 +453,8 @@ Commands:
   retag    Rewrite a packed .opus file's room and job fields without re-encoding it
   serve    Serve a static Cassini site locally
   speakers Separate the voices of people who shared one device
+  upgrade-format
+           Rewrite a .opus file in a pre-publication draft format as the published format
 
 Paths:
   Output paths are resolved from the current working directory.
