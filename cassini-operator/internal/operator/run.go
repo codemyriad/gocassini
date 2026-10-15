@@ -621,6 +621,9 @@ Usage:
 Commands:
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
+  `+importMeetingCommand+`       ingest portable meeting files into this archive
+                       (validate, deliver, index, adopt retention, share;
+                       see --help on the command itself)
   clear-meeting-metadata  clear derived file-ID metadata, preserving room names
   import-meeting-metadata import catalog descriptions using destination file IDs
                        into Nextcloud Files (run by hand after an update;
