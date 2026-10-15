@@ -44,7 +44,7 @@ import type {
   VocabularyTag,
 } from "./annotations";
 import type { SpeakerEditsDoc, SpeakerEditsState } from "./speakerEdits";
-import type { MeetingSuggestions, Topic, TopicBatchResult, TopicCoverage, TopicDecision, TopicLibrary, TopicQueue, TopicQueueQuery, TopicRevision, TopicSave, TopicTagRooms } from "./topics";
+import type { MeetingSuggestions, ProposalAction, Topic, TopicBatchResult, TopicProposal, TopicCoverage, TopicDecision, TopicLibrary, TopicQueue, TopicQueueQuery, TopicRevision, TopicSave, TopicTagRooms } from "./topics";
 import {
   searchMeetingTranscripts,
   type MeetingSearchOptions,
@@ -176,6 +176,12 @@ export interface DataProvider {
   // of one topic on many of them (at most 100), each as a single decision
   // would be made.
   loadReviewQueue?(query?: TopicQueueQuery): Promise<TopicQueue>;
+  // OPTIONAL: recurring-topic proposals, per room, and what people decide
+  // about them. Approve answers 409 terms-from-meetings (with the terms) when
+  // the typed label or definition shares words with the draft name and
+  // confirmTerms was not set.
+  loadTopicProposals?(room?: string): Promise<{ enabled: boolean; proposals?: TopicProposal[] }>;
+  decideTopicProposal?(id: string, action: ProposalAction & { requestId: string }): Promise<{ proposal: { id: string; state: string }; topic?: { tagId: string } }>;
   decideSuggestionBatch?(request: { requestId: string; tagId: string; meetingIds: string[]; decision: "confirm" | "reject" }): Promise<{ results: TopicBatchResult[] }>;
 
   // OPTIONAL (D-736): what was SAID across the meetings this caller can read —

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -21,7 +22,7 @@ import (
 // or text.
 const (
 	topicsVectorsFilename      = "topics.sqlite3"
-	topicsVectorsSchemaVersion = 1
+	topicsVectorsSchemaVersion = 2
 )
 
 const topicsVectorsSchemaSQL = `
@@ -32,7 +33,10 @@ CREATE TABLE IF NOT EXISTS passage_set (
   -- What the embed reported with these vectors, so a skipped embed reports
   -- the same: the transcript digest and the detected language.
   payload_sha256 TEXT NOT NULL DEFAULT '', language TEXT NOT NULL DEFAULT '',
-  language_confidence REAL NOT NULL DEFAULT 0, detector_version TEXT NOT NULL DEFAULT '');
+  language_confidence REAL NOT NULL DEFAULT 0, detector_version TEXT NOT NULL DEFAULT '',
+  -- sha256 of each word of the speakers' names, to keep names out of draft
+  -- topic names; never the names themselves.
+  speaker_terms TEXT NOT NULL DEFAULT '[]');
 CREATE TABLE IF NOT EXISTS passage (
   opus_name TEXT NOT NULL REFERENCES passage_set ON DELETE CASCADE,
   ordinal INTEGER NOT NULL, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL,
@@ -85,6 +89,7 @@ type topicPassageSet struct {
 	Language           string
 	LanguageConfidence float64
 	DetectorVersion    string
+	SpeakerTermHashes  []string
 	Passages           []topicStoredPassage
 }
 
@@ -130,8 +135,8 @@ func (s *topicsVectorStore) replaceMeeting(ctx context.Context, name string, set
 		if _, err := tx.ExecContext(ctx, `DELETE FROM passage_set WHERE opus_name=?`, name); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO passage_set(opus_name,embed_key,model_revision,chunker_version,recipe_version,built_at,payload_sha256,language,language_confidence,detector_version) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-			name, set.EmbedKey, set.ModelRevision, set.ChunkerVersion, set.RecipeVersion, time.Now().Unix(), set.PayloadSHA256, set.Language, set.LanguageConfidence, set.DetectorVersion); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO passage_set(opus_name,embed_key,model_revision,chunker_version,recipe_version,built_at,payload_sha256,language,language_confidence,detector_version,speaker_terms) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			name, set.EmbedKey, set.ModelRevision, set.ChunkerVersion, set.RecipeVersion, time.Now().Unix(), set.PayloadSHA256, set.Language, set.LanguageConfidence, set.DetectorVersion, speakerTermsJSON(set.SpeakerTermHashes)); err != nil {
 			return err
 		}
 		stmt, err := tx.PrepareContext(ctx, `INSERT INTO passage(opus_name,ordinal,start_ms,end_ms,word_count,token_count,boundary,vector) VALUES(?,?,?,?,?,?,?,?)`)
@@ -151,8 +156,10 @@ func (s *topicsVectorStore) replaceMeeting(ctx context.Context, name string, set
 // meeting reads one meeting's passages; ok is false when none are stored.
 func (s *topicsVectorStore) meeting(ctx context.Context, name string) (topicPassageSet, bool, error) {
 	var set topicPassageSet
-	err := s.db.QueryRowContext(ctx, `SELECT embed_key,model_revision,chunker_version,recipe_version,payload_sha256,language,language_confidence,detector_version FROM passage_set WHERE opus_name=?`, name).
-		Scan(&set.EmbedKey, &set.ModelRevision, &set.ChunkerVersion, &set.RecipeVersion, &set.PayloadSHA256, &set.Language, &set.LanguageConfidence, &set.DetectorVersion)
+	var speakers string
+	err := s.db.QueryRowContext(ctx, `SELECT embed_key,model_revision,chunker_version,recipe_version,payload_sha256,language,language_confidence,detector_version,speaker_terms FROM passage_set WHERE opus_name=?`, name).
+		Scan(&set.EmbedKey, &set.ModelRevision, &set.ChunkerVersion, &set.RecipeVersion, &set.PayloadSHA256, &set.Language, &set.LanguageConfidence, &set.DetectorVersion, &speakers)
+	_ = json.Unmarshal([]byte(speakers), &set.SpeakerTermHashes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return set, false, nil
 	}
@@ -206,6 +213,14 @@ func (s *topicsVectorStore) size() int64 {
 	return total
 }
 
+func speakerTermsJSON(hashes []string) string {
+	if hashes == nil {
+		hashes = []string{}
+	}
+	raw, _ := json.Marshal(hashes)
+	return string(raw)
+}
+
 // encodeTopicVector stores a vector as little-endian float32s.
 func encodeTopicVector(v []float32) []byte {
 	out := make([]byte, 4*len(v))
@@ -224,4 +239,16 @@ func decodeTopicVector(b []byte) ([]float32, error) {
 		out[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[4*i:]))
 	}
 	return out, nil
+}
+
+// setSpeakerTerms replaces a meeting's speaker-term hashes when its embed was
+// skipped: a speaker rename changes them, not the words.
+func (s *topicsVectorStore) setSpeakerTerms(ctx context.Context, name, embedKey string, hashes []string) error {
+	release, err := s.lockMeeting(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer release()
+	_, err = s.db.ExecContext(ctx, `UPDATE passage_set SET speaker_terms=? WHERE opus_name=? AND embed_key=?`, speakerTermsJSON(hashes), name, embedKey)
+	return err
 }

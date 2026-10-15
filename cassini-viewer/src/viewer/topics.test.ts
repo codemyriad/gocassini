@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newRequestId, roomWarning, usageLine, type Topic } from "./topics";
+import { newRequestId, roomWarning, sharedTerms, usageLine, type Topic } from "./topics";
 
 const topic = (meetings: number, pending: number) => ({ usage: { meetings, pending } }) as Topic;
 
@@ -21,5 +21,9 @@ describe("topic helpers", () => {
   it("makes request ids the operator accepts", () => {
     expect(newRequestId()).toMatch(/^req_[0-9a-f]{24}$/);
     expect(newRequestId()).not.toBe(newRequestId());
+  });
+
+  it("treats Indic vowel signs as part of a word", () => {
+    expect(sharedTerms("परियोजना की समीक्षा", ["परियोजना / बजट"])).toEqual(["परियोजना"]);
   });
 });

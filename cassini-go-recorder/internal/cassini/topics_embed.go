@@ -45,6 +45,10 @@ type topicsPassagesHeader struct {
 	RecordedLanguage string `json:"recordedLanguage,omitempty"`
 	// TruncatedNone says no passage was cut: over-long text is split.
 	TruncatedNone bool `json:"truncatedNone"`
+	// SpeakerTermHashes are the sha256 of the words of the speakers' names
+	// (topics.SpeakerTermHashes), so names can be kept out of draft topic
+	// names without the vectors file holding a name.
+	SpeakerTermHashes []string `json:"speakerTermHashes"`
 }
 
 type topicsPassageLine struct {
@@ -104,9 +108,12 @@ func runTopicsEmbed(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	key := topics.EmbedKey(transcript.PayloadSHA256, revision)
 	enc := json.NewEncoder(stdout)
-	// The caller already holds these vectors: nothing to load or lock.
+	speakers := topics.SpeakerTermHashes([]byte(os.Getenv(topics.SpeakerKeyEnv)), transcript.SpeakerLabels)
+	// The caller already holds these vectors: nothing to load or lock. The
+	// speakers' names are reported all the same: a rename changes them and
+	// not the words.
 	if *knownKey != "" && *knownKey == key {
-		_ = enc.Encode(map[string]any{"unchanged": true, "embedKey": key})
+		_ = enc.Encode(map[string]any{"unchanged": true, "embedKey": key, "speakerTermHashes": speakers})
 		return 0
 	}
 	if err := topicsRuntimeCheckFn(); err != nil {
@@ -157,6 +164,7 @@ func runTopicsEmbed(ctx context.Context, args []string, stdout, stderr io.Writer
 		Dimensions: topics.Dimensions, Count: len(passages),
 		Language: language.Code, LanguageConfidence: language.Confidence, DetectorVersion: topics.DetectorVersion,
 		RecordedLanguage: transcript.Language, TruncatedNone: true,
+		SpeakerTermHashes: speakers,
 	}
 	if err := writeTopicsPassages(*out, header, passages, embeddings); err != nil {
 		if errors.Is(err, topics.ErrModelFault) {

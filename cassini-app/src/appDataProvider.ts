@@ -27,7 +27,7 @@ import {
   type SpeakerSummaryChoice,
   type SummaryRequestState,
 } from "cassini-viewer/meetingSummary";
-import { newRequestId, type MeetingSuggestions, type Topic, type TopicBatchResult, type TopicCoverage, type TopicDecision, type TopicQueue, type TopicQueueQuery, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "cassini-viewer/topics";
+import { newRequestId, type MeetingSuggestions, type ProposalAction, type Topic, type TopicProposal, type TopicBatchResult, type TopicCoverage, type TopicDecision, type TopicQueue, type TopicQueueQuery, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "cassini-viewer/topics";
 
 import {
   listInsights as fetchInsightRuns,
@@ -217,6 +217,14 @@ export class AppDataProvider extends StaticCatalogProvider {
 
   decideSuggestionBatch(request: { requestId: string; tagId: string; meetingIds: string[]; decision: "confirm" | "reject" }): Promise<{ results: TopicBatchResult[] }> {
     return requestAnnotations("topics/review/batch", request);
+  }
+
+  loadTopicProposals(room?: string): Promise<{ enabled: boolean; proposals?: TopicProposal[] }> {
+    return requestAnnotations(room ? `topics/proposals?room=${encodeURIComponent(room)}` : "topics/proposals");
+  }
+
+  decideTopicProposal(id: string, action: ProposalAction & { requestId: string }): Promise<{ proposal: { id: string; state: string }; topic?: { tagId: string } }> {
+    return requestAnnotations(`topics/proposals/${encodeURIComponent(id)}`, action);
   }
 
   loadTopicCoverage(room?: string): Promise<TopicCoverage> {

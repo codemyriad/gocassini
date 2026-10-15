@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -92,6 +93,7 @@ func TestTopicsEmbedBundleAndOpusGiveTheSameKey(t *testing.T) {
 	root := t.TempDir()
 	m := fakeInstallShipped(t, root, DefaultEmbeddingModelID)
 	stubTopicsEmbedder(t, &fakeEmbedder{})
+	t.Setenv(topics.SpeakerKeyEnv, "deployment-key")
 	var headers []topicsPassagesHeader
 	for _, input := range []string{bundleDir, opus} {
 		out := filepath.Join(t.TempDir(), "passages.jsonl")
@@ -116,6 +118,20 @@ func TestTopicsEmbedBundleAndOpusGiveTheSameKey(t *testing.T) {
 			h.DetectorVersion != topics.DetectorVersion || h.Language != topics.LanguageUnknown {
 			t.Fatalf("header %+v, want payload %s key %s", h, packed, want)
 		}
+		// The speakers' names, hashed word by word, and never in clear.
+		if len(h.SpeakerTermHashes) == 0 || !reflect.DeepEqual(h.SpeakerTermHashes, headers[0].SpeakerTermHashes) {
+			t.Fatalf("speaker term hashes %v, bundle %v", h.SpeakerTermHashes, headers[0].SpeakerTermHashes)
+		}
+	}
+	// An unchanged meeting still reports its speakers' names: a rename
+	// changes them and not the words.
+	code, stdout, stderr := runTopicsEmbedCmd(context.Background(), root, "--input", opus, "--known-key", want, "--out", filepath.Join(t.TempDir(), "p.jsonl"))
+	var line struct {
+		Unchanged bool     `json:"unchanged"`
+		Speakers  []string `json:"speakerTermHashes"`
+	}
+	if code != 0 || json.Unmarshal([]byte(strings.TrimSpace(stdout)), &line) != nil || !line.Unchanged || !reflect.DeepEqual(line.Speakers, headers[0].SpeakerTermHashes) {
+		t.Fatalf("unchanged: code %d stdout %q stderr %q", code, stdout, stderr)
 	}
 }
 

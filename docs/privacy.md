@@ -131,6 +131,11 @@ artifacts:
   meeting, and when. Shown to the people who can read that meeting; deleted
   with the meeting. A confirm is also an ordinary tag in the recording,
   credited to that person.
+- **Topic proposals** — for recurring themes no topic covers: the time ranges
+  of the passages they draw on, their average vector, a draft name and a few
+  words from those meetings' transcripts. Shown only to people who can read
+  every meeting a proposal draws on; hidden at once and rebuilt when one of
+  those meetings is deleted.
 - **Topic library** — the names and definitions people write for topics, and
   every revision of them with who saved it. Everyone who can read at least one
   meeting sees the names and definitions; who wrote them is shown to

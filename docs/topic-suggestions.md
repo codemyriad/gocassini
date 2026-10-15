@@ -5,8 +5,10 @@ was about. A person confirms or rejects every suggestion; only a confirm writes
 a tag into the recording. This page is for the administrator who runs it. The
 design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.md).
 
-> **Status.** Topics are suggested on the meeting page and in a review queue
-> across meetings. Proposals for new topics come in a later release.
+> **Status.** Topics are suggested on the meeting page and in a review queue,
+> and recurring themes no topic covers are proposed as new topics. How good the
+> suggestions are has not been measured on people's own labels yet, so every
+> suggestion says that its language is not validated.
 
 ## Words used on this page
 
@@ -101,6 +103,40 @@ sorted out before a topic can be confirmed; rejecting still works.
 Scores are never shown, only the rule in words and the number of supporting
 words. Suggestions are not in the recording, its copies, search or the public
 viewer until someone confirms them.
+
+## New topics
+
+**Manage tags → New topics** lists themes that keep coming up in a room's
+meetings and no topic covers: passages of at least 40 words, from meetings of
+the last 90 days, that match no topic and are close in meaning to each other,
+on at least three meetings on three different days. At most 12 per room. Each
+card shows a draft name and a few words, taken from those meetings' own
+transcripts, and quotes from them.
+
+- A proposal is shown only to someone who can read **every** meeting it draws
+  on, because its draft name and words come from all of them. What remains is
+  an absence signal, weaker than search's: a passage you can read may be
+  missing from a theme because a meeting you cannot read pulled the theme
+  elsewhere.
+- Speakers' names never become a draft name: the vectors file keeps a hash of
+  each word of each speaker's name, never the name, and naming leaves those
+  words out.
+- Themes that are mostly greetings and wrap-ups, or that come up in most of a
+  room's meetings, are listed last and folded.
+- **Create topic** asks for a name and a definition written by you; the draft
+  stays beside the fields. If what you type shares words with the draft, you
+  confirm that those words, from that room's meetings, may be shown to
+  everyone who can tag. The new topic's suggestions are then reviewed like any
+  other; nothing is confirmed automatically.
+- **Link to topic** says the theme is an existing topic, and checks that topic
+  again on these meetings.
+- **Dismiss** keeps the theme from being proposed again, even after a model
+  change; **Restore** undoes it.
+
+Rooms are looked at again at most every six hours after a new meeting, every
+room once a night, and only while nobody is recording. When a meeting is
+deleted, its proposals disappear until they are rebuilt from the meetings
+that remain; one left with fewer than three meetings is dropped.
 
 ## Switching it on
 

@@ -524,32 +524,7 @@ func (s *annotationService) createTopic(w http.ResponseWriter, r *http.Request, 
 			}
 		}
 		now := t.store.unix()
-		if edits, err := topicEditsThisHour(ctx, tx, caller, now); err != nil {
-			return err
-		} else if edits >= maxTopicEditsPerHour {
-			return refuseTopic(http.StatusTooManyRequests, "rate-limited")
-		}
-		var active int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM topic_library WHERE status='active'`).Scan(&active); err != nil {
-			return err
-		}
-		if active >= maxActiveTopics {
-			return refuseTopic(http.StatusConflict, "library-full", "limit", maxActiveTopics)
-		}
-		var owner string
-		if err := tx.QueryRowContext(ctx, `SELECT tag_id FROM topic_library WHERE label_folded=? AND status='active'`, foldTagLabel(label)).Scan(&owner); err == nil {
-			return refuseTopic(http.StatusConflict, "label-taken", "tagId", owner)
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO topic_library(tag_id,label,label_folded,definition,definition_sha,color,icon,status,origin,revision,created_by,created_at,updated_by,updated_at)
- VALUES(?,?,?,?,?,?,?,'active',?,1,?,?,?,?)`, tagID, label, foldTagLabel(label), definition, topicDefinitionSHA(definition), in.Color, in.Icon, origin, caller, now, caller, now); err != nil {
-			return err
-		}
-		if err := appendTopicEvent(ctx, tx, tagID, 1, caller, now, topicChange{Kind: "create", Label: label, Definition: definition, Color: in.Color, Icon: in.Icon, Status: topicStatusActive}); err != nil {
-			return err
-		}
-		if err := addRescoreTx(ctx, tx, tagID); err != nil {
+		if err := insertLibraryTopic(ctx, tx, caller, now, libraryInsert{TagID: tagID, Label: label, Definition: definition, Color: in.Color, Icon: in.Icon, Origin: origin}); err != nil {
 			return err
 		}
 		row, _, err := topicByID(ctx, tx, tagID)
@@ -566,6 +541,49 @@ func (s *annotationService) createTopic(w http.ResponseWriter, r *http.Request, 
 	}
 	t.wakeUp()
 	writeJSON(w, http.StatusOK, map[string]any{"topic": view})
+}
+
+// libraryInsert is a new library topic.
+type libraryInsert struct {
+	TagID, Label, Definition string
+	Color, Icon              *string
+	Origin, ProposalID       string
+}
+
+// insertLibraryTopic adds a topic inside tx, under the library's rules: the
+// hourly limit, the 200-topic cap and one active topic per label. It queues
+// the topic's rescore in the same transaction.
+func insertLibraryTopic(ctx context.Context, tx *sql.Tx, caller string, now int64, in libraryInsert) error {
+	if edits, err := topicEditsThisHour(ctx, tx, caller, now); err != nil {
+		return err
+	} else if edits >= maxTopicEditsPerHour {
+		return refuseTopic(http.StatusTooManyRequests, "rate-limited")
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM topic_library WHERE status='active'`).Scan(&active); err != nil {
+		return err
+	}
+	if active >= maxActiveTopics {
+		return refuseTopic(http.StatusConflict, "library-full", "limit", maxActiveTopics)
+	}
+	var owner string
+	if err := tx.QueryRowContext(ctx, `SELECT tag_id FROM topic_library WHERE label_folded=? AND status='active'`, foldTagLabel(in.Label)).Scan(&owner); err == nil {
+		return refuseTopic(http.StatusConflict, "label-taken", "tagId", owner)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	var proposal any
+	if in.ProposalID != "" {
+		proposal = in.ProposalID
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO topic_library(tag_id,label,label_folded,definition,definition_sha,color,icon,status,origin,proposal_id,revision,created_by,created_at,updated_by,updated_at)
+ VALUES(?,?,?,?,?,?,?,'active',?,?,1,?,?,?,?)`, in.TagID, in.Label, foldTagLabel(in.Label), in.Definition, topicDefinitionSHA(in.Definition), in.Color, in.Icon, in.Origin, proposal, caller, now, caller, now); err != nil {
+		return err
+	}
+	if err := appendTopicEvent(ctx, tx, in.TagID, 1, caller, now, topicChange{Kind: "create", Label: in.Label, Definition: in.Definition, Color: in.Color, Icon: in.Icon, Status: topicStatusActive}); err != nil {
+		return err
+	}
+	return addRescoreTx(ctx, tx, in.TagID)
 }
 
 func topicViewOf(row topicLibraryRow) topicView {
@@ -1053,7 +1071,6 @@ func (s *annotationService) serveTopicRooms(w http.ResponseWriter, r *http.Reque
 	sort.Strings(names)
 	writeJSON(w, http.StatusOK, map[string]any{"rooms": names, "roomCount": len(rooms)})
 }
-
 
 // libraryOn: the library shapes tagging only while topic suggestions are on.
 func (s *annotationService) libraryOn() bool {
