@@ -195,6 +195,12 @@ func (t *topicsService) rescoreTopic(ctx context.Context, topic topicForScoring,
 			if status != topicStatusActive || sha != topic.DefinitionSHA {
 				return errTopicChanged
 			}
+			// A gate fitted since queued the topic again.
+			if key, err := effectiveScorerKeyTx(ctx, tx, topic, inputs.Versions); err != nil {
+				return err
+			} else if key != topic.scorerKey() {
+				return errTopicChanged
+			}
 			if err := t.store.notRetired(ctx, name); err != nil {
 				if errors.Is(err, errMeetingRetired) {
 					return nil

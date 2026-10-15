@@ -653,6 +653,10 @@ func (t *topicsService) rescoreMeetingTopic(ctx context.Context, opusName, tagID
 			if err := tx.QueryRowContext(ctx, `SELECT status,definition_sha FROM topic_library WHERE tag_id=?`, tagID).Scan(&status, &sha); err != nil || status != topicStatusActive || sha != topic.DefinitionSHA {
 				return nil
 			}
+			// A gate fitted meanwhile queued the topic's own rescore.
+			if key, err := effectiveScorerKeyTx(ctx, tx, topic, versions); err != nil || key != topic.scorerKey() {
+				return err
+			}
 			if err := t.store.notRetired(ctx, opusName); err != nil {
 				return nil
 			}

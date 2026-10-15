@@ -121,7 +121,7 @@ export interface TopicDecided {
   tagId: string;
   label: string;
   verdict: "confirmed" | "rejected";
-  source: "review" | "direct";
+  source: "review" | "direct" | "merge";
   by?: string;
   at: string;
 }

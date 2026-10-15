@@ -108,6 +108,27 @@ type topicForScoring struct {
 	LabelFolded   string
 	DefinitionSHA string
 	Vector        []float32
+	// Params are the global constants with the topic's fitted gate, if it
+	// has one; ScorerKey names them.
+	Params    topicScorerParams
+	ScorerKey string
+}
+
+// params are the topic's scorer constants; a topic built without them gets
+// the global ones.
+func (t topicForScoring) params() topicScorerParams {
+	if t.Params == (topicScorerParams{}) {
+		return topicScorerV1
+	}
+	return t.Params
+}
+
+// scorerKey names the topic's constants.
+func (t topicForScoring) scorerKey() string {
+	if t.ScorerKey == "" {
+		return topicScorerKeyFor(t.params())
+	}
+	return t.ScorerKey
 }
 
 // topicScoringInputs is everything a meeting is scored against.
@@ -149,9 +170,23 @@ func (s *topicsStore) scoringInputs(ctx context.Context, v topicVersions) (topic
 		if t.Vector, err = decodeTopicVector(blob); err != nil {
 			return in, false, err
 		}
+		t.Params, t.ScorerKey = topicScorerV1, in.ScorerKey
 		in.Topics = append(in.Topics, t)
 	}
-	return in, true, rows.Err()
+	if err := rows.Close(); err != nil {
+		return in, false, err
+	}
+	gates, err := topicGates(ctx, s.db)
+	if err != nil {
+		return in, false, err
+	}
+	for i, t := range in.Topics {
+		if g, ok := gates[t.TagID]; ok && g.appliesTo(t, v) {
+			in.Topics[i].Params.Threshold, in.Topics[i].Params.Margin = g.Threshold, g.Margin
+			in.Topics[i].ScorerKey = topicScorerKeyFor(in.Topics[i].Params)
+		}
+	}
+	return in, true, nil
 }
 
 // topicMeetingScore is one topic's outcome for one meeting.
@@ -164,7 +199,7 @@ type topicMeetingScore struct {
 func scoreMeetingTopics(passages []topicPassage, in topicScoringInputs) []topicMeetingScore {
 	out := make([]topicMeetingScore, 0, len(in.Topics))
 	for _, t := range in.Topics {
-		out = append(out, topicMeetingScore{Topic: t, Decision: scoreTopic(passages, t.Vector, in.Controls, topicScorerV1)})
+		out = append(out, topicMeetingScore{Topic: t, Decision: scoreTopic(passages, t.Vector, in.Controls, t.params())})
 	}
 	return out
 }
@@ -236,7 +271,7 @@ func (s *topicsStore) applyScores(ctx context.Context, tx *sql.Tx, name, payload
 		}
 		if carried.has(ctx, tx, t) {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO topic_verdict(opus_name,tag_id,verdict,source,at,payload_sha256,definition_sha,scorer_key) VALUES(?,?,'confirmed','direct',?,?,?,?)`,
-				name, t.TagID, now, payload, t.DefinitionSHA, topicsScorerKey()); err != nil {
+				name, t.TagID, now, payload, t.DefinitionSHA, t.scorerKey()); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE topic_suggestion SET state='withdrawn',updated_at=? WHERE opus_name=? AND tag_id=? AND state='pending'`, now, name, t.TagID); err != nil {
@@ -270,7 +305,7 @@ func (s *topicsStore) applyScores(ctx context.Context, tx *sql.Tx, name, payload
 		if _, err := tx.ExecContext(ctx, `INSERT INTO topic_suggestion(opus_name,tag_id,state,rule,support_words,peak,min_margin,definition_sha,scorer_key,created_at,updated_at)
  VALUES(?,?,'pending',?,?,?,?,?,?,?,?) ON CONFLICT(opus_name,tag_id) DO UPDATE SET state='pending',rule=excluded.rule,support_words=excluded.support_words,
  peak=excluded.peak,min_margin=excluded.min_margin,definition_sha=excluded.definition_sha,scorer_key=excluded.scorer_key,updated_at=excluded.updated_at`,
-			name, t.TagID, rule, words, peak, minMargin, t.DefinitionSHA, topicsScorerKey(), now, now); err != nil {
+			name, t.TagID, rule, words, peak, minMargin, t.DefinitionSHA, t.scorerKey(), now, now); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM topic_evidence WHERE opus_name=? AND tag_id=?`, name, t.TagID); err != nil {
