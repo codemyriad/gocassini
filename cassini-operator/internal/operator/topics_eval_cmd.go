@@ -21,9 +21,9 @@ import (
 // reads and writes only the files it is given.
 const topicsEvalCommand = "topics-eval"
 
-// topicsEvalGates are the gates --sweep reports, the prototype's sensitivity
-// table.
-var topicsEvalGates = [][2]float64{{0.83, 0.04}, {0.85, 0.05}, {0.87, 0.06}, {0.89, 0.08}}
+// topicsEvalGates are the gates --sweep reports around the default 0.68/0.06
+// of recipe r2. Gate 1 swept the prototype's 0.83/0.04 to 0.89/0.08 on r1.
+var topicsEvalGates = [][2]float64{{0.64, 0.04}, {0.66, 0.05}, {0.68, 0.06}, {0.70, 0.07}, {0.72, 0.08}}
 
 type topicsEvalMeeting struct {
 	ID       string
@@ -80,7 +80,7 @@ func runTopicsEval(_ context.Context, args []string, stdout, stderr io.Writer) i
 	definitions := fs.String("definitions", "", "`cassini topics embed-texts` output: every topic and both controls")
 	reference := fs.String("reference", "", "assignments to compare with: {\"meetings\": [...], \"assignments\": [{\"meeting\", \"topic\"}]}")
 	labels := fs.String("labels", "", "people's labels, JSON lines {\"meeting\", \"topic\", \"labeller\", \"inTopic\"}: agreement, precision and estimated recall per language")
-	sweep := fs.Bool("sweep", false, "also report the gates 0.83/0.04, 0.85/0.05, 0.87/0.06 and 0.89/0.08")
+	sweep := fs.Bool("sweep", false, "also report the gates 0.64/0.04, 0.66/0.05, 0.70/0.07 and 0.72/0.08")
 	out := fs.String("out", "", "write the full report, with per-pair differences, here")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

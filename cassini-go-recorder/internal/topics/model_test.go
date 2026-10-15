@@ -83,7 +83,7 @@ func readReference(t *testing.T, path string) referenceVectors {
 	if err := json.Unmarshal(raw, &ref); err != nil {
 		t.Fatal(err)
 	}
-	if ref.Prompt != PromptPrefix || len(ref.Texts) == 0 || len(ref.Texts) != len(ref.Vectors) || len(ref.Texts) != len(ref.IDs) {
+	if ref.Prompt != ProbePrefix || len(ref.Texts) == 0 || len(ref.Texts) != len(ref.Vectors) || len(ref.Texts) != len(ref.IDs) {
 		t.Fatalf("%s: malformed reference", path)
 	}
 	return ref
@@ -112,11 +112,11 @@ func TestTokenizerMatchesHuggingFace(t *testing.T) {
 	if err := json.Unmarshal(raw, &parity); err != nil {
 		t.Fatal(err)
 	}
-	if parity.Prompt != PromptPrefix || len(parity.Cases) < 40 {
+	if parity.Prompt != ProbePrefix || len(parity.Cases) < 40 {
 		t.Fatalf("parity file: prompt %q, %d cases", parity.Prompt, len(parity.Cases))
 	}
 	for _, c := range parity.Cases {
-		if got := tok.Encode(c.Text); !slices.Equal(got, c.IDs) {
+		if got := tok.Encode(ProbePrefix, c.Text); !slices.Equal(got, c.IDs) {
 			t.Errorf("%s: %d ids, Hugging Face gives %d\n go: %v\n hf: %v", c.Name, len(got), len(c.IDs), got, c.IDs)
 		}
 	}
@@ -133,7 +133,7 @@ func TestControlTokenTextStaysText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := tok.Encode("<bos> <eos> <pad> <unk>")
+	ids := tok.Encode(ProbePrefix, "<bos> <eos> <pad> <unk>")
 	if ids[0] != bosID || ids[len(ids)-1] != eosID {
 		t.Fatalf("ids = %v, want BOS ... EOS", ids)
 	}
@@ -149,12 +149,12 @@ func TestControlTokenTextStaysText(t *testing.T) {
 func TestGoldenVectors(t *testing.T) {
 	e := openEmbedder(t, false)
 	ref := readReference(t, "testdata/golden_vectors.json")
-	got, err := e.EmbedTexts(context.Background(), ref.Texts)
+	got, err := e.EmbedTexts(context.Background(), ProbePrefix, ref.Texts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := range ref.Texts {
-		if !slices.Equal(e.Tokenizer().Encode(ref.Texts[i]), ref.IDs[i]) {
+		if !slices.Equal(e.Tokenizer().Encode(ProbePrefix, ref.Texts[i]), ref.IDs[i]) {
 			t.Errorf("text %d: ids differ from the reference", i)
 		}
 		if c := Cosine(got[i].Vector, ref.Vectors[i]); c < ProbeMinCosine {
@@ -180,11 +180,11 @@ func TestPaddedBatchEqualsSingle(t *testing.T) {
 		for i := range n {
 			parts = append(parts, udhr[i%len(udhr)])
 		}
-		if text := strings.Join(parts, " "); len(single.Tokenizer().Encode(text)) <= MaxTokens {
+		if text := strings.Join(parts, " "); len(single.Tokenizer().Encode(ProbePrefix, text)) <= MaxTokens {
 			texts = append(texts, text)
 		}
 	}
-	want, err := single.EmbedTexts(context.Background(), texts)
+	want, err := single.EmbedTexts(context.Background(), ProbePrefix, texts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestPaddedBatchEqualsSingle(t *testing.T) {
 	if groups := batches(tokenize(batched, texts), true); len(groups) >= len(texts) {
 		t.Fatalf("batching formed %d groups for %d texts", len(groups), len(texts))
 	}
-	got, err := batched.EmbedTexts(context.Background(), texts)
+	got, err := batched.EmbedTexts(context.Background(), ProbePrefix, texts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestPaddedBatchEqualsSingle(t *testing.T) {
 func tokenize(e *Embedder, texts []string) [][]int64 {
 	ids := make([][]int64, len(texts))
 	for i, text := range texts {
-		ids[i] = e.Tokenizer().Encode(text)
+		ids[i] = e.Tokenizer().Encode(ProbePrefix, text)
 	}
 	return ids
 }
@@ -224,7 +224,7 @@ func TestEmbedTextsRefusesTooLongText(t *testing.T) {
 	for range 600 {
 		long += "word "
 	}
-	if _, err := e.EmbedTexts(context.Background(), []string{"fine", long}); err == nil {
+	if _, err := e.EmbedTexts(context.Background(), ProbePrefix, []string{"fine", long}); err == nil {
 		t.Fatal("a text over the token cap was embedded")
 	}
 }

@@ -7,7 +7,7 @@ shaping: true
 Date: 2026-10-14 · Status: Proposed
 
 - [Implementation slices](slices.md)
-- [Evaluation](evaluation.md) (Gate 1: passed)
+- [Evaluation](evaluation.md) (Gate 1: passed; Gate 2: measured on English, Italian thin)
 - Prototype record: `docs/proposals/automatic-tagging-poc.md` on the `feat/automatic-tagging-poc` branch
 
 ## TL;DR
@@ -108,8 +108,8 @@ promotion done (:177) ───────────────────�
 | Path | Role |
 |---|---|
 | `internal/topics/chunk.go` | Port of the natural-passage chunker (`refine_daily.py:16-47`) with a token cap. Exports `ChunkerVersion = "natural-1"`. |
-| `internal/topics/tokenizer.go` | `go-sentencepiece` over `tokenizer.model`. Adds BOS=2 and EOS=1. Prepends the prompt `task: clustering \| query: `. |
-| `internal/topics/recipe.go` | Exports `EmbedRecipeVersion = "r1"`. It names everything outside the model and the chunker that changes a vector: the prompt prefix, the 512-token cap and the batching policy. Any change to one of them bumps it. |
+| `internal/topics/tokenizer.go` | `go-sentencepiece` over `tokenizer.model`. Adds BOS=2 and EOS=1. Prepends EmbeddingGemma's retrieval prompts (recipe r2): `title: none \| text: ` before a passage, `task: search result \| query: ` before a definition. The model check keeps the `task: clustering \| query: ` prompt its reference vectors were made with. |
+| `internal/topics/recipe.go` | Exports `EmbedRecipeVersion = "r2"`, `PassagePrefix`, `DefinitionPrefix` and `ProbePrefix`. The version names everything outside the model and the chunker that changes a vector: the passage and definition prompts, the 512-token cap and the batching policy. Any change to one of them bumps it. The probe prompt belongs to the model check, not the recipe. r1 embedded everything behind the clustering prompt. |
 | `internal/topics/embed.go` | `onnxruntime_go` v1.31.0 session over `$CASSINI_LIB_DIR/libonnxruntime.so`. Feeds empty `[0,512]` image, video and audio tensors and reads `sentence_embedding [B,768]`. |
 | `internal/topics/language.go` | Text language identification over the passages: `abadojack/whatlanggo` (pure Go, MIT) on each passage of at least 12 words, then a vote weighted by words. The confidence is the winning language's share of those words; below 0.6 the answer is `unknown`. `DetectorVersion = "whatlanggo-1.0.1/vote-1"`. Known limits: Han-script text is always `zh`, so kanji-heavy Japanese can read as Chinese; the floors are untested on real multilingual meetings (Gate 2); the library has been unmaintained since 2019. |
 | `internal/cassini/topics_source.go` | Reads the default `cassini.words.v1` transcript from a `.opus` (verifying `payloadRef.sha256`) or rebuilds the same body from a bundle with the pack code (`assembleTranscriptInputs`, `internal/cassini/portable_meeting_tags.go:31`; `EncodeTranscriptBody`, `internal/portable/manifest_transcripts.go:275`). It lives in package `cassini`, because `assembleTranscriptInputs`, `flattenPortableTranscriptItems` and `portableMeetingSource` are unexported there, and `internal/topics` must not import `cassini` (the CLI imports `topics`, so that would be an import cycle). It hands `internal/topics` a plain word list. |
@@ -241,13 +241,15 @@ Ported exactly from `refine_daily.py:16-47`:
 2. If the meeting's **desired** annotations snapshot already carries the topic (by tag id, by an alias id, or by folded label), record a `confirmed` verdict with `source='direct'`, withdraw any suggestion and skip it. The desired snapshot (`annotation_head.desired`) counts a mark that has not uploaded yet.
 3. Otherwise compute spans and the meeting rule:
    - a passage supports the topic when it has ≥ 12 words, `cos ≥ T` and `cos − max(controls) ≥ M`;
-   - a non-supporting passage closes the span; a gap over 2500 ms or `cos(previous, this) < 0.88` starts a new span;
-   - the meeting qualifies on ≥ 80 words from spans of ≥ 25 words, or on one span of ≥ 40 words with min score ≥ 0.88 and min margin ≥ 0.08.
+   - a non-supporting passage closes the span, and so does a gap over 2500 ms;
+   - the meeting qualifies on ≥ 80 supporting words, or on one span of ≥ 40 words with min score ≥ 0.76 and min margin ≥ 0.10.
+
+   The scorer can also break spans on `cos(previous, this)` and count only spans of a minimum length; the prototype did (0.88 and 25 words). Against labelled meetings both lost topics the labellers saw, so both are off.
 4. Qualifies: upsert `pending`, replace its evidence. Does not qualify: set `withdrawn`. A row in state `decided` (see "Confirm") is never touched by the scorer.
 
-`T` and `M` start at 0.85 and 0.05 and are fixed by the evaluation gate. Every constant, the control definitions, the validated-language list and the expected `DetectorVersion` belong to one `ScorerVersion`. Changing any of them changes `scorer_key`, which rescores without embedding. A meeting whose recorded detector version is not the expected one counts as language `unknown`.
+`T` = 0.68 and `M` = 0.06 on recipe r2, chosen against labelled meetings by cross-validation over meetings (Gate 2, evaluation.md). The prototype's 0.85 and 0.05 belonged to the clustering prompt of recipe r1. Every constant, the control definitions, the validated-language list and the expected `DetectorVersion` belong to one `ScorerVersion`. Changing any of them changes `scorer_key`, which rescores without embedding. A meeting whose recorded detector version is not the expected one counts as language `unknown`.
 
-The two built-in control definitions are generic English prose (as in the prototype). They are not language-neutral. Their effect on other languages is an evaluation item (open question 3).
+The two built-in control definitions (gardening, astronomy) are written in seven languages: English, Italian, German, French, Spanish, Portuguese and Dutch. Text scores higher against text in its own language, so a margin over English controls alone let Italian definitions match almost any Italian talk (Gate 2). `max(controls)` is the highest of all fourteen, which makes the margin follow the passage's language; adding the languages left every English decision unchanged.
 
 ### 8. Rescoring
 
@@ -600,7 +602,7 @@ The existing settings wildcard allows only GET and PUT (`info.xml:271-273`), so 
 
 1. **Candidates:** passages with ≥ 40 words from `done` meetings in the room whose best active-topic score fails the **same** gate as suggestions (`T`, `M`). This fixes the prototype's hard-coded 0.83/0.04, which did not match its 0.85/0.05 gate.
 2. **Order** by meeting start, then `start_ms`.
-3. **Group:** join the nearest centroid (normalised running sum) at cosine ≥ 0.90, else start a new group. Then one reassignment pass against the final centroids, to reduce order effects.
+3. **Group:** join the nearest centroid (normalised running sum) at cosine ≥ 0.83, else start a new group (recipe r2; set on a room's real meetings, where 0.80 collapsed the room into three groups and 0.84 split a theme that recurred over fifteen meetings). Then one reassignment pass against the final centroids, to reduce order effects.
 4. **Keep** groups with ≥ 3 distinct meetings on ≥ 3 distinct days. At most 12 open proposals per room.
 5. **Flags** (no word lists): `routine` is computed at read time, when the group's member meetings are more than 50% of the caller's visible `done` meetings in the room in the group's date range. It is never stored, because a count over the whole room would include meetings the viewer cannot read and reveal that they exist. `edges` (stored) when most of its passages sit in the first or last 5% of their meeting (greetings and wrap-ups). Flagged groups sort last and start collapsed.
 6. **Draft name** (no built-in stop list, any language):
@@ -611,8 +613,8 @@ The existing settings wildcard allows only GET and PUT (`info.xml:271-273`), so 
    - score = in-group frequency × log(N / df), keeping terms seen in ≥ 2 member meetings;
    - the top 5 that are not substrings of each other become hints; the draft name is the top 2 joined by " / ". The UI always labels it a draft.
    - Passage text for naming is read from the search index's `segment_ref` rows of the member meetings by time range. If search does not hold a member, naming waits, and the proposal is not served until it has a name.
-7. **Nearest topic:** cosine of the centroid to each definition. Shown as a hint only at ≥ 0.90; the prototype's 0.83 flagged 11 of 12 groups. To be calibrated.
-8. **Identity across passes:** a new group matches a stored proposal in the room by member-passage overlap ≥ 50%, else centroid cosine ≥ 0.95. The centroid test is used only when the stored proposal has the current `model_revision`, `recipe_version` and `chunker_version`; centroids from different vector spaces are never compared. A proposal from an older revision first has its centroid recomputed from its re-embedded members. Until then it matches only by member meeting and time overlap (a member passage of the same meeting whose time range overlaps by ≥ 50%), which also covers a chunker change, where `start_ms` values move. A match keeps its id and state. A match with a `dismissed`, `approved` or `linked` row stays suppressed. An unmatched `open` row becomes `stale`.
+7. **Nearest topic:** cosine of the centroid to each definition. Shown as a hint only at ≥ 0.78 (recipe r2; the prototype's 0.90 on r1, mapped by percentile).
+8. **Identity across passes:** a new group matches a stored proposal in the room by member-passage overlap ≥ 50%, else centroid cosine ≥ 0.90. The centroid test is used only when the stored proposal has the current `model_revision`, `recipe_version` and `chunker_version`; centroids from different vector spaces are never compared. A proposal from an older revision first has its centroid recomputed from its re-embedded members. Until then it matches only by member meeting and time overlap (a member passage of the same meeting whose time range overlaps by ≥ 50%), which also covers a chunker change, where `start_ms` values move. A match keeps its id and state. A match with a `dismissed`, `approved` or `linked` row stays suppressed. An unmatched `open` row becomes `stale`.
 
 **Visibility.** A proposal is listed or actionable only if its `state` is `open` (or `dismissed`, for Restore), it has at least one member, and **every** `topic_proposal_member.opus_name` is in the caller's visible set: `EXISTS` a member `AND NOT EXISTS` a member outside the visible set. Without the `EXISTS` test, a proposal whose members were all deleted would pass the `NOT EXISTS` test for everyone. A proposal in `recompute` is never served. This uses all contributing meetings, not just the quoted ones, because the name, hints and centroid come from all of them. Share sets are fixed at first publish (`publish_sink_direct_shares.go:121`), so two meetings of one room can have different audiences; the strict rule covers that. What remains is an absence signal: a visible passage may be missing from a group because a hidden meeting pulled the centroid. This is weaker than search's accepted ranking leak (`search_query.go:35-43`) and is documented next to it.
 
@@ -710,6 +712,10 @@ Suggestions never reach the `.opus`, copies, search, the static viewer, or agent
 
 ### Gate 2: labelled review set (before the feature leaves preview)
 
+What was done differs from this plan in three ways, all recorded in evaluation.md. Every topic was labelled on 50 whole meetings instead of a stratified sample, because the labels were also needed to tune the scorer. The two labellers were models, not people. The gate was chosen at precision 0.75, not 0.8, in exchange for recall 0.60, because every suggestion is reviewed by a person; English was validated at that precision.
+
+The plan as written:
+
 - About 300 (meeting, topic) pairs, stratified by score band above and below the gate, including near misses.
 - At least 2 rooms and at least 1 room in a language other than English.
 - Two people label each pair against the transcript.
@@ -735,7 +741,7 @@ Suggestions never reach the `.opus`, copies, search, the static viewer, or agent
 
 1. **Which database.** The design puts the queue and verdicts in `annotations.sqlite3` so a confirm is one transaction. Does that match "the operator's database"? If that database is lost, the archive seeds a replacement and the library and rejections are gone. Backups must include it.
 2. **Model licence.** Resolved 2026-10-14: the linked licence page is the plain Apache License 2.0. Google's prohibited-use policy is a separate page; the docs should link it as guidance.
-3. **Languages.** The control definitions are English prose, and the chunker counts whitespace words. Production records no transcript language, so this design detects it in the CLI; S2 chose `whatlanggo` with a per-passage vote and a 0.6 floor (see `language.go`). Should meetings in unvalidated or unknown languages get suggestions with a warning (this design), or only appear in coverage? Should the build record the language too? Should the margin use the other library topics instead of fixed controls?
+3. **Languages.** The control definitions are in seven languages since Gate 2, and a margin over the other library topics was tried there and gained nothing. The chunker counts whitespace words. Production records no transcript language, so this design detects it in the CLI; S2 chose `whatlanggo` with a per-passage vote and a 0.6 floor (see `language.go`). Should meetings in unvalidated or unknown languages get suggestions with a warning (this design), or only appear in coverage? Should the build record the language too? Should a topic hold a definition per language, for rooms that meet in more than one?
 4. **Merge.** This design copies A's rejections to B on a merge. Confirm, or keep them as A's history only?
 5. **Private 1:1 calls.** The room type is not stored per meeting (`talk_backend.go:132-136`). Should proposals leave them out? That needs a stored room-type field.
 6. **Proposal window.** A rolling 90 days per room, or the whole history?
@@ -747,5 +753,5 @@ Suggestions never reach the `.opus`, copies, search, the static viewer, or agent
 12. **Platforms.** The CUDA image's ONNX Runtime version and arm64 are unchecked. v1 is amd64 CPU only.
 13. **Lock starvation.** Can a long build hold `.inference.lock` long enough to starve the queue? Not measured. Lock wait uses no attempts and no timeout budget, and it is exposed in status.
 14. **Vector size.** float32 (about 280 MiB per 1,000 meetings) or float16? The thresholds are sensitive, so float16 needs its own parity check.
-15. **Preview label.** Should the feature ship labelled "Preview" (as diarization shipped as "Proof of concept") until Gate 2 passes? *Not decided; for the maintainer. Until then the feature ships without a Preview label, and every suggestion says its language is not yet validated (Gate 2 is pending, see evaluation.md).*
+15. **Preview label.** Should the feature ship labelled "Preview" (as diarization shipped as "Proof of concept") until Gate 2 passes? *Not decided; for the maintainer. Gate 2 was measured on labels from two model labellers, not people (evaluation.md): English is validated, other languages still say they are not. A spot check by people would settle what the measurement is worth.*
 16. **Retired topics.** Should retired library entries ever be purged as a whole? (Single past revisions can already be redacted.)

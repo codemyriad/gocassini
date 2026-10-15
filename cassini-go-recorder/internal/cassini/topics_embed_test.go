@@ -92,7 +92,15 @@ func TestTopicsEmbedBundleAndOpusGiveTheSameKey(t *testing.T) {
 	opus, packed := packTopicsFixture(t, bundleDir)
 	root := t.TempDir()
 	m := fakeInstallShipped(t, root, DefaultEmbeddingModelID)
-	stubTopicsEmbedder(t, &fakeEmbedder{})
+	embedder := &fakeEmbedder{}
+	stubTopicsEmbedder(t, embedder)
+	t.Cleanup(func() {
+		for _, p := range embedder.prefixes {
+			if p != topics.PassagePrefix {
+				t.Errorf("passages embedded behind %q", p)
+			}
+		}
+	})
 	t.Setenv(topics.SpeakerKeyEnv, "deployment-key")
 	var headers []topicsPassagesHeader
 	for _, input := range []string{bundleDir, opus} {

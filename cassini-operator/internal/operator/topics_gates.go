@@ -27,12 +27,12 @@ const (
 	topicGateRefitSeconds = 3600
 )
 
-// topicGateGrid are the gates a fit chooses from: Threshold 0.80 to 0.92 and
-// Margin 0.02 to 0.10, by 0.01.
+// topicGateGrid are the gates a fit chooses from: Threshold 0.60 to 0.80 and
+// Margin 0 to 0.12, by 0.01, around the global 0.68/0.06.
 var topicGateGrid = func() [][2]float64 {
 	var grid [][2]float64
-	for t := 80; t <= 92; t++ {
-		for m := 2; m <= 10; m++ {
+	for t := 60; t <= 80; t++ {
+		for m := 0; m <= 12; m++ {
 			grid = append(grid, [2]float64{float64(t) / 100, float64(m) / 100})
 		}
 	}

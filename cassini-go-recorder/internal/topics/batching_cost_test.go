@@ -31,7 +31,7 @@ func TestMeasureBatchingCost(t *testing.T) {
 		}
 		defer e.Close()
 		start := time.Now()
-		got, err := e.EmbedTexts(context.Background(), texts)
+		got, err := e.EmbedTexts(context.Background(), PassagePrefix, texts)
 		if err != nil {
 			t.Fatal(err)
 		}

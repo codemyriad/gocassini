@@ -19,7 +19,7 @@ const (
 	pauseMS           = 2000 // a gap to the next word that closes a passage
 	minSentenceWords  = 40   // before a sentence end may close a passage
 	maxPassageWords   = 120  // the word safety cap
-	maxTokenCapBytes  = MaxTokens - 2 - len(PromptPrefix)
+	maxTokenCapBytes  = MaxTokens - 2 - len(PassagePrefix)
 	boundaryEnd       = "end"
 	boundaryPause     = "pause"
 	boundarySpeaker   = "speaker change"
@@ -133,7 +133,7 @@ func (c *chunker) wouldExceed(w Word) bool {
 	if len(candidate) <= maxTokenCapBytes {
 		return false
 	}
-	return len(c.tok.Encode(candidate)) > MaxTokens
+	return len(c.tok.Encode(PassagePrefix, candidate)) > MaxTokens
 }
 
 func (c *chunker) close(boundary string) {
@@ -153,7 +153,7 @@ func (c *chunker) close(boundary string) {
 	}
 	c.pending = c.pending[:0]
 	c.text.Reset()
-	if p.TokenCount = len(c.tok.Encode(p.Text)); p.TokenCount > MaxTokens {
+	if p.TokenCount = len(c.tok.Encode(PassagePrefix, p.Text)); p.TokenCount > MaxTokens {
 		// Only a single word can get here: anything longer was split before
 		// it grew past the cap. Split the word at rune boundaries so its text
 		// is embedded whole rather than refused or cut.
@@ -174,7 +174,7 @@ func (c *chunker) splitLongWord(p Passage) {
 		lo, hi := 1, utf8.RuneCountInString(rest)
 		for lo < hi {
 			mid := (lo + hi + 1) / 2
-			if len(c.tok.Encode(runePrefix(rest, mid))) <= MaxTokens {
+			if len(c.tok.Encode(PassagePrefix, runePrefix(rest, mid))) <= MaxTokens {
 				lo = mid
 			} else {
 				hi = mid - 1
@@ -187,7 +187,7 @@ func (c *chunker) splitLongWord(p Passage) {
 		if rest == "" {
 			q.Boundary = p.Boundary
 		}
-		q.TokenCount = len(c.tok.Encode(piece))
+		q.TokenCount = len(c.tok.Encode(PassagePrefix, piece))
 		q.Ordinal = len(c.out)
 		c.out = append(c.out, q)
 	}
