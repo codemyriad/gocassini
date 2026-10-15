@@ -258,6 +258,25 @@ func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, u
 	return hex.EncodeToString(sum.Sum(nil)), written, resp.StatusCode, file.Close()
 }
 
+// davDeleteUserFile removes one file acting as the given user. An already-gone
+// file reports success: the caller wants the path empty, and it is.
+func (c ExAppConfig) davDeleteUserFile(ctx context.Context, client *http.Client, userID, relPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.davFileURL(userID, relPath), nil)
+	if err != nil {
+		return err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer drainClose(resp.Body)
+	if resp.StatusCode == http.StatusNotFound || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
+		return nil
+	}
+	return fmt.Errorf("DELETE %s -> %d", relPath, resp.StatusCode)
+}
+
 // ncFilesProxy serves the installed Nextcloud archive as the current caller.
 // With the local static sink, the file handler serves the local export instead.
 func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFilesProxyFunc {

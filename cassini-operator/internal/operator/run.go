@@ -1046,6 +1046,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	if insights := newInsightService(rt, exappCfg, logger); insights != nil {
 		insights.register(root)
 	}
+	// Meeting imports (D-828): a sibling of insights on the ROOT mux — the
+	// manifest declares `^imports\/…` at that level, USER, since any user may
+	// import and the importer is always the share starter. Nil, and unmounted,
+	// wherever an import could not be performed (see newImportService).
+	if imports := newImportService(rt, exappCfg, logger); imports != nil {
+		imports.register(root)
+	}
 	// Tags and marks (D-737): a sibling of insights on the ROOT mux, for the same
 	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and
 	// unmounted, wherever a mark could not be served (see newAnnotationService).

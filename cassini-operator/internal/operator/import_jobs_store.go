@@ -59,15 +59,15 @@ type ImportJob struct {
 	Error      string         `json:"error,omitempty"`
 	Sharing    importAudience `json:"sharing"`
 	// Provenance read from the file at validation.
-	ContentID               string `json:"contentId,omitempty"`
-	SourceRoomID            string `json:"sourceRoomId,omitempty"`
-	MeetingCreatedAtUTC     string `json:"meetingCreatedAtUtc,omitempty"`
-	MeetingRecordedAtLocal  string `json:"meetingRecordedAtLocal,omitempty"`
-	DeliveredName           string `json:"deliveredName,omitempty"`
-	FileID                  int64  `json:"fileId,omitempty"`
-	ImportedAt              string `json:"importedAt,omitempty"`
-	CreatedAt               string `json:"createdAt"`
-	UpdatedAt               string `json:"updatedAt"`
+	ContentID              string `json:"contentId,omitempty"`
+	SourceRoomID           string `json:"sourceRoomId,omitempty"`
+	MeetingCreatedAtUTC    string `json:"meetingCreatedAtUtc,omitempty"`
+	MeetingRecordedAtLocal string `json:"meetingRecordedAtLocal,omitempty"`
+	DeliveredName          string `json:"deliveredName,omitempty"`
+	FileID                 int64  `json:"fileId,omitempty"`
+	ImportedAt             string `json:"importedAt,omitempty"`
+	CreatedAt              string `json:"createdAt"`
+	UpdatedAt              string `json:"updatedAt"`
 }
 
 const importJobColumns = `id,batch_id,created_by,source_name,staged_path,format,state,phase,error,audience_json,content_id,source_room_id,meeting_created_at_utc,meeting_recorded_at_local,delivered_name,file_id,imported_at,created_at,updated_at`
