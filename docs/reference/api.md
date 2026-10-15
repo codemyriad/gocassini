@@ -268,6 +268,8 @@ POST annotations/topics/meetings/<meetingId>/<tagId>   {requestId, decision: "co
 GET  annotations/topics/coverage[?room=<roomId>]
 GET  annotations/topics/review[?tag=&room=&cursor=&limit=]
 POST annotations/topics/review/batch                    {requestId, tagId, meetingIds[≤100], decision: "confirm" | "reject"}
+GET  annotations/topics/proposals[?room=<roomId>]
+POST annotations/topics/proposals/<id>                  {requestId, action: "approve" | "link" | "dismiss" | "restore", label?, definition?, color?, tagId?, confirmTerms?}
 ```
 
 USER. The meeting must be one the caller can read now (404 otherwise). `GET`
@@ -291,6 +293,14 @@ total, byMeeting, coverage}`. A quote comes from the search index, for a
 meeting the caller can read. A batch decides each named meeting as a single
 decision would and answers `{results:[{meetingId, status, error?}]}`, where
 status is `confirmed`, `rejected`, `not-found` or `error`.
+
+Proposals are listed only when every meeting they draw on is in the caller's
+visible set: `{proposals:[{id, roomId, room, state, draftName, hints,
+flags:{edges, routine}, nearest?, meetings, days, evidence:[{meetingId, title,
+date, startMs, endMs, quote}]}]}`. `approve` needs a `label` and `definition`
+and answers 409 `terms-from-meetings` with the shared `terms` until
+`confirmTerms` is set; it creates the topic with origin `proposal`. `link`
+needs an active topic's `tagId`.
 
 ## Summary of stage and state values
 

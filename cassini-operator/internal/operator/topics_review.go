@@ -761,6 +761,12 @@ func (s *annotationService) routeTopicQueue(w http.ResponseWriter, r *http.Reque
 		s.decideSuggestionBatch(w, r, caller)
 	case len(parts) >= 1 && parts[0] == "review":
 		writeMethodNotAllowed(w, "GET, POST")
+	case len(parts) == 1 && parts[0] == "proposals" && r.Method == http.MethodGet:
+		s.serveProposals(w, r, caller)
+	case len(parts) == 2 && parts[0] == "proposals" && r.Method == http.MethodPost:
+		s.decideProposal(w, r, caller, parts[1])
+	case len(parts) >= 1 && parts[0] == "proposals":
+		writeMethodNotAllowed(w, "GET, POST")
 	default:
 		return false
 	}

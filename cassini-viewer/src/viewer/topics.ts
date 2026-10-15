@@ -259,3 +259,34 @@ export const MAX_BATCH = 100;
 
 // suggestedBadge is a list row's "2 suggested", or "".
 export const suggestedBadge = (n: number | undefined) => (n ? `${n} suggested` : "");
+
+// Recurring-topic proposals (S7).
+
+export interface TopicProposal {
+  id: string;
+  roomId: string;
+  room: string;
+  state: "open" | "dismissed";
+  // A draft from the meetings' own words: shown as such, never saved as is.
+  draftName: string;
+  hints: string[];
+  flags: { routine?: boolean; edges?: boolean };
+  nearest?: { tagId: string; label: string };
+  meetings: number;
+  days: number;
+  evidence: { meetingId: string; title: string; date: string; startMs: number; endMs: number; quote?: string }[];
+}
+
+export type ProposalAction =
+  | { action: "approve"; label: string; definition: string; color?: TagColorId; confirmTerms?: boolean }
+  | { action: "link"; tagId: string }
+  | { action: "dismiss" }
+  | { action: "restore" };
+
+// sharedTerms are the typed words that also occur in a draft name or its
+// hints: words that came from the meetings (the operator checks the same).
+export function sharedTerms(typed: string, draft: readonly string[]): string[] {
+  const terms = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}\p{M}]{3,}/gu) ?? []);
+  const from = new Set(draft.flatMap(terms));
+  return [...new Set(terms(typed).filter((term) => from.has(term)))];
+}

@@ -533,3 +533,23 @@ func forgetTopicMeeting(ctx context.Context, tx *sql.Tx, name, reason string) er
 	_, err = tx.ExecContext(ctx, `DELETE FROM topic_receipt_target WHERE opus_name=?`, name)
 	return err
 }
+
+const topicMetaSpeakerKey = "speaker_key"
+
+// speakerKey is the deployment's key for speaker-term hashes, made once. It
+// lives here, beside the identities this database already holds, and never
+// in the disposable vectors file the hashes are stored in.
+func (s *topicsStore) speakerKey(ctx context.Context) ([]byte, error) {
+	if value, err := s.meta(ctx, topicMetaSpeakerKey); err != nil || value != "" {
+		return []byte(value), err
+	}
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return nil, err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO topic_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING`, topicMetaSpeakerKey, hex.EncodeToString(b[:])); err != nil {
+		return nil, err
+	}
+	value, err := s.meta(ctx, topicMetaSpeakerKey)
+	return []byte(value), err
+}
