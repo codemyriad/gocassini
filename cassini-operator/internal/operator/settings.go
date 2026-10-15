@@ -44,11 +44,14 @@ type STTSettings struct {
 	// recogniser so it gets the name RIGHT next time (D-726), while these find
 	// the recordings where it already got it wrong. An operator needs both, and
 	// only ever learns the variants by reading a transcript.
-	SearchAliases       [][]string `json:"search_aliases,omitempty"`
-	Source              string     `json:"source"` // "auto" | "user"
-	HardwareFingerprint string     `json:"hardware_fingerprint"`
-	DetectedGPU         bool       `json:"detected_gpu"`
-	Cores               int        `json:"cores"`
+	SearchAliases [][]string `json:"search_aliases,omitempty"`
+	// TopicSuggestions is saved through ADMIN /settings/topics only, so a
+	// PUT /settings never changes it (docs/proposals/automatic-tagging).
+	TopicSuggestions    topicSettings `json:"topic_suggestions"`
+	Source              string        `json:"source"` // "auto" | "user"
+	HardwareFingerprint string        `json:"hardware_fingerprint"`
+	DetectedGPU         bool          `json:"detected_gpu"`
+	Cores               int           `json:"cores"`
 }
 
 const (
@@ -347,6 +350,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s.SourceRetention = previous.SourceRetention
 			s.SearchAliases = previous.SearchAliases
 			s.RetainVideo = previous.RetainVideo
+			s.TopicSuggestions = previous.TopicSuggestions
 			// Vocabulary is independent of the hardware-derived quality tier.
 			// Preserve it when re-fingerprinting an auto policy.
 			s.TranscriptionTerms = terms
@@ -699,6 +703,9 @@ func (rt *Runtime) settingsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
+	// A load may rewrite the file (a hardware change), so it is a writer.
+	rt.settingsWriteMu.Lock()
+	defer rt.settingsWriteMu.Unlock()
 	// Re-read from disk so an out-of-band edit (or a peer process) is reflected,
 	// and refresh the in-memory copy used at job spawn time.
 	s, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration)
@@ -723,6 +730,9 @@ func transcriptionSelectionChanged(prev, next STTSettings) bool {
 }
 
 func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
+	// One read-modify-save at a time, across every settings handler.
+	rt.settingsWriteMu.Lock()
+	defer rt.settingsWriteMu.Unlock()
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))

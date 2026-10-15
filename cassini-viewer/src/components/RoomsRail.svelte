@@ -49,6 +49,9 @@
   export let insightsLoading = false;
   export let selectedTagIds: readonly string[] = [];
   export let tagMatch: TagMatch = "any";
+  // Topic suggestions waiting for review over the caller's meetings; null
+  // where there are none to offer.
+  export let reviewCount: number | null = null;
 
   const dispatch = createEventDispatcher<{
     select: string | null;
@@ -57,6 +60,7 @@
     toggleTag: string;
     tagMatch: TagMatch;
     manageTags: void;
+    needsReview: void;
   }>();
 
   const TAG_MATCHES: TagMatch[] = ["any", "all"];
@@ -214,6 +218,12 @@
     {/each}
   </div>
 
+  {#if reviewCount !== null}
+    <button type="button" class="room-button needs-review" on:click={() => dispatch("needsReview")}>
+      <span class="room-name">Needs review</span>
+      <span class="room-count">{reviewCount}</span>
+    </button>
+  {/if}
   {#if tagsOffered}
     <div class="rail-head rail-head-sub rail-head-row">
       <h2>Tags</h2>

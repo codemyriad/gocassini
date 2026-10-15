@@ -103,7 +103,11 @@ type Runtime struct {
 	store    *Store
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
-	searchStore     *searchStore
+	searchStore *searchStore
+	// topics runs topic suggestions; nil where they cannot run.
+	topics *topicsService
+	// settingsWriteMu serialises every read-modify-save of settings.json.
+	settingsWriteMu sync.Mutex
 	searchRepair    searchRepairState
 	archiveCoverage archiveCoverageState
 	// meetingMetadata is a disposable description index. Visibility always
@@ -132,9 +136,12 @@ type Runtime struct {
 	// VRAM headroom probe are not safely reservable between concurrent workers.
 	// Serializing here makes the resource check and ensuing launch atomic with
 	// respect to every other build in this operator process.
-	buildExecutionMu              sync.Mutex
-	priorityMu                    sync.Mutex
-	priorityBuildCancel           context.CancelCauseFunc
+	buildExecutionMu sync.Mutex
+	priorityMu       sync.Mutex
+	// priorityCancels holds the cancel of every running build and topic
+	// embed, so a recording that starts can stop them all.
+	priorityCancels               map[uint64]context.CancelCauseFunc
+	priorityNext                  uint64
 	lastRecordFinished            time.Time
 	autoSampleAt                  time.Time
 	autoCanStart, autoCanContinue bool
@@ -288,9 +295,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return runBackfillSearch(ctx, args[1:], stdout, stderr)
 		case backfillAnnotationsCommand:
 			return runBackfillAnnotations(ctx, args[1:], stdout, stderr)
+		case topicsEvalCommand:
+			return runTopicsEval(ctx, args[1:], stdout, stderr)
+		case backfillTopicsCommand:
+			return runBackfillTopics(ctx, args[1:], stdout, stderr)
+		case topicsExportCommand:
+			return runTopicsExport(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s)\n",
-			args[0], backfillSearchCommand, backfillAnnotationsCommand)
+		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s, %s, %s, %s)\n",
+			args[0], backfillSearchCommand, backfillAnnotationsCommand, backfillTopicsCommand, topicsExportCommand, topicsEvalCommand)
 		return 2
 	}
 
@@ -601,6 +614,8 @@ Usage:
 Commands:
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
+  `+backfillTopicsCommand+`     queue past meetings for topic suggestions
+  `+topicsExportCommand+`       write topic verdicts with their scores, no text
   import-meeting-metadata import catalog descriptions using destination file IDs
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
@@ -939,6 +954,11 @@ func (rt *Runtime) Shutdown() {
 			rt.logger.Printf("meeting metadata index close failed: %v", err)
 		}
 	}
+	if rt.topics != nil {
+		if err := rt.topics.vectors.Close(); err != nil {
+			rt.logger.Printf("topic vectors close failed: %v", err)
+		}
+	}
 	if store := rt.annotationReads(); store != nil {
 		if err := store.Close(); err != nil {
 			rt.logger.Printf("annotations index close failed: %v", err)
@@ -974,6 +994,10 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// is what the recorder ships, and an exact pattern wins over the prefix
 		// (D-718).
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
+		// Before the /settings/ prefix, which would hand them to the LLM
+		// settings handler (docs/proposals/automatic-tagging).
+		{"/settings/topics", http.HandlerFunc(rt.topicsSettingsHandler)},
+		{"/settings/topics/", http.HandlerFunc(rt.topicsSettingsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
@@ -1021,6 +1045,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	root := http.NewServeMux()
 	exappCfg.lifecycle = rt.store
 	annotations := newAnnotationService(rt, exappCfg, logger)
+	// Before retirement recovery, which forgets a retired meeting's vectors.
+	if rt.annotationReads() != nil && rt.topics == nil && rt.ctx != nil {
+		rt.topics = newTopicsService(rt, exappCfg, logger)
+		if rt.topics != nil {
+			rt.topics.startWorker()
+		}
+	}
 	rt.remoteRetentionMu.Lock()
 	rt.remoteRetention = annotations
 	rt.remoteRetentionMu.Unlock()

@@ -21,6 +21,7 @@ import {
   type TagVocabulary,
   type VocabularyTag,
 } from "cassini-viewer/annotations";
+import { newRequestId, type MeetingSuggestions, type ProposalAction, type Topic, type TopicProposal, type TopicBatchResult, type TopicCoverage, type TopicDecision, type TopicQueue, type TopicQueueQuery, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "cassini-viewer/topics";
 
 import {
   listInsights as fetchInsightRuns,
@@ -146,6 +147,61 @@ export class AppDataProvider extends StaticCatalogProvider {
 
   async loadTagJob(): Promise<TagJob | null> {
     return (await requestAnnotations<{ job: TagJob | null }>("tags/job")).job;
+  }
+
+  // The topic library (docs/topic-suggestions.md), under the same caller
+  // check as the tag routes.
+  loadTopicLibrary(): Promise<TopicLibrary> {
+    return requestAnnotations("topics");
+  }
+
+  saveTopic(save: TopicSave): Promise<{ topic: Topic; job?: TagJob | null }> {
+    const { tagId, ...body } = save;
+    const path = tagId ? `topics/library/${encodeURIComponent(tagId)}` : "topics/library";
+    return requestAnnotations(path, { requestId: newRequestId(), ...body });
+  }
+
+  async loadTopicHistory(tagId: string): Promise<TopicRevision[]> {
+    return (await requestAnnotations<{ revisions: TopicRevision[] }>(`topics/library/${encodeURIComponent(tagId)}/history`)).revisions;
+  }
+
+  async redactTopicRevision(tagId: string, revision: number): Promise<void> {
+    await requestAnnotations(`topics/library/${encodeURIComponent(tagId)}/history/${revision}`, { requestId: newRequestId(), action: "redact" });
+  }
+
+  loadTopicTagRooms(tagId: string): Promise<TopicTagRooms> {
+    return requestAnnotations(`topics/library/${encodeURIComponent(tagId)}/rooms`);
+  }
+
+  loadMeetingSuggestions(entry: MeetingCatalogEntry): Promise<MeetingSuggestions> {
+    return requestAnnotations(`topics/meetings/${encodeURIComponent(entry.id)}`);
+  }
+
+  decideSuggestion(entry: MeetingCatalogEntry, tagId: string, decision: TopicDecision, requestId: string): Promise<{ annotations?: AnnotationResult; replayed?: boolean }> {
+    return requestAnnotations(`topics/meetings/${encodeURIComponent(entry.id)}/${encodeURIComponent(tagId)}`, { requestId, decision });
+  }
+
+  loadReviewQueue(query: TopicQueueQuery = {}): Promise<TopicQueue> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
+    const search = params.toString();
+    return requestAnnotations(search ? `topics/review?${search}` : "topics/review");
+  }
+
+  decideSuggestionBatch(request: { requestId: string; tagId: string; meetingIds: string[]; decision: "confirm" | "reject" }): Promise<{ results: TopicBatchResult[] }> {
+    return requestAnnotations("topics/review/batch", request);
+  }
+
+  loadTopicProposals(room?: string): Promise<{ enabled: boolean; proposals?: TopicProposal[] }> {
+    return requestAnnotations(room ? `topics/proposals?room=${encodeURIComponent(room)}` : "topics/proposals");
+  }
+
+  decideTopicProposal(id: string, action: ProposalAction & { requestId: string }): Promise<{ proposal: { id: string; state: string }; topic?: { tagId: string } }> {
+    return requestAnnotations(`topics/proposals/${encodeURIComponent(id)}`, action);
+  }
+
+  loadTopicCoverage(room?: string): Promise<TopicCoverage> {
+    return requestAnnotations(room ? `topics/coverage?room=${encodeURIComponent(room)}` : "topics/coverage");
   }
 
   // The speakers route: people's edits to one meeting's speakers, beside its
