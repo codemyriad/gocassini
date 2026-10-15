@@ -4,15 +4,43 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestUISourceMapManifestAccess(t *testing.T) {
+	data, err := os.ReadFile("../../../appinfo/info.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Routes []struct {
+			URL    string `xml:"url"`
+			Verb   string `xml:"verb"`
+			Access string `xml:"access_level"`
+		} `xml:"external-app>routes>route"`
+	}
+	if err := xml.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range manifest.Routes {
+		if regexp.MustCompile(route.URL).MatchString("ui/viewer.js.map") {
+			if route.Access != "USER" || route.Verb != "GET,HEAD" {
+				t.Fatalf("source map must be readable by every UI user: %+v", route)
+			}
+			return
+		}
+	}
+	t.Fatal("AppAPI manifest has no route for the source map discovery URL")
+}
 
 func setExAppEnv(t *testing.T, kv map[string]string) {
 	t.Helper()
@@ -376,6 +404,8 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 		`(function(){/* embedded cassini */ var app=document.getElementById("app"); /* mount #app */})();`)
 	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.css"),
 		`#app{display:block}`)
+	const sourceMap = `{"version":3,"file":"embedded.js","sources":["src/App.svelte"],"sourcesContent":["<main>Cassini</main>"],"names":[],"mappings":""}`
+	writeFile(t, filepath.Join(viewerDist, "embedded", "viewer.js.map"), sourceMap)
 
 	root := http.NewServeMux()
 	ExAppConfig{ViewerDist: viewerDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0), searchDeps{})
@@ -410,6 +440,27 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 	// --- the Cassini embedded IIFE + CSS, served from disk, NOT an iframe ---
 	assertEmbeddedAsset("/ui/viewer.js", "javascript", true)
 	assertEmbeddedAsset("/ui/viewer.css", "css", false)
+	assertEmbeddedAsset("/ui/viewer.js.map", "application/json", false)
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost} {
+		r := httptest.NewRequest(method, "/ui/viewer.js.map?v=release", nil)
+		w := httptest.NewRecorder()
+		root.ServeHTTP(w, r)
+		if method == http.MethodPost {
+			if w.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("POST source map: got %d, want 405", w.Code)
+			}
+			continue
+		}
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s source map: got %d, want 200", method, w.Code)
+		}
+		if method == http.MethodGet && w.Body.String() != sourceMap {
+			t.Fatal("source map body does not match the build artifact")
+		}
+		if method == http.MethodHead && w.Body.Len() != 0 {
+			t.Fatal("HEAD source map must have an empty body")
+		}
+	}
 
 	// --- every entry's icon must resolve ---
 	for _, entry := range topMenuEntries {
@@ -433,7 +484,7 @@ func TestUIEmbeddedAssetUnavailableWithoutDist(t *testing.T) {
 	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0), searchDeps{})
 
 	for _, path := range []string{
-		"/ui/viewer.js", "/ui/viewer.css",
+		"/ui/viewer.js", "/ui/viewer.css", "/ui/viewer.js.map",
 	} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()

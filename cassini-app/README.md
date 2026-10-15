@@ -40,6 +40,32 @@ the real Svelte components with synthetic operator responses, so no operator
 or Nextcloud server is required.
 The installed ExApp browser validation remains part of the harness workflow.
 
+## Profiling installed builds
+
+Production builds include external JavaScript source maps with original source
+content. The code remains minified. The embedded bundle references
+`viewer.js.map`, served beside `/ui/viewer.js` through the Nextcloud AppAPI
+proxy with the same USER access as the UI. Every signed-in UI user can load it;
+no administrator or harness-only switch is required.
+
+```text
+DevTools -> AppAPI proxy /ui/viewer.js.map
+                       -> operator -> dist/embedded/viewer.js.map
+```
+
+Rebuild and deploy the image and update the registered AppAPI manifest together
+when introducing this route to an existing installation. A frontend rebuild
+alone does not add the operator route or proxy permission. The image build
+copies the complete dist directory, including maps.
+
+In Chrome, enable **Settings > Preferences > Sources > JavaScript source maps**,
+reload the app, then check **More tools > Developer Resources** for successful
+map loading before recording in Performance. Preserve the matching bundle and
+map when saving release artifacts; rebuilding a different revision cannot
+reliably decode an old trace. The standalone build serves maps alongside its
+hashed assets. Maps are separate downloads used by debugging tools, rather
+than inline additions to the executable bundle.
+
 `build` produces the standalone app. `build:embedded` produces the single JS/CSS
 bundle served by the ExApp on Nextcloud’s embedded page and checks its shape.
 `npm run preview` serves the standalone build; configure the same operator proxy

@@ -28,6 +28,12 @@ meeting-library/
       manifest.json
 ```
 
+All production builds also generate external JavaScript source maps containing
+the original source. Publish the `.map` files beside their matching scripts:
+standalone maps live in `dist/assets/`, and embedded/public builds emit
+`viewer.js.map` in their output directory. Keep each map paired with the exact
+bundle that produced it. The microsite embed sync includes the map automatically.
+
 At runtime the app loads `catalog.json`, then fetches the selected meeting artifact from the
 directory listed in that catalog entry. If exactly one meeting is listed, the app opens it
 automatically. If several meetings are listed, the root `index.html` acts as the landing page and

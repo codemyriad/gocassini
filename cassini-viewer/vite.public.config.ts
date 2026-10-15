@@ -20,6 +20,8 @@ export default defineConfig({
   plugins: [tailwindcss(), svelte()],
   base: "./",
   build: {
+    // External maps keep production code minified and make installed builds debuggable.
+    sourcemap: true,
     outDir: "dist/public",
     emptyOutDir: true,
     cssCodeSplit: false,

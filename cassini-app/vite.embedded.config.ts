@@ -39,6 +39,8 @@ export default defineConfig({
     __CASSINI_BUILD_ID__: JSON.stringify(Date.now().toString(36)),
   },
   build: {
+    // External maps keep production code minified and make installed builds debuggable.
+    sourcemap: true,
     outDir: "dist/embedded",
     emptyOutDir: true,
     cssCodeSplit: false,
@@ -50,6 +52,8 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
+        // The operator serves embedded.js as /ui/viewer.js.
+        sourcemapFileNames: "viewer.js.map",
         inlineDynamicImports: true,
         manualChunks: undefined,
         // Single CSS asset -> embedded.css (Vite names the lib CSS after the
