@@ -404,6 +404,80 @@ Retagging must validate the input contract, preserve every transcript chunk
 set and extension field, rebuild the main-payload digest and descriptors, copy
 the Opus stream, and verify the staged output before replacing anything.
 
+### Upgrade a file in a pre-publication draft shape
+
+Before version 1 was published, Cassini wrote three draft shapes, and for a
+week it wrote version 1 under the schema URL the format had before it moved to
+`format.gocassini.com`. Current readers refuse all four. `cassini upgrade-format`
+rewrites one such file as published version 1:
+
+```bash
+cassini upgrade-format ./old.opus --check            # report, write nothing
+cassini upgrade-format ./old.opus --out ./meeting.opus
+cassini upgrade-format ./old.opus --out ./meeting.opus --json
+```
+
+| Shape | How it is recognised | What changes |
+|---|---|---|
+| draft 1 | `CASSINI_FORMAT=…/1`, schema `cassini.local/…-v1`, one inline `transcript`, `exact-pcm` | inline `transcript`, `readableTranscript` and `displayTranscript` move into chunk sets `raw-asr` (default), `readable-cleanup` and `display`; single-step `provenance` members become maps keyed by those ids; integrity becomes `exact-opus-audio-v1` |
+| draft 2 | `CASSINI_FORMAT=…/2`, schema `cassini.local/…-v2`, `transcripts` index, `exact-pcm` | `version` 2 → 1; integrity becomes `exact-opus-audio-v1` |
+| draft 3 | `CASSINI_FORMAT=…/3`, schema `cassini.local/…-v3`, `transcripts` index, `exact-opus-audio-v1` | `version` 3 → 1 |
+| v1, old schema URL | `CASSINI_FORMAT=…/1`, schema `cassini-format.codemyriad.io/…` | the schema tag only |
+
+In every case the format, schema and decode-hint tags become the published
+values. The command adds a root `x-upgradedFrom` record of the source format,
+schema and manifest version and of how the audio was checked. Everything else
+is carried exactly as written. That includes every transcript chunk set, the
+speakers, room, job and attempt, the summary and attachments, `chapters`,
+annotations, the legacy `meeting.roomName`, and the `role` members on word
+transcripts. Published v1 is open everywhere except `integrity` and
+`payloadRef`, so v1 readers ignore all of these. A `meeting.id` derived from
+the draft's PCM digest is kept as it is.
+
+Only one thing has no place in v1: a draft's exact-PCM integrity record
+(`pcmSha256`, `pcmFormat`, and draft 1's `containerSha256`). The `integrity`
+object is closed, so the record moves to `x-upgradedFrom.integrity`. The
+`CASSINI_AUDIO_PCM_*` tags are removed. The report lists every relocation.
+
+The audio is copied with `-c:a copy`, never re-encoded. The output is written
+to a staging file next to `--out` and is renamed into place only after all of
+these hold:
+
+- its canonical compressed-Opus digest and shape equal the input's
+- its manifest is exactly the planned one
+- every transcript body decodes to the bytes it had
+- `cassini inspect` reports `cassini=ok` with no warnings
+- the default transcript extracts with the input's word count
+
+The command never writes over its input. A file already in the published
+format is reported as `current` and nothing is written.
+
+Before it stamps a new digest, the command checks that the source metadata
+belongs to the audio:
+
+- **Draft 3 and old-schema files:** the recorded compressed-Opus digest must
+  match the audio.
+- **Drafts 1 and 2:** these recorded a SHA-256 of decoded PCM, which depends on
+  the decoder that produced it. If this FFmpeg reproduces the digest, the
+  upgrade proceeds. If it does not but the decoded sample count matches
+  exactly, the command refuses unless `--accept-pcm-shape-match` is given. With
+  the flag, the file records `audioVerification: "pcm-shape-only"`. Recordings
+  produced by the FFmpeg 8/9 builds generally do not reproduce under another
+  FFmpeg, so expect to need the flag for drafts 1 and 2.
+
+The command refuses rather than guesses on any of these:
+
+- an unknown format and schema pair
+- a manifest version or shape that disagrees with the tags
+- metadata that does not match the audio
+- a transcript id or words body the published reader would reject
+- a chunk set that does not match its `payloadRef`
+- more than one default words transcript
+- a file that already carries `x-upgradedFrom`
+
+It upgrades a local file. Replacing recordings that are already delivered to
+Nextcloud is a separate operator step and is not built in.
+
 `cassini inspect` prints one `annotations` line when a file carries marks: the
 revision, tag and mark counts, and whether the marks are resolved against this
 audio. A format it does not read is reported as `status=unsupported-format`.
