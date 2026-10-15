@@ -21,6 +21,8 @@ type topicsTranscript struct {
 	// builds record none, so the embed detects its own.
 	Language string
 	Words    []topics.Word
+	// SpeakerLabels are the names the transcript gives its speakers.
+	SpeakerLabels []string
 }
 
 // readTopicsTranscript reads the default words transcript of a delivered
@@ -47,6 +49,9 @@ func readTopicsTranscript(path string) (topicsTranscript, error) {
 		return topicsTranscript{}, fmt.Errorf("%s: the default transcript has no payload digest", path)
 	}
 	out := topicsTranscript{PayloadSHA256: extracted.PayloadSHA256, Language: extracted.Language}
+	for _, label := range meeting.SpeakerLabels() {
+		out.SpeakerLabels = append(out.SpeakerLabels, label)
+	}
 	for _, w := range extracted.Words {
 		out.Words = append(out.Words, topics.Word{Text: w.Text, StartMS: w.StartMS, EndMS: w.EndMS, Speaker: w.Speaker})
 	}
@@ -77,6 +82,11 @@ func readTopicsTranscriptFromBundle(dir string) (topicsTranscript, error) {
 			return topicsTranscript{}, err
 		}
 		out := topicsTranscript{PayloadSHA256: ref.SHA256, Language: body.Language}
+		for _, speaker := range withSeparatedDevices(source.Transcript.Speakers, source.AdditionalTranscripts) {
+			if label := strings.TrimSpace(speaker.Label); label != "" {
+				out.SpeakerLabels = append(out.SpeakerLabels, label)
+			}
+		}
 		for _, item := range body.Items {
 			if strings.TrimSpace(item.Text) == "" {
 				continue

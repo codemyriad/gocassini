@@ -454,3 +454,15 @@ func TestTopicRescoreStopsWhenItsTopicChangesAndKeepsANewRequest(t *testing.T) {
 		t.Fatal("the newer request was dropped")
 	}
 }
+
+func TestApprovingAProposalAdoptsAVisibleTagOfThatName(t *testing.T) {
+	_, h, topics := topicLibraryService(t, "MEETING1.opus")
+	db := topics.store.db
+	db.Exec(`INSERT INTO topic_proposal(id,room_id,state,centroid,model_revision,recipe_version,chunker_version,draft_name,hints_json,flags_json,meeting_count,day_count,passage_count,created_at,updated_at)
+ VALUES('tp1','r1','open',x'00','m','r1','natural-1','spend / quarter','["spend"]','{}',3,3,3,1,1)`)
+	db.Exec(`INSERT INTO topic_proposal_member VALUES('tp1','MEETING1.opus',0,500,1)`)
+	rec := reviewCall(h, http.MethodPost, "proposals/tp1", "alice", `{"requestId":"a1","action":"approve","label":"Budget","definition":"Money and how it is planned."}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tag_budget"`) {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
+	}
+}

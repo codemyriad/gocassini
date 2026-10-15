@@ -1696,6 +1696,13 @@
         open={tagManagerOpen}
         on:close={() => (tagManagerOpen = false)}
         on:changed={() => refreshTags(true)}
+        on:openMeeting={(event) => {
+          const found = catalogMeetings.find((meeting) => meeting.id === event.detail.meetingId);
+          if (found) {
+            tagManagerOpen = false;
+            loadCatalogMeeting(found);
+          }
+        }}
       />
     {/if}
   </div>

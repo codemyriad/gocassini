@@ -32,15 +32,15 @@ type topicsStatus struct {
 	// BackfillSince is "all", a date, or "" when no past meeting was queued.
 	BackfillSince string `json:"backfillSince,omitempty"`
 	// Counts are topic_meeting rows by state; Unavailable by reason.
-	Counts                  map[string]int    `json:"counts"`
-	Unavailable             map[string]int    `json:"unavailable"`
-	OldestWaitingSeconds    int64             `json:"oldestWaitingSeconds"`
-	Blocked                 []topicBlockedRow `json:"blocked"`
-	VectorsBytes            int64             `json:"vectorsBytes"`
-	Worker                  topicsWorkerStats `json:"worker"`
+	Counts               map[string]int    `json:"counts"`
+	Unavailable          map[string]int    `json:"unavailable"`
+	OldestWaitingSeconds int64             `json:"oldestWaitingSeconds"`
+	Blocked              []topicBlockedRow `json:"blocked"`
+	VectorsBytes         int64             `json:"vectorsBytes"`
+	Worker               topicsWorkerStats `json:"worker"`
 	// Audit is the library's recent edits with who made them: admins only.
-	Audit []topicAuditRow `json:"audit"`
-	EstimateSecondsPerCheck int               `json:"estimateSecondsPerMeeting"`
+	Audit                   []topicAuditRow `json:"audit"`
+	EstimateSecondsPerCheck int             `json:"estimateSecondsPerMeeting"`
 }
 
 type topicAuditRow struct {

@@ -13,17 +13,18 @@
   import TagEditor from "./manager/TagEditor.svelte";
   import { popover, stepIndex } from "./popover";
   import TopicsPanel from "../topics/TopicsPanel.svelte";
+  import TopicInbox from "../topics/TopicInbox.svelte";
   import type { DataProvider } from "../../viewer/dataProvider";
   import type { TopicLibrary } from "../../viewer/topics";
 
   export let tags: VocabularyTag[] = [];
-  export let provider: TagProvider & Partial<Pick<DataProvider, "loadTopicLibrary" | "saveTopic" | "loadTopicHistory" | "redactTopicRevision" | "loadTopicTagRooms">>;
+  export let provider: TagProvider & Partial<Pick<DataProvider, "loadTopicLibrary" | "saveTopic" | "loadTopicHistory" | "redactTopicRevision" | "loadTopicTagRooms" | "loadTopicProposals" | "decideTopicProposal">>;
   export let open = false;
 
   const MENU = [["rename", "Rename"], ["color", "Change colour"], ["describe", "Describe as topic…"], ["merge", "Merge into…"], ["delete", "Delete…"]] as const;
   // The topic library, when this operator serves one with suggestions on.
   let library: TopicLibrary | null = null;
-  let tab: "tags" | "topics" = "tags";
+  let tab: "tags" | "topics" | "new" = "tags";
   let describing: VocabularyTag | null = null;
   // Also retire the topic of a tag being deleted.
   let retireToo = true;
@@ -39,7 +40,7 @@
       library = null;
     }
   }
-  const dispatch = createEventDispatcher<{ close: void; changed: void }>();
+  const dispatch = createEventDispatcher<{ close: void; changed: void; openMeeting: { meetingId: string; startMs: number } }>();
   const jobs = createJobTracker(provider, () => dispatch("changed"));
   onDestroy(jobs.stop);
 
@@ -194,9 +195,18 @@
       <div role="tablist" aria-label="Manage" class="tabs tabs-border px-3">
         <button type="button" role="tab" class="tab" class:tab-active={tab === "tags"} aria-selected={tab === "tags"} on:click={() => (tab = "tags")}>Tags</button>
         <button type="button" role="tab" class="tab" class:tab-active={tab === "topics"} aria-selected={tab === "topics"} on:click={() => (tab = "topics")}>Topics</button>
+        {#if provider.loadTopicProposals && provider.decideTopicProposal}
+          <button type="button" role="tab" class="tab" class:tab-active={tab === "new"} aria-selected={tab === "new"} on:click={() => (tab = "new")}>New topics</button>
+        {/if}
       </div>
     {/if}
-    {#if topicsOn && tab === "topics" && library}
+    {#if topicsOn && tab === "new" && library}
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-8 pt-1.5 max-[720px]:px-2">
+        <TopicInbox {provider} topics={(library.library ?? []).filter((t) => t.status === "active")}
+          on:openMeeting={(event) => dispatch("openMeeting", event.detail)}
+          on:changed={() => { void loadLibrary(); dispatch("changed"); }} />
+      </div>
+    {:else if topicsOn && tab === "topics" && library}
       <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-8 pt-1.5 max-[720px]:px-2">
         <TopicsPanel {library} {provider} {tags} describe={describing} on:describeDone={() => (describing = null)}
           on:changed={() => { void loadLibrary(); dispatch("changed"); }} />

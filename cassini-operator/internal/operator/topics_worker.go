@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -175,6 +176,16 @@ func (s *topicsService) loop() {
 		}
 		for s.rt.ctx.Err() == nil && s.runOnce(s.rt.ctx) {
 		}
+		// Nothing to embed: recluster rooms, while no one is recording. A
+		// recording that starts cancels the pass, as it cancels an embed.
+		if s.settings().Enabled && s.rt.ctx.Err() == nil && s.recordingIdle() {
+			if workCtx, done, err := s.rt.beginBackgroundBuild(); err == nil {
+				if err := s.proposalPass(workCtx); err != nil && workCtx.Err() == nil {
+					s.logf("proposals: %v", err)
+				}
+				done()
+			}
+		}
 		select {
 		case <-s.rt.ctx.Done():
 			return
@@ -182,6 +193,13 @@ func (s *topicsService) loop() {
 		case <-ticker.C:
 		}
 	}
+}
+
+// recordingIdle says whether recordings leave room for background work.
+func (s *topicsService) recordingIdle() bool {
+	s.rt.priorityMu.Lock()
+	defer s.rt.priorityMu.Unlock()
+	return s.rt.processingPolicy() == policyConcurrent || s.rt.recordingIdleLocked()
 }
 
 // paused says why the worker cannot run now, "" when it can.
@@ -373,6 +391,13 @@ func (s *topicsService) process(ctx context.Context, row topicMeetingRow, versio
 			return
 		}
 		set = stored
+		if run.speakers != nil && !slices.Equal(run.speakers, stored.SpeakerTermHashes) {
+			if err := s.vectors.setSpeakerTerms(base, row.OpusName, stored.EmbedKey, run.speakers); err != nil && !errors.Is(err, errMeetingRetired) {
+				s.failRow(base, row, err)
+				return
+			}
+			set.SpeakerTermHashes = run.speakers
+		}
 	} else {
 		set, err = readTopicPassagesFile(out)
 		if err != nil {
@@ -426,6 +451,7 @@ func (s *topicsService) process(ctx context.Context, row topicMeetingRow, versio
 		s.failRow(base, row, err)
 		return
 	}
+	s.markRoomDirty(base, row.OpusName)
 	suggested := 0
 	for _, sc := range scores {
 		if sc.Decision.qualifies() {
@@ -561,6 +587,7 @@ func (e *topicsCLIError) reason() string {
 type topicsEmbedRun struct {
 	unchanged    bool
 	embedKey     string
+	speakers     []string
 	header       topicPassagesHeader
 	tokens       int
 	lockWait     time.Duration
@@ -580,7 +607,11 @@ func (s *topicsService) runEmbed(ctx context.Context, input, out, knownKey strin
 	var run topicsEmbedRun
 	started := time.Now()
 	var lockedAt time.Time
-	err := s.runCLI(ctx, args, func(line map[string]json.RawMessage) {
+	key, err := s.store.speakerKey(ctx)
+	if err != nil {
+		return run, err
+	}
+	err = s.runCLIEnv(ctx, args, []string{"CASSINI_TOPICS_SPEAKER_KEY=" + string(key)}, func(line map[string]json.RawMessage) {
 		if _, ok := line["locked"]; ok {
 			lockedAt = time.Now()
 			run.lockWait = lockedAt.Sub(started)
@@ -588,6 +619,7 @@ func (s *topicsService) runEmbed(ctx context.Context, input, out, knownKey strin
 		if raw, ok := line["unchanged"]; ok && string(raw) == "true" {
 			run.unchanged = true
 			_ = json.Unmarshal(line["embedKey"], &run.embedKey)
+			_ = json.Unmarshal(line["speakerTermHashes"], &run.speakers)
 		}
 	})
 	if err != nil {
@@ -609,10 +641,14 @@ func (s *topicsService) runEmbed(ctx context.Context, input, out, knownKey strin
 // runCLI runs `cassini <args>`, hands each stdout JSON line to onLine and arms
 // topicsEmbedTimeout when the CLI reports {"locked":true}.
 func (s *topicsService) runCLI(ctx context.Context, args []string, onLine func(map[string]json.RawMessage)) error {
+	return s.runCLIEnv(ctx, args, nil, onLine)
+}
+
+func (s *topicsService) runCLIEnv(ctx context.Context, args, extraEnv []string, onLine func(map[string]json.RawMessage)) error {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	cmd := exec.CommandContext(runCtx, s.rt.cfg.CassiniBin, args...)
-	cmd.Env = s.rt.modelEnv()
+	cmd.Env = append(s.rt.modelEnv(), extraEnv...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
@@ -759,17 +795,18 @@ func (s *topicsService) ensureTextVectors(ctx context.Context, v topicVersions) 
 
 // topicPassagesHeader is the first line of a `cassini topics embed` output.
 type topicPassagesHeader struct {
-	Format             string  `json:"format"`
-	EmbedKey           string  `json:"embedKey"`
-	PayloadSHA256      string  `json:"payloadSha256"`
-	ModelRevision      string  `json:"modelRevision"`
-	ChunkerVersion     string  `json:"chunkerVersion"`
-	RecipeVersion      string  `json:"recipeVersion"`
-	Dimensions         int     `json:"dimensions"`
-	Count              int     `json:"count"`
-	Language           string  `json:"language"`
-	LanguageConfidence float64 `json:"languageConfidence"`
-	DetectorVersion    string  `json:"detectorVersion"`
+	Format             string   `json:"format"`
+	EmbedKey           string   `json:"embedKey"`
+	PayloadSHA256      string   `json:"payloadSha256"`
+	ModelRevision      string   `json:"modelRevision"`
+	ChunkerVersion     string   `json:"chunkerVersion"`
+	RecipeVersion      string   `json:"recipeVersion"`
+	Dimensions         int      `json:"dimensions"`
+	Count              int      `json:"count"`
+	Language           string   `json:"language"`
+	LanguageConfidence float64  `json:"languageConfidence"`
+	DetectorVersion    string   `json:"detectorVersion"`
+	SpeakerTermHashes  []string `json:"speakerTermHashes"`
 }
 
 func readTopicPassagesHeader(path string) (topicPassagesHeader, int, error) {
@@ -827,6 +864,7 @@ func readTopicPassages(path string) (topicPassageSet, topicPassagesHeader, error
 	}
 	set.EmbedKey, set.ModelRevision, set.ChunkerVersion, set.RecipeVersion = header.EmbedKey, header.ModelRevision, header.ChunkerVersion, header.RecipeVersion
 	set.PayloadSHA256, set.Language, set.LanguageConfidence, set.DetectorVersion = header.PayloadSHA256, header.Language, header.LanguageConfidence, header.DetectorVersion
+	set.SpeakerTermHashes = header.SpeakerTermHashes
 	return set, header, nil
 }
 

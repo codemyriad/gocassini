@@ -43,7 +43,10 @@ rev=$(cat "$D/revision")
 if [ "$cmd" = embed ]; then
   payload=$(sha256sum "$input" | cut -d' ' -f1)
   key=$(printf '%s\n%s\nnatural-1\nr1' "$payload" "$rev" | sha256sum | cut -d' ' -f1)
-  if [ "$known" = "$key" ]; then printf '{"unchanged":true,"embedKey":"%s"}\n' "$key"; exit 0; fi
+  if [ "$known" = "$key" ]; then
+    speakers='[]'; [ -f "$D/unchanged-speakers" ] && speakers=$(cat "$D/unchanged-speakers")
+    printf '{"unchanged":true,"embedKey":"%s","speakerTermHashes":%s}\n' "$key" "$speakers"; exit 0
+  fi
   if [ -f "$D/hang-before-lock" ]; then touch "$D/waiting"; sleep 30; fi
   if [ -f "$D/exit" ]; then cat "$D/stderr" >&2; exit "$(cat "$D/exit")"; fi
   echo '{"locked":true}'
@@ -619,8 +622,10 @@ func embedTopicTestControls(t *testing.T, s *topicsService) {
 
 func retireTopicTestMeeting(t *testing.T, s *topicsService, name string) {
 	t.Helper()
+	var n int
+	s.rt.store.db.QueryRow(`SELECT COUNT(*) FROM meeting_lifecycle`).Scan(&n)
 	if _, err := s.rt.store.db.Exec(`INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source) VALUES(?,?,?,?,?,?)`,
-		name, 7, "/Cassini/meetings/"+name, "retired", time.Now().UTC().Format(time.RFC3339Nano), "test"); err != nil {
+		name, 7+n, "/Cassini/meetings/"+name, "retired", time.Now().UTC().Format(time.RFC3339Nano), "test"); err != nil {
 		t.Fatal(err)
 	}
 }
