@@ -845,3 +845,50 @@ func TestADraftFormatRecordingIsReadFromItsBundleOrMarkedNotChecked(t *testing.T
 		t.Fatalf("no bundle: %+v", r)
 	}
 }
+
+func TestADraftFromTheArchiveNeverReadsAnUnpublishedBundle(t *testing.T) {
+	s, cli := newTopicsTestService(t)
+	ctx := context.Background()
+	cli.write("draft", "")
+	s.archive = func(ctx context.Context, name, dir string) (string, string, error) {
+		path := filepath.Join(dir, name)
+		return path, "d", os.WriteFile(path, []byte("archived draft"), 0o600)
+	}
+	name := publishTopicTestMeeting(t, s, "job-a", "delivered draft", 1)
+	// A rerun rebuilt the bundle and the local copy but never published:
+	// neither is what was delivered.
+	os.WriteFile(canonicalOpusPath(s.rt.cfg.WorkRoot, "job-a"), []byte("unpublished rerun"), 0o644)
+	bundle := canonicalMeetingPath(s.rt.cfg.WorkRoot, "job-a")
+	os.MkdirAll(bundle, 0o755)
+	os.WriteFile(filepath.Join(bundle, "transcript.words.v1.json"), []byte(`{"version":"transcript.words.v1","rerun":true}`), 0o644)
+	s.runOnce(ctx)
+	inputs, _ := os.ReadFile(filepath.Join(cli.dir, "inputs"))
+	if strings.Contains(string(inputs), ".meeting") {
+		t.Fatalf("the unpublished bundle was read: %s", inputs)
+	}
+	if r := topicRow(t, s, name); r.State != topicStateUnavailable || r.Reason != "unsupported-format" {
+		t.Fatalf("row %+v", r)
+	}
+}
+
+func TestADraftReadFromItsBundleIsRescoredAfterTheBundleIsGone(t *testing.T) {
+	s, cli := newTopicsTestService(t)
+	ctx := context.Background()
+	cli.write("draft", "")
+	name := publishTopicTestMeeting(t, s, "job-a", "delivered draft", 1)
+	bundle := canonicalMeetingPath(s.rt.cfg.WorkRoot, "job-a")
+	os.MkdirAll(bundle, 0o755)
+	os.WriteFile(filepath.Join(bundle, "transcript.words.v1.json"), []byte(`{"version":"transcript.words.v1"}`), 0o644)
+	s.runOnce(ctx)
+	if r := topicRow(t, s, name); r.State != topicStateDone {
+		t.Fatalf("first read: %+v", r)
+	}
+	// Retention removes the bundle; then the scorer changes and the meeting
+	// is queued to be scored again.
+	os.RemoveAll(bundle)
+	s.store.db.Exec(`UPDATE topic_meeting SET state='queued',scorer_key='older' WHERE opus_name=?`, name)
+	s.runOnce(ctx)
+	if r := topicRow(t, s, name); r.State != topicStateDone {
+		t.Fatalf("rescored from its stored vectors: %+v", r)
+	}
+}
