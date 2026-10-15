@@ -6,7 +6,7 @@ describe("the shell's answer to meeting-detail tag writes", () => {
   it("reconciles the list session and refreshes once the shared queue drains", () => {
     const handler = appSource.slice(
       appSource.indexOf("function reconcileMeetingTags"),
-      appSource.indexOf("const bulkTags"),
+      appSource.indexOf("function tagSelection"),
     );
     expect(handler).toContain(
       "listTagSession.updateConfirmed((vocabulary) => withMeetingResult(vocabulary, result));",
@@ -148,5 +148,16 @@ describe("the shell's Prepare panel", () => {
   it("re-runs the search when the narrowing changes under a live query", () => {
     expect(appSource).toContain("narrowingKey !== lastNarrowingKey");
     expect(appSource).toMatch(/narrowingKey !== lastNarrowingKey[\s\S]{0,240}runSearch\(searchQuery\)/);
+  });
+});
+
+
+describe("optimistic selection tagging", () => {
+  it("routes selection clicks and retries through the list session without disabling queued edits", () => {
+    expect(appSource).toContain("listTagSession.toggleBulk(pickedMeetings, pick)");
+    expect(appSource).toContain("tagReport={$listTagSession.bulkReport}");
+    expect(appSource).toContain("on:retryTag={() => listTagSession.retry()}");
+    expect(appSource).not.toContain("createBulkTagSession");
+    expect(appSource).not.toContain("tagBusy={");
   });
 });

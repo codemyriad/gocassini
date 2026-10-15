@@ -59,14 +59,12 @@
     createTagLoader,
     createWriteQueue,
     filterByTags,
-    planBulkTag,
     wholeTagState,
     withMeetingResult,
     type MeetingTags,
     type TagMatch,
   } from "./viewer/listTags";
   import { createMeetingMarksSessions } from "./components/marking/sessions";
-  import { createBulkTagSession, withAnnotationBatch } from "./viewer/bulkTags";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
@@ -391,7 +389,7 @@
   // open, while the room chip changes, and while the search narrows past it.
   function handlePick(event: CustomEvent<MeetingCatalogEntry>) {
     selection = toggleSelected(selection, event.detail.id);
-    bulkTags.clearReport();
+    listTagSession.clearBulkReport();
     if (selection.ids.length === 0) {
       // Nothing left to prepare; the panel would be describing an empty set.
       prepareOpen = false;
@@ -401,7 +399,7 @@
   function handleClearSelection() {
     selection = clearSelection();
     prepareOpen = false;
-    bulkTags.clearReport();
+    listTagSession.clearBulkReport();
   }
 
   const tagLoader = createTagLoader(
@@ -431,6 +429,11 @@
       return result;
     },
     queueTagWrite,
+    async (request) => {
+      const result = await dataProvider.applyAnnotationBatch!(request);
+      result.results.forEach((meeting) => meetingMarks.receive(meeting));
+      return result;
+    },
   );
 
   $: tagVocabulary = $listTagSession.vocabulary;
@@ -450,27 +453,9 @@
     // The shared queue refreshes the vocabulary once this burst drains.
   }
 
-  const bulkTags = createBulkTagSession(
-    (request) => new Promise((resolve, reject) => {
-      void queueTagWrite(async () => {
-        try {
-          const result = await dataProvider.applyAnnotationBatch!(request);
-          result.results.forEach((meeting) => meetingMarks.receive(meeting));
-          resolve(result);
-        }
-        catch (error) { reject(error); }
-      });
-    }),
-    (result) => {
-      listTagSession.updateConfirmed((vocabulary) => withAnnotationBatch(vocabulary, result));
-      refreshTags(true);
-    },
-  );
-
   function tagSelection(pick: TagPick) {
     if (!dataProvider.applyAnnotationBatch) return;
-    const plan = planBulkTag(pickedMeetings, meetingTags, pick);
-    void bulkTags.write(plan.targets.map((entry) => entry.id), plan.request, plan.remove);
+    listTagSession.toggleBulk(pickedMeetings, pick);
   }
 
   function toggleTagFilter(tagId: string) {
@@ -1503,10 +1488,9 @@
           tags={dataProvider.applyAnnotationBatch ? vocabularyTags : null}
           tagSelected={bulkTagState.selected}
           tagMixed={bulkTagState.mixed}
-          tagReport={$bulkTags.report}
-          tagBusy={$bulkTags.busy || $bulkTags.retryable}
-          tagRetry={$bulkTags.retryable}
-          on:retryTag={() => bulkTags.retry()}
+          tagReport={$listTagSession.bulkReport}
+          tagRetry={$listTagSession.retryable}
+          on:retryTag={() => listTagSession.retry()}
           on:tag={(event) => tagSelection(event.detail)}
         />
       </div>
