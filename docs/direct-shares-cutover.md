@@ -17,21 +17,25 @@ standalone static exporter still makes one for static hosting.
 
 ## Existing recordings
 
-This release does not migrate archives from older permission modes. For an
-existing one-user installation:
+This release does not migrate archives from older permission modes. Bring old
+recordings in through meeting import (D-828) rather than by hand:
 
-1. Keep the `cassini` account, and back up its Files and the operator volume.
-2. Sign in as `cassini` (use `occ user:resetpassword cassini` if needed).
-3. Move the old `.opus` files into `CassiniRecordings/meetings` in that account's
-   Files. Check for duplicate names before moving. Files in a former Team folder
-   must first be copied into this private folder.
-4. Share each imported file with its intended Nextcloud users, then check its
-   listing and playback as one recipient and one outsider. Existing file shares
-   may survive a move within the same account; check them rather than assuming.
-5. Retire old broad access only after the new copies and caller reads are
-   verified. Apply the instance's trash retention policy to old copies.
+- In the viewer, Browse → **Import**: drop the `.opus` (or transcription-only
+  `.json`) files, choose who each meeting is shared with, and import.
+- On the server, `cassini-operator import-meeting --as <user>
+  [--share-with user:a,group:b] <file>...` does the same from local paths —
+  the recovery path for files restored from a backup.
 
-A recording without a local metadata row appears with a filename based title
-until it is republished. Search and annotation backfills discover recordings
-from the private Nextcloud directory, so loss of the local metadata index does
-not hide the archive from those rebuilds.
+Either way each file is validated by the cassini CLI, delivered byte for byte
+into `CassiniRecordings/meetings` under a fresh local id, indexed for listing,
+search and tags, adopted into retention with the meeting's own dates as its
+age, and shared — the importer first, then the selection, with reshare
+permission where the instance allows it. The staged upload in the importer's
+own Files is removed once the import lands.
+
+A recording placed in the folder by hand still works for recipients of its
+shares, but it has no import record: retention will not manage it, and it
+lists with a filename-based title until `import-meeting-metadata` restores its
+description. Prefer the import paths above. Search and annotation backfills
+discover recordings from the private Nextcloud directory either way, so loss
+of the local metadata index does not hide the archive from those rebuilds.
