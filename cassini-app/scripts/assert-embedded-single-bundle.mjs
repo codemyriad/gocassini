@@ -69,6 +69,20 @@ if (cssFiles[0] !== "embedded.css") {
 const jsPath = join(distDir, jsFiles[0]);
 const source = readFileSync(jsPath, "utf8");
 
+// The external map must be discoverable under the served script's URL and
+// contain the original sources, so profiling works on installed releases.
+const mapName = "viewer.js.map";
+if (!source.trimEnd().endsWith(`//# sourceMappingURL=${mapName}`)) {
+  fail(`${jsFiles[0]} must reference ${mapName}`);
+}
+const sourceMap = JSON.parse(readFileSync(join(distDir, mapName), "utf8"));
+if (sourceMap.version !== 3 || !sourceMap.mappings ||
+    !sourceMap.sources?.length || sourceMap.sourcesContent?.length !== sourceMap.sources.length ||
+    !sourceMap.sourcesContent.every((source) => typeof source === "string")) {
+  fail(`${mapName} must contain mappings and original source content`);
+}
+
+
 // 1. No dynamic import() — strict-dynamic won't trust the fetched chunk.
 if (/\bimport\s*\(/.test(source)) {
   fail(`${jsFiles[0]} contains a dynamic import() — the embedded bundle must inline every chunk`);
