@@ -50,6 +50,12 @@ export interface MeetingCatalogEntry {
   // narrow it first, so the distinction cannot be lost by accident.
   hasSummary?: boolean;
   wordCount?: number;
+  // Stamped by the operator when the meeting was brought in through the Import
+  // tab or `cassini-operator import-meeting` (D-828): who imported it and when.
+  // It is local-only attribution — the file itself carries the source instance's
+  // provenance — and is visible to everyone the meeting is shared with, the
+  // same way marks travel with their authors. Absent on recordings made here.
+  imported?: { by?: string; atUtc?: string };
 }
 
 export interface MeetingCatalog {

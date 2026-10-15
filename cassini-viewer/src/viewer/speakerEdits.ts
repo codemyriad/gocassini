@@ -185,7 +185,10 @@ export function describeSpeakerEditsError(error: unknown): string {
 
 // The sentence for each reason the feature is absent on one meeting.
 export const UNAVAILABLE_REASONS: Record<SpeakerEditsUnavailableReason, string> = {
-  "no-job": "This recording was made before Cassini kept each participant's audio.",
+  // "no-job" covers both origins honestly: an imported meeting (D-828) and a
+  // recording from before per-participant audio existed look identical here —
+  // this installation has no recording job, so it holds nobody's own audio.
+  "no-job": "This Cassini doesn't hold each participant's own audio for this recording — it was imported, or made before Cassini kept it.",
   "no-source-audio": "Each participant's own audio was not kept for this recording.",
   "no-transcript": "This recording has no transcript to separate.",
   "diarization-unavailable": "Voice separation is not installed on this server. An administrator can download it in Cassini's Settings.",
