@@ -183,6 +183,7 @@ const REASONS: Record<string, string> = {
   "no-transcript": "no transcript",
   "transcript-has-no-words": "the transcript is empty",
   "transcript-integrity": "the transcript is damaged",
+  "unsupported-format": "it was published in an older file format",
   "recording-missing": "the recording is missing",
   "transcription-disabled": "transcription was off",
 };
