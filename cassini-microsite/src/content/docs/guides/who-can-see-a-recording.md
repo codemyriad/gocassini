@@ -1,227 +1,93 @@
 ---
 title: Who can see a recording
-description: Two audiences for published recordings — anyone with a Nextcloud account, or only the people who were in the call — what each needs, and how to switch.
+description: Each recording is shared with the people, groups and Teams in its Talk room, through ordinary Nextcloud file shares.
 source: docs/exapp-nextcloud-recordings-permissions.md
-copied: "2026-09-17"
+copied: "2026-10-13"
 ---
 
-Fresh installs make recordings visible to everyone with an account on your
-Nextcloud. Under **Operator › Settings › Who can see recordings**, an
-administrator can instead enable room-based permissions: private recordings
-are restricted to the room’s audience, while public-room recordings remain
-visible to all signed-in accounts. Nextcloud Files enforces those permissions.
+Access follows the Talk room. Each recording is shared with the room's
+Nextcloud people, groups and Teams, using ordinary Nextcloud file shares, and
+Nextcloud Files decides who can read it. There is nothing to choose and no
+extra Nextcloud app to install.
 
-Scoping a recording to its room needs the Team folders and Everyone Group apps.
-A fresh install without them uses the everyone audience. If an existing
-participant-restricted archive loses these prerequisites, Cassini reports a
-readiness error; it does not silently widen access.
+## Who gets a share
 
-This page covers the two audiences, what each needs, how to move between them,
-and what a recording you may not read looks like.
+- **Everyone in the room**, captured when the recording starts and again when
+  it stops. That includes people who were invited but never joined, not only
+  those present on the call.
+- **Groups and Teams are shared as themselves**, not expanded into a list of
+  people, so changing a group or Team's membership changes who can open the
+  recordings shared with it.
+- **The person who started the recording** always gets a share, even if Talk's
+  room list leaves them out.
+- **Guests, email invitees and federated participants** get nothing. They have no
+  local account to share with. Share the file from Files by hand if somebody
+  needs it.
 
-## The two audiences
+The room is captured while the meeting runs, so people who join or leave the
+room later do not change who can open an earlier recording.
 
-| | Everyone with a Nextcloud account | Meeting participants |
-|---|---|---|
-| Who can see a recording | anyone with an account on this Nextcloud | private rooms: the room’s audience at publication (including invitees); public rooms: all signed-in accounts |
-| Where recordings live | the `cassini` account's own `CassiniNoACL/Recordings` | `Cassini/Recordings`, inside the `Cassini` Team folder |
-| Nextcloud apps needed | none | Team folders + Everyone Group |
-| Other prerequisites | a `cassini` service account | a `cassini` service account, an `everyone` group, and a mapped, ACL-enabled `Cassini` Team folder |
-| On the wire | `"mode": "default"` | `"mode": "access_controlled"` |
+## Public rooms
 
-Each audience has its own root, and neither can shadow the other:
+A recording of a public Talk room is shared with the same people, with
+permission to reshare where this Nextcloud allows it. Recipients can then pass
+it on, or make a public link if the instance permits link sharing. Cassini never
+creates a public link itself.
 
-```text
-  the `cassini` service account's Files
-  ─────────────────────────────────────
-  CassiniNoACL/            its OWN directory. Nothing is mounted over it and no
-    Recordings/            other account has a mount of it, which is the whole
-      meetings/<id>.opus   of this audience's privacy argument.
-      catalog.json
+## Where recordings live
 
-  Cassini/                 the `Cassini` Team folder: `everyone` READ, `cassini`
-    Recordings/            ALL, advanced ACLs on, default-deny floor.
-      meetings/<id>.opus   MEETING PARTICIPANTS lives here.
-      catalog.json
-```
+Every recording belongs to the `cassini` service account, in its private
+`CassiniRecordings/meetings` folder, as one `.opus` file per meeting. Nothing
+else is mounted there, and Cassini checks the folder is private before it
+publishes. The `cassini` account can read every recording because it owns them;
+no other account can, unless the recording is shared with it.
 
-Both keep the same shape inside, so everything below the root — the catalog, the
-per-meeting `.opus`, the viewer's URLs — is identical either way.
+## Changing who can see a recording
 
-Neither is anonymous. A recording readable by "anyone with a Nextcloud account"
-is readable by every signed-in account and by nobody else; Cassini never makes a
-public link.
-
-## Which one an install gets
-
-Cassini resolves it when the app is enabled, from what is already on the
-instance, and records what it resolved. Nothing is asked and no install waits to
-be told:
-
-- Recordings in `Cassini/Recordings` — **meeting participants**, adopted.
-  Nothing moves, and an archive in the other root is reported as
-  `stranded_recordings`.
-- Anything else — **anyone with a Nextcloud account**. A fresh install records
-  from the moment the `cassini` account exists.
-
-**Cassini never widens an existing archive on its own.** Every branch either
-keeps the audience the recordings already have, or starts an empty archive at
-the audience a fresh install gets. Widening is an administrator's deliberate
-act, in the settings section, and the confirmation says how many recordings it
-is about to make visible to everyone.
-
-## How "meeting participants" is enforced
-
-Under this audience the recordings live in a system-owned Team folder with
-advanced ACLs and a default-deny floor. Every account has the same
-`Cassini/Recordings` path, and Nextcloud hides individual files from
-non-participants.
-
-- A **private** recording is readable only by the people who had access to the
-  Talk room when it was published — that is everyone on the room's attendee
-  list, including people who were invited but never joined, not only those
-  present on the call.
-- A recording of a **public** Talk conversation is readable by every signed-in
-  account. Publicness is read from Talk at record time and frozen with the
-  recording: making a conversation public later does not widen an earlier
-  private recording, and making it private does not narrow an earlier public
-  one.
-- Guest, email and federated participants have no local principal to grant, so a
-  private conversation containing only those remains owner-only. Share it as a
-  normal Nextcloud file if somebody needs it.
-
-Cassini keeps no separate permission list. The rules are on the files, and an
-administrator edits them with the ordinary Files advanced-permissions UI.
-
-### Why a recording is created empty
-
-A file that states no rules of its own inherits the folder's `everyone: READ`,
-so a recording uploaded and *then* protected would be readable by every account
-for as long as the gap between the two requests lasts. Nextcloud offers no
-atomic create-with-ACL, so Cassini closes the gap from the other end: it creates
-the file empty, denies it, and only then uploads the audio.
-
-```text
-  PUT <id>.opus (empty)  →  PROPPATCH owner-only deny  →  PUT <id>.opus (audio)
-                                                       →  PROPPATCH audience
-                                                       →  catalog.json
-```
-
-The catalog is written last, so a meeting whose ACL did not land is never
-advertised.
-
-## Setting up "meeting participants"
-
-Open **Cassini**, then **Operator › Settings › Who can see recordings**, and pick
-**Meeting participants**. Cassini checks the two apps first, lists every change
-it is about to make, asks Nextcloud to confirm your password, and then makes
-them **as you**. It never sees, holds or transmits your password.
-
-The one thing it cannot do is install the two Nextcloud apps: those routes
-require your password on the request itself, so Cassini tries through its own
-backend and otherwise sends you to Nextcloud's Apps page.
-
-The same recipe by hand:
-
-```bash
-occ group:add cassini
-occ user:add --group=cassini cassini
-occ app:install groupfolders && occ app:enable groupfolders
-occ app:install group_everyone && occ app:enable group_everyone
-occ groupfolders:create Cassini            # note the id it prints
-occ groupfolders:group <id> cassini read write share delete
-occ groupfolders:group <id> everyone read
-occ groupfolders:permissions <id> --enable
-occ groupfolders:permissions <id> -m --user cassini
-```
-
-Cassini prints only the lines your instance still needs, under **Details for
-administrators**.
-
-**The Everyone Group app is instance-wide.** Its `everyone` group can appear in
-Files and other Nextcloud sharing pickers, letting users who may share to groups
-select the whole instance. It also covers every Nextcloud account, including
-guest-app and external-backend accounts that may sign in. Accept that, or adjust
-Nextcloud's broader sharing policy, before installing it.
-
-## Switching
-
-The settings section moves the archive both ways, and it does it by **copying**
-into the other audience's root and emptying the source afterwards — never by
-moving. A copy means that at every instant the recorded audience names a root
-holding a complete archive, including the instant the container is killed
-mid-switch.
-
-Two things to know before you press it:
-
-- **Switching to meeting participants does not retroactively restrict
-  anything.** Recordings that already existed are copied into the Team folder
-  readable by every signed-in account: Cassini does not guess who was in a past
-  meeting. Narrowing them is a deliberate act, per recording, from the Files
-  app.
-- **Switching the other way drops every access rule.** A copy outside a Team
-  folder has no per-file rules, so afterwards everyone who can open Cassini can
-  read every recording, including ones that had been restricted to a call's
-  participants.
-
-Opting out empties the `Cassini` Team folder but leaves it in place, with its
-group mappings untouched, so switching back later is immediate.
-
-If a switch stops part way, both roots hold a copy. The app says so and offers
-**Resume**; the leftover copy keeps whatever audience it already had.
-
-## Day-to-day permission changes
-
-Access is frozen at publish and stays editable in Nextcloud:
-
-- Open the Team folder → the recording's `.opus` → sharing panel → **Advanced
-  permissions**, to add or remove user, group or team read rules.
-- Keep the explicit `everyone` rule: deny means private, read means public.
-- Removing participant rules leaves a private recording owner-only.
-- **Edits survive a re-publish.** Re-delivering a meeting replaces its audio and
-  leaves its rules exactly as they are. The one exception is a recording that
-  never got an audience at all, where the first publish failed part way, which
-  the next publish finishes.
+The shares are ordinary Nextcloud file shares, so change them the usual way:
+sign in as `cassini`, open the recording's `.opus` in Files, and use the sharing
+panel. Removing a share removes access in Cassini straight away, because Cassini
+checks the caller's current shares on every request.
 
 ## A recording you may not read looks like one that does not exist
 
 This is deliberate, and it is the same everywhere:
 
-- **In the app**, the meeting list is the intersection of the catalog and what
-  your account can actually open. A recording you may not read is simply not in
-  your list, and asking for it directly answers 404.
+- **In the app**, the meeting list is built from your own current Nextcloud
+  shares. A recording you may not read is simply not in your list, and asking
+  for it directly answers 404.
 - **From the CLI**, `cassini meetings` answers *no recording you can read* rather
-  than "forbidden" or "no such meeting". A recording you cannot see never
-  reveals that it exists. See
+  than "forbidden" or "no such meeting". See
   [Agent access via the CLI](/docs/guides/agent-access).
 
-Catalog scans fail closed: a mis-configured instance degrades to "no meetings",
-never to "everyone's meetings". If somebody who should see a recording gets an
-empty list, their account cannot traverse the folder — check with
-`occ groupfolders:list` that the folder has advanced ACL and the `everyone: read`
-mount, and that `occ user:info <user>` reports `everyone`.
+Cassini keeps titles and dates in a local index for the meeting cards, but that
+index never makes a recording visible. Every list, playback, transcript, search
+and annotation goes through Nextcloud as the person asking.
 
-## Checking which audience is in force
+## When a share cannot be made
 
-- In the app: the audience in force is marked **Current** in the settings
-  section, and everybody else sees a chip beside the meeting count reading
-  "Visible to anyone with a Nextcloud account" or "Visible to meeting
-  participants".
-- Over HTTP: `GET /operator/storage` reports the mode, where the decision came
-  from, and what is happening at the other root — `migration_clean` when a
-  switch did not finish tidying up, and `stranded_root` /
-  `stranded_recordings` for a settled instance whose other root still holds
-  recordings.
+- If Cassini cannot share a recording with the person who started it, the
+  recording is not published.
+- A failed group or Team share also stops publication, because it could leave
+  many people out.
+- One person's share being refused is a warning, and everybody else keeps
+  access.
 
-The provisioning internals, the ACL layering, the full state machine behind a
-switch and the traversal validation checklist stay in the repository:
-[`docs/exapp-nextcloud-recordings-permissions.md`](https://github.com/codemyriad/gocassini/blob/main/docs/exapp-nextcloud-recordings-permissions.md).
+The warning and the state of the setup are under **Operator › Settings › Publish
+pipeline › Who can see recordings**, and on `/operator/status` as `recordings_access`.
+
+## Recordings from before direct shares
+
+Older installs kept recordings in a Team folder or in `CassiniNoACL`. Cassini
+does not move those automatically. The
+[cutover steps](https://github.com/codemyriad/gocassini/blob/main/docs/direct-shares-cutover.md)
+show how to move them into `CassiniRecordings/meetings` and share them.
 
 ## Related
 
-- [Install on Nextcloud](/docs/getting-started/install) — the prerequisites for
-  each audience.
-- [Privacy and data processing](/docs/guides/privacy) — what is stored, where,
+- [Install on Nextcloud](/docs/getting-started/install): the recordings account
+  and the sharing check.
+- [Privacy and data processing](/docs/guides/privacy): what is stored, where,
   and what leaves your infrastructure.
-- [Troubleshooting](/docs/guides/troubleshooting) — the storage states and what
+- [Troubleshooting](/docs/guides/troubleshooting): the setup states and what
   clears them.

@@ -32,7 +32,7 @@ replacement for HPB or the recording backend. See [Talk scalability](https://nex
 
 | Needed | Where to check or obtain it | Who can resolve it |
 | --- | --- | --- |
-| A Nextcloud version supported by the release | Compare Administration → Overview with the release manifest; the current branch requires Nextcloud 32–35 | Nextcloud administrator/provider |
+| A Nextcloud version supported by the release | Compare Administration → Overview with the release manifest; the current branch requires Nextcloud 33.0.9–35 | Nextcloud administrator/provider |
 | AppAPI enabled and a working deployment engine | Administration → AppAPI; verify an actual Test deploy completes, not only the connection check | Administrator of the deployment engine |
 | A compatible execution host | Published Cassini images support Linux amd64 and arm64. Check the host where the ExApp will execute, which can differ from Nextcloud's host. CPU transcription is supported; a GPU is optional | Execution-host administrator |
 | Talk HPB with media support and internal-client authentication | Talk administration and the signaling service's configuration. A working ordinary Talk call is insufficient evidence | Talk/HPB administrator/provider |

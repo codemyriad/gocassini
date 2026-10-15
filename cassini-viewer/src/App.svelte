@@ -1003,6 +1003,58 @@
     }
   }
 
+  // renameInsightRun sends the sheet's new name and puts the record it answers
+  // with in the list, which is where the sheet, the card and the meeting's
+  // Insights card all read their headline from (D-791).
+  let renamingInsightId = "";
+  let insightRenameError: { id: string; message: string } | null = null;
+
+  async function renameInsightRun(record: InsightRecord, name: string) {
+    const provider = dataProvider;
+    if (!provider.renameInsight) {
+      return;
+    }
+    if (renamingInsightId !== "") {
+      // Said, not swallowed: the sheet keeps its input open on an error, and a
+      // request that was never sent must not close it as if it had been.
+      insightRenameError = { id: record.id, message: "Another rename is still saving. Try again in a moment." };
+      return;
+    }
+    renamingInsightId = record.id;
+    insightRenameError = null;
+    try {
+      const updated = await provider.renameInsight(record.id, name);
+      if (destroyed) {
+        return;
+      }
+      insights = insights.map((row) => (row.id === updated.id ? updated : row));
+    } catch (error) {
+      if (destroyed) {
+        return;
+      }
+      insightRenameError = {
+        id: record.id,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      renamingInsightId = "";
+    }
+  }
+
+  function renameSelectedInsight(event: CustomEvent<string>) {
+    if (selectedInsight) {
+      void renameInsightRun(selectedInsight, event.detail);
+    }
+  }
+
+  // A refusal is about the sheet it was shown in. Closing the sheet, a hash
+  // navigation or a listing that no longer carries the run all tear the editor
+  // down without a cancel, and the next pencil on that insight must not open
+  // on a stale reason under an untouched draft.
+  $: if (insightRenameError && insightRenameError.id !== selectedInsightId) {
+    insightRenameError = null;
+  }
+
   // handleInsightCreated is what Generate does once the operator has answered
   // (D-749): the new record goes to the top of the list, where every insight
   // is shown, and the Prepare panel closes — the question has been asked, and
@@ -1149,6 +1201,13 @@
   // Retry is offered exactly where something can perform it: the card and the
   // sheet render the control only when the provider has the method.
   $: canRetryInsight = typeof dataProvider.retryInsight === "function";
+  $: canRenameInsight = typeof dataProvider.renameInsight === "function";
+  // The offline copy (D-792). Files is only where there is a Nextcloud to open
+  // it in; a source links to its own sheet in this viewer, wherever this is.
+  $: insightFilesUrl =
+    selectedInsight && dataProvider.insightFilesUrl ? dataProvider.insightFilesUrl(selectedInsight) : "";
+  const insightSourceUrl = (source: MeetingCatalogEntry) =>
+    viewerHref(buildViewerHash({ meeting: source.id }));
   // Resolved against the WHOLE catalog, not the room-narrowed list: an insight
   // spanning rooms names sources in each of them, and counting only the ones in
   // the room being looked at would make the same insight claim a different
@@ -1498,11 +1557,18 @@
             documentLoading={insightDocumentLoading}
             canLoadDocument={canLoadInsightDocument}
             canRetry={canRetryInsight}
+            filesUrl={insightFilesUrl}
+            meetingUrl={insightSourceUrl}
             retrying={retryingInsightId === selectedInsight.id}
             retryError={insightRetryError?.id === selectedInsight.id ? insightRetryError.message : ""}
+            canRename={canRenameInsight}
+            renaming={renamingInsightId === selectedInsight.id}
+            renameError={insightRenameError?.id === selectedInsight.id ? insightRenameError.message : ""}
             on:close={closeSheet}
             on:openSource={openInsightSource}
             on:retry={retrySelectedInsight}
+            on:rename={renameSelectedInsight}
+            on:renameCancel={() => (insightRenameError = null)}
           />
         {:else}
           <!-- The other direction (D-721): a meeting says which insights read

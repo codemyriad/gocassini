@@ -4,7 +4,7 @@
   <id>gocassini</id>
   <name>Cassini</name>
   <summary>Record, transcribe and search Nextcloud Talk meetings on your own hardware.</summary>
-  <description><![CDATA[> 🧪 **Release candidate.** Nextcloud lists pre-releases only on servers set to the beta update channel. On a stable server, the [install guide](https://gocassini.com/docs/getting-started/install/) shows how to register Cassini by hand.
+  <description><![CDATA[> 🌱 **Early release, feedback welcome.** We run Cassini daily on our own Nextcloud, but expect rough edges. Tell us what works and what breaks in [GitHub issues](https://github.com/codemyriad/gocassini/issues).
 
 > 👀 **Try it first.** Start a call with friends or colleagues on [demo.gocassini.com](https://demo.gocassini.com), press Record, and explore what was said.
 
@@ -84,7 +84,7 @@ Negative:
 - part of the training data is licensed from third parties and not freely available
 
 Summaries and questions use whichever language model you connect, so their rating depends on that model. Learn more about the [Nextcloud Ethical AI Rating](https://nextcloud.com/blog/nextcloud-ethical-ai-rating/).]]></description>
-  <version>0.2.0-beta.8</version>
+  <version>0.2.0</version>
   <licence>agpl</licence>
   <author homepage="https://codemyriad.io">Codemyriad</author>
   <namespace>Cassini</namespace>
@@ -123,7 +123,7 @@ Summaries and questions use whichever language model you connect, so their ratin
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.8</image-tag>
+      <image-tag>0.2.0</image-tag>
     </docker-install>
 
     <!--
@@ -163,7 +163,7 @@ Summaries and questions use whichever language model you connect, so their ratin
       <variable>
         <name>CASSINI_ARTIFACT_RETENTION</name>
         <display-name>Deprecated working-file retention</display-name>
-        <description>Deprecated and ignored. Configure container-local retention in Operator → Storage. All categories default to keep forever; choose 7, 30, 60, 90 or custom days, evaluated on UTC dates. Successful duplicate working copies are cleaned independently. Published Nextcloud files and job metadata are not evicted.</description>
+        <description>Deprecated and ignored. Configure container-local retention in Operator → Storage. All categories default to keep forever; choose 7, 30, 60, 90 or custom days, evaluated on UTC dates. Successful duplicate working copies are cleaned independently. Job metadata is not evicted; expiry of published meetings in Nextcloud Files is a separate setting in Operator → Storage.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>
@@ -395,10 +395,10 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
 
       <!--
-        USER: insights. Four operations over three paths — create a run
+        USER: insights. Five operations over four paths — create a run
         (POST insights), list the caller's own runs (GET insights), read one
         with its document (GET insights/<id>), retry a failed one
-        (POST insights/<id>/retry).
+        (POST insights/<id>/retry), rename one (POST insights/<id>/name).
 
         Declared as one block, and deliberately not folded into
         `^published\/.+$`, because create and retry are the app's FIRST
@@ -415,7 +415,7 @@ Summaries and questions use whichever language model you connect, so their ratin
 
         The id pattern must not swallow the retry path: `[^\/]+` cannot cross a
         `/`, so `^insights\/[^\/]+\/?$` matches `insights/ins_0123…` and leaves
-        `insights/ins_0123…/retry` to the route below it. See
+        `insights/ins_0123…/retry` and `…/name` to the routes below it. See
         docs/exapp-update-constraints.md §5a for the command that checks a
         pattern against the paths it must and must not match — and for why a
         release that changes this block must bump <version>.
@@ -432,6 +432,13 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
       <route>
         <url>^insights\/[^\/]+\/retry\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- Rename (D-791). The operator answers 404 for anyone but the run's
+           creator, the same rule as every other insights/<id> route. -->
+      <route>
+        <url>^insights\/[^\/]+\/name\/?$</url>
         <verb>POST</verb>
         <access_level>USER</access_level>
       </route>

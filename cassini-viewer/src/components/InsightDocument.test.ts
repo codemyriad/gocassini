@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render } from "svelte/server";
 
 import InsightDocument from "./InsightDocument.svelte";
@@ -7,15 +7,19 @@ import type { InsightRecord } from "../viewer/insights";
 
 // Source-level assertions, for the reason MeetingList.test.ts gives: the suite
 // runs in node with no DOM harness.
+//
+// DOMPurify needs a DOM to sanitise against, so a rendered answer passes
+// through untouched here; what is under test is the controls around it.
+vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
 
 describe("InsightDocument", () => {
-  it("reads in the order the panel exists in: question, material, answer", () => {
-    const question = insightDocumentSource.indexOf('class="ins-question"');
+  it("reads in the order the panel exists in: material, question, answer", () => {
     const sources = insightDocumentSource.indexOf('class="ins-sources');
+    const question = insightDocumentSource.indexOf('class="ins-question"');
     const answer = insightDocumentSource.indexOf("documentHtml}");
-    expect(question).toBeGreaterThan(-1);
-    expect(sources).toBeGreaterThan(question);
-    expect(answer).toBeGreaterThan(sources);
+    expect(sources).toBeGreaterThan(-1);
+    expect(question).toBeGreaterThan(sources);
+    expect(answer).toBeGreaterThan(question);
   });
 
   it("renders the stored source set rather than deriving one", () => {
@@ -162,8 +166,198 @@ describe("InsightDocument", () => {
     });
   });
 
+  describe("rename", () => {
+    const named: InsightRecord = {
+      id: "ins_0123456789abcdef",
+      status: "succeeded",
+      createdBy: "alice",
+      attemptNumber: 1,
+      workflowId: "summarise",
+      workflowVersion: "v0",
+      workflowSha256: "abc",
+      meetingIds: [],
+      roomIds: [],
+      question: "",
+      name: "Design sync",
+      provider: "",
+      model: "",
+      documentPath: "",
+      reason: "",
+      error: "",
+      createdAt: "2026-09-03T10:00:00Z",
+      updatedAt: "2026-09-03T10:00:00Z",
+    };
+
+    it("heads the document with the insight's name", () => {
+      expect(render(InsightDocument, { props: { insight: named } }).body).toMatch(/<h2[^>]*>\s*Design sync\s*<\/h2>/);
+    });
+
+    it("offers the pencil exactly where the provider can rename", () => {
+      expect(render(InsightDocument, { props: { insight: named, canRename: true } }).body).toContain(
+        'aria-label="Rename the insight"',
+      );
+      expect(render(InsightDocument, { props: { insight: named } }).body).not.toContain("Rename the insight");
+    });
+
+    it("saves on Enter, cancels on Escape, and dispatches rather than performing one", () => {
+      expect(insightDocumentSource).toContain('if (event.key !== "Enter" && event.key !== "Escape") {');
+      expect(insightDocumentSource).toMatch(/if \(event\.key === "Enter"\) \{\s*saveRename\(\);\s*\} else \{\s*cancelRename\(\);/);
+      expect(insightDocumentSource).toContain('dispatch("rename", name)');
+      expect(insightDocumentSource).not.toContain("fetch(");
+    });
+
+    it("has Cancel and Save beside the name, as the tag editor does, and does not leave on blur", () => {
+      expect(insightDocumentSource).toContain("on:click={cancelRename}>Cancel</button>");
+      expect(insightDocumentSource).toContain("on:click={saveRename}");
+      expect(insightDocumentSource).not.toContain("on:blur");
+    });
+
+    it("cannot save an empty name", () => {
+      expect(insightDocumentSource).toContain('$: nameSaveable = draftName.trim() !== "" && !renaming;');
+      expect(insightDocumentSource).toContain("disabled={!nameSaveable}");
+    });
+
+    it("puts the keyboard back: on the input after a refusal, on the pencil after leaving", () => {
+      expect(insightDocumentSource).toContain("void tick().then(() => nameInput?.focus());");
+      expect(insightDocumentSource).toContain("renameButton?.focus();");
+      expect(insightDocumentSource).toContain("bind:this={renameButton}");
+    });
+
+    it("links the refusal to the input it is about", () => {
+      expect(insightDocumentSource).toContain("aria-describedby={renameError ? renameErrorId : undefined}");
+      expect(insightDocumentSource).toContain('aria-invalid={renameError ? "true" : undefined}');
+      expect(insightDocumentSource).toContain('id={renameErrorId} role="status"');
+    });
+  });
+
+  describe("the offline copy (D-792), rendered", () => {
+    const answered: InsightRecord = {
+      id: "ins_0123456789abcdef",
+      status: "succeeded",
+      createdBy: "alice",
+      attemptNumber: 1,
+      workflowId: "summarise",
+      workflowVersion: "v0",
+      workflowSha256: "abc",
+      meetingIds: ["m1"],
+      roomIds: ["r1"],
+      question: "",
+      provider: "hosted",
+      model: "",
+      documentPath: "Cassini Insights/answer.md",
+      reason: "",
+      error: "",
+      createdAt: "2026-09-03T10:00:00Z",
+      updatedAt: "2026-09-03T10:00:00Z",
+    };
+    const FILES = "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&amp;scrollto=answer.md";
+
+    it("offers Export and Open in Files for an answer on screen", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: answered,
+          documentMarkdown: "The gist.",
+          filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
+        },
+      }).body;
+      // The meeting sheet's Export menu, closed: one control, not two buttons.
+      expect(html).toMatch(/aria-haspopup="menu"[^>]*>\s*Export/);
+      expect(html).toContain(`href="${FILES}"`);
+      expect(html).toContain('target="_blank"');
+      expect(html).toContain('rel="noopener"');
+      // In the header, after the run's facts.
+      expect(html.indexOf("ins-actions")).toBeGreaterThan(html.indexOf("ins-head-meta"));
+      expect(html.indexOf("ins-actions")).toBeLessThan(html.indexOf("ins-body"));
+    });
+
+    it("leaves out Open in Files where there is no Nextcloud", () => {
+      const html = render(InsightDocument, {
+        props: { insight: answered, documentMarkdown: "The gist." },
+      }).body;
+      expect(html).toContain("ins-actions");
+      expect(html).not.toContain("Open in Files");
+    });
+
+    it("keeps Open in Files when the document could not be fetched", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: answered,
+          documentError: "the operator is restarting",
+          filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
+        },
+      }).body;
+      expect(html).toContain("Open in Files");
+      expect(html).not.toContain('aria-haspopup="menu"');
+    });
+
+    it("offers no Files link for a run that has not produced the file", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: { ...answered, status: "running" as const },
+          filesUrl: "https://cloud.example/apps/files/?dir=%2FCassini%20Insights&scrollto=answer.md",
+        },
+      }).body;
+      expect(html).not.toContain("ins-actions");
+    });
+
+    it("offers nothing to copy without an answer on screen", () => {
+      for (const props of [
+        { insight: { ...answered, status: "running" as const }, documentMarkdown: "The gist." },
+        { insight: answered, documentMarkdown: "" },
+        { insight: answered, documentMarkdown: "The gist.", documentLoading: true },
+        { insight: answered, documentMarkdown: "The gist.", documentError: "gone" },
+        { insight: answered, documentMarkdown: "---\nmodel: x\n---\n" },
+      ]) {
+        expect(render(InsightDocument, { props }).body).not.toContain("ins-actions");
+      }
+    });
+  });
+
   it("dispatches retry rather than performing one", () => {
     expect(insightDocumentSource).toContain('dispatch("retry")');
     expect(insightDocumentSource).not.toContain("fetch(");
+  });
+});
+
+describe("InsightDocument says the question once", () => {
+  const asked: InsightRecord = {
+    id: "ins_0123456789abcdef",
+    status: "succeeded",
+    createdBy: "alice",
+    attemptNumber: 1,
+    workflowId: "ask",
+    workflowVersion: "v0",
+    workflowSha256: "abc",
+    meetingIds: [],
+    roomIds: [],
+    question: "What did we decide?",
+    provider: "",
+    model: "",
+    documentPath: "",
+    reason: "",
+    error: "",
+    createdAt: "2026-09-03T10:00:00Z",
+    updatedAt: "2026-09-03T10:00:00Z",
+  };
+
+  it("leaves out the quote while the headline is the question", () => {
+    expect(render(InsightDocument, { props: { insight: asked } }).body).not.toContain("ins-question");
+    expect(render(InsightDocument, { props: { insight: { ...asked, name: "what did we decide" } } }).body).not.toContain(
+      "ins-question",
+    );
+  });
+
+  it("quotes the question under a name that says something else", () => {
+    expect(render(InsightDocument, { props: { insight: { ...asked, name: "Riverside Clinic" } } }).body).toContain(
+      "ins-question",
+    );
+  });
+
+  it("drops the document's own heading only when the quote stands in for it", () => {
+    // Rendering the answer needs a DOM for the sanitiser, which this suite has
+    // none of; the cut itself is tested on stripLeadingHeading, and this pins
+    // that the drawer applies it to the question, and only under a quote.
+    expect(insightDocumentSource).toContain("quoted ? stripLeadingHeading(front, question) : front");
+    expect(insightDocumentSource).toContain("renderDocumentHtml(documentMarkdown, showQuestion)");
   });
 });

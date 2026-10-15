@@ -40,9 +40,17 @@
   // The box is never empty when the endpoint has a default, so a run cannot
   // inherit a model chosen for a different endpoint the way an empty per-run
   // field once let it.
+  //
+  // The NAME is filled in for everybody (D-791): an insight titled by its
+  // workflow id made every summary in the list read "summarise". It follows
+  // the template and the selection until somebody edits it, and after that it
+  // is theirs; cleared, it shows the suggestion as a placeholder and sends it,
+  // so no run is created unnamed. Renaming later happens in the insight's own
+  // sheet.
   import { createEventDispatcher } from "svelte";
   import { ChevronDown } from "@lucide/svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
+  import { defaultInsightName, INSIGHT_NAME_MAX } from "cassini-viewer/insightName";
 
   import ModelCombobox from "./ModelCombobox.svelte";
   import { loadConfig } from "./operator/config";
@@ -96,6 +104,9 @@
   let chosenWorkflow = "";
 
   let question = "";
+
+  let name = "";
+  let nameTouched = false;
 
   // The endpoints this deployment has, and the one this run will reach.
   // Defaults to the first provider, which is what somebody who does not care
@@ -166,6 +177,17 @@
   // A workflow with a slot for a question cannot run without one, so Generate
   // waits for it rather than sending a request the operator will refuse.
   $: questionMissing = questionAccepted && question.trim() === "";
+
+  // A non-admin cannot read the registry, so their default says "Insight"
+  // rather than guessing which template the deployment runs. The question is
+  // not part of it: it is quoted in the insight instead (see insightName.ts).
+  $: suggestedName = defaultInsightName({
+    templateName: chosenWorkflowEntry?.name ?? null,
+    entries,
+  });
+  $: if (!nameTouched) {
+    name = suggestedName;
+  }
 
   async function loadWorkflows() {
     if (!operatorClient) {
@@ -263,6 +285,9 @@
         // choose from, which the operator reads as "this deployment's own".
         provider: chosenProvider,
         model: chosenModel,
+        // A cleared box falls back to the suggestion it shows as its
+        // placeholder, rather than creating the one run with no name.
+        name: name.trim() || suggestedName,
       });
       // Handed up and done. The record exists before its content does, and
       // the shell shows it where every insight is shown — at the top of the
@@ -283,6 +308,22 @@
 <!-- Nothing to ask about, nothing to render: an empty selection is not a
      question, and the Prepare panel is closed by the browse surface as soon as
      the last meeting is unpicked anyway. -->
+{#snippet nameField()}
+  <label class="tpl-field">
+    <span>Name</span>
+    <input
+      class="gc-input gc-text"
+      type="text"
+      maxlength={INSIGHT_NAME_MAX}
+      autocomplete="off"
+      placeholder={suggestedName}
+      bind:value={name}
+      on:input={() => (nameTouched = true)}
+    />
+    <span class="tpl-hint">You can rename it later from the insight.</span>
+  </label>
+{/snippet}
+
 {#if entries.length > 0}
   <section class="ins-card" aria-label="Create an insight">
     <div>
@@ -332,6 +373,8 @@
                same thing a second time, so it is gone. -->
           <p class="tpl-question">{chosenWorkflowEntry.question}</p>
         {/if}
+
+        {@render nameField()}
       </div>
 
       {#if workflowsError}
@@ -344,6 +387,7 @@
       <p class="ins-card-sub">
         This runs the template your administrator configured for insights.
       </p>
+      {@render nameField()}
     {/if}
 
     <!-- Where this question goes. Offered to EVERYBODY, not only
@@ -526,6 +570,15 @@
   .tpl-field > span {
     font-size: 12px;
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  /* The field shape the pickers wear, without their room for a chevron. */
+  .gc-text {
+    padding: 0 10px;
+    cursor: text;
+  }
+  .tpl-field > .tpl-hint {
+    font-size: 11.5px;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
   /* Typed into, so it reads at the size of the fields rather than of a note. */
   .tpl-question-box {

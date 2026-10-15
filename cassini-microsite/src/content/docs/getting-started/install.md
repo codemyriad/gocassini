@@ -16,19 +16,18 @@ having backed up what was there before.
 
 ## Requirements
 
-- Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
+- Nextcloud 33.0.9 to 35 with AppAPI and a HaRP deploy daemon.
 - Talk with the High-performance backend (standalone signalling). Cassini joins
   calls as an internal signalling client, so it needs the signalling server's
   `internalsecret`. This is the one value you have to supply by hand.
-- _Optional_: the [Team folders](https://apps.nextcloud.com/apps/groupfolders)
-  and [Everyone Group](https://apps.nextcloud.com/apps/group_everyone) apps,
-  which let Cassini restrict each recording to the people who were in the
-  meeting. Without them, every account on the instance can see every recording.
+- Nextcloud Files sharing enabled. Cassini shares each recording with the
+  people, groups and Teams in its Talk room. No Team folders or Everyone Group
+  app is needed.
 - _Optional_: an NVIDIA GPU with the Container Toolkit (x86_64) for faster
   transcription. CPU is the default and runs on amd64 and arm64.
 
-Cassini's manifest declares Nextcloud 32 as its minimum and 35 as its maximum;
-it is developed and tested against 33 and later.
+Cassini's manifest declares Nextcloud 33.0.9 as its minimum and 35 as its
+maximum, and CI tests it against Nextcloud 33, 34 and 35.
 
 ## The five steps
 
@@ -38,7 +37,7 @@ it is developed and tested against 33 and later.
    can stay empty.
 2. **Open Cassini as an administrator.** It creates the `cassini` service
    account that owns the meeting archive.
-3. **Choose who can see recordings**, under Operator › Settings.
+3. **Check recording sharing**, under Operator › Settings › Publish pipeline.
 4. **Point Talk at Cassini.** Back up Talk's current `recording_servers` value,
    then apply the one Cassini generates for you.
 5. **Record a test call** in a private room and watch it arrive in Cassini.
@@ -253,7 +252,7 @@ button** — it is a breaking change that needs a redeploy.
 
 Open **Cassini** from the Nextcloud app menu, signed in as an administrator. It
 creates the `cassini` service account that owns the meeting archive: every
-recording is written and read as that account, under either audience.
+recording is written as that account and shared from it.
 
 Cassini tries to create the account and its `cassini` group itself when the app
 is enabled, which works on releases that let an external app write to user
@@ -268,47 +267,24 @@ occ user:add --group=cassini cassini
 ```
 
 To check how the instance is set up — which apps are enabled, whether the
-`cassini` account exists, whether there is a Team folder — Cassini also acts as
+`cassini` account exists — Cassini also acts as
 an administrator account it discovers. That check is read-only, and the archive
 itself is never touched as an administrator. In almost every case this needs no
 configuration; set `CASSINI_NC_ADMIN_USER` only when discovery cannot find an
 administrator or picks the wrong account.
 
-## Step 3 — Choose who can see recordings
+## Step 3 — Check recording sharing
 
-Who can see a recording is one setting in the app, under **Operator › Settings ›
-Who can see recordings**. A fresh install makes every recording visible to
-everyone with an account on your Nextcloud.
+Open **Operator › Settings › Publish pipeline › Who can see recordings**. Once the `cassini`
+account exists and Nextcloud file sharing works, the section has nothing to
+report. Otherwise it says what is missing, and offers **Create recordings
+account** or **Check again**.
 
-To limit each recording to the people who were in that meeting, enable the
-**Team folders** and **Everyone Group** apps first, then change the setting to
-**meeting participants**. Cassini sets up the folder and permissions itself: it
-lists every change it is about to make, asks Nextcloud to confirm your password,
-and then makes them as you. It cannot install the two apps — those routes need
-your password on the request itself — so it sends you to Nextcloud's Apps page
-for that.
-
-Each audience has its own root inside the `cassini` account's Files, and the two
-are deliberately different paths:
-
-```text
-the `cassini` service account's Files
-─────────────────────────────────────
-  CassiniNoACL/Recordings   its OWN directory. No Team folder is mounted there
-                            and no other account has a mount of it. Visible to
-                            ANYONE WITH A NEXTCLOUD ACCOUNT.
-
-  Cassini/Recordings        inside the `Cassini` Team folder, under advanced
-                            ACLs. Visible to MEETING PARTICIPANTS — each
-                            recording readable only by the people who were in
-                            the call, enforced by Nextcloud itself.
-```
-
-Both have the same shape inside: `meetings/<job-id>.opus` beside a
-`catalog.json`. Cassini resolves which one an install gets when the app is
-enabled, from what is already on the instance, and never widens an existing
-archive on its own. Full detail, and how to switch later, is in
-[Who can see a recording](/docs/guides/who-can-see-a-recording).
+There is nothing to choose. Every recording is kept in the `cassini` account's
+private `CassiniRecordings/meetings` folder and shared with the people, groups
+and Teams in its Talk room, including invited people who did not join. Guests
+without an account get no share, and Cassini never creates a public link. Full
+detail is in [Who can see a recording](/docs/guides/who-can-see-a-recording).
 
 ## Step 4 — Point Talk at Cassini
 

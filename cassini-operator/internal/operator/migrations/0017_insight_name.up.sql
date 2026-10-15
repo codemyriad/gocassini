@@ -1,0 +1,12 @@
+-- An insight's own name, chosen by whoever asked for it (D-791).
+--
+-- Until now the viewer titled a run with its question, or with the workflow id
+-- for a template that asks none, so every meeting summary read "summarise".
+--
+-- It lives on the run row rather than in the document or its front matter: a
+-- rename is then one UPDATE and rewrites nothing in the requester's files, and a
+-- retry keeps it for free because a retry is another attempt on the same row.
+--
+-- Empty means "no name", which is every run made before this migration; the
+-- viewer then falls back to the question and the workflow id as it did before.
+ALTER TABLE insight_runs ADD COLUMN name TEXT NOT NULL DEFAULT '';

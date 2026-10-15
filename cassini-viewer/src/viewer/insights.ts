@@ -41,9 +41,16 @@ export interface InsightRecord {
   // filterInsightsByRoom.
   roomIds: string[];
   question: string;
+  // What the asker called it (D-791); "" for none, and absent from an operator
+  // older than names, which reads the same.
+  name?: string;
   provider: string;
   model: string;
   documentPath: string;
+  // The document's Nextcloud file id (D-792), which is how the Files app is
+  // pointed at a file; "" for a run delivered before it was kept, and absent
+  // from an older operator, which read the same.
+  documentFileId?: string;
   // Why the latest attempt failed, as one of the operator's reason tokens;
   // "" for a run that did not fail. See InsightReason.
   reason: string;
@@ -230,13 +237,19 @@ export function filterInsightsByRoom(
 }
 
 // insightHeadline is what names an insight in a list and at the head of its
-// document: the question it was asked.
+// document: the name its asker gave it (D-791), else the question it was asked.
 //
-// A workflow can be run with no question of its own ("summarise these"), and
-// then the workflow id is the honest fallback — the workflow's display NAME
-// lives in the registry the operator serves, not here, and inventing one in the
-// viewer would put a second set of names in front of the same four ids.
+// A run from before names, or one somebody cleared, falls back to the question;
+// a workflow run with no question of its own ("summarise these") falls back to
+// the workflow id. That last one is honest rather than friendly: the workflow's
+// display NAME lives in the registry the operator serves, not here, and
+// inventing one in the viewer would put a second set of names in front of the
+// same ids. It is also why every unnamed summary used to read "summarise".
 export function insightHeadline(record: InsightRecord): string {
+  const name = record.name?.trim() ?? "";
+  if (name !== "") {
+    return name;
+  }
   const question = record.question?.trim() ?? "";
   return question !== "" ? question : record.workflowId || "Insight";
 }
@@ -332,6 +345,54 @@ export function stripInsightFrontMatter(markdown: string): string {
   return markdown;
 }
 
+// sameHeadlineText says whether two pieces of headline text are the same words:
+// whitespace collapsed, case ignored, and the quotes and end punctuation a
+// question may or may not carry left out. The Ask prompt copies the question
+// into the document's heading verbatim "with a trailing question mark added
+// only if the asker wrote one", and a name is typed by hand, so the comparison
+// forgives exactly that much and no more.
+export function sameHeadlineText(left: string, right: string): boolean {
+  return normaliseHeadline(left) !== "" && normaliseHeadline(left) === normaliseHeadline(right);
+}
+
+function normaliseHeadline(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/[?.!:]+$/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+// stripLeadingHeading removes the document's first heading when it only repeats
+// text already shown above the document — the question, which the Ask template
+// puts at the top of every answer and the drawer prints as the headline and
+// again as the quote. Three copies of one sentence in a column is not emphasis.
+//
+// Only a heading that is the FIRST non-blank line, and only when its words are
+// the title's (sameHeadlineText): a document whose heading says something else
+// keeps it, because then it is information.
+export function stripLeadingHeading(markdown: string, title: string): string {
+  const lines = markdown.split("\n");
+  let first = 0;
+  while (first < lines.length && lines[first].trim() === "") {
+    first += 1;
+  }
+  if (first >= lines.length) {
+    return markdown;
+  }
+  const heading = /^#{1,2}\s+(.+?)\s*#*\s*$/.exec(lines[first].trimEnd());
+  if (!heading || !sameHeadlineText(heading[1], title)) {
+    return markdown;
+  }
+  let next = first + 1;
+  while (next < lines.length && lines[next].trim() === "") {
+    next += 1;
+  }
+  return lines.slice(next).join("\n");
+}
+
 // resolveInsightSources answers, for every insight at once, which of its source
 // meetings this caller can actually see — the entries present in the catalog
 // they were served, in the order the run recorded them.
@@ -378,12 +439,12 @@ export function insightsForMeeting(
   return insights.filter((record) => stringsOf(record.meetingIds).includes(meetingId));
 }
 
-// filterInsights is the list's text filter, applied to insights: the question,
-// the workflow id, and the created date AS THE CARD PRINTS IT. Those three are
-// exactly what an insight row shows, which is the rule — the date is included
-// because it is on the card, and the answer is excluded for the same reason the
-// meeting filter does not reach into transcripts: a hit the list cannot show is
-// a hit that looks like a bug.
+// filterInsights is the list's text filter, applied to insights: the name, the
+// question, the workflow id — the headline and what it falls back to — and the
+// created date AS THE CARD PRINTS IT. That is what an insight row shows, which
+// is the rule — the date is included because it is on the card, and the answer
+// is excluded for the same reason the meeting filter does not reach into
+// transcripts: a hit the list cannot show is a hit that looks like a bug.
 export function filterInsights(
   insights: readonly InsightRecord[],
   query: string,
@@ -393,7 +454,7 @@ export function filterInsights(
     return [...insights];
   }
   return insights.filter((record) =>
-    [record.question ?? "", record.workflowId ?? "", formatInsightCreated(record)].some(
+    [record.name ?? "", record.question ?? "", record.workflowId ?? "", formatInsightCreated(record)].some(
       (haystack) => haystack.toLowerCase().includes(needle),
     ),
   );

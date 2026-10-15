@@ -1,7 +1,7 @@
 # Cassini
 
-> [!WARNING]
-> **Cassini is in beta.** We run it daily on our own Nextcloud, but expect rough edges. Read the [changelog](CHANGELOG.md) before you update, and please [open an issue](https://github.com/codemyriad/gocassini/issues) if something breaks.
+> [!NOTE]
+> **Early release, feedback welcome.** We run Cassini daily on our own Nextcloud, but expect rough edges. Read the [changelog](CHANGELOG.md) before you update, and tell us what works and what breaks in [GitHub issues](https://github.com/codemyriad/gocassini/issues).
 
 **Cassini is a recording backend for Nextcloud Talk that puts you in control of your meeting data.**
 
@@ -75,7 +75,7 @@ What Cassini writes is described in [docs/portable-meeting-format.md](docs/porta
 2. **Open Cassini as an administrator.** It creates the `cassini` service
    account that owns the meeting archive. Nextcloud 34.0.2 and later ask you to
    confirm with your password first.
-3. **Check recording sharing**, under Operator › Settings. Cassini shares each recording with the local people, groups and Teams captured from its Talk room. For public meetings, those participants can share onward when your Nextcloud allows resharing. Cassini creates no public link. Existing installations can follow the [one-user cutover](docs/direct-shares-cutover.md).
+3. **Check recording sharing**, under Operator › Settings › Publish pipeline › Who can see recordings. Cassini shares each recording with the local people, groups and Teams captured from its Talk room. For public meetings, those participants can share onward when your Nextcloud allows resharing. Cassini creates no public link. Existing installations can follow the [one-user cutover](docs/direct-shares-cutover.md).
 4. **Point Talk at Cassini.** Back up Talk's current `recording_servers`
    value, then apply the one Cassini generates for you.
 5. **Record a test call** in a private room and watch it arrive in Cassini.

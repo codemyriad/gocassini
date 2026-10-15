@@ -14,6 +14,119 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.2.0] - 2026-10-13
+
+### Added
+- Administrators can select **Transcription only (.json)** in **Settings → Publish pipeline** to publish new meetings as transcription-only files in Nextcloud Files, retaining speaker timing, summaries, metadata, tags and annotations without audio. Existing meetings keep their format on reruns. Audio and transcription-only meetings can coexist, are labelled in the meeting list, and follow the same retention policies.
+- Administrators can publish transcription-only meetings and choose whether to retain source media for reruns or delete it after processing succeeds or fails. Each recording keeps the policy selected when it starts.
+- Operator jobs show media deletion progress and errors, offer deletion retries, and explain why processing cannot be rerun when deletion was selected.
+- Proof of concept: separate the voices of people who shared one participant's device. In the app, a meeting's People panel offers **Separate voices** for a participant, then lets readers listen to each voice, name it, say two voices are the same person, or undo the split; the operator republishes the recording with the new speakers and rewrites its summary. Diarization runs locally on that participant's own track and stores only turn timestamps; nothing is re-transcribed and the audio is not re-encoded, so marks stay attached. After a split the original transcript stays in the recording as `raw-asr` ("Original"); renaming a speaker without a split only changes the name in the one transcript. Each person can save a limited number of speaker changes in a while, across all meetings; past it the panel says when to try again and keeps what was typed. See `docs/speaker-separation.md`.
+- **Voice separation (optional)** in Settings: an administrator downloads the Nemotron 3 Diarization int8 model (about 62 MiB, CPU only) like any optional model; `cassini models install|pack|import` handle it too.
+- `cassini speakers diarize|apply|show`, and the operator route `annotations/meetings/<id>/speakers` (GET/POST, for anyone who can read the meeting). `CASSINI_DIARIZATION_THREADS` sets the diarizer's CPU threads (default 2).
+- Insights have names. **Create an insight** fills one in from the template and the meetings it reads (the question is quoted inside the insight instead), and you can change it before generating or later from the pencil beside the insight's title, with **Save** and **Cancel** as when renaming a tag. The list, the insight and the meeting's Insights card show the name, search matches it, and the document saved to your Nextcloud files is named after it.
+- An answered insight can now leave Cassini. **Export** in the insight drawer copies or downloads a markdown copy with a readable header (the insight's name, the question when that differs, when it was written, the template and model, and the meetings it drew from that you can see, each linking back to its meeting), and **Open in Files** opens the document in Nextcloud Files with its details open, where it can be shared.
+- Administrators can schedule whole-meeting expiry from Nextcloud Files independently of container storage. Expiry removes published audio, transcripts and notes together, with conditional deletion, durable recovery and protection against reruns or indexes recreating expired meetings. Nextcloud versions, trash and backups remain separate.
+- ADMIN-only APIs provide on-demand sweeps and eviction previews with the meeting name, creation and recording timestamps, age in calendar days and an evict/keep decision.
+- ADMIN-only `POST /operator/storage/retention/sweep` to run the scheduled expiry logic on demand, with overlap protection and synchronous results.
+- Configurable daily retention sweep time and timezone in Operator → Storage, defaulting to 03:42 UTC. Saved schedule changes take effect without restarting.
+- Operator → Storage retention configuration for container recordings, attempt history, current output archives and stage logs. Policies default to keep forever, with 7, 30, 60, 90 or custom days evaluated on UTC dates.
+- Startup/daily cleanup with restart recovery, whole-recording expiry (audio, video and supporting files together), and unavailable-source rerun protection. Only successful publication replaces the current local archive.
+- Storage insights now includes published Nextcloud files in the category comparison and temporal charts, with the same time range and exact-value controls as local assets.
+- Files without a matching job use recordedAtLocal or createdAtUtc metadata for their date, including inspection of older unindexed files. Undated files and partial measurement failures remain visible.
+- Operator → Storage shows local usage by retention category alongside retention settings, plus published Nextcloud usage including legacy archives.
+- Each category has a date bar chart with independent time range and precision controls, exact values and a data table. Attempt history can be combined or split into its fine-grained policy categories. Unknown dates and unclassified local files remain visible.
+- Storage usage is served from an in-memory index with its last-calculated time. Administrators can rebuild it on demand, and Cassini refreshes it on fixed five-minute boundaries.
+- After a Talk recording is first published, Cassini makes a best-effort attempt to post its meeting link as the moderator who started recording. Notification failures are logged without affecting publication or recording access; messages are not retried.
+
+### Changed
+- The fp32 Parakeet v3 model now downloads from dist.gocassini.com, like every other model.
+- The native speech runtime now includes Nemotron 3 Diarization support (sherpa-onnx `v1.13.7-cassini.6`). The runtime accepts the version-2 Nemotron models on dist.gocassini.com and fixes final-chunk padding. Parakeet and Silero model files and transcription behavior are unchanged.
+- The privacy guide describes on-demand voice separation, the summary rewritten after a speaker edit (which sends the transcript and the typed names to the configured summary endpoint), and where names and editors are kept.
+- A participant whose voices were separated stays in the recording's speaker list, marked with the voices that replace it, so every transcript's speakers are listed. Readers older than this release show it as one more speaker beside its voices.
+- Refreshed the App Store listing: a new description with a live demo link, an early-release note inviting feedback, rough hardware guide and Ethical AI rating; six new captioned screenshots; the Social & communication category; gocassini.com as the homepage; and the Codemyriad author link.
+- The documentation and landing page describe recording access as it now works: each recording is shared with the people, groups and Teams in its Talk room, with no audience to choose and no Team folders or Everyone Group app needed.
+- New recordings capture audio only by default, including upgrades without a saved video choice. Administrators can opt into retaining source camera video using **Capture video** in Operator → Publish pipeline. Retention review or reminder dismissal does not change video consent. Saving affects subsequent recordings; published meeting files remain audio only, and existing source video follows its retention policy.
+- Retention descriptions explain storage growth and the consequences of deleting each category. Existing keep-forever defaults and published Nextcloud recordings are unchanged.
+- Nextcloud Files retention uses the meeting’s recorded local date when present, otherwise its creation timestamp. Existing managed meetings adopt these dates without relying on job completion history; unknown provenance or invalid timestamps keep files unchanged.
+- Preview, operation-status inspection and on-demand sweeps are API-only tools; the retention UI provides policy settings. The durable operation journal and backend logging are preserved.
+- The old artifact-retention flag/environment variable is deprecated and ignored. Successful capture/intermediate duplicate cleanup remains unconditional; historical payloads now default to keep forever.
+- Search backfill against the local work root requires stopping its operator process to avoid racing archive promotion or expiry. Existing AppAPI installations must receive the new ADMIN retention route through a versioned manifest update.
+- Wide storage charts can be scrolled with the scrollbar, keyboard, or Earlier/Later buttons. Days per bar adapt automatically to the selected range.
+- A meeting opens on Summary and Transcript tabs, with insights at the end of the summary. The playback bar shows only under Transcript, and find-in-transcript sits beside the tabs, pinned while you scroll.
+- The meeting header is compact: the date, room, duration and participants sit in a details pill that opens them in full, technical details are folded into "About this recording", and the Raw JSON view is gone. Copy and download actions are one Export menu.
+- Tagging is a deliberate step. Dragging the timeline rail scrolls the transcript instead of selecting text, and a text selection offers Tag selection, Copy text and Cancel. An existing tagged section opens read-only, with Edit to adjust or remove it. A tag on the whole meeting is removed from its menu rather than an always-visible ✕.
+- Selections and hovered tagged sections are highlighted continuously across words, like a normal text selection.
+- On phones, the meeting and Prepare sheets fill the screen, and tapping the covered tab bar closes them.
+- Doctor opens like the other Operator pages: a fixed title and description, with **Run all checks** beside the title, and the overall verdict in a callout beneath, with when the checks last ran. The verdict also says when a test recording you started is unfinished, and links to it.
+- Each check leads with the next thing to do, under the explanation it acts on: Nextcloud's setup guide and Talk's settings when there is no High Performance Backend, **Open test room** while a test waits for Talk, **Play the recording** and an "I could hear the audio" checkbox once it is published, and **See why it stopped**, which opens the run on the Recordings page, when it fails. Re-check buttons are quieter, and a check's own time appears only when it differs from the rest of the run.
+- When something stops Talk from being checked, such as Talk refusing Cassini, Nextcloud being unreachable or Cassini having no recording secret, that is the one row to act on, and the rows it prevents from being checked wait on it.
+- Cassini says why it could not reach Nextcloud (an address that does not resolve, a refused connection, a timeout, an untrusted certificate, a server error, or a proxy answering instead), with steps for each.
+- The few commands Doctor gives, such as where to read a secret or how to see a log, are labelled with where they apply and come in a block with a copy button.
+- Archive search coverage reads in plain words. A running re-index shows progress and updates the row when it finishes. A failed one says what stopped it, and offers to try again only where that can help.
+- When the panel cannot refresh, it says why, whether a session that needs signing in again, Cassini not responding or the connection, and offers **Try again** while keeping the last results on screen.
+- Retention setup is now a nonblocking administrator reminder. Browse, playback and recording remain available before review; administrators can save unchanged defaults in Operator → Storage to acknowledge the reminder across sessions.
+- Administrators can choose “Don’t remind again” to keep the current settings and permanently dismiss the reminder for the installation. Unsaved drafts and concurrent policy changes are protected.
+- Meeting audio is encoded to match what its recording carries instead of at a fixed 64 kb/s, and with Opus tuned to reproduce the voices as they were rather than reshape them for a phone line. A 16 kHz phone recording is published at about half its previous size. A Talk call is coded at a third over what its highest-rate participant sent per channel, at most 64 kb/s; a participant whose client sends stereo counts at half their rate, since the meeting mix is mono. On our own meetings this makes the published audio about 30% smaller. Rebuilding a meeting published before this change keeps its original encode, so tags and marks on it carry over.
+- The hardware details under "Change" are one box: GPU, CPU cores, memory and the device choice as label and value, then one tip. The device choice warns only when it names a GPU this server doesn't have.
+- The line above Quality reads as one sentence ("Transcribing with Parakeet TDT 0.6B v3 — fp32 on the CPU (no GPU found).") with a Hardware button that opens the details.
+- Browsers revalidate the app's script and stylesheet on every load, so an update that keeps the version number no longer leaves an old stylesheet in place.
+- A model download says what happens after it finishes: "Downloaded · checks once no meeting is being processed", then "Checking it runs on this server", instead of sitting at "installed · 100%". The progress bar shows only while downloading.
+- With transcription off and the picked model downloaded but not yet checked, the hint says "Check the model below to turn it on." instead of asking to download it.
+- Model actions (Download, Check, Retry, Cancel, Use this model) and Retry media deletion are styled as buttons. They had no style at all inside Nextcloud.
+- The voice separation card leads with what the model is for, matches the transcript model row, and has more room at the bottom.
+- The Publishing card is now "After each meeting", and a strip at its top shows what new recordings get with the saved settings: transcription, summary, what is published and what is kept. A step that depends on one that is off is marked, and each step jumps to its setting.
+- The card asks four numbered questions in the order the steps run. Until transcription is saved on, the questions after it are dimmed and cannot be changed, and saving with transcription off publishes the audio.
+- The keep-on-server options say how long kept audio and video stay, from the Recordings retention policy in Storage.
+- Hardware is now a line in the transcript question; the detected GPU, cores and the device override open under Change.
+- Summarisation is now part of the card: its switch, provider and template sit in the summary question, and the separate Summarisation card is gone.
+- Vocabulary and Search spellings are now one Transcript hints card.
+- The documentation states the supported range as Nextcloud 33.0.9 to 35 everywhere, matching the App Store manifest.
+- The deprecated working-file retention setting no longer says published Nextcloud files are never evicted; their expiry is a separate setting in Operator → Storage.
+- Each Storage date chart says which files the next cleanup removes under its saved retention policy, and a dashed line separates the faded bars it removes from the ones it keeps.
+- Publishing now includes transcription: what is published, then whether and how a transcript is made, then what stays on the server.
+- Retention settings use plainer names on every screen: Recordings, Published meetings (on this server), Previous attempts, Processing logs and Published meetings in Nextcloud. The reminder banner is one sentence with Review and Dismiss.
+- The Storage report shows two totals, On this server and In Nextcloud Files, then space by type and by date. Previous attempts opens onto its four kinds, and each date chart picks its own bar width.
+- The retention editor shows each category as a heading, one line and its control. Previous attempts splits into its four kinds with a link, the daily cleanup is one row with a timezone list, and Discard changes appears only when there are unsaved edits.
+- Publishing asks what people receive first, then what stays on the server. Keeping nothing is unavailable while audio is published.
+- Transcription has its on/off switch in the heading, and the model shows as one row with its size, state and one action.
+- Opening a meeting from a search that matched what was said fills the meeting's transcript search with the same words, as opening one of its moments already did.
+- The app asks for its stylesheet by build, not only by app version. An update that keeps the version number (a rebuilt image, a hot-deploy) could leave a browser pairing the new script with an older stylesheet, which unstyled every screen built from components.
+- On wide lists the matched transcript lines take more room and start further left, while the meeting's title, date and tags keep about 34rem.
+- "Who can see recordings" in Settings and the "Shared with participants" note in the rooms rail lead with "Nextcloud Files controls who can read each recording." and then say the same three points, as a list. The rail's note is wider than the rail, so it no longer wraps into a narrow column.
+- A meeting opened with words carried in from a search opens on its Transcript tab, where the matches are highlighted.
+- "Who can see recordings" is two short paragraphs. Its status and a Check again button appear only when sharing needs fixing.
+- Voice separation has its own card in Settings, with the same model row as transcription, instead of sitting inside the transcript step.
+- The transcript step opens with one line naming the model in use and where it runs (CPU or GPU), with Change for the hardware details. The status strip's Transcribe step names that model's tier. A model that the picked quality still needs shows under a small heading, without repeating the one in use.
+- The status strip shows two chips per row when the settings card is narrow, all the same height. Step headings are larger than the text under them.
+- Publish pipeline no longer has a reload button in its header. It discarded unsaved changes without asking; the browser's reload asks first.
+
+### Fixed
+- The Cassini app no longer requests the administrators-only operator status on every page load for users who are not administrators (each request answered 404).
+- Guests who join the call at the moment the recording starts are now listed under their own name instead of a `participant-<id>` placeholder.
+- Preserve the same audio timing when source video is omitted, including single-track recordings remuxed with FFmpeg 6.
+- Doctor's test recording no longer offers a test conversation you cannot record in. Talk lets only a conversation's moderators start a recording, and the connection check creates this one under Cassini's own account — so **Open test room** could drop you into a call with no record button, directly under steps telling you to press it. The link now appears only for a conversation that is yours, and **Prepare test** makes you one.
+- Doctor now notices when its test conversation has been deleted, instead of only while Talk has a High Performance Backend. Without one, a deleted conversation stayed on the panel as a dead **Open test room** link, and preparing a test re-armed it against a conversation that was gone. Cassini asks Talk directly now, and forgets the conversation only when Talk says it no longer exists.
+- Storage chart bars now fill the available width and keep date labels below the plot despite global timeline styles.
+- The browse page and meeting view load without pop-in: the sidebar holds its height while rooms and tags load, the meeting list fades in once ready, and header tags and the timeline rail appear with the meeting.
+- Copying a selection after moving its handles copies the adjusted text, not the original selection.
+- Insight titles no longer truncate to a letter on phones.
+- Status colours meet WCAG AA contrast in light themes, including Nextcloud's.
+- "Connect Talk" is no longer offered when Cassini has no recording secret to give Talk, and a re-check button no longer says "Check again" for a check that never ran.
+- New recordings retain their original recording time through processing, publishing, and transcription-only export, even when filenames change or transcription is disabled or fails.
+- A failed recordings setup check no longer hides the meeting list. It shows as a strip above it, and you can still browse recordings; only saving new recordings stops.
+- When transcription is on but its saved model's files are missing, Settings says so: the transcript step shows a warning instead of "In use", and the status strip's Transcribe step turns amber with "model not installed". Recordings published in that state have no transcript.
+- Downloading the voice separation model no longer shows "until the model is ready" on the Publish step, and that note no longer appears while transcription is on.
+- Voice separation's "(optional)" is lighter and smaller than its heading.
+- A model installed but not yet checked against the current build reads "Installed · checked before the next recording" instead of "runtime check needed".
+- Selecting transcript text by dragging from outside a word (the end of a line, the space between turns) no longer loses the selection and its Tag selection bar the moment the mouse is released.
+- The "Who can see recordings" card and, in high-contrast themes, the "Create an insight" card now have the same inner padding as the cards around them.
+- The dot or icon in a tag chip sits on the centre of its label in every browser, including the tag filter in the rooms rail and the tag picker.
+- Search results keep the meeting's title and details readable at any width: the matched transcript lines sit under them, and beside them only when the list is wide. The meeting's length no longer runs into the first timestamp.
+- Clicking a matched transcript line opens that moment again; the row's click area had been covering it.
+
+### Security
+- Doctor's test conversation is now private. It was created as a public conversation, which Nextcloud never lists or shows to ordinary users, but which any signed-in user holding its token could read and join. It is now a group conversation whose only participant is the administrator it was made for, and Talk answers everyone else that it does not exist. Recording is unaffected: Cassini joins through signaling, not as a participant.
+
 ## [0.2.0-beta.8] - 2026-10-06
 
 ### Added
