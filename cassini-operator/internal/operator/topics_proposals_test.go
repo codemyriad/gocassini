@@ -392,6 +392,9 @@ func TestRecomputeWaitsForMembersOfAnotherModelAndKeepsADismissal(t *testing.T) 
 }
 
 func TestClusteringScalesToABusyRoom(t *testing.T) {
+	if raceEnabled {
+		t.Skip("a timing bound: the race detector slows this loop about 14 times")
+	}
 	var candidates []proposalCandidate
 	r := rand.New(rand.NewPCG(3, 4))
 	for i := range 3000 {
