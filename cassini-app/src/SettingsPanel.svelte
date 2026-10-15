@@ -135,13 +135,11 @@
   let savedTranscription = "";
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
-  let transcriptionTermsText = "";
   let searchAliasesText = "";
   let savedSearchAliasesText = "";
 
   let savedQuality: SettingsQuality = "balanced";
   let savedDeviceOverride = "";
-  let savedTranscriptionTermsText = "";
 
   // The LLM half. Null when it could not be read, which is not the same as a
   // deployment with no providers: the summarisation step says so rather than
@@ -269,11 +267,9 @@
     savedTranscription = JSON.stringify([transcriptionEnabled,activeModel,activeRevision]);
     quality = next.quality;
     deviceOverride = next.device_override;
-    transcriptionTermsText = next.transcription_terms.join("\n");
     searchAliasesText = formatSearchAliases(next.search_aliases);
     savedQuality = next.quality;
     savedDeviceOverride = next.device_override;
-    savedTranscriptionTermsText = transcriptionTermsText;
     savedSearchAliasesText = searchAliasesText;
   }
 
@@ -332,7 +328,6 @@
             active_revision: activeRevision,
             ...(quality !== savedQuality ? { quality } : {}),
             device_override: deviceOverride,
-            transcription_terms: transcriptionTermsText.split(/\r?\n/),
             search_aliases: parseSearchAliases(searchAliasesText),
           }),
         );
@@ -518,17 +513,13 @@
   $: hasProvider = llm === null ? null : providers.length > 0;
   $: summaryModels = modelsByProvider[summary.provider] ?? [];
 
-  // Two stores, two dirty bits, and the transcription terms belong to the STT
-  // one: they ride the same PUT as quality and the device override, so a page
-  // whose only edit was a term must still send that request and must not send
-  // the LLM one.
+  // Save each settings store only when its fields have changed.
   $: sttDirty =
     settings !== null &&
     (sourceRetention !== savedSourceRetention || retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
       meetingFormat !== savedMeetingFormat ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
-      transcriptionTermsText !== savedTranscriptionTermsText ||
       searchAliasesText !== savedSearchAliasesText);
   $: summaryDirty = llm !== null && JSON.stringify(summary) !== savedSummary;
   $: isDirty = sttDirty || summaryDirty;
@@ -939,37 +930,10 @@
 
       <VoiceSeparationModel client={operatorClient} inventory={modelInventory} />
 
-      <!-- Both fields steer how names come out: one when transcribing, one when
-           searching what was transcribed. -->
-      <section class="op-tint pipe-step hints-card" aria-labelledby="transcript-hints-heading">
-        <h2 id="transcript-hints-heading" class="set-row-name op-card-title">Transcript hints</h2>
+      <section class="op-tint pipe-step search-spellings-card" aria-labelledby="search-spellings-heading">
+        <h2 id="search-spellings-heading" class="set-row-name op-card-title">Search spellings</h2>
         <div class="set-row-main pipe-text-step">
-          <div>
-            <h3 class="q-title">Vocabulary</h3>
-            <p class="set-row-sub">Saved names and preferred spellings for transcription hints.</p>
-          </div>
-          <label class="op-field">
-            <span class="pipe-field-head">
-              <span class="op-field-label">One term per line</span>
-              <span class="pipe-limit">(up to 100, 100 characters each)</span>
-            </span>
-            <textarea
-              bind:value={transcriptionTermsText}
-              class="op-input pipe-textarea"
-              maxlength={10_100}
-              placeholder={'Gocassini\nNextcloud Talk\nProject Cassini'}
-            ></textarea>
-          </label>
-          <ul class="pipe-notes">
-            <li>Participant names are added automatically on models that support hints.</li>
-            <li>Hints guide recognition toward preferred spellings; they do not guarantee the correct word. When hints cannot be used, the recording notes why.</li>
-          </ul>
-        </div>
-        <div class="set-row-main pipe-text-step hints-part">
-          <div>
-            <h3 class="q-title">Search spellings</h3>
-            <p class="set-row-sub">Common mishearings of a name, so searching for the name finds them too.</p>
-          </div>
+          <p class="set-row-sub">Common mishearings of a name, so searching for the name finds them too.</p>
           <label class="op-field">
             <span class="pipe-field-head">
               <span class="op-field-label">One name per line, then its spellings, separated by commas</span>
@@ -1392,13 +1356,9 @@
     line-height: 1.45;
     color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
   }
-  .hints-card {
+  .search-spellings-card {
     flex-direction: column;
     align-items: stretch;
-  }
-  .hints-part {
-    padding-top: 14px;
-    border-top: 1px solid var(--op-border, color-mix(in oklch, var(--color-base-content) 12%, transparent));
   }
   .pipe-text-step {
     display: grid;
