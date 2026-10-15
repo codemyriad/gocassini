@@ -3,6 +3,7 @@ package operator
 import (
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -178,18 +179,45 @@ func TestTopicsScorerKeyCoversTheControlsAndConstants(t *testing.T) {
 		t.Fatal("the threshold is not in the scorer key")
 	}
 	topicScorerV1 = saved
-	controls := topicControlsV1
-	t.Cleanup(func() { topicControlsV1 = controls })
-	topicControlsV1 = append([]topicControl(nil), controls...)
-	topicControlsV1[0].Definition += " "
+	controls := topicControls
+	t.Cleanup(func() { topicControls = controls })
+	topicControls = append([]topicControl(nil), controls...)
+	topicControls[0].Definition += " "
 	if topicsScorerKey() == key {
 		t.Fatal("the control definitions are not in the scorer key")
 	}
-	topicControlsV1 = controls
+	topicControls = controls
 	if topicsScorerKey() != key {
 		t.Fatal("the scorer key is not deterministic")
 	}
 	if topicsLanguageValidated("en", "other-detector") {
 		t.Fatal("another detector's language counted as validated")
+	}
+}
+
+// Each language has both controls, so a passage in it always has a
+// same-language control to clear (Gate 2: a margin over English controls
+// alone did not hold for an Italian meeting).
+func TestEveryControlLanguageHasBothControls(t *testing.T) {
+	ids := map[string]bool{}
+	langs := map[string]int{}
+	for _, c := range topicControls {
+		if ids[c.ID] {
+			t.Fatalf("duplicate control %s", c.ID)
+		}
+		ids[c.ID] = true
+		kind, lang, _ := strings.Cut(strings.TrimPrefix(c.ID, "control-"), "-")
+		if kind != "gardening" && kind != "astronomy" {
+			t.Fatalf("unexpected control %s", c.ID)
+		}
+		langs[lang]++
+	}
+	for lang, n := range langs {
+		if n != 2 {
+			t.Fatalf("language %q has %d controls", lang, n)
+		}
+	}
+	if len(langs) < 7 {
+		t.Fatalf("languages: %v", langs)
 	}
 }

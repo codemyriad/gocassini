@@ -45,6 +45,10 @@ Anyone who can read at least one meeting can describe topics, in **Manage tags
   your own words as you would explain the subject to a new colleague. Never
   paste text from a meeting: everyone who can tag sees the name and the
   definition.
+- **Write the definition in the language the meetings are held in.** A
+  definition in another language matches far less: on our Italian meetings,
+  English definitions found none of the topics people saw, and Italian ones
+  found most of them.
 - **Describe as topic…** on an existing tag keeps that tag, so meetings that
   already carry it count as the topic's. When the tag is on meetings from only
   one conversation you can read, the editor warns that describing it shows its

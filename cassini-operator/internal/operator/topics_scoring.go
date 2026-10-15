@@ -70,7 +70,7 @@ type topicText struct {
 // for the current versions.
 func (s *topicsStore) missingTextVectors(ctx context.Context, v topicVersions) ([]topicText, error) {
 	var want []topicText
-	for _, c := range topicControlsV1 {
+	for _, c := range topicControls {
 		want = append(want, topicText{topicTextControl, topicTextSHA(c.Definition), c.Definition})
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT definition_sha,definition FROM topic_library WHERE status='active'`)
@@ -147,7 +147,7 @@ func (s *topicsStore) scoringInputs(ctx context.Context, v topicVersions) (topic
 	if v.ModelRevision == "" {
 		return in, false, nil
 	}
-	for _, c := range topicControlsV1 {
+	for _, c := range topicControls {
 		vector, ok, err := s.textVector(ctx, topicTextControl, topicTextSHA(c.Definition), v)
 		if err != nil || !ok {
 			return in, false, err

@@ -80,6 +80,9 @@ func TestTopicsEvalSweepsAndComparesWithAReference(t *testing.T) {
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
+	if strings.Join(report.Controls, ",") != "control-gardening,control-astronomy" {
+		t.Fatalf("controls used: %v", report.Controls)
+	}
 	if report.Meetings != 2 || report.Passages != 5 || strings.Join(report.Topics, ",") != "build,travel" || report.Languages["en"] != 2 || len(report.Gates) != 4 {
 		t.Fatalf("report %+v", report)
 	}
