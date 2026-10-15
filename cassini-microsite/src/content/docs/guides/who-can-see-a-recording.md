@@ -34,6 +34,16 @@ permission to reshare where this Nextcloud allows it. Recipients can then pass
 it on, or make a public link if the instance permits link sharing. Cassini never
 creates a public link itself.
 
+## Imported meetings
+
+A meeting brought in through the viewer's **Import** tab follows the same
+model. Whoever imports it chooses the audience right there: nobody (just
+themselves), or selected people, groups and Teams — the importer always gets a
+share, like the person who starts a recording does. Created shares allow
+resharing where this Nextcloud permits it, the same permission a public room's
+recording has, so recipients can pass the meeting along. There is no "everyone"
+option, and no public link is ever created.
+
 ## Where recordings live
 
 Every recording belongs to the `cassini` service account, in its private

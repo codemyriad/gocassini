@@ -33,6 +33,18 @@ The installed app creates no remote `catalog.json` and needs neither Team
 folders nor the Everyone Group app. The local static exporter still uses
 `catalog.json` to build a portable static site.
 
+## Imported meetings
+
+A portable meeting file brought in through the viewer's Import tab or with
+`cassini-operator import-meeting` (D-828) follows the same model. The importer
+chooses the audience at import time: nobody (the importer alone), or selected
+users, groups, and Teams — the importer always receives a share, as the
+recording starter does. Created shares carry reshare permission where the
+instance allows it, the same permission a public room's recording grants, so
+recipients can pass the meeting along. There is no "everyone" option, and no
+public link is ever created. Afterwards the shares are ordinary Nextcloud file
+shares, changed in Files like any other.
+
 ## Storage and scale
 
 The metadata index supports list filters and paging, but Nextcloud's shares are
