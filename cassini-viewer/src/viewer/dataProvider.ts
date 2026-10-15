@@ -45,11 +45,15 @@ import {
   type MeetingSearchOptions,
   type MeetingSearchOutcome,
 } from "./meetingSearch";
+import type { ImportFileRequest, ImportJobRecord, ImportSharee } from "./imports";
 
 // Re-exported so a provider implemented outside this package (cassini-app's,
 // which has an operator behind it) can type its methods without reaching past
 // the viewing layer's published entry points.
 export type { MeetingCatalogEntry, InsightRecord, MeetingSearchOptions, MeetingSearchOutcome };
+// The import types, for the same reason: cassini-app's provider implements the
+// optional import methods below.
+export type { ImportFileRequest, ImportJobRecord, ImportSharee };
 // The speaker-edit types and their error, for the same reason: a provider with
 // an operator behind it implements the two optional methods below.
 export { SpeakerEditsError } from "./speakerEdits";
@@ -202,6 +206,30 @@ export interface DataProvider {
     expectRevision: number,
     doc: SpeakerEditsDoc,
   ): Promise<SpeakerEditsState>;
+
+  // OPTIONAL (D-828): meeting import. All five exist together or not at all —
+  // the Import tab renders only when a provider can stage, start and list.
+  //
+  // Optional for the reason every capability above is: an import is an operator
+  // ingesting a file into the Nextcloud archive. A standalone export, the public
+  // single-meeting view and a bundled artifact have no operator and no archive,
+  // so the tab is absent rather than present and failing.
+  //
+  // stageImportUpload puts the file into the CALLER'S OWN Files (the operator
+  // later pulls it as the caller and removes it after a successful import) and
+  // resolves to the staged path startImports is given. Progress is byte-level,
+  // for the per-file bar.
+  stageImportUpload?(
+    file: File,
+    onProgress?: (sentBytes: number, totalBytes: number) => void,
+  ): Promise<string>;
+  startImports?(files: ImportFileRequest[]): Promise<ImportJobRecord[]>;
+  listImports?(): Promise<ImportJobRecord[]>;
+  cancelImport?(id: string): Promise<void>;
+  retryImport?(id: string): Promise<void>;
+  // Who a meeting can be shared with: Nextcloud's own sharee search, narrowed
+  // to the principal kinds recording shares accept (users, groups, Teams).
+  searchImportSharees?(query: string): Promise<ImportSharee[]>;
 }
 
 // resolvePublishedUrl locates a file in the operator's published archive.
