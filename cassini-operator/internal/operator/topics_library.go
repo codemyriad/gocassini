@@ -1227,7 +1227,7 @@ func (t *topicsService) libraryFollowMerge(ctx context.Context, from, into, into
 			return nil
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO topic_verdict(opus_name,tag_id,verdict,source,actor_id,at,payload_sha256,definition_sha,scorer_key,rule,support_words,peak,min_margin)
- SELECT opus_name,?,verdict,source,actor_id,at,payload_sha256,definition_sha,scorer_key,rule,support_words,peak,min_margin FROM topic_verdict
+ SELECT opus_name,?,verdict,'merge',actor_id,at,payload_sha256,definition_sha,scorer_key,rule,support_words,peak,min_margin FROM topic_verdict
  WHERE tag_id=? AND verdict='rejected' ON CONFLICT(opus_name,tag_id) DO NOTHING`, into, from); err != nil {
 			return err
 		}

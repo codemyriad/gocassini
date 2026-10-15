@@ -133,7 +133,9 @@ promotion done (:177) ───────────────────�
 | `topics_proposals.go`, `topics_names.go` | Per-room clustering, identity across passes, draft names. |
 | `topics_coverage.go` | USER coverage (visible set) and ADMIN status. |
 | `topics_settings.go` | Settings block, validation, the ADMIN routes. |
-| `topics_eval_cmd.go` | `cassini-operator topics-eval` (offline gate) and `topics-export` (verdict aggregates). |
+| `topics_eval_cmd.go`, `topics_eval_labels.go` | `cassini-operator topics-eval` (offline gates; `--labels` for Gate 2). |
+| `topics_export_cmd.go` | `cassini-operator topics-export`: verdict rows with scores, no text. |
+| `topics_gates.go` | Per-topic `T` and `M`, fitted from verdicts with leave-one-meeting-out validation. |
 
 **Hooks into existing code**
 
@@ -719,7 +721,7 @@ Suggestions never reach the `.opus`, copies, search, the static viewer, or agent
 - Verdicts are labels. Each stores the definition sha, the scorer key and the scores.
 - Per-topic confirm and reject counts are not served on any route (see "Why no suggestion or verdict counts on ADMIN routes"). `cassini-operator topics-export` writes verdict rows with scores and no text, for offline analysis by someone with shell access on the server.
 - Recall needs an audit: periodically sample meetings with no suggestion and ask people which topics they see.
-- Per-topic thresholds come later, once a topic has ≥ 20 verdicts with ≥ 5 rejections, fitted with leave-one-meeting-out validation.
+- Per-topic thresholds: once a topic has ≥ 20 review verdicts with ≥ 5 rejections on its current definition, `T` and `M` are fitted with leave-one-meeting-out validation (`topics_gates.go`; evaluation.md, "Per-topic gates").
 
 ## Tests
 
@@ -745,5 +747,5 @@ Suggestions never reach the `.opus`, copies, search, the static viewer, or agent
 12. **Platforms.** The CUDA image's ONNX Runtime version and arm64 are unchecked. v1 is amd64 CPU only.
 13. **Lock starvation.** Can a long build hold `.inference.lock` long enough to starve the queue? Not measured. Lock wait uses no attempts and no timeout budget, and it is exposed in status.
 14. **Vector size.** float32 (about 280 MiB per 1,000 meetings) or float16? The thresholds are sensitive, so float16 needs its own parity check.
-15. **Preview label.** Should the feature ship labelled "Preview" (as diarization shipped as "Proof of concept") until Gate 2 passes?
+15. **Preview label.** Should the feature ship labelled "Preview" (as diarization shipped as "Proof of concept") until Gate 2 passes? *Not decided; for the maintainer. Until then the feature ships without a Preview label, and every suggestion says its language is not yet validated (Gate 2 is pending, see evaluation.md).*
 16. **Retired topics.** Should retired library entries ever be purged as a whole? (Single past revisions can already be redacted.)

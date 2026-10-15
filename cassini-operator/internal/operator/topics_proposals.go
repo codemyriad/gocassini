@@ -320,7 +320,7 @@ func coveredByATopic(vector []float32, inputs topicScoringInputs) bool {
 	}
 	for _, topic := range inputs.Topics {
 		score := topicCosine(vector, topic.Vector)
-		if score >= topicScorerV1.Threshold && score-control >= topicScorerV1.Margin {
+		if p := topic.params(); score >= p.Threshold && score-control >= p.Margin {
 			return true
 		}
 	}

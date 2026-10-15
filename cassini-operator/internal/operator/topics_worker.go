@@ -270,6 +270,9 @@ func (s *topicsService) runOnce(ctx context.Context) bool {
 	if !s.settings().Enabled {
 		return false
 	}
+	if err := s.fitGates(workCtx, versions); err != nil && workCtx.Err() == nil {
+		s.recordError(fmt.Errorf("fit topic gates: %w", err))
+	}
 	if err := s.rescorePending(workCtx, versions); err != nil && workCtx.Err() == nil {
 		s.recordError(fmt.Errorf("rescore: %w", err))
 	}

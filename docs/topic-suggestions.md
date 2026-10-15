@@ -178,6 +178,25 @@ reason. It never counts as a meeting with no topics.
 meetings from a shell, like the Settings button. It only queues; the running
 operator does the work.
 
+## Topics that tune themselves
+
+Every confirm and reject is kept with the scores that led to the suggestion.
+Once a topic has at least 20 reviewed suggestions on its current definition, 5
+of them rejected, Cassini tries a stricter or looser bar for that topic alone.
+Tags people added by hand do not count: they say nothing about the meetings
+nobody tagged. It
+keeps the new bar only if it decides those meetings better than the shared
+one when each meeting is left out of its own fit; otherwise the topic stays on
+the shared bar. A changed bar rescores the topic from stored vectors, without
+reading any meeting again. Editing the definition drops the fitted bar until
+the new definition has its own 20 decisions.
+
+`cassini-operator topics-export [--out FILE]` writes every decision with its
+scores, as JSON lines, for analysis on the server: meeting file names, topic
+ids, scores and detected languages, but no transcript text, topic names,
+definitions or user ids, and nothing from deleted meetings. No page in Cassini
+shows these numbers, for the reason in [What Settings shows](#what-settings-shows).
+
 ## What is stored
 
 | Where | What | Disposable? |

@@ -299,9 +299,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return runTopicsEval(ctx, args[1:], stdout, stderr)
 		case backfillTopicsCommand:
 			return runBackfillTopics(ctx, args[1:], stdout, stderr)
+		case topicsExportCommand:
+			return runTopicsExport(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s, %s, %s)\n",
-			args[0], backfillSearchCommand, backfillAnnotationsCommand, backfillTopicsCommand, topicsEvalCommand)
+		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s, %s, %s, %s)\n",
+			args[0], backfillSearchCommand, backfillAnnotationsCommand, backfillTopicsCommand, topicsExportCommand, topicsEvalCommand)
 		return 2
 	}
 
@@ -613,6 +615,7 @@ Commands:
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
   `+backfillTopicsCommand+`     queue past meetings for topic suggestions
+  `+topicsExportCommand+`       write topic verdicts with their scores, no text
   import-meeting-metadata import catalog descriptions using destination file IDs
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)

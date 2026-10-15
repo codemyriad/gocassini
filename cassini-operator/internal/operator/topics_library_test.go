@@ -256,11 +256,11 @@ func TestTagManagerChangesFollowTheLibrary(t *testing.T) {
 	if from.Status != topicStatusRetired || from.MergedInto == nil || *from.MergedInto != hiring.TagID {
 		t.Fatalf("merged topic: %+v", from)
 	}
-	var state, verdict string
+	var state, verdict, source string
 	topics.store.db.QueryRow(`SELECT state FROM topic_suggestion WHERE tag_id=?`, budget.TagID).Scan(&state)
-	topics.store.db.QueryRow(`SELECT verdict FROM topic_verdict WHERE tag_id=? AND opus_name='MEETING1.opus'`, hiring.TagID).Scan(&verdict)
-	if state != "withdrawn" || verdict != "rejected" {
-		t.Fatalf("pending withdrawn (%s), rejection copied (%s)", state, verdict)
+	topics.store.db.QueryRow(`SELECT verdict,source FROM topic_verdict WHERE tag_id=? AND opus_name='MEETING1.opus'`, hiring.TagID).Scan(&verdict, &source)
+	if state != "withdrawn" || verdict != "rejected" || source != "merge" {
+		t.Fatalf("pending withdrawn (%s), rejection copied (%s) and marked as copied (%s)", state, verdict, source)
 	}
 	// Merging into an undescribed tag gives it the definition.
 	other := decodeTopic(t, topicCall(h, http.MethodPost, "/library", "alice", createTopicBody("r3", "travel", "Trips.")))
