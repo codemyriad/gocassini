@@ -23,6 +23,25 @@
   // there are no keys.
   export let row = false;
   export let copied = false;
+  export let editable = true;
+  export let shareUrl = "";
+  let linkCopied = false;
+  let fallbackUrl = "";
+  let previousUrl = "";
+  $: if (shareUrl !== previousUrl) {
+    previousUrl = shareUrl;
+    linkCopied = false;
+    fallbackUrl = "";
+  }
+  async function copyLink() {
+    const url = shareUrl;
+    try {
+      await navigator.clipboard.writeText(url);
+      if (url === shareUrl) linkCopied = true;
+    } catch {
+      if (url === shareUrl) fallbackUrl = url;
+    }
+  }
 
   const copyKey = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘C" : "Ctrl C";
 
@@ -32,7 +51,7 @@
 
   // Enter: nothing is ever saved on release, only here.
   export function confirm() {
-    if (busy) {
+    if (busy || !editable) {
       return;
     }
     if (mark) {
@@ -91,9 +110,9 @@
     {/if}
     <!-- Once an edge has moved, saving is the thing to do: it takes the
          strongest button, the one "Tag selection" has, above the rest. -->
-    {#if locked}
+    {#if locked || !editable}
       <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid grid-flow-col auto-cols-fr gap-1"}>
-        <ActionButton tone="plain" compact disabled={busy} on:click={() => dispatch("edit")}>Edit</ActionButton>
+        {#if editable}<ActionButton tone="plain" compact disabled={busy} on:click={() => dispatch("edit")}>Edit</ActionButton>{/if}
         <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>Done</ActionButton>
       </div>
     {:else}
@@ -111,12 +130,21 @@
     {/if}
   {:else}
     <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid gap-1.5"}>
-      <ActionButton bind:element={tagButton} tone="ink" block={!row} key={row ? "" : "↵"} disabled={busy} aria-haspopup="dialog" aria-expanded={picking} on:click={confirm}>
+      {#if editable}<ActionButton bind:element={tagButton} tone="ink" block={!row} key={row ? "" : "↵"} disabled={busy} aria-haspopup="dialog" aria-expanded={picking} on:click={confirm}>
         Tag selection
-      </ActionButton>
+      </ActionButton>{/if}
       <ActionButton tone="plain" block={!row} key={row ? "" : copyKey} on:click={() => dispatch("copy")}>{#if copied}<span class="text-success">Copied</span>{:else}Copy text{/if}</ActionButton>
       <ActionButton tone="plain" block={!row} key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>Cancel</ActionButton>
     </div>
+  {/if}
+  {#if shareUrl}
+    <ActionButton tone="plain" block={!row} on:click={copyLink}>{linkCopied ? "Link copied" : "Copy link"}</ActionButton>
+    {#if fallbackUrl}
+      <label class="grid gap-1 min-w-0" data-keep-selection>
+        <span role="status">Copy this link:</span>
+        <input class="input input-sm w-full" aria-label="Selection link" readonly value={fallbackUrl} on:focus={(event) => event.currentTarget.select()} />
+      </label>
+    {/if}
   {/if}
   {#if error}
     <p class="text-error {row ? 'basis-full' : 'px-0.5'}" role="alert">{error}</p>
