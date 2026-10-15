@@ -130,7 +130,11 @@ artifacts:
 - **Topic review decisions** — who confirmed or rejected which topic on which
   meeting, and when. Shown to the people who can read that meeting; deleted
   with the meeting. A confirm is also an ordinary tag in the recording,
-  credited to that person.
+  credited to that person. A topic with enough decisions gets its own
+  suggestion bar fitted to them (numbers only, in the annotations database).
+  `cassini-operator topics-export` writes the decisions and their scores, by
+  meeting file name, with no transcript text, topic names or user ids, for
+  someone with shell access on the server.
 - **Topic proposals** — for recurring themes no topic covers: the time ranges
   of the passages they draw on, their average vector, a draft name and a few
   words from those meetings' transcripts. Shown only to people who can read

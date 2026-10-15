@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -135,5 +136,68 @@ func TestTopicsEvalRefusesAReferenceTheInputsDoNotCover(t *testing.T) {
 		if code != 1 || !strings.Contains(stderr.String(), tc.want) {
 			t.Fatalf("%s: code %d stderr %q, want %q", tc.name, code, stderr.String(), tc.want)
 		}
+	}
+}
+
+func TestTopicsEvalReportsLabelAgreementAndPrecisionPerLanguage(t *testing.T) {
+	vectors, definitions := writeTopicsEvalFixture(t)
+	labels := filepath.Join(t.TempDir(), "labels.jsonl")
+	lines := ""
+	for _, l := range []struct {
+		meeting, topic string
+		alice, bob     bool
+	}{{"meeting-a", "build", true, true}, {"meeting-b", "build", true, false}, {"meeting-b", "travel", true, true}, {"meeting-a", "travel", false, false}} {
+		lines += fmt.Sprintf(`{"meeting":%q,"topic":%q,"labeller":"alice","inTopic":%v}`+"\n", l.meeting, l.topic, l.alice)
+		lines += fmt.Sprintf(`{"meeting":%q,"topic":%q,"labeller":"bob","inTopic":%v}`+"\n", l.meeting, l.topic, l.bob)
+	}
+	os.WriteFile(labels, []byte(lines), 0o644)
+	report, err := topicsEval(vectors, definitions, "", labels, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := report.Agreement
+	if a == nil || a.Labellers != 2 || a.MultiLabelled != 4 || a.Agreeing != 3 || a.Disputed != 1 || a.Kappa == nil || math.Abs(*a.Kappa-0.5) > 1e-9 {
+		t.Fatalf("agreement %+v", a)
+	}
+	// At 0.85: the two undisputed positives are assigned, the negative is
+	// not. The disputed pair is in a band with no other labelled pair.
+	en := report.Gates[0].Labelled["en"]
+	if en.Labelled != 3 || en.Positive != 2 || en.Assigned != 2 || *en.Precision != 1 || *en.Recall != 1 || en.UnestimatedPairs != 1 {
+		t.Fatalf("en %+v", en)
+	}
+	if _, err := topicsEval(vectors, definitions, "", writeLabels(t, `{"meeting":"meeting-z","topic":"build","labeller":"a","inTopic":true}`), false); err == nil {
+		t.Fatal("a label on a meeting without vectors is refused")
+	}
+	if _, err := topicsEval(vectors, definitions, "", writeLabels(t, `{"meeting":"meeting-a","topic":"build","labeller":"a"}`), false); err == nil {
+		t.Fatal("a label without an answer is refused")
+	}
+}
+
+func writeLabels(t *testing.T, content string) string {
+	path := filepath.Join(t.TempDir(), "labels.jsonl")
+	os.WriteFile(path, []byte(content+"\n"), 0o644)
+	return path
+}
+
+func TestLabelledPairsStandForTheirScoreBand(t *testing.T) {
+	var pairs []topicsEvalPair
+	truth := map[[2]string]bool{}
+	assigned := map[string]bool{}
+	// Below the gate, band 45: ten pairs, two labelled, one of them in the
+	// topic, so about five missed. Above, band 50: four pairs, two labelled,
+	// both right.
+	for i := range 10 {
+		pairs = append(pairs, topicsEvalPair{Meeting: fmt.Sprintf("low%d", i), Topic: "t", Language: "it", Band: 45})
+	}
+	truth[[2]string{"low0", "t"}], truth[[2]string{"low1", "t"}] = true, false
+	for i := range 4 {
+		name := fmt.Sprintf("high%d", i)
+		pairs = append(pairs, topicsEvalPair{Meeting: name, Topic: "t", Language: "it", Band: 50})
+		assigned[name+"\tt"] = true
+	}
+	truth[[2]string{"high0", "t"}], truth[[2]string{"high1", "t"}] = true, true
+	it := topicsEvalLabelled(pairs, assigned, truth)["it"]
+	if *it.SampleRecall != 2.0/3 || math.Abs(*it.Recall-4.0/9) > 1e-9 || *it.Precision != 1 || it.UnestimatedPairs != 0 {
+		t.Fatalf("%+v recall %v", it, *it.Recall)
 	}
 }

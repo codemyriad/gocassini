@@ -54,7 +54,9 @@ type topicsEvalGateResult struct {
 	Agreement float64  `json:"agreement,omitempty"`
 	OnlyHere  []string `json:"onlyHere,omitempty"`
 	OnlyThere []string `json:"onlyReference,omitempty"`
-	assigned  map[string]bool
+	// Against --labels, per detected language and "all".
+	Labelled map[string]topicsEvalLabelStats `json:"labelled,omitempty"`
+	assigned map[string]bool
 }
 
 type topicsEvalReport struct {
@@ -67,6 +69,7 @@ type topicsEvalReport struct {
 	Languages       map[string]int         `json:"languages"`
 	Gates           []topicsEvalGateResult `json:"gates"`
 	ReferenceTopics int                    `json:"referenceAssignments,omitempty"`
+	Agreement       *topicsEvalAgreement   `json:"labelAgreement,omitempty"`
 }
 
 func runTopicsEval(_ context.Context, args []string, stdout, stderr io.Writer) int {
@@ -75,6 +78,7 @@ func runTopicsEval(_ context.Context, args []string, stdout, stderr io.Writer) i
 	vectorsDir := fs.String("vectors", "", "folder of `cassini topics embed` outputs, one <meeting>.jsonl each")
 	definitions := fs.String("definitions", "", "`cassini topics embed-texts` output: every topic and both controls")
 	reference := fs.String("reference", "", "assignments to compare with: {\"meetings\": [...], \"assignments\": [{\"meeting\", \"topic\"}]}")
+	labels := fs.String("labels", "", "people's labels, JSON lines {\"meeting\", \"topic\", \"labeller\", \"inTopic\"}: agreement, precision and estimated recall per language")
 	sweep := fs.Bool("sweep", false, "also report the gates 0.83/0.04, 0.85/0.05, 0.87/0.06 and 0.89/0.08")
 	out := fs.String("out", "", "write the full report, with per-pair differences, here")
 	if err := fs.Parse(args); err != nil {
@@ -84,10 +88,10 @@ func runTopicsEval(_ context.Context, args []string, stdout, stderr io.Writer) i
 		return 2
 	}
 	if *vectorsDir == "" || *definitions == "" || fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: cassini-operator topics-eval --vectors <dir> --definitions <file> [--reference <file>] [--sweep] [--out <file>]")
+		fmt.Fprintln(stderr, "usage: cassini-operator topics-eval --vectors <dir> --definitions <file> [--reference <file>] [--labels <file>] [--sweep] [--out <file>]")
 		return 2
 	}
-	report, err := topicsEval(*vectorsDir, *definitions, *reference, *sweep)
+	report, err := topicsEval(*vectorsDir, *definitions, *reference, *labels, *sweep)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", topicsEvalCommand, err)
 		return 1
@@ -111,7 +115,7 @@ func runTopicsEval(_ context.Context, args []string, stdout, stderr io.Writer) i
 	return 0
 }
 
-func topicsEval(vectorsDir, definitionsPath, referencePath string, sweep bool) (topicsEvalReport, error) {
+func topicsEval(vectorsDir, definitionsPath, referencePath, labelsPath string, sweep bool) (topicsEvalReport, error) {
 	defs, defRevision, defRecipe, err := readTopicsDefinitions(definitionsPath)
 	if err != nil {
 		return topicsEvalReport{}, err
@@ -179,6 +183,22 @@ func topicsEval(vectorsDir, definitionsPath, referencePath string, sweep bool) (
 		}
 		report.ReferenceTopics = len(ref.Assignments)
 	}
+	var truth map[[2]string]bool
+	var pairs []topicsEvalPair
+	if labelsPath != "" {
+		labels, err := readTopicsEvalLabels(labelsPath, meetings, topicIDs)
+		if err != nil {
+			return topicsEvalReport{}, err
+		}
+		var agreement topicsEvalAgreement
+		truth, agreement = topicsEvalTruth(labels)
+		report.Agreement = &agreement
+		for _, m := range meetings {
+			for _, topic := range topicIDs {
+				pairs = append(pairs, topicsEvalPair{Meeting: m.ID, Topic: topic, Language: m.Language, Band: topicsEvalBand(m.Passages, defs[topic])})
+			}
+		}
+	}
 	gates := [][2]float64{{topicScorerV1.Threshold, topicScorerV1.Margin}}
 	if sweep {
 		for _, g := range topicsEvalGates {
@@ -204,6 +224,9 @@ func topicsEval(vectorsDir, definitionsPath, referencePath string, sweep bool) (
 					result.Strong++
 				}
 			}
+		}
+		if truth != nil {
+			result.Labelled = topicsEvalLabelled(pairs, result.assigned, truth)
 		}
 		if ref != nil {
 			compareTopicsEval(&result, ref, topicIDs)

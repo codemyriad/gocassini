@@ -82,3 +82,26 @@ None comes from a systematic shift: the score delta is centred on zero with a st
 - Gate 1 fed the chunker words in the prototype's order. In production, words with equal times keep their transcript order, which differs in 3 of the 60 meetings; those three were not scored that way.
 - The language detector reported English for all 60 meetings. That is not a test of the detector on other languages: its tests use public multilingual text.
 - Gate 1 says int8 decides like fp32. It does not say the decisions are right.
+
+## Gate 2: labelled review set
+
+**Status: pending.** No labels exist yet, so no language is validated: `topicsValidatedLanguages` is empty, and every suggestion carries the "not yet validated" line. The tooling is in place.
+
+### What it needs
+
+- About 300 (meeting, topic) pairs over at least 2 rooms, at least 1 of them in a language other than English.
+- Pairs stratified by score band (the best passage cosine to the topic, in bands of 0.02), on both sides of the gate, near misses included.
+- Two people label every pair against the transcript, without seeing the score.
+
+### Procedure
+
+1. On the server, embed the sample's meetings with `cassini topics embed` into a folder, and the library's definitions plus the two controls with `cassini topics embed-texts`.
+2. Write the labels as JSON lines: `{"meeting": "<file stem>", "topic": "<id>", "labeller": "<name>", "inTopic": true}`, one line per labeller and pair.
+3. Run `cassini-operator topics-eval --vectors <dir> --definitions <file> --labels <file> --sweep --out <report>`.
+4. Copy the aggregates into this page: labeller agreement and Cohen's kappa, then per gate and detected language the labelled count, sample precision, and precision and recall weighted to the corpus by score band. Pairs the labellers disagree on are left out and counted. Per-meeting rows stay off the repository.
+5. Languages with precision of about 0.8 or better at the gate go into `topicsValidatedLanguages`, which changes the scorer key and rescores every meeting without embedding.
+
+### Per-topic gates
+
+Separate from Gate 2: in production, a topic with at least 20 review verdicts on its current definition, 5 of them rejections, all from meetings with vectors in the current space, gets `T` and `M` fitted from a grid (0.80 to 0.92 and 0.02 to 0.10, in steps of 0.01). The fit is kept only when its leave-one-meeting-out accuracy beats the global gate's accuracy on the same verdicts. Direct confirms (a meeting that already carried the tag) are left out: rejections exist only where a suggestion was made, so direct confirms below the gate would pull every fit looser. Rejections copied by a merge are left out for the opposite reason: the merged topic's confirms are not copied. A fit is tied to the definition, the vector space and the global scorer key; a change to any of them voids it. `cassini-operator topics-export` gives the verdict rows for checking this offline.
+
