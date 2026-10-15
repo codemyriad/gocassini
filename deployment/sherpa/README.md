@@ -1,12 +1,22 @@
 # Cassini native Parakeet frontend
 
-Linux amd64/arm64 CPU builds use the prebuilt libraries from
-[codemyriad/sherpa-onnx-go-linux](https://github.com/codemyriad/sherpa-onnx-go-linux).
-The Go wrapper and platform declarations match upstream v1.13.7. Standard
-`go build`, `go run` and `go test` work without compiling sherpa-onnx.
-macOS, Windows and Linux arm32 use stock v1.13.7 libraries, which cannot load
-Parakeet Ultra: there only the fast tier's 110M model transcribes. The patched
-frontend is reported in doctor, operator status and transcription provenance.
+CPU builds use the prebuilt Cassini libraries from
+[codemyriad/sherpa-onnx-go-linux](https://github.com/codemyriad/sherpa-onnx-go-linux)
+(amd64, arm64),
+[codemyriad/sherpa-onnx-go-macos](https://github.com/codemyriad/sherpa-onnx-go-macos)
+(arm64, x86_64) and
+[codemyriad/sherpa-onnx-go-windows](https://github.com/codemyriad/sherpa-onnx-go-windows)
+(x64; its 386 DLL is also Cassini's, but the stock Go wrapper does not compile
+for windows/386), all at `v1.13.7-cassini.8` from the same native source. The
+recorder itself does not build for Windows yet (the model store uses Unix file
+locking and `statfs`); the Windows module is pinned so it is ready when it does. Each
+fork's GitHub workflow builds the library on a native runner and transcribes a
+quiet sample with Parakeet v3 and Parakeet Ultra before release. The Go wrapper
+and platform declarations match upstream v1.13.7. Standard `go build`, `go run`
+and `go test` work without compiling sherpa-onnx. Linux arm32 still uses the
+stock v1.13.7 library, which cannot load Parakeet Ultra: there only the fast
+tier's 110M model transcribes. The patched frontend is reported in doctor,
+operator status and transcription provenance.
 
 CUDA still requires native compilation. `build.sh` downloads the immutable
 commit recorded in that script from the `v1.13.7-cassini` source fork and verifies
@@ -41,8 +51,8 @@ interface-version-2 models with an explicit valid-frame count and padding
 masked before the output convolution. Use this runtime with those exports.
 The old immutable version-1 model URLs remain available for `.5` clients.
 Parakeet and Silero model files are unchanged. No application feature uses
-diarization yet. Linux amd64/arm64 provide this capability; stock macOS, Windows
-and arm32 packages do not. The native source is retained by the
+diarization yet. The Cassini Linux, macOS and Windows libraries provide this
+capability; the stock Linux arm32 package does not. The native source is retained by the
 [`v1.13.7-cassini-nemotron-v2` tag](https://github.com/codemyriad/sherpa-onnx/tree/v1.13.7-cassini-nemotron-v2).
 
 ```sh

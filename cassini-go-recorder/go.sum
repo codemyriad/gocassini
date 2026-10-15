@@ -1,5 +1,9 @@
 github.com/codemyriad/sherpa-onnx-go-linux v1.13.7-cassini.8 h1:gaARLA0I1rhMhUdbAUF7aPE27UyzwRZxjMDEZSJY/vw=
 github.com/codemyriad/sherpa-onnx-go-linux v1.13.7-cassini.8/go.mod h1:NXEH2rsBgTdqY59YpPq6CtSBlBAXy/8a9FmpLERU97I=
+github.com/codemyriad/sherpa-onnx-go-macos v1.13.7-cassini.8 h1:EA2TYe2/j5hxrH/Vogb8l9kg0Z5qz2jhlwJtghZuuF4=
+github.com/codemyriad/sherpa-onnx-go-macos v1.13.7-cassini.8/go.mod h1:ZOhUAXC62Unj0ZNfu6zxSFKcW96aXf7P3BsqiUyOBbE=
+github.com/codemyriad/sherpa-onnx-go-windows v1.13.7-cassini.8 h1:g3PbZ2qJD+HAsPrtSwxyB2oVLRdV9S1VfvQhwAwg/5s=
+github.com/codemyriad/sherpa-onnx-go-windows v1.13.7-cassini.8/go.mod h1:5AX7TU8+P/gInjglY1ijtWUM2b8iyR0QX4yEngzMe64=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
@@ -8,10 +12,6 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/k2-fsa/sherpa-onnx-go v1.13.7 h1:QG5bjU5LQEz2nNDT9Rt0V1k3Pvr22OdQCVByChT/aPM=
 github.com/k2-fsa/sherpa-onnx-go v1.13.7/go.mod h1:JC2kmiNHLMvY7zEbAVXduAymntUTi4QQLkmjnuYlDxo=
-github.com/k2-fsa/sherpa-onnx-go-macos v1.13.7 h1:miDo530lFRiiKxEP66PpPry+RHQuucYK+IrBe+wqCdI=
-github.com/k2-fsa/sherpa-onnx-go-macos v1.13.7/go.mod h1:ZOhUAXC62Unj0ZNfu6zxSFKcW96aXf7P3BsqiUyOBbE=
-github.com/k2-fsa/sherpa-onnx-go-windows v1.13.7 h1:XOgxcWUOBXjNZpdTIgDGur8v1+A+Tpm688XXYS1y6NI=
-github.com/k2-fsa/sherpa-onnx-go-windows v1.13.7/go.mod h1:5AX7TU8+P/gInjglY1ijtWUM2b8iyR0QX4yEngzMe64=
 github.com/klauspost/compress v1.18.4 h1:RPhnKRAQ4Fh8zU2FY/6ZFDwTVTxgJ/EMydqSTzE9a2c=
 github.com/klauspost/compress v1.18.4/go.mod h1:R0h/fSBs8DE4ENlcrlib3PsXS61voFxhIs2DeRhCvJ4=
 github.com/pion/datachannel v1.5.10 h1:ly0Q26K1i6ZkGf42W7D4hQYR90pZwzFOjTq5AuCKk4o=
