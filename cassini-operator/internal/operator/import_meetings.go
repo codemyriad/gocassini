@@ -45,10 +45,10 @@ import (
 // copy on the operator's own disk; fetching it (from the caller's Files, or a
 // path on the CLI) is the caller's business.
 type meetingImportRequest struct {
-	ImportID   string
-	CreatedBy  string
-	LocalPath  string
-	Audience   []sharePrincipal
+	ImportID  string
+	CreatedBy string
+	LocalPath string
+	Audience  []sharePrincipal
 }
 
 // meetingImportResult is what the ingest settled.
