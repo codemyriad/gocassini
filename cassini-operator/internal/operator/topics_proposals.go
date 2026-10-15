@@ -19,9 +19,12 @@ import (
 // by meaning, and a group that recurs over several meetings and days becomes
 // a proposal people can turn into a topic. Pure Go over the stored vectors.
 
+// The cosines are on recipe r2's vectors. The join was set on a room's real
+// meetings (Gate 2): at 0.80 a room collapsed into three groups, at 0.84 a
+// theme that recurred over fifteen meetings split apart.
 const (
 	proposalMinWords       = 40
-	proposalJoinCosine     = 0.90
+	proposalJoinCosine     = 0.83
 	proposalMinMeetings    = 3
 	proposalMinDays        = 3
 	proposalMaxOpenDefault = 12
@@ -29,9 +32,9 @@ const (
 	proposalRoomEvery      = 6 * time.Hour
 	proposalNightly        = 24 * time.Hour
 	proposalEdgeShare      = 0.05
-	proposalNearestCosine  = 0.90
+	proposalNearestCosine  = 0.78
 	proposalMatchOverlap   = 0.5
-	proposalMatchCentroid  = 0.95
+	proposalMatchCentroid  = 0.90
 )
 
 // Proposal states.
@@ -167,7 +170,7 @@ func normalizedSum(vectors [][]float32) []float32 {
 }
 
 // clusterProposals groups candidates (deterministic for a fixed input): in
-// meeting and time order each joins the nearest centroid at cosine 0.90 or
+// meeting and time order each joins the nearest centroid at cosine 0.83 or
 // starts a group; then one reassignment against the final centroids. Groups
 // on at least 3 meetings and 3 days are returned, largest first; the cap of
 // 12 open proposals is applied after matching, so decided themes do not use
@@ -773,7 +776,7 @@ func writeProposal(ctx context.Context, tx *sql.Tx, id, room, state string, g na
 	return nil
 }
 
-// nearestTopic is the active topic whose definition is at least 0.90 from a
+// nearestTopic is the active topic whose definition is at least 0.78 from a
 // centroid, as a hint; "" when none is.
 func nearestTopic(centroid []float32, inputs topicScoringInputs) string {
 	best, bestCos := "", proposalNearestCosine

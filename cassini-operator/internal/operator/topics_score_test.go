@@ -29,6 +29,16 @@ var (
 	farControl = [][]float32{{0, -1}}
 )
 
+// protoParams are the prototype's constants. The mechanics they switch on
+// (joining spans by meaning, a minimum span length) are off in the tuned
+// constants but still part of the scorer, so these tests pin them.
+var protoParams = topicScorerParams{
+	Threshold: 0.85, Margin: 0.05, MinSupportWords: 12,
+	SpanGapMS: 2500, SpanJoinCosine: 0.88,
+	SubstantialSpanWords: 25, QualifyWords: 80,
+	StrongSpanWords: 40, StrongMinScore: 0.88, StrongMinMargin: 0.08,
+}
+
 func spanPassages(d topicDecision) [][2]int {
 	var out [][2]int
 	for _, s := range d.Spans {
@@ -40,7 +50,7 @@ func spanPassages(d topicDecision) [][2]int {
 // From the prototype: an unsupported middle passage and a change of meaning
 // both break a span.
 func TestScoreTopicSpansBreakOnAMiddlePassageAndOnMeaning(t *testing.T) {
-	p := topicScorerV1
+	p := protoParams
 	p.Threshold, p.Margin = 0.83, 0.04
 	passages := scoredPassages(0.9, 0.7, 0.9, 0.9)
 	// Passages 2 and 3 score the same against the topic but point different
@@ -58,12 +68,12 @@ func TestScoreTopicSpansBreakOnAMiddlePassageAndOnMeaning(t *testing.T) {
 func TestScoreTopicSpansBreakOnAPause(t *testing.T) {
 	passages := scoredPassages(0.9, 0.9)
 	passages[1].StartMS, passages[1].EndMS = 10000, 11000
-	if got := spanPassages(scoreTopic(passages, topicX, farControl, topicScorerV1)); len(got) != 2 {
+	if got := spanPassages(scoreTopic(passages, topicX, farControl, protoParams)); len(got) != 2 {
 		t.Fatalf("spans %v", got)
 	}
 	// 2.5 s exactly still joins.
 	passages[1].StartMS = passages[0].EndMS + 2500
-	if got := spanPassages(scoreTopic(passages, topicX, farControl, topicScorerV1)); len(got) != 1 {
+	if got := spanPassages(scoreTopic(passages, topicX, farControl, protoParams)); len(got) != 1 {
 		t.Fatalf("a 2.5 s gap split the span: %v", got)
 	}
 }
@@ -88,8 +98,8 @@ func TestScoreTopicThresholdMarginAndTheTwelveWordFloor(t *testing.T) {
 		passages := []topicPassage{{StartMS: 0, EndMS: 1000, WordCount: words, Vector: unit(angleFor(score))}}
 		return len(scoreTopic(passages, topicX, [][]float32{control}, p).Spans)
 	}
-	if at(0.851, 12, farControl[0]) != 1 || at(0.849, 12, farControl[0]) != 0 {
-		t.Fatal("threshold 0.85")
+	if at(p.Threshold+0.001, 12, farControl[0]) != 1 || at(p.Threshold-0.001, 12, farControl[0]) != 0 {
+		t.Fatalf("threshold %v", p.Threshold)
 	}
 	if at(0.9, 11, farControl[0]) != 0 {
 		t.Fatal("an 11-word passage supported a topic")
@@ -100,14 +110,14 @@ func TestScoreTopicThresholdMarginAndTheTwelveWordFloor(t *testing.T) {
 		a := angleFor(0.9)
 		return unit(a + angleFor(0.9-margin))
 	}
-	if at(0.9, 40, control(0.051)) != 1 || at(0.9, 40, control(0.049)) != 0 {
-		t.Fatal("margin 0.05")
+	if at(0.9, 40, control(p.Margin+0.001)) != 1 || at(0.9, 40, control(p.Margin-0.001)) != 0 {
+		t.Fatalf("margin %v", p.Margin)
 	}
 }
 
 // From the prototype: the two qualifying rules.
 func TestTopicQualifiesOnWordsOrOneStrongSpan(t *testing.T) {
-	p := topicScorerV1
+	p := protoParams
 	strong := topicSpan{WordCount: 45, MinScore: 0.9, MinMargin: 0.1}
 	if got := topicQualifies([]topicSpan{strong}, p); got != topicReasonStrong {
 		t.Fatalf("strong span: %q", got)
@@ -149,7 +159,7 @@ func slicesRepeat(s topicSpan, n int) []topicSpan {
 func TestScoreTopicMeetingRule(t *testing.T) {
 	passages := scoredPassages(0.9, 0.9, 0.5, 0.9)
 	passages[3].WordCount = 20
-	d := scoreTopic(passages, topicX, farControl, topicScorerV1)
+	d := scoreTopic(passages, topicX, farControl, protoParams)
 	if !d.qualifies() || d.Reason != topicReasonWords || len(d.Spans) != 2 {
 		t.Fatalf("decision %+v", d)
 	}
@@ -162,10 +172,10 @@ func TestScoreTopicMeetingRule(t *testing.T) {
 	}
 	// One 40-word span is not 80 words, but at 0.9 with a wide margin it is
 	// a short strong discussion; at 0.87 it is neither.
-	if d := scoreTopic(scoredPassages(0.9, 0.5), topicX, farControl, topicScorerV1); d.Reason != topicReasonStrong {
+	if d := scoreTopic(scoredPassages(0.9, 0.5), topicX, farControl, protoParams); d.Reason != topicReasonStrong {
 		t.Fatalf("one strong 40-word span: %+v", d)
 	}
-	if d := scoreTopic(scoredPassages(0.87, 0.5), topicX, farControl, topicScorerV1); d.qualifies() {
+	if d := scoreTopic(scoredPassages(0.87, 0.5), topicX, farControl, protoParams); d.qualifies() {
 		t.Fatalf("one 40-word span at 0.87: %+v", d)
 	}
 }
@@ -193,6 +203,10 @@ func TestTopicsScorerKeyCoversTheControlsAndConstants(t *testing.T) {
 	if topicsLanguageValidated("en", "other-detector") {
 		t.Fatal("another detector's language counted as validated")
 	}
+	// Gate 2 measured English; two Italian meetings validate nothing.
+	if !topicsLanguageValidated("en", topicsExpectedDetectorVersion) || topicsLanguageValidated("it", topicsExpectedDetectorVersion) {
+		t.Fatal("validated languages: English only")
+	}
 }
 
 // Each language has both controls, so a passage in it always has a
@@ -219,5 +233,29 @@ func TestEveryControlLanguageHasBothControls(t *testing.T) {
 	}
 	if len(langs) < 7 {
 		t.Fatalf("languages: %v", langs)
+	}
+}
+
+// The tuned rule (Gate 2): every supporting word counts, whatever the length
+// of its span and however its passages point, and a short discussion
+// qualifies on its own only when it is unmistakable.
+func TestTheTunedRuleCountsEveryWord(t *testing.T) {
+	p := topicScorerV1
+	passages := scoredPassages(0.72, 0.5, 0.72, 0.5, 0.72, 0.5, 0.72, 0.5)
+	for i := range passages {
+		passages[i].WordCount = 20
+	}
+	if d := scoreTopic(passages, topicX, farControl, p); d.Reason != topicReasonWords {
+		t.Fatalf("four 20-word spans make 80 words: %+v", d)
+	}
+	passages[6].WordCount = 19
+	if d := scoreTopic(passages, topicX, farControl, p); d.qualifies() {
+		t.Fatalf("79 words: %+v", d)
+	}
+	if d := scoreTopic(scoredPassages(0.77, 0.5), topicX, farControl, p); d.Reason != topicReasonStrong {
+		t.Fatalf("one 40-word span at 0.77: %+v", d)
+	}
+	if d := scoreTopic(scoredPassages(0.75, 0.5), topicX, farControl, p); d.qualifies() {
+		t.Fatalf("one 40-word span at 0.75: %+v", d)
 	}
 }

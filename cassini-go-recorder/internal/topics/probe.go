@@ -50,7 +50,7 @@ func loadProbeGolden() (probeGolden, error) {
 	if err := json.Unmarshal(probeGoldenJSON, &g); err != nil {
 		return g, err
 	}
-	if g.Prompt != PromptPrefix || len(g.Texts) == 0 || len(g.IDs) != len(g.Texts) || len(g.Vectors) != len(g.Texts) {
+	if g.Prompt != ProbePrefix || len(g.Texts) == 0 || len(g.IDs) != len(g.Texts) || len(g.Vectors) != len(g.Texts) {
 		return g, fmt.Errorf("malformed probe vectors")
 	}
 	return g, nil
@@ -69,11 +69,11 @@ func Probe(ctx context.Context, e *Embedder, revision string) error {
 		return fmt.Errorf("no probe vectors for model revision %s", revision)
 	}
 	for i, text := range g.Texts {
-		if !slices.Equal(e.Tokenizer().Encode(text), g.IDs[i]) {
+		if !slices.Equal(e.Tokenizer().Encode(ProbePrefix, text), g.IDs[i]) {
 			return fmt.Errorf("%w: tokenizer ids for probe text %d differ from the reference", ErrModelFault, i)
 		}
 	}
-	got, err := e.EmbedTexts(ctx, g.Texts)
+	got, err := e.EmbedTexts(ctx, ProbePrefix, g.Texts)
 	if err != nil {
 		return err
 	}

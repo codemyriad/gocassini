@@ -24,9 +24,12 @@ type fakeEmbedder struct {
 	err     error
 	started chan struct{}
 	release chan struct{}
+	// prefixes are the prompt prefixes it was called with.
+	prefixes []string
 }
 
-func (f *fakeEmbedder) EmbedTexts(ctx context.Context, texts []string) ([]topics.Embedding, error) {
+func (f *fakeEmbedder) EmbedTexts(ctx context.Context, prefix string, texts []string) ([]topics.Embedding, error) {
+	f.prefixes = append(f.prefixes, prefix)
 	if f.started != nil {
 		close(f.started)
 	}
@@ -62,7 +65,7 @@ func stubTopicsEmbedder(t *testing.T, embedder textEmbedder) {
 // topics.MaxTokens bytes is over the cap.
 type fakeTokenCounter struct{}
 
-func (fakeTokenCounter) Encode(text string) []int64 { return make([]int64, len(text)) }
+func (fakeTokenCounter) Encode(prefix, text string) []int64 { return make([]int64, len(text)) }
 
 func stubTopicsTokenizer(t *testing.T) {
 	t.Helper()
@@ -118,7 +121,14 @@ func readTopicsVectors(t *testing.T, path string) topicsVectorsFile {
 }
 
 func TestTopicsEmbedTextsWritesVectorsInInputOrder(t *testing.T) {
-	stubTopicsEmbedder(t, &fakeEmbedder{})
+	embedder := &fakeEmbedder{}
+	stubTopicsEmbedder(t, embedder)
+	t.Cleanup(func() {
+		// Definitions are queries: the passages they look for are documents.
+		if len(embedder.prefixes) != 1 || embedder.prefixes[0] != topics.DefinitionPrefix {
+			t.Errorf("embed-texts prompts: %q", embedder.prefixes)
+		}
+	})
 	root := t.TempDir()
 	m := fakeInstallShipped(t, root, DefaultEmbeddingModelID)
 	in := writeTopicsInput(t, `{"id":"budget","text":"Planning the yearly budget."}`, "", `{"id":"hiring","text":"Interviews and new hires."}`)

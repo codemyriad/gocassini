@@ -68,7 +68,7 @@ func TestASuggestionIsServedWithEvidenceAndNoScores(t *testing.T) {
 	if len(view.Suggestions) != 1 || view.Suggestions[0].TagID != "tag_release" || len(view.Suggestions[0].Evidence) != 1 || view.Suggestions[0].SupportWords != 120 {
 		t.Fatalf("view %+v", view)
 	}
-	if view.State != topicStateDone || view.Language != "en" || view.ValidatedLanguage || !view.Confirmable {
+	if view.State != topicStateDone || view.Language != "en" || !view.ValidatedLanguage || !view.Confirmable {
 		t.Fatalf("meeting state %+v", view)
 	}
 	if rec := reviewCall(h, http.MethodGet, "meetings/SECRET", "alice", ""); rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "Layoffs") {
@@ -204,7 +204,7 @@ func TestTopicCoverageCountsOnlyVisibleMeetings(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &c) != nil {
 		t.Fatalf("coverage: %d %s", rec.Code, rec.Body)
 	}
-	if c.Visible != 1 || c.Checked != 1 || len(c.Unavailable) != 0 || c.UnvalidatedLanguage != 1 {
+	if c.Visible != 1 || c.Checked != 1 || len(c.Unavailable) != 0 || c.UnvalidatedLanguage != 0 {
 		t.Fatalf("coverage %+v", c)
 	}
 }

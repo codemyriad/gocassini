@@ -85,23 +85,85 @@ None comes from a systematic shift: the score delta is centred on zero with a st
 
 ## Gate 2: labelled review set
 
-**Status: pending.** No labels exist yet, so no language is validated: `topicsValidatedLanguages` is empty, and every suggestion carries the "not yet validated" line. The tooling is in place.
+**Result: English measured and validated; Italian too thin to validate.** The labels led to three changes:
 
-### What it needs
+- **Prompts:** recipe r2 embeds passages as documents and definitions as queries, with EmbeddingGemma's retrieval prompts.
+- **Scorer:** `T` = 0.68 and `M` = 0.06, with every supporting word counting.
+- **Controls:** the control texts are now in seven languages.
 
-- About 300 (meeting, topic) pairs over at least 2 rooms, at least 1 of them in a language other than English.
-- Pairs stratified by score band (the best passage cosine to the topic, in bands of 0.02), on both sides of the gate, near misses included.
-- Two people label every pair against the transcript, without seeing the score.
+On English meetings, suggestions are right about 3 times in 4 (precision 0.75) and find about 3 in 5 of the topics a meeting is about (recall 0.60). The scorer before Gate 2 had precision 0.82 and recall 0.45.
 
-### Procedure
+### Corpus and labels
 
-1. On the server, embed the sample's meetings with `cassini topics embed` into a folder, and the library's definitions plus the two controls with `cassini topics embed-texts`.
-2. Write the labels as JSON lines: `{"meeting": "<file stem>", "topic": "<id>", "labeller": "<name>", "inTopic": true}`, one line per labeller and pair.
-3. Run `cassini-operator topics-eval --vectors <dir> --definitions <file> --labels <file> --sweep --out <report>`.
-4. Copy the aggregates into this page: labeller agreement and Cohen's kappa, then per gate and detected language the labelled count, sample precision, and precision and recall weighted to the corpus by score band. Pairs the labellers disagree on are left out and counted. Per-meeting rows stay off the repository.
-5. Languages with precision of about 0.8 or better at the gate go into `topicsValidatedLanguages`, which changes the scorer key and rescores every meeting without embedding.
+- **Meetings:** 50 meetings from 5 rooms (37, 5, 3, 3 and 2 meetings), 199,196 words in all. Of these, 48 are in English and 2 in Italian. They are the 13 meetings with transcripts outside the largest room, plus 37 drawn at random from it.
+- **Topics:** 16 written definitions. These are Gate 1's 12 and 4 more for subjects the smaller rooms discuss. Every topic was labelled on every meeting: 800 (meeting, topic) pairs, so no band weighting is needed.
+- **Labellers:** two independent model labellers of different model families read each transcript in full. Neither saw a score, and each answered whether the meeting has a real discussion of the topic (roughly a minute or more, a decision, or work assigned), not a passing mention.
+  - They agreed on 709 of 800 pairs (88.6%, Cohen's kappa 0.76), with near-identical positive rates (0.378 and 0.379).
+  - A third model reader settled the 91 disagreements, for tuning only. The precision and recall below count undisputed pairs, as `topics-eval --labels` does.
+  - The labels are not people's labels. A spot check by people is the obvious next step.
+- **Positives:** 310 of the 800 pairs are about their topic.
+
+### What was tried
+
+All numbers are for English meetings. Settings were chosen by 5-fold cross-validation grouped by meeting, and the held-out numbers are what the choice achieved on meetings it never saw. A Python port of the scorer, checked to decide exactly like the Go one on all 1,840 pairs of a larger 115-meeting corpus (the 50 labelled meetings and 65 more from the largest room), made the sweeps fast.
+
+| Change | Result |
+|---|---|
+| `T` and `M` alone, recipe r1 | A trade-off, not a gain. At a precision floor of 0.75, held out: precision 0.74, recall 0.52. |
+| Control texts of everyday talk (greetings, status rounds, scheduling, small talk) | No better than the two prototype controls. |
+| Per-topic offsets from each topic's own score distribution (z-scores, percentiles) | No better. Topics do differ in level, but only labels can tell where to cut. |
+| Margin over the other library topics instead of the controls | Slightly better at most; within noise. |
+| Prompts: retrieval (passages as documents, definitions as queries) | Best at every precision level; held-out recall 0.60 against 0.52 at precision 0.74. |
+| Prompts: classification | Much worse (recall 0.22 at precision 0.75). |
+| Prompts: sentence similarity | Close to retrieval at precision 0.75, worse at 0.8. |
+| Joining spans by passage cosine, and counting only spans of 25 words or more | Both lose topics; every fold turned both off. |
+| The short-strong rule, rescaled to r2 | Fires rarely and moves nothing. It is kept at 0.76 / 0.10 / 40 words for short, unmistakable discussions. |
+| S8's per-topic gates, simulated on review verdicts from the training meetings | No topic reached 20 reviewed suggestions with 5 rejections in 50 meetings. They matter only after months of use. |
+
+### Final settings (recipe r2, `ScorerVersion` 2), measured by `topics-eval --labels`
+
+| Gate (`T`/`M`) | English precision | English recall | Italian found |
+|---|---|---|---|
+| 0.64 / 0.04 | 0.52 | 0.92 | 3 of 7 |
+| 0.66 / 0.05 | 0.64 | 0.82 | 3 of 7 |
+| **0.68 / 0.06** | **0.75** | **0.60** | **3 of 7, none wrong** |
+| 0.70 / 0.07 | 0.82 | 0.42 | 2 of 7 |
+| 0.72 / 0.08 | 0.89 | 0.22 | 1 of 7 |
+
+Before Gate 2 (recipe r1, 0.85 / 0.05): English precision 0.82, recall 0.45; Italian 0 of 7.
+
+The gate chosen is a judgement. Every suggestion is reviewed by a person, so we chose one wrong suggestion in four in exchange for finding a third more of the topics. 0.70 / 0.07 keeps the old precision with the old recall.
+
+### Languages
+
+Text scores higher against text in its own language. With English definitions, Italian meetings got nothing before Gate 2. Italian definitions with only English controls matched almost any Italian talk: 7 of 8 found, but 15 wrong. Italian controls brought that to 6 found and 2 wrong. These two counts use the settled labels (8 Italian positives); the gate table counts undisputed pairs only (7).
+
+The controls are therefore shipped in seven languages, and the margin takes the best of all of them. That left every English decision unchanged.
+
+The docs ask for definitions in the language the meetings are held in. Two Italian meetings cannot validate Italian, so only English is in `topicsValidatedLanguages`.
+
+### Proposals
+
+The clustering join was set on the largest room's meetings by looking at the groups it formed:
+- at 0.80 the room collapsed into three groups;
+- at 0.84 a theme that recurred over fifteen meetings split apart;
+- 0.83 keeps it.
+
+The nearest-topic hint (0.78) and the identity test (0.90) were mapped from r1 by percentile.
+
+### Not covered
+
+- The labels come from models, not people.
+- Gate 1 compared int8 with fp32 on recipe r1, and it was not re-run on r2. Gate 1 was needed because the prototype's thresholds were set on fp32 vectors. The r2 thresholds were set directly on the int8 vectors the product computes.
+- One organisation, and nearly all of it in English.
+
+### Re-running it
+
+1. On the server, embed the meetings with `cassini topics embed` into a folder, and the library's definitions with every control in `topicControls` with `cassini topics embed-texts`.
+2. Label every topic on every sampled meeting, two labellers each, as JSON lines: `{"meeting": "<file stem>", "topic": "<id>", "labeller": "<name>", "inTopic": true}`.
+3. Run `cassini-operator topics-eval --vectors <dir> --definitions <file> --labels <file> --sweep --out <report>` and copy the aggregates here. Per-meeting rows stay off the repository.
 
 ### Per-topic gates
 
-Separate from Gate 2: in production, a topic with at least 20 review verdicts on its current definition, 5 of them rejections, all from meetings with vectors in the current space, gets `T` and `M` fitted from a grid (0.80 to 0.92 and 0.02 to 0.10, in steps of 0.01). The fit is kept only when its leave-one-meeting-out accuracy beats the global gate's accuracy on the same verdicts. Direct confirms (a meeting that already carried the tag) are left out: rejections exist only where a suggestion was made, so direct confirms below the gate would pull every fit looser. Rejections copied by a merge are left out for the opposite reason: the merged topic's confirms are not copied. A fit is tied to the definition, the vector space and the global scorer key; a change to any of them voids it. `cassini-operator topics-export` gives the verdict rows for checking this offline.
+In production, a topic with at least 20 review verdicts on its current definition, 5 of them rejections, all from meetings with vectors in the current space, gets `T` and `M` fitted from a grid (0.60 to 0.80 and 0 to 0.12, in steps of 0.01, around the global 0.68/0.06). The fit is kept only when its leave-one-meeting-out accuracy beats the global gate's accuracy on the same verdicts. Direct confirms (a meeting that already carried the tag) are left out: rejections exist only where a suggestion was made, so direct confirms below the gate would pull every fit looser. Rejections copied by a merge are left out for the opposite reason: the merged topic's confirms are not copied. A fit is tied to the definition, the vector space and the global scorer key; a change to any of them voids it. `cassini-operator topics-export` gives the verdict rows for checking this offline.
 

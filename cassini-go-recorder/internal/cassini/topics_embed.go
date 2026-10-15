@@ -149,7 +149,7 @@ func runTopicsEmbed(ctx context.Context, args []string, stdout, stderr io.Writer
 	for i, p := range passages {
 		texts[i] = p.Text
 	}
-	embeddings, err := embedder.EmbedTexts(ctx, texts)
+	embeddings, err := embedder.EmbedTexts(ctx, topics.PassagePrefix, texts)
 	switch {
 	case errors.Is(err, topics.ErrModelFault), errors.Is(err, topics.ErrTooLong):
 		// The chunker keeps every passage within the cap, so a refusal here

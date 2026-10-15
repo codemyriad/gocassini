@@ -16,7 +16,7 @@ import (
 // when set. Real ids do not matter to the chunker, only their number.
 type fakeCounter struct{ perWord, perRune int }
 
-func (f fakeCounter) Encode(text string) []int64 {
+func (f fakeCounter) Encode(prefix, text string) []int64 {
 	n := 9
 	if f.perRune > 0 {
 		n += f.perRune * utf8.RuneCountInString(text)
@@ -186,8 +186,8 @@ func TestChunkSplitsAtTheTokenCap(t *testing.T) {
 		if p.TokenCount > MaxTokens {
 			t.Fatalf("passage %d has %d tokens", p.Ordinal, p.TokenCount)
 		}
-		if p.TokenCount != len(tok.Encode(p.Text)) {
-			t.Fatalf("passage %d reports %d tokens, its text has %d", p.Ordinal, p.TokenCount, len(tok.Encode(p.Text)))
+		if p.TokenCount != len(tok.Encode(PassagePrefix, p.Text)) {
+			t.Fatalf("passage %d reports %d tokens, its text has %d", p.Ordinal, p.TokenCount, len(tok.Encode(PassagePrefix, p.Text)))
 		}
 	}
 	if fmt.Sprint(counts) != "[25 25 20]" || passages[0].Boundary != boundaryTokenCap || passages[2].Boundary != boundaryEnd {
@@ -209,7 +209,10 @@ type countingCounter struct {
 	n     int
 }
 
-func (c *countingCounter) Encode(text string) []int64 { c.n++; return c.inner.Encode(text) }
+func (c *countingCounter) Encode(prefix, text string) []int64 {
+	c.n++
+	return c.inner.Encode(prefix, text)
+}
 
 // A single word over the cap, which no word boundary can split, is embedded
 // whole in pieces that each fit and count as one word, so none can support a
@@ -261,8 +264,8 @@ func TestChunkRespectsTheCapWithTheTokenizer(t *testing.T) {
 	passages := Chunk(words, tok)
 	capped := 0
 	for _, p := range passages {
-		if p.TokenCount > MaxTokens || p.TokenCount != len(tok.Encode(p.Text)) {
-			t.Fatalf("passage %d: %d tokens, its text %d", p.Ordinal, p.TokenCount, len(tok.Encode(p.Text)))
+		if p.TokenCount > MaxTokens || p.TokenCount != len(tok.Encode(PassagePrefix, p.Text)) {
+			t.Fatalf("passage %d: %d tokens, its text %d", p.Ordinal, p.TokenCount, len(tok.Encode(PassagePrefix, p.Text)))
 		}
 		if p.Boundary == boundaryTokenCap {
 			capped++
@@ -280,7 +283,7 @@ func TestChunkRespectsTheCapWithTheTokenizer(t *testing.T) {
 	for i, p := range passages {
 		texts[i] = p.Text
 	}
-	if _, err := e.EmbedTexts(context.Background(), texts); err != nil {
+	if _, err := e.EmbedTexts(context.Background(), PassagePrefix, texts); err != nil {
 		t.Fatalf("the model refused a chunked passage: %v", err)
 	}
 }
