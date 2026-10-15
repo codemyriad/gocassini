@@ -172,7 +172,10 @@ A meeting that fails is tried again after 1 minute, doubling up to 6 hours. Afte
 5 failures it is **blocked**, and Settings lists it with the error and a
 **Retry** button. A meeting with no transcript, an empty one, or one whose bytes
 do not match their checksum is recorded as **could not be checked**, with the
-reason. It never counts as a meeting with no topics.
+reason. It never counts as a meeting with no topics. A recording published in
+one of the format drafts before version 1 is read from its job's own bundle,
+as search does; when retention has removed the bundle, it is recorded as
+**published in an older file format**.
 
 `cassini-operator backfill-topics [--since YYYY-MM-DD] [--limit N]` queues past
 meetings from a shell, like the Settings button. It only queues; the running

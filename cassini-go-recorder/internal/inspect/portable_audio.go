@@ -511,7 +511,7 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("missing CASSINI_FORMAT")
 	}
 	if !isPublishedPortableFormat(formatTag) {
-		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
+		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s: %w", formatTag, ErrUnsupportedFormat)
 	}
 	for _, required := range []struct {
 		name string
@@ -524,7 +524,7 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 		{name: "CASSINI_AUDIO_MATCH_POLICY", want: portable.AudioMatchPolicy},
 	} {
 		if got := strings.TrimSpace(metadataTag(tags, required.name)); got != required.want {
-			return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported %s=%q", required.name, got)
+			return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported %s=%q: %w", required.name, got, ErrUnsupportedFormat)
 		}
 	}
 	if digest := strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_OPUS_SHA256")); !validPortableDigest(digest) {

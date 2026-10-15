@@ -41,7 +41,15 @@ done
 echo "$cmd" >> "$D/calls"
 rev=$(cat "$D/revision")
 if [ "$cmd" = embed ]; then
-  payload=$(sha256sum "$input" | cut -d' ' -f1)
+  echo "$input" >> "$D/inputs"
+  if [ -f "$D/draft" ] && [ -f "$input" ]; then
+    echo "cassini topics embed: unsupported-format: unsupported CASSINI_FORMAT=org.cassini.portable-meeting/2" >&2; exit 5
+  fi
+  if [ -d "$input" ]; then
+    payload=$(sha256sum "$input/transcript.words.v1.json" | cut -d' ' -f1)
+  else
+    payload=$(sha256sum "$input" | cut -d' ' -f1)
+  fi
   key=$(printf '%s\n%s\nnatural-1\nr1' "$payload" "$rev" | sha256sum | cut -d' ' -f1)
   if [ "$known" = "$key" ]; then
     speakers='[]'; [ -f "$D/unchanged-speakers" ] && speakers=$(cat "$D/unchanged-speakers")
@@ -810,5 +818,30 @@ func TestTopicsRerunWhoseHookNeverRanIsQueuedByTheReconciler(t *testing.T) {
 	s.store.db.QueryRow(`SELECT published_attempt,delivered_digest FROM topic_meeting WHERE opus_name=?`, name).Scan(&attempt, &digest)
 	if attempt != 2 || digest.Valid {
 		t.Fatalf("published_attempt = %d, digest %v: the older delivery's digest must not be trusted", attempt, digest)
+	}
+}
+
+func TestADraftFormatRecordingIsReadFromItsBundleOrMarkedNotChecked(t *testing.T) {
+	s, cli := newTopicsTestService(t)
+	ctx := context.Background()
+	cli.write("draft", "")
+	// With the job's bundle: the transcript comes from there.
+	withBundle := publishTopicTestMeeting(t, s, "job-bundle", "draft file", 1)
+	bundle := canonicalMeetingPath(s.rt.cfg.WorkRoot, "job-bundle")
+	os.MkdirAll(bundle, 0o755)
+	os.WriteFile(filepath.Join(bundle, "transcript.words.v1.json"), []byte(`{"version":"transcript.words.v1"}`), 0o644)
+	s.runOnce(ctx)
+	if r := topicRow(t, s, withBundle); r.State != topicStateDone {
+		t.Fatalf("read from the bundle: %+v", r)
+	}
+	inputs, _ := os.ReadFile(filepath.Join(cli.dir, "inputs"))
+	if !strings.Contains(string(inputs), "job-bundle.meeting") {
+		t.Fatalf("the second embed reads the bundle: %s", inputs)
+	}
+	// Without one: not checked, with its reason, and never blocked.
+	without := publishTopicTestMeeting(t, s, "job-none", "draft file too", 1)
+	s.runOnce(ctx)
+	if r := topicRow(t, s, without); r.State != topicStateUnavailable || r.Reason != "unsupported-format" || r.Attempts != 0 {
+		t.Fatalf("no bundle: %+v", r)
 	}
 }

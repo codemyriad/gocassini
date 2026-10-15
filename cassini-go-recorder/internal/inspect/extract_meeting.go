@@ -51,6 +51,9 @@ var (
 	// ErrTranscriptIntegrity: the transcript body does not match what its
 	// manifest entry says about it (chunks, encoding, sizes or sha256).
 	ErrTranscriptIntegrity = errors.New("transcript body does not match its manifest")
+	// ErrUnsupportedFormat: a Cassini file in a shape this build does not
+	// read, such as the pre-publication drafts of the portable format.
+	ErrUnsupportedFormat = errors.New("unsupported portable meeting format")
 )
 
 // ExtractMeeting reads a published portable .opus back into its manifest, its
@@ -90,7 +93,7 @@ func extractMeetingTags(path string, tags map[string]string) (ExtractedMeeting, 
 		return ExtractedMeeting{}, fmt.Errorf("%s carries no CASSINI_FORMAT metadata (%w)", path, ErrNotPortableMeeting)
 	}
 	if !isPublishedPortableFormat(formatTag) {
-		return ExtractedMeeting{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
+		return ExtractedMeeting{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s: %w", formatTag, ErrUnsupportedFormat)
 	}
 
 	_, manifest, err := decodePortableMeeting(tags)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -353,6 +354,18 @@ func (s *topicsService) process(ctx context.Context, row topicMeetingRow, versio
 	out := filepath.Join(tmp, "passages.jsonl")
 	started := time.Now()
 	run, err := s.runEmbed(ctx, input, out, knownKey)
+	if draftFormat(err) {
+		// Published in a pre-publication draft of the format, which this
+		// build does not read: the job's own bundle still has the transcript.
+		bundle, ok, linkErr := s.linkBundle(row, tmp)
+		if linkErr != nil {
+			s.failRow(base, row, linkErr)
+			return
+		}
+		if ok {
+			run, err = s.runEmbed(ctx, bundle, out, knownKey)
+		}
+	}
 	if err != nil {
 		var cliErr *topicsCLIError
 		switch {
@@ -572,6 +585,51 @@ func (e *topicsCLIError) Error() string {
 	return fmt.Sprintf("cassini topics exited %d: %s", e.code, e.stderr)
 }
 
+// draftFormat says whether an embed refused its input as a file in a format
+// this build does not read.
+func draftFormat(err error) bool {
+	var cliErr *topicsCLIError
+	return errors.As(err, &cliErr) && cliErr.code == topicsCLIExitTranscript && cliErr.reason() == "unsupported-format"
+}
+
+// linkBundle links the job's current bundle into dir, holding the archive
+// gates while it does, as localCopy does for the recording. ok is false when
+// the job has no bundle (retention removed it).
+func (s *topicsService) linkBundle(row topicMeetingRow, dir string) (string, bool, error) {
+	if s.rt.store != nil {
+		s.rt.store.artifactGate.RLock()
+		defer s.rt.store.artifactGate.RUnlock()
+		unlock := s.rt.store.lockArtifacts(row.JobID)
+		defer unlock()
+	}
+	src := canonicalMeetingPath(s.rt.cfg.WorkRoot, row.JobID)
+	if info, err := os.Stat(src); err != nil || !info.IsDir() {
+		return "", false, nil
+	}
+	dest := filepath.Join(dir, row.JobID+".meeting")
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		target := filepath.Join(dest, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		if err := os.Link(path, target); err != nil {
+			return copyFile(path, target, 0o600)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return dest, true, nil
+}
+
 // reason is the stderr's reason word after the command prefix, as in
 // "cassini topics embed: transcript-integrity: ...".
 func (e *topicsCLIError) reason() string {
@@ -581,7 +639,7 @@ func (e *topicsCLIError) reason() string {
 	}
 	reason, _, _ := strings.Cut(line, ":")
 	switch reason = strings.TrimSpace(reason); reason {
-	case "no-transcript", "transcript-has-no-words", "transcript-integrity":
+	case "no-transcript", "transcript-has-no-words", "transcript-integrity", "unsupported-format":
 		return reason
 	}
 	return "no-transcript"

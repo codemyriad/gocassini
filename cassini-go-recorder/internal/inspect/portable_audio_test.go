@@ -434,4 +434,19 @@ func TestExtractMeetingWrapsTranscriptErrors(t *testing.T) {
 	if _, err := extractMeetingTags("song.opus", map[string]string{}); !errors.Is(err, ErrNotPortableMeeting) {
 		t.Fatalf("plain audio: %v, want ErrNotPortableMeeting", err)
 	}
+	// Files from the pre-publication drafts exist: they are a known shape
+	// this build does not read, not an I/O failure worth retrying.
+	draft := map[string]string{}
+	for key, value := range tags {
+		draft[key] = value
+	}
+	draft["CASSINI_FORMAT"] = "org.cassini.portable-meeting/2"
+	if _, err := extractMeetingTags("draft.opus", draft); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("draft format: %v, want ErrUnsupportedFormat", err)
+	}
+	draft["CASSINI_FORMAT"] = tags["CASSINI_FORMAT"]
+	draft["CASSINI_PAYLOAD_SCHEMA"] = "https://cassini.local/schema/old.json"
+	if _, err := extractMeetingTags("draft.opus", draft); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("draft schema: %v, want ErrUnsupportedFormat", err)
+	}
 }
