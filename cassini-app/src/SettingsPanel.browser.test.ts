@@ -119,7 +119,7 @@ it("requires prepared transcription before saving deletion", async () => {
   open();
   await expect.element(page.getByText("Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.")).toBeVisible();
   await expect.element(page.getByText("Transcription must be on to keep nothing.")).toBeVisible();
-  await page.getByPlaceholder(/^Gocassini/).fill("Cassini");
+  await page.getByRole("textbox", { name: /One name per line/ }).fill("Cassini, casino");
   await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
 
   // Saved on and keeping nothing; switching transcription off in the draft.
@@ -308,7 +308,7 @@ it("opens the hardware facts under Change and sends Add one to the providers", a
   await page.getByRole("button", { name: "Add one", exact: true }).click();
   expect(openProviders).toHaveBeenCalledTimes(1);
 
-  const hints = page.getByRole("region", { name: "Transcript hints" });
-  await expect.element(hints.getByRole("textbox", { name: /One term per line/ })).toBeVisible();
-  await expect.element(hints.getByRole("textbox", { name: /One name per line/ })).toBeVisible();
+  const spellings = page.getByRole("region", { name: "Search spellings" });
+  await expect.element(spellings.getByRole("textbox", { name: /One name per line/ })).toBeVisible();
+  await expect.element(page.getByRole("textbox", { name: /One term per line/ })).not.toBeInTheDocument();
 });
