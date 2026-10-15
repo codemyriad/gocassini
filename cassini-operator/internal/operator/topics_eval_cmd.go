@@ -66,6 +66,7 @@ type topicsEvalReport struct {
 	ModelRevision   string                 `json:"modelRevision"`
 	RecipeVersion   string                 `json:"recipeVersion"`
 	ScorerVersion   int                    `json:"scorerVersion"`
+	Controls        []string               `json:"controls"`
 	Languages       map[string]int         `json:"languages"`
 	Gates           []topicsEvalGateResult `json:"gates"`
 	ReferenceTopics int                    `json:"referenceAssignments,omitempty"`
@@ -120,14 +121,23 @@ func topicsEval(vectorsDir, definitionsPath, referencePath, labelsPath string, s
 	if err != nil {
 		return topicsEvalReport{}, err
 	}
+	report := topicsEvalReport{ScorerVersion: topicsScorerVersion, Languages: map[string]int{}}
+	// The controls the file has: at least the English pair. Files embedded
+	// before the controls were multilingual have only that.
 	var controls [][]float32
-	for _, c := range topicControlsV1 {
+	for _, c := range topicControls {
 		v, ok := defs[c.ID]
 		if !ok {
-			return topicsEvalReport{}, fmt.Errorf("%s has no vector for the control %s", definitionsPath, c.ID)
+			continue
 		}
 		controls = append(controls, v)
+		report.Controls = append(report.Controls, c.ID)
 		delete(defs, c.ID)
+	}
+	for _, required := range []string{"control-gardening", "control-astronomy"} {
+		if !slices.Contains(report.Controls, required) {
+			return topicsEvalReport{}, fmt.Errorf("%s has no vector for the control %s", definitionsPath, required)
+		}
 	}
 	for id, v := range defs {
 		if len(v) != len(controls[0]) {
@@ -144,7 +154,7 @@ func topicsEval(vectorsDir, definitionsPath, referencePath, labelsPath string, s
 		return topicsEvalReport{}, err
 	}
 	sort.Strings(paths)
-	report := topicsEvalReport{Topics: topicIDs, ModelRevision: defRevision, RecipeVersion: defRecipe, ScorerVersion: topicsScorerVersion, Languages: map[string]int{}}
+	report.Topics, report.ModelRevision, report.RecipeVersion = topicIDs, defRevision, defRecipe
 	var meetings []topicsEvalMeeting
 	for _, path := range paths {
 		m, err := readTopicsPassagesFile(path)

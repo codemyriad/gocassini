@@ -15,7 +15,7 @@ import (
 // definitions, the validated languages and the expected detector version.
 // Changing any of them changes topicsScorerKey, which rescores every meeting
 // without embedding it again.
-const topicsScorerVersion = 1
+const topicsScorerVersion = 2
 
 // topicScorerParams are the scorer's constants.
 type topicScorerParams struct {
@@ -56,11 +56,28 @@ type topicControl struct {
 	Definition string `json:"definition"`
 }
 
-// topicControlsV1 are the prototype's two controls: generic English prose,
-// not language-neutral (README open question 3).
-var topicControlsV1 = []topicControl{
+// topicControls are the prototype's two controls, written in several
+// languages. Text in a language scores higher against a definition in the
+// same language, so a margin over English controls alone was far too easy to
+// clear for an Italian definition on an Italian meeting and far too hard for
+// an English one (Gate 2, evaluation.md). The best control is the highest of
+// all of them, so the margin follows each passage's language with no
+// language logic. Adding languages left the English decisions unchanged.
+var topicControls = []topicControl{
 	{ID: "control-gardening", Definition: "Growing vegetables, planting flowers, watering gardens, composting, soil fertility and pruning trees."},
 	{ID: "control-astronomy", Definition: "Observing stars, planets and galaxies through telescopes, orbital mechanics, astrophysics and astronomical observations."},
+	{ID: "control-gardening-it", Definition: "Coltivare ortaggi, piantare fiori, annaffiare il giardino, fare il compost, la fertilità del terreno e la potatura degli alberi."},
+	{ID: "control-astronomy-it", Definition: "Osservare stelle, pianeti e galassie con il telescopio, meccanica orbitale, astrofisica e osservazioni astronomiche."},
+	{ID: "control-gardening-de", Definition: "Gemüse anbauen, Blumen pflanzen, den Garten gießen, kompostieren, Bodenfruchtbarkeit und Bäume schneiden."},
+	{ID: "control-astronomy-de", Definition: "Sterne, Planeten und Galaxien durch Teleskope beobachten, Himmelsmechanik, Astrophysik und astronomische Beobachtungen."},
+	{ID: "control-gardening-fr", Definition: "Cultiver des légumes, planter des fleurs, arroser le jardin, faire du compost, la fertilité du sol et la taille des arbres."},
+	{ID: "control-astronomy-fr", Definition: "Observer les étoiles, les planètes et les galaxies au télescope, la mécanique orbitale, l'astrophysique et les observations astronomiques."},
+	{ID: "control-gardening-es", Definition: "Cultivar hortalizas, plantar flores, regar el jardín, hacer compost, la fertilidad del suelo y la poda de árboles."},
+	{ID: "control-astronomy-es", Definition: "Observar estrellas, planetas y galaxias con telescopios, mecánica orbital, astrofísica y observaciones astronómicas."},
+	{ID: "control-gardening-pt", Definition: "Cultivar legumes, plantar flores, regar o jardim, fazer compostagem, a fertilidade do solo e a poda de árvores."},
+	{ID: "control-astronomy-pt", Definition: "Observar estrelas, planetas e galáxias com telescópios, mecânica orbital, astrofísica e observações astronómicas."},
+	{ID: "control-gardening-nl", Definition: "Groenten kweken, bloemen planten, de tuin water geven, composteren, bodemvruchtbaarheid en bomen snoeien."},
+	{ID: "control-astronomy-nl", Definition: "Sterren, planeten en sterrenstelsels door telescopen bekijken, hemelmechanica, astrofysica en astronomische waarnemingen."},
 }
 
 // topicsExpectedDetectorVersion is the language detector the validated
@@ -82,7 +99,7 @@ func topicsScorerKey() string {
 		Controls        []topicControl    `json:"controls"`
 		Languages       []string          `json:"languages"`
 		DetectorVersion string            `json:"detectorVersion"`
-	}{topicsScorerVersion, topicScorerV1, topicControlsV1, topicsValidatedLanguages, topicsExpectedDetectorVersion})
+	}{topicsScorerVersion, topicScorerV1, topicControls, topicsValidatedLanguages, topicsExpectedDetectorVersion})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
