@@ -14,10 +14,10 @@ const (
 	bosID = 2
 )
 
-// TokenCounter counts the ids the model would read for a text, prompt prefix,
-// BOS and EOS included. *Tokenizer is one.
+// TokenCounter counts the ids the model would read for a text behind a prompt
+// prefix, BOS and EOS included. *Tokenizer is one.
 type TokenCounter interface {
-	Encode(text string) []int64
+	Encode(prefix, text string) []int64
 }
 
 // Tokenizer turns text into EmbeddingGemma input ids, matching the Hugging
@@ -37,8 +37,8 @@ func LoadTokenizer(path string) (*Tokenizer, error) {
 
 // Encode returns the ids the model reads for text: BOS, the prompt prefix and
 // the text, EOS.
-func (t *Tokenizer) Encode(text string) []int64 {
-	tokens := t.proc.Encode(PromptPrefix + text)
+func (t *Tokenizer) Encode(prefix, text string) []int64 {
+	tokens := t.proc.Encode(prefix + text)
 	ids := make([]int64, 0, len(tokens)+2)
 	ids = append(ids, bosID)
 	for _, tok := range tokens {

@@ -14,12 +14,20 @@ import (
 // changes a vector: the prompt prefix, the token cap and the batching policy.
 // A change to any of them must bump it, because stored vectors made under an
 // older recipe can no longer be compared with new ones.
-const EmbedRecipeVersion = "r1"
+const EmbedRecipeVersion = "r2"
 
-// PromptPrefix is EmbeddingGemma's "Clustering" prompt, the one the
-// prototype's thresholds were measured with. Every text, passage or topic
-// definition, is embedded behind it.
-const PromptPrefix = "task: clustering | query: "
+// EmbeddingGemma's retrieval prompts: a passage is embedded as a document and
+// a topic definition as the query that looks for it. On labelled meetings
+// (Gate 2, evaluation.md) they found more of the labelled topics than the
+// symmetric clustering prompt r1 used, at the precision chosen (0.75).
+const (
+	PassagePrefix    = "title: none | text: "
+	DefinitionPrefix = "task: search result | query: "
+)
+
+// ProbePrefix is the prompt the model check's reference vectors were made
+// with (probe_golden.json). The check is about the model, not the recipe.
+const ProbePrefix = "task: clustering | query: "
 
 // MaxTokens caps one input, prefix and the BOS and EOS tokens included. A
 // longer text is refused, never truncated: truncation drops words silently.

@@ -49,7 +49,7 @@ const maxTopicsTextBytes = 64 << 10
 
 // textEmbedder is the part of *topics.Embedder the command uses.
 type textEmbedder interface {
-	EmbedTexts(ctx context.Context, texts []string) ([]topics.Embedding, error)
+	EmbedTexts(ctx context.Context, prefix string, texts []string) ([]topics.Embedding, error)
 	Close() error
 }
 
@@ -206,7 +206,7 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 		return fail(topicsExitUnavailable, "%v", err)
 	}
 	for _, input := range inputs {
-		if n := len(tok.Encode(input.Text)); n > topics.MaxTokens {
+		if n := len(tok.Encode(topics.DefinitionPrefix, input.Text)); n > topics.MaxTokens {
 			return fail(topicsExitUsage, "%v: text %q has %d tokens; the limit is %d", topics.ErrTooLong, input.ID, n, topics.MaxTokens)
 		}
 	}
@@ -234,7 +234,7 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 	for i, input := range inputs {
 		texts[i] = input.Text
 	}
-	embeddings, err := embedder.EmbedTexts(ctx, texts)
+	embeddings, err := embedder.EmbedTexts(ctx, topics.DefinitionPrefix, texts)
 	switch {
 	case errors.Is(err, topics.ErrTooLong):
 		return fail(topicsExitUsage, "%v", err)

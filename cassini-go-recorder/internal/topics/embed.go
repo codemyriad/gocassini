@@ -144,13 +144,14 @@ type Embedding struct {
 	TokenCount int
 }
 
-// EmbedTexts embeds texts in order. A text over MaxTokens fails the call with
-// ErrTooLong before anything runs; a vector that fails the guards fails it
-// with ErrModelFault.
-func (e *Embedder) EmbedTexts(ctx context.Context, texts []string) ([]Embedding, error) {
+// EmbedTexts embeds texts in order, each behind prefix (PassagePrefix or
+// DefinitionPrefix). A text over MaxTokens fails the call with ErrTooLong
+// before anything runs; a vector that fails the guards fails it with
+// ErrModelFault.
+func (e *Embedder) EmbedTexts(ctx context.Context, prefix string, texts []string) ([]Embedding, error) {
 	ids := make([][]int64, len(texts))
 	for i, text := range texts {
-		ids[i] = e.tok.Encode(text)
+		ids[i] = e.tok.Encode(prefix, text)
 		if len(ids[i]) > MaxTokens {
 			return nil, fmt.Errorf("%w: text %d has %d tokens; the limit is %d", ErrTooLong, i, len(ids[i]), MaxTokens)
 		}

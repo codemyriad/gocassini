@@ -6,9 +6,12 @@ a tag into the recording. This page is for the administrator who runs it. The
 design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.md).
 
 > **Status.** Topics are suggested on the meeting page and in a review queue,
-> and recurring themes no topic covers are proposed as new topics. How good the
-> suggestions are has not been measured on people's own labels yet, so every
-> suggestion says that its language is not validated.
+> and recurring themes no topic covers are proposed as new topics. On English
+> meetings, measured against labelled meetings, about 3 suggestions in 4 are
+> right and about 3 in 5 of the topics a meeting is about are found
+> ([evaluation](./proposals/automatic-tagging/evaluation.md), Gate 2). The
+> labels came from two model labellers, not people. Suggestions on meetings in
+> other languages say that their language is not validated.
 
 ## Words used on this page
 
@@ -46,9 +49,8 @@ Anyone who can read at least one meeting can describe topics, in **Manage tags
   paste text from a meeting: everyone who can tag sees the name and the
   definition.
 - **Write the definition in the language the meetings are held in.** A
-  definition in another language matches far less: on our Italian meetings,
-  English definitions found none of the topics people saw, and Italian ones
-  found most of them.
+  definition in another language matches less: on our two Italian meetings,
+  English definitions found 3 of the 7 labelled topics.
 - **Describe as topic…** on an existing tag keeps that tag, so meetings that
   already carry it count as the topic's. When the tag is on meetings from only
   one conversation you can read, the editor warns that describing it shows its

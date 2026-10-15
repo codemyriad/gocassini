@@ -24,14 +24,14 @@ var gateTopic, gateControls = []float32{1, 0, 0, 0}, [][]float32{{0, 0, 0, 1}}
 func TestAGateFitsRejectionsAboveTheGlobalGate(t *testing.T) {
 	var samples []topicGateSample
 	for i := range 22 {
-		samples = append(samples, gateSample(fmt.Sprintf("p%d", i), 0.91, true))
+		samples = append(samples, gateSample(fmt.Sprintf("p%d", i), 0.75, true))
 	}
 	for i := range 8 {
-		samples = append(samples, gateSample(fmt.Sprintf("n%d", i), 0.86, false))
+		samples = append(samples, gateSample(fmt.Sprintf("n%d", i), 0.705, false))
 	}
 	gate, ok := fitTopicGate(samples, gateTopic, gateControls)
-	// Every gate from 0.87 to 0.91 decides all; the one nearest 0.85/0.05 wins.
-	if !ok || gate.Threshold != 0.87 || gate.Margin != 0.05 || gate.HeldOutAccuracy != 1 || gate.GlobalAccuracy != 22.0/30 || gate.Rejections != 8 {
+	// Every gate from 0.71 to 0.75 decides all; the one nearest 0.68/0.06 wins.
+	if !ok || gate.Threshold != 0.71 || gate.Margin != 0.06 || gate.HeldOutAccuracy != 1 || gate.GlobalAccuracy != 22.0/30 || gate.Rejections != 8 {
 		t.Fatalf("%+v %v", gate, ok)
 	}
 }
@@ -41,7 +41,7 @@ func TestAGateNeedsToBeatTheGlobalOneOnHeldOutMeetings(t *testing.T) {
 	// same scores. Any fit is noise, and leaving meetings out shows it.
 	var samples []topicGateSample
 	for i := range 24 {
-		c := []float64{0.86, 0.88, 0.90}[i%3]
+		c := []float64{0.705, 0.725, 0.745}[i%3]
 		samples = append(samples, gateSample(fmt.Sprintf("m%d", i), c, i%2 == 0))
 	}
 	if gate, ok := fitTopicGate(samples, gateTopic, gateControls); ok {
@@ -55,10 +55,10 @@ func TestAGateLeavesOutEveryVerdictOfAMeetingTogether(t *testing.T) {
 	// right only by seeing the meeting's twin verdict.
 	var samples []topicGateSample
 	for i := range 20 {
-		samples = append(samples, gateSample(fmt.Sprintf("p%d", i), 0.92, true))
+		samples = append(samples, gateSample(fmt.Sprintf("p%d", i), 0.78, true))
 	}
 	for i := range 3 {
-		s := gateSample(fmt.Sprintf("n%d", i), 0.86+float64(i)*0.02, false)
+		s := gateSample(fmt.Sprintf("n%d", i), 0.705+float64(i)*0.02, false)
 		samples = append(samples, s, s)
 	}
 	gate, _ := fitTopicGate(samples, gateTopic, gateControls)
@@ -139,13 +139,13 @@ func TestFittedGatesRescoreTheirTopicAndLapseWithTheDefinition(t *testing.T) {
 	s, v, ctx := f.s, f.v, context.Background()
 	seed := func(name string, c float64, verdict string) { f.seed(t, name, c, verdict, "review", true) }
 	for i := range 22 {
-		seed(fmt.Sprintf("p%d.opus", i), 0.91, "confirmed")
+		seed(fmt.Sprintf("p%d.opus", i), 0.75, "confirmed")
 	}
 	for i := range 8 {
-		seed(fmt.Sprintf("n%d.opus", i), 0.86, "rejected")
+		seed(fmt.Sprintf("n%d.opus", i), 0.705, "rejected")
 	}
 	// A meeting no one has looked at, just above the global gate.
-	seed("open.opus", 0.86, "")
+	seed("open.opus", 0.705, "")
 	s.queueRescore(ctx, "tag_x")
 	if err := s.rescorePending(ctx, v); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestFittedGatesRescoreTheirTopicAndLapseWithTheDefinition(t *testing.T) {
 	}
 	inputs, _, _ := s.store.scoringInputs(ctx, v)
 	fitted := inputs.Topics[0]
-	if fitted.Params.Threshold != 0.87 || fitted.ScorerKey == topicsScorerKey() || fitted.ScorerKey != topicScorerKeyFor(fitted.Params) {
+	if fitted.Params.Threshold != 0.71 || fitted.ScorerKey == topicsScorerKey() || fitted.ScorerKey != topicScorerKeyFor(fitted.Params) {
 		t.Fatalf("scoring inputs: %+v %s", fitted.Params, fitted.ScorerKey)
 	}
 	if err := s.rescorePending(ctx, v); err != nil {
@@ -238,13 +238,13 @@ func TestDirectConfirmsNeverLoosenAGate(t *testing.T) {
 	// below the gate: only rejections above the gate exist, so the tagged
 	// ones would make any looser gate look better.
 	for i := range 15 {
-		f.seed(t, fmt.Sprintf("p%d.opus", i), 0.90, "confirmed", "review", true)
+		f.seed(t, fmt.Sprintf("p%d.opus", i), 0.74, "confirmed", "review", true)
 	}
 	for i := range 5 {
-		f.seed(t, fmt.Sprintf("n%d.opus", i), 0.90, "rejected", "review", true)
+		f.seed(t, fmt.Sprintf("n%d.opus", i), 0.74, "rejected", "review", true)
 	}
 	for i := range 6 {
-		f.seed(t, fmt.Sprintf("d%d.opus", i), 0.82, "confirmed", "direct", true)
+		f.seed(t, fmt.Sprintf("d%d.opus", i), 0.65, "confirmed", "direct", true)
 	}
 	if err := f.s.fitGates(ctx, f.v); err != nil {
 		t.Fatal(err)
@@ -259,10 +259,10 @@ func TestAGateWaitsForEnoughScorableVerdictsAndRefitsWhenTheyArrive(t *testing.T
 	ctx := context.Background()
 	// After a model change: 30 verdicts, none with vectors in the new space.
 	for i := range 22 {
-		f.seed(t, fmt.Sprintf("p%d.opus", i), 0.91, "confirmed", "review", false)
+		f.seed(t, fmt.Sprintf("p%d.opus", i), 0.75, "confirmed", "review", false)
 	}
 	for i := range 8 {
-		f.seed(t, fmt.Sprintf("n%d.opus", i), 0.86, "rejected", "review", false)
+		f.seed(t, fmt.Sprintf("n%d.opus", i), 0.705, "rejected", "review", false)
 	}
 	if err := f.s.fitGates(ctx, f.v); err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestAGateWaitsForEnoughScorableVerdictsAndRefitsWhenTheyArrive(t *testing.T
 	}
 	// A few arrive: still under the minimums, still no fit.
 	for i := range 3 {
-		f.addVectors(t, fmt.Sprintf("p%d.opus", i), 0.91)
+		f.addVectors(t, fmt.Sprintf("p%d.opus", i), 0.75)
 	}
 	f.expire(t)
 	f.s.fitGates(ctx, f.v)
@@ -282,10 +282,10 @@ func TestAGateWaitsForEnoughScorableVerdictsAndRefitsWhenTheyArrive(t *testing.T
 	}
 	// All of them: the fit happens, though no verdict changed.
 	for i := range 22 {
-		f.addVectors(t, fmt.Sprintf("p%d.opus", i), 0.91)
+		f.addVectors(t, fmt.Sprintf("p%d.opus", i), 0.75)
 	}
 	for i := range 8 {
-		f.addVectors(t, fmt.Sprintf("n%d.opus", i), 0.86)
+		f.addVectors(t, fmt.Sprintf("n%d.opus", i), 0.705)
 	}
 	f.expire(t)
 	f.s.fitGates(ctx, f.v)
@@ -298,20 +298,20 @@ func TestSwappingAVerdictRefitsAndAScorerChangeVoidsTheGate(t *testing.T) {
 	f := newGateFixture(t)
 	ctx := context.Background()
 	for i := range 22 {
-		f.seed(t, fmt.Sprintf("p%d.opus", i), 0.91, "confirmed", "review", true)
+		f.seed(t, fmt.Sprintf("p%d.opus", i), 0.75, "confirmed", "review", true)
 	}
 	for i := range 8 {
-		f.seed(t, fmt.Sprintf("n%d.opus", i), 0.86, "rejected", "review", true)
+		f.seed(t, fmt.Sprintf("n%d.opus", i), 0.705, "rejected", "review", true)
 	}
 	f.s.fitGates(ctx, f.v)
 	first, _ := f.gate(t)
 	// One rejection moves to another meeting: the counts stay the same.
 	f.s.store.db.Exec(`DELETE FROM topic_verdict WHERE opus_name='n0.opus'`)
-	f.seed(t, "n9.opus", 0.885, "rejected", "review", true)
+	f.seed(t, "n9.opus", 0.725, "rejected", "review", true)
 	f.expire(t)
 	f.s.fitGates(ctx, f.v)
 	second, _ := f.gate(t)
-	if second.VerdictsDigest == first.VerdictsDigest || second.FittedAt == 0 || second.Threshold != 0.89 {
+	if second.VerdictsDigest == first.VerdictsDigest || second.FittedAt == 0 || second.Threshold != 0.73 {
 		t.Fatalf("a swapped verdict refits: %+v", second)
 	}
 	// A gate fitted against another global scorer does not apply.
@@ -327,10 +327,10 @@ func TestSwappingAVerdictRefitsAndAScorerChangeVoidsTheGate(t *testing.T) {
 func TestARescoreUnderASupersededGateWritesNothing(t *testing.T) {
 	f := newGateFixture(t)
 	ctx := context.Background()
-	f.seed(t, "open.opus", 0.86, "", "", true)
+	f.seed(t, "open.opus", 0.705, "", "", true)
 	stale, _, _ := f.s.store.scoringInputs(ctx, f.v)
 	// A gate is fitted after the rescore read its inputs.
-	g := topicGate{Threshold: 0.89, Margin: 0.05, GlobalKey: topicsScorerKey(), DefinitionSHA: f.sha, ModelRevision: f.v.ModelRevision, RecipeVersion: f.v.RecipeVersion}
+	g := topicGate{Threshold: 0.73, Margin: 0.06, GlobalKey: topicsScorerKey(), DefinitionSHA: f.sha, ModelRevision: f.v.ModelRevision, RecipeVersion: f.v.RecipeVersion}
 	if err := f.s.setGate(ctx, "tag_x", &g, false); err != nil {
 		t.Fatal(err)
 	}
@@ -346,13 +346,13 @@ func TestARescoreUnderASupersededGateWritesNothing(t *testing.T) {
 
 func TestProposalsTreatAPassageAsCoveredAtTheTopicsOwnGate(t *testing.T) {
 	strict := topicScorerV1
-	strict.Threshold = 0.89
+	strict.Threshold = 0.74
 	inputs := topicScoringInputs{Controls: gateControls, Topics: []topicForScoring{{TagID: "t", Vector: gateTopic, Params: strict}}}
-	if coveredByATopic(gateVector(0.87), inputs) {
+	if coveredByATopic(gateVector(0.705), inputs) {
 		t.Fatal("below the topic's fitted gate, a passage is not covered")
 	}
 	inputs.Topics[0].Params = topicScorerV1
-	if !coveredByATopic(gateVector(0.87), inputs) {
+	if !coveredByATopic(gateVector(0.705), inputs) {
 		t.Fatal("above the global gate it is")
 	}
 }
@@ -362,10 +362,10 @@ func TestRejectionsCopiedByAMergeAreNotFitted(t *testing.T) {
 	ctx := context.Background()
 	// The merged topic's confirms were not copied, only its rejections.
 	for i := range 22 {
-		f.seed(t, fmt.Sprintf("p%d.opus", i), 0.91, "confirmed", "review", true)
+		f.seed(t, fmt.Sprintf("p%d.opus", i), 0.75, "confirmed", "review", true)
 	}
 	for i := range 8 {
-		f.seed(t, fmt.Sprintf("n%d.opus", i), 0.86, "rejected", "merge", true)
+		f.seed(t, fmt.Sprintf("n%d.opus", i), 0.705, "rejected", "merge", true)
 	}
 	if err := f.s.fitGates(ctx, f.v); err != nil {
 		t.Fatal(err)

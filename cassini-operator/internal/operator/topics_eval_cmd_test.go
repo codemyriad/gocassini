@@ -41,10 +41,12 @@ func writeTopicsEvalFixture(t *testing.T) (vectors, definitions string) {
 		return map[string]any{"ordinal": i, "startMs": i * 1000, "endMs": (i + 1) * 1000, "wordCount": words, "vector": v}
 	}
 	// Meeting A: 80 words close to "build". Meeting B: 80 words loosely near
-	// "build" (0.86), in at 0.85 and out at 0.87, then 40 words exactly on
+	// "build" (0.695), in at 0.68 and out at 0.70, then 40 words exactly on
 	// "travel": a short strong discussion at every gate.
+	// 0.695 from "build", away from "travel" and from the controls.
+	nearBuild := []float32{0.695, 0, float32(math.Sqrt(1 - 0.695*0.695))}
 	write(filepath.Join(vectors, "meeting-a.jsonl"), header(2), passage(0, 40, vec(0.1)), passage(1, 40, vec(0.1)))
-	write(filepath.Join(vectors, "meeting-b.jsonl"), header(3), passage(0, 40, vec(math.Acos(0.86))), passage(1, 40, vec(math.Acos(0.86))), passage(2, 40, vec(math.Pi/2)))
+	write(filepath.Join(vectors, "meeting-b.jsonl"), header(3), passage(0, 40, nearBuild), passage(1, 40, nearBuild), passage(2, 40, vec(math.Pi/2)))
 	definitions = filepath.Join(dir, "definitions.jsonl")
 	write(definitions,
 		map[string]any{"format": "cassini.topic-text-vectors.v1", "modelRevision": "m@r", "recipeVersion": "r1", "count": 4},
@@ -83,21 +85,21 @@ func TestTopicsEvalSweepsAndComparesWithAReference(t *testing.T) {
 	if strings.Join(report.Controls, ",") != "control-gardening,control-astronomy" {
 		t.Fatalf("controls used: %v", report.Controls)
 	}
-	if report.Meetings != 2 || report.Passages != 5 || strings.Join(report.Topics, ",") != "build,travel" || report.Languages["en"] != 2 || len(report.Gates) != 4 {
+	if report.Meetings != 2 || report.Passages != 5 || strings.Join(report.Topics, ",") != "build,travel" || report.Languages["en"] != 2 || len(report.Gates) != 5 {
 		t.Fatalf("report %+v", report)
 	}
 	byGate := map[float64]topicsEvalGateResult{}
 	for _, g := range report.Gates {
 		byGate[g.Threshold] = g
 	}
-	// 0.85 (the default, reported first): A/build, B/build and B/travel. The
+	// 0.68 (the default, reported first): A/build, B/build and B/travel. The
 	// reference has A/build and B/travel: 3 of 4 pairs agree.
-	if g := report.Gates[0]; g.Threshold != 0.85 || g.Assignments != 3 || g.Strong != 1 || g.Pairs != 4 || g.Agreeing != 3 ||
+	if g := report.Gates[0]; g.Threshold != 0.68 || g.Assignments != 3 || g.Strong != 1 || g.Pairs != 4 || g.Agreeing != 3 ||
 		strings.Join(g.OnlyHere, ",") != "meeting-b\tbuild" || len(g.OnlyThere) != 0 || g.PerTopic["build"] != 2 {
-		t.Fatalf("0.85 gate %+v", g)
+		t.Fatalf("0.68 gate %+v", g)
 	}
-	if g := byGate[0.87]; g.Assignments != 2 || g.Agreeing != 4 || g.Agreement != 1 {
-		t.Fatalf("0.87 gate %+v", g)
+	if g := byGate[0.70]; g.Assignments != 2 || g.Agreeing != 4 || g.Agreement != 1 {
+		t.Fatalf("0.70 gate %+v", g)
 	}
 }
 
@@ -162,7 +164,7 @@ func TestTopicsEvalReportsLabelAgreementAndPrecisionPerLanguage(t *testing.T) {
 	if a == nil || a.Labellers != 2 || a.MultiLabelled != 4 || a.Agreeing != 3 || a.Disputed != 1 || a.Kappa == nil || math.Abs(*a.Kappa-0.5) > 1e-9 {
 		t.Fatalf("agreement %+v", a)
 	}
-	// At 0.85: the two undisputed positives are assigned, the negative is
+	// At 0.68: the two undisputed positives are assigned, the negative is
 	// not. The disputed pair is in a band with no other labelled pair.
 	en := report.Gates[0].Labelled["en"]
 	if en.Labelled != 3 || en.Positive != 2 || en.Assigned != 2 || *en.Precision != 1 || *en.Recall != 1 || en.UnestimatedPairs != 1 {

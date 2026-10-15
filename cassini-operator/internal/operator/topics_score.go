@@ -39,13 +39,17 @@ type topicScorerParams struct {
 	StrongMinMargin      float64 `json:"strongMinMargin"`
 }
 
-// topicScorerV1 holds the prototype's constants. Gate 1 (evaluation.md)
-// re-validated Threshold and Margin on int8 vectors.
+// topicScorerV1 holds the constants chosen against labelled meetings on the
+// retrieval prompts of embed recipe r2 (Gate 2, evaluation.md), by
+// cross-validation over meetings. Every supporting word counts: joining spans
+// by their passages' cosine, and dropping spans under 25 words, both lost
+// topics the labellers saw. The short-strong rule rarely fires and is kept for
+// short, unmistakable discussions.
 var topicScorerV1 = topicScorerParams{
-	Threshold: 0.85, Margin: 0.05, MinSupportWords: 12,
-	SpanGapMS: 2500, SpanJoinCosine: 0.88,
-	SubstantialSpanWords: 25, QualifyWords: 80,
-	StrongSpanWords: 40, StrongMinScore: 0.88, StrongMinMargin: 0.08,
+	Threshold: 0.68, Margin: 0.06, MinSupportWords: 12,
+	SpanGapMS: 2500, SpanJoinCosine: 0,
+	SubstantialSpanWords: 0, QualifyWords: 80,
+	StrongSpanWords: 40, StrongMinScore: 0.76, StrongMinMargin: 0.10,
 }
 
 // topicControl is a built-in definition no meeting should be about. A passage
@@ -86,9 +90,9 @@ var topicControls = []topicControl{
 const topicsExpectedDetectorVersion = "whatlanggo-1.0.1/vote-1"
 
 // topicsValidatedLanguages are the detected languages whose suggestions were
-// measured against people's labels (Gate 2). None yet: until Gate 2 every
-// suggestion carries the "not yet validated" line.
-var topicsValidatedLanguages = []string{}
+// measured against labelled meetings (Gate 2, evaluation.md): English, on 678
+// labelled pairs. Italian had two meetings, too few to say.
+var topicsValidatedLanguages = []string{"en"}
 
 // topicsScorerKey identifies everything that decides a suggestion apart from
 // the vectors, so a change to any of it rescores.
