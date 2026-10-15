@@ -1,3 +1,4 @@
+import { MAX_TAG_BATCH_MEETINGS, withAnnotationBatch } from "./bulkTags";
 import type { MeetingCatalogEntry } from "./catalog";
 import { writable } from "svelte/store";
 import {
@@ -10,6 +11,8 @@ import {
   plural,
   retryDelay,
   untagMeetingRequest,
+  type AnnotationBatchRequest,
+  type AnnotationBatchResult,
   type AnnotationRequest,
   type AnnotationResult,
   type MeetingAnnotations,
@@ -174,7 +177,7 @@ function wholeTagOn(vocabulary: TagVocabulary, meetingId: string, pick: TagPick)
 // so an older answer can never erase a newer click from the picker.
 function withOptimisticWholeTag(
   vocabulary: TagVocabulary,
-  meetingId: string,
+  meetingIds: readonly string[],
   pick: TagPick,
   desired: boolean,
   optimisticTagId: string,
@@ -197,41 +200,47 @@ function withOptimisticWholeTag(
   }
   if (!tag) return vocabulary;
 
-  const meetings = vocabulary.meetings.map((meeting) => ({
+  const targets = new Set(meetingIds);
+  const meetings = vocabulary.meetings.map((meeting) => targets.has(meeting.meetingId) ? {
     ...meeting,
     tags: meeting.tags.map((held) => ({ ...held })),
-  }));
-  let meeting = meetings.find((candidate) => candidate.meetingId === meetingId);
-  if (!meeting) {
-    meeting = { meetingId, tags: [] };
-    meetings.push(meeting);
-  }
-  const held = meeting.tags.find((candidate) => candidate.tagId === tag!.tagId);
-  const current = held?.whole ?? false;
-  if (current === desired) return vocabulary;
+  } : meeting);
+  const byId = new Map(meetings.map((meeting) => [meeting.meetingId, meeting]));
+  for (const meetingId of meetingIds) {
+    let meeting = byId.get(meetingId);
+    if (!meeting) {
+      meeting = { meetingId, tags: [] };
+      meetings.push(meeting);
+      byId.set(meetingId, meeting);
+    }
+    const held = meeting.tags.find((candidate) => candidate.tagId === tag!.tagId);
+    const current = held?.whole ?? false;
+    if (current === desired) continue;
 
-  if (desired) {
-    if (held) held.whole = true;
-    else meeting.tags.push({ tagId: tag.tagId, whole: true, stretches: 0 });
-    tag.marks += 1;
-    if (!held) tag.meetings += 1;
-  } else if (held) {
-    held.whole = false;
-    tag.marks = Math.max(0, tag.marks - 1);
-    if (held.stretches === 0) {
-      meeting.tags = meeting.tags.filter((candidate) => candidate !== held);
-      tag.meetings = Math.max(0, tag.meetings - 1);
+    if (desired) {
+      if (held) held.whole = true;
+      else meeting.tags.push({ tagId: tag.tagId, whole: true, stretches: 0 });
+      tag.marks += 1;
+      if (!held) tag.meetings += 1;
+    } else if (held) {
+      held.whole = false;
+      tag.marks = Math.max(0, tag.marks - 1);
+      if (held.stretches === 0) {
+        meeting.tags = meeting.tags.filter((candidate) => candidate !== held);
+        tag.meetings = Math.max(0, tag.meetings - 1);
+      }
     }
   }
   return { ...vocabulary, tags, meetings };
 }
 
 interface PendingTagAction {
-  meeting: MeetingCatalogEntry;
+  meetings: readonly MeetingCatalogEntry[];
+  bulk: boolean;
   pick: TagPick;
   desired: boolean;
   optimisticTagId: string;
-  request?: AnnotationRequest;
+  request?: AnnotationRequest | AnnotationBatchRequest;
   deferred?: boolean;
 }
 
@@ -239,6 +248,7 @@ export interface ListTagSessionState {
   vocabulary: TagVocabulary | null;
   notice: string;
   retryable: boolean;
+  bulkReport: string;
 }
 
 type TagWriteScheduler = (write: () => Promise<void>) => Promise<void>;
@@ -249,8 +259,9 @@ type TagWriteScheduler = (write: () => Promise<void>) => Promise<void>;
 export function createListTagSession(
   apply: (meeting: MeetingCatalogEntry, request: AnnotationRequest) => Promise<AnnotationResult>,
   schedule: TagWriteScheduler,
+  applyBatch?: (request: AnnotationBatchRequest) => Promise<AnnotationBatchResult>,
 ) {
-  const state = writable<ListTagSessionState>({ vocabulary: null, notice: "", retryable: false });
+  const state = writable<ListTagSessionState>({ vocabulary: null, notice: "", retryable: false, bulkReport: "" });
   let confirmed: TagVocabulary | null = null;
   let confirmedGeneration = 0;
   let pending: PendingTagAction[] = [];
@@ -260,6 +271,8 @@ export function createListTagSession(
   // layer can otherwise erase the user's final intent.
   let blocked: PendingTagAction | null = null;
   let notice = "";
+  let bulkReport = "";
+  let retryScheduled = false;
 
   const identifier = () => crypto.randomUUID?.() ?? Array.from(
     crypto.getRandomValues(new Uint8Array(16)),
@@ -271,7 +284,7 @@ export function createListTagSession(
     return pending.reduce(
       (vocabulary, action) => withOptimisticWholeTag(
         vocabulary,
-        action.meeting.id,
+        action.meetings.map((meeting) => meeting.id),
         action.pick,
         action.desired,
         action.optimisticTagId,
@@ -281,23 +294,34 @@ export function createListTagSession(
   }
 
   function publish() {
-    state.set({ vocabulary: visible(), notice, retryable: blocked !== null });
+    const saving = pending.filter((action) => action.bulk).length;
+    state.set({
+      vocabulary: visible(), notice, retryable: blocked !== null,
+      bulkReport: blocked ? notice : saving ? `Saving ${plural(saving, "tag update")}…` : bulkReport,
+    });
   }
 
   function remove(action: PendingTagAction) {
     pending = pending.filter((candidate) => candidate !== action);
   }
 
-  function requestFor(action: PendingTagAction): AnnotationRequest | null {
-    if (!confirmed || wholeTagOn(confirmed, action.meeting.id, action.pick) === action.desired) {
-      return null;
-    }
+  // Keep a new tag's label and style if another click chooses its temporary
+  // identity. If creation is rejected, the later intent can still create it.
+  function pendingPick(pick: TagPick): TagPick {
+    if (!("tagId" in pick)) return pick;
+    return pending.find((action) => action.optimisticTagId === pick.tagId && !("tagId" in action.pick))?.pick ?? pick;
+  }
+
+  function requestFor(action: PendingTagAction): AnnotationRequest | AnnotationBatchRequest | null {
+    if (!confirmed) return null;
+    const targets = action.meetings.filter((meeting) => wholeTagOn(confirmed!, meeting.id, action.pick) !== action.desired);
+    if (!targets.length) return null;
     const known = tagForPick(confirmed, action.pick);
     if (!action.desired && !known) return null;
     const base = action.desired
       ? markRequest(known ? { tagId: known.tagId, label: known.label } : action.pick, WHOLE_MEETING)
       : untagMeetingRequest(known!.tagId);
-    return { ...base, requestId: identifier() };
+    return { ...base, requestId: identifier(), ...(action.bulk ? { meetingIds: targets.map((meeting) => meeting.id) } : {}) };
   }
 
   function writeRetryDelay(error: unknown, attempt: number): number | null {
@@ -324,18 +348,22 @@ export function createListTagSession(
   }
 
   async function execute(action: PendingTagAction) {
-    if (blocked) {
+    // A click queued during recovery must not overtake earlier deferred edits.
+    if (blocked || pending[0] !== action) {
       action.deferred = true;
       return;
     }
     let settled = true;
+    let failed = false;
     try {
       action.request ??= requestFor(action) ?? undefined;
       if (!action.request) return;
-      let result: AnnotationResult;
+      let result: AnnotationResult | AnnotationBatchResult;
       for (let attempt = 0; ; attempt++) {
         try {
-          result = await apply(action.meeting, action.request);
+          result = action.bulk
+            ? await applyBatch!(action.request as AnnotationBatchRequest)
+            : await apply(action.meetings[0], action.request);
           break;
         } catch (error) {
           const delay = writeRetryDelay(error, attempt);
@@ -344,19 +372,23 @@ export function createListTagSession(
         }
       }
       if (confirmed) {
-        confirmed = withMeetingResult(confirmed, result);
+        confirmed = "results" in result ? withAnnotationBatch(confirmed, result) : withMeetingResult(confirmed, result);
         confirmedGeneration += 1;
       }
     } catch (error) {
-      if (outcomeUnknown(error)) {
+      failed = true;
+      const target = action.bulk ? plural(action.meetings.length, "meeting") : `“${action.meetings[0].title}”`;
+      if (outcomeUnknown(error) || (error instanceof AnnotationError && error.status === 429)) {
         blocked = action;
         settled = false;
-        notice = `Could not confirm the tag update for “${action.meeting.title}”: ${describeAnnotationError(error)}`;
+        notice = `Could not confirm the tag update for ${target}: ${describeAnnotationError(error)}`;
       } else {
-        notice = `Could not ${action.desired ? "tag" : "untag"} “${action.meeting.title}”: ${describeAnnotationError(error)}`;
+        notice = `Could not ${action.desired ? "tag" : "untag"} ${target}: ${describeAnnotationError(error)}`;
       }
+      if (action.bulk) bulkReport = notice;
     } finally {
       if (settled) {
+        if (action.bulk && !failed) bulkReport = `${action.desired ? "Tagged" : "Untagged"} ${plural(action.meetings.length, "meeting")}`;
         remove(action);
         resumeDeferred();
       }
@@ -385,8 +417,9 @@ export function createListTagSession(
       const current = visible();
       if (!current) return false;
       const action: PendingTagAction = {
-        meeting,
-        pick,
+        meetings: [meeting],
+        bulk: false,
+        pick: pendingPick(pick),
         desired: !wholeTagOn(current, meeting.id, pick),
         optimisticTagId: "tagId" in pick ? pick.tagId : `optimistic-${identifier()}`,
       };
@@ -396,13 +429,42 @@ export function createListTagSession(
       void schedule(() => execute(action));
       return true;
     },
-    retry() {
-      if (!blocked) return false;
-      const action = blocked;
-      blocked = null;
-      notice = "";
+    toggleBulk(meetings: readonly MeetingCatalogEntry[], pick: TagPick) {
+      const current = visible();
+      if (!current || !applyBatch || !meetings.length) return false;
+      if (meetings.length > MAX_TAG_BATCH_MEETINGS) {
+        bulkReport = `Tag at most ${MAX_TAG_BATCH_MEETINGS} meetings at once.`;
+        publish();
+        return false;
+      }
+      const action: PendingTagAction = {
+        meetings: [...new Map(meetings.map((meeting) => [meeting.id, meeting])).values()],
+        bulk: true,
+        pick: pendingPick(pick),
+        desired: !meetings.every((meeting) => wholeTagOn(current, meeting.id, pick)),
+        optimisticTagId: "tagId" in pick ? pick.tagId : `optimistic-${identifier()}`,
+      };
+      pending = [...pending, action];
+      if (!blocked) notice = "";
       publish();
       void schedule(() => execute(action));
+      return true;
+    },
+    clearBulkReport() {
+      if (pending.some((action) => action.bulk)) return;
+      bulkReport = "";
+      publish();
+    },
+    retry() {
+      if (!blocked || retryScheduled) return false;
+      const action = blocked;
+      retryScheduled = true;
+      void schedule(async () => {
+        blocked = null;
+        retryScheduled = false;
+        notice = "";
+        await execute(action);
+      });
       return true;
     },
     dismissNotice() {
