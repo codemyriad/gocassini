@@ -58,7 +58,7 @@
 {/if}
 
 <style>
-  /* Same inset as the other settings cards (.pipe-step, .hints-card). */
+  /* Same inset as the other settings cards (.pipe-step). */
   .voice-card { display: grid; gap: 12px; padding: 16px 18px 18px; }
   .optional { margin-left: 4px; font-size: 0.85em; font-weight: 400; color: color-mix(in oklch, var(--color-base-content) 60%, transparent); }
   progress { display: block; width: 100%; }
