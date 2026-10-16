@@ -278,3 +278,32 @@ func syncDir(path string) error {
 	defer f.Close()
 	return f.Sync()
 }
+
+// RemoveReplaced deletes the files of the retired models m replaces, in both
+// the store layout (models/<id>/<revision>) and the older archive layout
+// (models/<id>). Callers run it only after m has passed its runtime check, so
+// a failed upgrade never leaves an install with neither model. It returns the
+// ids it removed.
+func (s *Store) RemoveReplaced(ctx context.Context, m Model) ([]string, error) {
+	var removed []string
+	err := s.locked(ctx, func() error {
+		for _, id := range m.Replaces {
+			if !safeName(id) {
+				return fmt.Errorf("invalid replaced model %q", id)
+			}
+			dir := filepath.Join(s.Root, "models", id)
+			if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err := os.RemoveAll(dir); err != nil {
+				return fmt.Errorf("remove replaced model %s: %w", id, err)
+			}
+			removed = append(removed, id)
+		}
+		if len(removed) > 0 {
+			return syncDir(filepath.Join(s.Root, "models"))
+		}
+		return nil
+	})
+	return removed, err
+}

@@ -61,6 +61,11 @@ describe("pipelineStatus", () => {
     expect(status.summarise).toEqual({ state: "On · OpenRouter", tone: "amber", reason: "needs a transcript" });
   });
 
+  it("names the tier of the saved GPU model", () => {
+    const status = pipelineStatus({ ...team, device: "cuda", quality: "balanced", activeModel: "parakeet-ultra-0.6b" });
+    expect(status.transcribe.state).toBe("On · Best · GPU");
+  });
+
   it("omits the policy part when retention is unknown and names the GPU", () => {
     const status = pipelineStatus({ ...team, keep: "audio-video", recordingsPolicy: null, device: "cuda", quality: "best" });
     expect(status.keep.state).toBe("Audio + video");
@@ -70,13 +75,20 @@ describe("pipelineStatus", () => {
 
 describe("helpers", () => {
   it("names the model a tier runs", () => {
-    expect(speechModelFor("balanced", "cpu")).toBe("parakeet-tdt-0.6b-v3-int8");
-    expect(speechModelFor("fast", "cuda")).toBe("parakeet-tdt-0.6b-v3");
+    expect(speechModelFor("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8");
+    expect(speechModelFor("best", "cpu")).toBe("parakeet-ultra-0.6b");
+    expect(speechModelFor("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8");
+    for (const quality of ["fast", "balanced", "best"]) {
+      expect(speechModelFor(quality, "cuda")).toBe("parakeet-ultra-0.6b");
+    }
   });
   it("reads a running download", () => {
     const job = { id: "j", model: "m", revision: "r", device: "cpu", updated_at: "", progress: { phase: "", completed_bytes: 42, total_bytes: 100, reused_bytes: 0 } };
     expect(runningDownload({ models: [], jobs: [{ ...job, state: "downloading" }], downloads_allowed: true, device: "cpu" })).toEqual({ percent: 42 });
     expect(runningDownload({ models: [], jobs: [{ ...job, state: "cancelled" }], downloads_allowed: true, device: "cpu" })).toBeNull();
+    // Asked for one model, another model's download does not count.
+    expect(runningDownload({ models: [], jobs: [{ ...job, state: "downloading" }], downloads_allowed: true, device: "cpu" }, "m")).toEqual({ percent: 42 });
+    expect(runningDownload({ models: [], jobs: [{ ...job, state: "downloading" }], downloads_allowed: true, device: "cpu" }, "other")).toBeNull();
     // Voice separation's download holds nothing in the pipeline up.
     const diarizer = { id: "m", kind: "diarization", name: "", revision: "r", download_bytes: 1, installed_bytes: 1, installed: false, ready: false, device: "cpu" };
     expect(runningDownload({ models: [diarizer], jobs: [{ ...job, state: "downloading" }], downloads_allowed: true, device: "cpu" })).toBeNull();
@@ -88,14 +100,22 @@ describe("helpers", () => {
   });
 
   it("names the tier of the saved model, which is what builds use", () => {
-    const status = pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-tdt-0.6b-v3-int8" });
+    const status = pipelineStatus({ ...team, quality: "best", activeModel: "parakeet-ultra-0.6b-int8" });
     expect(status.transcribe.state).toBe("On · Balanced · CPU");
   });
 
   it("warns when transcription is on but its model is not installed", () => {
-    const status = pipelineStatus({ ...team, activeModel: "parakeet-tdt-0.6b-v3", activeModelInstalled: false, download: { percent: 10 } });
+    // Another model's download does not make the saved one any closer.
+    const status = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b", activeModelInstalled: false, download: { percent: 10 }, activeModelDownload: null });
     expect(status.transcribe).toEqual({ state: "On · Best · CPU", tone: "amber", reason: "model not installed" });
     // Transcription is on, so publishing does not wait on the download.
     expect(status.publish.badge).toBeUndefined();
+  });
+
+  it("shows the saved model downloading after an upgrade replaced it", () => {
+    const status = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, download: { percent: 40 }, activeModelDownload: { percent: 40 } });
+    expect(status.transcribe).toEqual({ state: "On · Balanced · CPU", tone: "busy", reason: "downloading the model · 40%" });
+    const unsized = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, download: { percent: null }, activeModelDownload: { percent: null } });
+    expect(unsized.transcribe.reason).toBe("downloading the model");
   });
 });

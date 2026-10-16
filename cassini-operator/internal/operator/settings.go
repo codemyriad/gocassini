@@ -823,7 +823,7 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 409, "Install and check the selected model before enabling transcription.")
 			return
 		}
-		if modelForQuality(updated.Quality, device) != m.ID {
+		if !modelServesQuality(updated.Quality, device, m.ID) {
 			writeJSONError(w, 409, "Use the prepared model matching the selected quality and device.")
 			return
 		}

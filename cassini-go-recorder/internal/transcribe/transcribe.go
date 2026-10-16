@@ -20,13 +20,16 @@ type BuildConfig struct {
 	TranscriptionMode   string
 	TranscriptionReason string
 	ModelRevision       string
-	Device              string     // "cpu" or "cuda"
-	ModelID             ModelID    // defaults to defaultModelID
-	AdditionalModels    []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
-	CacheDir            string     // root cache directory, e.g. ~/.cache/cassini
-	SummaryLLM          LLMConfig  // optional; if not configured, skip summary generation
-	NumThreads          int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
-	Quality             STTQuality // "" = balanced; picks model/device when not explicitly set
+	Device              string  // "cpu" or "cuda"
+	ModelID             ModelID // defaults to defaultModelID
+	// ReplacedModelID is the retired id the configuration named when ModelID
+	// stands in for it (see ResolveModel); the build log says so.
+	ReplacedModelID  ModelID
+	AdditionalModels []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
+	CacheDir         string     // root cache directory, e.g. ~/.cache/cassini
+	SummaryLLM       LLMConfig  // optional; if not configured, skip summary generation
+	NumThreads       int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
+	Quality          STTQuality // "" = balanced; picks model/device when not explicitly set
 	// Vocabulary lists preferred spellings for names and project terms. It is
 	// biasing evidence for the decoder itself (see hotwords.go), not a
 	// post-processing rewrite. The score must stay conservative because this
@@ -171,6 +174,9 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	backend, err := LookupRecognizerBackend(cfg.Backend)
 	if err != nil {
 		return err
+	}
+	if cfg.ReplacedModelID != "" {
+		fmt.Fprintf(stdout, "  STT model %s is retired; using %s, which replaces it\n", cfg.ReplacedModelID, cfg.ModelID)
 	}
 	fmt.Fprintf(stdout, "  STT policy: backend=%s device=%s model=%s threads=%d quality=%s\n",
 		backend,
@@ -350,6 +356,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		Attribution:       attrProv,
 		WordTimings:       wordEnds.provenance(),
 		ReferenceFrontend: refGuarantee.provenance(cfg.ModelID),
+		Encoder:           encoderProvenance(modelPaths.EncoderFile),
 	}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
@@ -850,7 +857,12 @@ func DefaultBuildConfig() BuildConfig {
 	// Leave an unset model empty: BuildMeetingArtifact derives it from the
 	// quality tier and the resolved device (GPU -> fp32, CPU -> int8). An
 	// explicit CASSINI_STT_MODEL still wins.
-	primary := ModelID(strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")))
+	// A retired id (Parakeet v3) resolves to the model that replaced it.
+	primary, revision, replaced := ModelID(""), os.Getenv("CASSINI_STT_REVISION"), ModelID("")
+	if explicit := strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")); explicit != "" {
+		resolved := ResolveModel(explicit, revision, "", "")
+		primary, revision, replaced = resolved.ID, resolved.Revision, resolved.Replaces
+	}
 
 	var additional []ModelID
 	if raw := strings.TrimSpace(os.Getenv("CASSINI_STT_ADDITIONAL_MODELS")); raw != "" {
@@ -859,7 +871,8 @@ func DefaultBuildConfig() BuildConfig {
 			if part == "" {
 				continue
 			}
-			additional = append(additional, ModelID(part))
+			id, _ := ReplacementModelID(ModelID(part))
+			additional = append(additional, id)
 		}
 	}
 
@@ -870,9 +883,10 @@ func DefaultBuildConfig() BuildConfig {
 	return BuildConfig{
 		TranscriptionMode:   mode,
 		TranscriptionReason: os.Getenv("CASSINI_TRANSCRIPTION_REASON"),
-		ModelRevision:       os.Getenv("CASSINI_STT_REVISION"),
+		ModelRevision:       revision,
 		Device:              defaultDevice(),
 		ModelID:             primary,
+		ReplacedModelID:     replaced,
 		AdditionalModels:    additional,
 		SummaryLLM:          summaryLLM,
 		NumThreads:          envInt("CASSINI_STT_NUM_THREADS"),

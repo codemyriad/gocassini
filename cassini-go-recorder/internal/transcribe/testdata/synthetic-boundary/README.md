@@ -7,7 +7,7 @@ track 2 gives instructions for opening a library and starts three seconds later.
 Both tracks overlap on the meeting timeline but remain independent audio streams.
 
 The test exercises `ProbeMKV`, `ExtractSpeakerFloats`, the production decoder
-resolver, `NewRecognizer`, Silero VAD, Parakeet v3 and word filtering. It checks
+resolver, `NewRecognizer`, Silero VAD, Parakeet Ultra and word filtering. It checks
 specific spoken phrases, including words before and after the omission and a
 second-track control. It does not select experimental policies, stub decoding,
 add the expected words as hints, or pass based on word count alone.
@@ -24,6 +24,12 @@ runtime and the same cached FP32 Parakeet v3 model.
 | Before PR | fails | fails on 3 runs | Omits “if the weather clears tomorrow”; surrounding speech and track 2 survive |
 | PR | passes | passes on 3 runs | All required phrases survive on both tracks |
 
+That validation, recorded in `validation.json`, used Parakeet v3, the model
+Cassini shipped then. Since Parakeet Ultra replaced v3 (2026-10) the tests run
+fp32 Ultra; both Ultra builds pass every assertion unchanged: fp32 on CUDA
+(native runtime from codemyriad/sherpa-onnx `0c2ee3f3`) and int8 on the CPU
+(sherpa-onnx-go-linux `v1.13.7-cassini.8`).
+
 This is a reproduction of missing interior speech with invented audio. It does
 not establish that every real-meeting omission has the same native cause, or
 that all the PR's known recognition regressions are resolved. The diagnostic
@@ -34,11 +40,11 @@ actual old source, not that emulation.
 
 These model tests run automatically in the normal `CI` workflow, in the
 `Unit tests (cassini-go-recorder)` job, on every code PR and main/master push.
-They use FP32 Parakeet on the hosted CPU runner; no `full-ci` label or GPU is
-needed. Fast local unit runs can still omit the model-test build tag. Selecting the build tag requires the models and fails if they are
+They use FP32 Parakeet Ultra on the hosted CPU runner; no `full-ci` label or
+GPU is needed. Fast local unit runs can still omit the model-test build tag. Selecting the build tag requires the models and fails if they are
 missing; it does not silently skip the speech assertion or download models.
-FFmpeg/ffprobe and the cached FP32 `parakeet-tdt-0.6b-v3` and Silero models are
-required. From `cassini-go-recorder`:
+FFmpeg/ffprobe and the cached FP32 `parakeet-ultra-0.6b` and Silero models are
+required (`deployment/models/fetch-models.sh <cache> parakeet-ultra-0.6b`). From `cassini-go-recorder`:
 
 ```sh
 CASSINI_CACHE_ROOT="$HOME/.cache/cassini" \
@@ -47,8 +53,9 @@ CASSINI_CACHE_ROOT="$HOME/.cache/cassini" \
 ```
 
 For the CUDA native package, add `--backend cuda` before `--test` and set
-`CASSINI_ASR_REGRESSION_DEVICE=cuda`. Tests use the FP32 model on either device;
-this fixture does not certify the separately quantized INT8 bundle.
+`CASSINI_ASR_REGRESSION_DEVICE=cuda`. Tests use the FP32 model on either device
+unless `CASSINI_ASR_REGRESSION_MODEL` names another cached one, such as
+`parakeet-ultra-0.6b-int8`; CI runs FP32 only.
 
 CI caches the model weights and production CPU native library. It verifies
 all inference model files against `models.sha256`, including the external

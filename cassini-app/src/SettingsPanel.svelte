@@ -472,6 +472,7 @@
     device: savedDevice,
     modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
     download: runningDownload(modelInventory),
+    activeModelDownload: settings?.active_model ? runningDownload(modelInventory, settings.active_model) : null,
     summaryEnabled: llm?.summary.enabled === true,
     providerName: llm ? providerName(llm.summary.provider) : "",
     hasProvider: llm === null ? null : llm.providers.length > 0,

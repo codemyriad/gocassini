@@ -30,13 +30,26 @@ on:
       - 'planning/**'
       - 'img/**'
       - 'media-kit.*'
+  # Run the full suite on demand for any commit, without opening a PR:
+  #   gh workflow run ci.yml --ref <branch> -f ref=<sha|branch|tag>
+  # An empty ref tests the dispatched branch's head. paths-ignore does not
+  # apply, and the recorder integration classifier runs everything, as on main.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA, branch or tag to test (empty = the dispatched branch)
+        type: string
+        required: false
+        default: ''
 
 # Cancel a PR's superseded in-progress runs when a new commit is pushed, so
 # rapid pushes don't stack multiple ~45-min e2e runs (a major source of the
 # runner-minute burn that has been starving CI). Never cancel a push to main —
 # every main commit must produce a full, independent signal.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # A dispatch is keyed by the commit it tests, so two dispatches of different
+  # commits from the same branch run side by side.
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -50,6 +63,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
       - name: Classify standalone recorder integration relevance
         id: changes
@@ -70,6 +84,7 @@ jobs:
           fi
           echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
           echo "Standalone recorder integration relevant: $relevant" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tested commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
       - name: Derive recorder matrix from compatibility inventory
         id: matrix
         run: echo "value=$(python3 scripts/nextcloud_compatibility.py matrix --tier recorder)" >> "$GITHUB_OUTPUT"
@@ -130,6 +145,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -163,6 +180,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -208,8 +227,8 @@ jobs:
           CASSINI_CACHE_ROOT: ${{ runner.temp }}/synthetic-asr-models
         run: |
           set -euo pipefail
-          if [[ ! -d "$CASSINI_CACHE_ROOT/models/parakeet-tdt-0.6b-v3" ]]; then
-            ./deployment/models/fetch-models.sh "$CASSINI_CACHE_ROOT" parakeet-tdt-0.6b-v3
+          if [[ ! -d "$CASSINI_CACHE_ROOT/models/parakeet-ultra-0.6b" ]]; then
+            ./deployment/models/fetch-models.sh "$CASSINI_CACHE_ROOT" parakeet-ultra-0.6b
           fi
           mkdir -p "$CASSINI_CACHE_ROOT/vad"
           if [[ ! -s "$CASSINI_CACHE_ROOT/vad/silero_vad.onnx" ]]; then
@@ -241,7 +260,7 @@ jobs:
         env:
           CASSINI_CACHE_ROOT: ${{ runner.temp }}/synthetic-asr-models
           CASSINI_BUNDLED_MODEL_ROOT: ${{ runner.temp }}/synthetic-asr-models
-          CASSINI_BUNDLED_MODELS: parakeet-tdt-0.6b-v3
+          CASSINI_BUNDLED_MODELS: parakeet-ultra-0.6b
           CASSINI_DISALLOW_MODEL_DOWNLOAD: "1"
           CASSINI_ASR_REGRESSION_DEVICE: cpu
           ASR_TEST_BINARY: ${{ runner.temp }}/synthetic-asr.test
@@ -272,6 +291,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -324,6 +345,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Setup Go
         uses: actions/setup-go@v5
         with:

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -80,8 +81,8 @@ func TestShippedCatalogue(t *testing.T) {
 	}
 	want := map[string]string{
 		"parakeet-tdt-ctc-110m-en-int8": KindSpeech,
-		"parakeet-tdt-0.6b-v3-int8":     KindSpeech,
-		"parakeet-tdt-0.6b-v3":          KindSpeech,
+		"parakeet-ultra-0.6b-int8":      KindSpeech,
+		"parakeet-ultra-0.6b":           KindSpeech,
 		"silero-vad":                    KindVAD,
 		"nemotron-3-diarization-int8":   KindDiarization,
 		"nemotron-3-diarization":        KindDiarization,
@@ -693,5 +694,77 @@ func TestPinnedDependencySurvivesNewCatalogueDefault(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatal("new dependency default changed active model")
+	}
+}
+
+// Parakeet Ultra replaces v3 at the same precision, and the int8 build ships
+// without bpe.vocab so it decodes greedily, as v3 int8 did.
+func TestShippedUltraReplacesV3(t *testing.T) {
+	c := Shipped()
+	for retired, want := range map[string]string{
+		"parakeet-tdt-0.6b-v3":      "parakeet-ultra-0.6b",
+		"parakeet-tdt-0.6b-v3-int8": "parakeet-ultra-0.6b-int8",
+	} {
+		if _, err := c.Model(retired, ""); err == nil {
+			t.Errorf("catalogue still ships %s", retired)
+		}
+		if m, ok := c.Replacement(retired); !ok || m.ID != want {
+			t.Errorf("replacement of %s = %q, %v; want %s", retired, m.ID, ok, want)
+		}
+	}
+	if _, ok := c.Replacement("parakeet-tdt-ctc-110m-en-int8"); ok {
+		t.Error("a shipped model is reported as replaced")
+	}
+	m, err := c.Model("parakeet-ultra-0.6b-int8", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The revision is the sha256 of the sorted `sha256sum` listing of the
+	// exported files, as dist.gocassini.com's manifest records it.
+	var listing strings.Builder
+	paths := []string{}
+	byPath := map[string]string{}
+	for _, f := range m.Files {
+		if f.Path == "bpe.vocab" {
+			t.Fatal("Ultra int8 ships bpe.vocab; it is published without it to decode greedily")
+		}
+		a, err := c.Artifact(f.Artifact)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, f.Path)
+		byPath[f.Path] = a.UncompressedSHA256
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		fmt.Fprintf(&listing, "%s  %s\n", byPath[p], p)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(listing.String()))); got != m.Revision || m.Revision != "18cb623004dd6c15999b93cb70b14d8a1f6e8f3a2a97ff733f104bfc3494f6a9" {
+		t.Fatalf("revision %s, listing hash %s", m.Revision, got)
+	}
+}
+
+func TestValidateRejectsAmbiguousReplacement(t *testing.T) {
+	cases := map[string]func(c *Catalogue){
+		"replaces a shipped model": func(c *Catalogue) { c.Models[0].Replaces = []string{"test-diarizer"} },
+		"replaces itself":          func(c *Catalogue) { c.Models[0].Replaces = []string{"test-model"} },
+		"replaces a path":          func(c *Catalogue) { c.Models[0].Replaces = []string{"../vad"} },
+		"two replacements": func(c *Catalogue) {
+			c.Models[0].Replaces = []string{"old-model"}
+			c.Models[2].Replaces = []string{"old-model"}
+		},
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := fixture(t)
+			s.Catalogue.Models[0].Replaces = []string{"old-model"}
+			if err := s.Catalogue.Validate(); err != nil {
+				t.Fatalf("fixture invalid: %v", err)
+			}
+			breakIt(&s.Catalogue)
+			if err := s.Catalogue.Validate(); err == nil {
+				t.Fatal("accepted")
+			}
+		})
 	}
 }

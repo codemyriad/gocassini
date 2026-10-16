@@ -70,7 +70,7 @@ func resourceLimitsFromEnv() resourceLimits {
 // minFreeMemForBuild is the memory that must be free before a build of this
 // model starts on this device. CUDA keeps the measured full-run figure. A CPU build holds the recognizer in
 // host RAM instead of VRAM, so its floor is that model's measured peak plus a
-// margin: 1.5GiB for the 110M CTC model, 2.75GiB for 0.6B int8, 4.5GiB for
+// margin: 1.5GiB for the 110M CTC model, 3GiB for 0.6B int8, 4.5GiB for
 // 0.6B fp32. A 4-core/8GiB host therefore runs the fast and balanced tiers and
 // declines "best" with an actionable message instead of OOMing Talk.
 func (l resourceLimits) minFreeMemForBuild(device, model string) int {
@@ -148,9 +148,12 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 	}
 	m, err := findModel(inventory, settings.ActiveModel, settings.ActiveRevision)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("speech model %s is not one this version can run; select a quality in Settings: %w", settings.ActiveModel, err)
 	}
 	if !m.Installed {
+		if job, ok := rt.runningModelJob(ctx, m.ID, m.Revision, device); ok {
+			return "", fmt.Errorf("speech model %s is being installed (%s); recordings wait for it", m.ID, modelJobProgressText(job))
+		}
 		return "", fmt.Errorf("speech model %s is not installed; install it in Settings", m.ID)
 	}
 	if !m.Ready {

@@ -305,6 +305,11 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 		return "", "", err
 	}
 	if !selected.Installed {
+		if job, ok := rt.runningModelJob(ctx, selected.ID, selected.Revision, device); ok {
+			// Being installed (after an upgrade replaced the model, typically):
+			// waiting is what makes this transcript possible.
+			return "", "", &resourceUnavailableError{resource: "speech model " + selected.ID, detail: "being installed (" + modelJobProgressText(job) + ")"}
+		}
 		return "", "", fmt.Errorf("speech model %s %s is not installed", selected.ID, selected.Revision)
 	}
 	if !selected.Ready {

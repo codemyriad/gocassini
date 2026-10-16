@@ -146,6 +146,26 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("rm -rf", (self.directory / "sudo-calls").read_text())
 
+    def test_ci_can_be_dispatched_on_any_commit(self):
+        # A manual run must test the requested commit in every job, not the
+        # dispatched branch's head: one checkout without the ref would
+        # silently mix two commits into a single green run.
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("\n  workflow_dispatch:\n    inputs:\n      ref:\n", workflow)
+        lines = workflow.splitlines()
+        checkouts = [i for i, line in enumerate(lines)
+                     if line.strip().startswith("uses: actions/checkout@")]
+        self.assertGreater(len(checkouts), 0)
+        for i in checkouts:
+            indent = len(lines[i]) - len(lines[i].lstrip())
+            block = []
+            for line in lines[i + 1:]:
+                if line.strip() and len(line) - len(line.lstrip()) <= indent - 2:
+                    break
+                block.append(line.strip())
+            self.assertIn("ref: ${{ inputs.ref }}", block, f"checkout at ci.yml:{i + 1}")
+        self.assertIn("${{ inputs.ref }}", workflow.split("concurrency:")[1].split("jobs:")[0])
+
 
 if __name__ == "__main__":
     unittest.main()
