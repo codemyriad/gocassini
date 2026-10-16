@@ -104,7 +104,7 @@ func TestTalkNotificationInstalledExApp(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			n := talkNotification{Owner: owner, RoomToken: room.Token, Message: "Cassini notification API integration check (temporary test room)"}
+			n := talkNotification{Owner: owner, RoomToken: room.Token, MeetingID: "d833-test", Link: cfg.NextcloudURL + "/index.php/apps/app_api/embedded/" + cfg.AppID + "/viewer#meeting=d833-test", Message: "Meeting recording available: Integration check · 13 Oct · 2 min · Speakers: Test"}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			// Joining a call/chat session is deliberately unnecessary.
@@ -129,7 +129,30 @@ func TestTalkNotificationInstalledExApp(t *testing.T) {
 			if !found {
 				t.Fatalf("moderator message %d missing from history", id)
 			}
-			t.Logf("moderator message %d verified in room type %s", id, roomType)
+			data, err = setup(http.MethodGet, "/apps/spreed/api/v1/chat/"+room.Token+"/share/overview", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var overview map[string][]struct {
+				ID         int64 `json:"id"`
+				Parameters map[string]struct {
+					Name string `json:"name"`
+					Link string `json:"link"`
+				} `json:"messageParameters"`
+			}
+			if err := json.Unmarshal(data, &overview); err != nil {
+				t.Fatal(err)
+			}
+			found = false
+			for _, item := range overview["other"] {
+				if item.ID == id && item.Parameters["object"].Link == n.Link && item.Parameters["object"].Name == n.Message {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("rich meeting reference missing from Shared items / Other")
+			}
+			t.Logf("moderator message %d verified in chat and Shared items for room type %s", id, roomType)
 		})
 	}
 }
