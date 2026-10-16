@@ -25,7 +25,8 @@
   //
   // With a session (the app, with an operator behind it) it is also where the
   // speakers are changed: a device can be separated into voices or made one
-  // person again, and voices named or said to be the same person. Without one
+  // person again, a participant or a voice named, and voices said to be the
+  // same person. Without one
   // (an embed, a static export) it lists the speakers and offers nothing.
   export let groups: SpeakerGroup[] = [];
   export let session: SpeakersSession | null = null;
@@ -59,12 +60,22 @@
     ? `${plural(people.voices, "voice")} on ${plural(people.devices, "device")}`
     : plural(people.voices, "participant");
 
+  // Devices nobody separated, or asked to: each is one person, named on its
+  // own row the way a voice is named on its.
+  $: ownNamed = new Set(
+    groups
+      .filter((group) => group.speaks && group.voices.length === 0 && !(doc && isSplit(doc, group.device.id)))
+      .map((group) => group.device.id),
+  );
   // What each speaker is called now: the saved name when there is one (it may
   // not be applied yet), else the recording's own label.
   $: docLabels = new Map((doc?.labels ?? []).map((entry) => [entry.speakerId, entry.label]));
-  $: shownLabels = new Map(
-    groups.flatMap((group) => group.voices).map((voice) => [voice.id, docLabels.get(voice.id) ?? voice.label]),
-  );
+  $: shownLabels = new Map([
+    ...groups
+      .filter((group) => ownNamed.has(group.device.id))
+      .map((group): [string, string] => [group.device.id, docLabels.get(group.device.id) ?? group.device.label]),
+    ...groups.flatMap((group) => group.voices).map((voice): [string, string] => [voice.id, docLabels.get(voice.id) ?? voice.label]),
+  ]);
   $: deviceLabels = new Map(groups.map((group) => [group.device.id, group.device.label]));
   $: savedMerges = new Map((doc?.merges ?? []).map((entry) => [entry.from, entry.into]));
   $: mergeOf = (id: string): string | null =>
@@ -100,7 +111,7 @@
   // Reload").
   $: shownVoices = new Set(groups.flatMap((group) => group.voices.map((voice) => voice.id)));
   $: stale = reloadDue($store, shownVoices);
-  $: nameable = editable && !locked && groups.some((group) => group.voices.length > 0);
+  $: nameable = editable && !locked && groups.some((group) => group.voices.length > 0 || ownNamed.has(group.device.id));
   $: summaryStale = server?.report?.summary === "stale";
   $: inconclusive = (server?.report?.inconclusive ?? []).filter(
     (id) => doc && isSplit(doc, id) && !groups.some((group) => group.device.id === id && group.voices.length > 0),
@@ -208,7 +219,24 @@
         {@const split = isGroupSplit(group)}
         <li class="pp-device" class:pp-shared={split && !group.speaks}>
           <span class="mf-avatar" aria-hidden="true">{initials(group.device.label)}</span>
-          <span class="pp-name truncate">{group.device.label}</span>
+          {#if editable && ownNamed.has(group.device.id)}
+            {@const label = labelOf(group.device.id)}
+            <input
+              type="text"
+              class="input input-xs pp-input"
+              aria-label={`Name for ${label}`}
+              maxlength={MAX_SPEAKER_LABEL_LENGTH}
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Add a name"
+              disabled={locked}
+              value={pending.labels[group.device.id] ?? label}
+              on:input={(event) => session?.setLabel(group.device.id, event.currentTarget.value)}
+              on:focus={(event) => event.currentTarget.select()}
+            />
+          {:else}
+            <span class="pp-name truncate">{group.device.label}</span>
+          {/if}
           {#if editable}
             <button
               type="button"
