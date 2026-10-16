@@ -485,9 +485,7 @@
     { name: "Keep on server", step: status.keep, target: () => keepSettings },
   ] satisfies { name: string; step: StepStatus; target: () => HTMLElement }[];
 
-  // Everything after the transcript can be changed once transcription is
-  // SAVED on, like the strip: turning the switch on in the draft says to save
-  // first.
+  // Keep the saved state for warnings; editable controls follow the draft.
   $: savedTranscriptionOn = settings?.transcription_enabled === true;
   // An older save publishes transcript-only meetings with no transcript.
   // Saving with transcription off publishes the audio, so it says so.
@@ -660,9 +658,6 @@
               on:change={(event) => toggleTranscription(event.currentTarget.checked)}
             />
           </div>
-          {#if transcriptionEnabled && !savedTranscriptionOn}
-            <p class="set-row-sub">Save to set up the summary and what participants receive.</p>
-          {/if}
           {#if !transcriptionEnabled && !readyModel}
             <!-- The switch needs the picked quality's model installed AND checked
                  on this build; say which of the two is missing. -->
@@ -755,7 +750,7 @@
           <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
             bind:readyModel bind:inventory={modelInventory}
             on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
-          {#if !savedTranscriptionOn}
+          {#if !transcriptionEnabled}
             {#if savedTranscriptOnlyWithout}
               <p class="set-row-sub pipe-warn pipe-gap" role="status">Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.</p>
             {/if}
@@ -766,12 +761,11 @@
           {/if}
         </section>
 
-        <!-- 2–4 need a SAVED transcript, like the strip: until transcription
-             is saved on they are shown dimmed and cannot be changed, and the
-             chips still jump to them. -->
+        <!-- 2–4 follow the draft transcription switch so the whole configuration
+             can be edited before saving. The strip still shows saved settings. -->
         <!-- 2. Whether each meeting is summarised, and with which provider. The
              switch belongs to the heading: what is turned on is the step. -->
-          <section class="pub-q scroll-mt-4" class:off={!savedTranscriptionOn} aria-labelledby="summary-heading" tabindex="-1" bind:this={summarySettings}>
+          <section class="pub-q scroll-mt-4" class:off={!transcriptionEnabled} aria-labelledby="summary-heading" tabindex="-1" bind:this={summarySettings}>
             <div class="q-head">
               <span class="q-num" aria-hidden="true">2</span>
               <h3 id="summary-heading" class="q-title" class:off={hasProvider === false}>Summary</h3>
@@ -779,7 +773,7 @@
                 type="checkbox"
                 class="op-switch"
                 aria-label="Summarise every meeting"
-                disabled={hasProvider !== true || !savedTranscriptionOn}
+                disabled={hasProvider !== true || !transcriptionEnabled}
                 checked={summary.enabled && hasProvider === true}
                 on:change={(event) => toggleSummary(event.currentTarget.checked)}
               />
@@ -790,14 +784,14 @@
                 {llmError}
               </p>
             {:else if hasProvider === false}
-              <p class="set-row-sub">Needs a provider. <button type="button" class="link" disabled={!savedTranscriptionOn} on:click={() => dispatch("openProviders")}>Add one</button></p>
+              <p class="set-row-sub">Needs a provider. <button type="button" class="link" disabled={!transcriptionEnabled} on:click={() => dispatch("openProviders")}>Add one</button></p>
             {:else if hasProvider === true}
               <p class="set-row-sub">Sends each transcript to the provider and writes the summary shown on the meeting.</p>
               {#if savedTranscriptionOn && !transcriptionEnabled}
                 <p class="set-row-sub">A summary needs a transcript. While transcription is off, recordings get no summary.</p>
               {/if}
               {#if summary.enabled}
-              <fieldset class="step-config" disabled={!savedTranscriptionOn || saving}>
+              <fieldset class="step-config" disabled={!transcriptionEnabled || saving}>
                 <label class="op-field">
                   <span class="op-field-label">Provider</span>
                   <span class="op-select">
@@ -881,13 +875,13 @@
           </section>
 
         <!-- 3. What participants receive. -->
-          <section class="pub-q scroll-mt-4" class:off={!savedTranscriptionOn} aria-labelledby="publication-heading" tabindex="-1" bind:this={publicationSettings}>
+          <section class="pub-q scroll-mt-4" class:off={!transcriptionEnabled} aria-labelledby="publication-heading" tabindex="-1" bind:this={publicationSettings}>
             <div class="q-head">
               <span class="q-num" aria-hidden="true">3</span>
               <h3 id="publication-heading" class="q-title">What participants receive</h3>
             </div>
             <div class="q-row">
-              <select id="meeting-format" class="op-input q-select" aria-label="Published meeting" value={meetingFormat} on:change={(event) => selectMeetingFormat(event.currentTarget.value === "json" ? "json" : "opus")} disabled={saving || !savedTranscriptionOn} aria-describedby="publication-help">
+              <select id="meeting-format" class="op-input q-select" aria-label="Published meeting" value={meetingFormat} on:change={(event) => selectMeetingFormat(event.currentTarget.value === "json" ? "json" : "opus")} disabled={saving || !transcriptionEnabled} aria-describedby="publication-help">
                 <option value="opus">Audio and transcript (.opus)</option>
                 <option value="json">Transcript only (.json)</option>
               </select>
@@ -900,7 +894,7 @@
 
         <!-- 4. What stays on the server. Independent of transcription: audio
              only versus audio and video is a choice either way. -->
-        <fieldset class="pub-q grid gap-3 scroll-mt-4" class:off={!savedTranscriptionOn} disabled={saving || !savedTranscriptionOn} tabindex="-1" bind:this={keepSettings}>
+        <fieldset class="pub-q grid gap-3 scroll-mt-4" class:off={!transcriptionEnabled} disabled={saving || !transcriptionEnabled} tabindex="-1" bind:this={keepSettings}>
           <legend class="q-head">
             <span class="q-num" aria-hidden="true">4</span>
             <span class="q-title">What stays on this server</span>
@@ -918,18 +912,19 @@
             <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-only" aria-label="Audio only" checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
             <span>{#if keptFor}<strong>Audio only</strong>, {keptFor}.{:else}<strong>Audio only.</strong>{/if}</span>
           </label>
-          {#if recordingMedia === "nothing"}
-            {#if !transcriptionEnabled || !activeModel || !activeRevision}
-              <p class="set-row-sub" role="status"><strong>Transcription must be on to keep nothing.</strong> <button type="button" class="link" on:click={focusTranscriptionSettings}>Set up transcription</button></p>
-            {/if}
-          {:else if keptSpan === "forever"}
+          {#if recordingMedia !== "nothing"}
+          {#if keptSpan === "forever"}
             <p class="set-row-sub">Kept forever: change this in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
           {:else if keptSpan}
             <p class="set-row-sub">The {keptSpan} {keptSpan === "1 day" ? "comes" : "come"} from <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
           {:else}
             <p class="set-row-sub">How long kept media stays is set in <button type="button" class="link" on:click={() => dispatch("openStorage")}>Storage</button>.</p>
           {/if}
+          {/if}
         </fieldset>
+        {#if recordingMedia === "nothing" && (!transcriptionEnabled || !activeModel || !activeRevision)}
+          <p class="set-row-sub" role="status"><strong>Transcription must be on to keep nothing.</strong> <button type="button" class="link" on:click={focusTranscriptionSettings}>Set up transcription</button></p>
+        {/if}
         <p class="set-row-sub">Applies to new recordings after saving.</p>
       </section>
 
