@@ -270,6 +270,7 @@
     type OperatorStateChangeEvent,
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
+  import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
   import Settings from "./Settings.svelte";
   import { applyJob, applyPanel, readJob, readPanel } from "./surfaceRouting";
@@ -931,6 +932,28 @@
 
   $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
   $: stopApplies = selectedJob?.job.stage === "record" && selectedJob?.job.state === "running";
+
+  // The run's recording in Nextcloud Files (D-825), linked only when Nextcloud
+  // finds it for the signed-in administrator. Looked up once per file id, not
+  // on every poll of the detail.
+  let recordingFileId = 0;
+  let recordingHref = "";
+  $: void lookUpRecording(selectedJob?.recording_file_id ?? 0);
+
+  async function lookUpRecording(fileId: number) {
+    if (fileId === recordingFileId) {
+      return;
+    }
+    recordingFileId = fileId;
+    recordingHref = "";
+    if (fileId <= 0) {
+      return;
+    }
+    const path = await findRecordingInFiles(fileId);
+    if (fileId === recordingFileId && path !== "") {
+      recordingHref = recordingFilesUrl(window.location, path, fileId);
+    }
+  }
   $: jobFinished = selectedJob?.job.stage === "done";
   $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
@@ -1439,6 +1462,16 @@
                         {/if}
                       </dd>
                     </div>
+                    {#if recordingHref}
+                      <div class="min-w-0">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recording</dt>
+                        <dd class="text-sm">
+                          <a class="link link-hover text-primary" href={recordingHref} target="_blank" rel="noreferrer noopener">
+                            Open in Files
+                          </a>
+                        </dd>
+                      </div>
+                    {/if}
                     <div class="min-w-0">
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
                       <dd class="font-mono text-xs break-all">{selectedJob.job.id}</dd>
