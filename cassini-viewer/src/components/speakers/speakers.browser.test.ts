@@ -5,10 +5,12 @@ import { page } from "vitest/browser";
 import MeetingView from "../MeetingView.svelte";
 import "../../app.css";
 import {
+  BEN,
   ROOM,
   meeting,
   named,
   original,
+  participantRenamed,
   renamed,
   separated,
   separatedWithOriginal,
@@ -62,6 +64,7 @@ const openPeople = () => page.getByRole("button", { name: "Meeting details" }).c
 const people = () => details().getByText(/^\d+ (participants?|voices? on \d+ devices?)$/);
 const nameField = (label: string) => details().getByRole("textbox", { name: `Name for ${label}` });
 const voice = (n: number) => `Meeting room laptop · Speaker ${n}`;
+const ROOM_NAME = "Meeting room laptop";
 const shot = (name: string) => page.screenshot({ element: details(), path: `${SHOTS}/${name}.png` });
 const status = () => details().getByRole("status").filter({ hasText: /Saving|Starting|Separating|Updating|Waiting|Loading|Voices updated|Couldn't update/ });
 const transcript = () => page.getByRole("log", { name: "Transcript" });
@@ -92,11 +95,12 @@ describe("separating the voices on a shared device", () => {
     mountView();
     await openPeople();
     await expect.element(people()).toHaveTextContent("2 participants");
-    await expect.element(details().getByText("Meeting room laptop")).toBeVisible();
+    await expect.element(nameField("Meeting room laptop")).toHaveValue("Meeting room laptop");
     await shot("01-participants-before-split");
 
-    // Names are said to travel with the recording only once there are voices to name.
-    await expect.element(details().getByText(/^Names are saved in the recording/)).not.toBeInTheDocument();
+    // Participants can be named before anything is separated, so the note that
+    // names travel with the recording is there from the start.
+    await expect.element(details().getByText(/^Names are saved in the recording/)).toBeVisible();
 
     // Separating is the device's own action, done at once: no confirmation.
     await details().getByRole("button", { name: "Actions for Meeting room laptop" }).click();
@@ -540,6 +544,34 @@ describe("changes shown as soon as they are saved", () => {
     await reopen();
     await expect.poll(turnNames).toEqual(["Mira", "Ben Ortiz", "Leo", "Mira", voice(3), "Leo", "Ben Ortiz"]);
     expect(freshLoads()).toBe(1);
+  });
+
+  // A participant nobody separated is one person: named on their own row, with
+  // no separating first (D-805).
+  it("names a participant on their own row, and keeps the name on the row once applied", async () => {
+    fixture = speakersFixture();
+    mountView();
+    await openPeople();
+    await expect.element(people()).toHaveTextContent("2 participants");
+    await expect.element(nameField("Ben Ortiz")).toHaveValue("Ben Ortiz");
+
+    await nameField("Ben Ortiz").fill("Benjamin Ortiz");
+    await details().getByRole("button", { name: "Save", exact: true }).click();
+    expect(fixture.save).toHaveBeenLastCalledWith(meeting, 0, {
+      splits: [],
+      merges: [],
+      labels: [{ speakerId: BEN, label: "Benjamin Ortiz" }],
+    });
+    await expect.poll(turnNames).toEqual([ROOM_NAME, "Benjamin Ortiz", ROOM_NAME, "Benjamin Ortiz"]);
+
+    // Applied and opened later in a new tab: the row says the new name too,
+    // though the operator's original roster still has the old one.
+    fixture.applied(participantRenamed);
+    fixture.forget();
+    await reopen();
+    await openPeople();
+    await expect.element(nameField("Benjamin Ortiz")).toHaveValue("Benjamin Ortiz");
+    await expect.element(details().getByRole("button", { name: "Actions for Benjamin Ortiz" })).toBeVisible();
   });
 
   it("joins a merged voice's turns into the other voice's at once", async () => {

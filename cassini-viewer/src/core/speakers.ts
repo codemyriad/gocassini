@@ -39,9 +39,11 @@ export interface SpeakerGroup {
 // groupSpeakers lists the devices in a meeting with their voices beneath them.
 //
 // `roster` is the loaded transcript's speakers, where a split device's voices
-// stand in for it. `participants` is the original roster when the operator
-// says what it was. `deviceNames` names split devices where nothing else
-// does: the file's own record of them (the roster entry marked
+// stand in for it. A device that still speaks there is called what the roster
+// calls it, so a participant renamed in the edits shows renamed. `participants`
+// is the original roster when the operator says what it was: it names the
+// devices that no longer speak themselves. `deviceNames` names split devices
+// where nothing else does: the file's own record of them (the roster entry marked
 // "x-separatedInto"), for a reader with no operator behind it. Failing both,
 // a split device's name is read back out of a voice's default label, and only
 // when every voice has been renamed does the device go by a generic name.
@@ -70,7 +72,7 @@ export function groupSpeakers(
     }
     const group = groupFor(speaker.id);
     group.speaks = true;
-    group.device.label ||= speaker.label;
+    group.device.label = speaker.label || group.device.label;
   }
   const listed = [...groups.values()].filter((group) => group.speaks || group.voices.length > 0);
   const named = new Map(deviceNames.map((device) => [device.id, device.label]));
