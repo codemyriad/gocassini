@@ -101,4 +101,23 @@ fi
 [[ "$output" == *"Missing services:"* && "$output" == *"nextcloud"* ]] \
   || fail "service mismatch was not reported: $output"
 
-echo "PASS: stack resume accepts retained volumes and preserves stopped-container checks"
+# A stopped proxy with the old bind mount cannot consume the new nginx
+# template. Refuse to start it and offer the data-preserving migration.
+TEST_DESIRED=$'db\nnextcloud\nreverse-proxy'
+TEST_EXISTING="$TEST_DESIRED"
+TEST_PROXY_HASHES=$'current-hash\ncurrent-hash'
+# shellcheck disable=SC2317 # Called indirectly by the resume validation function.
+harness_resume_proxy_hashes() { printf '%s\n' "$TEST_PROXY_HASHES"; }
+harness_validate_resume_resources || fail "matching proxy configuration was rejected"
+TEST_PROXY_HASHES=$'current-hash\nold-hash'
+if output="$(harness_validate_resume_resources 2>&1)"; then
+  fail "stale proxy configuration was accepted"
+fi
+[[ "$output" == *"retained data volumes"* && "$output" == *"stack down"* ]] \
+  || fail "proxy migration did not preserve data: $output"
+harness_resume_proxy_hashes() { return 1; }
+if harness_validate_resume_resources >/dev/null 2>&1; then
+  fail "failed proxy inspection was accepted"
+fi
+
+echo "PASS: stack resume preserves data and rejects stale proxy containers"

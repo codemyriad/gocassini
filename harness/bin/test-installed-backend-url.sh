@@ -9,6 +9,9 @@ source "$SCRIPT_DIR/lib/stack.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+[[ -f "$SCRIPT_DIR/../config/signaling-extra-ca.pem" ]] \
+  || fail "the default signaling trust mount must be a checked-in file"
+
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -66,4 +69,41 @@ harness_render_stack_configs
 grep -q '^allowall = false$' "$SIGNALING_CONF" \
   || fail "remote signaling config should retain explicit backend allowlisting"
 
-echo "PASS: local installed ExApp callbacks use Compose DNS and authenticated internal signaling"
+# A full media stack in remote mode needs the internal HTTPS helper even if
+# the caller spells the service mode "full" instead of "full-remote".
+callback_services="$(harness_compose_services_for_mode)"
+grep -Fxq signaling-public-proxy <<<"$callback_services" \
+  || fail "remote full stack omitted its callback HTTPS helper"
+[[ -s "$SIGNALING_PUBLIC_PROXY_CERT" ]] || fail "remote helper certificate was not generated"
+# Reject accidental trust bypasses: signaling trusts this exact generated cert.
+if grep -q '^skipverify = true$' "$SIGNALING_CONF"; then
+  fail "remote backend certificate verification was disabled"
+fi
+cp "$SIGNALING_PUBLIC_PROXY_CERT" "$TMP_DIR/original-cert"
+harness_render_stack_configs
+cmp -s "$SIGNALING_PUBLIC_PROXY_CERT" "$TMP_DIR/original-cert" \
+  || fail "rendering unchanged remote config rotated the cached TLS identity"
+CASSINI_HARNESS_PUBLIC_HOST=other.example.test
+CASSINI_HARNESS_PUBLIC_URL=https://other.example.test
+harness_render_stack_configs
+if cmp -s "$SIGNALING_PUBLIC_PROXY_CERT" "$TMP_DIR/original-cert"; then
+  fail "changing the public hostname did not regenerate its certificate"
+fi
+harness_stack_env_resolve
+[[ "$CASSINI_HARNESS_SIGNALING_HOST_ALIAS" != "$CASSINI_HARNESS_PUBLIC_HOST" ]] \
+  || fail "remote host mapping bypasses the Docker DNS HTTPS helper"
+CASSINI_HARNESS_PUBLIC_MODE=lan-http
+harness_stack_env_resolve
+[[ "$CASSINI_HARNESS_SIGNALING_HOST_ALIAS" == "$CASSINI_HARNESS_PUBLIC_HOST" ]] \
+  || fail "LAN HTTP lost its explicit public host mapping"
+
+# A failing certificate command must fail the render even when the caller
+# handles failure explicitly (and Bash therefore disables implicit errexit).
+# shellcheck disable=SC2317 # Dispatched through the renderer command array.
+openssl() { return 1; }
+if harness_render_stack_configs >/dev/null 2>&1; then
+  fail "certificate generation failure was swallowed"
+fi
+unset -f openssl
+
+echo "PASS: local and remote callbacks use their configured Compose routes"
