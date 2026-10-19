@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { parseTimeHash } from "../core/transcript";
-import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./hashRouting";
+import { buildViewerHash, readViewerHash, readViewerRange, viewerUrlWithHash } from "./hashRouting";
 
 // Routing must stay hash-only so the AppAPI embedded page's pathname/search is
 // never rewritten. These tests pin: nav state round-trips through the hash;
@@ -67,5 +67,23 @@ describe("viewerUrlWithHash", () => {
     expect(url.pathname).toBe("/portable/site/");
     expect(url.search).toBe("");
     expect(url.hash).toBe("#meeting=b");
+  });
+});
+
+
+describe("shared time ranges", () => {
+  it("round-trips a selection alongside transcript and legacy seek time", () => {
+    const range = { startMs: 0, endMs: 18500 };
+    const hash = buildViewerHash({ meeting: "m1", tx: "clean", range, timeMs: 12000 });
+    expect(readViewerRange(hash)).toEqual(range);
+    expect(readViewerHash(hash)).toEqual({ meeting: "m1", tx: "clean" });
+    expect(parseTimeHash(hash)).toBe(12000);
+    expect(new URL(viewerUrlWithHash("https://example.com/viewer?foo=bar", hash)).search).toBe("?foo=bar");
+  });
+  it.each(["", "1", "-1,20", "20,10", "1,1", "1.5,2", "NaN,20", "0,Infinity", "1,2,3", "1e2,200", "0,9007199254740992", "1,2&range=3,4"])("ignores invalid range %s", (value) => {
+    expect(readViewerRange(`#range=${value}`)).toBeNull();
+  });
+  it("does not write invalid bounds", () => {
+    expect(buildViewerHash({ meeting: "m1", range: { startMs: 2, endMs: 1 } })).toBe("#meeting=m1");
   });
 });

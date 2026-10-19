@@ -328,10 +328,12 @@
   }
 
   function seedListHistoryEntry(meetingId: string) {
-    // The "list" entry below the current page in the back stack never carries
-    // a transcript selection; tx is per-meeting state.
+    // Keep the requested transcript, seek, and selection on the meeting entry.
+    const hash = currentViewerHash().meeting === meetingId
+      ? window.location.hash
+      : buildViewerHash({ meeting: meetingId });
     window.history.replaceState({}, "", viewerHref(buildViewerHash({})));
-    window.history.pushState({}, "", viewerHref(buildViewerHash({ meeting: meetingId })));
+    window.history.pushState({}, "", viewerHref(hash));
   }
 
   function handleBackToList() {

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,10 +77,11 @@ func TestTalkNotificationBestEffortPublication(t *testing.T) {
 				if string(auth) != "alice:test-secret" || r.Header.Get("EX-APP-ID") != "gocassini" || r.Header.Get("OCS-APIRequest") != "true" {
 					t.Error("wrong moderator act-as headers")
 				}
-				if r.Method != http.MethodPost || r.URL.Path != "/ocs/v2.php/apps/spreed/api/v1/chat/room1234" {
+				if r.Method != http.MethodPost || r.URL.Path != "/ocs/v2.php/apps/spreed/api/v1/chat/room1234/share" {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
-				if r.FormValue("message") != "Recording available: https://cloud.example/nc/index.php/apps/app_api/embedded/gocassini/viewer#meeting=one" {
+				var metadata map[string]string
+				if json.Unmarshal([]byte(r.FormValue("metaData")), &metadata) != nil || metadata["link"] != "https://cloud.example/nc/index.php/apps/app_api/embedded/gocassini/viewer#meeting=one" || metadata["name"] != "Meeting recording available: Untitled meeting" || r.FormValue("objectType") != "highlight" || r.FormValue("objectId") != "one" || r.FormValue("message") != "" {
 					t.Error("wrong recording link")
 				}
 				job, err := rt.store.GetJob(context.Background(), "one")
@@ -164,5 +166,47 @@ func TestTalkNotificationDoesNotFollowRedirect(t *testing.T) {
 	client := newTalkNotificationClient(ExAppConfig{NextcloudURL: server.URL})
 	if _, err := client.send(context.Background(), talkNotification{Owner: "alice", RoomToken: "room", Message: "link"}); err == nil || calls != 0 {
 		t.Fatalf("redirect followed or accepted: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestTalkNotificationMetadata(t *testing.T) {
+	for _, extension := range []string{"opus", "json"} {
+		t.Run(extension, func(t *testing.T) {
+			dir := t.TempDir()
+			write := func(name, body string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("catalog.json", `{"meetings":[{"id":"other","title":"Wrong meeting"},{"id":"one","title":"Weekly\nplanning","dateLabel":"2026-10-13 10:00","digestDurationMs":1920000,"meetingPath":"./meetings/one.`+extension+`"}]}`)
+			n := talkNotification{MeetingID: "one", Link: "https://cloud.example/viewer#meeting=one"}
+			n.enrich(dir, dir, "")
+			want := "Meeting recording available: Weekly planning · 13 Oct · 32 min"
+			if n.Message != want {
+				t.Fatalf("catalog fallback=%q", n.Message)
+			}
+			write("transcript.words.v1.json", `{"speakers":[{"label":"Ivan"},{"label":"Alex"},{"label":"Chris"},{"label":"Silvio"},{"label":"Ivan"},{"label":" "}]}`)
+			n.enrich(dir, dir, "Daily\nStandup")
+			want = "Meeting recording available: Daily Standup · 13 Oct · 32 min · Speakers: Alex, Chris, Ivan +1"
+			if n.Message != want {
+				t.Fatalf("label=%q want=%q", n.Message, want)
+			}
+			write("transcript.words.v1.json", `{"speakers":[]}`)
+			write("catalog.json", `{"meetings":[{"id":"other","title":"Private unrelated meeting"}]}`)
+			n.enrich(dir, dir, "")
+			if n.Message != "Meeting recording available: Untitled meeting" {
+				t.Fatalf("unrelated metadata leaked: %q", n.Message)
+			}
+			write("catalog.json", `{`)
+			write("transcript.words.v1.json", `{`)
+			n.enrich(dir, dir, "")
+			if n.Message != "Meeting recording available: Untitled meeting" {
+				t.Fatalf("malformed fallback: %q", n.Message)
+			}
+		})
+	}
+	if got := notificationText("  αβγ\n δ ", 3); got != "αβγ…" {
+		t.Fatalf("bounded label: %q", got)
 	}
 }

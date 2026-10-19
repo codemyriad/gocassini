@@ -34,8 +34,12 @@ func (c *talkNotificationClient) send(ctx context.Context, n talkNotification) (
 	if n.Owner == "" || n.RoomToken == "" {
 		return 0, fmt.Errorf("the recording moderator or room is missing")
 	}
-	endpoint := withFormatJSON(c.cfg.ocsURL("/apps/spreed/api/v1/chat/" + url.PathEscape(n.RoomToken)))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(url.Values{"message": {n.Message}}.Encode()))
+	endpoint := withFormatJSON(c.cfg.ocsURL("/apps/spreed/api/v1/chat/" + url.PathEscape(n.RoomToken) + "/share"))
+	metadata, err := json.Marshal(map[string]string{"name": n.Message, "link": n.Link})
+	if err != nil {
+		return 0, fmt.Errorf("could not encode meeting reference")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(url.Values{"objectType": {"highlight"}, "objectId": {n.MeetingID}, "metaData": {string(metadata)}}.Encode()))
 	if err != nil {
 		return 0, fmt.Errorf("invalid Talk API URL")
 	}
