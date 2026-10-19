@@ -274,6 +274,11 @@ type jobDetailResponse struct {
 	Availability artifactAvailability `json:"availability"`
 	Job          Job                  `json:"job"`
 	Attempts     []JobAttempt         `json:"attempts"`
+	// RecordingFileID is the Nextcloud file id of the job's delivered
+	// recording, from the meeting metadata index; 0 when it has none (D-825).
+	// It is not a grant: the operator page asks Nextcloud, as the signed-in
+	// admin, whether they can open it, and links to Files only if they can.
+	RecordingFileID int64 `json:"recording_file_id,omitempty"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -2085,7 +2090,24 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job)})
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job), RecordingFileID: rt.recordingFileID(r.Context(), id)})
+}
+
+// recordingFileID looks up the delivered recording of job id by the name the
+// Nextcloud Files sink gives it. A failed lookup only costs the Files link, so
+// it is logged and the detail is still served.
+func (rt *Runtime) recordingFileID(ctx context.Context, id string) int64 {
+	for _, name := range []string{id + ".opus", id + ".json"} {
+		fileID, err := rt.meetingMetadata.FileIDFor(ctx, name)
+		if err != nil {
+			rt.logger.Printf("recording file id lookup failed id=%s: %v", id, err)
+			return 0
+		}
+		if fileID > 0 {
+			return fileID
+		}
+	}
+	return 0
 }
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {

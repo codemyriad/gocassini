@@ -97,6 +97,9 @@ export interface JobDetailResponse {
   availability?: { media_cleanup?: MediaCleanupStatus; source_retention?: string; source: string; output: string; published_attempt: number; rerun_blocked_reason?: string };
   job: Job;
   attempts: JobAttempt[];
+  // The Nextcloud file id of the run's delivered recording; absent when the
+  // operator has none indexed (D-825).
+  recording_file_id?: number;
 }
 
 export type SettingsQuality = "fast" | "balanced" | "best";

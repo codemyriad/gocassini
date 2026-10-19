@@ -3147,3 +3147,51 @@ func mustGetJob(t *testing.T, store *Store, id string) Job {
 func strPtr(v string) *string { return &v }
 
 func intPtr(v int) *int { return &v }
+
+func TestJobDetailHandlerIncludesRecordingFileID(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	metadata, err := openMeetingMetadataStore(filepath.Join(t.TempDir(), meetingMetadataFilename), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer metadata.Close()
+	rt.meetingMetadata = metadata
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/read-surface"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d body=%s", createRec.Code, createRec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
+
+	detail := func() jobDetailResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		rt.jobDetailHandler(rec, httptest.NewRequest(http.MethodGet, "/jobs/"+resp.ID, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("detail status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var out jobDetailResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if got := detail().RecordingFileID; got != 0 {
+		t.Fatalf("unindexed recording file id = %d, want 0", got)
+	}
+	name := resp.ID + ".opus"
+	entry := json.RawMessage(`{"id":"` + resp.ID + `","audioPath":"./meetings/` + name + `"}`)
+	if err := metadata.Put(context.Background(), 7301, name, entry); err != nil {
+		t.Fatal(err)
+	}
+	if got := detail().RecordingFileID; got != 7301 {
+		t.Fatalf("recording file id = %d, want 7301", got)
+	}
+}
