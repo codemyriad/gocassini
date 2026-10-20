@@ -93,6 +93,20 @@ own trash bin, which no regular user can see or restore, the bin empties on
 Nextcloud's schedule, and a file an administrator restores from it stays
 tombstoned and invisible to Cassini.
 
+For a user-deleted meeting with a local job, recording the local disposal
+obligation and completing the remote deletion journal happen in one database
+transaction. If either write fails, the remote intent stays pending for recovery.
+An existing completed source-media cleanup obligation is reopened to include
+the remaining transcript, seals and logs. After commit, the operator tries
+cleanup immediately; if it is interrupted or an artifact reader defers it, the
+periodic disposal worker picks up the durable obligation.
+
+```text
+remote file removed + projections scrubbed
+    -> transaction: enqueue/reopen local disposal + complete remote journal
+    -> immediate cleanup attempt, or periodic disposal retry
+```
+
 Example preview row (inside `meetings`):
 
 ```json
