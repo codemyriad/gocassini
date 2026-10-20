@@ -764,6 +764,20 @@
     );
   }
 
+  // A rename applies to everyone's view (D-862). A set title is folded into
+  // the catalog in place; a reset needs the recorded default back, which only
+  // the server knows, so it refetches the catalog instead.
+  function handleRenamed(event: CustomEvent<{ id: string; title: string | null }>) {
+    const { id, title } = event.detail;
+    if (title !== null) {
+      catalogMeetings = catalogMeetings.map((entry) =>
+        entry.id === id ? { ...entry, title } : entry,
+      );
+    } else {
+      void refreshCatalog();
+    }
+  }
+
   function readStoredTheme(): ThemeMode | null {
     try {
       const value = localStorage.getItem(THEME_STORAGE_KEY);
@@ -1578,6 +1592,7 @@
             {insightSourceCounts}
             on:back={handleBackToList}
             on:enriched={handleEnriched}
+            on:renamed={handleRenamed}
             on:openInsight={(event) => openInsight(event.detail)}
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}

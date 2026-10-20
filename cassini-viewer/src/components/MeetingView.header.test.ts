@@ -54,6 +54,40 @@ describe("MeetingView header", () => {
   });
 });
 
+describe("MeetingView renaming (D-862)", () => {
+  it("offers a rename exactly where marks can be written", () => {
+    // Access to the meeting is the only gate: the control exists when the
+    // provider handed over an annotations write path, and nowhere else — a
+    // published export or an embed can read a title but never change one.
+    expect(meetingViewSource).toContain("$: canRename = Boolean(meeting && applyAnnotations);");
+    const header = meetingViewSource.slice(
+      meetingViewSource.indexOf('<header class="mv-header'),
+      meetingViewSource.indexOf("</header>"),
+    );
+    expect(header).toContain("{#if canRename}");
+    expect(header).toContain('aria-label="Rename meeting"');
+  });
+
+  it("writes the rename through the annotations route and tells the shell", () => {
+    // The same route as a tag write, so the rename sticks in the meeting file;
+    // an empty title resets to the recorded default, which only the server
+    // knows, so the shell is told `null` and refetches.
+    expect(meetingViewSource).toContain('ops: [{ op: "set-title", title }]');
+    expect(meetingViewSource).toContain(
+      'dispatch("renamed", { id: meeting.id, title: trimmed === "" ? null : trimmed });',
+    );
+  });
+
+  it("lets the editor back out and resets to the default", () => {
+    const header = meetingViewSource.slice(
+      meetingViewSource.indexOf('<header class="mv-header'),
+      meetingViewSource.indexOf("</header>"),
+    );
+    expect(header).toContain('on:click={() => void submitRename("")}');
+    expect(header).toContain("cancelRename");
+  });
+});
+
 describe("MeetingView tagging", () => {
   it("works unwired: every tagging prop has a default, and no loader means no tagging", () => {
     expect(meetingViewSource).toContain("export let tagVocabulary: VocabularyTag[] = [];");
