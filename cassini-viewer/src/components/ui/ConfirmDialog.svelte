@@ -58,6 +58,8 @@
   .confirm-scrim {
     position: absolute;
     inset: 0;
+    /* Above the shell's sheets, including Manage tags (41/42). */
+    z-index: 50;
     display: block;
     padding: 0;
     border: 0;
@@ -66,6 +68,7 @@
   }
   .confirm-dialog {
     position: absolute;
+    z-index: 51;
     left: 50%;
     top: 40%;
     transform: translate(-50%, -50%);

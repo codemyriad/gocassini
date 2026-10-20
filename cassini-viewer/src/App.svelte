@@ -811,8 +811,13 @@
       }
     }
     if (failed.length > 0) {
-      // Roll the survivors back into the list and say so, with a retry.
-      catalogMeetings = sortMeetingCatalogEntries([...catalogMeetings, ...failed]);
+      // A poll may already have restored a failed target while later deletes
+      // were pending. Merge by id, keeping any fresher catalog entry.
+      const restored = new Map(failed.map((entry) => [entry.id, entry]));
+      for (const entry of catalogMeetings) {
+        restored.set(entry.id, entry);
+      }
+      catalogMeetings = sortMeetingCatalogEntries([...restored.values()]);
       deleteNotice =
         failed.length === 1
           ? `“${failed[0].title}” could not be deleted.`
