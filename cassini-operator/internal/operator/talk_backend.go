@@ -134,6 +134,10 @@ type talkRoomState struct {
 	// when the lookup failed — an unknown room is treated as non-public, so a
 	// failed lookup can only ever over-restrict (D-552).
 	RoomPublic bool
+	// RoomType is spreed's raw conversation type, resolved alongside RoomName.
+	// Zero when the lookup failed — an unknown room keeps the room-name title
+	// default rather than guessing it is one-to-one (D-862).
+	RoomType   int
 	Status     int
 	StartActor *talkActorData
 	StopActor  *talkActorData
@@ -681,6 +685,7 @@ type talkJobBinding struct {
 	Owner      string         `json:"owner"`
 	RoomName   string         `json:"room_name,omitempty"`
 	RoomPublic bool           `json:"room_public,omitempty"`
+	RoomType   int            `json:"room_type,omitempty"`
 	Status     int            `json:"status,omitempty"`
 	StartActor *talkActorData `json:"start_actor,omitempty"`
 }
@@ -692,6 +697,7 @@ func encodeTalkBinding(state *talkRoomState) (string, error) {
 		Owner:      state.Owner,
 		RoomName:   state.RoomName,
 		RoomPublic: state.RoomPublic,
+		RoomType:   state.RoomType,
 		Status:     state.Status,
 		StartActor: state.StartActor,
 	})
@@ -715,6 +721,7 @@ func decodeTalkBinding(raw string) (talkRoomState, error) {
 		Owner:      binding.Owner,
 		RoomName:   binding.RoomName,
 		RoomPublic: binding.RoomPublic,
+		RoomType:   binding.RoomType,
 		Status:     binding.Status,
 		StartActor: binding.StartActor,
 	}, nil

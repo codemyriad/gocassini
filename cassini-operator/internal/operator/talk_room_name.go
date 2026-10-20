@@ -23,13 +23,19 @@ import (
 // falls back to "Untitled meeting".
 
 // talkRoomInfo is what the operator needs from a Talk conversation: its
-// display name (for the meeting title) and whether it is public, which decides
-// the recording's audience (D-552).
+// display name (for the meeting title), whether it is public, which decides
+// the recording's audience (D-552), and its raw conversation type, which
+// decides whether the default meeting title is the room name at all — a
+// one-to-one room's display name is just the other person (D-862).
 type talkRoomInfo struct {
 	Name string
 	// Public is spreed's conversation type 3. A public room is one anyone with
 	// the link can join, so its recording is not participant-private.
 	Public bool
+	// Type is spreed's raw conversation type (talkRoomTypeOneToOne etc.).
+	// Zero when the lookup never resolved — an unknown room composes no
+	// participant title and keeps the room-name default.
+	Type int
 }
 
 // talkRoomNameFetcher resolves a Talk room as seen by a Nextcloud user. Nil
@@ -48,7 +54,18 @@ const (
 	// 2 group, 4 changelog, 5 former one-to-one, 6 note-to-self) are all
 	// invitation-scoped, so only this one widens a recording's audience.
 	talkRoomTypePublic = 3
+	// talkRoomTypeOneToOne and talkRoomTypeFormerOneToOne are the rooms Talk
+	// names automatically after the other participant, so their display name
+	// makes a degenerate meeting title ("Chris" for a Chris–Alex call, D-862).
+	talkRoomTypeOneToOne       = 1
+	talkRoomTypeFormerOneToOne = 5
 )
+
+// isOneToOneTalkRoom reports whether a conversation type is one Talk
+// auto-names after the counterpart instead of a name a person chose.
+func isOneToOneTalkRoom(roomType int) bool {
+	return roomType == talkRoomTypeOneToOne || roomType == talkRoomTypeFormerOneToOne
+}
 
 // talkRoomNameFetcher returns a fetcher backed by the Talk OCS API, or nil
 // when the ExApp environment (NEXTCLOUD_URL / APP_SECRET / APP_ID) is absent —
@@ -112,7 +129,11 @@ func (c ExAppConfig) talkRoomNameFetcher() talkRoomNameFetcher {
 		if name == "" {
 			return talkRoomInfo{}, fmt.Errorf("room response has no display name")
 		}
-		return talkRoomInfo{Name: name, Public: payload.OCS.Data.Type == talkRoomTypePublic}, nil
+		return talkRoomInfo{
+			Name:   name,
+			Public: payload.OCS.Data.Type == talkRoomTypePublic,
+			Type:   payload.OCS.Data.Type,
+		}, nil
 	}
 }
 
@@ -181,6 +202,7 @@ func (rt *Runtime) storeTalkRoomInfo(jobID string, info talkRoomInfo) {
 	if ok {
 		state.RoomName = info.Name
 		state.RoomPublic = info.Public
+		state.RoomType = info.Type
 	}
 	var snapshot talkRoomState
 	if ok {
