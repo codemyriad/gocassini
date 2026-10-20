@@ -78,35 +78,59 @@ async function ensureStagingDir(): Promise<void> {
 export async function stageImportUpload(
   file: File,
   onProgress?: (sentBytes: number, totalBytes: number) => void,
+  sharing: Pick<ImportFileRequest, "share" | "audience"> = { share: false, audience: [] },
 ): Promise<string> {
-  await ensureStagingDir();
   const name = stagedName(file.name);
-  const url = `${davBase()}/${encodeURIComponent(STAGING_DIR)}/${encodeURIComponent(name)}`;
-  await new Promise<void>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", url);
-    xhr.withCredentials = true;
-    xhr.setRequestHeader("requesttoken", requestToken());
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) {
-        onProgress?.(event.loaded, event.total);
-      }
-    };
-    xhr.onerror = () => reject(new Error("The upload failed — check the connection and try again."));
-    xhr.onabort = () => reject(new Error("The upload was interrupted."));
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress?.(file.size, file.size);
-        resolve();
-      } else if (xhr.status === 507) {
-        reject(new Error("Not enough space in your Nextcloud Files for this upload."));
-      } else {
-        reject(new Error(`The upload was refused (HTTP ${xhr.status}).`));
-      }
-    };
-    xhr.send(file);
+  const stagedPath = `${STAGING_DIR}/${name}`;
+  const prepared = await importsRequest<{ imports: ImportJobRecord[] }>("", {
+    prepare: true,
+    files: [{ stagedPath, sourceName: file.name, expectedBytes: file.size, ...sharing }],
   });
-  return `${STAGING_DIR}/${name}`;
+  const job = prepared.imports[0];
+  if (!job) throw new Error("Could not register the upload.");
+  try {
+    await ensureStagingDir();
+    const url = `${davBase()}/${encodeURIComponent(STAGING_DIR)}/${encodeURIComponent(name)}`;
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", url);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader("requesttoken", requestToken());
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          onProgress?.(event.loaded, event.total);
+        }
+      };
+      xhr.onerror = () => reject(new Error("The upload failed — check the connection and try again."));
+      xhr.onabort = () => reject(new Error("The upload was interrupted."));
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          onProgress?.(file.size, file.size);
+          resolve();
+        } else if (xhr.status === 507) {
+          reject(new Error("Not enough space in your Nextcloud Files for this upload."));
+        } else {
+          reject(new Error(`The upload was refused (HTTP ${xhr.status}).`));
+        }
+      };
+      let heartbeatPending = false;
+      const heartbeat = setInterval(async () => {
+        if (heartbeatPending) return;
+        heartbeatPending = true;
+        try { await importsRequest(`/${encodeURIComponent(job.id)}/heartbeat`, {}, AbortSignal.timeout(15_000)); }
+        catch { xhr.abort(); }
+        finally { heartbeatPending = false; }
+      }, 20_000);
+      xhr.addEventListener("loadend", () => clearInterval(heartbeat), { once: true });
+      xhr.send(file);
+    });
+  } catch (error) {
+    try { await importsRequest(`/${encodeURIComponent(job.id)}/upload-failed`, {}); } catch { /* The lease expires if the browser cannot report failure. */ }
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { importJobId: job.id });
+  }
+  try { await importsRequest(`/${encodeURIComponent(job.id)}/staged`, {}); }
+  catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { importJobId: job.id }); }
+  return stagedPath;
 }
 
 // --- the operator imports API ---------------------------------------------------
@@ -116,7 +140,7 @@ function importsUrl(path = ""): string {
   return new URL(`../imports${path}`, resolvePublishedUrl("")).toString();
 }
 
-async function importsRequest<T>(path: string, body?: object): Promise<T> {
+async function importsRequest<T>(path: string, body?: object, signal?: AbortSignal): Promise<T> {
   const init: RequestInit =
     body === undefined
       ? { headers: { Accept: "application/json" } }
@@ -127,7 +151,7 @@ async function importsRequest<T>(path: string, body?: object): Promise<T> {
         };
   // no-store: AppAPI caches a proxied GET for an hour, and this surface is
   // polled for progress.
-  const response = await fetch(importsUrl(path), { ...init, cache: "no-store" });
+  const response = await fetch(importsUrl(path), { ...init, cache: "no-store", signal });
   if (!response.ok) {
     throw new Error(await describeImportFailure(response));
   }
@@ -145,6 +169,14 @@ export async function listImports(): Promise<ImportJobRecord[]> {
 
 export async function cancelImport(id: string): Promise<void> {
   await importsRequest(`/${encodeURIComponent(id)}/cancel`, {});
+}
+
+export async function removeImport(id: string): Promise<void> {
+  await importsRequest(`/${encodeURIComponent(id)}/remove`, {});
+}
+
+export async function clearImportStaging(): Promise<void> {
+  await importsRequest("/staging/clear", {});
 }
 
 export async function retryImport(id: string): Promise<void> {

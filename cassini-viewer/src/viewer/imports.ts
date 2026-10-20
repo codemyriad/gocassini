@@ -41,6 +41,9 @@ export interface ImportJobRecord {
   stagedPath: string;
   format?: string;
   state:
+    | "uploading"
+    | "upload_failed"
+    | "staged"
     | "queued"
     | "fetching"
     | "validating"
@@ -50,6 +53,7 @@ export interface ImportJobRecord {
     | "done"
     | "failed"
     | "canceled";
+  stagingState?: string;
   phase?: string;
   error?: string;
   sharing: { share: boolean; audience?: Array<{ type: string; id: string }> };
@@ -61,7 +65,7 @@ export interface ImportJobRecord {
 }
 
 export function importJobTerminal(state: ImportJobRecord["state"]): boolean {
-  return state === "done" || state === "failed" || state === "canceled";
+  return state === "upload_failed" || state === "staged" || state === "done" || state === "failed" || state === "canceled";
 }
 
 // What the local parse learned about a dropped file.

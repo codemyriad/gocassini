@@ -432,10 +432,12 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
 
       <!--
-        USER: meeting imports (D-828). Five operations over three paths —
+        USER: meeting imports (D-828), durable upload tracking and staging cleanup —
         start a batch (POST imports), list the caller's own imports
         (GET imports), read one (GET imports/<id>), cancel or retry one
-        (POST imports/<id>/cancel, POST imports/<id>/retry).
+        (POST imports/<id>/cancel, POST imports/<id>/retry), track upload
+        heartbeats/completion/failure, remove a staged attempt, or clear the
+        caller's inactive staging files (POST imports/staging/clear).
 
         USER is right even though these mutate, for the insights reasons: the
         request body is small JSON naming files staged in the CALLER'S OWN
@@ -458,7 +460,7 @@ Summaries and questions use whichever language model you connect, so their ratin
         <access_level>USER</access_level>
       </route>
       <route>
-        <url>^imports\/[^\/]+\/(cancel|retry)\/?$</url>
+        <url>^imports\/[^\/]+\/(cancel|retry|heartbeat|staged|upload-failed|remove|clear)\/?$</url>
         <verb>POST</verb>
         <access_level>USER</access_level>
       </route>

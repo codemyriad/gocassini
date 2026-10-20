@@ -31,6 +31,8 @@ import {
 import { insightFilesUrl } from "./insights/filesUrl";
 import {
   cancelImport as postImportCancel,
+  removeImport as postImportRemove,
+  clearImportStaging as postClearImportStaging,
   listImports as fetchImports,
   retryImport as postImportRetry,
   searchImportSharees as queryImportSharees,
@@ -194,8 +196,8 @@ export class AppDataProvider extends StaticCatalogProvider {
   // writes into the caller's own Nextcloud Files and the jobs run on the
   // operator, neither of which a standalone export has, so the Import tab is
   // absent everywhere else rather than present and failing.
-  stageImportUpload(file: File, onProgress?: (sentBytes: number, totalBytes: number) => void): Promise<string> {
-    return davStageImportUpload(file, onProgress);
+  stageImportUpload(file: File, onProgress?: (sentBytes: number, totalBytes: number) => void, sharing?: Pick<ImportFileRequest, "share" | "audience">): Promise<string> {
+    return davStageImportUpload(file, onProgress, sharing);
   }
 
   startImports(files: ImportFileRequest[]): Promise<ImportJobRecord[]> {
@@ -213,6 +215,9 @@ export class AppDataProvider extends StaticCatalogProvider {
   retryImport(id: string): Promise<void> {
     return postImportRetry(id);
   }
+
+  removeImport(id: string): Promise<void> { return postImportRemove(id); }
+  clearImportStaging(): Promise<void> { return postClearImportStaging(); }
 
   searchImportSharees(query: string): Promise<ImportSharee[]> {
     return queryImportSharees(query);

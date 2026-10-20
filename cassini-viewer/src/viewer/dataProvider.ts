@@ -207,7 +207,7 @@ export interface DataProvider {
     doc: SpeakerEditsDoc,
   ): Promise<SpeakerEditsState>;
 
-  // OPTIONAL (D-828): meeting import. All five exist together or not at all —
+  // OPTIONAL (D-828): meeting import capabilities —
   // the Import tab renders only when a provider can stage, start and list.
   //
   // Optional for the reason every capability above is: an import is an operator
@@ -215,18 +215,22 @@ export interface DataProvider {
   // single-meeting view and a bundled artifact have no operator and no archive,
   // so the tab is absent rather than present and failing.
   //
-  // stageImportUpload puts the file into the CALLER'S OWN Files (the operator
+  // stageImportUpload first registers durable upload intent, then puts the
+  // file into the CALLER'S OWN Files (the operator
   // later pulls it as the caller and removes it after a successful import) and
   // resolves to the staged path startImports is given. Progress is byte-level,
   // for the per-file bar.
   stageImportUpload?(
     file: File,
     onProgress?: (sentBytes: number, totalBytes: number) => void,
+    sharing?: Pick<ImportFileRequest, "share" | "audience">,
   ): Promise<string>;
   startImports?(files: ImportFileRequest[]): Promise<ImportJobRecord[]>;
   listImports?(): Promise<ImportJobRecord[]>;
   cancelImport?(id: string): Promise<void>;
   retryImport?(id: string): Promise<void>;
+  removeImport?(id: string): Promise<void>;
+  clearImportStaging?(): Promise<void>;
   // Who a meeting can be shared with: Nextcloud's own sharee search, narrowed
   // to the principal kinds recording shares accept (users, groups, Teams).
   searchImportSharees?(query: string): Promise<ImportSharee[]>;

@@ -44,6 +44,7 @@
   let pending: PendingItem[] = [];
   let jobs: ImportJobRecord[] = [];
   let jobsError = "";
+  let submitError = "";
   let jobsLoaded = false;
   let submitting = false;
   let dragOver = false;
@@ -209,34 +210,36 @@
     if (!dataProvider.stageImportUpload || !dataProvider.startImports) return;
     submitting = true;
     syncPolling();
-    const staged: ImportFileRequest[] = [];
+    submitError = "";
     try {
       for (const item of pending.filter((candidate) => candidate.status === "ready")) {
         patch(item.key, { status: "staging", sentBytes: 0 });
         try {
+          const sharing = { share: item.share, audience: item.audience.map(({ type, id }) => ({ type, id })) };
           const stagedPath = await dataProvider.stageImportUpload(item.file, (sent) => {
             patch(item.key, { sentBytes: sent });
-          });
-          staged.push({
+          }, sharing);
+          // This upload is already durable. Queue it independently so a large
+          // selection cannot upload fully and then hit the 50-file batch cap.
+          removePending(item.key);
+          await dataProvider.startImports([{
             stagedPath,
             sourceName: item.file.name,
             share: item.share,
             audience: item.audience.map(({ type, id }) => ({ type, id })),
-          });
-          removePending(item.key);
+          }]);
         } catch (error) {
-          patch(item.key, {
+          submitError = error instanceof Error ? error.message : String(error);
+          if (error instanceof Error && "importJobId" in error) removePending(item.key);
+          else patch(item.key, {
             status: "failed",
             reason: error instanceof Error ? error.message : String(error),
           });
         }
       }
-      if (staged.length > 0) {
-        await dataProvider.startImports(staged);
-        await refreshJobs();
-      }
+      await refreshJobs();
     } catch (error) {
-      jobsError = error instanceof Error ? error.message : String(error);
+      submitError = error instanceof Error ? error.message : String(error);
     } finally {
       submitting = false;
       syncPolling();
@@ -245,12 +248,12 @@
 
   // --- the jobs list --------------------------------------------------------
 
-  $: shownJobs = jobs.filter((job) => !(importJobTerminal(job.state) && job.state !== "failed" && cleared.has(job.id)));
-  $: clearableCount = jobs.filter((job) => importJobTerminal(job.state) && job.state !== "failed" && !cleared.has(job.id)).length;
+  $: shownJobs = jobs.filter((job) => !((job.state === "done" || job.state === "canceled") && cleared.has(job.id)));
+  $: clearableCount = jobs.filter((job) => (job.state === "done" || job.state === "canceled") && !cleared.has(job.id)).length;
 
   function clearCompleted() {
     for (const job of jobs) {
-      if (importJobTerminal(job.state) && job.state !== "failed") cleared.add(job.id);
+      if (job.state === "done" || job.state === "canceled") cleared.add(job.id);
     }
     cleared = cleared;
     persistCleared();
@@ -260,8 +263,9 @@
     if (!dataProvider.cancelImport) return;
     try {
       await dataProvider.cancelImport(job.id);
+      submitError = "";
     } catch (error) {
-      jobsError = error instanceof Error ? error.message : String(error);
+      submitError = error instanceof Error ? error.message : String(error);
     }
     await refreshJobs();
   }
@@ -270,15 +274,32 @@
     if (!dataProvider.retryImport) return;
     try {
       await dataProvider.retryImport(job.id);
+      submitError = "";
       cleared.delete(job.id);
       persistCleared();
     } catch (error) {
-      jobsError = error instanceof Error ? error.message : String(error);
+      submitError = error instanceof Error ? error.message : String(error);
     }
     await refreshJobs();
   }
 
+  async function removeJob(job: ImportJobRecord) {
+    if (!dataProvider.removeImport) return;
+    try { await dataProvider.removeImport(job.id); submitError = ""; await refreshJobs(); }
+    catch (error) { submitError = error instanceof Error ? error.message : String(error); }
+  }
+
+  async function clearStaging() {
+    if (!dataProvider.clearImportStaging) return;
+    if (!window.confirm("Delete inactive temporary uploads? Failed attempts will disappear from this list. Imported meetings and active work will be kept.")) return;
+    try { await dataProvider.clearImportStaging(); submitError = ""; await refreshJobs(); }
+    catch (error) { submitError = error instanceof Error ? error.message : String(error); }
+  }
+
   const JOB_LABELS: Record<string, string> = {
+    uploading: "uploading",
+    upload_failed: "upload incomplete",
+    staged: "uploaded — ready to import",
     queued: "queued",
     fetching: "fetching upload",
     validating: "validating",
@@ -473,10 +494,17 @@
     <section class="pt-4" aria-label="Import jobs">
       <div class="flex items-center justify-between gap-2">
         <h3 class="text-[15px] font-semibold">Imports</h3>
+        {#if dataProvider.clearImportStaging}
+          <button type="button" class="btn btn-ghost btn-xs" disabled={submitting} on:click={clearStaging}>Clear staged files</button>
+        {/if}
         {#if clearableCount > 0}
           <button type="button" class="btn btn-ghost btn-xs" on:click={clearCompleted}>Clear completed</button>
         {/if}
       </div>
+      {#if submitError}
+        <p role="alert" class="alert alert-warning alert-soft my-1.5 py-2 text-sm">{submitError}</p>
+      {/if}
+      <p class="text-xs text-base-content/60">Inactive temporary files are cleared daily at 03:03 UTC. Cleared unsuccessful attempts disappear from this list.</p>
       {#if jobsError}
         <p role="alert" class="alert alert-warning alert-soft my-1.5 py-2 text-sm">{jobsError}</p>
       {/if}
@@ -494,23 +522,26 @@
                 class:badge-error={job.state === "failed"}
                 class:badge-info={!importJobTerminal(job.state)}
               >{JOB_LABELS[job.state] ?? job.state}</span>
-              {#if !importJobTerminal(job.state)}
+              {#if !importJobTerminal(job.state) && job.state !== "uploading"}
                 <button type="button" class="btn btn-ghost btn-xs" on:click={() => void cancelJob(job)}>Cancel</button>
-              {:else if job.state === "failed" || job.state === "canceled"}
+              {:else if (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed"}
                 <button type="button" class="btn btn-ghost btn-xs gap-1" on:click={() => void retryJob(job)}>
                   <RotateCcw size={13} aria-hidden="true" /> Retry
                 </button>
               {/if}
+              {#if dataProvider.removeImport && (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagedPath.startsWith(".CassiniImports/")}
+                <button type="button" class="btn btn-ghost btn-xs" title="Delete the temporary upload and remove this attempt" on:click={() => void removeJob(job)}>Remove</button>
+              {/if}
             </span>
           </div>
-          {#if job.state === "failed" && job.error}
+          {#if (job.state === "failed" || job.state === "upload_failed") && job.error}
             <p class="text-sm text-error mt-0.5">{job.error}</p>
           {:else if job.state === "done"}
             <p class="text-sm text-base-content/65 mt-0.5">
               {job.sharing.share ? `Shared with ${(job.sharing.audience ?? []).length + 1}` : "Visible only to you"}
               {job.format === "json" ? " · transcription only" : ""}
             </p>
-          {:else}
+          {:else if !importJobTerminal(job.state)}
             <progress class="progress progress-primary w-full mt-1"></progress>
           {/if}
         </div>

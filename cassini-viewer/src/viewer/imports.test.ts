@@ -34,8 +34,11 @@ describe("parseImportPreview", () => {
 });
 
 describe("importJobTerminal", () => {
-  it("marks exactly done, failed and canceled terminal", () => {
+  it("stops polling for settled or staged jobs", () => {
     expect(importJobTerminal("done")).toBe(true);
+    expect(importJobTerminal("staged")).toBe(true);
+    expect(importJobTerminal("upload_failed")).toBe(true);
+    expect(importJobTerminal("uploading")).toBe(false);
     expect(importJobTerminal("failed")).toBe(true);
     expect(importJobTerminal("canceled")).toBe(true);
     for (const state of ["queued", "fetching", "validating", "delivering", "sharing", "indexing"] as const) {
