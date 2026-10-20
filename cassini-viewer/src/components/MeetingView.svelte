@@ -11,6 +11,7 @@
     ArrowLeft,
     CassetteTape,
     Search,
+    Trash2,
     X,
   } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
@@ -111,6 +112,9 @@
   // decides how leaving is offered: a close control at every width, instead of
   // the narrow-viewport-only back arrow a two-column layout needed.
   export let inSheet = false;
+  // Whether this deployment can delete a meeting (D-861). The shell owns the
+  // confirmation and the actual call; this header only offers the control.
+  export let canDelete = false;
   export let isDesktop = false;
   export let prefersReducedMotion = false;
   // hasCatalog drives the "choose a meeting" empty-state copy (a list exists to
@@ -143,6 +147,7 @@
     enriched: MeetingCatalogEntry;
     openInsight: InsightRecord;
     tagsChanged: AnnotationResult;
+    deleteMeeting: void;
     // The audio would not play. Said out loud because the embed has no other
     // way to tell the page around it; src/public.ts re-dispatches it (D-838).
     playbackerror: string;
@@ -1465,6 +1470,17 @@
           on:transcript={downloadTranscript}
           on:audio={downloadAudio}
         />
+      {/if}
+      {#if canDelete && meeting}
+        <button
+          type="button"
+          class="btn btn-sm btn-square btn-quiet"
+          aria-label={`Delete ${meeting.title}`}
+          title="Delete this meeting"
+          on:click={() => dispatch("deleteMeeting")}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
       {/if}
     </div>
 
