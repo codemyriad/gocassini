@@ -14,6 +14,7 @@ import {
   describeMeeting,
   describeSpeechToTextVariant,
   preferredPortableTitle,
+  userPortableTitle,
   portableContentFields,
   portableRoomFields,
   describeVariantSuffix,
@@ -495,6 +496,30 @@ describe("preferredPortableTitle", () => {
     expect(preferredPortableTitle({ meeting: {} }, ulid)).toBe("");
     expect(preferredPortableTitle({}, ulid)).toBe("");
     expect(preferredPortableTitle(null, ulid)).toBe("");
+  });
+});
+
+describe("userPortableTitle", () => {
+  it("reads the rename out of the annotations document", () => {
+    expect(
+      userPortableTitle({
+        annotations: {
+          format: "cassini.annotations.v1",
+          meeting: { title: "  Q4 hiring sync  " },
+        },
+      }),
+    ).toBe("Q4 hiring sync");
+  });
+
+  it("is empty for untitled, absent or unreadable annotations", () => {
+    expect(userPortableTitle({ annotations: { format: "cassini.annotations.v1" } })).toBe("");
+    expect(
+      userPortableTitle({
+        annotations: { format: "cassini.annotations.v2", meeting: { title: "X" } },
+      }),
+    ).toBe("");
+    expect(userPortableTitle({})).toBe("");
+    expect(userPortableTitle(null)).toBe("");
   });
 });
 

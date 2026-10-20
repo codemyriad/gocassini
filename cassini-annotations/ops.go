@@ -23,6 +23,7 @@ const (
 	annotateOpRelabel       = "relabel"
 	annotateOpMergeTag      = "merge-tag"
 	annotateOpRestyle       = "restyle"
+	annotateOpSetTitle      = "set-title"
 )
 
 // annotateOpFields is the members each op may carry besides "op". Another op's
@@ -35,6 +36,7 @@ var annotateOpFields = map[string][]string{
 	annotateOpRelabel:       {"tagId", "label"},
 	annotateOpMergeTag:      {"tagId", "into"},
 	annotateOpRestyle:       {"tagId", "color", "icon"},
+	annotateOpSetTitle:      {"title"},
 }
 
 // Op is the union of every op's members.
@@ -49,6 +51,7 @@ type Op struct {
 	Into        *OpTag            `json:"into"`
 	Color       *string           `json:"color"`
 	Icon        *string           `json:"icon"`
+	Title       *string           `json:"title"`
 	Raw         json.RawMessage   // the op as sent, for the meetings client to forward
 }
 
@@ -139,7 +142,7 @@ func ParseBatch(raw []byte) (Batch, error) {
 		allowed, known := annotateOpFields[op.Op]
 		if !known {
 			return Batch{}, fail(ExitInvalid,
-				"ops[%d]: unknown op %q (want mark, unmark, unmark-tag, undo-operation, relabel, merge-tag or restyle)", i, op.Op)
+				"ops[%d]: unknown op %q (want mark, unmark, unmark-tag, undo-operation, relabel, merge-tag, restyle or set-title)", i, op.Op)
 		}
 		// encoding/json matches names case-insensitively; this checks the spelling.
 		names := make([]string, 0, len(members))
@@ -194,6 +197,8 @@ func ApplyBatch(current *Annotations, batch Batch, durationMS int64, stamp Stamp
 			err = applyMergeTagOp(work, op, &notFound)
 		case annotateOpRestyle:
 			err = applyRestyleOp(work, op, &notFound)
+		case annotateOpSetTitle:
+			err = applySetTitleOp(work, op, stamp)
 		default:
 			err = fail(ExitInvalid, "unknown op")
 		}
@@ -237,7 +242,9 @@ func ApplyBatch(current *Annotations, batch Batch, durationMS int64, stamp Stamp
 		Removed:  []string{},
 	}
 	// Canonical order is total (ids are unique), so equal content means equal slices.
-	outcome.Changed = !reflect.DeepEqual(before.Tags, work.Tags) || !reflect.DeepEqual(before.Items, work.Items)
+	outcome.Changed = !reflect.DeepEqual(before.Tags, work.Tags) ||
+		!reflect.DeepEqual(before.Items, work.Items) ||
+		!reflect.DeepEqual(before.Meeting, work.Meeting)
 
 	// Net, from the two id sets rather than tallied per op.
 	beforeIDs := make(map[string]bool, len(before.Items))
@@ -488,6 +495,34 @@ func applyMergeTagOp(doc *Annotations, op Op, notFound *[]string) error {
 	return nil
 }
 
+// applySetTitleOp sets or clears the user title of the meeting itself. An
+// absent, empty or whitespace title clears it — readers then fall back to the
+// sealed manifest title. Setting the title it already has is a no-op, so a
+// retry after a lost response neither bumps the revision nor re-stamps the
+// actor.
+func applySetTitleOp(doc *Annotations, op Op, stamp Stamp) error {
+	title := ""
+	if op.Title != nil {
+		title = strings.TrimSpace(*op.Title)
+	}
+	if title == "" {
+		doc.Meeting = nil
+		return nil
+	}
+	if err := ValidateAnnotationTitle(title); err != nil {
+		return fail(ExitInvalid, "title: %v", err)
+	}
+	if doc.Meeting != nil && doc.Meeting.Title == title {
+		return nil
+	}
+	doc.Meeting = &AnnotationMeeting{
+		Title:    title,
+		SetAtUTC: stamp.CreatedAt,
+		Actor:    AnnotationActor{Kind: stamp.ActorKind, ID: stamp.ActorID},
+	}
+	return nil
+}
+
 // annotateOpLabel trims and checks a label from an op; absent answers ("", false, nil).
 func annotateOpLabel(raw *string, member string) (string, bool, error) {
 	if raw == nil {
@@ -601,6 +636,10 @@ func Clone(doc *Annotations) *Annotations {
 	for _, item := range doc.Items {
 		item.Target = copyAnnotationTarget(item.Target)
 		clone.Items = append(clone.Items, item)
+	}
+	if doc.Meeting != nil {
+		meeting := *doc.Meeting
+		clone.Meeting = &meeting
 	}
 	return &clone
 }

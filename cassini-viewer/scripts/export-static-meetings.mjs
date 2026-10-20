@@ -168,10 +168,12 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       portable?.meeting?.recordedAtLocal,
     );
     const transcript = buildTranscriptWordsFromPortable(portable);
-    // A real embedded title (e.g. the Talk room name the operator captured
-    // at recording time) beats anything derived from the file name; packer
-    // defaults that merely echo the id fall through to describeMeeting.
-    const meetingTitle = preferredPortableTitle(portable, meetingId) || title;
+    // A user-set rename (the annotations document's meeting.title, D-862)
+    // beats the sealed title; a real embedded title (e.g. the Talk room name
+    // the operator captured at recording time) beats anything derived from
+    // the file name; packer defaults that merely echo the id fall through to
+    // describeMeeting.
+    const meetingTitle = userPortableTitle(portable) || preferredPortableTitle(portable, meetingId) || title;
     const transcriptionOnly = extname(sourcePath).toLowerCase() === ".json";
     const targetFileName = `${meetingId}${extname(sourcePath)}`;
     if (!recordingsBaseUrl) {
@@ -1354,6 +1356,19 @@ export function artifactContentFields(manifest) {
     fields.wordCount = wordCount;
   }
   return fields;
+}
+
+// userPortableTitle returns the user-set meeting title a portable meeting's
+// annotations document carries (the set-title rename, D-862), or "" when
+// nobody renamed the meeting or the member is in a format this reader does
+// not know. It wins over every derived title.
+export function userPortableTitle(portable) {
+  const annotations = portable?.annotations;
+  if (!annotations || annotations.format !== "cassini.annotations.v1") {
+    return "";
+  }
+  const raw = typeof annotations.meeting?.title === "string" ? annotations.meeting.title.trim() : "";
+  return raw;
 }
 
 // preferredPortableTitle returns the title embedded in a portable meeting's
