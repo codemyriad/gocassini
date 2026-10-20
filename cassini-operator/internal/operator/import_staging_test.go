@@ -164,13 +164,29 @@ func TestStagingSweepAllUsersPreservesActiveAndSuccessfulHistory(t *testing.T) {
 	if len(files) != 2 || files["alice/"+active.StagedPath] != 10 || files["alice/"+refused.StagedPath] != 10 {
 		t.Fatal(files)
 	}
+	// Files go; rows stay. The sweep hides nothing — a failed row keeps its
+	// error on the list until its owner removes it, only without a Retry.
 	jobs, _ := s.rt.store.ImportJobsFor(ctx, "alice")
-	if len(jobs) != 3 {
+	if len(jobs) != 5 {
 		t.Fatal(jobs)
 	}
 	current, _, _ := s.rt.store.ImportJob(ctx, done.ID)
 	if current.State != importStateDone || current.StagingState != "removed" || current.ClearedAt != "" {
 		t.Fatal(current)
+	}
+	swept, _, _ := s.rt.store.ImportJob(ctx, failed.ID)
+	if swept.State != importStateUploadFailed || swept.StagingState != "removed" || swept.ClearedAt != "" || swept.Error == "" {
+		t.Fatal(swept)
+	}
+	if w := importDo(t, s, "POST", "/imports/"+failed.ID+"/retry", "alice", ""); w.Code != 409 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// The explicit Remove is what hides it.
+	if w := importDo(t, s, "POST", "/imports/"+failed.ID+"/remove", "alice", ""); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if jobs, _ := s.rt.store.ImportJobsFor(ctx, "alice"); len(jobs) != 4 {
+		t.Fatal(jobs)
 	}
 	deliveries, _ := s.rt.store.doneImportDeliveries(ctx)
 	if len(deliveries) != 1 || deliveries[0] != "done.opus" {
@@ -192,5 +208,57 @@ func TestNextStagingSweepIs0303UTC(t *testing.T) {
 		if got := nextImportStagingSweep(now).Format(time.RFC3339); got != tc.want {
 			t.Fatalf("%s: %s != %s", tc.now, got, tc.want)
 		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A Nextcloud that is slow for one user's staging work must not stall another
+// user's list or registration: staging is serialized per user, never across
+// users, and the service mutex is held only around the worker's running job.
+func TestStagingWorkForOneUserDoesNotBlockAnother(t *testing.T) {
+	s, files, _ := stagingFixture(t)
+	ctx := context.Background()
+	bob := prepareUpload(t, s, "bob", "slow.opus")
+	files["bob/"+bob.StagedPath] = 10
+	s.rt.store.SetImportJobState(ctx, bob.ID, importStateUploadFailed, "", "failed upload")
+
+	gate := make(chan struct{})
+	inFlight := make(chan struct{}, 1)
+	base := s.client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	s.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == "DELETE" && strings.Contains(r.URL.Path, "/files/bob/") {
+			select {
+			case inFlight <- struct{}{}:
+			default:
+			}
+			<-gate
+		}
+		return base.RoundTrip(r)
+	})}
+	cleared := make(chan error, 1)
+	go func() { cleared <- s.clearUserStaging(ctx, "bob") }()
+	select {
+	case <-inFlight:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bob's DELETE never started")
+	}
+	defer func() { close(gate); <-cleared }()
+
+	started := time.Now()
+	if w := importDo(t, s, "GET", "/imports", "alice", ""); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	alice := prepareUpload(t, s, "alice", "quick.opus")
+	if w := importDo(t, s, "POST", "/imports/"+alice.ID+"/heartbeat", "alice", ""); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if waited := time.Since(started); waited > 2*time.Second {
+		t.Fatalf("alice waited %s behind bob's staging work", waited)
 	}
 }

@@ -293,7 +293,7 @@
 
   async function clearStaging() {
     if (!dataProvider.clearImportStaging) return;
-    if (!window.confirm("Delete inactive temporary uploads? Failed attempts will disappear from this list. Imported meetings and active work will be kept.")) return;
+    if (!window.confirm("Delete inactive temporary uploads? Failed attempts stay listed, without Retry, until you remove them. Imported meetings and active work are kept.")) return;
     try { await dataProvider.clearImportStaging(); submitError = ""; await refreshJobs(); }
     catch (error) { submitError = error instanceof Error ? error.message : String(error); }
   }
@@ -508,7 +508,7 @@
       {#if submitError}
         <p role="alert" class="alert alert-warning alert-soft my-1.5 py-2 text-sm">{submitError}</p>
       {/if}
-      <p class="text-xs text-base-content/60">Inactive temporary files are cleared daily at 03:03 UTC. Cleared unsuccessful attempts disappear from this list.</p>
+      <p class="text-xs text-base-content/60">Inactive temporary files are cleared daily at 03:03 UTC. An attempt whose file was cleared stays listed, without Retry, until you remove it.</p>
       {#if jobsError}
         <p role="alert" class="alert alert-warning alert-soft my-1.5 py-2 text-sm">{jobsError}</p>
       {/if}

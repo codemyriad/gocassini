@@ -12,67 +12,86 @@ import (
 // durable intent; reconciliation checks the actual file after the lease ends.
 const importUploadLease = 2 * time.Minute
 
+// Staging work — confirming an upload, removing a staged file, sweeping the
+// folder — is serialized per user through userLocks, bounded by a deadline so a
+// failed Nextcloud cannot hold a lock indefinitely. The service mutex is never
+// taken here: it guards only the worker's running job.
+const stagingLockTimeout = 10 * time.Second
+
 func (s *importService) stagingAction(w http.ResponseWriter, r *http.Request, job ImportJob, action string) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), stagingLockTimeout)
 	defer cancel()
-	r = r.WithContext(ctx)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	job, ok, err := s.rt.store.ImportJob(r.Context(), job.ID)
-	if err != nil {
-		writeJSONError(w, 500, err.Error())
-		return
-	}
-	if !ok || job.ClearedAt != "" {
-		http.NotFound(w, r)
-		return
-	}
-	switch action {
-	case "heartbeat":
-		if job.State != importStateUploading {
-			writeJSONError(w, 409, "upload is no longer active")
-			return
+	lockErr := s.withUserLock(ctx, job.CreatedBy, func(ctx context.Context) error {
+		// Re-read under the lock: another tab may have settled the row.
+		job, ok, err := s.rt.store.ImportJob(ctx, job.ID)
+		if err != nil {
+			writeJSONError(w, 500, err.Error())
+			return nil
 		}
-		_, err = s.rt.store.db.ExecContext(r.Context(), `UPDATE import_jobs SET updated_at=? WHERE id=?`, nowUTCString(), job.ID)
-	case "staged":
-		if job.State == importStateStaged {
-			writeJSON(w, 200, job)
-			return
+		if !ok || job.ClearedAt != "" {
+			http.NotFound(w, r)
+			return nil
 		}
-		if job.State != importStateUploading {
-			writeJSONError(w, 409, "upload is no longer active")
-			return
-		}
-		err = s.inspectUpload(r.Context(), job)
-		if err == nil {
-			current, _, readErr := s.rt.store.ImportJob(r.Context(), job.ID)
-			if readErr != nil {
-				err = readErr
-			} else if current.State != importStateStaged {
+		switch action {
+		case "heartbeat":
+			touched, err := s.rt.store.TouchImportUpload(ctx, job.ID)
+			if err == nil && !touched {
+				writeJSONError(w, 409, "upload is no longer active")
+				return nil
+			}
+			if err != nil {
+				writeJSONError(w, 500, err.Error())
+				return nil
+			}
+		case "staged":
+			if job.State == importStateStaged {
+				writeJSON(w, 200, job)
+				return nil
+			}
+			if job.State != importStateUploading {
+				writeJSONError(w, 409, "upload is no longer active")
+				return nil
+			}
+			if err := s.inspectUpload(ctx, job); err != nil {
+				writeJSONError(w, 500, err.Error())
+				return nil
+			}
+			current, _, err := s.rt.store.ImportJob(ctx, job.ID)
+			if err != nil {
+				writeJSONError(w, 500, err.Error())
+				return nil
+			}
+			if current.State != importStateStaged {
 				writeJSONError(w, 409, "upload is incomplete; add the file again")
-				return
+				return nil
+			}
+		case "upload-failed":
+			if job.State == importStateUploading {
+				if err := s.inspectUpload(ctx, job); err != nil {
+					writeJSONError(w, 500, err.Error())
+					return nil
+				}
+			}
+		case "remove":
+			if importUsesStaging(job) || s.running() == job.ID {
+				writeJSONError(w, 409, "upload or import is still active")
+				return nil
+			}
+			if _, pathErr := sanitizeStagedImportPath(job.StagedPath); pathErr != nil {
+				writeJSONError(w, 409, "this job does not have a Nextcloud staging file")
+				return nil
+			}
+			if err := s.removeStaging(ctx, job); err != nil {
+				writeJSONError(w, 500, err.Error())
+				return nil
 			}
 		}
-	case "upload-failed":
-		if job.State == importStateUploading {
-			err = s.inspectUpload(r.Context(), job)
-		}
-	case "remove":
-		if importUsesStaging(job) || s.runningID == job.ID {
-			writeJSONError(w, 409, "upload or import is still active")
-			return
-		}
-		if _, pathErr := sanitizeStagedImportPath(job.StagedPath); pathErr != nil {
-			writeJSONError(w, 409, "this job does not have a Nextcloud staging file")
-			return
-		}
-		err = s.removeStaging(r.Context(), job)
+		writeJSON(w, 200, map[string]bool{"accepted": true})
+		return nil
+	})
+	if lockErr != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "staging is busy; try again")
 	}
-	if err != nil {
-		writeJSONError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]bool{"accepted": true})
 }
 
 func importUsesStaging(job ImportJob) bool {
@@ -83,6 +102,8 @@ func importUsesStaging(job ImportJob) bool {
 	return false
 }
 
+// inspectUpload settles an uploading row from what is actually in the caller's
+// Files: the whole file means staged, anything else means upload_failed.
 func (s *importService) inspectUpload(ctx context.Context, job ImportJob) error {
 	leaf, err := s.exapp.davPropfindLeafState(ctx, s.client, job.CreatedBy, job.StagedPath)
 	if err != nil {
@@ -91,43 +112,43 @@ func (s *importService) inspectUpload(ctx context.Context, job ImportJob) error 
 	if !leaf.Exists || leaf.Size != job.ExpectedBytes {
 		return s.rt.store.SetImportJobState(ctx, job.ID, importStateUploadFailed, "", "Upload did not complete. Add the file again to import it.")
 	}
-	_, err = s.rt.store.db.ExecContext(ctx, `UPDATE import_jobs SET state=?,staging_state='present',error='',updated_at=? WHERE id=? AND state=?`, importStateStaged, nowUTCString(), job.ID, importStateUploading)
-	return err
+	return s.rt.store.ConfirmImportUpload(ctx, job.ID)
 }
 
+// reconcileUploads settles the caller's uploads whose lease has lapsed — the
+// browser went away without reporting the PUT's outcome, so the file decides.
 func (s *importService) reconcileUploads(ctx context.Context, caller string) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, stagingLockTimeout)
 	defer cancel()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	jobs, err := s.rt.store.ImportJobsFor(ctx, caller)
-	if err != nil {
-		return
-	}
-	for _, job := range jobs {
-		updated, err := time.Parse(time.RFC3339Nano, job.UpdatedAt)
-		if job.State != importStateUploading || err != nil || time.Since(updated) < importUploadLease {
-			continue
+	_ = s.withUserLock(ctx, caller, func(ctx context.Context) error {
+		jobs, err := s.rt.store.ImportJobsFor(ctx, caller)
+		if err != nil {
+			return nil
 		}
-		if err := s.inspectUpload(ctx, job); err != nil {
-			s.logf("inspect upload %s: %v", job.ID, err)
-			_ = s.rt.store.SetImportJobState(ctx, job.ID, importStateUploadFailed, "", "Upload could not be confirmed. Add the file again to import it.")
+		for _, job := range jobs {
+			updated, err := time.Parse(time.RFC3339Nano, job.UpdatedAt)
+			if job.State != importStateUploading || err != nil || time.Since(updated) < importUploadLease {
+				continue
+			}
+			if err := s.inspectUpload(ctx, job); err != nil {
+				s.logf("inspect upload %s: %v", job.ID, err)
+				_ = s.rt.store.SetImportJobState(ctx, job.ID, importStateUploadFailed, "", "Upload could not be confirmed. Add the file again to import it.")
+			}
 		}
-	}
+		return nil
+	})
 }
 
-// Successful rows are permanent retention provenance. Unsuccessful rows are
-// hidden only after deletion succeeds; failures remain visible and actionable.
-func (s *importService) markStagingRemoved(ctx context.Context, id string) error {
-	_, err := s.rt.store.db.ExecContext(ctx, `UPDATE import_jobs SET staging_state='removed',cleared_at=CASE WHEN state=? THEN '' ELSE ? END WHERE id=?`, importStateDone, nowUTCString(), id)
-	return err
-}
-
+// removeStaging is the explicit Remove: the staged file goes, and the row is
+// hidden from its owner's list. Nothing else ever hides a row.
 func (s *importService) removeStaging(ctx context.Context, job ImportJob) error {
 	if err := s.exapp.davDeleteUserFile(ctx, s.client, job.CreatedBy, job.StagedPath); err != nil {
 		return err
 	}
-	return s.markStagingRemoved(ctx, job.ID)
+	if err := s.rt.store.MarkImportStagingRemoved(ctx, job.ID); err != nil {
+		return err
+	}
+	return s.rt.store.ClearImportJob(ctx, job.ID)
 }
 
 func nextImportStagingSweep(now time.Time) time.Time {
@@ -159,29 +180,20 @@ func (s *importService) startStagingGC() {
 	}()
 }
 
-// Enumerating Nextcloud users also covers orphan uploads from the old client,
-// which uploaded before creating a DB row. Known owners remain sweepable even
-// when Nextcloud's user-list endpoint is temporarily unavailable.
+// stagingUsers is everyone whose staging folder may hold files: every user who
+// ever registered an import, plus every Nextcloud user, which also covers
+// orphan uploads that never got a row. Known owners remain sweepable even when
+// Nextcloud's user-list endpoint is temporarily unavailable.
 func (s *importService) stagingUsers(ctx context.Context) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	seen := map[string]bool{}
-	rows, err := s.rt.store.db.QueryContext(ctx, `SELECT DISTINCT created_by FROM import_jobs`)
+	known, err := s.rt.store.ImportCreators(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var user string
-		if err := rows.Scan(&user); err != nil {
-			rows.Close()
-			return nil, err
-		}
+	for _, user := range known {
 		seen[user] = true
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
 	}
 	var listErr error
 	for offset := 0; ; offset += 100 {
@@ -230,80 +242,73 @@ func (s *importService) sweepImportStaging(ctx context.Context) error {
 	return listErr
 }
 
+// clearUserStaging deletes every inactive file in one user's staging folder —
+// the nightly sweep, and the "Clear staged files" button. Files go; rows stay.
+// A row whose file was deleted is marked so (no Retry), and remains listed
+// with its error until its owner removes it.
 func (s *importService) clearUserStaging(ctx context.Context, user string) error {
-	// Serialize against queue admission, worker claims and upload heartbeats.
-	// Requests have a deadline so a failed Nextcloud cannot hold this indefinitely.
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, stagingLockTimeout)
 	defer cancel()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entries, _, err := s.exapp.davListSizes(ctx, s.client, user, importStagingDir)
-	if err != nil {
-		return err
-	}
-	rows, err := s.rt.store.db.QueryContext(ctx, `SELECT `+importJobColumns+` FROM import_jobs WHERE created_by=?`, user)
-	if err != nil {
-		return err
-	}
-	byPath := map[string][]ImportJob{}
-	for rows.Next() {
-		job, err := scanImportJob(rows.Scan)
+	return s.withUserLock(ctx, user, func(ctx context.Context) error {
+		entries, _, err := s.exapp.davListSizes(ctx, s.client, user, importStagingDir)
 		if err != nil {
-			rows.Close()
 			return err
 		}
-		byPath[job.StagedPath] = append(byPath[job.StagedPath], job)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	// Include absent files: an earlier DELETE may have succeeded before the DB
-	// update failed, or the user may have removed the file in Nextcloud Files.
-	paths := map[string]bool{}
-	for path, jobs := range byPath {
-		if _, err := sanitizeStagedImportPath(path); err != nil {
-			continue
+		rows, err := s.rt.store.importJobsIncludingCleared(ctx, user)
+		if err != nil {
+			return err
 		}
-		for _, job := range jobs {
-			if job.StagingState != "removed" {
-				paths[path] = true
-				break
+		byPath := map[string][]ImportJob{}
+		for _, job := range rows {
+			byPath[job.StagedPath] = append(byPath[job.StagedPath], job)
+		}
+		// Include absent files: an earlier DELETE may have succeeded before the DB
+		// update failed, or the user may have removed the file in Nextcloud Files.
+		paths := map[string]bool{}
+		for path, jobs := range byPath {
+			if _, err := sanitizeStagedImportPath(path); err != nil {
+				continue
+			}
+			for _, job := range jobs {
+				if job.StagingState != "removed" {
+					paths[path] = true
+					break
+				}
 			}
 		}
-	}
-	for _, entry := range entries {
-		if entry.collection {
-			continue
-		}
-		if _, err := sanitizeStagedImportPath(entry.relPath); err == nil {
-			paths[entry.relPath] = true
-		}
-	}
-	var firstErr error
-	for path := range paths {
-		jobs := byPath[path]
-		active := false
-		for _, job := range jobs {
-			if (job.ClearedAt == "" && importUsesStaging(job)) || s.runningID == job.ID {
-				active = true
+		for _, entry := range entries {
+			if entry.collection {
+				continue
+			}
+			if _, err := sanitizeStagedImportPath(entry.relPath); err == nil {
+				paths[entry.relPath] = true
 			}
 		}
-		if active {
-			continue
-		}
-		if err := s.exapp.davDeleteUserFile(ctx, s.client, user, path); err != nil {
-			if firstErr == nil {
-				firstErr = err
+		running := s.running()
+		var firstErr error
+		for path := range paths {
+			jobs := byPath[path]
+			active := false
+			for _, job := range jobs {
+				if (job.ClearedAt == "" && importUsesStaging(job)) || running == job.ID {
+					active = true
+				}
 			}
-			continue
-		}
-		for _, job := range jobs {
-			if err := s.markStagingRemoved(ctx, job.ID); err != nil && firstErr == nil {
-				firstErr = err
+			if active {
+				continue
+			}
+			if err := s.exapp.davDeleteUserFile(ctx, s.client, user, path); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			for _, job := range jobs {
+				if err := s.rt.store.MarkImportStagingRemoved(ctx, job.ID); err != nil && firstErr == nil {
+					firstErr = err
+				}
 			}
 		}
-	}
-	return firstErr
+		return firstErr
+	})
 }

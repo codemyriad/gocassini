@@ -17,13 +17,14 @@ function open(provider: DataProvider) {
  host = document.createElement("div"); document.body.append(host);
  app = mount(ImportPanel, { target: host, props: { dataProvider: provider, active: true } });
 }
-it("restores failed uploads without Retry, removes them durably, and preserves successful history", async () => {
+it("restores failed uploads without Retry, removes them durably, and keeps cleared attempts listed", async () => {
  let jobs = [job("partial", "upload_failed"), job("staged", "staged"), job("success", "done")];
  const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
   listImports: async () => jobs,
   retryImport: vi.fn(async () => {}),
   removeImport: vi.fn(async (id: string) => { jobs = jobs.filter((j) => j.id !== id); }),
-  clearImportStaging: vi.fn(async () => { jobs = jobs.filter((j) => j.state === "done"); }),
+  // Files go; rows stay — a cleared attempt loses its Retry, not its place.
+  clearImportStaging: vi.fn(async () => { jobs = jobs.map((j) => (j.state === "done" ? j : { ...j, stagingState: "removed" })); }),
  });
  open(provider);
  await expect.element(page.getByText("partial.json", { exact: true })).toBeVisible();
@@ -37,7 +38,8 @@ it("restores failed uploads without Retry, removes them durably, and preserves s
  await expect.element(page.getByText("partial.json", { exact: true })).not.toBeInTheDocument();
  vi.spyOn(window,"confirm").mockReturnValue(true);
  await page.getByRole("button", { name: "Clear staged files" }).click();
- await expect.element(page.getByText("staged.json", { exact: true })).not.toBeInTheDocument();
+ await expect.element(page.getByRole("button", { name: "Retry", exact: true })).not.toBeInTheDocument();
+ await expect.element(page.getByText("staged.json", { exact: true })).toBeVisible();
  await expect.element(page.getByText("success.json", { exact: true })).toBeVisible();
 });
 it("keeps staged imports recoverable when job submission fails and a new selection creates new uploads", async () => {
