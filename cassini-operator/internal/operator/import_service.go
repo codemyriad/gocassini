@@ -228,6 +228,12 @@ func (s *importService) list(w http.ResponseWriter, r *http.Request, caller stri
 	writeJSON(w, http.StatusOK, map[string]any{"imports": jobs})
 }
 
+// importCreateRequest serves two calls. With prepare, it REGISTERS uploads: one
+// row per file, with the source name, the expected size and the sharing the
+// importer chose — that choice is final from here on. Without prepare, it
+// SUBMITS registered uploads whose bytes have landed: a file then names only
+// its staged path, and any sharing in the body is refused rather than silently
+// ignored, so no client can believe submit decides it.
 type importCreateRequest struct {
 	Prepare bool `json:"prepare"`
 	Files   []struct {
@@ -268,6 +274,10 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if !request.Prepare && (file.Share || len(file.Audience) > 0 || file.ExpectedBytes != 0 || strings.TrimSpace(file.SourceName) != "") {
+			writeJSONError(w, http.StatusBadRequest, "sharing is decided when the upload is registered; a submit names only staged paths")
+			return
+		}
 		sharing := importAudience{Share: file.Share}
 		if file.Share {
 			for _, principal := range file.Audience {
@@ -277,7 +287,7 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 					writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid share recipient %q %q", principal.Type, principal.ID))
 					return
 				}
-				sharing.Audience = append(sharing.Audience, importPrincipal{Type: kind, ID: id})
+				sharing.Audience = append(sharing.Audience, importPrincipal{Type: kind, ID: id, Label: strings.TrimSpace(principal.Label)})
 			}
 		}
 		sourceName := strings.TrimSpace(file.SourceName)
@@ -308,12 +318,14 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		})
 	}
 	if !request.Prepare {
+		// A submit queues what prepare registered, with the sharing that was
+		// chosen then. Nothing is created here: a path without a registered
+		// upload is a client that skipped prepare, not a file to import.
 		existing, err := s.rt.store.ImportJobsFor(r.Context(), caller)
 		if err != nil {
 			writeJSONError(w, 500, err.Error())
 			return
 		}
-		newJobs := []ImportJob{}
 		for i := range jobs {
 			found := false
 			for _, old := range existing {
@@ -321,25 +333,23 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 					continue
 				}
 				found = true
-				if old.State == importStateStaged {
+				switch old.State {
+				case importStateStaged:
 					if err := s.rt.store.RetryImportJob(r.Context(), old.ID); err != nil {
 						writeJSONError(w, 500, err.Error())
 						return
 					}
-				} else if old.State == importStateUploading || old.State == importStateUploadFailed {
+				case importStateUploading, importStateUploadFailed:
 					writeJSONError(w, 409, "upload is not complete")
 					return
 				}
+				// Any other state: already queued, running or settled — the
+				// submit is a repeat, answered with the row as it is.
 				jobs[i] = old
 				break
 			}
 			if !found {
-				newJobs = append(newJobs, jobs[i])
-			}
-		}
-		if len(newJobs) > 0 {
-			if err := s.rt.store.CreateImportJobs(r.Context(), newJobs); err != nil {
-				writeJSONError(w, 500, err.Error())
+				writeJSONError(w, 409, fmt.Sprintf("no registered upload at %s; add the file again", jobs[i].StagedPath))
 				return
 			}
 		}

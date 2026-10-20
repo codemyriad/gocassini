@@ -49,7 +49,7 @@ import {
   type MeetingSearchOptions,
   type MeetingSearchOutcome,
 } from "./meetingSearch";
-import type { ImportFileRequest, ImportJobRecord, ImportSharee } from "./imports";
+import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "./imports";
 
 // Re-exported so a provider implemented outside this package (cassini-app's,
 // which has an operator behind it) can type its methods without reaching past
@@ -57,7 +57,7 @@ import type { ImportFileRequest, ImportJobRecord, ImportSharee } from "./imports
 export type { MeetingCatalogEntry, InsightRecord, MeetingSearchOptions, MeetingSearchOutcome };
 // The import types, for the same reason: cassini-app's provider implements the
 // optional import methods below.
-export type { ImportFileRequest, ImportJobRecord, ImportSharee };
+export type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest };
 // The speaker-edit types and their error, for the same reason: a provider with
 // an operator behind it implements the two optional methods below.
 export { SpeakerEditsError } from "./speakerEdits";
@@ -240,16 +240,19 @@ export interface DataProvider {
   // single-meeting view and a bundled artifact have no operator and no archive,
   // so the tab is absent rather than present and failing.
   //
-  // stageImportUpload first registers durable upload intent, then puts the
-  // file into the CALLER'S OWN Files (the operator
-  // later pulls it as the caller and removes it after a successful import) and
-  // resolves to the staged path startImports is given. Progress is byte-level,
-  // for the per-file bar.
+  // stageImportUpload first registers the upload with the operator — source
+  // name, size and the SHARING, which is final from then on — then puts the
+  // file into the CALLER'S OWN Files (the operator later pulls it as the
+  // caller and removes it after a successful import) and resolves to the
+  // staged path startImports is given. Progress is byte-level, for the
+  // per-file bar.
   stageImportUpload?(
     file: File,
     onProgress?: (sentBytes: number, totalBytes: number) => void,
-    sharing?: Pick<ImportFileRequest, "share" | "audience">,
+    sharing?: ImportSharingRequest,
   ): Promise<string>;
+  // startImports queues registered uploads whose bytes have landed. A file is
+  // named by its staged path only; sharing was decided at registration.
   startImports?(files: ImportFileRequest[]): Promise<ImportJobRecord[]>;
   listImports?(): Promise<ImportJobRecord[]>;
   cancelImport?(id: string): Promise<void>;

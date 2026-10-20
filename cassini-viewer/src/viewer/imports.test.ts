@@ -1,3 +1,4 @@
+import { describeImportSharing } from "./imports";
 import { describe, expect, it } from "vitest";
 
 import { formatImportDuration, importJobTerminal, parseImportPreview } from "./imports";
@@ -54,5 +55,26 @@ describe("formatImportDuration", () => {
     expect(formatImportDuration(12 * 60_000)).toBe("12 min");
     expect(formatImportDuration(60 * 60_000)).toBe("1 h");
     expect(formatImportDuration(92 * 60_000)).toBe("1 h 32 min");
+  });
+});
+
+describe("describeImportSharing", () => {
+  it("names the importer and every recipient, kinds marked", () => {
+    const got = describeImportSharing({
+      sharing: {
+        share: true,
+        audience: [
+          { type: "user", id: "bob", label: "Bob Lee" },
+          { type: "group", id: "design", label: "Design" },
+          { type: "circle", id: "c1", label: "Core" },
+          { type: "user", id: "nolabel" },
+        ],
+      },
+    });
+    expect(got.line).toBe("Shared with 5");
+    expect(got.title).toBe("you, Bob Lee, Design (group), Core (team), nolabel");
+  });
+  it("says so when the meeting is private", () => {
+    expect(describeImportSharing({ sharing: { share: false } })).toEqual({ line: "Visible only to you", title: "Only you can open this meeting." });
   });
 });

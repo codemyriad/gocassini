@@ -10,7 +10,7 @@
 // a successful import.
 
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
-import type { ImportFileRequest, ImportJobRecord, ImportSharee } from "cassini-viewer/imports";
+import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/imports";
 
 // The staging folder inside the caller's Files. Must match the operator's
 // importStagingDir — it refuses staged paths anywhere else.
@@ -102,13 +102,14 @@ async function ensureStagingDir(): Promise<void> {
   }
 }
 
-// stageImportUpload PUTs one file and resolves to the path the operator is
-// given. XMLHttpRequest rather than fetch for the one thing fetch still cannot
-// do: upload progress events for the per-file bar.
+// stageImportUpload registers the upload (source name, size, and the sharing —
+// final from here on), PUTs the file, and resolves to the path the operator is
+// given at submit. XMLHttpRequest rather than fetch for the one thing fetch
+// still cannot do: upload progress events for the per-file bar.
 export async function stageImportUpload(
   file: File,
   onProgress?: (sentBytes: number, totalBytes: number) => void,
-  sharing: Pick<ImportFileRequest, "share" | "audience"> = { share: false, audience: [] },
+  sharing: ImportSharingRequest = { share: false, audience: [] },
 ): Promise<string> {
   const name = stagedName(file.name);
   const stagedPath = `${STAGING_DIR}/${name}`;

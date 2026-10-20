@@ -28,9 +28,9 @@ function mockUpload(putStatus = 201, prepareStatus = 202) {
 }
 it("registers owner metadata and sharing before sending bytes, then confirms staging",async()=>{
  const mock = mockUpload();
- const path = await stageImportUpload(new File(["123"],"test.json"),undefined,{share:true,audience:[{type:"user",id:"bob"}]});
+ const path = await stageImportUpload(new File(["123"],"test.json"),undefined,{share:true,audience:[{type:"user",id:"bob",label:"Bob Lee"}]});
  expect(mock.events).toEqual(["prepare","mkdir","put","staged"]);
- expect(mock.body().files[0]).toMatchObject({stagedPath:path,expectedBytes:3,sourceName:"test.json",share:true,audience:[{type:"user",id:"bob"}]});
+ expect(mock.body().files[0]).toMatchObject({stagedPath:path,expectedBytes:3,sourceName:"test.json",share:true,audience:[{type:"user",id:"bob",label:"Bob Lee"}]});
 });
 it("does not upload when DB preparation fails",async()=>{
  const mock=mockUpload(201,503);
