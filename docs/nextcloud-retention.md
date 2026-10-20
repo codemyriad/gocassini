@@ -78,6 +78,21 @@ fresh deployment with disposable fixtures; see [validation](nextcloud-retention-
 Nextcloud versions and Deleted files, independent exports and backups are
 separate. Active-file deletion does not guarantee physical disk reclamation.
 
+The same cascade also serves user-initiated deletion (D-861): anyone who can
+read a meeting can delete it from the viewer, which runs the journaled
+retirement with action `delete` and lifecycle reason `deleted`. A user delete
+differs from policy expiry in four ways: it needs no retention policy, no
+capability certification and no job row (the conditional file-ID and ETag
+checks carry the safety, as the annotation write-back already does); its
+receipts and tag-job outcomes say `deleted` rather than `expired`; previews and
+operation listings present it as `deleted`, never as the policy's doing; and it
+additionally reclaims the job's whole local working footprint (capture, build
+workspace, seals, logs), keeping only the job and attempt rows as the log.
+Deletion is final from Cassini's side: the file lands in the service account's
+own trash bin, which no regular user can see or restore, the bin empties on
+Nextcloud's schedule, and a file an administrator restores from it stays
+tombstoned and invisible to Cassini.
+
 Example preview row (inside `meetings`):
 
 ```json
