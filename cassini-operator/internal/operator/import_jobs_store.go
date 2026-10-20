@@ -18,19 +18,22 @@ import (
 // deleted — "clear completed" in the viewer is a display action only.
 
 const (
-	importStateQueued     = "queued"
-	importStateFetching   = "fetching"
-	importStateValidating = "validating"
-	importStateDelivering = "delivering"
-	importStateSharing    = "sharing"
-	importStateIndexing   = "indexing"
-	importStateDone       = "done"
-	importStateFailed     = "failed"
-	importStateCanceled   = "canceled"
+	importStateUploading    = "uploading"
+	importStateUploadFailed = "upload_failed"
+	importStateStaged       = "staged"
+	importStateQueued       = "queued"
+	importStateFetching     = "fetching"
+	importStateValidating   = "validating"
+	importStateDelivering   = "delivering"
+	importStateSharing      = "sharing"
+	importStateIndexing     = "indexing"
+	importStateDone         = "done"
+	importStateFailed       = "failed"
+	importStateCanceled     = "canceled"
 )
 
 func importStateTerminal(state string) bool {
-	return state == importStateDone || state == importStateFailed || state == importStateCanceled
+	return state == importStateUploadFailed || state == importStateDone || state == importStateFailed || state == importStateCanceled
 }
 
 // importAudience is the sharing selection the importer made for one file. The
@@ -48,16 +51,19 @@ type importPrincipal struct {
 // ImportJob is one file moving through fetch -> validate -> deliver -> share ->
 // index. Terminal states are done, failed and canceled.
 type ImportJob struct {
-	ID         string         `json:"id"`
-	BatchID    string         `json:"batchId"`
-	CreatedBy  string         `json:"createdBy"`
-	SourceName string         `json:"sourceName"`
-	StagedPath string         `json:"stagedPath"`
-	Format     string         `json:"format,omitempty"`
-	State      string         `json:"state"`
-	Phase      string         `json:"phase,omitempty"`
-	Error      string         `json:"error,omitempty"`
-	Sharing    importAudience `json:"sharing"`
+	ExpectedBytes int64          `json:"expectedBytes,omitempty"`
+	StagingState  string         `json:"stagingState,omitempty"`
+	ClearedAt     string         `json:"clearedAt,omitempty"`
+	ID            string         `json:"id"`
+	BatchID       string         `json:"batchId"`
+	CreatedBy     string         `json:"createdBy"`
+	SourceName    string         `json:"sourceName"`
+	StagedPath    string         `json:"stagedPath"`
+	Format        string         `json:"format,omitempty"`
+	State         string         `json:"state"`
+	Phase         string         `json:"phase,omitempty"`
+	Error         string         `json:"error,omitempty"`
+	Sharing       importAudience `json:"sharing"`
 	// Provenance read from the file at validation.
 	ContentID              string `json:"contentId,omitempty"`
 	SourceRoomID           string `json:"sourceRoomId,omitempty"`
@@ -70,14 +76,14 @@ type ImportJob struct {
 	UpdatedAt              string `json:"updatedAt"`
 }
 
-const importJobColumns = `id,batch_id,created_by,source_name,staged_path,format,state,phase,error,audience_json,content_id,source_room_id,meeting_created_at_utc,meeting_recorded_at_local,delivered_name,file_id,imported_at,created_at,updated_at`
+const importJobColumns = `id,batch_id,created_by,source_name,staged_path,format,state,phase,error,audience_json,content_id,source_room_id,meeting_created_at_utc,meeting_recorded_at_local,delivered_name,file_id,imported_at,created_at,updated_at,expected_bytes,staging_state,cleared_at`
 
 func scanImportJob(scan func(dest ...any) error) (ImportJob, error) {
 	var j ImportJob
 	var audience string
 	err := scan(&j.ID, &j.BatchID, &j.CreatedBy, &j.SourceName, &j.StagedPath, &j.Format, &j.State, &j.Phase, &j.Error, &audience,
 		&j.ContentID, &j.SourceRoomID, &j.MeetingCreatedAtUTC, &j.MeetingRecordedAtLocal,
-		&j.DeliveredName, &j.FileID, &j.ImportedAt, &j.CreatedAt, &j.UpdatedAt)
+		&j.DeliveredName, &j.FileID, &j.ImportedAt, &j.CreatedAt, &j.UpdatedAt, &j.ExpectedBytes, &j.StagingState, &j.ClearedAt)
 	if err != nil {
 		return ImportJob{}, err
 	}
@@ -88,7 +94,8 @@ func scanImportJob(scan func(dest ...any) error) (ImportJob, error) {
 }
 
 // CreateImportJobs enqueues one batch. Every job must already carry an ID, a
-// creator, a staged path and a sharing document; they are inserted queued.
+// creator, a staged path and a sharing document. Prepared uploads wait for
+// confirmation; legacy callers and CLI jobs are inserted queued.
 func (s *Store) CreateImportJobs(ctx context.Context, jobs []ImportJob) error {
 	if len(jobs) == 0 {
 		return fmt.Errorf("an import batch names at least one file")
@@ -103,14 +110,18 @@ func (s *Store) CreateImportJobs(ctx context.Context, jobs []ImportJob) error {
 		if j.ID == "" || j.BatchID == "" || j.CreatedBy == "" || j.StagedPath == "" {
 			return fmt.Errorf("invalid import job")
 		}
+		state := importStateQueued
+		if j.State == importStateUploading {
+			state = j.State
+		}
 		audience, err := json.Marshal(j.Sharing)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO import_jobs(id,batch_id,created_by,source_name,staged_path,state,audience_json,created_at,updated_at)
-			 VALUES(?,?,?,?,?,?,?,?,?)`,
-			j.ID, j.BatchID, j.CreatedBy, j.SourceName, j.StagedPath, importStateQueued, string(audience), now, now); err != nil {
+			`INSERT INTO import_jobs(id,batch_id,created_by,source_name,staged_path,state,audience_json,created_at,updated_at,expected_bytes,staging_state)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			j.ID, j.BatchID, j.CreatedBy, j.SourceName, j.StagedPath, state, string(audience), now, now, j.ExpectedBytes, j.StagingState); err != nil {
 			return err
 		}
 	}
@@ -122,7 +133,7 @@ func (s *Store) CreateImportJobs(ctx context.Context, jobs []ImportJob) error {
 // workbench item even though the delivered meeting is shared state.
 func (s *Store) ImportJobsFor(ctx context.Context, caller string) ([]ImportJob, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+importJobColumns+` FROM import_jobs WHERE created_by=? ORDER BY created_at DESC, id DESC`, caller)
+		`SELECT `+importJobColumns+` FROM import_jobs WHERE created_by=? AND cleared_at='' ORDER BY created_at DESC, id DESC`, caller)
 	if err != nil {
 		return nil, err
 	}
@@ -193,12 +204,12 @@ func (s *Store) SetImportJobOutcome(ctx context.Context, id, deliveredName strin
 }
 
 // RequeueUnfinishedImports returns interrupted work to the queue at startup.
-// Terminal rows stay terminal; everything else was in flight when the process
-// died and the engine is idempotent, so re-running it is the recovery.
+// Only import-processing states are requeued. Uploading and staged records
+// must never enter the worker until staging has been confirmed.
 func (s *Store) RequeueUnfinishedImports(ctx context.Context) (int64, error) {
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE import_jobs SET state=?,phase='',updated_at=? WHERE state NOT IN (?,?,?)`,
-		importStateQueued, nowUTCString(), importStateDone, importStateFailed, importStateCanceled)
+		`UPDATE import_jobs SET state=?,phase='',updated_at=? WHERE state IN (?,?,?,?,?,?)`,
+		importStateQueued, nowUTCString(), importStateQueued, importStateFetching, importStateValidating, importStateDelivering, importStateSharing, importStateIndexing)
 	if err != nil {
 		return 0, err
 	}
@@ -214,11 +225,12 @@ func (s *Store) CancelImportJob(ctx context.Context, id string) error {
 	return err
 }
 
-// RetryImportJob re-queues a failed or canceled job.
+// RetryImportJob queues a staged file or re-queues a failed/canceled import.
+// Upload failures are deliberately excluded: they require a new upload.
 func (s *Store) RetryImportJob(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE import_jobs SET state=?,phase='',error='',updated_at=? WHERE id=? AND state IN (?,?)`,
-		importStateQueued, nowUTCString(), id, importStateFailed, importStateCanceled)
+		`UPDATE import_jobs SET state=?,phase='',error='',updated_at=? WHERE id=? AND state IN (?,?,?) AND staging_state!='removed' AND cleared_at=''`,
+		importStateQueued, nowUTCString(), id, importStateFailed, importStateCanceled, importStateStaged)
 	return err
 }
 

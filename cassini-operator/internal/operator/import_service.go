@@ -21,7 +21,7 @@ import (
 // The imports HTTP surface (D-828): the Import tab's backend.
 //
 // The browser stages each dropped file into the CALLER'S OWN Files over
-// Nextcloud's chunked WebDAV (`.CassiniImports/<name>`), then POSTs only small
+// Nextcloud's WebDAV (`.CassiniImports/<name>`), then POSTs only small
 // JSON here — staged paths plus the sharing selection — keeping the operator
 // API's small-body invariant. The worker pulls each staged file server-side AS
 // THE CALLER, so a request can only ever name files its own author can read,
@@ -85,6 +85,7 @@ func newImportService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *impor
 		client:   &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
 	}
 	service.startWorker()
+	service.startStagingGC()
 	return service
 }
 
@@ -118,6 +119,19 @@ func (s *importService) serveItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if rest == "staging/clear" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.reconcileUploads(r.Context(), caller)
+		if err := s.clearUserStaging(r.Context(), caller); err != nil {
+			writeJSONError(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"accepted": true})
+		return
+	}
 	id, action, _ := strings.Cut(rest, "/")
 	job, ok := s.ownJob(w, r, caller, id)
 	if !ok {
@@ -130,6 +144,12 @@ func (s *importService) serveItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, job)
+	case "heartbeat", "staged", "upload-failed", "remove":
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.stagingAction(w, r, job, action)
 	case "cancel":
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)
@@ -173,6 +193,7 @@ func (s *importService) ownJob(w http.ResponseWriter, r *http.Request, caller, i
 }
 
 func (s *importService) list(w http.ResponseWriter, r *http.Request, caller string) {
+	s.reconcileUploads(r.Context(), caller)
 	jobs, err := s.rt.store.ImportJobsFor(r.Context(), caller)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -182,11 +203,13 @@ func (s *importService) list(w http.ResponseWriter, r *http.Request, caller stri
 }
 
 type importCreateRequest struct {
-	Files []struct {
-		StagedPath string            `json:"stagedPath"`
-		SourceName string            `json:"sourceName"`
-		Share      bool              `json:"share"`
-		Audience   []importPrincipal `json:"audience"`
+	Prepare bool `json:"prepare"`
+	Files   []struct {
+		ExpectedBytes int64             `json:"expectedBytes"`
+		StagedPath    string            `json:"stagedPath"`
+		SourceName    string            `json:"sourceName"`
+		Share         bool              `json:"share"`
+		Audience      []importPrincipal `json:"audience"`
 	} `json:"files"`
 }
 
@@ -202,6 +225,8 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("an import names between 1 and %d staged files", importBatchLimit))
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	batchID := ulid.Make().String()
 	jobs := make([]ImportJob, 0, len(request.Files))
 	for _, file := range request.Files {
@@ -226,12 +251,66 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		if sourceName == "" {
 			sourceName = path.Base(staged)
 		}
+		if request.Prepare && (file.ExpectedBytes <= 0 || file.ExpectedBytes > maxImportUploadBytes) {
+			writeJSONError(w, http.StatusBadRequest, "upload must be between 1 byte and 4 GiB")
+			return
+		}
+		state, stagingState := "", ""
+		if request.Prepare {
+			var count int
+			if err := s.rt.store.db.QueryRowContext(r.Context(), `SELECT count(*) FROM import_jobs WHERE created_by=? AND staged_path=?`, caller, staged).Scan(&count); err != nil {
+				writeJSONError(w, 500, err.Error())
+				return
+			}
+			if count != 0 {
+				writeJSONError(w, 409, "staging path already belongs to an upload; add the file again")
+				return
+			}
+			state, stagingState = importStateUploading, "pending"
+		}
 		jobs = append(jobs, ImportJob{
+			State: state, StagingState: stagingState, ExpectedBytes: file.ExpectedBytes,
 			ID: ulid.Make().String(), BatchID: batchID, CreatedBy: caller,
 			SourceName: sourceName, StagedPath: staged, Sharing: sharing,
 		})
 	}
-	if err := s.rt.store.CreateImportJobs(r.Context(), jobs); err != nil {
+	if !request.Prepare {
+		existing, err := s.rt.store.ImportJobsFor(r.Context(), caller)
+		if err != nil {
+			writeJSONError(w, 500, err.Error())
+			return
+		}
+		newJobs := []ImportJob{}
+		for i := range jobs {
+			found := false
+			for _, old := range existing {
+				if old.StagedPath != jobs[i].StagedPath {
+					continue
+				}
+				found = true
+				if old.State == importStateStaged {
+					if err := s.rt.store.RetryImportJob(r.Context(), old.ID); err != nil {
+						writeJSONError(w, 500, err.Error())
+						return
+					}
+				} else if old.State == importStateUploading || old.State == importStateUploadFailed {
+					writeJSONError(w, 409, "upload is not complete")
+					return
+				}
+				jobs[i] = old
+				break
+			}
+			if !found {
+				newJobs = append(newJobs, jobs[i])
+			}
+		}
+		if len(newJobs) > 0 {
+			if err := s.rt.store.CreateImportJobs(r.Context(), newJobs); err != nil {
+				writeJSONError(w, 500, err.Error())
+				return
+			}
+		}
+	} else if err := s.rt.store.CreateImportJobs(r.Context(), jobs); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -255,6 +334,10 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 }
 
 func (s *importService) cancel(w http.ResponseWriter, r *http.Request, job ImportJob) {
+	if job.State == importStateUploading {
+		writeJSONError(w, 409, "upload is still active")
+		return
+	}
 	if importStateTerminal(job.State) {
 		writeJSON(w, http.StatusOK, job)
 		return
@@ -272,13 +355,27 @@ func (s *importService) cancel(w http.ResponseWriter, r *http.Request, job Impor
 }
 
 func (s *importService) retry(w http.ResponseWriter, r *http.Request, job ImportJob) {
-	if job.State != importStateFailed && job.State != importStateCanceled {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok, err := s.rt.store.ImportJob(r.Context(), job.ID)
+	if err != nil {
+		writeJSONError(w, 500, err.Error())
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	job = current
+	if job.ClearedAt != "" || job.StagingState == "removed" || (job.ExpectedBytes > 0 && job.StagingState != "present") {
+		writeJSONError(w, 409, "staged file was removed; upload the file again")
+		return
+	}
+	if job.State != importStateFailed && job.State != importStateCanceled && job.State != importStateStaged {
 		writeJSON(w, http.StatusOK, job)
 		return
 	}
-	s.mu.Lock()
 	stillWinding := s.runningID == job.ID
-	s.mu.Unlock()
 	if stillWinding {
 		writeJSONError(w, http.StatusConflict, "cancellation is still finishing; retry in a moment")
 		return
@@ -383,6 +480,8 @@ func (s *importService) runImportJob(job ImportJob) {
 	// quota and is theirs to see; it never fails a landed import.
 	if err := s.exapp.davDeleteUserFile(context.Background(), s.client, job.CreatedBy, job.StagedPath); err != nil {
 		s.logf("import %s: staged copy not removed (%v)", job.ID, err)
+	} else {
+		_ = s.markStagingRemoved(context.Background(), job.ID)
 	}
 }
 
