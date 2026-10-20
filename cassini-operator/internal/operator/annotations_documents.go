@@ -109,6 +109,9 @@ CREATE TABLE annotation_batch_target (
 			{"annotation_head", "republish_json", "BLOB"},
 			{"annotation_tag", "color", "TEXT"},
 			{"annotation_tag", "icon", "TEXT"},
+			// Schema 8: the projected user-set meeting title (D-862). '' until a
+			// rename is committed, so existing rows need no backfill.
+			{"meeting_annotations", "title", "TEXT NOT NULL DEFAULT ''"},
 		} {
 			var present int
 			if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, column.table, column.name).Scan(&present); err != nil {

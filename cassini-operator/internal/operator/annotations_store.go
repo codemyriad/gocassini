@@ -22,7 +22,7 @@ const (
 	annotationsStoreFilename = "annotations.sqlite3"
 
 	// annotationsSchemaVersion is upgraded through managed migrations.
-	annotationsSchemaVersion = 7
+	annotationsSchemaVersion = 8
 
 	annotationsStateIndexed = "indexed"
 	// annotationsStateUnavailable: the meeting is known but its marks could not
@@ -54,7 +54,10 @@ CREATE TABLE IF NOT EXISTS annotations_meta (
   value TEXT NOT NULL
 );
 
--- References only: the caller's own catalog supplies titles, dates and rooms.
+-- References only: the caller's own catalog supplies dates and rooms. The one
+-- exception is title: a user-set rename (the document's meeting.title, D-862)
+-- is projected here so catalog resolution can overlay it without reading the
+-- file.
 CREATE TABLE IF NOT EXISTS meeting_annotations (
   opus_name        TEXT PRIMARY KEY, -- path.Base of the delivered .opus
   state            TEXT NOT NULL,
@@ -64,7 +67,9 @@ CREATE TABLE IF NOT EXISTS meeting_annotations (
   resolved         INTEGER NOT NULL DEFAULT 1,
   namespace        TEXT NOT NULL DEFAULT '',
   -- The bytes these rows came from, so a rebuild skips an unchanged file.
-  container_sha256 TEXT NOT NULL DEFAULT ''
+  container_sha256 TEXT NOT NULL DEFAULT '',
+  -- The document's user-set meeting title, '' when nobody renamed it.
+  title            TEXT NOT NULL DEFAULT ''
 );
 
 -- Per meeting, because relabel is per file: one id can carry several labels.
@@ -150,6 +155,9 @@ type projectedDocument struct {
 			EndMS   *int64 `json:"endMs"`
 		} `json:"target"`
 	} `json:"items"`
+	Meeting *struct {
+		Title string `json:"title"`
+	} `json:"meeting"`
 }
 
 type projectedTag struct {
@@ -168,6 +176,7 @@ type projectedMeeting struct {
 	revision   int
 	resolved   bool
 	namespace  string
+	title      string
 	tags       []projectedTag
 	items      []projectedItem
 }
@@ -187,6 +196,9 @@ func projectAnnotations(raw json.RawMessage, cliResolved *bool, fileAudio string
 	}
 
 	out := projectedMeeting{revision: doc.Revision, namespace: strings.TrimSpace(doc.TagNamespace)}
+	if doc.Meeting != nil {
+		out.title = strings.TrimSpace(doc.Meeting.Title)
+	}
 	// The CLI's verdict when it gave one; otherwise the same comparison.
 	if cliResolved != nil {
 		out.resolved = *cliResolved
@@ -314,6 +326,33 @@ func (s *annotationStore) replace(ctx context.Context, opusName string, m projec
 		return "", err
 	}
 	return state, nil
+}
+
+// Titles answers the user-set meeting titles among names — only the meetings
+// someone renamed (annotationTitleSource). Catalog resolution overlays these
+// onto the entries it serves, so a rename shows everywhere the moment it is
+// committed, without waiting for the write-behind to land in the file (D-862).
+func (s *annotationStore) Titles(ctx context.Context, names []string) (map[string]string, error) {
+	titles := map[string]string{}
+	if len(names) == 0 {
+		return titles, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT opus_name, title
+  FROM meeting_annotations
+ WHERE title != '' AND opus_name IN (SELECT value FROM json_each(?1))`, namesJSON(names))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, title string
+		if err := rows.Scan(&name, &title); err != nil {
+			return nil, err
+		}
+		titles[name] = title
+	}
+	return titles, rows.Err()
 }
 
 // deleteAnnotationRows drops a meeting and its rows — explicitly, so
@@ -891,9 +930,9 @@ func replaceAnnotationProjection(ctx context.Context, tx *sql.Tx, name string, m
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO meeting_annotations (opus_name, state, revision, resolved, namespace, container_sha256)
-VALUES (?, ?, ?, ?, ?, ?)`, name, state, m.revision, m.resolved, m.namespace,
-		strings.ToLower(strings.TrimSpace(container))); err != nil {
+INSERT INTO meeting_annotations (opus_name, state, revision, resolved, namespace, container_sha256, title)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, name, state, m.revision, m.resolved, m.namespace,
+		strings.ToLower(strings.TrimSpace(container)), m.title); err != nil {
 		return fmt.Errorf("record meeting annotations: %w", err)
 	}
 	for _, tag := range m.tags {

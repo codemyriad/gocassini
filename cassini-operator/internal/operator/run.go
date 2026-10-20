@@ -351,6 +351,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	exappCfg.meetingMetadata = runtime.meetingMetadata
 	exappCfg.lifecycle = store
+	// Conditional, so a missing store stays a nil interface rather than a
+	// non-nil interface around a nil pointer.
+	if annotations := runtime.annotationReads(); annotations != nil {
+		exappCfg.annotationTitles = annotations
+	}
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
