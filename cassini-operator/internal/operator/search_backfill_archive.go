@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -149,7 +148,9 @@ func transcriptWordsFromOpus(ctx context.Context, cassiniBin, path string) ([]se
 	if strings.TrimSpace(cassiniBin) == "" {
 		return nil, fmt.Errorf("no cassini binary configured to read %s", filepath.Base(path))
 	}
-	cmd := exec.CommandContext(ctx, cassiniBin, "inspect", "--transcript", path)
+	// Same process-group and environment hygiene as every other CLI run on a
+	// file a caller supplied: imports feed this with uploaded recordings.
+	cmd := cassiniCommand(ctx, cassiniBin, "inspect", "--transcript", path)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
