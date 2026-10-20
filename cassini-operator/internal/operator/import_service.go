@@ -59,9 +59,35 @@ type importService struct {
 	// stream and each pull runs under the worker's own context.
 	client *http.Client
 
+	// mu guards the two fields below and nothing else: which job the worker is
+	// on and how to cancel it. It is never held across a database call or a
+	// Nextcloud request, so a slow Nextcloud for one caller cannot stall every
+	// other caller's poll.
 	mu        sync.Mutex
 	runningID string
 	cancelRun context.CancelFunc
+	// userLocks serializes one caller's staging work — registering uploads,
+	// confirming them, removing files, sweeping the folder — so two tabs cannot
+	// race on one folder, while callers stay independent of each other.
+	userLocks keyedLocks
+}
+
+// running reports the job the worker is on, or "" between jobs.
+func (s *importService) running() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runningID
+}
+
+// withUserLock runs fn holding the caller's staging lock, bounded by the
+// deadline on ctx so a failed Nextcloud cannot hold it indefinitely.
+func (s *importService) withUserLock(ctx context.Context, user string, fn func(ctx context.Context) error) error {
+	release, err := s.userLocks.acquire(ctx, user)
+	if err != nil {
+		return fmt.Errorf("staging is busy for %s: %w", user, err)
+	}
+	defer release()
+	return fn(ctx)
 }
 
 // newImportService wires the Import surface, or reports (nil) that it cannot be
@@ -225,8 +251,15 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("an import names between 1 and %d staged files", importBatchLimit))
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	release, err := s.userLocks.acquire(ctx, caller)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "staging is busy; try again")
+		return
+	}
+	defer release()
+	r = r.WithContext(ctx)
 	batchID := ulid.Make().String()
 	jobs := make([]ImportJob, 0, len(request.Files))
 	for _, file := range request.Files {
@@ -257,12 +290,12 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 		}
 		state, stagingState := "", ""
 		if request.Prepare {
-			var count int
-			if err := s.rt.store.db.QueryRowContext(r.Context(), `SELECT count(*) FROM import_jobs WHERE created_by=? AND staged_path=?`, caller, staged).Scan(&count); err != nil {
+			taken, err := s.rt.store.HasImportJobForPath(r.Context(), caller, staged)
+			if err != nil {
 				writeJSONError(w, 500, err.Error())
 				return
 			}
-			if count != 0 {
+			if taken {
 				writeJSONError(w, 409, "staging path already belongs to an upload; add the file again")
 				return
 			}
@@ -359,8 +392,6 @@ func (s *importService) cancel(w http.ResponseWriter, r *http.Request, job Impor
 }
 
 func (s *importService) retry(w http.ResponseWriter, r *http.Request, job ImportJob) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	current, ok, err := s.rt.store.ImportJob(r.Context(), job.ID)
 	if err != nil {
 		writeJSONError(w, 500, err.Error())
@@ -383,8 +414,9 @@ func (s *importService) retry(w http.ResponseWriter, r *http.Request, job Import
 		writeJSON(w, http.StatusOK, job)
 		return
 	}
-	stillWinding := s.runningID == job.ID
-	if stillWinding {
+	// A cancel lands on the row before the worker has let go of the job; a
+	// retry in that window would be claimed by the dying run's bookkeeping.
+	if s.running() == job.ID {
 		writeJSONError(w, http.StatusConflict, "cancellation is still finishing; retry in a moment")
 		return
 	}
@@ -489,7 +521,7 @@ func (s *importService) runImportJob(job ImportJob) {
 	if err := s.exapp.davDeleteUserFile(context.Background(), s.client, job.CreatedBy, job.StagedPath); err != nil {
 		s.logf("import %s: staged copy not removed (%v)", job.ID, err)
 	} else {
-		_ = s.markStagingRemoved(context.Background(), job.ID)
+		_ = rt.store.MarkImportStagingRemoved(context.Background(), job.ID)
 	}
 }
 

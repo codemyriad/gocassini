@@ -142,10 +142,21 @@ func (s *Store) CreateImportJobs(ctx context.Context, jobs []ImportJob) error {
 
 // ImportJobsFor lists one caller's import jobs, newest first. The list surface
 // is always "this caller's imports": like insights, an import is a per-user
-// workbench item even though the delivered meeting is shared state.
+// workbench item even though the delivered meeting is shared state. Rows the
+// caller removed (cleared_at set) are left out.
 func (s *Store) ImportJobsFor(ctx context.Context, caller string) ([]ImportJob, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+importJobColumns+` FROM import_jobs WHERE created_by=? AND cleared_at='' ORDER BY created_at DESC, id DESC`, caller)
+	return s.queryImportJobs(ctx, `WHERE created_by=? AND cleared_at='' ORDER BY created_at DESC, id DESC`, caller)
+}
+
+// importJobsIncludingCleared is ImportJobsFor without the visibility filter:
+// the staging sweep reconciles the folder against every row, hidden ones
+// included, because a removed row's file may still be there.
+func (s *Store) importJobsIncludingCleared(ctx context.Context, caller string) ([]ImportJob, error) {
+	return s.queryImportJobs(ctx, `WHERE created_by=? ORDER BY created_at DESC, id DESC`, caller)
+}
+
+func (s *Store) queryImportJobs(ctx context.Context, clause string, args ...any) ([]ImportJob, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+importJobColumns+` FROM import_jobs `+clause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +170,26 @@ func (s *Store) ImportJobsFor(ctx context.Context, caller string) ([]ImportJob, 
 		jobs = append(jobs, j)
 	}
 	return jobs, rows.Err()
+}
+
+// ImportCreators lists every user who ever registered an import, cleared rows
+// included: the staging sweep must reach a folder even when all of its rows
+// are hidden.
+func (s *Store) ImportCreators(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT created_by FROM import_jobs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []string
+	for rows.Next() {
+		var user string
+		if err := rows.Scan(&user); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
 }
 
 // ImportJob reads one row. ok is false when the id names nothing.
@@ -293,4 +324,60 @@ func (s *Store) doneImportDeliveries(ctx context.Context) ([]string, error) {
 		}
 	}
 	return names, rows.Err()
+}
+
+// --- the upload lifecycle -----------------------------------------------------
+//
+// uploading -> staged | upload_failed, plus the staged file's removal and the
+// row's explicit clearing. Kept here beside the import lifecycle so the whole
+// state machine is described in one file and each guard is written once.
+
+// HasImportJobForPath reports whether caller already registered an upload at
+// staged. Staged names are minted per attempt, so a hit is a client bug and
+// the registration is refused rather than silently joined.
+func (s *Store) HasImportJobForPath(ctx context.Context, caller, staged string) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM import_jobs WHERE created_by=? AND staged_path=?`, caller, staged).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// TouchImportUpload renews an upload's lease. It reports false when the row is
+// no longer uploading — settled by the browser, or by lease-expiry
+// reconciliation — which the heartbeat answers with a 409.
+func (s *Store) TouchImportUpload(ctx context.Context, id string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE import_jobs SET updated_at=? WHERE id=? AND state=?`, nowUTCString(), id, importStateUploading)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
+// ConfirmImportUpload moves an uploading row to staged once its file was seen
+// whole in the caller's Files. A row that left uploading meanwhile is left as
+// it is.
+func (s *Store) ConfirmImportUpload(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE import_jobs SET state=?,staging_state='present',error='',updated_at=? WHERE id=? AND state=?`,
+		importStateStaged, nowUTCString(), id, importStateUploading)
+	return err
+}
+
+// MarkImportStagingRemoved records that the staged file is gone. The row stays
+// listed: a done row is retention provenance, and a failed one still carries
+// the error its owner may not have read yet. Only ClearImportJob hides a row.
+func (s *Store) MarkImportStagingRemoved(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE import_jobs SET staging_state='removed',updated_at=? WHERE id=?`, nowUTCString(), id)
+	return err
+}
+
+// ClearImportJob hides an unsuccessful row from its owner's list — the explicit
+// Remove, the only thing that ever hides one. Done rows are never cleared here;
+// the viewer folds those away locally, and they remain provenance regardless.
+func (s *Store) ClearImportJob(ctx context.Context, id string) error {
+	now := nowUTCString()
+	_, err := s.db.ExecContext(ctx, `UPDATE import_jobs SET cleared_at=?,updated_at=? WHERE id=? AND state!=? AND cleared_at=''`, now, now, id, importStateDone)
+	return err
 }
