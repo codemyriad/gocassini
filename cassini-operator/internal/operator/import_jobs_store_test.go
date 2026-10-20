@@ -173,25 +173,35 @@ func TestSniffPortableMeetingExtension(t *testing.T) {
 	}
 }
 
+// The stamp adds attribution and replaces the source room with the one
+// Imported meetings bucket (D-828): the file's own room id must not leak into
+// the rail, whether it came with a name or not.
 func TestStampImportedEntry(t *testing.T) {
-	entry := json.RawMessage(`{"id":"01X","title":"Retro","roomId":"rm_abc"}`)
-	stamped, err := stampImportedEntry(entry, "alice", "2026-10-15T10:00:00Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields struct {
-		ID       string `json:"id"`
-		RoomID   string `json:"roomId"`
-		Imported struct {
-			By    string `json:"by"`
-			AtUTC string `json:"atUtc"`
-		} `json:"imported"`
-	}
-	if err := json.Unmarshal(stamped, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if fields.ID != "01X" || fields.RoomID != "rm_abc" || fields.Imported.By != "alice" || fields.Imported.AtUTC != "2026-10-15T10:00:00Z" {
-		t.Fatalf("stamp: %+v", fields)
+	for _, entry := range []string{
+		`{"id":"01X","title":"Retro","roomId":"rm_abc","roomName":"Design"}`,
+		`{"id":"01X","title":"Retro"}`,
+	} {
+		stamped, err := stampImportedEntry(json.RawMessage(entry), "alice", "2026-10-15T10:00:00Z")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields struct {
+			ID       string `json:"id"`
+			Title    string `json:"title"`
+			RoomID   string `json:"roomId"`
+			RoomName string `json:"roomName"`
+			Imported struct {
+				By    string `json:"by"`
+				AtUTC string `json:"atUtc"`
+			} `json:"imported"`
+		}
+		if err := json.Unmarshal(stamped, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if fields.ID != "01X" || fields.Title != "Retro" || fields.RoomID != importedRoomID || fields.RoomName != importedRoomName ||
+			fields.Imported.By != "alice" || fields.Imported.AtUTC != "2026-10-15T10:00:00Z" {
+			t.Fatalf("stamp of %s: %+v", entry, fields)
+		}
 	}
 }
 
