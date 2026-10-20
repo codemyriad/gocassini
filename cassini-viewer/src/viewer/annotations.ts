@@ -29,6 +29,9 @@ export interface AnnotationsDocument {
   tagNamespace: string;
   tags: AnnotationTag[];
   items: AnnotationItem[];
+  // The user-set meeting title (D-862). Absent on a meeting nobody renamed;
+  // the catalog's title then carries the recorded default.
+  meeting?: { title: string; setAtUtc: string; actor: { kind: string; id: string } } | null;
 }
 
 // `resolved: false` means the marks were made against other audio, and their
@@ -112,7 +115,9 @@ export type AnnotationOp =
   | { op: "unmark-tag"; tagId: string; target?: AnnotationTarget }
   | { op: "relabel"; tagId: string; label: string }
   | { op: "merge-tag"; tagId: string; into: AnnotationTag }
-  | { op: "undo-operation"; operationId: string };
+  | { op: "undo-operation"; operationId: string }
+  // Renames the meeting itself; an empty title restores the recorded default.
+  | { op: "set-title"; title: string };
 
 interface TagStyle {
   label: string;
