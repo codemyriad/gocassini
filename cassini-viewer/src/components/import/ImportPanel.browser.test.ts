@@ -67,3 +67,19 @@ it("keeps staged imports recoverable when job submission fails and a new selecti
  await expect.element(page.getByText("attempt-2.json", { exact: true })).toBeVisible();
  expect(uploads).toBe(2);
 });
+
+it.each(["staged", "failed", "canceled"] as const)("polls a retried %s import through completion without reloading", async (initialState) => {
+ let current = job("retry", initialState);
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: vi.fn(async () => [{ ...current }]),
+  retryImport: vi.fn(async () => { current = { ...current, state: "queued" }; }),
+ });
+ open(provider);
+ await page.getByRole("button", { name: "Retry", exact: true }).click();
+ await expect.element(page.getByText("queued", { exact: true })).toBeVisible();
+ // The server completes after the immediate post-Retry refresh. Only polling
+ // can discover this transition; do not remount or navigate the workbench.
+ current = { ...current, state: "done" };
+ await expect.element(page.getByText("imported", { exact: true }), { timeout: 6000 }).toBeVisible();
+ expect(host.querySelector(".import-item progress")).toBeNull();
+});
