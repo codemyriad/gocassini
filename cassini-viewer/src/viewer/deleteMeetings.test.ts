@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import appSource from "../App.svelte?raw";
 import meetingListSource from "../components/MeetingList.svelte?raw";
 import meetingViewSource from "../components/MeetingView.svelte?raw";
+import selectionBarSource from "../components/SelectionBar.svelte?raw";
 import confirmDialogSource from "../components/ui/ConfirmDialog.svelte?raw";
 
 // Source-level assertions, the convention this repo follows for .svelte files:
@@ -80,6 +81,22 @@ describe("the sheet's delete affordance", () => {
     expect(meetingViewSource).toContain("export let canDelete = false;");
     expect(meetingViewSource).toContain("{#if canDelete && meeting}");
     expect(meetingViewSource).toContain('on:click={() => dispatch("deleteMeeting")}');
+  });
+});
+
+describe("the selection bar's bulk delete", () => {
+  it("asks the shell to delete the picked set, behind the same dialog", () => {
+    expect(selectionBarSource).toContain("export let deletable = false;");
+    expect(selectionBarSource).toContain('on:click={() => dispatch("delete")}');
+    expect(appSource).toContain("on:delete={() => requestDeleteMeetings([...pickedMeetings])}");
+  });
+
+  it("unpicks a deleted meeting instead of reporting it as an archive loss", () => {
+    const runner = appSource.slice(
+      appSource.indexOf("async function runMeetingDeletes"),
+      appSource.indexOf("function confirmDeleteMeetings"),
+    );
+    expect(runner).toContain("selection = toggleSelected(selection, entry.id);");
   });
 });
 

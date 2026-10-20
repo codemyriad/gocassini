@@ -29,6 +29,7 @@
     clearSelection,
     countHiddenByView,
     describeSelectionGaps,
+    isSelected,
     reconcileSelection,
     selectedEntries,
     shouldShowSelectionBar,
@@ -790,6 +791,11 @@
       catalogMeetings = catalogMeetings.filter((listed) => listed.id !== entry.id);
       if (selectedMeetingId === entry.id) {
         handleBackToList();
+      }
+      // Unpick directly: a deliberate delete is not a "no longer in the
+      // archive" loss, so it must not land in the selection's dropped notice.
+      if (isSelected(selection, entry.id)) {
+        selection = toggleSelected(selection, entry.id);
       }
       try {
         await remove(entry);
@@ -1567,6 +1573,9 @@
           on:clear={handleClearSelection}
           on:prepare={() => (prepareOpen = true)}
           on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
+          deletable={canDelete}
+          {deleteBusy}
+          on:delete={() => requestDeleteMeetings([...pickedMeetings])}
           tags={dataProvider.applyAnnotationBatch ? vocabularyTags : null}
           tagSelected={bulkTagState.selected}
           tagMixed={bulkTagState.mixed}
