@@ -203,7 +203,9 @@ func runSpeakersForTest(args ...string) (int, string, string) {
 
 func speakersApplyOK(t *testing.T, bundle, edits, turnsDir string) speakersApplyReport {
 	t.Helper()
-	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--json")
+	// Every caller of this helper exercises the summary rewrite; the default
+	// (keep) has tests of its own.
+	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--summary", "rewrite", "--json")
 	if code != 0 {
 		t.Fatalf("apply: exit %d stderr=%q", code, stderr)
 	}
@@ -1334,7 +1336,8 @@ func TestSpeakersApplyKeepsTheSummaryWhenItCannotBeRewrittenAndRetries(t *testin
 
 	turnsDir := writeSpeakersTurns(t, tmp, false)
 	edits := writeSpeakersEdits(t, tmp, "split.json", speakersSplitDoc(1, speakersNoMergesNoLabels))
-	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--json")
+	// A rewrite was asked for and the model failed: stale, not "kept".
+	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--summary", "rewrite", "--json")
 	if code != 0 {
 		t.Fatalf("apply: exit %d stderr=%q", code, stderr)
 	}
@@ -1719,5 +1722,51 @@ func TestSpeakersApplyAnInconclusiveSplitWithANameIsARename(t *testing.T) {
 	}
 	if got := rosterOf(t, filepath.Join(bundle, speakersDefaultTranscript)); got[1].Label != "Benedict" || got[0].ID != speakersRoomID {
 		t.Errorf("roster = %+v", got)
+	}
+}
+
+// A rewrite costs a model call, so an apply keeps the summary unless asked:
+// it stays byte for byte and is reported stale, and a later apply asked to
+// rewrite it still can (D-814).
+func TestSpeakersApplyKeepsTheSummaryUnlessAskedToRewriteIt(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	original := []byte("## Action items\n- Meeting room: book the hall\n")
+	writeSpeakersSummary(t, bundle, original)
+	calls := stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) {
+		return "## Action items\n- Mira: book the hall\n", "test-model", nil
+	})
+
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	named := writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, speakersNamedMira))
+	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", named, "--turns-dir", turnsDir, "--json")
+	if code != 0 {
+		t.Fatalf("apply: exit %d stderr=%q", code, stderr)
+	}
+	var report speakersApplyReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout)
+	}
+	if report.Summary != "stale" || *calls != 0 {
+		t.Fatalf("summary = %q after %d model calls, want stale and none", report.Summary, *calls)
+	}
+	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !bytes.Equal(got, original) {
+		t.Errorf("kept summary changed:\n%s", got)
+	}
+
+	// The same edits, now with a rewrite asked for: one call, a new summary.
+	if report := speakersApplyOK(t, bundle, named, turnsDir); report.Summary != "regenerated" || *calls != 1 {
+		t.Fatalf("rewrite: summary = %q after %d calls, want regenerated after 1", report.Summary, *calls)
+	}
+}
+
+func TestSpeakersApplyRefusesAnUnknownSummaryMode(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	named := writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, speakersNamedMira))
+	code, _, stderr := runSpeakersForTest("apply", bundle, "--edits", named, "--turns-dir", turnsDir, "--summary", "maybe")
+	if code != speakersExitUsage || !strings.Contains(stderr, "--summary must be keep or rewrite") {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
 }

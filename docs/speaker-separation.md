@@ -129,7 +129,7 @@ A rename separates nobody, so it writes no `x-speakerDiarization`.
 | `transcript.raw-asr.words.v1.json` | The original transcript, byte for byte, listed as the `raw-asr` transcript. |
 | `speaker-edits.json` | The edits document as applied. |
 | `captions.vtt` | Regenerated from the separated transcript. |
-| `summary.md` | Rewritten for the edited speakers when the bundle has a summary (one call to the summary model). |
+| `summary.md` | Rewritten for the edited speakers when the bundle has a summary and `--summary rewrite` asks for it (one call to the summary model). Kept as it was otherwise. |
 | `summary.raw-asr.md` | The build's summary, byte for byte, kept the first time the summary is rewritten. |
 | `manifest.json` | See below. `wordCount` is unchanged. |
 
@@ -175,7 +175,13 @@ hashes only.
 
 ### The summary
 
-The summary model is called before apply writes anything, and only when
+A rewrite costs a call to the summary model, so apply makes one only when
+asked: `--summary rewrite`. By default (`--summary keep`) `summary.md` is left
+as it was and the report says `"summary":"stale"`, the same note the People
+panel shows when a rewrite could not be made; a later apply with `--summary
+rewrite` still rewrites it.
+
+When asked, the summary model is called before apply writes anything, and only when
 `summary.md` is not already the one apply wrote from this exact edited
 transcript: a retried apply, a replay onto a bundle that already has the
 edits, or a new revision that changes nobody's words or name (the same

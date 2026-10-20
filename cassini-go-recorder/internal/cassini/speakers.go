@@ -38,6 +38,13 @@ const (
 	speakersExitTurnsMissing = 5 // a split has no stored turns file
 )
 
+// What --summary does with a summary the edits leave out of date: keep it
+// (the default, no model call) or rewrite it.
+const (
+	speakersSummaryKeep    = "keep"
+	speakersSummaryRewrite = "rewrite"
+)
+
 const (
 	speakersRawASRTranscript   = "transcript.raw-asr.words.v1.json"
 	speakersEditsFile          = "speaker-edits.json"
@@ -320,9 +327,14 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 	turnsDir := fs.String("turns-dir", "", "directory holding <speakerId>.json turns for each split")
 	emitJSON := fs.Bool("json", false, "print the report as JSON")
 	recording := fs.String("recording", "", "the capture (x.run or x.mkv) the turns were measured on; turns measured on any other recording are refused")
+	summaryMode := fs.String("summary", speakersSummaryKeep, "an existing summary: keep it, marked as written before these edits, or rewrite it for them (one summary-model call)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
-  cassini speakers apply ./meetings/meeting.meeting --edits ./edits.json --turns-dir ./turns [--recording ./runs/meeting.run] [--json]
+  cassini speakers apply ./meetings/meeting.meeting --edits ./edits.json --turns-dir ./turns [--recording ./runs/meeting.run] [--summary keep|rewrite] [--json]
+
+A meeting's summary names its speakers. By default an apply keeps the summary
+as it is and reports it "stale" (written before these edits); --summary rewrite
+asks the summary model for a new one, which costs a model call.
 
 `)
 		fs.PrintDefaults()
@@ -333,6 +345,10 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 	}
 	if *editsPath == "" || *turnsDir == "" {
 		fmt.Fprintln(stderr, "cassini speakers apply: --edits and --turns-dir are required")
+		return speakersExitUsage
+	}
+	if *summaryMode != speakersSummaryKeep && *summaryMode != speakersSummaryRewrite {
+		fmt.Fprintf(stderr, "cassini speakers apply: --summary must be %s or %s, got %q\n", speakersSummaryKeep, speakersSummaryRewrite, *summaryMode)
 		return speakersExitUsage
 	}
 	editsRaw, err := os.ReadFile(*editsPath)
@@ -352,7 +368,7 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 			return speakersExitRuntime
 		}
 	}
-	report, err := applySpeakerEditsToBundle(files[0], editsRaw, *turnsDir, recordingSHA256, stderr)
+	report, err := applySpeakerEditsToBundle(files[0], editsRaw, *turnsDir, recordingSHA256, *summaryMode == speakersSummaryRewrite, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return speakersExitCodeFor(err)
@@ -390,7 +406,7 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 // the copy is kept for undo, unlisted. Warnings (a summary that could not be
 // rewritten) go to stderr. With recordingSHA256, every turn set must have been
 // measured on that recording.
-func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, recordingSHA256 string, stderr io.Writer) (speakersApplyReport, error) {
+func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, recordingSHA256 string, rewriteSummary bool, stderr io.Writer) (speakersApplyReport, error) {
 	doc, err := transcribe.ParseSpeakerEdits(editsRaw)
 	if err != nil {
 		return speakersApplyReport{}, speakersFail(speakersExitRuntime, "invalid: %v", err)
@@ -589,7 +605,7 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 		}
 		// The summary model runs before the first write: it is the slow,
 		// fallible step, and the bundle stays as it was while it runs.
-		summary, err := planSpeakerSummary(root, previousEdits.Summary, edited, editsRecord.EditsSHA256, stderr)
+		summary, err := planSpeakerSummary(root, previousEdits.Summary, edited, editsRecord.EditsSHA256, rewriteSummary, stderr)
 		if err != nil {
 			return speakersApplyReport{}, err
 		}
@@ -1019,7 +1035,11 @@ type speakerSummaryPlan struct {
 // these exact edits: a retried apply, or a replay onto a bundle this apply
 // already wrote, costs nothing, while a rebuilt bundle (whose fresh summary
 // has no record) is rewritten. A meeting without a summary gets none.
-func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited transcribe.TranscriptSpeakers, editsSHA256 string, stderr io.Writer) (speakerSummaryPlan, error) {
+//
+// The rewrite costs a model call, so it happens only when asked for. Without
+// rewrite the summary is kept and reported "stale", exactly as when the model
+// is unavailable, and a later apply asked to rewrite still can.
+func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited transcribe.TranscriptSpeakers, editsSHA256 string, rewrite bool, stderr io.Writer) (speakerSummaryPlan, error) {
 	path := filepath.Join(root, speakersSummaryFile)
 	if !fileExists(path) && !fileExists(filepath.Join(root, speakersBaseSummary)) {
 		return speakerSummaryPlan{status: "none"}, nil
@@ -1045,6 +1065,9 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 		kept := *previous
 		kept.EditsSHA256 = editsSHA256
 		return speakerSummaryPlan{status: "unchanged", record: &kept}, nil
+	}
+	if !rewrite {
+		return speakerSummaryPlan{status: "stale", record: previous}, nil
 	}
 	body, model, err := summarizeSpeakersFn(edited)
 	if err != nil {

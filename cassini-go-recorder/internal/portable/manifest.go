@@ -41,7 +41,34 @@ const (
 
 type Processing struct {
 	Transcription TranscriptionStatus `json:"transcription"`
+	// MeetingSummary says what the summary step did. Absent in files sealed
+	// before it was recorded, where a missing summary may mean the step was
+	// off, failed or never ran: absence asserts nothing.
+	MeetingSummary *SummaryStatus `json:"meetingSummary,omitempty"`
 }
+
+// SummaryStatus is the summary step's outcome: "completed" (Model says which
+// model wrote it), "skipped" (Reason: disabled, not_configured, no_transcript)
+// or "failed" (Reason: llm_failed). The failure itself stays in the build log;
+// the file only says that it happened.
+type SummaryStatus struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+	Model  string `json:"model,omitempty"`
+}
+
+// The summary step's statuses and reasons, as SummaryStatus carries them.
+const (
+	SummaryCompleted = "completed"
+	SummarySkipped   = "skipped"
+	SummaryFailed    = "failed"
+
+	SummaryReasonDisabled      = "disabled"
+	SummaryReasonNotConfigured = "not_configured"
+	SummaryReasonNoTranscript  = "no_transcript"
+	SummaryReasonLLMFailed     = "llm_failed"
+)
+
 type TranscriptionStatus struct {
 	Status   string `json:"status"`
 	Reason   string `json:"reason,omitempty"`

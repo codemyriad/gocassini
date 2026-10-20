@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	inspectpkg "gocassini/internal/inspect"
+	"gocassini/internal/portable"
 )
 
 // summaryLLMEnv points the summary step at an endpoint the way an operator
@@ -116,6 +117,62 @@ func packFixtureOpusWithSummary(t *testing.T, dir, name, summaryBody string) str
 	return outPath
 }
 
+// A file that records its processing gets the summary outcome too, so it no
+// longer reads as "no summary, reason unknown".
+func TestMeetingsSummarizeRecordsTheSummaryOutcome(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "meeting.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	manifestPath := filepath.Join(bundleDir, "manifest.json")
+	var manifest map[string]any
+	if err := json.Unmarshal(readFileBytes(t, manifestPath), &manifest); err != nil {
+		t.Fatalf("parse artifact manifest: %v", err)
+	}
+	// As a build that tried the summary step and failed it would leave it.
+	manifest["processing"] = map[string]any{
+		"transcription":  map[string]any{"status": "completed", "model": "test-stt"},
+		"meetingSummary": map[string]any{"status": "failed", "reason": "llm_failed"},
+	}
+	updated, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("encode artifact manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, updated, 0o644); err != nil {
+		t.Fatalf("write artifact manifest: %v", err)
+	}
+	path := filepath.Join(tmp, "meeting.opus")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"pack", bundleDir, "--out", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack fixture failed code=%d stderr=%q", code, stderr.String())
+	}
+	if before := decodePortableManifestFromOpus(t, path); before.Processing == nil || before.Processing.MeetingSummary == nil ||
+		before.Processing.MeetingSummary.Status != "failed" {
+		t.Fatalf("seal lost the summary outcome: %+v", before.Processing)
+	}
+
+	stub := &stubSummaryLLM{}
+	server := httptest.NewServer(stub.handler("# Meeting Summary\n\nRecovered."))
+	defer server.Close()
+	summaryLLMEnv(t, server.URL)
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), []string{"meetings", "summarize", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("summarize failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	after := decodePortableManifestFromOpus(t, path)
+	if after.Processing == nil || after.Processing.Transcription.Status != "completed" {
+		t.Fatalf("transcription outcome lost: %+v", after.Processing)
+	}
+	want := portable.SummaryStatus{Status: "completed", Model: "test-summary-model"}
+	if got := after.Processing.MeetingSummary; got == nil || *got != want {
+		t.Fatalf("summary outcome = %+v, want %+v", got, want)
+	}
+}
+
 func readFileBytes(t *testing.T, path string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -178,6 +235,11 @@ func TestMeetingsSummarizeSealsASummaryInPlace(t *testing.T) {
 	}
 	if got := after.Provenance.MeetingSummary.Model; got != "test-summary-model" {
 		t.Errorf("meetingSummary provenance model = %q, want test-summary-model", got)
+	}
+	// This fixture records no processing block, and the backfill must not
+	// invent one: a summary status beside a transcription status nobody wrote.
+	if after.Processing != nil {
+		t.Errorf("backfill invented a processing block: %+v", after.Processing)
 	}
 
 	// The audio was not re-encoded: the file still claims — and the reader
