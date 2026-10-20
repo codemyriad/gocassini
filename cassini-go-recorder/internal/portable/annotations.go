@@ -14,6 +14,7 @@ type AnnotationActor = annotations.AnnotationActor
 var ParseAnnotations = annotations.ParseAnnotations
 var UserAnnotationTitle = annotations.UserTitle
 var ValidateAnnotations = annotations.ValidateAnnotations
+var ValidateAnnotationTitle = annotations.ValidateAnnotationTitle
 var ValidateAnnotationLabel = annotations.ValidateAnnotationLabel
 var NewAnnotationTagID = annotations.NewAnnotationTagID
 var NewAnnotationItemID = annotations.NewAnnotationItemID
