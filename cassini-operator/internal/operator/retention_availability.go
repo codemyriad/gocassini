@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -67,12 +68,16 @@ func (rt *Runtime) artifactAvailability(job Job) artifactAvailability {
 	if policy := processingPolicy(job); policy != nil {
 		a.SourceRetention = policy.SourceRetention
 	}
-	a.MediaCleanup = rt.mediaCleanupStatus(job)
+	deleted := rt.store.meetingDeleted(context.Background(), job.ID)
+	a.MediaCleanup = rt.mediaCleanupStatus(job, deleted)
 	if a.MediaCleanup != nil {
 		a.RerunBlockedReason = "This recording deletes source media after processing; processing cannot be rerun."
 		if a.MediaCleanup.Status == "completed" {
 			a.RerunBlockedReason = "Source media was deleted after processing. This job cannot be rerun."
 		}
+	}
+	if deleted {
+		a.RerunBlockedReason = "The meeting was deleted; this job cannot be rerun."
 	}
 	return a
 }

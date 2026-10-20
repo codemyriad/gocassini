@@ -181,6 +181,20 @@ export interface DataProvider {
   // own share sidebar, so Cassini needs no share dialog of its own.
   insightFilesUrl?(record: InsightRecord): string;
 
+  // OPTIONAL (D-861): delete a meeting everywhere — `POST
+  // annotations/meetings/<id>/delete`. The operator checks the caller can
+  // read the meeting (the same rule as marking it), moves the recording into
+  // the archive owner's Nextcloud trashbin and removes the meeting from every
+  // serving surface; nothing restores it from here.
+  //
+  // Optional for the reason the tag writes are: only an operator can remove
+  // the published recording, so a standalone export offers no Delete control
+  // rather than one that fails. Rejects with an AnnotationError — a 404 means
+  // the meeting already left the caller's readable set, which after a delete
+  // is the terminal answer, and a 409 means the meeting is busy right now and
+  // the delete may simply be retried.
+  deleteMeeting?(entry: MeetingCatalogEntry): Promise<void>;
+
   // OPTIONAL: people's edits to a meeting's speakers — `GET|POST
   // annotations/meetings/<id>/speakers`. Saying that several people used one
   // participant's device separates the voices in that device's own audio, and

@@ -144,6 +144,14 @@ export class AppDataProvider extends StaticCatalogProvider {
     return (await requestAnnotations<{ job: TagJob }>(`${tagPath(tagId)}/delete`, {})).job;
   }
 
+  // POST annotations/meetings/<id>/delete (D-861). Anyone who can read a
+  // meeting can delete it; the operator verifies that and the service account
+  // moves the recording into its trashbin. The response carries nothing the
+  // viewer needs beyond success itself.
+  async deleteMeeting(entry: MeetingCatalogEntry): Promise<void> {
+    await requestAnnotations(`${meetingPath(entry)}/delete`, {});
+  }
+
   async loadTagJob(): Promise<TagJob | null> {
     return (await requestAnnotations<{ job: TagJob | null }>("tags/job")).job;
   }
