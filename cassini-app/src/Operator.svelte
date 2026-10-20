@@ -260,7 +260,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, Info, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
+  import { Activity, ArrowLeft, CassetteTape, ChevronRight, FileText, Inbox, Info, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
   import { fade } from "svelte/transition";
   import { guardLeave } from "./operator/unsaved";
   import { loadConfig } from "./operator/config";
@@ -269,10 +269,18 @@
     OperatorHttpError,
     type OperatorStateChangeEvent,
   } from "./operator/client";
-  import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
+  import type { Job, JobAttempt, JobDetailResponse, SummaryPlan } from "./operator/types";
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
   import { outcomeAttempt, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
+  import {
+    summaryActionLabel,
+    summaryConfirmTitle,
+    summaryCostText,
+    summaryEndpointText,
+    summaryReplaceText,
+    summaryUnavailableText,
+  } from "./operator/summaryAction";
   import Settings from "./Settings.svelte";
   import { applyJob, applyPanel, readJob, readPanel } from "./surfaceRouting";
 
@@ -633,6 +641,49 @@
     return ({ waiting: "Media deletion after processing", pending: "Media deletion pending", error: "Media deletion failed", completed: "Media deleted" } as Record<string, string>)[status] ?? status;
   }
 
+  // Writing a run's summary (D-814): what it would cost is loaded for a
+  // finished run, and nothing is queued before the administrator has read
+  // that and confirmed.
+  let summaryPlan: SummaryPlan | null = null;
+  let summaryPlanKey = "";
+  let confirmingSummary = false;
+  let submittingSummary = false;
+  let summaryError = "";
+
+  async function loadSummaryPlan(key: string, jobId: string) {
+    if (!operatorClient) return;
+    try {
+      const plan = await operatorClient.getJobSummary(jobId);
+      if (summaryPlanKey === key) summaryPlan = plan;
+    } catch (error) {
+      // No plan means no action offered; say why in the console rather than
+      // hide it.
+      console.error("summary plan unavailable", jobId, error);
+      if (summaryPlanKey === key) summaryPlan = null;
+    }
+  }
+
+  async function handleWriteSummary() {
+    if (!operatorClient || !selectedJob?.job || !summaryPlan?.available) return;
+    submittingSummary = true;
+    summaryError = "";
+    try {
+      await operatorClient.writeJobSummary(selectedJob.job.id, summaryPlan.has_summary);
+      confirmingSummary = false;
+      await refreshJobs();
+      await selectJob(selectedJob.job.id, { allowJobsRefresh: false });
+    } catch (error) {
+      const message = asMessage(error);
+      summaryError =
+        message === "has_summary" || message === "unavailable"
+          ? "The meeting changed since this was loaded. Check it and try again."
+          : message;
+    } finally {
+      submittingSummary = false;
+      updatePolling();
+    }
+  }
+
   async function handleRerunJob() {
     if (!operatorClient || !selectedJob?.job || !canRerunSelectedJob) {
       return;
@@ -973,6 +1024,19 @@
         (notice): notice is OutcomeNotice => notice !== null,
       )
     : [];
+  $: {
+    // One plan per finished run and state: a new attempt or an update reloads
+    // it, and leaves any open confirmation, which priced the old one.
+    const key =
+      selectedJob && jobFinished ? `${selectedJob.job.id}:${selectedJob.job.current_attempt_number}:${selectedJob.job.updated_at}` : "";
+    if (key !== summaryPlanKey) {
+      summaryPlanKey = key;
+      summaryPlan = null;
+      confirmingSummary = false;
+      summaryError = "";
+      if (key && selectedJob) void loadSummaryPlan(key, selectedJob.job.id);
+    }
+  }
   const outcomeToneClasses: Record<OutcomeNotice["tone"], string> = {
     error: "border-error/40 bg-error/10",
     warning: "border-warning/50 bg-warning/10",
@@ -1392,6 +1456,41 @@
                       </div>
                     </div>
                   {/each}
+                  {#if summaryPlan}
+                    {#if confirmingSummary}
+                      <div
+                        class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3"
+                        role="alertdialog"
+                        aria-label={summaryConfirmTitle(summaryPlan)}
+                      >
+                        <p class="text-sm font-semibold">{summaryConfirmTitle(summaryPlan)}</p>
+                        <p class="text-sm">{summaryCostText(summaryPlan)}</p>
+                        <p class="text-xs text-base-content/70">{summaryEndpointText(summaryPlan)}</p>
+                        {#if summaryReplaceText(summaryPlan)}
+                          <p class="text-xs text-base-content/70">{summaryReplaceText(summaryPlan)}</p>
+                        {/if}
+                        <div class="flex flex-wrap items-center gap-2">
+                          <button class="btn btn-sm btn-primary" type="button" disabled={submittingSummary} on:click={handleWriteSummary}>
+                            {summaryActionLabel(summaryPlan)}
+                          </button>
+                          <button class="btn btn-sm btn-ghost" type="button" disabled={submittingSummary} on:click={() => (confirmingSummary = false)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    {:else if summaryPlan.available}
+                      <div>
+                        <button class="btn btn-sm" type="button" on:click={() => (confirmingSummary = true)}>
+                          <FileText size={15} aria-hidden="true" />{summaryActionLabel(summaryPlan)}
+                        </button>
+                      </div>
+                    {:else if summaryUnavailableText(summaryPlan)}
+                      <p class="text-xs text-base-content/60">{summaryUnavailableText(summaryPlan)}</p>
+                    {/if}
+                  {/if}
+                  {#if summaryError}
+                    <p class="text-sm text-error" role="alert">{summaryError}</p>
+                  {/if}
                   {#if rerunBlockedReason && rerunVisible}
                     <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
                       <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />

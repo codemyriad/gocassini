@@ -966,6 +966,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 	}{
 		{"/jobs", http.HandlerFunc(rt.jobsHandler)},
 		{"/jobs/", http.HandlerFunc(rt.jobDetailHandler)},
+		{"/summaries/missing", http.HandlerFunc(rt.missingSummariesHandler)},
 		{"/events", http.HandlerFunc(rt.eventsHandler)},
 		{"/status", http.HandlerFunc(rt.statusHandler)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
@@ -2060,6 +2061,10 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rt.handleRerunJob(w, r, id)
+		return
+	}
+	if action == "summary" {
+		rt.handleJobSummary(w, r, id)
 		return
 	}
 	if r.Method != http.MethodGet {

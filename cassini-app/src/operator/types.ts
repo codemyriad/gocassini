@@ -101,6 +101,23 @@ export interface JobAttempt {
   summary_reason?: string;
 }
 
+// What writing (or rewriting) a meeting's summary would do and cost, as
+// GET /jobs/{id}/summary says before anyone confirms it (D-814).
+export interface SummaryPlan {
+  available: boolean;
+  /** Why it cannot be written now: not_published, no_transcript,
+   *  summaries_off, no_source_audio or busy. */
+  reason?: string;
+  has_summary: boolean;
+  calls: number;
+  words: number;
+  estimated_input_tokens: number;
+  provider?: string;
+  model?: string;
+  /** The endpoint is not on this network, so the call may be billed. */
+  external: boolean;
+}
+
 export interface JobDetailResponse {
   availability?: { media_cleanup?: MediaCleanupStatus; source_retention?: string; source: string; output: string; published_attempt: number; rerun_blocked_reason?: string };
   job: Job;
