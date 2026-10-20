@@ -50,7 +50,10 @@ type importPrincipal struct {
 
 // ImportJob is one file moving through fetch -> validate -> deliver -> share ->
 // index. Terminal states are done, failed and canceled.
+const importCLIRecovery = "This import uses a local CLI file. Run import-meeting again with the source file, or upload it as a new import."
+
 type ImportJob struct {
+	Origin        string         `json:"origin"`
 	ExpectedBytes int64          `json:"expectedBytes,omitempty"`
 	StagingState  string         `json:"stagingState,omitempty"`
 	ClearedAt     string         `json:"clearedAt,omitempty"`
@@ -76,6 +79,11 @@ type ImportJob struct {
 	UpdatedAt              string `json:"updatedAt"`
 }
 
+// The persisted local: marker already distinguishes CLI sources, including
+// records written before upload tracking. Expose that origin without a second
+// database field that could disagree with the source path.
+func (j ImportJob) isCLI() bool { return strings.HasPrefix(j.StagedPath, "local:") }
+
 const importJobColumns = `id,batch_id,created_by,source_name,staged_path,format,state,phase,error,audience_json,content_id,source_room_id,meeting_created_at_utc,meeting_recorded_at_local,delivered_name,file_id,imported_at,created_at,updated_at,expected_bytes,staging_state,cleared_at`
 
 func scanImportJob(scan func(dest ...any) error) (ImportJob, error) {
@@ -89,6 +97,10 @@ func scanImportJob(scan func(dest ...any) error) (ImportJob, error) {
 	}
 	if err := json.Unmarshal([]byte(audience), &j.Sharing); err != nil {
 		return ImportJob{}, fmt.Errorf("import job %s: decode sharing: %w", j.ID, err)
+	}
+	j.Origin = "upload"
+	if j.isCLI() {
+		j.Origin = "cli"
 	}
 	return j, nil
 }
@@ -166,7 +178,7 @@ func (s *Store) ImportJob(ctx context.Context, id string) (ImportJob, bool, erro
 // single worker to run. Claiming happens by moving the state off `queued`.
 func (s *Store) nextQueuedImport(ctx context.Context) (ImportJob, bool, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+importJobColumns+` FROM import_jobs WHERE state=? ORDER BY created_at, id LIMIT 1`, importStateQueued)
+		`SELECT `+importJobColumns+` FROM import_jobs WHERE state=? AND staged_path NOT GLOB 'local:*' ORDER BY created_at, id LIMIT 1`, importStateQueued)
 	j, err := scanImportJob(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ImportJob{}, false, nil
@@ -207,13 +219,31 @@ func (s *Store) SetImportJobOutcome(ctx context.Context, id, deliveredName strin
 // Only import-processing states are requeued. Uploading and staged records
 // must never enter the worker until staging has been confirmed.
 func (s *Store) RequeueUnfinishedImports(ctx context.Context) (int64, error) {
-	result, err := s.db.ExecContext(ctx,
-		`UPDATE import_jobs SET state=?,phase='',updated_at=? WHERE state IN (?,?,?,?,?,?)`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Local CLI source files cannot be fetched through the web worker. Keep
+	// interrupted CLI attempts visible as failures instead of retrying DAV.
+	if _, err := tx.ExecContext(ctx, `UPDATE import_jobs SET state=?,phase='',error=?,updated_at=? WHERE staged_path GLOB 'local:*' AND state IN (?,?,?,?,?,?)`,
+		importStateFailed, importCLIRecovery, nowUTCString(), importStateQueued, importStateFetching, importStateValidating, importStateDelivering, importStateSharing, importStateIndexing); err != nil {
+		return 0, err
+	}
+	result, err := tx.ExecContext(ctx,
+		`UPDATE import_jobs SET state=?,phase='',updated_at=? WHERE staged_path NOT GLOB 'local:*' AND state IN (?,?,?,?,?,?)`,
 		importStateQueued, nowUTCString(), importStateQueued, importStateFetching, importStateValidating, importStateDelivering, importStateSharing, importStateIndexing)
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // CancelImportJob marks a non-terminal job canceled. The worker's context is
@@ -228,7 +258,14 @@ func (s *Store) CancelImportJob(ctx context.Context, id string) error {
 // RetryImportJob queues a staged file or re-queues a failed/canceled import.
 // Upload failures are deliberately excluded: they require a new upload.
 func (s *Store) RetryImportJob(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx,
+	job, _, err := s.ImportJob(ctx, id)
+	if err != nil {
+		return err
+	}
+	if job.isCLI() {
+		return errors.New(importCLIRecovery)
+	}
+	_, err = s.db.ExecContext(ctx,
 		`UPDATE import_jobs SET state=?,phase='',error='',updated_at=? WHERE id=? AND state IN (?,?,?) AND staging_state!='removed' AND cleared_at=''`,
 		importStateQueued, nowUTCString(), id, importStateFailed, importStateCanceled, importStateStaged)
 	return err

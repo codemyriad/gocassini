@@ -148,3 +148,33 @@ func TestSanitizeStagedImportPath(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIImportsRejectWebRecoveryAndRemainVisible(t *testing.T) {
+	s := importHandlerService(t)
+	ctx := context.Background()
+	job := ImportJob{ID: "cli", BatchID: "b", CreatedBy: "alice", SourceName: "source.opus", StagedPath: "local:/tmp/source.opus"}
+	if err := s.rt.store.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rt.store.SetImportJobState(ctx, job.ID, importStateFailed, "", "CLI validation failed"); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"retry", "cancel"} {
+		w := importDo(t, s, "POST", "/imports/cli/"+action, "alice", "")
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "local CLI file") {
+			t.Fatalf("%s: %d %s", action, w.Code, w.Body.String())
+		}
+		if w := importDo(t, s, "POST", "/imports/cli/"+action, "mallory", ""); w.Code != http.StatusNotFound {
+			t.Fatal(w.Code)
+		}
+	}
+	w := importDo(t, s, "GET", "/imports", "alice", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"origin":"cli"`) || !strings.Contains(w.Body.String(), "CLI validation failed") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// Defense in depth: even a direct worker call must refuse the local source
+	// before attempting DAV or touching local files. This service has no client.
+	if _, err := s.performImport(ctx, job); err == nil || !strings.Contains(err.Error(), "local CLI file") {
+		t.Fatal(err)
+	}
+}

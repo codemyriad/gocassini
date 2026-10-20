@@ -83,3 +83,42 @@ it.each(["staged", "failed", "canceled"] as const)("polls a retried %s import th
  await expect.element(page.getByText("imported", { exact: true }), { timeout: 6000 }).toBeVisible();
  expect(host.querySelector(".import-item progress")).toBeNull();
 });
+
+it.each(["failed", "canceled"] as const)("explains recovery for %s CLI imports without offering web Retry", async (state) => {
+ const cli = { ...job("cli", state), stagedPath: "local:/tmp/source.json", origin: "cli" as const, error: "CLI import failed" };
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [cli, job("browser", "failed")],
+  retryImport: vi.fn(async () => {}),
+ });
+ open(provider);
+ await expect.element(page.getByText("cli.json", { exact: true })).toBeVisible();
+ const cliRow = Array.from(host.querySelectorAll(".import-item")).find((row) => row.textContent?.includes("cli.json"))!;
+ expect(cliRow.textContent).toContain("Run import-meeting again with the source file");
+ expect(cliRow.textContent).not.toContain("Retry");
+ expect(cliRow.textContent).not.toContain("Cancel");
+ await expect.element(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+});
+
+it("imports a 51-file selection without hitting the server batch limit", async () => {
+ let jobs: ImportJobRecord[] = [];
+ let uploads = 0;
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [...jobs],
+  stageImportUpload: vi.fn(async () => `.CassiniImports/batch-${++uploads}.json`),
+  startImports: vi.fn(async (files: Array<{ stagedPath: string }>) => {
+   if (files.length > 50) throw new Error("an import names between 1 and 50 staged files");
+   const created = files.map((file) => ({ ...job(file.stagedPath.split("/").at(-1)!, "done"), stagedPath: file.stagedPath }));
+   jobs.push(...created);
+   return created;
+  }),
+ });
+ open(provider);
+ const transfer = new DataTransfer();
+ for (let i = 0; i < 51; i++) transfer.items.add(new File([JSON.stringify(fixture)], `meeting-${i}.json`, {type:"application/json"}));
+ const input = host.querySelector('input[type="file"]') as HTMLInputElement;
+ input.files = transfer.files; input.dispatchEvent(new Event("change",{bubbles:true}));
+ await page.getByRole("button",{name:"Import 51 meetings",exact:true}).click();
+ await expect.poll(() => host.querySelectorAll(".import-item .badge-success").length).toBe(51);
+ expect(uploads).toBe(51);
+ expect(host.querySelector('[role="alert"]')).toBeNull();
+});

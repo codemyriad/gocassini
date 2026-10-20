@@ -34,6 +34,7 @@ export interface ImportFileRequest {
 
 // One import job as the operator serves it (GET imports).
 export interface ImportJobRecord {
+  origin?: "upload" | "cli";
   id: string;
   batchId: string;
   createdBy: string;
