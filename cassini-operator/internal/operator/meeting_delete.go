@@ -52,25 +52,18 @@ func (s *Store) deletedMeetingJobs(ctx context.Context) (map[string]bool, error)
 	return deleted, rows.Err()
 }
 
-// scheduleDeletedMeetingDisposal makes a deleted meeting's job eligible for
-// the journaled local disposal worker and nudges it. Best-effort by design:
-// the worker retries on its own schedule, and an imported meeting has no job
-// row or local artifacts at all.
-func (s *annotationService) scheduleDeletedMeetingDisposal(ctx context.Context, name string) {
+// enqueueDeletedMeetingDisposal records the local cleanup obligation in the
+// transaction that completes remote deletion. Imported meetings have no job
+// row or local artifacts, so the INSERT selects only an existing job.
+func enqueueDeletedMeetingDisposal(ctx context.Context, tx *sql.Tx, name string) error {
 	job := meetingStem(name)
-	if s.rt == nil || !validArtifactJob(job) {
-		return
-	}
-	if _, err := s.rt.store.GetJob(ctx, job); err != nil {
-		return
+	if !validArtifactJob(job) {
+		return nil
 	}
 	// A 'completed' row means the source-media policy already ran; reopen it so
 	// the worker sweeps again with the deleted meeting's wider path set.
-	if _, err := s.rt.store.db.ExecContext(ctx, `INSERT INTO media_cleanup(job_id,status) VALUES(?,'waiting') ON CONFLICT(job_id) DO UPDATE SET status=CASE WHEN status='completed' THEN 'waiting' ELSE status END,retry_at=0`, job); err != nil {
-		s.logf("annotations: schedule disposal for deleted %s: %v", name, err)
-		return
-	}
-	s.rt.cleanupMediaAfterStage(job)
+	_, err := tx.ExecContext(ctx, `INSERT INTO media_cleanup(job_id,status) SELECT id,'waiting' FROM jobs WHERE id=? ON CONFLICT(job_id) DO UPDATE SET status=CASE WHEN status='completed' THEN 'waiting' ELSE status END,retry_at=0`, job)
+	return err
 }
 
 // deleteMeeting answers POST annotations/meetings/<id>/delete.

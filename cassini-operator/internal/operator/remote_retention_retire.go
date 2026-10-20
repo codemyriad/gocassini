@@ -191,10 +191,11 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 	if err := s.finishRemoteRetention(ctx, op); err != nil {
 		return err
 	}
-	// A user delete also reclaims the job's whole local footprint; expiry
-	// leaves the working copy to container retention (docs/container-retention.md).
+	// Completion durably enqueued the user delete's local disposal. This nudge
+	// is optional: if it cannot run or we crash here, the worker finds the row.
+	// Expiry leaves the working copy to container retention.
 	if op.Action == remoteRetentionActionDelete {
-		s.scheduleDeletedMeetingDisposal(ctx, op.Name)
+		s.rt.cleanupMediaAfterStage(meetingStem(op.Name))
 	}
 	return nil
 }
