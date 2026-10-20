@@ -334,6 +334,10 @@ func (s *importService) create(w http.ResponseWriter, r *http.Request, caller st
 }
 
 func (s *importService) cancel(w http.ResponseWriter, r *http.Request, job ImportJob) {
+	if job.isCLI() {
+		writeJSONError(w, http.StatusConflict, importCLIRecovery)
+		return
+	}
 	if job.State == importStateUploading {
 		writeJSONError(w, 409, "upload is still active")
 		return
@@ -367,6 +371,10 @@ func (s *importService) retry(w http.ResponseWriter, r *http.Request, job Import
 		return
 	}
 	job = current
+	if job.isCLI() {
+		writeJSONError(w, http.StatusConflict, importCLIRecovery)
+		return
+	}
 	if job.ClearedAt != "" || job.StagingState == "removed" || (job.ExpectedBytes > 0 && job.StagingState != "present") {
 		writeJSONError(w, 409, "staged file was removed; upload the file again")
 		return
@@ -406,9 +414,9 @@ func (s *importService) startWorker() {
 	rt.workerWG.Add(1)
 	go func() {
 		defer rt.workerWG.Done()
-		// Durable intent survives process death: anything that was in flight is
-		// re-queued, and the engine is idempotent, so re-running it is the whole
-		// recovery. Terminal rows stay terminal.
+		// Uploaded imports resume after process death. Interrupted CLI imports
+		// become failures with local-source recovery guidance; the web worker
+		// cannot fetch those files. Terminal rows stay terminal.
 		if n, err := rt.store.RequeueUnfinishedImports(rt.ctx); err != nil {
 			s.logf("import job recovery: %v", err)
 		} else if n > 0 {
@@ -486,6 +494,9 @@ func (s *importService) runImportJob(job ImportJob) {
 }
 
 func (s *importService) performImport(ctx context.Context, job ImportJob) (meetingImportResult, error) {
+	if job.isCLI() {
+		return meetingImportResult{}, fmt.Errorf("%s", importCLIRecovery)
+	}
 	_ = s.setState(job.ID, importStateFetching, "fetching", "")
 	staging, err := os.MkdirTemp(rtWorkScratchDir(s.rt.cfg.WorkRoot), ".import-fetch-")
 	if err != nil {

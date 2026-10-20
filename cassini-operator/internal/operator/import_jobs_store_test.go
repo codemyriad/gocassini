@@ -84,7 +84,7 @@ func TestImportJobLifecycle(t *testing.T) {
 func TestImportJobCancelBeatsWorkerUpdates(t *testing.T) {
 	s := openImportTestStore(t)
 	ctx := context.Background()
-	job := ImportJob{ID: "01TESTIMPORT0000000000000B", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: "local:/tmp/a.opus"}
+	job := ImportJob{ID: "01TESTIMPORT0000000000000B", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus"}
 	if err := s.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
 		t.Fatal(err)
 	}
@@ -211,5 +211,51 @@ func TestParseSharePrincipals(t *testing.T) {
 	}
 	if audience, err := parseSharePrincipals(""); err != nil || len(audience) != 0 {
 		t.Fatalf("empty list: %v %v", audience, err)
+	}
+}
+
+func TestInterruptedCLIImportsAreNotRequeuedAsWebUploads(t *testing.T) {
+	s := openImportTestStore(t)
+	ctx := context.Background()
+	states := []string{importStateQueued, importStateFetching, importStateValidating, importStateDelivering, importStateSharing, importStateIndexing, importStateFailed, importStateCanceled, importStateDone}
+	for _, state := range states {
+		j := ImportJob{ID: "cli-" + state, BatchID: "b", CreatedBy: "alice", SourceName: "source.opus", StagedPath: "local:/tmp/source.opus"}
+		if err := s.CreateImportJobs(ctx, []ImportJob{j}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetImportJobState(ctx, j.ID, state, "", "original error"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	upload := ImportJob{ID: "upload", BatchID: "b", CreatedBy: "alice", SourceName: "upload.opus", StagedPath: ".CassiniImports/upload.opus"}
+	if err := s.CreateImportJobs(ctx, []ImportJob{upload}); err != nil {
+		t.Fatal(err)
+	}
+	// Queue selection itself excludes CLI jobs, even before startup recovery.
+	if next, ok, err := s.nextQueuedImport(ctx); err != nil || !ok || next.ID != upload.ID {
+		t.Fatal(next, ok, err)
+	}
+	if n, err := s.RequeueUnfinishedImports(ctx); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+	for _, state := range states {
+		j, ok, err := s.ImportJob(ctx, "cli-"+state)
+		if err != nil || !ok || j.Origin != "cli" {
+			t.Fatal(j, ok, err)
+		}
+		if importStateTerminal(state) {
+			if j.State != state || j.Error != "original error" {
+				t.Fatal(j)
+			}
+		} else if j.State != importStateFailed || j.Error != importCLIRecovery {
+			t.Fatal(j)
+		}
+		if err := s.RetryImportJob(ctx, j.ID); err == nil {
+			t.Fatalf("CLI retry accepted: %s", j.ID)
+		}
+	}
+	jobs, err := s.ImportJobsFor(ctx, "alice")
+	if err != nil || len(jobs) != len(states)+1 {
+		t.Fatal(jobs, err)
 	}
 }

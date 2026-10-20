@@ -298,6 +298,8 @@
     catch (error) { submitError = error instanceof Error ? error.message : String(error); }
   }
 
+  const CLI_RECOVERY_HELP = "This import uses a local CLI file. Run import-meeting again with the source file, or upload it as a new import.";
+
   const JOB_LABELS: Record<string, string> = {
     uploading: "uploading",
     upload_failed: "upload incomplete",
@@ -514,6 +516,7 @@
         <p class="text-sm text-base-content/60 py-2">Nothing imported from this account yet.</p>
       {/if}
       {#each shownJobs as job (job.id)}
+        {@const fromCLI = job.origin === "cli" || job.stagedPath.startsWith("local:")}
         <div class="import-item" class:import-item-error={job.state === "failed"}>
           <div class="flex items-baseline justify-between gap-2 flex-wrap">
             <span class="font-semibold truncate">{job.sourceName}</span>
@@ -524,9 +527,9 @@
                 class:badge-error={job.state === "failed"}
                 class:badge-info={!importJobTerminal(job.state)}
               >{JOB_LABELS[job.state] ?? job.state}</span>
-              {#if !importJobTerminal(job.state) && job.state !== "uploading"}
+              {#if !fromCLI && !importJobTerminal(job.state) && job.state !== "uploading"}
                 <button type="button" class="btn btn-ghost btn-xs" on:click={() => void cancelJob(job)}>Cancel</button>
-              {:else if (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed"}
+              {:else if !fromCLI && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed"}
                 <button type="button" class="btn btn-ghost btn-xs gap-1" on:click={() => void retryJob(job)}>
                   <RotateCcw size={13} aria-hidden="true" /> Retry
                 </button>
@@ -536,6 +539,9 @@
               {/if}
             </span>
           </div>
+          {#if fromCLI && job.state !== "done" && job.error !== CLI_RECOVERY_HELP}
+            <p class="text-sm text-base-content/65 mt-0.5">{CLI_RECOVERY_HELP}</p>
+          {/if}
           {#if (job.state === "failed" || job.state === "upload_failed") && job.error}
             <p class="text-sm text-error mt-0.5">{job.error}</p>
           {:else if job.state === "done"}
