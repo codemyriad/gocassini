@@ -8,6 +8,8 @@ export interface Job {
   media_cleanup?: MediaCleanupStatus;
 	/** True when retention has deleted the original source recording. */
 	source_expired?: boolean;
+	/** True when a user deleted the published meeting (D-861). */
+	meeting_deleted?: boolean;
   id: string;
   provider: string;
   request_json: string;

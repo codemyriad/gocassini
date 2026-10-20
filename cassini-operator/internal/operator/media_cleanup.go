@@ -22,8 +22,19 @@ func terminalMediaJob(job Job) bool {
 	return job.State == "interrupted" || (job.Stage == "done" && (job.State == "succeeded" || job.State == "failed"))
 }
 
-func (rt *Runtime) mediaCleanupStatus(job Job) *mediaCleanupStatus {
-	if !deletesSourceMedia(job) {
+// mediaDisposalEligible says whose local footprint the disposal worker may
+// reclaim: a terminal job whose policy deletes source media, or any job whose
+// published meeting a user deleted (D-861) — deletion makes every local
+// artifact, logs and seals included, debris.
+func (rt *Runtime) mediaDisposalEligible(ctx context.Context, job Job) bool {
+	if deletesSourceMedia(job) && terminalMediaJob(job) {
+		return true
+	}
+	return rt.store.meetingDeleted(ctx, job.ID)
+}
+
+func (rt *Runtime) mediaCleanupStatus(job Job, deleted bool) *mediaCleanupStatus {
+	if !deletesSourceMedia(job) && !deleted {
 		return nil
 	}
 	status := &mediaCleanupStatus{}
@@ -32,7 +43,7 @@ func (rt *Runtime) mediaCleanupStatus(job Job) *mediaCleanupStatus {
 		status.Status = "error"
 		status.LastError = "Cannot read media cleanup state"
 	}
-	if status.Status == "waiting" && terminalMediaJob(job) {
+	if status.Status == "waiting" && (terminalMediaJob(job) || deleted) {
 		status.Status = "pending"
 	}
 	return status
@@ -50,7 +61,7 @@ func (rt *Runtime) cleanupMediaAfterStage(id string) {
 
 func (rt *Runtime) attemptMediaCleanup(id string) {
 	job, err := rt.store.GetJob(context.Background(), id)
-	if err != nil || !deletesSourceMedia(job) || !terminalMediaJob(job) {
+	if err != nil || !rt.mediaDisposalEligible(context.Background(), job) {
 		return
 	}
 	var status string
@@ -77,7 +88,8 @@ func (rt *Runtime) attemptMediaCleanup(id string) {
 // Caller reserves both the job and archive readers. The obligation remains
 // pending until every journal has removed its old bytes, including hard links.
 func (rt *Runtime) cleanupJobMedia(job Job) error {
-	if !validArtifactJob(job.ID) || !deletesSourceMedia(job) || !terminalMediaJob(job) {
+	deleted := rt.store.meetingDeleted(context.Background(), job.ID)
+	if !validArtifactJob(job.ID) || !rt.mediaDisposalEligible(context.Background(), job) {
 		return errors.New("job is not eligible for media cleanup")
 	}
 	if _, err := rt.store.db.Exec(`UPDATE media_cleanup SET status='pending' WHERE job_id=?`, job.ID); err != nil {
@@ -103,19 +115,25 @@ func (rt *Runtime) cleanupJobMedia(job Job) error {
 	for _, a := range attempts {
 		// Keep the immutable JSON seal (including on publication failure). Everything
 		// else in the seal directory is temporary output, including partial Opus packs.
+		// A deleted meeting keeps nothing: seals, logs and the transcript-only
+		// canonical JSON are debris once the published meeting is gone (D-861).
 		paths := []string{canonicalRunPath(rt.cfg.WorkRoot, job.ID), canonicalMeetingPath(rt.cfg.WorkRoot, job.ID), canonicalOpusPath(rt.cfg.WorkRoot, job.ID), attemptRunPath(rt.cfg.WorkRoot, job.ID, a.AttemptNumber), attemptMeetingPath(rt.cfg.WorkRoot, job.ID, a.AttemptNumber), attemptSitePath(rt.cfg.WorkRoot, job.ID, a.AttemptNumber), attemptScratchPath(rt.cfg.WorkRoot, job.ID, a.AttemptNumber)}
 		paths = append(paths, mediaPromotionPaths(rt.cfg.WorkRoot, job.ID)...)
 		seal := attemptSealDir(rt.cfg.WorkRoot, job.ID, a.AttemptNumber)
 		if err := validateArtifactTree(rt.cfg.WorkRoot, seal); err != nil {
 			return err
 		}
-		entries, e := os.ReadDir(seal)
-		if e != nil && !os.IsNotExist(e) {
-			return e
-		}
-		for _, entry := range entries {
-			if entry.Name() != job.ID+".json" {
-				paths = append(paths, filepath.Join(seal, entry.Name()))
+		if deleted {
+			paths = append(paths, seal, attemptLogsDir(rt.cfg.WorkRoot, job.ID, a.AttemptNumber), filepath.Join(currentRoot(rt.cfg.WorkRoot), job.ID+".json"))
+		} else {
+			entries, e := os.ReadDir(seal)
+			if e != nil && !os.IsNotExist(e) {
+				return e
+			}
+			for _, entry := range entries {
+				if entry.Name() != job.ID+".json" {
+					paths = append(paths, filepath.Join(seal, entry.Name()))
+				}
 			}
 		}
 		if err := rt.removeMediaPaths(job.ID, a.AttemptNumber, paths); err != nil {
@@ -208,7 +226,7 @@ func (rt *Runtime) startMediaCleanupWorker() {
 
 func (rt *Runtime) runMediaCleanupPass() {
 	// Only admitted disposal obligations, not an orphan scan or age-policy sweep.
-	rows, err := rt.store.db.QueryContext(rt.ctx, `SELECT c.job_id FROM media_cleanup c JOIN jobs j ON j.id=c.job_id WHERE c.status!='completed' AND c.retry_at<=? AND (j.state='interrupted' OR (j.stage='done' AND j.state IN ('succeeded','failed'))) ORDER BY c.retry_at,c.job_id LIMIT 100`, time.Now().Unix())
+	rows, err := rt.store.db.QueryContext(rt.ctx, `SELECT c.job_id FROM media_cleanup c JOIN jobs j ON j.id=c.job_id WHERE c.status!='completed' AND c.retry_at<=? AND (j.state='interrupted' OR (j.stage='done' AND j.state IN ('succeeded','failed')) OR EXISTS(SELECT 1 FROM meeting_lifecycle l WHERE l.name IN (j.id||'.opus',j.id||'.json') AND l.reason='deleted' AND l.state IN ('retiring','retired'))) ORDER BY c.retry_at,c.job_id LIMIT 100`, time.Now().Unix())
 	if err != nil {
 		if rt.ctx.Err() == nil {
 			rt.logger.Printf("media cleanup scan failed: %v", err)
@@ -254,7 +272,7 @@ func (rt *Runtime) handleRetryMediaCleanup(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, 500, err.Error())
 		return
 	}
-	if !deletesSourceMedia(job) || !terminalMediaJob(job) {
+	if !rt.mediaDisposalEligible(r.Context(), job) {
 		writeJSONError(w, 409, "job is not eligible for media cleanup")
 		return
 	}

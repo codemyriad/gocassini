@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,6 +152,61 @@ func TestPrepareMeetingDeletion(t *testing.T) {
 				t.Fatalf("preview action %q", effect.Action)
 			}
 		})
+	}
+}
+
+// A delete reclaims the job's whole local footprint — source capture, build
+// workspace, canonical artifacts, seals, logs — and leaves only the job and
+// attempt rows, surfaced as deleted and refusing reruns (Q1).
+func TestDeletedMeetingDisposalReclaimsEverything(t *testing.T) {
+	f := newMeetingDeleteFixture(t, ".opus")
+	ctx := context.Background()
+	insertJob(t, f.rt.store.db, "m", nowUTCString())
+	if _, err := f.rt.store.db.Exec(`UPDATE jobs SET stage='done',state='succeeded' WHERE id='m'`); err != nil {
+		t.Fatal(err)
+	}
+	root := f.rt.cfg.WorkRoot
+	paths := []string{
+		filepath.Join(canonicalRunPath(root, "m"), "session", "audio.rtp"),
+		filepath.Join(canonicalMeetingPath(root, "m"), "transcript.json"),
+		canonicalOpusPath(root, "m"),
+		filepath.Join(currentRoot(root), "m.json"),
+		filepath.Join(attemptRunPath(root, "m", 1), "recording.mkv"),
+		filepath.Join(attemptSealDir(root, "m", 1), "m.json"),
+		filepath.Join(attemptSealDir(root, "m", 1), "m.opus"),
+		attemptLogPath(root, "m", 1, "build"),
+	}
+	for _, p := range paths {
+		mediaFile(t, p)
+	}
+	keep := filepath.Join(root, "unrelated.run", "recording.mkv")
+	mediaFile(t, keep)
+
+	if err := f.service.prepareMeetingDeletion(ctx, "m.opus"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range paths {
+		assertAbsent(t, p)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("unrelated artifact removed: %v", err)
+	}
+	if !f.rt.store.meetingDeleted(ctx, "m") {
+		t.Fatal("job not marked deleted")
+	}
+	job := mustGetJob(t, f.rt.store, "m")
+	if _, err := f.rt.store.QueueRerunAttempt(ctx, job, nowUTCString()); err == nil || !strings.Contains(err.Error(), "the meeting was deleted") {
+		t.Fatalf("rerun: %v", err)
+	}
+	if a := f.rt.artifactAvailability(job); a.RerunBlockedReason != "The meeting was deleted; this job cannot be rerun." {
+		t.Fatalf("availability %+v", a)
+	}
+	if status := f.rt.mediaCleanupStatus(job, true); status == nil || status.Status != "completed" {
+		t.Fatalf("cleanup status %+v", status)
+	}
+	deleted, err := f.rt.store.deletedMeetingJobs(ctx)
+	if err != nil || !deleted["m"] {
+		t.Fatalf("deleted jobs %v err=%v", deleted, err)
 	}
 }
 

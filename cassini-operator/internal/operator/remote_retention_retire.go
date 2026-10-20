@@ -188,7 +188,15 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 	if err != nil {
 		return err
 	}
-	return s.finishRemoteRetention(ctx, op)
+	if err := s.finishRemoteRetention(ctx, op); err != nil {
+		return err
+	}
+	// A user delete also reclaims the job's whole local footprint; expiry
+	// leaves the working copy to container retention (docs/container-retention.md).
+	if op.Action == remoteRetentionActionDelete {
+		s.scheduleDeletedMeetingDisposal(ctx, op.Name)
+	}
+	return nil
 }
 
 // Remove this meeting's response content without touching other batch targets.

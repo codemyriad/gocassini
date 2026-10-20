@@ -1217,6 +1217,9 @@
                         {#if job.source_expired}
                           <span class="badge badge-outline badge-warning badge-sm mt-1" title="The source recording was deleted by retention. This job can no longer be rerun.">Recording deleted</span>
                         {/if}
+                        {#if job.meeting_deleted}
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title="The published meeting was deleted by a user. Its local artifacts are reclaimed and this job can no longer be rerun.">Meeting deleted</span>
+                        {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
                             {job.error}
