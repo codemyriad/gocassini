@@ -259,6 +259,15 @@ describe("AppDataProvider annotations", () => {
     ]);
   });
 
+  it("deletes a meeting through its action subpath (D-861)", async () => {
+    const fetchMock = respondWith(JSON.stringify({ meetingId: "m 1", deleted: true }));
+
+    await expect(new AppDataProvider().deleteMeeting(entry("m 1"))).resolves.toBeUndefined();
+    expect(calls(fetchMock)).toEqual([
+      { path: "annotations/meetings/m%201/delete", method: "POST", body: "{}", cache: "no-store" },
+    ]);
+  });
+
   it("polls the tag job, and reads no job as null", async () => {
     const fetchMock = respondWith(JSON.stringify({ job: null }));
 

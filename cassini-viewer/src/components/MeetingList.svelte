@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Sun, Moon, Search, PanelLeft, Tag, TriangleAlert, Users, X } from "@lucide/svelte";
+  import { Sun, Moon, Search, PanelLeft, Tag, Trash2, TriangleAlert, Users, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import { filterByTagLabel, wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
@@ -109,6 +109,11 @@
   export let tagFilterIds: readonly string[] = [];
   export let tagNotice = "";
   export let tagRetryable = false;
+  // Whether this deployment can delete a meeting (D-861); the shell owns the
+  // confirmation. A failed delete is reported through deleteNotice, with retry.
+  export let deletable = false;
+  export let deleteNotice = "";
+  export let deleteRetryable = false;
   let tagging: { meeting: MeetingCatalogEntry; anchor: HTMLElement } | null = null;
 
   // The filter is list-local state — no other surface reads it.
@@ -158,6 +163,9 @@
     removeTag: string;
     dismissTagNotice: void;
     retryTag: void;
+    deleteMeeting: MeetingCatalogEntry;
+    dismissDeleteNotice: void;
+    retryDelete: void;
     // What was typed. The shell debounces it and asks the operator.
     query: string;
     // Open a meeting AT a matched moment, carrying the query so the meeting
@@ -460,6 +468,18 @@
         </span>
       </p>
     {/if}
+    {#if deleteNotice}
+      <p class="list-note list-note-error" role="status">
+        <TriangleAlert size={14} aria-hidden="true" />
+        <span>
+          {deleteNotice}
+          {#if deleteRetryable}
+            <button type="button" class="link" on:click={() => dispatch("retryDelete")}>Retry delete</button>
+          {/if}
+          <button type="button" class="link" on:click={() => dispatch("dismissDeleteNotice")}>Dismiss</button>
+        </span>
+      </p>
+    {/if}
     {#if shown}
     {#if totalCount === 0 && totalInsightCount === 0}
       <div class="list-empty">
@@ -634,6 +654,17 @@
                   on:click={(event) => toggleTagging(meeting, event.currentTarget)}
                 >
                   <Tag size={16} aria-hidden="true" />
+                </button>
+              {/if}
+              {#if deletable}
+                <button
+                  type="button"
+                  class="row-tag row-delete"
+                  aria-label={`Delete ${meeting.title}`}
+                  title="Delete this meeting"
+                  on:click={() => dispatch("deleteMeeting", meeting)}
+                >
+                  <Trash2 size={16} aria-hidden="true" />
                 </button>
               {/if}
               {#if typeof meeting.digestDurationMs === "number"}
@@ -1265,6 +1296,10 @@
     .row-tag {
       opacity: 1;
     }
+  }
+  .row-delete:hover,
+  .row-delete:focus-visible {
+    color: var(--color-error);
   }
   .row-duration {
     flex: none;
