@@ -315,7 +315,7 @@ type meetingTimesDocument struct {
 func (imp *meetingImporter) inspectMeetingTimes(ctx context.Context, file string) (meetingTimesDocument, error) {
 	ctx, cancel := context.WithTimeout(ctx, importCLITimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, imp.sink.cassiniBin, "inspect", "--meeting-times", file)
+	cmd := cassiniCommand(ctx, imp.sink.cassiniBin, "inspect", "--meeting-times", file)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -332,16 +332,28 @@ func (imp *meetingImporter) inspectMeetingTimes(ctx context.Context, file string
 func (imp *meetingImporter) runCassini(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithTimeout(ctx, importCLITimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, imp.sink.cassiniBin, args...)
+	cmd := cassiniCommand(ctx, imp.sink.cassiniBin, args...)
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("cassini %s: %w: %s", args[0], err, tailOfOutput(output.String()))
 	}
 	return nil
+}
+
+// cassiniCommand prepares one run of the cassini CLI on a file a caller
+// supplied. Two things every such run needs: its own process group with a
+// cancel that kills the group, so a canceled import does not leave an ffmpeg
+// grandchild reading the file to the end (`inspect` and `annotate` spawn one
+// for Opus input); and an environment without the operator's own credentials,
+// since any logged-in caller can make the operator run this (D-700).
+func cassiniCommand(ctx context.Context, bin string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = contextChildEnv(os.Environ())
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
+	return cmd
 }
 
 func tailOfOutput(out string) string {
