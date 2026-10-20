@@ -48,6 +48,36 @@ function requestToken(): string {
 
 // --- staging over WebDAV -------------------------------------------------------
 
+// The upload heartbeat. While a PUT is live the browser renews the server's
+// upload lease (importUploadLease, two minutes) every HEARTBEAT_INTERVAL_MS.
+// A beat that fails is not fatal on its own: the operator may be restarting,
+// or a proxy may have hiccupped, and the lease still has time on it. The
+// browser gives up only after HEARTBEAT_MAX_MISSES consecutive failures — 80
+// seconds of silence, inside the lease — or at once when the server says the
+// row is no longer an upload (409: removed, or already settled by the
+// lease-expiry reconciliation; 404: the row is gone), because then no amount
+// of patience will get the bytes claimed.
+export const HEARTBEAT_INTERVAL_MS = 20_000;
+export const HEARTBEAT_MAX_MISSES = 4;
+
+export type HeartbeatVerdict = "continue" | "abort";
+
+// heartbeatVerdict decides what a failed beat means, given how many have
+// failed in a row (counting this one).
+export function heartbeatVerdict(error: unknown, consecutiveMisses: number): HeartbeatVerdict {
+  const status = requestStatus(error);
+  if (status === 409 || status === 404) return "abort";
+  return consecutiveMisses >= HEARTBEAT_MAX_MISSES ? "abort" : "continue";
+}
+
+function requestStatus(error: unknown): number {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const status = Number((error as { status?: unknown }).status);
+    return Number.isFinite(status) ? status : 0;
+  }
+  return 0;
+}
+
 function davBase(): string {
   return nextcloudOriginUrl(`/remote.php/dav/files/${encodeURIComponent(currentUserId())}`);
 }
@@ -101,8 +131,10 @@ export async function stageImportUpload(
           onProgress?.(event.loaded, event.total);
         }
       };
+      // Set before xhr.abort() so the rejection says why the browser gave up.
+      let abortReason = "";
       xhr.onerror = () => reject(new Error("The upload failed — check the connection and try again."));
-      xhr.onabort = () => reject(new Error("The upload was interrupted."));
+      xhr.onabort = () => reject(new Error(abortReason || "The upload was interrupted."));
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           onProgress?.(file.size, file.size);
@@ -114,13 +146,26 @@ export async function stageImportUpload(
         }
       };
       let heartbeatPending = false;
+      let misses = 0;
       const heartbeat = setInterval(async () => {
         if (heartbeatPending) return;
         heartbeatPending = true;
-        try { await importsRequest(`/${encodeURIComponent(job.id)}/heartbeat`, {}, AbortSignal.timeout(15_000)); }
-        catch { xhr.abort(); }
-        finally { heartbeatPending = false; }
-      }, 20_000);
+        try {
+          await importsRequest(`/${encodeURIComponent(job.id)}/heartbeat`, {}, AbortSignal.timeout(15_000));
+          misses = 0;
+        } catch (error) {
+          misses += 1;
+          if (heartbeatVerdict(error, misses) === "abort") {
+            abortReason =
+              requestStatus(error) === 409 || requestStatus(error) === 404
+                ? "This upload is no longer registered with Cassini; add the file again."
+                : "Cassini stopped answering during the upload, so it was interrupted; add the file again.";
+            xhr.abort();
+          }
+        } finally {
+          heartbeatPending = false;
+        }
+      }, HEARTBEAT_INTERVAL_MS);
       xhr.addEventListener("loadend", () => clearInterval(heartbeat), { once: true });
       xhr.send(file);
     });
@@ -153,7 +198,8 @@ async function importsRequest<T>(path: string, body?: object, signal?: AbortSign
   // polled for progress.
   const response = await fetch(importsUrl(path), { ...init, cache: "no-store", signal });
   if (!response.ok) {
-    throw new Error(await describeImportFailure(response));
+    // The status rides along for callers that decide by it (the heartbeat).
+    throw Object.assign(new Error(await describeImportFailure(response)), { status: response.status });
   }
   return (await response.json()) as T;
 }
