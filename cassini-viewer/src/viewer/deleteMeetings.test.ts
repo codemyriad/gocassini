@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import appSource from "../App.svelte?raw";
+import insightDocumentSource from "../components/InsightDocument.svelte?raw";
 import meetingListSource from "../components/MeetingList.svelte?raw";
 import meetingViewSource from "../components/MeetingView.svelte?raw";
 import selectionBarSource from "../components/SelectionBar.svelte?raw";
@@ -97,6 +98,20 @@ describe("the selection bar's bulk delete", () => {
       appSource.indexOf("function confirmDeleteMeetings"),
     );
     expect(runner).toContain("selection = toggleSelected(selection, entry.id);");
+  });
+});
+
+describe("the insight document's gone sources", () => {
+  it("says a source is gone instead of silently shrinking the list", () => {
+    // The shell hands the count down; the document renders a dead row — not a
+    // button — and claims neither "deleted" nor "unshared", because it cannot
+    // tell which happened.
+    expect(appSource).toContain(
+      "missingSourceCount={missingInsightSources(selectedInsight, insightSources.get(selectedInsight.id) ?? [])}",
+    );
+    expect(insightDocumentSource).toContain("export let missingSourceCount = 0;");
+    expect(insightDocumentSource).toContain("{#if sources.length > 0 || missingSourceCount > 0}");
+    expect(insightDocumentSource).toContain("no longer available (deleted, or no longer shared with you)");
   });
 });
 
