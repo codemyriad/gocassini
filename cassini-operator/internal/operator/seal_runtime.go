@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -195,9 +196,16 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 		return "", err
 	}
 	sink := io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
-	// The room's display name is also the meeting title (D-462); its token is
-	// what `cassini pack` derives the published room id from (D-622).
+	// The room's token is what `cassini pack` derives the published room id
+	// from (D-622). The title is whatever the build stamped on the bundle —
+	// for a one-to-one room that is both participants, not the room name
+	// (D-862) — with the room name as the fallback for bundles that predate
+	// the stamp or whose stamp failed (D-462).
 	roomToken, roomName := rt.talkRoomForJob(task.JobID)
+	title := roomName
+	if manifest, ok, err := LoadMeetingBundleManifest(task.ArtifactMeetingPath); err == nil && ok && strings.TrimSpace(manifest.Title) != "" {
+		title = strings.TrimSpace(manifest.Title)
+	}
 	format := "opus"
 	err = rt.store.db.QueryRowContext(ctx, `SELECT format FROM meeting_format WHERE job_id=? AND attempt_number=?`, task.JobID, task.AttemptNumber).Scan(&format)
 	if err != nil && err != sql.ErrNoRows {
@@ -212,7 +220,7 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 		rt.cfg.CassiniBin,
 		task.ArtifactMeetingPath,
 		filepath.Join(attemptSealDir(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber), task.JobID+"."+format),
-		roomName,
+		title,
 		roomToken,
 		roomName,
 		task.JobID,
