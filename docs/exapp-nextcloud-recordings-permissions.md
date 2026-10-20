@@ -45,6 +45,11 @@ recipients can pass the meeting along. There is no "everyone" option, and no
 public link is ever created. Afterwards the shares are ordinary Nextcloud file
 shares, changed in Files like any other.
 
+Every imported meeting is listed under one **Imported meetings** room,
+regardless of who imported it: the ones you brought in and the ones shared
+with you sit together there. The room the meeting was recorded in on its
+source installation is not shown; it is kept on the import record only.
+
 ## Storage and scale
 
 The metadata index supports list filters and paging, but Nextcloud's shares are

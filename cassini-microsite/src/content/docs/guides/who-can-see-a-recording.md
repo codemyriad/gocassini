@@ -44,6 +44,10 @@ resharing where this Nextcloud permits it, the same permission a public room's
 recording has, so recipients can pass the meeting along. There is no "everyone"
 option, and no public link is ever created.
 
+Imported meetings all sit in one **Imported meetings** room in Browse — the
+ones you imported and the ones shared with you alike. The room the meeting was
+recorded in on its source installation is not shown.
+
 ## Where recordings live
 
 Every recording belongs to the `cassini` service account, in its private

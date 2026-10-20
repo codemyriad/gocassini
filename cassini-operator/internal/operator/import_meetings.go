@@ -34,6 +34,12 @@ import (
 //   - Retention is adopted eagerly, with the meeting's own timestamps as the
 //     age anchor — the standard policy. A file without a usable createdAtUtc is
 //     invalid for import, because retention could never establish its age.
+//   - The catalog entry files the meeting under one fixed "Imported meetings"
+//     room, never the source room. The source room belongs to another
+//     installation (or to this one's past): showing it would seed the rooms
+//     rail with phantom rooms, and a backup restored into its own instance
+//     would land beside live recordings of that room without saying so. The
+//     source room id is still kept on the import job row as lineage.
 //
 // The file bytes are stored untouched: the manifest (source job and room ids,
 // speakers, provenance, annotations) stays the authoritative travel record, and
@@ -369,10 +375,22 @@ func sniffPortableMeetingExtension(file string) (string, error) {
 	return "", fmt.Errorf("the file is neither an Ogg/Opus recording nor a transcription document")
 }
 
+// The room every imported meeting is filed under. One bucket for all of them,
+// whoever imported and whoever it was shared with: a meeting you imported is
+// there, and so is one somebody shared with you. The id is deliberately not
+// in the rm_<hex> shape a derived Talk room id has, so it can never be
+// mistaken for one, and it is stable across installations so a meeting
+// re-exported from here still names the same bucket.
+const (
+	importedRoomID   = "imported"
+	importedRoomName = "Imported meetings"
+)
+
 // stampImportedEntry records the local-only provenance on the catalog entry:
-// who brought the meeting in and when. Everything else the entry carries came
-// out of the file. Visible to everyone the meeting is shared with — it is
-// attribution, the same way marks carry their authors.
+// who brought the meeting in and when, and files it under the Imported
+// meetings room in place of the source room. Everything else the entry
+// carries came out of the file. Visible to everyone the meeting is shared with
+// — it is attribution, the same way marks carry their authors.
 func stampImportedEntry(entry json.RawMessage, importedBy, importedAtUTC string) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(entry, &fields); err != nil {
@@ -383,6 +401,16 @@ func stampImportedEntry(entry json.RawMessage, importedBy, importedAtUTC string)
 		return nil, err
 	}
 	fields["imported"] = stamp
+	roomID, err := json.Marshal(importedRoomID)
+	if err != nil {
+		return nil, err
+	}
+	roomName, err := json.Marshal(importedRoomName)
+	if err != nil {
+		return nil, err
+	}
+	fields["roomId"] = roomID
+	fields["roomName"] = roomName
 	return json.Marshal(fields)
 }
 

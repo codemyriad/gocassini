@@ -27,9 +27,10 @@ recordings in through meeting import (D-828) rather than by hand:
   the recovery path for files restored from a backup.
 
 Either way each file is validated by the cassini CLI, delivered byte for byte
-into `CassiniRecordings/meetings` under a fresh local id, indexed for listing,
-search and tags, adopted into retention with the meeting's own dates as its
-age, and shared — the importer first, then the selection, with reshare
+into `CassiniRecordings/meetings` under a fresh local id, filed under the one
+**Imported meetings** room (never the room it was recorded in — that room
+belongs to the source installation), indexed for listing, search and tags,
+adopted into retention with the meeting's own dates as its age, and shared — the importer first, then the selection, with reshare
 permission where the instance allows it. The staged upload in the importer's
 own Files is removed once the import lands.
 
