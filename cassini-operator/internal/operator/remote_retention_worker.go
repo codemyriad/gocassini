@@ -101,6 +101,29 @@ func (s *annotationService) retentionInventory(ctx context.Context) ([]meetingLi
 		}
 		byName[name] = meetingLifecycle{Name: name, FileID: id, Path: ncRecordingsRoot + "/meetings/" + names[id], State: "active"}
 	}
+	// Imports are the second provenance source (D-828): a done import row is
+	// this installation's own record that it deliberately placed that file in
+	// the archive, exactly as a successful publish is for a recording job. The
+	// import engine adopts the lifecycle row eagerly, so this matters after a
+	// rebuild of the lifecycle ledger, when adoption has to be re-established.
+	imports, err := s.rt.store.doneImportDeliveries(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, imported := range imports {
+		name := logicalMeetingName(imported)
+		if name == "" {
+			continue
+		}
+		if _, ok := byName[name]; ok {
+			continue
+		}
+		id := ids[name]
+		if id == 0 {
+			continue
+		}
+		byName[name] = meetingLifecycle{Name: name, FileID: id, Path: ncRecordingsRoot + "/meetings/" + names[id], State: "active"}
+	}
 	meetings := []meetingLifecycle{}
 	for name, m := range byName {
 		delete(ids, name)

@@ -253,6 +253,49 @@ func TestMigrateDownRemovesTheInsightDocumentFileIDAndKeepsTheRun(t *testing.T) 
 	}
 }
 
+// A rollback past 0019 drops the import records entirely — with them goes the
+// retention provenance for imported meetings, which the gate then simply stops
+// adopting (a keep, never a delete). The re-upgrade brings the table back
+// empty; done imports must then be re-recorded by re-importing, so this test
+// pins that the rows really are gone rather than mangled.
+func TestMigrateDownDropsImportJobs(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "import_jobs")
+	if at < 0 {
+		t.Fatal("no import_jobs migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	job := ImportJob{ID: "01MIGRATIONTEST00000000000", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: "p"}
+	if err := store.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatalf("CreateImportJobs() error = %v", err)
+	}
+	if err := store.SetImportJobOutcome(ctx, job.ID, job.ID+".opus", 7, "2026-10-15T10:00:00Z"); err != nil {
+		t.Fatalf("SetImportJobOutcome() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT id FROM import_jobs`); err == nil {
+		t.Fatal("import_jobs survived the down migration")
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	if names, err := store.doneImportDeliveries(ctx); err != nil || len(names) != 0 {
+		t.Fatalf("doneImportDeliveries() after re-upgrade = %v, %v; want an empty, working table", names, err)
+	}
+}
+
 // TestNewestMigrationHasARollbackTest is the tripwire: a rollback to the last
 // release is only known to work for a migration that has a down-and-up test in
 // this file. Adding a migration means adding its test and naming it here, or
@@ -266,9 +309,62 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"speaker_edits":            true,
 		"insight_name":             true,
 		"insight_document_file_id": true,
+		"import_jobs":              true,
+		"import_staging":           true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {
 		t.Fatalf("the newest migration %q has no rollback test in migrations_test.go; add one and list it here", newest)
+	}
+}
+
+// Rollback preserves imported-meeting provenance and never lets the old worker
+// automatically enqueue a partial upload. Re-upgrade restores usable defaults.
+func TestMigrateDownImportStagingPreservesHistory(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := migrationIndex(migrations, "import_staging")
+	if at < 0 {
+		t.Fatal("no import_staging migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	jobs := []ImportJob{
+		{ID: "upload", BatchID: "b", CreatedBy: "alice", SourceName: "a.opus", StagedPath: ".CassiniImports/a.opus", State: importStateUploading, ExpectedBytes: 10, StagingState: "pending"},
+		{ID: "success", BatchID: "b", CreatedBy: "alice", SourceName: "b.opus", StagedPath: ".CassiniImports/b.opus"},
+	}
+	if err := store.CreateImportJobs(ctx, jobs); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetImportJobOutcome(ctx, "success", "success.opus", 7, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`SELECT staging_state FROM import_jobs`); err == nil {
+		t.Fatal("staging column survived rollback")
+	}
+	var state string
+	if err := store.db.QueryRow(`SELECT state FROM import_jobs WHERE id='upload'`).Scan(&state); err != nil || state != "failed" {
+		t.Fatal(state, err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatal(err)
+	}
+	done, ok, err := store.ImportJob(ctx, "success")
+	if err != nil || !ok || done.State != importStateDone || done.DeliveredName != "success.opus" {
+		t.Fatal(done, err)
+	}
+	upload, ok, err := store.ImportJob(ctx, "upload")
+	if err != nil || !ok || upload.State != importStateFailed || upload.ExpectedBytes != 0 || upload.StagingState != "" {
+		t.Fatal(upload, err)
 	}
 }

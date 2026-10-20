@@ -431,6 +431,40 @@ Summaries and questions use whichever language model you connect, so their ratin
         <access_level>USER</access_level>
       </route>
 
+      <!--
+        USER: meeting imports (D-828), durable upload tracking and staging cleanup —
+        start a batch (POST imports), list the caller's own imports
+        (GET imports), read one (GET imports/<id>), cancel or retry one
+        (POST imports/<id>/cancel, POST imports/<id>/retry), track upload
+        heartbeats/completion/failure, remove a staged attempt, or clear the
+        caller's inactive staging files (POST imports/staging/clear).
+
+        USER is right even though these mutate, for the insights reasons: the
+        request body is small JSON naming files staged in the CALLER'S OWN
+        Files (the operator pulls them as the caller, so Nextcloud's ACL
+        decides what is readable), and the delivered meeting is shared from
+        the importer as starter — anyone may bring a meeting in and hand it
+        to people, which is the same trust the direct-shares model already
+        gives a recording's starter. The id pattern must not swallow the
+        action paths: `[^\/]+` cannot cross a `/` (see the insights note and
+        docs/exapp-update-constraints.md §5a).
+      -->
+      <route>
+        <url>^imports\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^imports\/[^\/]+\/?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^imports\/[^\/]+\/(cancel|retry|heartbeat|staged|upload-failed|remove|clear)\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+
       <!-- USER: tags and marks (D-737). A meeting's annotations are read as the
            caller, so Nextcloud re-checks the ACL on the bytes; a write is made
            by the service account after the same visibility check every archive

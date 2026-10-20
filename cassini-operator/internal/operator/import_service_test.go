@@ -1,0 +1,216 @@
+package operator
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"cassini-operator/internal/operator/appapi"
+)
+
+// importHandlerService builds the HTTP surface over a real jobs database with
+// no worker behind it, so handler behavior is asserted without running imports.
+func importHandlerService(t *testing.T) *importService {
+	t.Helper()
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	rt := &Runtime{store: store, logger: log.New(testWriter{t}, "", 0)}
+	return &importService{rt: rt, logger: rt.logger}
+}
+
+type testWriter struct{ t *testing.T }
+
+func (w testWriter) Write(p []byte) (int, error) {
+	w.t.Log(strings.TrimSpace(string(p)))
+	return len(p), nil
+}
+
+func importDo(t *testing.T, s *importService, method, target, caller, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	if caller != "" {
+		req = req.WithContext(appapi.WithUserID(req.Context(), caller))
+	}
+	mux := http.NewServeMux()
+	s.register(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	return w
+}
+
+func TestCreateImportRefusesABadRequest(t *testing.T) {
+	s := importHandlerService(t)
+	cases := []struct {
+		name, body string
+		want       int
+	}{
+		{"no files", `{"files":[]}`, 400},
+		{"unknown field", `{"files":[{"stagedPath":".CassiniImports/a.opus"}],"mode":"x"}`, 400},
+		{"path outside staging", `{"files":[{"stagedPath":"Documents/a.opus"}]}`, 400},
+		{"path escaping staging", `{"files":[{"stagedPath":".CassiniImports/../../x"}]}`, 400},
+		{"nested path", `{"files":[{"stagedPath":".CassiniImports/deep/a.opus"}]}`, 400},
+		{"bad principal type", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/a.opus","expectedBytes":3,"share":true,"audience":[{"type":"team","id":"x"}]}]}`, 400},
+		{"empty principal id", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/a.opus","expectedBytes":3,"share":true,"audience":[{"type":"user","id":" "}]}]}`, 400},
+		{"no size on prepare", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/a.opus"}]}`, 400},
+		// Sharing is decided at prepare; a submit that carries any is refused
+		// outright rather than having it silently ignored.
+		{"sharing on submit", `{"files":[{"stagedPath":".CassiniImports/a.opus","share":true,"audience":[{"type":"user","id":"bob"}]}]}`, 400},
+		{"source name on submit", `{"files":[{"stagedPath":".CassiniImports/a.opus","sourceName":"a.opus"}]}`, 400},
+		{"submit of an unregistered path", `{"files":[{"stagedPath":".CassiniImports/never-prepared.opus"}]}`, 409},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := importDo(t, s, http.MethodPost, importsURLPath, "alice", tc.body)
+			if w.Code != tc.want {
+				t.Fatalf("%s: %d %s", tc.name, w.Code, w.Body.String())
+			}
+		})
+	}
+	// Nothing was enqueued by any refusal.
+	jobs, err := s.rt.store.ImportJobsFor(context.Background(), "alice")
+	if err != nil || len(jobs) != 0 {
+		t.Fatalf("refusals enqueued work: %v %v", jobs, err)
+	}
+}
+
+func TestImportLifecycleOverHTTP(t *testing.T) {
+	s := importHandlerService(t)
+	ctx := context.Background()
+	// Prepare registers the uploads and fixes their sharing, labels included.
+	body := `{"prepare":true,"files":[
+	  {"stagedPath":"/.CassiniImports/abc-retro.opus","sourceName":"retro.opus","expectedBytes":10,"share":true,"audience":[{"type":"user","id":"mina","label":"Mina Park"},{"type":"group","id":"growth","label":"Growth"}]},
+	  {"stagedPath":".CassiniImports/def-standup.json","expectedBytes":4,"share":false}
+	]}`
+	w := importDo(t, s, http.MethodPost, importsURLPath, "alice", body)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("prepare: %d %s", w.Code, w.Body.String())
+	}
+	var prepared struct {
+		BatchID string      `json:"batchId"`
+		Imports []ImportJob `json:"imports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &prepared); err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared.Imports) != 2 || prepared.Imports[0].State != importStateUploading || prepared.Imports[0].SourceName != "retro.opus" {
+		t.Fatalf("prepared: %+v", prepared)
+	}
+	// The bytes land (confirmed here directly; the DAV check has its own tests).
+	for _, job := range prepared.Imports {
+		if err := s.rt.store.ConfirmImportUpload(ctx, job.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Submit names only the paths and queues both with the sharing from prepare.
+	w = importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"files":[{"stagedPath":"/.CassiniImports/abc-retro.opus"},{"stagedPath":".CassiniImports/def-standup.json"}]}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		BatchID string      `json:"batchId"`
+		Imports []ImportJob `json:"imports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Imports) != 2 || created.Imports[0].ID != prepared.Imports[0].ID || created.Imports[0].State != importStateQueued || created.Imports[0].SourceName != "retro.opus" {
+		t.Fatalf("created: %+v", created)
+	}
+	if got := created.Imports[0].Sharing.Audience; len(got) != 2 || got[0].ID != "mina" || got[0].Label != "Mina Park" || got[1].Label != "Growth" {
+		t.Fatalf("sharing lost: %+v", got)
+	}
+	if created.Imports[1].SourceName != "def-standup.json" || created.Imports[1].Sharing.Share {
+		t.Fatalf("second file: %+v", created.Imports[1])
+	}
+	// A repeated submit is answered with the rows as they are, not re-queued twice.
+	if w := importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"files":[{"stagedPath":".CassiniImports/abc-retro.opus"}]}`); w.Code != http.StatusAccepted {
+		t.Fatalf("repeat submit: %d %s", w.Code, w.Body.String())
+	}
+	if jobs, _ := s.rt.store.ImportJobsFor(ctx, "alice"); len(jobs) != 2 {
+		t.Fatalf("repeat submit created rows: %+v", jobs)
+	}
+	id := created.Imports[0].ID
+
+	// The creator reads it; anyone else gets a 404, not a 403.
+	if w := importDo(t, s, http.MethodGet, importsURLPath+"/"+id, "alice", ""); w.Code != 200 {
+		t.Fatalf("own read: %d", w.Code)
+	}
+	if w := importDo(t, s, http.MethodGet, importsURLPath+"/"+id, "mallory", ""); w.Code != 404 {
+		t.Fatalf("stranger read: %d", w.Code)
+	}
+	if w := importDo(t, s, http.MethodGet, importsURLPath, "mallory", ""); !strings.Contains(w.Body.String(), `"imports":[]`) {
+		t.Fatalf("stranger list: %s", w.Body.String())
+	}
+
+	// Cancel, then retry, over the API.
+	if w := importDo(t, s, http.MethodPost, importsURLPath+"/"+id+"/cancel", "alice", ""); w.Code != http.StatusAccepted {
+		t.Fatalf("cancel: %d", w.Code)
+	}
+	if job, _, _ := s.rt.store.ImportJob(context.Background(), id); job.State != importStateCanceled {
+		t.Fatalf("cancel state: %s", job.State)
+	}
+	if w := importDo(t, s, http.MethodPost, importsURLPath+"/"+id+"/retry", "alice", ""); w.Code != http.StatusAccepted {
+		t.Fatalf("retry: %d", w.Code)
+	}
+	if job, _, _ := s.rt.store.ImportJob(context.Background(), id); job.State != importStateQueued {
+		t.Fatalf("retry state: %s", job.State)
+	}
+
+	// No identity at all is an outage, not an empty answer.
+	if w := importDo(t, s, http.MethodGet, importsURLPath, "", ""); w.Code != http.StatusBadGateway {
+		t.Fatalf("anonymous: %d", w.Code)
+	}
+}
+
+func TestSanitizeStagedImportPath(t *testing.T) {
+	good := []string{".CassiniImports/a.opus", "/.CassiniImports/b c.json"}
+	for _, raw := range good {
+		if got, err := sanitizeStagedImportPath(raw); err != nil || !strings.HasPrefix(got, importStagingDir+"/") {
+			t.Fatalf("%q: %q %v", raw, got, err)
+		}
+	}
+	bad := []string{"", "a.opus", "Documents/a.opus", ".CassiniImports/", ".CassiniImports/..", ".CassiniImports/x/y", "CassiniImports/a.opus"}
+	for _, raw := range bad {
+		if got, err := sanitizeStagedImportPath(raw); err == nil {
+			t.Fatalf("%q accepted as %q", raw, got)
+		}
+	}
+}
+
+func TestCLIImportsRejectWebRecoveryAndRemainVisible(t *testing.T) {
+	s := importHandlerService(t)
+	ctx := context.Background()
+	job := ImportJob{ID: "cli", BatchID: "b", CreatedBy: "alice", SourceName: "source.opus", StagedPath: "local:/tmp/source.opus"}
+	if err := s.rt.store.CreateImportJobs(ctx, []ImportJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rt.store.SetImportJobState(ctx, job.ID, importStateFailed, "", "CLI validation failed"); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"retry", "cancel"} {
+		w := importDo(t, s, "POST", "/imports/cli/"+action, "alice", "")
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "local CLI file") {
+			t.Fatalf("%s: %d %s", action, w.Code, w.Body.String())
+		}
+		if w := importDo(t, s, "POST", "/imports/cli/"+action, "mallory", ""); w.Code != http.StatusNotFound {
+			t.Fatal(w.Code)
+		}
+	}
+	w := importDo(t, s, "GET", "/imports", "alice", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"origin":"cli"`) || !strings.Contains(w.Body.String(), "CLI validation failed") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// Defense in depth: even a direct worker call must refuse the local source
+	// before attempting DAV or touching local files. This service has no client.
+	if _, err := s.performImport(ctx, job); err == nil || !strings.Contains(err.Error(), "local CLI file") {
+		t.Fatal(err)
+	}
+}

@@ -289,13 +289,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		switch args[0] {
 		case "import-meeting-metadata":
 			return runImportMeetingMetadata(ctx, args[1:], stdout, stderr)
+		case importMeetingCommand:
+			return runImportMeeting(ctx, args[1:], stdout, stderr)
 		case backfillSearchCommand:
 			return runBackfillSearch(ctx, args[1:], stdout, stderr)
 		case backfillAnnotationsCommand:
 			return runBackfillAnnotations(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s)\n",
-			args[0], backfillSearchCommand, backfillAnnotationsCommand)
+		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s, %s)\n",
+			args[0], importMeetingCommand, backfillSearchCommand, backfillAnnotationsCommand)
 		return 2
 	}
 
@@ -606,6 +608,9 @@ Usage:
 Commands:
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
+  `+importMeetingCommand+`       ingest portable meeting files into this archive
+                       (validate, deliver, index, adopt retention, share;
+                       see --help on the command itself)
   import-meeting-metadata import catalog descriptions using destination file IDs
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
@@ -1048,6 +1053,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// CLI): a route that always fails is worse than a route that is not there.
 	if insights := newInsightService(rt, exappCfg, logger); insights != nil {
 		insights.register(root)
+	}
+	// Meeting imports (D-828): a sibling of insights on the ROOT mux — the
+	// manifest declares `^imports\/…` at that level, USER, since any user may
+	// import and the importer is always the share starter. Nil, and unmounted,
+	// wherever an import could not be performed (see newImportService).
+	if imports := newImportService(rt, exappCfg, logger); imports != nil {
+		imports.register(root)
 	}
 	// Tags and marks (D-737): a sibling of insights on the ROOT mux, for the same
 	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and
