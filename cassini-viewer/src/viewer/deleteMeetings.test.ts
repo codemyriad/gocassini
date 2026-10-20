@@ -7,11 +7,8 @@ import meetingViewSource from "../components/MeetingView.svelte?raw";
 import selectionBarSource from "../components/SelectionBar.svelte?raw";
 import confirmDialogSource from "../components/ui/ConfirmDialog.svelte?raw";
 
-// Source-level assertions, the convention this repo follows for .svelte files:
-// the suite runs in node with no DOM harness. What is asserted is the delete
-// wiring (D-861): every entry point passes one confirm dialog, the removal is
-// optimistic but cannot be flashed back by the catalog poll, and a failure
-// rolls the row back in and says so.
+// Source-level wiring assertions for D-861. App.delete.browser.test.ts covers
+// confirmation paint order and rollback behavior across catalog refreshes.
 
 describe("the shell's meeting delete", () => {
   it("is offered exactly where the provider can perform one", () => {
@@ -58,7 +55,6 @@ describe("the shell's meeting delete", () => {
     // Anything else: the id is forgotten, the entry returns to the list, and
     // the list banner offers a retry over exactly the failed entries.
     expect(runner).toContain("deletedMeetingIds.delete(entry.id);");
-    expect(runner).toContain("catalogMeetings = sortMeetingCatalogEntries([...catalogMeetings, ...failed]);");
     expect(appSource).toContain("on:retryDelete={() => void runMeetingDeletes(deleteFailed)}");
   });
 });
