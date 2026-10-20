@@ -426,6 +426,20 @@ export function resolveInsightSources(
   return resolved;
 }
 
+// missingInsightSources counts the run's recorded sources that are absent from
+// this caller's catalog — meetings deleted since the run (D-861), or no longer
+// shared with them. Saying the number out loud discloses nothing new to the
+// one person who sees it: the record it is read from is the creator's own and
+// carries its meetingIds verbatim. What stays undisclosed is WHICH meeting and
+// WHY — the viewer cannot tell a delete from revoked access, and must not
+// guess.
+export function missingInsightSources(
+  record: InsightRecord,
+  sources: readonly MeetingCatalogEntry[],
+): number {
+  return Math.max(0, stringsOf(record.meetingIds).length - sources.length);
+}
+
 // insightsForMeeting is the other direction: which insights read this meeting.
 // Same rule in reverse — an insight the caller was not served is not here to be
 // found, because the list it comes from is already theirs alone.

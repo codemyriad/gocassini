@@ -41,6 +41,7 @@
     ALL_BROWSE_TYPES,
     filterInsightsByRoom,
     insightsForMeeting,
+    missingInsightSources,
     resolveInsightSources,
     toggleBrowseType,
     type BrowseType,
@@ -1627,6 +1628,7 @@
           <InsightDocument
             insight={selectedInsight}
             sources={insightSources.get(selectedInsight.id) ?? []}
+            missingSourceCount={missingInsightSources(selectedInsight, insightSources.get(selectedInsight.id) ?? [])}
             documentMarkdown={insightDocument}
             documentError={insightDocumentError}
             documentLoading={insightDocumentLoading}
