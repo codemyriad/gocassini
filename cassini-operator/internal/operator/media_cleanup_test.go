@@ -76,7 +76,7 @@ func TestMediaCleanupDeletesEveryCopyAndPreservesText(t *testing.T) {
 					t.Fatalf("removed retained file %s: %v", p, err)
 				}
 			}
-			status := rt.mediaCleanupStatus(job)
+			status := rt.mediaCleanupStatus(job, false)
 			if status.Status != "completed" || status.CompletedAt == "" {
 				t.Fatalf("%+v", status)
 			}
@@ -102,7 +102,7 @@ func TestMediaCleanupPendingBlocksRerunButDoesNotTouchActiveJob(t *testing.T) {
 	if _, err := os.Stat(file); err != nil {
 		t.Fatal(err)
 	}
-	if rt.mediaCleanupStatus(job).Status != "waiting" {
+	if rt.mediaCleanupStatus(job, false).Status != "waiting" {
 		t.Fatal("active job cleaned")
 	}
 	if _, err := rt.store.QueueRerunAttempt(context.Background(), job, nowUTCString()); !errors.Is(err, ErrJobNotEligibleForRerun) {
@@ -110,7 +110,7 @@ func TestMediaCleanupPendingBlocksRerunButDoesNotTouchActiveJob(t *testing.T) {
 	}
 	rt.store.db.Exec(`UPDATE jobs SET stage='done',state='failed' WHERE id=?`, job.ID)
 	job = mustGetJob(t, rt.store, job.ID)
-	if rt.mediaCleanupStatus(job).Status != "pending" {
+	if rt.mediaCleanupStatus(job, false).Status != "pending" {
 		t.Fatal("terminal commit lost cleanup obligation")
 	}
 	// Simulates startup recovery after termination without the stage defer running.
@@ -131,7 +131,7 @@ func TestMediaCleanupFailureAndRetryDoesNotFollowSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt.attemptMediaCleanup(job.ID)
-	status := rt.mediaCleanupStatus(job)
+	status := rt.mediaCleanupStatus(job, false)
 	if status.Status != "error" || status.LastError == "" {
 		t.Fatalf("%+v", status)
 	}
@@ -147,7 +147,7 @@ func TestMediaCleanupFailureAndRetryDoesNotFollowSymlinks(t *testing.T) {
 		t.Fatalf("retry %d: %s", rec.Code, rec.Body.String())
 	}
 	rt.runMediaCleanupPass()
-	if rt.mediaCleanupStatus(job).Status != "completed" {
+	if rt.mediaCleanupStatus(job, false).Status != "completed" {
 		t.Fatal("retry did not finish")
 	}
 }
@@ -169,12 +169,12 @@ func TestMediaCleanupRecoversJournalBeforeReportingCompletion(t *testing.T) {
 	if err := os.Rename(path, filepath.Join(dir, "old-0")); err != nil {
 		t.Fatal(err)
 	}
-	if rt.mediaCleanupStatus(job).Status == "completed" {
+	if rt.mediaCleanupStatus(job, false).Status == "completed" {
 		t.Fatal("premature success")
 	}
 	rt.runMediaCleanupPass()
 	assertAbsent(t, dir)
-	if rt.mediaCleanupStatus(job).Status != "completed" {
+	if rt.mediaCleanupStatus(job, false).Status != "completed" {
 		t.Fatal("recovery incomplete")
 	}
 }
@@ -261,7 +261,7 @@ func TestTerminalStageFailuresRunMediaCleanup(t *testing.T) {
 				rt.runPublishJob(publishTask{JobID: job.ID, AttemptNumber: 1})
 			}
 			assertAbsent(t, media)
-			if state := rt.mediaCleanupStatus(mustGetJob(t, rt.store, job.ID)); state.Status != "completed" {
+			if state := rt.mediaCleanupStatus(mustGetJob(t, rt.store, job.ID), false); state.Status != "completed" {
 				t.Fatalf("%+v", state)
 			}
 		})
@@ -338,7 +338,7 @@ func TestDisposalLocalPublicationKeepsDeliveredJSONAndSearch(t *testing.T) {
 	if job.State != "succeeded" {
 		t.Fatalf("%+v", job)
 	}
-	if rt.mediaCleanupStatus(job).Status != "completed" {
+	if rt.mediaCleanupStatus(job, false).Status != "completed" {
 		t.Fatal("cleanup incomplete")
 	}
 	assertAbsent(t, run)
@@ -369,7 +369,7 @@ func TestRecordFailureCleansMediaBeforeWaitReturns(t *testing.T) {
 	start()
 	rt.WaitForRecordJobs(5 * time.Second)
 	job := mustGetJob(t, rt.store, resp.ID)
-	if rt.mediaCleanupStatus(job).Status != "completed" {
+	if rt.mediaCleanupStatus(job, false).Status != "completed" {
 		t.Fatal("capture failure retained media")
 	}
 	assertAbsent(t, attemptRunPath(rt.cfg.WorkRoot, resp.ID, 1))
@@ -417,7 +417,7 @@ func TestMediaCleanupRecoveryAfterUnlinkBeforeJournalCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt.runMediaCleanupPass()
-	if state := rt.mediaCleanupStatus(job); state.Status != "completed" {
+	if state := rt.mediaCleanupStatus(job, false); state.Status != "completed" {
 		t.Fatalf("recovery stranded: %+v", state)
 	}
 	if rt.pendingArtifactOperation(job.ID) {

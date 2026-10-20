@@ -1165,9 +1165,15 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "load recording availability")
 			return
 		}
+		deleted, err := rt.store.deletedMeetingJobs(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load meeting lifecycle")
+			return
+		}
 		for i := range jobs {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
-			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i])
+			jobs[i].MeetingDeleted = deleted[jobs[i].ID]
+			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i], jobs[i].MeetingDeleted)
 		}
 		writeJSON(w, http.StatusOK, jobs)
 	case http.MethodPost:
@@ -1491,6 +1497,7 @@ func (s *Store) Close() error {
 type Job struct {
 	MediaCleanup         *mediaCleanupStatus `json:"media_cleanup,omitempty"`
 	SourceExpired        bool                `json:"source_expired,omitempty"`
+	MeetingDeleted       bool                `json:"meeting_deleted,omitempty"`
 	ID                   string              `json:"id"`
 	Provider             string              `json:"provider"`
 	RequestJSON          string              `json:"request_json"`
@@ -2102,6 +2109,7 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	job.MeetingDeleted = rt.store.meetingDeleted(r.Context(), job.ID)
 	availability := rt.artifactAvailability(job)
 	rt.fillPublishedStepOutcomes(id, availability.PublishedAttempt, attempts)
 	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: availability, RecordingFileID: rt.recordingFileID(r.Context(), id)})

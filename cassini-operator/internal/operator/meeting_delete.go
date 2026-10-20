@@ -24,6 +24,55 @@ const anchorSourceDeleteRequest = "deleteRequest"
 // the job right now. The delete was not started; the caller may retry.
 var errMeetingDeleteBusy = errors.New("meeting is busy")
 
+// meetingDeleted reports whether jobID's published meeting was deleted by a
+// user — the condition that makes its whole local footprint reclaimable and
+// its reruns pointless.
+func (s *Store) meetingDeleted(ctx context.Context, jobID string) bool {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM meeting_lifecycle WHERE name IN (?,?) AND reason=? AND state IN ('retiring','retired')`, jobID+".opus", jobID+".json", meetingRetireReasonDeleted).Scan(&n)
+	return err == nil && n > 0
+}
+
+// deletedMeetingJobs lists the job ids whose meetings were user-deleted, for
+// the jobs listing.
+func (s *Store) deletedMeetingJobs(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM meeting_lifecycle WHERE reason=? AND state IN ('retiring','retired')`, meetingRetireReasonDeleted)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	deleted := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		deleted[meetingStem(name)] = true
+	}
+	return deleted, rows.Err()
+}
+
+// scheduleDeletedMeetingDisposal makes a deleted meeting's job eligible for
+// the journaled local disposal worker and nudges it. Best-effort by design:
+// the worker retries on its own schedule, and an imported meeting has no job
+// row or local artifacts at all.
+func (s *annotationService) scheduleDeletedMeetingDisposal(ctx context.Context, name string) {
+	job := meetingStem(name)
+	if s.rt == nil || !validArtifactJob(job) {
+		return
+	}
+	if _, err := s.rt.store.GetJob(ctx, job); err != nil {
+		return
+	}
+	// A 'completed' row means the source-media policy already ran; reopen it so
+	// the worker sweeps again with the deleted meeting's wider path set.
+	if _, err := s.rt.store.db.ExecContext(ctx, `INSERT INTO media_cleanup(job_id,status) VALUES(?,'waiting') ON CONFLICT(job_id) DO UPDATE SET status=CASE WHEN status='completed' THEN 'waiting' ELSE status END,retry_at=0`, job); err != nil {
+		s.logf("annotations: schedule disposal for deleted %s: %v", name, err)
+		return
+	}
+	s.rt.cleanupMediaAfterStage(job)
+}
+
 // deleteMeeting answers POST annotations/meetings/<id>/delete.
 //
 // Status discipline is the write path's: denial is a 404 identical to a
