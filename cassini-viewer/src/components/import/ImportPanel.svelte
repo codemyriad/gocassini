@@ -106,7 +106,9 @@
   $: dispatch("activity", activeJobs.length > 0 || submitting || pending.some((item) => item.status === "staging"));
 
   function syncPolling() {
-    const wanted = activeJobs.length > 0 || submitting;
+    // refreshJobs calls this before Svelte recomputes activeJobs. Read the
+    // fresh jobs directly so retrying an idle job immediately restarts polling.
+    const wanted = jobs.some((job) => !importJobTerminal(job.state)) || submitting;
     if (wanted && pollTimer === null) {
       pollTimer = setInterval(() => void refreshJobs(), 2500);
     } else if (!wanted && pollTimer !== null) {
