@@ -253,6 +253,55 @@ func TestMigrateDownRemovesTheInsightDocumentFileIDAndKeepsTheRun(t *testing.T) 
 	}
 }
 
+func TestMigrateDownRemovesTheAttemptStepOutcomesAndKeepsTheAttempt(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "attempt_step_outcomes")
+	if at < 0 {
+		t.Fatal("no attempt_step_outcomes migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "job-outcomes", nowUTCString())
+	if err := store.MarkBuildQueued(ctx, "job-outcomes", "/runs/job-outcomes.run", "/runs/job-outcomes.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	if err := store.RecordAttemptStepOutcomes(ctx, "job-outcomes", 1, stepOutcomes{TranscriptionStatus: "failed", TranscriptionReason: "transcription_failed"}); err != nil {
+		t.Fatalf("RecordAttemptStepOutcomes() error = %v", err)
+	}
+	if err := store.SetAttemptTranscriptionDetail(ctx, "job-outcomes", 1, "CUDA error: out of memory"); err != nil {
+		t.Fatalf("SetAttemptTranscriptionDetail() error = %v", err)
+	}
+	if attempt, err := store.GetJobAttempt(ctx, "job-outcomes", 1); err != nil || attempt.TranscriptionDetail != "CUDA error: out of memory" {
+		t.Fatalf("GetJobAttempt() = %+v, %v; want the outcome kept", attempt, err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT transcription_status FROM job_attempts`); err == nil {
+		t.Fatal("job_attempts.transcription_status survived the down migration")
+	}
+	var stage string
+	if err := store.db.QueryRow(`SELECT stage FROM job_attempts WHERE job_id = ?`, "job-outcomes").Scan(&stage); err != nil {
+		t.Fatalf("the attempt did not survive the down migration: %v", err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	attempt, err := store.GetJobAttempt(ctx, "job-outcomes", 1)
+	if err != nil || attempt.TranscriptionStatus != "" || attempt.TranscriptionDetail != "" || attempt.Stage != stage {
+		t.Fatalf("GetJobAttempt() after re-upgrade = %+v, %v; want the attempt back with no outcomes", attempt, err)
+	}
+}
+
 // TestNewestMigrationHasARollbackTest is the tripwire: a rollback to the last
 // release is only known to work for a migration that has a down-and-up test in
 // this file. Adding a migration means adding its test and naming it here, or
@@ -266,6 +315,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"speaker_edits":            true,
 		"insight_name":             true,
 		"insight_document_file_id": true,
+		"attempt_step_outcomes":    true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {

@@ -91,6 +91,14 @@ export interface JobAttempt {
   publish_finished_at: string | null;
   interrupted_at: string | null;
   completed_at: string | null;
+  // What the transcription and summary steps did (D-854, D-814). Absent until
+  // the attempt is built, and for attempts built before this was recorded
+  // (the published one is then read from its bundle).
+  transcription_status?: string;
+  transcription_reason?: string;
+  transcription_detail?: string;
+  summary_status?: string;
+  summary_reason?: string;
 }
 
 export interface JobDetailResponse {

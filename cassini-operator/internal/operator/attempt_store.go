@@ -57,6 +57,16 @@ type JobAttempt struct {
 	PublishFinishedAt   *string `json:"publish_finished_at"`
 	InterruptedAt       *string `json:"interrupted_at"`
 	CompletedAt         *string `json:"completed_at"`
+	// What the transcription and summary steps did, copied from the built
+	// bundle's manifest once the attempt is built (D-854, D-814). Empty until
+	// then, and for attempts built before this was recorded.
+	// TranscriptionDetail is the operator's own account of a transcription it
+	// dropped: a crashed build's last words, or the resource it ran out of.
+	TranscriptionStatus string `json:"transcription_status,omitempty"`
+	TranscriptionReason string `json:"transcription_reason,omitempty"`
+	TranscriptionDetail string `json:"transcription_detail,omitempty"`
+	SummaryStatus       string `json:"summary_status,omitempty"`
+	SummaryReason       string `json:"summary_reason,omitempty"`
 }
 
 func insertInitialAttemptTx(tx *sql.Tx, job Job) error {
@@ -271,7 +281,8 @@ SELECT job_id, attempt_number, trigger_kind, request_json,
        build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
-       interrupted_at, completed_at
+       interrupted_at, completed_at,
+       transcription_status, transcription_reason, transcription_detail, summary_status, summary_reason
 FROM job_attempts
 WHERE job_id = ?
 ORDER BY attempt_number DESC`, jobID)
@@ -370,6 +381,11 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 		&publishFinishedAt,
 		&interruptedAt,
 		&completedAt,
+		&attempt.TranscriptionStatus,
+		&attempt.TranscriptionReason,
+		&attempt.TranscriptionDetail,
+		&attempt.SummaryStatus,
+		&attempt.SummaryReason,
 	)
 	if err != nil {
 		return JobAttempt{}, fmt.Errorf("scan job attempt: %w", err)

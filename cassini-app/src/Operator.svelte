@@ -260,7 +260,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
+  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, Info, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
   import { fade } from "svelte/transition";
   import { guardLeave } from "./operator/unsaved";
   import { loadConfig } from "./operator/config";
@@ -272,6 +272,7 @@
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
+  import { outcomeAttempt, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
   import Settings from "./Settings.svelte";
   import { applyJob, applyPanel, readJob, readPanel } from "./surfaceRouting";
 
@@ -964,6 +965,24 @@
       : "");
   $: canStopSelectedJob = !submittingStop && stopApplies;
   $: canRerunSelectedJob = !submittingRerun && rerunApplies && !rerunBlockedReason;
+  // A run that published without a transcript or a summary says so (D-854,
+  // D-814), from the attempt it published.
+  $: outcomeSource = selectedJob ? outcomeAttempt(selectedJob) : null;
+  $: outcomeNotices = outcomeSource
+    ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)].filter(
+        (notice): notice is OutcomeNotice => notice !== null,
+      )
+    : [];
+  const outcomeToneClasses: Record<OutcomeNotice["tone"], string> = {
+    error: "border-error/40 bg-error/10",
+    warning: "border-warning/50 bg-warning/10",
+    info: "border-base-content/15 bg-base-200/60",
+  };
+  const outcomeIconClasses: Record<OutcomeNotice["tone"], string> = {
+    error: "text-error",
+    warning: "text-warning",
+    info: "text-base-content/60",
+  };
 </script>
 
 <svelte:head>
@@ -1206,7 +1225,7 @@
                           {/if}
                         </p>
                         {#if isBuildWaitingForResources(job)}
-                          <p class="truncate text-warning" title={formatTimestamp(job.build_retry_not_before)}>
+                          <p class="truncate text-warning" title={job.error || formatTimestamp(job.build_retry_not_before)}>
                             Next retry {formatTimestamp(job.build_retry_not_before)} · {job.build_deferral_count}
                             {job.build_deferral_count === 1 ? "deferral" : "deferrals"}
                           </p>
@@ -1359,6 +1378,20 @@
                       {/if}
                     </div>
                   {/if}
+                  {#each outcomeNotices as notice (notice.title)}
+                    <div class="flex items-start gap-2 rounded-box border p-3 text-sm {outcomeToneClasses[notice.tone]}" role="status">
+                      {#if notice.tone === "info"}
+                        <Info size={16} class="mt-0.5 shrink-0 {outcomeIconClasses[notice.tone]}" aria-hidden="true" />
+                      {:else}
+                        <TriangleAlert size={16} class="mt-0.5 shrink-0 {outcomeIconClasses[notice.tone]}" aria-hidden="true" />
+                      {/if}
+                      <div class="grid min-w-0 gap-1">
+                        <p class="font-medium">{notice.title}</p>
+                        {#if notice.detail}<p class="font-mono text-xs break-words text-base-content/75">{notice.detail}</p>{/if}
+                        {#if notice.hint}<p class="text-xs text-base-content/70">{notice.hint}</p>{/if}
+                      </div>
+                    </div>
+                  {/each}
                   {#if rerunBlockedReason && rerunVisible}
                     <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
                       <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />

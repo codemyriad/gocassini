@@ -183,7 +183,8 @@ SELECT job_id, attempt_number, trigger_kind, request_json,
        build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
-       interrupted_at, completed_at
+       interrupted_at, completed_at,
+       transcription_status, transcription_reason, transcription_detail, summary_status, summary_reason
 FROM job_attempts
 WHERE job_id = ? AND attempt_number = ?`, jobID, attemptNumber)
 	attempt, err := scanJobAttempt(row)
