@@ -256,6 +256,16 @@ travels with every copy of the meeting.
 ./bin/cassini meetings annotate <meeting-id> --ops ./ops.json --json
 ```
 
+The same rule covers renaming: only when the user asks. A rename shows for
+everyone with access to the meeting and travels inside its portable file;
+`--clear` restores the default title (the room name, or both participants of
+a 1:1).
+
+```bash
+./bin/cassini meetings rename <meeting-id> "Q4 hiring sync"
+./bin/cassini meetings rename <meeting-id> --clear
+```
+
 ```json
 {"ops":[
   {"op":"mark","tag":{"label":"hiring"},"target":{"kind":"meeting"}},
@@ -357,8 +367,9 @@ The Cassini app reads exactly the same documents through the operator's own
 one implementation, and what you read is what the app shows. There is nothing
 for you to call there; it is named here so you do not build a second reader.
 
-This surface reads, and it writes exactly one thing: **marks**, through
-`meetings annotate`, on meetings this account may read. There is no command here
+This surface reads, and it writes exactly two things: **marks**, through
+`meetings annotate`, and **the meeting's title**, through `meetings rename`,
+on meetings this account may read. There is no command here
 to start, stop, delete or re-run a recording, and there is no way to read a meeting the account may not
 read. `meetings rooms` enumerates rooms, but only the ones this account already
 has readable recordings from — it is a view of the same permitted set, not a
