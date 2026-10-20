@@ -12,10 +12,10 @@
 
   import type { DataProvider } from "../../viewer/dataProvider";
   import {
+    describeImportSharing,
     formatImportDuration,
     importJobTerminal,
     parseImportPreview,
-    type ImportFileRequest,
     type ImportJobRecord,
     type ImportPreview,
     type ImportSharee,
@@ -217,19 +217,16 @@
       for (const item of pending.filter((candidate) => candidate.status === "ready")) {
         patch(item.key, { status: "staging", sentBytes: 0 });
         try {
-          const sharing = { share: item.share, audience: item.audience.map(({ type, id }) => ({ type, id })) };
+          // Sharing travels with the registration and is final from then on;
+          // the submit below names the staged path only.
+          const sharing = { share: item.share, audience: item.audience.map(({ type, id, label }) => ({ type, id, label })) };
           const stagedPath = await dataProvider.stageImportUpload(item.file, (sent) => {
             patch(item.key, { sentBytes: sent });
           }, sharing);
           // This upload is already durable. Queue it independently so a large
           // selection cannot upload fully and then hit the 50-file batch cap.
           removePending(item.key);
-          await dataProvider.startImports([{
-            stagedPath,
-            sourceName: item.file.name,
-            share: item.share,
-            audience: item.audience.map(({ type, id }) => ({ type, id })),
-          }]);
+          await dataProvider.startImports([{ stagedPath }]);
         } catch (error) {
           submitError = error instanceof Error ? error.message : String(error);
           if (error instanceof Error && "importJobId" in error) removePending(item.key);
@@ -483,6 +480,9 @@
               People you share with can open the meeting and pass it along.
             </p>
           {/if}
+          <p class="text-xs text-base-content/60 mt-1">
+            Sharing is set when you press Import. To change it afterwards, remove the attempt and drop the file again.
+          </p>
         {/if}
       </div>
     {/each}
@@ -535,7 +535,7 @@
                 </button>
               {/if}
               {#if dataProvider.removeImport && (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagedPath.startsWith(".CassiniImports/")}
-                <button type="button" class="btn btn-ghost btn-xs" title="Delete the temporary upload and remove this attempt" on:click={() => void removeJob(job)}>Remove</button>
+                <button type="button" class="btn btn-ghost btn-xs" title="Delete the temporary upload and remove this attempt. To import with different sharing, drop the file again." on:click={() => void removeJob(job)}>Remove</button>
               {/if}
             </span>
           </div>
@@ -544,12 +544,16 @@
           {/if}
           {#if (job.state === "failed" || job.state === "upload_failed") && job.error}
             <p class="text-sm text-error mt-0.5">{job.error}</p>
-          {:else if job.state === "done"}
+          {/if}
+          {#if importJobTerminal(job.state)}
+            <!-- Every settled row says how it is (or would be) shared, and who
+                 that means on hover — a retry imports with exactly this. -->
+            {@const sharing = describeImportSharing(job)}
             <p class="text-sm text-base-content/65 mt-0.5">
-              {job.sharing.share ? `Shared with ${(job.sharing.audience ?? []).length + 1}` : "Visible only to you"}
+              <span class="import-sharing" title={sharing.title}>{sharing.line}</span>
               {job.format === "json" ? " · transcription only" : ""}
             </p>
-          {:else if !importJobTerminal(job.state)}
+          {:else}
             <progress class="progress progress-primary w-full mt-1"></progress>
           {/if}
         </div>
@@ -614,5 +618,10 @@
   }
   .import-item-error {
     border-color: var(--color-error);
+  }
+  .import-sharing {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+    cursor: help;
   }
 </style>

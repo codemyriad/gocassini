@@ -57,8 +57,14 @@ func TestCreateImportRefusesABadRequest(t *testing.T) {
 		{"path outside staging", `{"files":[{"stagedPath":"Documents/a.opus"}]}`, 400},
 		{"path escaping staging", `{"files":[{"stagedPath":".CassiniImports/../../x"}]}`, 400},
 		{"nested path", `{"files":[{"stagedPath":".CassiniImports/deep/a.opus"}]}`, 400},
-		{"bad principal type", `{"files":[{"stagedPath":".CassiniImports/a.opus","share":true,"audience":[{"type":"team","id":"x"}]}]}`, 400},
-		{"empty principal id", `{"files":[{"stagedPath":".CassiniImports/a.opus","share":true,"audience":[{"type":"user","id":" "}]}]}`, 400},
+		{"bad principal type", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/a.opus","expectedBytes":3,"share":true,"audience":[{"type":"team","id":"x"}]}]}`, 400},
+		{"empty principal id", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/a.opus","expectedBytes":3,"share":true,"audience":[{"type":"user","id":" "}]}]}`, 400},
+		{"no size on prepare", `{"prepare":true,"files":[{"stagedPath":".CassiniImports/a.opus"}]}`, 400},
+		// Sharing is decided at prepare; a submit that carries any is refused
+		// outright rather than having it silently ignored.
+		{"sharing on submit", `{"files":[{"stagedPath":".CassiniImports/a.opus","share":true,"audience":[{"type":"user","id":"bob"}]}]}`, 400},
+		{"source name on submit", `{"files":[{"stagedPath":".CassiniImports/a.opus","sourceName":"a.opus"}]}`, 400},
+		{"submit of an unregistered path", `{"files":[{"stagedPath":".CassiniImports/never-prepared.opus"}]}`, 409},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,13 +83,36 @@ func TestCreateImportRefusesABadRequest(t *testing.T) {
 
 func TestImportLifecycleOverHTTP(t *testing.T) {
 	s := importHandlerService(t)
-	body := `{"files":[
-	  {"stagedPath":"/.CassiniImports/abc-retro.opus","sourceName":"retro.opus","share":true,"audience":[{"type":"user","id":"mina"},{"type":"group","id":"growth"}]},
-	  {"stagedPath":".CassiniImports/def-standup.json","share":false}
+	ctx := context.Background()
+	// Prepare registers the uploads and fixes their sharing, labels included.
+	body := `{"prepare":true,"files":[
+	  {"stagedPath":"/.CassiniImports/abc-retro.opus","sourceName":"retro.opus","expectedBytes":10,"share":true,"audience":[{"type":"user","id":"mina","label":"Mina Park"},{"type":"group","id":"growth","label":"Growth"}]},
+	  {"stagedPath":".CassiniImports/def-standup.json","expectedBytes":4,"share":false}
 	]}`
 	w := importDo(t, s, http.MethodPost, importsURLPath, "alice", body)
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+		t.Fatalf("prepare: %d %s", w.Code, w.Body.String())
+	}
+	var prepared struct {
+		BatchID string      `json:"batchId"`
+		Imports []ImportJob `json:"imports"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &prepared); err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared.Imports) != 2 || prepared.Imports[0].State != importStateUploading || prepared.Imports[0].SourceName != "retro.opus" {
+		t.Fatalf("prepared: %+v", prepared)
+	}
+	// The bytes land (confirmed here directly; the DAV check has its own tests).
+	for _, job := range prepared.Imports {
+		if err := s.rt.store.ConfirmImportUpload(ctx, job.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Submit names only the paths and queues both with the sharing from prepare.
+	w = importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"files":[{"stagedPath":"/.CassiniImports/abc-retro.opus"},{"stagedPath":".CassiniImports/def-standup.json"}]}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", w.Code, w.Body.String())
 	}
 	var created struct {
 		BatchID string      `json:"batchId"`
@@ -92,14 +121,21 @@ func TestImportLifecycleOverHTTP(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if len(created.Imports) != 2 || created.Imports[0].State != importStateQueued || created.Imports[0].SourceName != "retro.opus" {
+	if len(created.Imports) != 2 || created.Imports[0].ID != prepared.Imports[0].ID || created.Imports[0].State != importStateQueued || created.Imports[0].SourceName != "retro.opus" {
 		t.Fatalf("created: %+v", created)
 	}
-	if got := created.Imports[0].Sharing.Audience; len(got) != 2 || got[0].ID != "mina" {
+	if got := created.Imports[0].Sharing.Audience; len(got) != 2 || got[0].ID != "mina" || got[0].Label != "Mina Park" || got[1].Label != "Growth" {
 		t.Fatalf("sharing lost: %+v", got)
 	}
 	if created.Imports[1].SourceName != "def-standup.json" || created.Imports[1].Sharing.Share {
 		t.Fatalf("second file: %+v", created.Imports[1])
+	}
+	// A repeated submit is answered with the rows as they are, not re-queued twice.
+	if w := importDo(t, s, http.MethodPost, importsURLPath, "alice", `{"files":[{"stagedPath":".CassiniImports/abc-retro.opus"}]}`); w.Code != http.StatusAccepted {
+		t.Fatalf("repeat submit: %d %s", w.Code, w.Body.String())
+	}
+	if jobs, _ := s.rt.store.ImportJobsFor(ctx, "alice"); len(jobs) != 2 {
+		t.Fatalf("repeat submit created rows: %+v", jobs)
 	}
 	id := created.Imports[0].ID
 

@@ -124,3 +124,18 @@ it("imports a 51-file selection without hitting the server batch limit", async (
  expect(uploads).toBe(51);
  expect(host.querySelector('[role="alert"]')).toBeNull();
 });
+
+it("tells every settled row how it is shared, with the names on hover", async () => {
+ const shared = { ...job("shared", "failed"), error: "not a valid portable meeting", sharing: { share: true, audience: [{ type: "user", id: "bob", label: "Bob Lee" }, { type: "group", id: "design", label: "Design" }] } };
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [shared, job("private", "done"), job("live", "validating")],
+  retryImport: vi.fn(async () => {}),
+ });
+ open(provider);
+ await expect.element(page.getByText("Shared with 3", { exact: true })).toBeVisible();
+ expect((host.querySelector(".import-sharing") as HTMLElement).title).toBe("you, Bob Lee, Design (group)");
+ await expect.element(page.getByText("Visible only to you", { exact: true })).toBeVisible();
+ const live = Array.from(host.querySelectorAll(".import-item")).find((row) => row.textContent?.includes("live.json"))!;
+ expect(live.querySelector(".import-sharing")).toBeNull();
+ expect(live.querySelector("progress")).not.toBeNull();
+});

@@ -16,20 +16,27 @@ import {
   type PortableMeetingManifest,
 } from "./portable";
 
-// One recipient of the shares an import creates. `label` is display-only; the
-// operator receives only type and id.
+// One recipient of the shares an import creates. `label` is display-only: the
+// operator keeps it on the job row so the list can say who "Shared with 3"
+// means, and shares by type and id alone.
 export interface ImportSharee {
   type: "user" | "group" | "circle";
   id: string;
   label: string;
 }
 
-// What POST imports sends per file, once the file is staged.
+// The sharing chosen for one file. It is sent when the upload is REGISTERED
+// (before a byte moves) and is final from then on: submit and retry use what
+// was stored. To import with different sharing, remove the attempt and drop
+// the file again.
+export interface ImportSharingRequest {
+  share: boolean;
+  audience: Array<{ type: string; id: string; label?: string }>;
+}
+
+// What POST imports sends per file once it is staged: the path, nothing else.
 export interface ImportFileRequest {
   stagedPath: string;
-  sourceName: string;
-  share: boolean;
-  audience: Array<{ type: string; id: string }>;
 }
 
 // One import job as the operator serves it (GET imports).
@@ -57,7 +64,7 @@ export interface ImportJobRecord {
   stagingState?: string;
   phase?: string;
   error?: string;
-  sharing: { share: boolean; audience?: Array<{ type: string; id: string }> };
+  sharing: { share: boolean; audience?: Array<{ type: string; id: string; label?: string }> };
   contentId?: string;
   deliveredName?: string;
   importedAt?: string;
@@ -152,4 +159,21 @@ export function formatImportDuration(durationMs: number): string {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+// The sharing line a settled row shows, and the names behind it on hover. The
+// list is always the caller's own, so "you" is the importer.
+export function describeImportSharing(job: Pick<ImportJobRecord, "sharing">): { line: string; title: string } {
+  if (!job.sharing.share) {
+    return { line: "Visible only to you", title: "Only you can open this meeting." };
+  }
+  const audience = job.sharing.audience ?? [];
+  const names = audience.map((sharee) => {
+    const name = (sharee.label ?? "").trim() || sharee.id;
+    return sharee.type === "group" ? `${name} (group)` : sharee.type === "circle" ? `${name} (team)` : name;
+  });
+  return {
+    line: `Shared with ${audience.length + 1}`,
+    title: ["you", ...names].join(", "),
+  };
 }

@@ -43,9 +43,13 @@ type importAudience struct {
 	Audience []importPrincipal `json:"audience,omitempty"`
 }
 
+// importPrincipal is one recipient. Label is the display name the importer saw
+// in the sharee search, kept so the row can say who "Shared with 3" means; the
+// share reconciler never reads it — only type and id reach Nextcloud.
 type importPrincipal struct {
-	Type string `json:"type"`
-	ID   string `json:"id"`
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
 }
 
 // ImportJob is one file moving through fetch -> validate -> deliver -> share ->

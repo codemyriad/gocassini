@@ -40,7 +40,7 @@ import {
   startImports as postImports,
 } from "./imports/client";
 import { nextcloudRootPath } from "./operator/ncSetup";
-import type { ImportFileRequest, ImportJobRecord, ImportSharee } from "cassini-viewer/dataProvider";
+import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/dataProvider";
 
 // The in-Nextcloud shell's data provider (D-626).
 //
@@ -196,7 +196,7 @@ export class AppDataProvider extends StaticCatalogProvider {
   // writes into the caller's own Nextcloud Files and the jobs run on the
   // operator, neither of which a standalone export has, so the Import tab is
   // absent everywhere else rather than present and failing.
-  stageImportUpload(file: File, onProgress?: (sentBytes: number, totalBytes: number) => void, sharing?: Pick<ImportFileRequest, "share" | "audience">): Promise<string> {
+  stageImportUpload(file: File, onProgress?: (sentBytes: number, totalBytes: number) => void, sharing?: ImportSharingRequest): Promise<string> {
     return davStageImportUpload(file, onProgress, sharing);
   }
 
