@@ -93,6 +93,23 @@ func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.routeTags(w, r, caller, id)
+	case resource == "meetings" && strings.HasSuffix(id, "/delete") && !strings.Contains(strings.TrimSuffix(id, "/delete"), "/"):
+		// Delete the meeting everywhere (D-861): the same visibility rule as
+		// marking — anyone who can read a meeting can delete it.
+		meetingID := strings.TrimSuffix(id, "/delete")
+		if !isPlainMeetingID(meetingID) {
+			writeJSONError(w, http.StatusBadRequest, "that is not a meeting id")
+			return
+		}
+		caller, ok := s.caller(w, r)
+		if !ok {
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.deleteMeeting(w, r, caller, meetingID)
 	case resource == "meetings" && strings.HasSuffix(id, "/speakers") && !strings.Contains(strings.TrimSuffix(id, "/speakers"), "/"):
 		// Who spoke, as people corrected it (docs/speaker-separation.md).
 		meetingID := strings.TrimSuffix(id, "/speakers")

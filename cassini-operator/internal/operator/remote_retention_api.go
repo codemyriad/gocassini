@@ -52,6 +52,11 @@ func evaluateRemoteRetention(m meetingLifecycle, p nextcloudRetentionSettings, n
 	}
 	if m.State == "retired" || m.State == "retiring" {
 		effect.Action = m.State
+		// A user-deleted meeting is not a retention effect; previews and
+		// operation listings must not present it as the policy's doing.
+		if m.Reason == meetingRetireReasonDeleted {
+			effect.Action = meetingRetireReasonDeleted
+		}
 		return effect
 	}
 	if !validAge {
@@ -69,7 +74,7 @@ func evaluateRemoteRetention(m meetingLifecycle, p nextcloudRetentionSettings, n
 	return effect
 }
 func (s *Store) retainedMeetings(ctx context.Context) ([]meetingLifecycle, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local FROM meeting_lifecycle ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local,reason FROM meeting_lifecycle ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +82,7 @@ func (s *Store) retainedMeetings(ctx context.Context) ([]meetingLifecycle, error
 	result := []meetingLifecycle{}
 	for rows.Next() {
 		var m meetingLifecycle
-		if err := rows.Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource, &m.CreatedAtUTC, &m.RecordedAtLocal); err != nil {
+		if err := rows.Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource, &m.CreatedAtUTC, &m.RecordedAtLocal, &m.Reason); err != nil {
 			return nil, err
 		}
 		result = append(result, m)

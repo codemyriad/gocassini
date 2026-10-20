@@ -349,7 +349,7 @@ func (s *annotationService) recoverRemoteRetentionPass(ctx context.Context) (rem
 }
 
 func (s *annotationService) resumeRemoteRetention(ctx context.Context, op remoteRetentionOperation) error {
-	if logicalMeetingName(op.Name) != op.Name || op.Name == "" || op.Action != "retire" {
+	if logicalMeetingName(op.Name) != op.Name || op.Name == "" || (op.Action != "retire" && op.Action != remoteRetentionActionDelete) {
 		return fmt.Errorf("invalid retirement intent")
 	}
 	if err := retentionLeafPath(op.Source); err != nil {

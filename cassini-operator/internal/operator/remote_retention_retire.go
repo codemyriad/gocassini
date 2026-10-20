@@ -12,6 +12,13 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 	if store == nil {
 		return fmt.Errorf("annotation store unavailable")
 	}
+	// Receipts and tag-job outcomes name the reason the meeting went away:
+	// "expired" for retention expiry, "deleted" for a user-initiated delete.
+	reason := meetingRetireReasonExpired
+	if op.Action == remoteRetentionActionDelete {
+		reason = meetingRetireReasonDeleted
+	}
+	terminalReceipt := []byte(`{"` + reason + `":true}`)
 	release, err := annotationMutationLocks.acquire(ctx, store.path)
 	if err != nil {
 		return err
@@ -53,7 +60,7 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 		return err
 	}
 	// Tombstone denies every serving path while independent stores are scrubbed.
-	if _, err = s.rt.store.db.ExecContext(ctx, `UPDATE meeting_lifecycle SET state='retired' WHERE name=?`, op.Name); err != nil {
+	if _, err = s.rt.store.db.ExecContext(ctx, `UPDATE meeting_lifecycle SET state='retired',reason=? WHERE name=?`, reason, op.Name); err != nil {
 		return err
 	}
 	projectionRelease, err := meetingProjectionLocks.acquire(ctx, op.Name)
@@ -83,7 +90,7 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 			return err
 		}
 		// Keep single-request hashes and explicit terminal outcomes for idempotency.
-		if _, err := tx.ExecContext(ctx, `UPDATE annotation_receipt SET response=?,snapshot=0 WHERE opus_name=?`, []byte(`{"expired":true}`), op.Name); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE annotation_receipt SET response=?,snapshot=0 WHERE opus_name=?`, terminalReceipt, op.Name); err != nil {
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT caller,request_id,response FROM annotation_batch_receipt WHERE (caller,request_id) IN (SELECT caller,request_id FROM annotation_batch_target WHERE opus_name=?)`, op.Name)
@@ -107,7 +114,7 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 			return err
 		}
 		for _, r := range receipts {
-			raw, err := scrubRetiredResult(r.raw, op.Name)
+			raw, err := scrubRetiredResult(r.raw, op.Name, reason)
 			if err != nil {
 				return err
 			}
@@ -151,7 +158,7 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 			}
 			for i := range job.Failed {
 				if job.Failed[i].Meeting == title || job.Failed[i].Meeting == op.Name {
-					job.Failed[i] = tagJobFailure{Meeting: op.Name, Error: "expired"}
+					job.Failed[i] = tagJobFailure{Meeting: op.Name, Error: reason}
 				}
 			}
 			{
@@ -159,7 +166,7 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 				if live := s.jobs.last[r.caller]; live != nil && live.ID == job.ID {
 					for i := range live.Failed {
 						if live.Failed[i].Meeting == title || live.Failed[i].Meeting == op.Name {
-							live.Failed[i] = tagJobFailure{Meeting: op.Name, Error: "expired"}
+							live.Failed[i] = tagJobFailure{Meeting: op.Name, Error: reason}
 						}
 					}
 				}
@@ -185,7 +192,7 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 }
 
 // Remove this meeting's response content without touching other batch targets.
-func scrubRetiredResult(raw []byte, name string) ([]byte, error) {
+func scrubRetiredResult(raw []byte, name, reason string) ([]byte, error) {
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return nil, err
@@ -196,7 +203,7 @@ func scrubRetiredResult(raw []byte, name string) ([]byte, error) {
 		switch item := v.(type) {
 		case map[string]any:
 			if target, ok := item["meetingId"].(string); ok && (target == id || target == name) {
-				return map[string]any{"meetingId": target, "expired": true}
+				return map[string]any{"meetingId": target, reason: true}
 			}
 			for k, child := range item {
 				item[k] = scrub(child)
