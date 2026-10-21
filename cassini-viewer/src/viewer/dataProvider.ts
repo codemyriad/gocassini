@@ -28,6 +28,7 @@ import {
 } from "./catalog";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import type { InsightRecord } from "./insights";
+import type { SpeakerSummaryChoice, SummaryRequestState } from "./meetingSummary";
 import type {
   AnnotationRequest,
   AnnotationBatchRequest,
@@ -196,12 +197,24 @@ export interface DataProvider {
   // SpeakerEditsError: revision-conflict, busy, invalid,
   // diarization-unavailable, unavailable (with the reason), rate-limited
   // (with retryAfterMs) or not-found.
+  //
+  // `summary` says what the save does with the meeting's summary: "keep" (the
+  // default) or "rewrite", a model call only an administrator or a moderator
+  // of the room may ask for (the state's canRewriteSummary, D-814).
   loadSpeakerEdits?(entry: MeetingCatalogEntry): Promise<SpeakerEditsState>;
   saveSpeakerEdits?(
     entry: MeetingCatalogEntry,
     expectRevision: number,
     doc: SpeakerEditsDoc,
+    summary?: SpeakerSummaryChoice,
   ): Promise<SpeakerEditsState>;
+
+  // A meeting's summary as its readers can ask for it (D-814,
+  // meetingSummary.ts): what writing or replacing it would cost, and asking.
+  // requestSummary rejects with a SummaryRequestError. Optional: only an
+  // operator can write a summary into a published meeting.
+  loadSummaryRequestState?(entry: MeetingCatalogEntry): Promise<SummaryRequestState>;
+  requestSummary?(entry: MeetingCatalogEntry, replace: boolean): Promise<SummaryRequestState>;
 }
 
 // resolvePublishedUrl locates a file in the operator's published archive.

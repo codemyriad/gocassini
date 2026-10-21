@@ -21,6 +21,11 @@ import {
   type TagVocabulary,
   type VocabularyTag,
 } from "cassini-viewer/annotations";
+import {
+  SummaryRequestError,
+  type SpeakerSummaryChoice,
+  type SummaryRequestState,
+} from "cassini-viewer/meetingSummary";
 
 import {
   listInsights as fetchInsightRuns,
@@ -155,8 +160,25 @@ export class AppDataProvider extends StaticCatalogProvider {
     return requestAnnotations(speakersPath(entry), undefined, readSpeakerEditsError);
   }
 
-  saveSpeakerEdits(entry: MeetingCatalogEntry, expectRevision: number, doc: SpeakerEditsDoc): Promise<SpeakerEditsState> {
-    return requestAnnotations(speakersPath(entry), { expectRevision, doc }, readSpeakerEditsError);
+  // summary is sent only when given: an operator that predates the choice
+  // refuses a field it does not know, and keep is what its absence means.
+  saveSpeakerEdits(
+    entry: MeetingCatalogEntry,
+    expectRevision: number,
+    doc: SpeakerEditsDoc,
+    summary?: SpeakerSummaryChoice,
+  ): Promise<SpeakerEditsState> {
+    return requestAnnotations(speakersPath(entry), summary ? { expectRevision, doc, summary } : { expectRevision, doc }, readSpeakerEditsError);
+  }
+
+  // The meeting's summary as its readers can ask for it (D-814): what writing
+  // or replacing it would cost, and asking.
+  loadSummaryRequestState(entry: MeetingCatalogEntry): Promise<SummaryRequestState> {
+    return requestAnnotations(summaryPath(entry), undefined, readSummaryRequestError);
+  }
+
+  requestSummary(entry: MeetingCatalogEntry, replace: boolean): Promise<SummaryRequestState> {
+    return requestAnnotations(summaryPath(entry), { replace }, readSummaryRequestError);
   }
 
   // POST insights/<id>/retry (D-749). The run record comes back as the
@@ -185,6 +207,7 @@ export class AppDataProvider extends StaticCatalogProvider {
 const meetingPath = (entry: MeetingCatalogEntry) => `meetings/${encodeURIComponent(entry.id)}`;
 const tagPath = (tagId: string) => `tags/${encodeURIComponent(tagId)}`;
 const speakersPath = (entry: MeetingCatalogEntry) => `${meetingPath(entry)}/speakers`;
+const summaryPath = (entry: MeetingCatalogEntry) => `${meetingPath(entry)}/summary`;
 
 // A sibling of the published archive, as the insight routes are. A body makes
 // it a POST.
@@ -257,6 +280,19 @@ function readRetryAfterMs(body: Record<string, unknown>, response: Response): nu
   return response.status === 429 && response.headers.has("Retry-After") && Number.isFinite(seconds) && seconds >= 0
     ? seconds * 1000
     : undefined;
+}
+
+// The operator's refusals of a summary request: 409 with a code (busy,
+// has-summary, unavailable with its reason), 403 for a replacement this reader
+// may not ask for, 429 past the hourly limit, 404 for a meeting it does not
+// know. The status decides where the body carries a sentence, not a code.
+async function readSummaryRequestError(response: Response): Promise<SummaryRequestError> {
+  const body = await readErrorBody(response);
+  const byStatus =
+    response.status === 403 ? "forbidden" : response.status === 404 ? "not-found" : response.status === 429 ? "rate-limited" : "";
+  const code = byStatus || (typeof body.error === "string" ? body.error : "");
+  const message = typeof body.reason === "string" ? body.reason : typeof body.error === "string" ? body.error : response.statusText;
+  return new SummaryRequestError(response.status, code, message);
 }
 
 async function readAnnotationError(response: Response): Promise<AnnotationError> {
