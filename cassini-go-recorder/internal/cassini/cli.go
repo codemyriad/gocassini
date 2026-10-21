@@ -462,6 +462,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini inspect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dumpMeetingTimes := fs.Bool("meeting-times", false, "dump portable meeting retention timestamps as JSON")
+	dumpMeetingIdentity := fs.Bool("meeting-identity", false, "dump portable meeting room and job identity as JSON")
 	dumpTranscript := fs.Bool("transcript", false, "dump the default words transcript from a portable .opus as transcript.words.v1.json to stdout (instead of the inspect summary)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
@@ -474,6 +475,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
   cassini inspect /path/to/archive.csr
   cassini inspect --transcript ./archive/meeting.opus
   cassini inspect --meeting-times ./archive/meeting.opus
+  cassini inspect --meeting-identity ./archive/meeting.opus
 
 `+"\n")
 	}
@@ -488,10 +490,26 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if *dumpMeetingTimes && *dumpTranscript {
+	if (*dumpMeetingTimes && *dumpTranscript) || (*dumpMeetingIdentity && (*dumpMeetingTimes || *dumpTranscript)) {
 		return 2
 	}
 	path := fs.Arg(0)
+	if *dumpMeetingIdentity {
+		meeting, err := inspectpkg.ExtractMeeting(path)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(struct {
+			RoomID        string `json:"roomId"`
+			JobID         string `json:"jobId"`
+			AttemptNumber int    `json:"attemptNumber"`
+		}{meeting.Manifest.Meeting.RoomID, meeting.Manifest.Meeting.JobID, meeting.Manifest.Meeting.AttemptNumber}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
 	if *dumpMeetingTimes {
 		meeting, err := inspectpkg.ExtractMeeting(path)
 		if err != nil {

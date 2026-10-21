@@ -3,6 +3,8 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -108,17 +110,12 @@ func (rt *Runtime) reconcileRoomNames(ctx context.Context) error {
 			jobID = e.ID
 		}
 		job, err := rt.store.GetJob(ctx, jobID)
-		if err != nil || job.TalkBinding == nil || job.ArtifactSitePath == nil {
+		if err != nil || job.TalkBinding == nil {
 			continue
 		}
 		// An imported ID matching a local job is insufficient. Its retained local
 		// publication must agree on both meeting and room identity.
-		cat, ok, err := loadSiteCatalog(*job.ArtifactSitePath)
-		if err != nil || !ok || len(cat.Meetings) != 1 {
-			continue
-		}
-		var local roomEntry
-		if json.Unmarshal(cat.Meetings[0], &local) != nil || local.ID != e.ID || local.RoomID != e.RoomID {
+		if !rt.roomEntryHasLocalLineage(ctx, job, e) {
 			continue
 		}
 		published, err := rt.store.HasSuccessfulPublish(ctx, jobID)
@@ -153,4 +150,49 @@ func (rt *Runtime) reconcileRoomNames(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (rt *Runtime) roomEntryHasLocalLineage(ctx context.Context, job Job, entry roomEntry) bool {
+	if job.ArtifactSitePath != nil {
+		if cat, ok, err := loadSiteCatalog(*job.ArtifactSitePath); err == nil && ok && len(cat.Meetings) == 1 {
+			var local roomEntry
+			if json.Unmarshal(cat.Meetings[0], &local) == nil && local.ID == entry.ID && local.RoomID == entry.RoomID {
+				return true
+			}
+		}
+	}
+	// Nextcloud publication deletes its staging site and stores a remote
+	// destination in artifact_site_path. Recover identity from the retained
+	// portable archive, matching the last successful publication's digest.
+	// Never derive an old room ID using today's pepper or trust an imported ID.
+	if rt.cfg.WorkRoot == "" || rt.cfg.CassiniBin == "" || !validArtifactJob(job.ID) || entry.ID != job.ID {
+		return false
+	}
+	var attempt int
+	var digest, attemptPath string
+	if err := rt.store.db.QueryRowContext(ctx, `SELECT attempt_number,COALESCE(artifact_opus_sha256,''),COALESCE(artifact_opus_path,'')
+ FROM job_attempts WHERE job_id=? AND state='succeeded' AND publish_finished_at IS NOT NULL
+ ORDER BY attempt_number DESC LIMIT 1`, job.ID).Scan(&attempt, &digest, &attemptPath); err != nil || digest == "" {
+		return false
+	}
+	for _, file := range []string{canonicalOpusPath(rt.cfg.WorkRoot, job.ID), filepath.Join(currentRoot(rt.cfg.WorkRoot), job.ID+".json"), attemptPath} {
+		if safeArtifactPath(rt.cfg.WorkRoot, file) != nil || verifySealedPublishInput(job.ID, file, digest) != nil {
+			continue
+		}
+		readCtx, cancel := context.WithTimeout(ctx, talkRoomNameTimeout)
+		raw, err := exec.CommandContext(readCtx, rt.cfg.CassiniBin, "inspect", "--meeting-identity", file).Output()
+		cancel()
+		if err != nil {
+			continue
+		}
+		var identity struct {
+			RoomID        string `json:"roomId"`
+			JobID         string `json:"jobId"`
+			AttemptNumber int    `json:"attemptNumber"`
+		}
+		if json.Unmarshal(raw, &identity) == nil && identity.RoomID == entry.RoomID && identity.JobID == job.ID && identity.AttemptNumber == attempt {
+			return true
+		}
+	}
+	return false
 }
