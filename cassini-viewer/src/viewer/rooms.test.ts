@@ -71,8 +71,8 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "c", roomId: "r-daily", roomName: "Daily" }),
     ]);
     expect(buckets).toEqual([
-      { key: "id:r-daily", name: "Daily", count: 2, hasRoom: true },
-      { key: "id:r-ops", name: "Ops & Infra", count: 1, hasRoom: true },
+      { key: "id:r-daily", roomId: "r-daily", name: "Daily", count: 2, hasRoom: true },
+      { key: "id:r-ops", roomId: "r-ops", name: "Ops & Infra", count: 1, hasRoom: true },
     ]);
   });
 
@@ -97,7 +97,7 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "a", roomId: "r1", roomName: "Design" }),
     ]);
     expect(buckets).toEqual([
-      { key: "id:r1", name: "Design review", count: 2, hasRoom: true },
+      { key: "id:r1", roomId: "r1", name: "Design review", count: 2, hasRoom: true },
     ]);
   });
 

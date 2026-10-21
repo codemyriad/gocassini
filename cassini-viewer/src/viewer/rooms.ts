@@ -22,6 +22,7 @@ export const UNDATED_MONTH_KEY = "";
 export const UNDATED_MONTH_LABEL = "Undated";
 
 export interface RoomBucket {
+  roomId?: string;
   key: string;
   name: string;
   count: number;
@@ -90,6 +91,7 @@ export function buildRoomBuckets(
     }
     buckets.set(key, {
       key,
+      roomId: meeting.roomId,
       // The FIRST entry seen for a key names the bucket. Callers pass a
       // newest-first list, so after a room is renamed the rail shows the new
       // name while the older meetings — which still carry the old one on their

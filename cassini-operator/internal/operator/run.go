@@ -1035,6 +1035,10 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	exappCfg.lifecycle = rt.store
+	exappCfg.meetingMetadata = rt.meetingMetadata
+	if exappCfg.appAPIActive() && exappCfg.PublishSink == publishSinkNextcloudFiles {
+		root.HandleFunc("/rooms/", exappCfg.roomNameHandler)
+	}
 	annotations := newAnnotationService(rt, exappCfg, logger)
 	rt.remoteRetentionMu.Lock()
 	rt.remoteRetention = annotations
