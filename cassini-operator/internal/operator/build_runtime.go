@@ -181,7 +181,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// those after the counterpart, so the default title becomes both
 	// participants instead ("Alex & Chris", D-862). The room name field keeps
 	// the room's own display name either way.
-	meetingTitle := rt.defaultMeetingTitle(task.JobID, task.ArtifactRunPath, roomName)
+	meetingTitle := rt.defaultMeetingTitle(task.JobID, roomName)
 	if err := SetMeetingBundleRoom(builtMeetingPath, meetingTitle, roomToken, roomName, task.JobID, task.AttemptNumber); err != nil {
 		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, builtMeetingPath, err)
 	}

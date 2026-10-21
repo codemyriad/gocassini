@@ -35,11 +35,13 @@ type talkRoomInfo struct {
 	// Type is spreed's raw conversation type (talkRoomTypeOneToOne etc.).
 	// Zero when the lookup never resolved — an unknown room composes no
 	// participant title and keeps the room-name default.
-	Type int
+	Type              int
+	TitleParticipants []talkTitleParticipant
 }
 
-// talkRoomNameFetcher resolves a Talk room as seen by a Nextcloud user. Nil
-// when the operator has no AppAPI credentials.
+// talkRoomNameFetcher resolves a Talk room as seen by a Nextcloud user. A
+// membership failure returns the resolved room info alongside the error, so
+// the caller can preserve its fallback while retrying. Nil without AppAPI.
 type talkRoomNameFetcher func(ctx context.Context, owner, roomToken string) (talkRoomInfo, error)
 
 const (
@@ -129,11 +131,23 @@ func (c ExAppConfig) talkRoomNameFetcher() talkRoomNameFetcher {
 		if name == "" {
 			return talkRoomInfo{}, fmt.Errorf("room response has no display name")
 		}
-		return talkRoomInfo{
+		info := talkRoomInfo{
 			Name:   name,
 			Public: payload.OCS.Data.Type == talkRoomTypePublic,
 			Type:   payload.OCS.Data.Type,
-		}, nil
+		}
+		if isOneToOneTalkRoom(info.Type) {
+			rows, err := c.fetchTalkParticipantRows(ctx, client, owner, roomToken)
+			if err != nil {
+				// Retain the room name/type even when membership is unavailable.
+				return info, err
+			}
+			info.TitleParticipants = oneToOneTitleParticipants(rows)
+			if len(info.TitleParticipants) != 2 {
+				return info, fmt.Errorf("1:1 title requires two named conversation members")
+			}
+		}
+		return info, nil
 	}
 }
 
@@ -175,8 +189,10 @@ func (rt *Runtime) resolveTalkRoomName(jobID, owner, roomToken string) {
 		ctx, cancel := context.WithTimeout(rt.ctx, talkRoomNameTimeout)
 		info, err := rt.fetchTalkRoomName(ctx, owner, roomToken)
 		cancel()
-		if err == nil {
+		if info.Name != "" {
 			rt.storeTalkRoomInfo(jobID, info)
+		}
+		if err == nil {
 			return
 		}
 		lastErr = err
@@ -184,10 +200,10 @@ func (rt *Runtime) resolveTalkRoomName(jobID, owner, roomToken string) {
 	// The audience consequence is the one worth stating: without the room
 	// object we do not know the conversation is public, so the recording keeps
 	// participant shares without reshare permission.
-	rt.logger.Printf("talk room lookup failed id=%s room=%s: %v (meeting title falls back; recording treated as non-public)", jobID, roomToken, lastErr)
+	rt.logger.Printf("talk room lookup incomplete id=%s room=%s: %v (using available room metadata; unresolved title falls back to room name)", jobID, roomToken, lastErr)
 }
 
-// storeTalkRoomInfo records the resolved room name and publicness on the
+// storeTalkRoomInfo records the resolved room name, title members and publicness on the
 // in-memory room state and re-persists the job's Talk binding, so both survive
 // an operator restart: the name until the build flow packs it into the meeting
 // title, and the public flag until publish decides the recording's audience.
@@ -203,6 +219,7 @@ func (rt *Runtime) storeTalkRoomInfo(jobID string, info talkRoomInfo) {
 		state.RoomName = info.Name
 		state.RoomPublic = info.Public
 		state.RoomType = info.Type
+		state.TitleParticipants = append([]talkTitleParticipant(nil), info.TitleParticipants...)
 	}
 	var snapshot talkRoomState
 	if ok {

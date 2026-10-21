@@ -1621,20 +1621,22 @@
         </button>
       </form>
     {:else}
-      <h1 class="mv-title flex-1 min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
-        {meeting ? meeting.title : "Meeting transcript viewer"}
-      </h1>
-      {#if canRename}
-        <button
-          type="button"
-          class="btn btn-ghost btn-square btn-xs flex-none"
-          aria-label="Rename meeting"
-          title="Rename meeting"
-          on:click={startRename}
-        >
-          <Pencil size={16} aria-hidden="true" />
-        </button>
-      {/if}
+      <div class="flex flex-1 min-w-0 items-center gap-2">
+        <h1 class="mv-title min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
+          {meeting ? meeting.title : "Meeting transcript viewer"}
+        </h1>
+        {#if canRename}
+          <button
+            type="button"
+            class="btn btn-ghost btn-square btn-xs flex-none"
+            aria-label="Rename meeting"
+            title="Rename meeting"
+            on:click={startRename}
+          >
+            <Pencil size={16} aria-hidden="true" />
+          </button>
+        {/if}
+      </div>
     {/if}
 
     <!-- Status info: artifact mode, transcript switcher, timing precision. -->
