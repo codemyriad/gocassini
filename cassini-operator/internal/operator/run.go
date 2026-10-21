@@ -287,6 +287,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// the binary's job is to be the operator, and a subcommand is the exception.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
+		case "clear-meeting-metadata":
+			return runClearMeetingMetadata(ctx, args[1:], stdout, stderr)
 		case "import-meeting-metadata":
 			return runImportMeetingMetadata(ctx, args[1:], stdout, stderr)
 		case backfillSearchCommand:
@@ -361,6 +363,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer runtime.Shutdown()
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
+	runtime.startRoomNamesWorker()
 
 	// Resolve the publish destination. An explicit name always wins; an unset
 	// one is resolved from the deployment shape, and in an ExApp that must be
@@ -611,6 +614,7 @@ Usage:
 Commands:
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
+  clear-meeting-metadata  clear derived file-ID metadata, preserving room names
   import-meeting-metadata import catalog descriptions using destination file IDs
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)

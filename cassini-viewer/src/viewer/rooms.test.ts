@@ -194,3 +194,12 @@ describe("hasRoom", () => {
     expect(hasRoom({ id: "m", title: "", dateLabel: "", roomName: "" })).toBe(false);
   });
 });
+
+ it("uses local display names without changing identity or original labels", () => {
+ const a=meeting({id:"a",roomId:"one",roomName:"Alice",roomDisplayName:"admin & Alice"});
+ const b=meeting({id:"b",roomId:"two",roomName:"Alice",roomDisplayName:"admin & Alice"});
+ expect(roomLabelOf(a)).toBe("admin & Alice");
+ expect(a.roomName).toBe("Alice");
+ expect(buildRoomBuckets([a,b])).toHaveLength(2);
+ expect(roomKeyOf(a)).toBe("id:one");
+ });
