@@ -175,6 +175,18 @@ describe("speakers session", () => {
     session.close();
   });
 
+  // Rewriting the summary is asked for only when chosen, and then passed on;
+  // keeping it sends nothing more than a save always did (D-814).
+  it("asks for the summary to be rewritten only when chosen", async () => {
+    const save = vi.fn(async () => state({ revision: 1, state: "applying" }));
+    const session = createSpeakersSession();
+    await session.open(async () => state(), save);
+    session.setLabel("room~1", "Mira");
+    await session.saveEdits(labels, "rewrite");
+    expect(save.mock.lastCall).toEqual([1, expect.any(Object), "rewrite"]);
+    session.close();
+  });
+
   it("keeps a name typed while the save was on its way", async () => {
     let answer!: (value: SpeakerEditsState) => void;
     const save = vi.fn(() => new Promise<SpeakerEditsState>((resolve) => { answer = resolve; }));

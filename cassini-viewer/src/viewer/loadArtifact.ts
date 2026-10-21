@@ -33,10 +33,14 @@ import {
 } from "./portable";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import { withoutSplitDevices } from "../core/speakers";
+import { readSummaryStatus, type SummaryStatus } from "./meetingSummary";
 
 export interface LoadedArtifact {
   transcriptionOnly?: boolean;
   transcriptionStatus?: { status: "completed" | "skipped" | "failed"; reason?: string };
+  // What the summary step did (processing.meetingSummary, D-814); absent in
+  // files from before it was recorded.
+  summaryStatus?: SummaryStatus;
   transcript: TranscriptWordsV1;
   displayTranscript: DisplayTranscriptV1 | null;
   readableTranscript: ReadableTranscriptV1 | null;
@@ -402,6 +406,7 @@ function buildPortableLoadedArtifact({
       ),
     ),
     transcriptionStatus: readTranscriptionStatus(manifest.processing),
+    summaryStatus: readSummaryStatus(manifest.processing),
     wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest.provenance),
     availableTranscripts,
     currentTranscriptId,
@@ -459,6 +464,7 @@ async function loadArtifactFromPaths(paths: {
       buildDirectoryMetadataRaw(manifest, transcript, displayTranscript, readableTranscript),
     ),
     transcriptionStatus: readTranscriptionStatus(manifest?.processing),
+    summaryStatus: readSummaryStatus(manifest?.processing),
     wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest?.provenance),
     availableTranscripts: SYNTHETIC_SINGLE_TRANSCRIPT,
     currentTranscriptId: "default",
