@@ -187,6 +187,9 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 		}
 		result.entries = append(result.entries, item.entry)
 	}
+	if projected, err := metadata.projectRoomNames(ctx, result.entries); err == nil {
+		result.entries = projected
+	}
 	if c.sharePaths != nil {
 		c.sharePaths.put(caller, result.paths)
 	}

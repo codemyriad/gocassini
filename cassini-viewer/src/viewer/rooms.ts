@@ -58,7 +58,7 @@ export function roomKeyOf(meeting: MeetingCatalogEntry): string {
 // honest — it says "this meeting has a room we have no name for", which is a
 // different fact from "this meeting has no room".
 export function roomLabelOf(meeting: MeetingCatalogEntry): string {
-  return meeting.roomName ?? meeting.roomId ?? NO_ROOM_LABEL;
+  return meeting.roomDisplayName ?? meeting.roomName ?? meeting.roomId ?? NO_ROOM_LABEL;
 }
 
 // Whether this meeting says which room it was recorded in. The rail needs the

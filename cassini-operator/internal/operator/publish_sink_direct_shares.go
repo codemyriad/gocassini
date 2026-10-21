@@ -118,6 +118,10 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 			return "", fmt.Errorf("index recording metadata: %w", err)
 		}
 	}
+	if err := s.rt.registerPublishedRoom(ctx, d.JobID, entry); err != nil {
+		return "", fmt.Errorf("register room default: %w", err)
+	}
+
 	if !priorSuccess || !before.Exists {
 		audience, public, err := s.audienceForJob(ctx, d.JobID)
 		if err != nil {
