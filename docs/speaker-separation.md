@@ -391,8 +391,19 @@ window would show, and edit, a meeting readers no longer have.
   republished (61 s decoding and diarizing, 9 s apply with the summary
   rewrite, 5 s seal and publish); the part that is not diarization took
   3–4 s on 3-minute meetings and about 14 s on the 64-minute one.
-- `POST {expectRevision, doc}` stores the next revision and queues a `refine`
-  attempt in one transaction. It is admitted the way a rerun is: under the
+- `GET` also says `canRewriteSummary`: whether this caller may ask a save to
+  rewrite the meeting's summary for the new speakers, which costs a call to
+  the summary model. It is true for a Nextcloud administrator and for an
+  owner or moderator of the meeting's Talk room (the people Talk lets record
+  it), asked of Nextcloud as the caller and remembered for a minute.
+- `POST {expectRevision, doc, summary}` stores the next revision and queues a `refine`
+  attempt in one transaction. `summary` is `"keep"` (the default, also for a
+  client that does not send it: the summary stays as it was and the report
+  says `stale`) or `"rewrite"`, which answers 403
+  `{"error":"forbidden","reason":"summary-rewrite"}` unless `canRewriteSummary`;
+  the choice is kept on the attempt and passed to `cassini speakers apply
+  --summary`. A rerun's replay of the edits always rewrites: its build has
+  just written, and paid for, a summary of the unedited transcript. It is admitted the way a rerun is: under the
   job's artifact lock, which every build, seal, publish and expiry of the job
   holds while it runs. The POST waits at most 2 s for that lock, so a save
   never hangs behind a whole build. It answers 200 with the `GET` shape, or:

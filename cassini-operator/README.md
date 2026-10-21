@@ -19,6 +19,9 @@ The current operator runtime supports:
 - `POST /jobs?provider=nextcloud-talk` for live Nextcloud Talk recording jobs
 - `POST /jobs/:id/stop` for intentional stop during the record stage
 - `POST /jobs/:id/rerun` for explicit rerun of failed jobs
+- `GET|POST /jobs/:id/summary` to see what writing a meeting's summary would cost, then write or regenerate it without transcribing again (ADMIN)
+- `GET /summaries/missing` for the published meetings without a summary and the cost of writing them all (ADMIN)
+- `GET|POST annotations/meetings/:id/summary`, the same for a meeting's readers (USER; see below for who may replace one)
 - `GET /jobs` for logical-job summaries
 - `GET /jobs/:id` for logical-job summary plus attempt history
 - `GET /events` for tagged SSE job/attempt state-change events emitted from successful persisted operator writes
@@ -377,6 +380,41 @@ Behavior:
 - starts a fresh attempt from `record` again
 - preserves older attempts rather than overwriting them
 
+### Write or regenerate a meeting's summary
+
+```http
+GET  /jobs/:id/summary
+POST /jobs/:id/summary   {"replace": false}
+GET  /summaries/missing
+```
+
+A `summarize` attempt writes a summary into the job's published meeting
+without transcribing it again: it copies the published bundle, runs
+`cassini meetings summarize --force` with the LLM settings, and the ordinary
+seal and publish deliver it (marks and shares kept, as for a speaker-edit
+`refine`). The summary goes into the bundle so later speaker edits keep it.
+
+- `GET` says what it would do and cost before anything is sent: `calls` (1),
+  `words`, `estimated_input_tokens`, `provider`, `model`, `external` (the
+  endpoint is not on this network, so it may be billed), `has_summary`, and
+  `available` or a `reason` (`not_published`, `no_transcript`,
+  `summaries_off`, `no_source_audio`, `busy`).
+- `POST` queues it, `202` with the new `attempt_number`. Replacing an
+  existing summary needs `{"replace": true}` (`409 has_summary` otherwise).
+  Like a speaker edit, it needs the job's capture: once retention removed
+  it, `reason` is `no_source_audio`.
+- `GET /summaries/missing` lists published meetings with a transcript and no
+  summary, with the total calls and estimated tokens: the dry run of a
+  backfill.
+
+Readers use `annotations/meetings/:id/summary` (`hasSummary`, `canWrite`,
+`canRegenerate`, the same cost fields in camelCase, and `state`: `idle`,
+`writing` or `failed`). Anyone who can read the meeting may write a missing
+summary; replacing one is for a Nextcloud administrator or an owner or
+moderator of the meeting's Talk room, the people Talk lets record it, asked
+of Nextcloud as the caller (`403` otherwise). A reader asks for at most
+`CASSINI_SUMMARY_WRITES_PER_HOUR` (default 10) an hour.
+
 ### List jobs
 
 ```http
@@ -587,7 +625,9 @@ These fields describe the current or winning attempt for the logical job.
 An attempt row stores:
 - `job_id`
 - `attempt_number`
-- `trigger_kind` (`initial` or `rerun`)
+- `trigger_kind` (`initial`, `rerun`, `refine` for speaker edits, or `summarize`)
+- what the transcription and summary steps did (`transcription_status`/`reason`/`detail`, `summary_status`/`reason`), copied from the built bundle
+- `summary_mode`: `rewrite` when a speaker-edit save asked to rewrite the summary, empty to keep it
 - preserved normalized `request_json`
 - `stage`
 - `state`
