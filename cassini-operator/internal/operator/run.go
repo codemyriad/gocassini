@@ -1181,6 +1181,7 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
 			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i])
 		}
+		rt.projectJobRoomNames(r.Context(), jobs)
 		writeJSON(w, http.StatusOK, jobs)
 	case http.MethodPost:
 		rt.handleCreateJob(w, r)
@@ -1560,7 +1561,8 @@ type Job struct {
 	// RoomName is the conversation's display name as it was when this job ran.
 	// Null for a non-Talk job, and for a Talk job whose name lookup never
 	// completed.
-	RoomName *string `json:"room_name"`
+	RoomName        *string `json:"room_name"`
+	RoomDisplayName string  `json:"room_display_name,omitempty"`
 	// RoomAudience is who had access to the Talk room while this recording was
 	// being made: a JSON array of Files share recipients (users, groups,
 	// Teams), captured at record time and never re-derived (D-769).
@@ -2103,6 +2105,9 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	projectedJobs := []Job{job}
+	rt.projectJobRoomNames(r.Context(), projectedJobs)
+	job = projectedJobs[0]
 	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job), RecordingFileID: rt.recordingFileID(r.Context(), id)})
 }
 

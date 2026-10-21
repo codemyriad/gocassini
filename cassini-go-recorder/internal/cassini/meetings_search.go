@@ -173,7 +173,7 @@ inside a marked stretch of a meeting lists the marks it falls in.
 			formatMeetingsSpan(hit.StartMS, hit.EndMS),
 			blankMeetingsDash(hit.SpeakerID),
 			blankMeetingsDash(hit.Matched),
-			blankMeetingsDash(firstNonBlank(hit.RoomName, hit.RoomID)),
+			blankMeetingsDash(firstNonBlank(hit.RoomDisplayName, hit.RoomName, hit.RoomID)),
 			blankMeetingsDash(hit.DateLabel),
 			formatMeetingsSearchMarks(hit.Marks),
 			blankMeetingsDash(hit.Title))
@@ -206,16 +206,17 @@ type meetingsSearchResults struct {
 }
 
 type meetingsSearchHit struct {
-	MeetingID string `json:"meetingId"`
-	Title     string `json:"title,omitempty"`
-	DateLabel string `json:"dateLabel,omitempty"`
-	RoomID    string `json:"roomId,omitempty"`
-	RoomName  string `json:"roomName,omitempty"`
-	SegmentID string `json:"segmentId"`
-	StartMS   int64  `json:"startMs"`
-	EndMS     int64  `json:"endMs"`
-	SpeakerID string `json:"speakerId,omitempty"`
-	Matched   string `json:"matched"`
+	MeetingID       string `json:"meetingId"`
+	Title           string `json:"title,omitempty"`
+	DateLabel       string `json:"dateLabel,omitempty"`
+	RoomID          string `json:"roomId,omitempty"`
+	RoomName        string `json:"roomName,omitempty"`
+	RoomDisplayName string `json:"roomDisplayName,omitempty"`
+	SegmentID       string `json:"segmentId"`
+	StartMS         int64  `json:"startMs"`
+	EndMS           int64  `json:"endMs"`
+	SpeakerID       string `json:"speakerId,omitempty"`
+	Matched         string `json:"matched"`
 	// Marks are the time-range marks this moment overlaps (D-737). A label is
 	// a tag's name, not transcript text.
 	Marks []meetingsSearchMark `json:"marks,omitempty"`
