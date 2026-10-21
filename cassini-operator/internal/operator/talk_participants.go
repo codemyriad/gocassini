@@ -35,39 +35,51 @@ func (c ExAppConfig) talkParticipantsFetcher() talkParticipantsFetcher {
 	if !c.appAPIActive() {
 		return nil
 	}
-	base := strings.TrimRight(c.NextcloudURL, "/")
 	client := &http.Client{Timeout: talkParticipantsTimeout}
 	return func(ctx context.Context, owner, roomToken string) ([]sharePrincipal, error) {
-		owner = strings.TrimSpace(owner)
-		roomToken = strings.TrimSpace(roomToken)
-		if owner == "" || roomToken == "" {
-			return nil, fmt.Errorf("owner and room token are required")
-		}
-		partURL := base + "/ocs/v2.php/apps/spreed/api/v4/room/" + url.PathEscape(roomToken) + "/participants"
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, partURL, nil)
+		rows, err := c.fetchTalkParticipantRows(ctx, client, owner, roomToken)
 		if err != nil {
-			return nil, fmt.Errorf("build participants request: %w", err)
+			return nil, err
 		}
-		c.setAppAPIOCSHeadersForUser(req, owner)
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("participants request failed: %w", err)
-		}
-		defer drainClose(resp.Body)
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-		if resp.StatusCode >= 300 {
-			return nil, fmt.Errorf("participants request returned %d", resp.StatusCode)
-		}
-		var payload struct {
-			OCS struct {
-				Data []participantRow `json:"data"`
-			} `json:"ocs"`
-		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			return nil, fmt.Errorf("decode participants response: %w", err)
-		}
-		return participantMappings(payload.OCS.Data), nil
+		return participantMappings(rows), nil
 	}
+}
+
+// Share discovery and title snapshots read the same membership endpoint, but
+// select their own fields and actors. Titles must never change share policy.
+func (c ExAppConfig) fetchTalkParticipantRows(ctx context.Context, client *http.Client, owner, roomToken string) ([]participantRow, error) {
+	owner = strings.TrimSpace(owner)
+	roomToken = strings.TrimSpace(roomToken)
+	if owner == "" || roomToken == "" {
+		return nil, fmt.Errorf("owner and room token are required")
+	}
+	partURL := strings.TrimRight(c.NextcloudURL, "/") + "/ocs/v2.php/apps/spreed/api/v4/room/" + url.PathEscape(roomToken) + "/participants"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, partURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build participants request: %w", err)
+	}
+	c.setAppAPIOCSHeadersForUser(req, owner)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("participants request failed: %w", err)
+	}
+	defer drainClose(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read participants response: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("participants request returned %d", resp.StatusCode)
+	}
+	var payload struct {
+		OCS struct {
+			Data []participantRow `json:"data"`
+		} `json:"ocs"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode participants response: %w", err)
+	}
+	return payload.OCS.Data, nil
 }
 
 // participantACTORs are Talk actor types that map to a local share principal. Everything else (guests, emails, federated_users,
@@ -79,9 +91,10 @@ var participantACTORs = map[string]string{
 }
 
 type participantRow struct {
-	ActorType string `json:"actorType"`
-	ActorID   string `json:"actorId"`
-	UserID    string `json:"userId"`
+	ActorType   string `json:"actorType"`
+	ActorID     string `json:"actorId"`
+	UserID      string `json:"userId"`
+	DisplayName string `json:"displayName"`
 }
 
 // participantMappings deduplicates the locally shareable Talk actors.
