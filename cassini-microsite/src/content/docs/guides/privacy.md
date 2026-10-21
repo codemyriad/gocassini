@@ -22,7 +22,7 @@ configure an LLM endpoint, and all send text, never audio.
 | Step                           | Where it runs                                             | Data leaves your infrastructure? |
 | ------------------------------ | --------------------------------------------------------- | -------------------------------- |
 | Recording the call             | Local (the Cassini container)                             | No                               |
-| Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
+| Transcription (speech-to-text) | Local (Parakeet / Parakeet Ultra / Silero VAD models)     | No                               |
 | Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
 | Separating voices on a shared device | Local, only when someone asks for one participant (Nemotron diarization) | No                   |
 | Meeting summary                | LLM endpoint — **only if one is configured**              | **Only if the endpoint is external** |
@@ -292,7 +292,9 @@ could not use.
 ## What is _not_ sent anywhere
 
 - **Transcription is 100% local.** Speech-to-text runs in-process using local
-  Parakeet models and Silero VAD (ONNX Runtime). No audio and no transcript
+  Parakeet models (Moondream's Parakeet Ultra; NVIDIA Parakeet on the CPU's
+  Fast tier) and
+  Silero VAD (ONNX Runtime). No audio and no transcript
   leaves your infrastructure for transcription.
 - **Speaker labels come from Talk, not from audio.** Each participant's label
   comes from Talk's signaling server (participant join events). Cassini never

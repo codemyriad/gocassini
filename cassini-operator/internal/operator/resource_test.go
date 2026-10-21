@@ -104,7 +104,7 @@ func TestApplyToEnv(t *testing.T) {
 	// CPU: no VRAM probe, device pinned so the child cannot re-detect, and the
 	// thread budget (cores minus reserve) rather than the CUDA single thread.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out, err := l.applyToEnv([]string{"X=1", "CASSINI_STT_DEVICE=cuda"}, deviceCPU, modelParakeetV3Int8)
+	out, err := l.applyToEnv([]string{"X=1", "CASSINI_STT_DEVICE=cuda"}, deviceCPU, modelParakeetUltraInt8)
 	if err != nil {
 		t.Fatalf("CPU applyToEnv() error = %v", err)
 	}
@@ -119,7 +119,7 @@ func TestApplyToEnv(t *testing.T) {
 	}
 	// The governor sized this build for a model; the child must load exactly
 	// that one rather than re-deriving it from the tier.
-	if !contains(out, "CASSINI_STT_MODEL="+modelParakeetV3Int8) {
+	if !contains(out, "CASSINI_STT_MODEL="+modelParakeetUltraInt8) {
 		t.Errorf("admitted model was not pinned into the child environment: %v", out)
 	}
 
@@ -127,7 +127,7 @@ func TestApplyToEnv(t *testing.T) {
 
 	// CUDA intended, GPU full -> defer rather than silently using host CPU/RAM.
 	probeGPUFreeMB = func() (int, bool) { return 1000, true }
-	out, err = l.applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32)
+	out, err = l.applyToEnv(nil, deviceCUDA, modelParakeetUltraFp32)
 	unavailable = nil
 	if !errors.As(err, &unavailable) || unavailable.resource != "GPU memory" {
 		t.Fatalf("low VRAM error = %v, want GPU resourceUnavailableError", err)
@@ -142,7 +142,7 @@ func TestApplyToEnv(t *testing.T) {
 	out, err = l.applyToEnv([]string{
 		"CASSINI_STT_NUM_THREADS=12",
 		"CASSINI_STT_STREAM_CONCURRENCY=4",
-	}, deviceCUDA, modelParakeetV3Fp32)
+	}, deviceCUDA, modelParakeetUltraFp32)
 	if err != nil {
 		t.Fatalf("CUDA applyToEnv() error = %v", err)
 	}
@@ -155,18 +155,18 @@ func TestApplyToEnv(t *testing.T) {
 		t.Errorf("stale CUDA stream concurrency override survived: %v", out)
 	}
 	probeGPUFreeMB = func() (int, bool) { return 5500, true }
-	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32); err != nil {
+	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA, modelParakeetUltraFp32); err != nil {
 		t.Errorf("VRAM exactly at floor must be eligible: %v", err)
 	}
 	probeGPUFreeMB = func() (int, bool) { return 5499, true }
-	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32); err == nil {
+	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA, modelParakeetUltraFp32); err == nil {
 		t.Error("VRAM one MiB below floor must be deferred")
 	}
 
 	// Unknown VRAM fails closed: launching without a usable capacity reading
 	// cannot uphold the host-safety guarantee.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out, err = l.applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32)
+	out, err = l.applyToEnv(nil, deviceCUDA, modelParakeetUltraFp32)
 	unavailable = nil
 	if !errors.As(err, &unavailable) || unavailable.resource != "GPU memory" {
 		t.Fatalf("unknown VRAM error = %v, want GPU memory resourceUnavailableError", err)
@@ -214,7 +214,7 @@ func TestExecuteBuildCLIPreservesAudioWithoutCUDARuntime(t *testing.T) {
 			// hardware must not override the missing CUDA execution provider;
 			// admission must fail before cmd.Run can start the ASR process.
 			TranscriptionEnabled: true,
-			ActiveModel:          modelParakeetV3Fp32, ActiveRevision: "pinned",
+			ActiveModel:          modelParakeetUltraFp32, ActiveRevision: "pinned",
 			DeviceOverride: "cuda",
 		},
 	}
@@ -765,10 +765,10 @@ func TestMinFreeMemForBuild(t *testing.T) {
 		device, model string
 		want          int
 	}{
-		{deviceCUDA, modelParakeetV3Fp32, 6144},
+		{deviceCUDA, modelParakeetUltraFp32, 6144},
 		{deviceCPU, modelParakeet110M, 512 + 1024},
-		{deviceCPU, modelParakeetV3Int8, 1792 + 1024},
-		{deviceCPU, modelParakeetV3Fp32, 3584 + 1024},
+		{deviceCPU, modelParakeetUltraInt8, 2048 + 1024},
+		{deviceCPU, modelParakeetUltraFp32, 3584 + 1024},
 		// An unrecognised model is charged the largest known footprint: the
 		// governor exists to keep a build from OOMing Nextcloud and Talk.
 		{deviceCPU, "some-future-model", 3584 + 1024},
@@ -838,8 +838,8 @@ func TestCPUFloorsRankByTierCost(t *testing.T) {
 	// hold — so assert the ordering rather than only the individual numbers.
 	l := resourceLimitsFromEnv()
 	fast := l.minFreeMemForBuild(deviceCPU, modelParakeet110M)
-	balanced := l.minFreeMemForBuild(deviceCPU, modelParakeetV3Int8)
-	best := l.minFreeMemForBuild(deviceCPU, modelParakeetV3Fp32)
+	balanced := l.minFreeMemForBuild(deviceCPU, modelParakeetUltraInt8)
+	best := l.minFreeMemForBuild(deviceCPU, modelParakeetUltraFp32)
 	if !(fast < balanced && balanced < best) {
 		t.Fatalf("CPU floors are not ordered by tier cost: fast=%d balanced=%d best=%d", fast, balanced, best)
 	}
@@ -916,7 +916,7 @@ func newAdmissionTestRuntime(t *testing.T, cassiniBin, jobID string) (*Runtime, 
 		logger: log.New(io.Discard, "", 0),
 		settings: STTSettings{
 			TranscriptionEnabled: true,
-			ActiveModel:          modelParakeetV3Int8, ActiveRevision: "r1",
+			ActiveModel:          modelParakeetUltraInt8, ActiveRevision: "r1",
 			Quality: sttQualityBalanced, DeviceOverride: deviceCPU,
 		},
 		maxBuildResourceDeferrals: 2,
@@ -924,7 +924,7 @@ func newAdmissionTestRuntime(t *testing.T, cassiniBin, jobID string) (*Runtime, 
 	return rt, runPath
 }
 
-const readyInt8Inventory = `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":true,"ready":true,"device":"cpu"}]`
+const readyInt8Inventory = `[{"id":"parakeet-ultra-0.6b-int8","revision":"r1","installed":true,"ready":true,"device":"cpu"}]`
 
 // A native crash after media preparation leaves a partial bundle. The audio-only
 // rebuild must start from an empty directory, or the meeting build refuses it
@@ -950,7 +950,7 @@ func TestExecuteBuildCLIFallbackRebuildsIntoACleanBundle(t *testing.T) {
 // the audio.
 func TestExecuteBuildCLIDefersTransientTranscriptionAdmission(t *testing.T) {
 	const jobID = "probe-deferred"
-	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), jobID)
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`), jobID)
 	t.Setenv("FAKE_PROBE_EXIT", "75")
 	task := buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}
 
@@ -996,7 +996,7 @@ func TestExecuteBuildCLIKeepsAudioWhenModelRAMNeverFrees(t *testing.T) {
 	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, readyInt8Inventory), jobID)
 	t.Setenv("CASSINI_BUILD_MEM_WAIT_SECS", "0")
 	limits := resourceLimitsFromEnv()
-	audioFloor, modelFloor := limits.minFreeMemForBuild(deviceCPU, ""), limits.minFreeMemForBuild(deviceCPU, modelParakeetV3Int8)
+	audioFloor, modelFloor := limits.minFreeMemForBuild(deviceCPU, ""), limits.minFreeMemForBuild(deviceCPU, modelParakeetUltraInt8)
 	if audioFloor >= modelFloor {
 		t.Fatalf("audio floor %d is not below the model floor %d", audioFloor, modelFloor)
 	}
@@ -1016,7 +1016,7 @@ func TestExecuteBuildCLIKeepsAudioWhenModelRAMNeverFrees(t *testing.T) {
 // audio at once rather than defer.
 func TestExecuteBuildCLIKeepsAudioWhenTheModelIsNotInstalled(t *testing.T) {
 	const jobID = "model-missing"
-	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":false,"ready":false,"device":"cpu"}]`), jobID)
+	rt, runPath := newAdmissionTestRuntime(t, fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8","revision":"r1","installed":false,"ready":false,"device":"cpu"}]`), jobID)
 	meetingPath, err := rt.executeBuildCLI(context.Background(), buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath})
 	if err != nil {
 		t.Fatalf("executeBuildCLI() = %v, want the audio preserved", err)

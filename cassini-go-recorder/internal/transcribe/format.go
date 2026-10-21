@@ -252,6 +252,9 @@ type provStep struct {
 	Model             string `json:"model,omitempty"`
 	Device            string `json:"device,omitempty"`
 	ReferenceFrontend *bool  `json:"referenceFrontend,omitempty"`
+	// Encoder is the url and comment from the encoder's ONNX metadata: the
+	// export that actually loaded, which the model id alone does not prove.
+	Encoder *EncoderProvenance `json:"encoder,omitempty"`
 	// Hints is set on a speech-to-text step whose decoder was biased towards a
 	// configured vocabulary. Absent means the pass ran unbiased, which is what
 	// every build before this feature did.
@@ -330,6 +333,8 @@ type ManifestInput struct {
 	Attribution       *AttributionProvenance
 	WordTimings       *WordTimingProvenance
 	ReferenceFrontend *bool
+	// Encoder is the primary model's encoder metadata, or nil.
+	Encoder *EncoderProvenance
 }
 
 func WriteManifest(path string, in ManifestInput) error {
@@ -347,7 +352,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		primaryID := sanitizeTranscriptID(string(in.STTModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 			ID: primaryID, Path: "transcript.words.v1.json", Default: true,
-			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, ReferenceFrontend: in.ReferenceFrontend, Hints: in.Hints},
+			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, ReferenceFrontend: in.ReferenceFrontend, Encoder: in.Encoder, Hints: in.Hints},
 		})
 		for _, extra := range in.Additional {
 			extraBackend := extra.Backend
@@ -372,6 +377,7 @@ func WriteManifest(path string, in ManifestInput) error {
 			Model:             string(in.STTModelID),
 			Device:            in.STTDevice,
 			ReferenceFrontend: in.ReferenceFrontend,
+			Encoder:           in.Encoder,
 			Hints:             in.Hints,
 		},
 		Attribution: in.Attribution,

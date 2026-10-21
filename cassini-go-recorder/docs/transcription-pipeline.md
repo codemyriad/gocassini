@@ -149,10 +149,12 @@ The operator-configured vocabulary reaches the recorder as
 `CASSINI_TRANSCRIPTION_TERMS`, a JSON array of preferred spellings. It is
 applied to supported **decoders**, not to finished text.
 
-Parakeet v3 (FP32 and INT8) uses the model-reference frontend while retaining
-modified beam search and supported vocabulary hints on participant tracks. The
-validated INT8 bundle without `bpe.vocab` retains greedy decoding: it cannot
-encode hints, and unbiased beam search lost more speech in recorded tests. Its detected speech spans
+Parakeet Ultra (FP32 and INT8, Moondream's post-training of Parakeet v3) uses
+the model-reference frontend while retaining modified beam search and supported
+vocabulary hints on participant tracks. The INT8 bundle is published without
+`bpe.vocab` and decodes greedily: it cannot encode hints, and unbiased beam
+search lost more speech than greedy in recorded tests (as it did for v3 INT8),
+at more CPU and about twice the peak memory. Its detected speech spans
 retain 30 ms of surrounding recorded audio, remain whole within VAD resource
 limits, and receive no synthetic decoder tail. Normal CPU/CUDA builds and the
 developer CLI include the required patched native runtime.
@@ -169,7 +171,7 @@ automatically from the recording metadata are capped at 0.5: stronger scores
 made short names overwhelm weak evidence and repeat, while 0.5 kept them as a
 nudge in full-meeting comparisons. Each participant track omits its speaker's
 own name and retains the other participant names; the mixed fallback
-has no single speaker. Parakeet v3’s merged-audio recovery fallback uses unbiased
+has no single speaker. Parakeet Ultra’s merged-audio recovery fallback uses unbiased
 greedy decoding because beam search lost speech in its separate non-VAD tests.
 Only an accepted fallback replaces the final hint provenance with an explicit
 unapplied reason; an attempted but rejected fallback leaves participant hints
@@ -184,8 +186,8 @@ the wider beam would cost decode time and buy nothing.
 
 Applying hints requires both of these model properties:
 
-1. the model must use a supported beam-search transducer decoder. Parakeet v3
-   supports hints; the `nemo_ctc` tier uses greedy decoding and cannot be biased.
+1. the model must use a supported beam-search transducer decoder. Parakeet
+   Ultra FP32 supports hints; the `nemo_ctc` tier uses greedy decoding and cannot be biased.
 2. the model bundle must ship `bpe.vocab`, and `modeling_unit` must be `bpe`.
    These two are the dangerous pair: with an empty `bpe_vocab` sherpa fails to
    construct the recognizer (loud), but with `modeling_unit` left unset the

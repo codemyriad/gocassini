@@ -203,6 +203,15 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			}
 			return fail(fmt.Errorf("files installed, but runtime check failed: %w", err))
 		}
+		// The model it replaces is no longer in the catalogue, so nothing can
+		// load its files; reclaim them once their successor is known to run.
+		removed, err := s.RemoveReplaced(ctx, m)
+		if err != nil {
+			fmt.Fprintln(stderr, "models: warning:", err)
+		}
+		for _, id := range removed {
+			fmt.Fprintf(stderr, "models: removed %s, which %s replaces\n", id, m.ID)
+		}
 		s.Progress(modelstore.Progress{Version: 1, Phase: "ready"})
 	}
 	if *jsonOutput {

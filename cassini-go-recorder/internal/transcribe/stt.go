@@ -191,14 +191,36 @@ func defaultVADDecodePolicy() vadDecodePolicy {
 // silence changes every frame; retaining the detected utterance and the source
 // context avoids both that perturbation and arbitrary mid-utterance resets.
 // 30ms is Silero's reference speech-boundary margin, not an ASR score optimum.
+// Parakeet Ultra shares the architecture and frontend, so it shares the policy;
+// the model spec, not the id, decides (ReferenceRuntimeMarkers).
 func usesParakeetV3ReferencePolicy(id ModelID) bool {
-	return id == ModelParakeet06BV3 || id == ModelParakeet06BV3Int8
+	return len(knownModels[id].ReferenceRuntimeMarkers) > 0
 }
 
 // UsesParakeetV3ReferencePolicy reports whether the given model uses the Parakeet v3
 // reference frontend policy.
 func UsesParakeetV3ReferencePolicy(id ModelID) bool {
 	return usesParakeetV3ReferencePolicy(id)
+}
+
+// ReferenceFrontendActive reports whether the given runtime version selects the
+// reference frontend for this model: every marker its spec requires is present.
+// False for a model without the reference policy.
+func ReferenceFrontendActive(id ModelID, version string) bool {
+	isRef, _ := checkReferenceRuntime(id, version)
+	return isRef
+}
+
+// missingReferenceMarkers lists the markers this model needs that the runtime
+// version lacks.
+func missingReferenceMarkers(id ModelID, version string) []string {
+	var missing []string
+	for _, marker := range knownModels[id].ReferenceRuntimeMarkers {
+		if !strings.Contains(version, marker) {
+			missing = append(missing, marker)
+		}
+	}
+	return missing
 }
 
 func vadDecodePolicyForModel(id ModelID) vadDecodePolicy {
@@ -255,6 +277,14 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 
 const parakeetReferenceRuntimeMarker = "+cassini-parakeet-v3-reference-v1"
 
+// parakeetUltraRuntimeMarker is in the native version string of a Cassini
+// runtime (v1.13.7-cassini.7 or later) that also selects the reference frontend
+// for Moondream Parakeet Ultra exports whose encoder metadata carries the
+// Ultra model URL. Earlier runtimes run such exports on the legacy frontend, or
+// exit at load for the plain Ultra URL. It is appended after the v3 marker, so
+// the v3 check above is unaffected.
+const parakeetUltraRuntimeMarker = ".parakeet-ultra-v1"
+
 var unpatchedWarnOnce sync.Once
 
 // RuntimeVersion returns the dynamic library version string reported by sherpa-onnx.
@@ -268,6 +298,12 @@ func HasReferenceRuntime() bool {
 	return strings.Contains(sherpa.GetVersion(), parakeetReferenceRuntimeMarker)
 }
 
+// HasParakeetUltraRuntime reports whether the active sherpa runtime selects the
+// reference frontend for Parakeet Ultra exports identified by their own URL.
+func HasParakeetUltraRuntime() bool {
+	return strings.Contains(sherpa.GetVersion(), parakeetUltraRuntimeMarker)
+}
+
 // checkReferenceRuntime returns whether the given runtime version satisfies the
 // Cassini reference frontend requirement for Parakeet v3 models, along with an
 // explanatory warning message if it falls back to the standard decode policy.
@@ -275,10 +311,23 @@ func checkReferenceRuntime(id ModelID, version string) (isReference bool, warnMs
 	if !usesParakeetV3ReferencePolicy(id) {
 		return false, ""
 	}
-	if strings.Contains(version, parakeetReferenceRuntimeMarker) {
+	missing := missingReferenceMarkers(id, version)
+	if len(missing) == 0 {
 		return true, ""
 	}
-	return false, fmt.Sprintf("Parakeet v3 running on upstream sherpa runtime (version %q); reference frontend optimization (%s) is inactive; falling back to standard decode profile", version, parakeetReferenceRuntimeMarker)
+	return false, fmt.Sprintf("%s running on a sherpa runtime without its reference frontend (version %q lacks %s); reference frontend optimization is inactive; falling back to standard decode profile", id, version, strings.Join(missing, ", "))
+}
+
+// refuseWithoutReferenceRuntime is the load-time guard for a model whose
+// export the runtime cannot run without its reference frontend selection.
+func refuseWithoutReferenceRuntime(id ModelID, version string) error {
+	if !knownModels[id].RefuseWithoutReferenceRuntime {
+		return nil
+	}
+	if missing := missingReferenceMarkers(id, version); len(missing) > 0 {
+		return fmt.Errorf("model %s needs a Cassini sherpa runtime with %s (sherpa-onnx-go-linux v1.13.7-cassini.7 or later); runtime %q would run it on the legacy frontend or exit while loading it", id, strings.Join(missing, ", "), version)
+	}
+	return nil
 }
 
 func effectiveVADPolicy(id ModelID, version string, referenceProfile bool) (vadDecodePolicy, bool, string) {
@@ -295,6 +344,9 @@ func effectiveVADPolicy(id ModelID, version string, referenceProfile bool) (vadD
 
 // The legacy profile is private and exists only for recorded-audio comparisons.
 func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, referenceProfile bool) (*Recognizer, error) {
+	if err := refuseWithoutReferenceRuntime(paths.ModelID, sherpa.GetVersion()); err != nil {
+		return nil, err
+	}
 	policy, isRef, warn := effectiveVADPolicy(paths.ModelID, sherpa.GetVersion(), referenceProfile)
 	if warn != "" {
 		unpatchedWarnOnce.Do(func() {
@@ -1348,6 +1400,7 @@ func (r *Recognizer) Close() {
 // word-level timings. Handles both BPE (▁ word-start marker) and
 // character-level CTC (space as delimiter).
 func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
+	tokens, timestamps, durations = withoutUnknownTokens(tokens, timestamps, durations)
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -1452,6 +1505,50 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 	}
 	flush()
 	return splitMultiWordTokens(words)
+}
+
+// unknownToken is the SentencePiece placeholder a Parakeet decoder emits for a
+// sound it cannot spell. It is not speech: Parakeet Ultra writes it as literal
+// text on greedy paths (19 hypotheses in the 2026-10 evaluation, against 2 for
+// v3), and left in, it glues onto a neighbouring word ("hello<unk>") or stands
+// as a word of its own in the transcript, the captions and the summary input.
+const unknownToken = "<unk>"
+
+// withoutUnknownTokens removes every <unk> from a decoder result, keeping the
+// three parallel slices aligned so each surviving token keeps its own
+// timestamp and duration. A token that is <unk> plus a word-start marker
+// ("▁<unk>") keeps the marker: the boundary it carries is still real, and only
+// the placeholder text goes. A token with nothing left is dropped with its
+// timing, so it can neither start a word nor extend one.
+func withoutUnknownTokens(tokens []string, timestamps, durations []float32) ([]string, []float32, []float32) {
+	found := false
+	for _, tok := range tokens {
+		if strings.Contains(tok, unknownToken) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return tokens, timestamps, durations
+	}
+	outTokens := make([]string, 0, len(tokens))
+	var outTimestamps, outDurations []float32
+	for i, tok := range tokens {
+		if strings.Contains(tok, unknownToken) {
+			tok = strings.ReplaceAll(tok, unknownToken, "")
+			if tok == "" {
+				continue
+			}
+		}
+		outTokens = append(outTokens, tok)
+		if i < len(timestamps) {
+			outTimestamps = append(outTimestamps, timestamps[i])
+		}
+		if i < len(durations) {
+			outDurations = append(outDurations, durations[i])
+		}
+	}
+	return outTokens, outTimestamps, outDurations
 }
 
 // tokenIsNonAcousticPunctuation reports whether a decoder token is nothing but

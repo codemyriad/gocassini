@@ -13,7 +13,7 @@ func TestSTTModelCacheChecksMissingIsAudioOnlyAndNeverDownloads(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CASSINI_CACHE_ROOT", root)
 	t.Setenv("CASSINI_STT_DEVICE", "cpu")
-	t.Setenv("CASSINI_STT_MODEL", string(transcribe.ModelParakeet06BV3Int8))
+	t.Setenv("CASSINI_STT_MODEL", string(transcribe.ModelParakeetUltraInt8))
 	t.Setenv("CASSINI_STT_REVISION", "")
 	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
 
@@ -62,7 +62,7 @@ func TestNativeRuntimeCheck(t *testing.T) {
 		},
 		{
 			name:       "v3 model with reference frontend passes with active marker",
-			modelID:    transcribe.ModelParakeet06BV3Int8,
+			modelID:    transcribe.ModelParakeetUltraInt8,
 			version:    "1.13.7+cassini-parakeet-v3-reference-v1",
 			hasRef:     true,
 			wantStatus: doctorOK,
@@ -70,7 +70,7 @@ func TestNativeRuntimeCheck(t *testing.T) {
 		},
 		{
 			name:       "v3 model without reference frontend warns (never fails) with inactive marker",
-			modelID:    transcribe.ModelParakeet06BV3Int8,
+			modelID:    transcribe.ModelParakeetUltraInt8,
 			version:    "1.13.7",
 			hasRef:     false,
 			wantStatus: doctorWarn,
@@ -98,7 +98,7 @@ func TestNativeRuntimeCheck(t *testing.T) {
 	}
 
 	// Live environment check: verify against linked runtime without stubs.
-	liveCheck := nativeRuntimeCheck(transcribe.ModelParakeet06BV3Int8)
+	liveCheck := nativeRuntimeCheck(transcribe.ModelParakeetUltraInt8)
 	if liveCheck.Status == doctorFail {
 		t.Fatalf("live nativeRuntimeCheck returned doctorFail: %+v", liveCheck)
 	}
@@ -204,5 +204,33 @@ func TestDoctorTextOutputIsUnchangedByTheJSONFlag(t *testing.T) {
 	}
 	if strings.HasPrefix(strings.TrimSpace(text), "[{") {
 		t.Error("text output became JSON")
+	}
+}
+
+// The speech.runtime check reads the markers the model needs from its spec:
+// the .6 runtime predates the Parakeet Ultra selection, so neither Ultra
+// precision is reference on it.
+func TestNativeRuntimeCheckIsModelAware(t *testing.T) {
+	const cassini6 = "1.13.7+cassini-parakeet-v3-reference-v1.nemotron-diarization-v2"
+	const cassini7 = cassini6 + ".parakeet-ultra-v1"
+	cases := []struct {
+		model   transcribe.ModelID
+		version string
+		want    doctorStatus
+	}{
+		{transcribe.ModelParakeetUltraInt8, cassini6, doctorWarn},
+		{transcribe.ModelParakeetUltraInt8, cassini7, doctorOK},
+		{transcribe.ModelParakeetUltra, cassini6, doctorWarn},
+		{transcribe.ModelParakeetUltra, cassini7, doctorOK},
+		{transcribe.ModelParakeetUltra, "1.13.7", doctorWarn},
+	}
+	for _, c := range cases {
+		check := nativeRuntimeCheckForVersion(c.model, c.version)
+		if check.Status != c.want {
+			t.Errorf("%s on %q: status %s, want %s (%s)", c.model, c.version, check.Status, c.want, check.Summary)
+		}
+		if c.want == doctorOK && !strings.Contains(check.Summary, SpeechEngineRefActiveMarker) {
+			t.Errorf("%s on %q: summary %q lacks %q", c.model, c.version, check.Summary, SpeechEngineRefActiveMarker)
+		}
 	}
 }

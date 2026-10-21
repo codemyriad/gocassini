@@ -83,7 +83,7 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 	cache := os.Getenv("CASSINI_CACHE_ROOT")
 	model := ModelID(os.Getenv("CASSINI_BOUNDARY_MODEL"))
 	if model == "" {
-		model = ModelParakeet06BV3
+		model = ModelParakeetUltra
 	}
 	device := os.Getenv("CASSINI_BOUNDARY_DEVICE")
 	if device == "" {

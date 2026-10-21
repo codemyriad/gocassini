@@ -176,7 +176,7 @@ func TestChooseMergedFallbackAcceptsEmptyPassRecoveryAndMeaningfulGain(t *testin
 }
 
 func TestMergedFallbackDecoderAndProvenance(t *testing.T) {
-	paths := ModelPaths{ModelID: ModelParakeet06BV3, SampleRate: 16000}
+	paths := ModelPaths{ModelID: ModelParakeetUltra, SampleRate: 16000}
 	base := &DecoderConfig{Method: decodingModifiedBeamSearch, HotwordsFile: "participant.txt", Score: 2, MaxActivePaths: 4}
 	before := *base
 	prov := &HintsProvenance{TermCount: 3, ParticipantTermCount: 2, Score: 2, ParticipantScore: 0.5, OwnNameExcluded: true, Applied: true, DecodingMethod: decodingModifiedBeamSearch}
@@ -232,7 +232,7 @@ func TestMergedFallbackDecoderAndProvenance(t *testing.T) {
 }
 
 func TestMergedFallbackDoesNotInventRequestedHints(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
 		for _, accepted := range []bool{false, true} {
 			if got := mergedFallbackHints(ModelPaths{ModelID: id}, nil, accepted); got != nil {
 				t.Fatalf("%s accepted=%v: invented hint request: %+v", id, accepted, got)

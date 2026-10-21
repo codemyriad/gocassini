@@ -72,7 +72,7 @@ func newSyntheticRegressionRecognizer(t *testing.T) *Recognizer {
 	t.Helper()
 	cache := os.Getenv("CASSINI_CACHE_ROOT")
 	if cache == "" {
-		t.Fatal("asrregression requires CASSINI_CACHE_ROOT with cached Parakeet v3 and Silero models")
+		t.Fatal("asrregression requires CASSINI_CACHE_ROOT with cached Parakeet Ultra fp32 and Silero models")
 	}
 	provider := os.Getenv("CASSINI_ASR_REGRESSION_DEVICE")
 	if provider == "" {
@@ -85,7 +85,13 @@ func newSyntheticRegressionRecognizer(t *testing.T) *Recognizer {
 	// skip the recognition assertion because a model is missing.
 	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
 	t.Setenv(envHintsDisabled, "")
-	paths, err := EnsureModel(cache, ModelParakeet06BV3, os.Stderr)
+	// CI runs fp32 Parakeet Ultra; CASSINI_ASR_REGRESSION_MODEL checks another
+	// cached model (the int8 CPU default) against the same phrases.
+	model := ModelParakeetUltra
+	if id := os.Getenv("CASSINI_ASR_REGRESSION_MODEL"); id != "" {
+		model = ModelID(id)
+	}
+	paths, err := EnsureModel(cache, model, os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-func TestReferencePolicyPreservesUtterancesOnlyForV3(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+func TestReferencePolicyPreservesUtterancesOnlyForParakeetReferenceModels(t *testing.T) {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
 		p := vadDecodePolicyForModel(id)
 		if !p.preserveVADSpan || p.contextMS != 30 || p.tailPaddingMS != 0 || p.headPaddingMS != 0 || !p.disableSyntheticPadding {
 			t.Fatalf("%s policy: %+v", id, p)
@@ -25,12 +25,12 @@ func TestReferencePolicyPreservesUtterancesOnlyForV3(t *testing.T) {
 }
 
 func TestReferenceRuntimeValidation(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
 		isRef, warn := checkReferenceRuntime(id, "1.13.7")
 		if isRef || warn == "" || !strings.Contains(warn, parakeetReferenceRuntimeMarker) {
 			t.Fatalf("expected warning for unpatched runtime on %s, got isRef=%v, warn=%q", id, isRef, warn)
 		}
-		isRef, warn = checkReferenceRuntime(id, "1.13.7"+parakeetReferenceRuntimeMarker)
+		isRef, warn = checkReferenceRuntime(id, cassiniRuntimeVersion)
 		if !isRef || warn != "" {
 			t.Fatalf("expected reference runtime satisfied for %s, got isRef=%v, warn=%q", id, isRef, warn)
 		}
@@ -42,7 +42,7 @@ func TestReferenceRuntimeValidation(t *testing.T) {
 }
 
 func TestUnpatchedRuntimeDegradesGracefullyToStandardPolicy(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
 		// Unpatched runtime falls back to standard decode policy with a warning
 		policy, isRef, warn := effectiveVADPolicy(id, "1.13.7", true)
 		if isRef || warn == "" {
@@ -56,7 +56,7 @@ func TestUnpatchedRuntimeDegradesGracefullyToStandardPolicy(t *testing.T) {
 		}
 
 		// Patched runtime activates model's reference policy without warning
-		policy, isRef, warn = effectiveVADPolicy(id, "1.13.7"+parakeetReferenceRuntimeMarker, true)
+		policy, isRef, warn = effectiveVADPolicy(id, cassiniRuntimeVersion, true)
 		if !isRef || warn != "" {
 			t.Fatalf("expected patched runtime to return isRef=true and no warning: isRef=%v, warn=%q", isRef, warn)
 		}
@@ -76,7 +76,7 @@ func TestUnpatchedRuntimeDegradesGracefullyToStandardPolicy(t *testing.T) {
 }
 
 func TestReferenceFrontendRetainsVocabularyHints(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
 		dir := t.TempDir()
 		paths := transducerPaths(t)
 		paths.ModelID = id
@@ -105,7 +105,7 @@ func TestReferenceFrontendRetainsVocabularyHints(t *testing.T) {
 // No native recognizer is needed: a short reference chunk must return before
 // constructing a stream. This covers the former zero-frame native abort.
 func TestReferenceSkipsChunksWithoutTwoFeatureFrames(t *testing.T) {
-	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
 		policy := vadDecodePolicyForModel(id)
 		for _, n := range []int{0, 1, 159, 160, 319} {
 			for _, vadSegment := range []bool{false, true} {
@@ -121,7 +121,7 @@ func TestReferenceSkipsChunksWithoutTwoFeatureFrames(t *testing.T) {
 
 func TestReferenceINT8WithoutHintTokenizerUsesGreedy(t *testing.T) {
 	paths := transducerPaths(t)
-	paths.ModelID = ModelParakeet06BV3Int8
+	paths.ModelID = ModelParakeetUltraInt8
 	paths.BpeVocabFile = ""
 	for _, terms := range [][]string{nil, {"Librocco"}} {
 		decoder, provenance, err := resolveDecoder(t.TempDir(), terms, paths)

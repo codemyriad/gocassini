@@ -41,4 +41,8 @@ require (
 
 replace cassini-annotations => ../cassini-annotations
 
-replace github.com/k2-fsa/sherpa-onnx-go-linux => github.com/codemyriad/sherpa-onnx-go-linux v1.13.7-cassini.6
+replace github.com/k2-fsa/sherpa-onnx-go-linux => github.com/codemyriad/sherpa-onnx-go-linux v1.13.7-cassini.8
+
+replace github.com/k2-fsa/sherpa-onnx-go-macos => github.com/codemyriad/sherpa-onnx-go-macos v1.13.7-cassini.8
+
+replace github.com/k2-fsa/sherpa-onnx-go-windows => github.com/codemyriad/sherpa-onnx-go-windows v1.13.7-cassini.8

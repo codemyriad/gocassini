@@ -208,6 +208,7 @@ type Runtime struct {
 	referenceFrontendProbe func() (known bool, isReference bool)
 	refFrontendMu          sync.Mutex
 	refFrontendBin         string
+	refFrontendModel       string
 	refFrontendKnown       bool
 	refFrontendIsRef       bool
 	refFrontendChecked     time.Time
