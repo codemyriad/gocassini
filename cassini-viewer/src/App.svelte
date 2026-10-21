@@ -70,6 +70,8 @@
   import MeetingView from "./components/MeetingView.svelte";
   import PreparePanel from "./components/PreparePanel.svelte";
   import TagManager from "./components/tags/TagManager.svelte";
+  import RoomNameDialog from "./components/RoomNameDialog.svelte";
+  import type { RoomNameState } from "./viewer/roomNames";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
   import { focusLayer } from "./components/ui/focusLayer";
@@ -132,6 +134,8 @@
   const CATALOG_REFRESH_INTERVAL_MS = 60_000;
   let catalogMode = false;
   let catalogRefreshRunning = false;
+  let catalogRequestGeneration = 0;
+  let editingRoomId: string | null = null;
   let catalogRefreshTimer: number | undefined;
 
   // Which room the list is narrowed to (D-654). null is "all meetings" — not
@@ -538,6 +542,7 @@
   }
 
   function handleShellKeydown(event: KeyboardEvent) {
+    if (editingRoomId) return;
     if (event.key !== "Escape" || event.defaultPrevented) {
       return;
     }
@@ -868,6 +873,14 @@
     );
   }
 
+  function roomNameSaved(state: RoomNameState) {
+    ++catalogRequestGeneration;
+    catalogRefreshRunning = false;
+    catalogMeetings = catalogMeetings.map((entry) => entry.roomId === state.roomId ? {...entry, roomDisplayName: state.displayName} : entry);
+    editingRoomId = null;
+    void refreshCatalog();
+  }
+
   async function refreshCatalog() {
     // Embedded mode keeps probing even when no catalog existed at mount time:
     // a fresh install can stay open while its first recording is published.
@@ -875,9 +888,10 @@
       return;
     }
     catalogRefreshRunning = true;
+    const generation = ++catalogRequestGeneration;
     try {
       const catalog = await dataProvider.loadCatalog();
-      if (destroyed || !catalog) {
+      if (destroyed || generation !== catalogRequestGeneration || !catalog) {
         return;
       }
       catalogMode = true;
@@ -897,13 +911,13 @@
       }
       pendingMeetingId = null;
     } catch (error) {
-      if (destroyed) {
+      if (destroyed || generation !== catalogRequestGeneration) {
         return;
       }
       // Preserve the last known-good list while surfacing the refresh failure.
       listError = error instanceof Error ? error.message : String(error);
     } finally {
-      catalogRefreshRunning = false;
+      if (generation === catalogRequestGeneration) catalogRefreshRunning = false;
     }
   }
 
@@ -1406,6 +1420,8 @@
     <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
+      editable={!!dataProvider.loadRoomName && !!dataProvider.saveRoomName}
+      on:rename={(event) => (editingRoomId = event.detail)}
       {selectedRoomKey}
       totalCount={catalogMeetings.length}
       open={railOpen}
@@ -1654,6 +1670,14 @@
   </div>
 {/if}
 </div><!-- /.cassini-root -->
+
+{#if editingRoomId}
+  {#key editingRoomId}
+    <RoomNameDialog roomId={editingRoomId} provider={dataProvider}
+      on:close={() => (editingRoomId = null)} on:saved={(event) => roomNameSaved(event.detail)}
+      on:unavailable={() => refreshCatalog()} />
+  {/key}
+{/if}
 
 <style>
   /* The browse shell: rail + list side by side, with the meeting sheet and its

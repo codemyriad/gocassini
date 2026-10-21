@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Pencil } from "@lucide/svelte";
   import { createEventDispatcher } from "svelte";
   import { fade } from "svelte/transition";
   import { Lock, Settings } from "@lucide/svelte";
@@ -26,6 +27,7 @@
   // `open` — rather than there being a second, phone-shaped room list to keep
   // in step with this one.
   export let rooms: RoomBucket[] = [];
+  export let editable = false;
   export let selectedRoomKey: string | null = null;
   export let totalCount = 0;
   export let open = false;
@@ -52,6 +54,7 @@
 
   const dispatch = createEventDispatcher<{
     select: string | null;
+    rename: string;
     close: void;
     toggleType: BrowseType;
     toggleTag: string;
@@ -200,17 +203,17 @@
       </div>
     {/if}
     {#each rooms as room (room.key)}
-      <button
-        in:fade={{ duration: SWAP_MS }}
-        type="button"
-        on:click={() => select(room.key)}
-        aria-pressed={selectedRoomKey === room.key}
-        class="room-button"
-        class:room-none={!room.hasRoom}
-      >
-        <span class="room-name">{room.name}</span>
-        <span class="room-count">{room.count}</span>
-      </button>
+      <div class="room-row" in:fade={{ duration: SWAP_MS }}>
+        <button type="button" on:click={() => select(room.key)} aria-pressed={selectedRoomKey === room.key}
+          class="room-button" class:room-none={!room.hasRoom}>
+          <span class="room-name">{room.name}</span>
+          <span class="room-count">{room.count}</span>
+        </button>
+        {#if editable && room.roomId}
+          <button type="button" class="room-edit" aria-label={`Rename room ${room.name}`} title="Rename room"
+            on:click={() => dispatch("rename", room.roomId!)}><Pencil size={14} aria-hidden="true" /></button>
+        {/if}
+      </div>
     {/each}
   </div>
 
@@ -311,6 +314,13 @@
 </nav>
 
 <style>
+  .room-row { position: relative; }
+  .room-row:has(.room-edit) .room-button { padding-right: 44px; }
+  .room-edit { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 28px; height: 28px; border-radius: 4px; opacity: 0; cursor: pointer; }
+  .room-row:hover .room-edit, .room-row:focus-within .room-edit { opacity: 1; }
+  .room-edit:hover { background: color-mix(in oklch, var(--color-base-content) 12%, transparent); }
+  @media (hover: none) { .room-edit { opacity: 1; } }
+
   /* Plain CSS rather than Tailwind utilities: aria-pressed drives two
      properties at once (fill and the inset marker), which reads
      better as one rule than as a stack of aria-[pressed=true]: variants, and
