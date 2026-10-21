@@ -118,6 +118,20 @@ func mapSeedMetadata(catalog siteCatalog, inventory map[int64]string) ([]seedMet
 			return nil, fmt.Errorf("invalid, duplicate, or absent destination recording: %q", meetingPath(probe.AudioPath, probe.MeetingPath))
 		}
 		seen[name], seenIDs[probe.ID] = true, true
+		// Runtime display names belong to the source installation, not the
+		// imported original metadata. Preserve all other extension fields.
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(entry, &fields); err != nil {
+			return nil, err
+		}
+		if _, projected := fields["roomDisplayName"]; projected {
+			delete(fields, "roomDisplayName")
+			cleaned, err := json.Marshal(fields)
+			if err != nil {
+				return nil, err
+			}
+			entry = cleaned
+		}
 		rows = append(rows, seedMetadataRow{ids[name], name, entry})
 	}
 	return rows, nil

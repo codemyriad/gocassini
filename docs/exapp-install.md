@@ -424,6 +424,42 @@ SQLite meeting metadata index helps build cards and never decides access.
 There is no `catalog.json` in the Nextcloud archive. The static exporter still
 makes one for static hosting.
 
+Room display names live in a separate `room_names` table in the same
+`operator/meetings.sqlite3` database. Private 1:1 rooms default to both named
+conversation members, including members who sent no recorded media. Readers
+can use the room row's pencil to set a shared Cassini name or restore the
+default. Cassini keeps the original Talk name in meeting metadata and does not
+change the Talk conversation or portable recording. A fresh Files read-access
+check authorizes each room-name read and edit.
+
+```text
+Current Files shares -> visible meetings -> room ID -> local display name
+                            |
+                            +-> original Talk name remains intact
+```
+
+**Back up `meetings.sqlite3` as durable data.** Only its `meeting_metadata` rows
+are rebuildable; user-edited room names cannot be recovered from recordings.
+Take a SQLite-aware backup or stop the operator and copy the database with any
+remaining WAL files. Keep it alongside the operator volume backup.
+
+For an index reset, stop the operator and run
+`cassini-operator clear-meeting-metadata` with the same environment and mounted
+volume, then perform the normal catalog import/recovery. This removes derived
+file-ID metadata while preserving room names. Do not delete `meetings.sqlite3`.
+Schema upgrades migrate it in place. Downgrading to a binary with the old
+disposable-index opener requires restoring that binary's pre-upgrade database
+backup; the old opener would delete an unfamiliar schema.
+
+Meeting-pack imports preserve room IDs and original names, create missing local
+name mappings, and retain destination overrides. Local display overrides are
+excluded from exported packs. A full operator-volume restore intentionally
+restores the lookup too. Old rooms without recoverable Talk lineage retain their
+best available name and can still be renamed manually when they have a room ID.
+Recovery verifies the retained portable file against its successful publication
+digest before reading its room/job identity; it does not depend on the temporary
+publish site, which is normally deleted, or recompute IDs with the current pepper.
+
 The `/operator/status` response reports `recordings_access.state`, `step`,
 `detail` and the private `root`. A failed setup check blocks new publication;
 previous shares remain controlled by Nextcloud. Use **Operator › Publish

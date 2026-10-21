@@ -118,3 +118,36 @@ func TestRoomNameValidationUnicode(t *testing.T) {
 		}
 	}
 }
+
+func TestRoomNameRetirementDoesNotDeleteOverride(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	raw := json.RawMessage(`{"id":"A","audioPath":"./meetings/A.opus","roomId":"one","roomName":"Alice"}`)
+	if err := rt.meetingMetadata.Put(ctx, 1, "A.opus", raw); err != nil {
+		t.Fatal(err)
+	}
+	name := "Planning"
+	if _, err := rt.meetingMetadata.saveRoomName(ctx, "one", &name, 1, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.store.db.Exec(`INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source) VALUES('A.opus',1,'CassiniRecordings/meetings/A.opus','retired','2026-10-21T00:00:00Z','test')`); err != nil {
+		t.Fatal(err)
+	}
+	nc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ocs":{"meta":{"statuscode":100},"data":[{"uid_file_owner":"cassini","file_source":1,"permissions":1,"path":"/Shared/A.opus","item_type":"file"}]}}`)
+	}))
+	defer nc.Close()
+	c := ExAppConfig{NextcloudURL: nc.URL, AppID: "cassini", AppSecret: "secret", meetingMetadata: rt.meetingMetadata, lifecycle: rt.store}
+	r := httptest.NewRequest("POST", "/rooms/one/name", strings.NewReader(`{"customName":"No","expectRevision":2}`))
+	r = r.WithContext(appapi.WithUserID(r.Context(), "alice"))
+	w := httptest.NewRecorder()
+	c.roomNameHandler(w, r)
+	if w.Code != 404 {
+		t.Fatalf("retired recording authorized: %d %s", w.Code, w.Body.String())
+	}
+	states, _ := rt.meetingMetadata.roomNames(ctx, []string{"one"})
+	if states["one"].DisplayName != "Planning" {
+		t.Fatal("retirement erased alias")
+	}
+}
