@@ -52,6 +52,7 @@ export interface Job {
    * for a non-Talk job, for a job whose room-name lookup never completed, and
    * for any job recorded before the operator promoted the room to a column. */
   room_name: string | null;
+  room_display_name?: string;
 }
 
 export interface JobAttempt {

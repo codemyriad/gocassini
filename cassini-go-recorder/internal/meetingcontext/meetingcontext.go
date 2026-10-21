@@ -72,8 +72,9 @@ type Meeting struct {
 	// summarising a meeting routinely needs answered, and the command the docs
 	// point it at for reading a meeting used to hand back a document that could
 	// not answer it.
-	RoomID   string `json:"roomId,omitempty"`
-	RoomName string `json:"roomName,omitempty"`
+	RoomID          string `json:"roomId,omitempty"`
+	RoomName        string `json:"roomName,omitempty"`
+	RoomDisplayName string `json:"roomDisplayName,omitempty"`
 }
 
 // Speaker is one member of the meeting's roster.
@@ -279,12 +280,13 @@ type BuildInput struct {
 	// meeting id so the bundle can be correlated with the catalog entry it came
 	// from: the manifest id is content-derived (a hash of the audio) and is not
 	// the id a published catalog indexes by.
-	ID           string
-	Title        string
-	CreatedAtUTC string
-	DurationMS   int64
-	RoomID       string
-	RoomName     string
+	ID              string
+	Title           string
+	CreatedAtUTC    string
+	DurationMS      int64
+	RoomID          string
+	RoomName        string
+	RoomDisplayName string
 
 	Speakers []Speaker
 
@@ -307,12 +309,13 @@ func Build(in BuildInput) MeetingContext {
 	bundle := MeetingContext{
 		Version: Version,
 		Meeting: Meeting{
-			ID:           strings.TrimSpace(in.ID),
-			Title:        strings.TrimSpace(in.Title),
-			CreatedAtUTC: strings.TrimSpace(in.CreatedAtUTC),
-			DurationMS:   in.DurationMS,
-			RoomID:       strings.TrimSpace(in.RoomID),
-			RoomName:     strings.TrimSpace(in.RoomName),
+			ID:              strings.TrimSpace(in.ID),
+			Title:           strings.TrimSpace(in.Title),
+			CreatedAtUTC:    strings.TrimSpace(in.CreatedAtUTC),
+			DurationMS:      in.DurationMS,
+			RoomID:          strings.TrimSpace(in.RoomID),
+			RoomName:        strings.TrimSpace(in.RoomName),
+			RoomDisplayName: strings.TrimSpace(in.RoomDisplayName),
 		},
 		TranscriptSource:       TranscriptSourceDerived,
 		SourceTranscriptID:     in.SourceTranscriptID,

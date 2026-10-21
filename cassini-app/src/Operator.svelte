@@ -1286,7 +1286,7 @@
                     <div class="card-body min-w-0 gap-1 p-3">
                       <div class="flex min-w-0 items-start justify-between gap-2">
                         <p class="min-w-0 flex-1 truncate text-sm font-medium" title={requestUrlLabel(job.request_json)}>
-                          {meetingLabel(job.request_json, job.id, job.room_name)}
+                          {meetingLabel(job.request_json, job.id, job.room_display_name || job.room_name)}
                         </p>
                         {#if job.current_attempt_number > 1}
                           <span class="badge badge-outline badge-sm shrink-0 border-base-content/20 text-base-content"
@@ -1418,7 +1418,7 @@
                 <section class="op-tint run-detail-card grid gap-3">
                   <div class="min-w-0">
                     <h3 class="truncate text-lg font-semibold" title={requestUrlLabel(selectedJob.job.request_json)}>
-                      {meetingLabel(selectedJob.job.request_json, selectedJob.job.id, selectedJob.job.room_name)}
+                      {meetingLabel(selectedJob.job.request_json, selectedJob.job.id, selectedJob.job.room_display_name || selectedJob.job.room_name)}
                     </h3>
                     <p class="text-sm {jobStatusToneClass(selectedJob.job)}">
                       {jobStatusLabel(selectedJob.job)}
