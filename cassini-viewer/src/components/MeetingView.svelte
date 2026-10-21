@@ -53,7 +53,6 @@
     type MeetingTag,
     type VocabularyTag,
   } from "../viewer/annotations";
-  import { identifier } from "./marking/optimistic";
   import { createWordHighlighter } from "../core/wordHighlight";
   import {
     keyboardEventTargetsControl,
@@ -192,10 +191,11 @@
     }
     renameBusy = true;
     renameError = "";
+    const meetingId = meeting.id;
     try {
-      await applyAnnotations({ requestId: identifier(), ops: [{ op: "set-title", title }] });
+      await marks.setTitle(title);
       const trimmed = title.trim();
-      dispatch("renamed", { id: meeting.id, title: trimmed === "" ? null : trimmed });
+      dispatch("renamed", { id: meetingId, title: trimmed === "" ? null : trimmed });
       renaming = false;
     } catch (error) {
       renameError = describeAnnotationError(error);

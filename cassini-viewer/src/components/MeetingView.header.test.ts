@@ -72,9 +72,9 @@ describe("MeetingView renaming (D-862)", () => {
     // The same route as a tag write, so the rename sticks in the meeting file;
     // an empty title resets to the recorded default, which only the server
     // knows, so the shell is told `null` and refetches.
-    expect(meetingViewSource).toContain('ops: [{ op: "set-title", title }]');
+    expect(meetingViewSource).toContain('await marks.setTitle(title);');
     expect(meetingViewSource).toContain(
-      'dispatch("renamed", { id: meeting.id, title: trimmed === "" ? null : trimmed });',
+      'dispatch("renamed", { id: meetingId, title: trimmed === "" ? null : trimmed });',
     );
   });
 
