@@ -771,9 +771,14 @@
 
   // A rename applies to everyone's view (D-862). A set title is folded into
   // the catalog in place; a reset needs the recorded default back, which only
-  // the server knows, so it refetches the catalog instead.
+  // the server knows, so it refetches the catalog instead. Either way a refresh
+  // already in flight was fetched pre-rename: invalidate it (and release the
+  // running guard) so a stale response can't revert the title, same as
+  // roomNameSaved.
   function handleRenamed(event: CustomEvent<{ id: string; title: string | null }>) {
     const { id, title } = event.detail;
+    ++catalogRequestGeneration;
+    catalogRefreshRunning = false;
     if (title !== null) {
       catalogMeetings = catalogMeetings.map((entry) =>
         entry.id === id ? { ...entry, title } : entry,
