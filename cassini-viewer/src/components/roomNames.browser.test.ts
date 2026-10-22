@@ -152,3 +152,58 @@ it.each(["light", "dark"])("inherits the embedded %s theme and dismisses without
     document.removeEventListener("keydown", hostShortcut);
   }
 });
+
+it("edits the listed name immediately and keeps the draft and focus when details arrive", async () => {
+  let resolveDetails!: (value: RoomNameState) => void;
+  fixture.provider.loadRoomName = vi.fn(() => new Promise(resolve => { resolveDetails = resolve; }));
+  start();
+  await edit();
+  const input = page.getByRole("textbox", { name: "Room name", exact: true });
+  const saveButton = page.getByRole("button", { name: "Save", exact: true });
+  await expect.element(input).toHaveValue("admin & Alice");
+  await expect.element(input).toHaveFocus();
+  await expect.element(input).toBeEnabled();
+  await expect.element(saveButton).toBeDisabled();
+  await input.fill("Planning");
+  await userEvent.keyboard("{Enter}");
+  expect(save).not.toHaveBeenCalled();
+  const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+  (cancel.element() as HTMLButtonElement).focus();
+  state = { ...state, customName: "Updated elsewhere", displayName: "Updated elsewhere", revision: 2 };
+  resolveDetails(structuredClone(state));
+  await expect.element(saveButton).toBeEnabled();
+  await expect.element(input).toHaveValue("Planning");
+  await expect.element(cancel).toHaveFocus();
+  await expect.element(page.getByText("Current saved name: Updated elsewhere", { exact: true })).toBeVisible();
+  await saveButton.click();
+  expect(save).toHaveBeenCalledWith("one", "Planning", 2);
+});
+
+it("retains an editable draft through a failed details request and retry", async () => {
+  fixture.provider.loadRoomName = vi.fn()
+    .mockRejectedValueOnce(new RoomNameError("Could not reach Cassini.", null))
+    .mockResolvedValueOnce(structuredClone(state));
+  start();
+  await edit();
+  const input = page.getByRole("textbox", { name: "Room name", exact: true });
+  await input.fill("Keep my draft");
+  await expect.element(page.getByRole("alert").filter({ hasText: "Could not reach Cassini" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await expect.element(input).toHaveValue("Keep my draft");
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("can cancel before details arrive without a late response reopening or moving focus", async () => {
+  let resolveDetails!: (value: RoomNameState) => void;
+  fixture.provider.loadRoomName = vi.fn(() => new Promise(resolve => { resolveDetails = resolve; }));
+  start();
+  await edit();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("dialog", { name: "Rename room" })).not.toBeInTheDocument();
+  resolveDetails(structuredClone(state));
+  await expect.element(page.getByRole("button", { name: "Rename room admin & Alice", exact: true })).toHaveFocus();
+  await expect.element(page.getByRole("dialog", { name: "Rename room" })).not.toBeInTheDocument();
+  expect(save).not.toHaveBeenCalled();
+});

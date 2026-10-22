@@ -1,15 +1,17 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount, tick } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import type { DataProvider } from "../viewer/dataProvider";
   import { RoomNameError, validateRoomName, type RoomNameState } from "../viewer/roomNames";
 
   export let roomId: string;
+  export let initialName: string;
   export let provider: DataProvider;
   const dispatch = createEventDispatcher<{ close: void; saved: RoomNameState; unavailable: void }>();
   let dialog: HTMLDialogElement;
   let input: HTMLInputElement;
   let state: RoomNameState | null = null;
-  let draft = "";
+  let draft = initialName;
+  let edited = false;
   let error = "";
   let busy = false;
   let loading = true;
@@ -22,6 +24,8 @@
   onMount(() => {
     const previous = (dialog.getRootNode() as Document | ShadowRoot).activeElement as HTMLElement | null;
     dialog.showModal();
+    input.focus();
+    input.select();
     void load();
     return () => { disposed = true; dialog.close(); previous?.focus(); };
   });
@@ -33,11 +37,16 @@
       const current = await provider.loadRoomName!(roomId);
       if (disposed) return;
       state = current;
-      draft = current.displayName;
-      loading = false;
-      await tick(); input?.focus(); input?.select();
-    } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
-    finally { loading = false; }
+      // The list already supplied a usable name. Loading edit permissions and
+      // the revision must neither replace a draft nor steal focus back.
+      if (!edited) draft = current.displayName;
+    } catch (cause) {
+      if (disposed) return;
+      error = cause instanceof Error ? cause.message : String(cause);
+      if (cause instanceof RoomNameError && cause.status === 404) {
+        inaccessible = true; dispatch("unavailable");
+      }
+    } finally { if (!disposed) loading = false; }
   }
 
   async function save(reset = false) {
@@ -98,21 +107,22 @@
   on:pointercancel={() => (backdropPressed = false)} on:click={handleBackdropClick} class="room-dialog">
   <form on:submit|preventDefault={() => save()}>
     <h2 id="room-name-title">Rename room</h2>
-    {#if loading}
-      <p role="status">Loading room name…</p>
-    {:else if state}
-      <label for="room-name-input">Room name</label>
-      <input bind:this={input} id="room-name-input" bind:value={draft} disabled={busy || inaccessible} autocomplete="off" aria-describedby="room-name-scope room-name-error" />
+    <label for="room-name-input">Room name</label>
+    <input bind:this={input} id="room-name-input" bind:value={draft} on:input={() => (edited = true)} disabled={busy || inaccessible} autocomplete="off" aria-describedby="room-name-scope room-name-error" />
+    {#if state}
       <p class="secondary">Default: {state.defaultName || state.roomId}</p>
-      <p id="room-name-scope">This name is shared with everyone who can access this room in Cassini.</p>
+      {#if edited && state.displayName !== initialName}<p class="secondary">Current saved name: {state.displayName}</p>{/if}
+    {:else if loading}
+      <p class="secondary" role="status">Checking room details…</p>
     {/if}
-    <p id="room-name-error" role="alert">{error || (state && validation ? validation : "")}</p>
+    <p id="room-name-scope">This name is shared with everyone who can access this room in Cassini.</p>
+    <p id="room-name-error" role="alert">{error || validation}</p>
     <div class="actions">
       {#if state?.customName !== null && state}<button type="button" disabled={busy || inaccessible} on:click={() => save(true)}>Use default</button>{/if}
       <span class="spacer"></span>
       <button type="button" disabled={busy} on:click={() => cancel()}>Cancel</button>
-      {#if state}<button class="save" type="submit" disabled={busy || inaccessible || !!validation}>{busy ? "Saving…" : "Save"}</button>
-      {:else if !loading}<button type="button" on:click={load}>Retry</button>{/if}
+      {#if !state && !loading && !inaccessible}<button type="button" on:click={load}>Retry</button>{/if}
+      <button class="save" type="submit" disabled={!state || loading || busy || inaccessible || !!validation}>{busy ? "Saving…" : "Save"}</button>
     </div>
   </form>
 </dialog>
