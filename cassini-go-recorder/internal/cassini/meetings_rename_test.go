@@ -42,6 +42,32 @@ func TestMeetingsRenameSendsOneSetTitleOp(t *testing.T) {
 	}
 }
 
+func TestMeetingsRenameAcceptsAFlagBetweenIdAndTitle(t *testing.T) {
+	// `rename MEET-1 --json "Q4 sync"` once swapped the positionals: flag
+	// parsing stopped at the title and handed back [title, id].
+	var sent []byte
+	fake := newMeetingsFakeNextcloud(t, serveRoutes(map[string]http.HandlerFunc{
+		"POST " + meetingsTestAnnotationsPath + "MEET-1": func(w http.ResponseWriter, r *http.Request) {
+			sent, _ = io.ReadAll(r.Body)
+			answerJSON(http.StatusOK, renameCommitted)(w, r)
+		},
+	}))
+
+	code, _, stderr := runMeetingsCLI(t, fake.server.URL, "rename", "MEET-1", "--json", "Q4 sync")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	var body struct {
+		Ops []map[string]string `json:"ops"`
+	}
+	if err := json.Unmarshal(sent, &body); err != nil {
+		t.Fatalf("the request body is not JSON: %v (%s)", err, sent)
+	}
+	if len(body.Ops) != 1 || body.Ops[0]["title"] != "Q4 sync" {
+		t.Errorf("ops = %v, want one set-title with %q (positionals swapped?)", body.Ops, "Q4 sync")
+	}
+}
+
 func TestMeetingsRenameClearSendsAnEmptyTitle(t *testing.T) {
 	var sent []byte
 	fake := newMeetingsFakeNextcloud(t, serveRoutes(map[string]http.HandlerFunc{

@@ -41,43 +41,57 @@ title, so the meeting falls back to its recorded default. Use
 `)
 		fs.PrintDefaults()
 	}
-	// meetingsParseArgs for a command with up to TWO leading positionals: the
-	// id and the title may come first, with flags after, the order every other
-	// meetings command accepts.
-	reordered := append([]string{}, args...)
-	var lead []string
-	for len(reordered) > 0 && !strings.HasPrefix(reordered[0], "-") && len(lead) < 2 {
-		lead = append(lead, reordered[0])
-		reordered = reordered[1:]
-	}
-	if err := fs.Parse(append(reordered, lead...)); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
+	// meetingsParseArgs for a command with TWO positionals: the id and the
+	// title may come before, between, or after flags, the order every other
+	// meetings command accepts. Re-appending leading positionals to the parse
+	// input (the one-positional trick) would swap them when a flag sits in
+	// between — flag parsing stops at the first non-flag, so
+	// `rename MEET-1 --json "Q4 sync"` would hand back [title, id]. Alternate
+	// instead: collect positionals until the next flag, parse flags until the
+	// next positional, repeat. Flag values ("--actor-kind person") are consumed
+	// by the parser, never mistaken for positionals.
+	rest := args
+	var positionals []string
+	for len(rest) > 0 {
+		if !strings.HasPrefix(rest[0], "-") {
+			positionals = append(positionals, rest[0])
+			rest = rest[1:]
+			continue
 		}
-		return 2
+		if err := fs.Parse(rest); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return 0
+			}
+			return 2
+		}
+		if len(fs.Args()) == len(rest) {
+			// A bare "-" is refused by the flag parser without being consumed;
+			// take it as a positional so the loop always advances.
+			positionals = append(positionals, rest[0])
+			rest = rest[1:]
+			continue
+		}
+		rest = fs.Args()
 	}
 
 	wantArgs := 2
 	if *clearTitle {
 		wantArgs = 1
 	}
-	if fs.NArg() != wantArgs {
+	if len(positionals) != wantArgs {
 		fmt.Fprintf(stderr, "rename takes a meeting id and a title (or just the id with --clear), got %d arguments: %v\n",
-			fs.NArg(), redactMeetingsArgs(fs.Args()))
-		if meetingsArgsLookLikeFlagsAfterPositional(fs.Args()) {
-			fmt.Fprintln(stderr, "hint=flags must come before the meeting id")
-		}
+			len(positionals), redactMeetingsArgs(positionals))
 		fs.Usage()
 		return 2
 	}
-	meetingID := strings.TrimSpace(fs.Arg(0))
+	meetingID := strings.TrimSpace(positionals[0])
 	if meetingID == "" || meetingID == "." || meetingID == ".." {
 		fmt.Fprintf(stderr, "rename configuration error: %q is not a meeting id; run `cassini meetings list` to find one\n", meetingID)
 		return 2
 	}
 	title := ""
 	if !*clearTitle {
-		title = strings.TrimSpace(fs.Arg(1))
+		title = strings.TrimSpace(positionals[1])
 		if title == "" {
 			fmt.Fprintln(stderr, "rename configuration error: the title is empty; to restore the default title, pass --clear")
 			return 2
