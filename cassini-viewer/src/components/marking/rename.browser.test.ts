@@ -1,5 +1,5 @@
 import { mount, unmount } from "svelte";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import App from "../../App.svelte";
 import "../../app.css";
@@ -24,8 +24,49 @@ afterEach(async () => {
   if (app) await unmount(app);
   app = undefined;
   fixture.dispose();
+  delete window.__CASSINI_VIEWER_BASE__;
   host.remove();
   history.replaceState(null, "", originalUrl);
+});
+
+it("ignores a catalog response started before a title save", async () => {
+  // A refresh already in flight when the rename commits was fetched with the
+  // old title; applying it would visibly revert the card (same race the room
+  // name dialog guards against).
+  const initial = fixture.snapshot();
+  initial.sync = { state: "saved", desired: 1, confirmed: 1 };
+  const renamed = structuredClone(initial);
+  renamed.revision = renamed.annotations!.revision = 2;
+  renamed.stateToken = "epoch:2";
+  renamed.sync = { state: "saved", desired: 2, confirmed: 2 };
+  renamed.annotations!.meeting = {
+    title: "Renamed meeting", setAtUtc: "2026-10-21T12:00:00Z",
+    actor: { kind: "person", id: "ana" },
+  };
+  fixture.load.mockResolvedValue(initial);
+  fixture.apply.mockResolvedValueOnce(renamed);
+
+  const load = fixture.provider.loadCatalog.bind(fixture.provider);
+  let release: ((value: Awaited<ReturnType<typeof load>>) => void) | undefined;
+  const old = await load();
+  const listing = vi.fn(load);
+  fixture.provider.loadCatalog = listing;
+  window.__CASSINI_VIEWER_BASE__ = location.origin + "/";
+  app = mount(App, { target: host, props: { dataProvider: fixture.provider } });
+  await page.getByRole("button", { name: /^Annotation test Mon/ }).click();
+  listing.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+  window.dispatchEvent(new Event("focus"));
+  await expect.poll(() => !!release).toBe(true);
+
+  await page.getByRole("button", { name: "Rename meeting", exact: true }).click();
+  await page.getByRole("textbox", { name: "Meeting title" }).fill("Renamed meeting");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.element(page.getByRole("textbox", { name: "Meeting title" })).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: /^Renamed meeting/ })).toBeInTheDocument();
+
+  release!(old);
+  await expect.element(page.getByRole("button", { name: /^Renamed meeting/ })).toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: /^Annotation test Mon/ })).not.toBeInTheDocument();
 });
 
 it.each(["Save", "Reset"])("can tag the same open meeting after a title %s", async (action) => {
