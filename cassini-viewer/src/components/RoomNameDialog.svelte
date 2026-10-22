@@ -16,10 +16,11 @@
   let uncertain = false;
   let inaccessible = false;
   let disposed = false;
+  let backdropPressed = false;
   $: validation = validateRoomName(draft);
 
   onMount(() => {
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = (dialog.getRootNode() as Document | ShadowRoot).activeElement as HTMLElement | null;
     dialog.showModal();
     void load();
     return () => { disposed = true; dialog.close(); previous?.focus(); };
@@ -69,9 +70,32 @@
     event?.preventDefault();
     if (!busy) dispatch("close");
   }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    // Handle this before the embedding page's global shortcuts can cancel
+    // the browser's native dialog dismissal.
+    event.stopPropagation();
+    cancel(event);
+  }
+
+  function isBackdrop(event: MouseEvent) {
+    if (event.target !== dialog) return false;
+    const bounds = dialog.getBoundingClientRect();
+    return event.clientX < bounds.left || event.clientX > bounds.right ||
+      event.clientY < bounds.top || event.clientY > bounds.bottom;
+  }
+
+  function handleBackdropClick(event: MouseEvent) {
+    const dismiss = backdropPressed && isBackdrop(event);
+    backdropPressed = false;
+    if (dismiss) cancel();
+  }
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="room-name-title" on:cancel={cancel} class="room-dialog">
+<dialog bind:this={dialog} aria-labelledby="room-name-title" on:cancel={cancel} on:keydown={handleKeydown}
+  on:pointerdown={(event) => (backdropPressed = event.button === 0 && isBackdrop(event))}
+  on:pointercancel={() => (backdropPressed = false)} on:click={handleBackdropClick} class="room-dialog">
   <form on:submit|preventDefault={() => save()}>
     <h2 id="room-name-title">Rename room</h2>
     {#if loading}

@@ -1674,8 +1674,9 @@
     {/if}
   </div>
 {/if}
-</div><!-- /.cassini-root -->
 
+<!-- Keep the modal inside the themed root: in Nextcloud's shadow DOM, the
+     color tokens are scoped here rather than on the document or shadow host. -->
 {#if editingRoomId}
   {#key editingRoomId}
     <RoomNameDialog roomId={editingRoomId} provider={dataProvider}
@@ -1683,6 +1684,7 @@
       on:unavailable={() => refreshCatalog()} />
   {/key}
 {/if}
+</div><!-- /.cassini-root -->
 
 <style>
   /* The browse shell: rail + list side by side, with the meeting sheet and its
