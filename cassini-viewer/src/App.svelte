@@ -1792,7 +1792,7 @@
      color tokens are scoped here rather than on the document or shadow host. -->
 {#if editingRoomId}
   {#key editingRoomId}
-    <RoomNameDialog roomId={editingRoomId} provider={dataProvider}
+    <RoomNameDialog roomId={editingRoomId} initialName={roomBuckets.find((room) => room.roomId === editingRoomId)?.name ?? editingRoomId} provider={dataProvider}
       on:close={() => (editingRoomId = null)} on:saved={(event) => roomNameSaved(event.detail)}
       on:unavailable={() => refreshCatalog()} />
   {/key}
