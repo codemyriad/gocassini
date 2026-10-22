@@ -109,6 +109,11 @@ type Runtime struct {
 	// meetingMetadata is a disposable description index. Visibility always
 	// comes from the caller's current Nextcloud shares, never from these rows.
 	meetingMetadata *meetingMetadataStore
+	// roomNameRetry backs off reconcile passes per room when its default keeps
+	// failing to reach a terminal source, bounding the repeated lineage proofs
+	// (full-file digest + CLI exec) for rooms that may never resolve.
+	roomNameRetryMu sync.Mutex
+	roomNameRetry   map[string]roomNameRetryState
 	// annotations is the marks projection (D-737); nil when it could not be
 	// opened, in which case writes still commit and only indexing is skipped.
 	annotations annotationIndex

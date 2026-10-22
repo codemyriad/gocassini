@@ -41,6 +41,46 @@ func (rt *Runtime) registerPublishedRoom(ctx context.Context, jobID string, raw 
 	return rt.meetingMetadata.observeRoom(ctx, e.RoomID, name, source, job.CreatedAt)
 }
 
+// roomNameRetryState paces reconciliation for one room: each pass that ends
+// without a terminal source doubles the wait before the room is tried again.
+type roomNameRetryState struct {
+	failures int
+	next     time.Time
+}
+
+const (
+	roomNameRetryBase = 5 * time.Minute
+	roomNameRetryCap  = 6 * time.Hour
+)
+
+func (rt *Runtime) roomNameRetryDue(roomID string) bool {
+	rt.roomNameRetryMu.Lock()
+	defer rt.roomNameRetryMu.Unlock()
+	state, ok := rt.roomNameRetry[roomID]
+	return !ok || !time.Now().Before(state.next)
+}
+
+func (rt *Runtime) deferRoomNameRetry(roomID string) {
+	rt.roomNameRetryMu.Lock()
+	defer rt.roomNameRetryMu.Unlock()
+	if rt.roomNameRetry == nil {
+		rt.roomNameRetry = map[string]roomNameRetryState{}
+	}
+	state := rt.roomNameRetry[roomID]
+	// 5min<<7 already exceeds the cap; bounding the shift keeps it from
+	// overflowing after weeks of failures.
+	delay := min(roomNameRetryBase<<min(state.failures, 7), roomNameRetryCap)
+	state.failures++
+	state.next = time.Now().Add(delay)
+	rt.roomNameRetry[roomID] = state
+}
+
+func (rt *Runtime) clearRoomNameRetry(roomID string) {
+	rt.roomNameRetryMu.Lock()
+	defer rt.roomNameRetryMu.Unlock()
+	delete(rt.roomNameRetry, roomID)
+}
+
 // A tracked worker retries only unresolved room defaults. No catalog read waits
 // for Talk, and each pass calls Talk at most once per room, sequentially.
 func (rt *Runtime) startRoomNamesWorker() {
@@ -105,17 +145,15 @@ func (rt *Runtime) reconcileRoomNames(ctx context.Context) error {
 		if source == "participants" || source == "talk-group" {
 			continue
 		}
+		if !rt.roomNameRetryDue(e.RoomID) {
+			continue
+		}
 		jobID := e.JobID
 		if jobID == "" {
 			jobID = e.ID
 		}
 		job, err := rt.store.GetJob(ctx, jobID)
 		if err != nil || job.TalkBinding == nil {
-			continue
-		}
-		// An imported ID matching a local job is insufficient. Its retained local
-		// publication must agree on both meeting and room identity.
-		if !rt.roomEntryHasLocalLineage(ctx, job, e) {
 			continue
 		}
 		published, err := rt.store.HasSuccessfulPublish(ctx, jobID)
@@ -127,6 +165,14 @@ func (rt *Runtime) reconcileRoomNames(ctx context.Context) error {
 		}
 		state, err := decodeTalkBinding(*job.TalkBinding)
 		if err != nil {
+			continue
+		}
+		// An imported ID matching a local job is insufficient. Its retained local
+		// publication must agree on both meeting and room identity. This proof
+		// digests the retained recording and execs the CLI, so it runs after the
+		// cheap checks and under the per-room backoff.
+		if !rt.roomEntryHasLocalLineage(ctx, job, e) {
+			rt.deferRoomNameRetry(e.RoomID)
 			continue
 		}
 		seen[e.RoomID] = true
@@ -144,6 +190,11 @@ func (rt *Runtime) reconcileRoomNames(ctx context.Context) error {
 			if fetchErr != nil {
 				rt.logger.Printf("room default incomplete room_id=%s; will retry", e.RoomID)
 			}
+		}
+		if kind == "participants" || kind == "talk-group" {
+			rt.clearRoomNameRetry(e.RoomID)
+		} else {
+			rt.deferRoomNameRetry(e.RoomID)
 		}
 		if err := rt.meetingMetadata.observeRoom(ctx, e.RoomID, name, kind, at); err != nil {
 			return err

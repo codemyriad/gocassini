@@ -83,6 +83,9 @@ func (s *meetingMetadataStore) registerMetadataRooms(ctx context.Context) error 
 
 // Stronger complete evidence can enrich a fallback; old reruns and transient
 // failures cannot replace a known pair. Neither path writes custom_name.
+// An observation that repeats the stored name and source changes nothing a
+// viewer can see, so it must not touch the row: revision guards concurrent
+// edits, and a background bump would 409 an open rename dialog.
 func (s *meetingMetadataStore) observeRoom(ctx context.Context, id, name, source, at string) error {
 	if err := s.registerRoom(ctx, id, name); err != nil {
 		return err
@@ -94,8 +97,8 @@ func (s *meetingMetadataStore) observeRoom(ctx context.Context, id, name, source
  revision=revision+1, updated_at=? WHERE room_id=? AND
  (default_source IN ('unknown','metadata') OR
   (? >= default_observed_at AND (?='participants' OR default_source<>'participants' OR ?='talk-group')))
- AND (default_name<>? OR default_source<>? OR default_observed_at<>?)`,
-		name, source, at, nowUTCString(), id, at, source, source, name, source, at)
+ AND (default_name<>? OR default_source<>?)`,
+		name, source, at, nowUTCString(), id, at, source, source, name, source)
 	return err
 }
 
