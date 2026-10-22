@@ -71,7 +71,7 @@ func openMeetingMetadataStore(file string, logger *log.Logger) (*meetingMetadata
 		if _, err := tx.Exec(meetingMetadataSchema + roomNamesSchema); err != nil {
 			return fail(err)
 		}
-		if _, err := tx.Exec("PRAGMA user_version = 2"); err != nil {
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", meetingMetadataVersion)); err != nil {
 			return fail(err)
 		}
 	}
