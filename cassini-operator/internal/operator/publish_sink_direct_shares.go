@@ -118,8 +118,11 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 			return "", fmt.Errorf("index recording metadata: %w", err)
 		}
 	}
+	// Best-effort, like the room stamp at build time: a failed registration
+	// costs the room default, never the meeting. The reconcile worker's next
+	// pass retries it from the indexed entry.
 	if err := s.rt.registerPublishedRoom(ctx, d.JobID, entry); err != nil {
-		return "", fmt.Errorf("register room default: %w", err)
+		s.rt.logger.Printf("register room default job=%s: %v (reconciliation will retry)", d.JobID, err)
 	}
 
 	if !priorSuccess || !before.Exists {
