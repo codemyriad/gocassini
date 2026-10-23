@@ -24,6 +24,14 @@
   import TranscriptWords from "./TranscriptWords.svelte";
   import ExportMenu from "./ExportMenu.svelte";
   import MeetingFacts from "./MeetingFacts.svelte";
+  import SummaryRequest from "./SummaryRequest.svelte";
+  import {
+    describeSummaryRequestError,
+    missingSummaryText,
+    summaryCostLine,
+    type SummaryRequestState,
+    type SummaryStatus,
+  } from "../viewer/meetingSummary";
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
@@ -168,10 +176,99 @@
     openedSpeakersFor = speakersFor;
     void speakerSession.open(
       speakersFor ? () => dataProvider.loadSpeakerEdits!(meeting!) : null,
-      speakersFor ? (expectRevision, doc) => dataProvider.saveSpeakerEdits!(meeting!, expectRevision, doc) : null,
+      speakersFor
+        ? (expectRevision, doc, summary) =>
+            // Keep is what no choice means, so only a rewrite is passed on:
+            // a provider that predates the choice is called as it always was.
+            summary === "rewrite"
+              ? dataProvider.saveSpeakerEdits!(meeting!, expectRevision, doc, summary)
+              : dataProvider.saveSpeakerEdits!(meeting!, expectRevision, doc)
+        : null,
     );
   }
   onDestroy(() => speakerSession.close());
+
+  // Asking for the meeting's summary (D-814): offered in the app, where an
+  // operator can write one into the published meeting. While one is being
+  // written the state is polled, and once it is done the meeting is read
+  // again so the summary appears.
+  export let summaryRequestPollMs = 5000;
+  let summaryRequest: SummaryRequestState | null = null;
+  let summaryRequestError = "";
+  let summaryRequestFor: string | null = null;
+  let summaryRequestTimer: ReturnType<typeof setTimeout> | undefined;
+  // Polls in a row that failed while a summary was being written.
+  let summaryRequestFailures = 0;
+  const SUMMARY_REQUEST_RETRY_MAX_MS = 60_000;
+  $: summaryRequestOffered =
+    surface === "app" &&
+    !bundled &&
+    typeof dataProvider.loadSummaryRequestState === "function" &&
+    typeof dataProvider.requestSummary === "function";
+  $: summaryRequestKey = summaryRequestOffered && meeting ? meeting.id : null;
+  $: if (summaryRequestKey !== summaryRequestFor) {
+    summaryRequestFor = summaryRequestKey;
+    summaryRequest = null;
+    summaryRequestError = "";
+    summaryRequestFailures = 0;
+    clearTimeout(summaryRequestTimer);
+    if (summaryRequestKey && meeting) void loadSummaryRequest(meeting);
+  }
+  onDestroy(() => clearTimeout(summaryRequestTimer));
+
+  async function loadSummaryRequest(entry: MeetingCatalogEntry) {
+    try {
+      const next = await dataProvider.loadSummaryRequestState!(entry);
+      if (meeting?.id !== entry.id) return;
+      summaryRequestFailures = 0;
+      takeSummaryRequest(entry, next);
+    } catch (error) {
+      console.error("summary request state unavailable", entry.id, error);
+      if (meeting?.id !== entry.id) return;
+      if (summaryRequest?.state === "writing") {
+        // The summary is still being written: one lost answer must not leave
+        // the page waiting for ever, so ask again, a little later each time.
+        summaryRequestFailures += 1;
+        clearTimeout(summaryRequestTimer);
+        summaryRequestTimer = setTimeout(
+          () => {
+            if (meeting?.id === entry.id) void loadSummaryRequest(entry);
+          },
+          Math.min(summaryRequestPollMs * 2 ** summaryRequestFailures, SUMMARY_REQUEST_RETRY_MAX_MS),
+        );
+      } else {
+        // No state means nothing is offered.
+        summaryRequest = null;
+      }
+    }
+  }
+
+  function takeSummaryRequest(entry: MeetingCatalogEntry, next: SummaryRequestState) {
+    const wasWriting = summaryRequest?.state === "writing";
+    summaryRequest = next;
+    clearTimeout(summaryRequestTimer);
+    if (next.state === "writing") {
+      summaryRequestTimer = setTimeout(() => {
+        if (meeting?.id === entry.id) void loadSummaryRequest(entry);
+      }, summaryRequestPollMs);
+    } else if (wasWriting && next.state === "idle") {
+      void reloadForSpeakers();
+    }
+  }
+
+  async function askForSummary(replace: boolean) {
+    const entry = meeting;
+    if (!entry || !dataProvider.requestSummary) return;
+    summaryRequestError = "";
+    try {
+      const next = await dataProvider.requestSummary(entry, replace);
+      if (meeting?.id === entry.id) takeSummaryRequest(entry, next);
+    } catch (error) {
+      if (meeting?.id !== entry.id) return;
+      summaryRequestError = describeSummaryRequestError(error);
+      void loadSummaryRequest(entry);
+    }
+  }
   // A voice sample plays through the meeting's own player and stops itself:
   // `sampleStopMs` is where, and any other seek or pause cancels it.
   let sampleStopMs: number | null = null;
@@ -204,6 +301,8 @@
   let displayTranscript: DisplayTranscriptV1 | null = null;
   let readableTranscript: ReadableTranscriptV1 | null = null;
   let summaryMarkdown: string | null = null;
+  // What the summary step did, as the meeting file says (D-814).
+  let summaryStatus: SummaryStatus | undefined;
   let audioSrc = "";
   // Bumped when the file at `audioSrc` was republished, to replace the player.
   let audioGeneration = 0;
@@ -395,6 +494,7 @@
     displayTranscript = artifact.displayTranscript;
     readableTranscript = artifact.readableTranscript;
     summaryMarkdown = artifact.summary;
+    summaryStatus = artifact.summaryStatus;
     audioSrc = artifact.audioSrc;
     transcriptionOnly = artifact.transcriptionOnly === true;
     captionsSrc = artifact.captionsSrc;
@@ -453,6 +553,7 @@
     displayTranscript = null;
     readableTranscript = null;
     summaryMarkdown = null;
+    summaryStatus = undefined;
     audioSrc = "";
     transcriptionOnly = false;
     captionsSrc = null;
@@ -1371,6 +1472,17 @@
     }
   }
   $: hasSummaryTab = Boolean(summaryHtml) || linkedInsights.length > 0;
+  // A meeting with no summary says why, when its file says, and offers to
+  // write one where the operator can (D-814). A meeting with no transcript
+  // has its own message in the transcript, and nothing to summarize.
+  $: summaryReasonText = summaryHtml ? null : missingSummaryText(summaryStatus);
+  $: transcribedForSummary = !transcriptionStatus || transcriptionStatus.status === "completed";
+  $: writeSummaryShown =
+    !summaryHtml &&
+    transcribedForSummary &&
+    ((summaryRequest !== null && (summaryRequest.canWrite || summaryRequest.state !== "idle")) || summaryReasonText !== null);
+  $: regenerateSummaryShown =
+    Boolean(summaryHtml) && summaryRequest !== null && (summaryRequest.canRegenerate || summaryRequest.state !== "idle");
   $: shownTab = hasSummaryTab ? activeTab : ("transcript" as MeetingTab);
   $: overlayShown = Boolean(transcriptIndex) && (hasSummaryTab || displaySegments.length > 0);
   $: tabsOffset = overlayShown ? tabsHeight : 0;
@@ -1490,6 +1602,8 @@
             on:sample={(event) => playSample(event.detail.id, event.detail.startMs, event.detail.endMs)}
             on:stopSample={stopSample}
             on:reload={() => reloadForSpeakers()}
+            hasSummary={Boolean(summaryMarkdown)}
+            summaryCost={summaryRequest ? summaryCostLine(summaryRequest) : null}
             recording={artifactMetadata?.recording ?? null}
             timing={timingPrecision}
           />
@@ -1540,6 +1654,13 @@
       aria-labelledby={hasSummaryTab ? "mv-tab-summary" : undefined}
       hidden={shownTab !== "summary"}
     >
+    {#if hasSummaryTab && writeSummaryShown}
+      {#if summaryRequest}
+        <SummaryRequest state={summaryRequest} mode="write" reasonText={summaryReasonText} error={summaryRequestError} on:request={(event) => askForSummary(event.detail.replace)} />
+      {:else}
+        <p class="mv-nosummary">{summaryReasonText}</p>
+      {/if}
+    {/if}
     {#if summaryHtml || linkedInsights.length > 0}
       <section>
         <div>
@@ -1566,6 +1687,11 @@
               [&_blockquote]:border-l-[3px] [&_blockquote]:border-primary/60 [&_blockquote]:pl-3.5 [&_blockquote]:py-0.5 [&_blockquote]:text-base-content/80
               [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-base-300"
           >{@html summaryHtml}</div>
+          {#if regenerateSummaryShown && summaryRequest}
+            <div class="mv-summary-regenerate">
+              <SummaryRequest state={summaryRequest} mode="regenerate" error={summaryRequestError} on:request={(event) => askForSummary(event.detail.replace)} />
+            </div>
+          {/if}
           {/if}
           {#if linkedInsights.length > 0}
             <div class="mv-summary-insights" class:mv-summary-insights-only={!summaryHtml}>
@@ -1607,6 +1733,13 @@
       aria-labelledby={hasSummaryTab ? "mv-tab-transcript" : undefined}
       hidden={shownTab !== "transcript"}
     >
+    {#if !hasSummaryTab && writeSummaryShown}
+      {#if summaryRequest}
+        <SummaryRequest state={summaryRequest} mode="write" reasonText={summaryReasonText} error={summaryRequestError} on:request={(event) => askForSummary(event.detail.replace)} />
+      {:else}
+        <p class="mv-nosummary">{summaryReasonText}</p>
+      {/if}
+    {/if}
     {#if displaySegments.length === 0}
       <p class="text-base-content/70 text-sm leading-normal">
         {#if transcriptionStatus?.status === "failed"}Recording available. Transcription failed.
@@ -2019,6 +2152,17 @@
   }
   .mv-tabbar-gap {
     height: calc(var(--tf-bleed) - 9px);
+  }
+  .mv-nosummary {
+    margin-bottom: 16px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .mv-summary-regenerate {
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-base-300);
   }
   .mv-tabrow {
     position: relative;
