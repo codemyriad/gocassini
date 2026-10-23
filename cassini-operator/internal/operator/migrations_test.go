@@ -302,6 +302,48 @@ func TestMigrateDownRemovesTheAttemptStepOutcomesAndKeepsTheAttempt(t *testing.T
 	}
 }
 
+func TestMigrateDownRemovesTheAttemptSummaryModeAndKeepsTheAttempt(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "attempt_summary_mode")
+	if at < 0 {
+		t.Fatal("no attempt_summary_mode migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "job-summary-mode", nowUTCString())
+	if err := store.MarkBuildQueued(ctx, "job-summary-mode", "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE job_attempts SET summary_mode = ? WHERE job_id = ?`, speakerSummaryRewrite, "job-summary-mode"); err != nil {
+		t.Fatal(err)
+	}
+	if rewrite, err := store.AttemptRewritesSummary(ctx, "job-summary-mode", 1); err != nil || !rewrite {
+		t.Fatalf("AttemptRewritesSummary() = %v, %v; want the rewrite kept", rewrite, err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT summary_mode FROM job_attempts`); err == nil {
+		t.Fatal("job_attempts.summary_mode survived the down migration")
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	// Back up, the attempt is there and keeps the summary: the default.
+	if rewrite, err := store.AttemptRewritesSummary(ctx, "job-summary-mode", 1); err != nil || rewrite {
+		t.Fatalf("AttemptRewritesSummary() after re-upgrade = %v, %v; want keep", rewrite, err)
+	}
+}
+
 // TestNewestMigrationHasARollbackTest is the tripwire: a rollback to the last
 // release is only known to work for a migration that has a down-and-up test in
 // this file. Adding a migration means adding its test and naming it here, or
@@ -316,6 +358,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"insight_name":             true,
 		"insight_document_file_id": true,
 		"attempt_step_outcomes":    true,
+		"attempt_summary_mode":     true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {

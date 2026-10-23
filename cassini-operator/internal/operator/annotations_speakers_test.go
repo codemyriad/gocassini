@@ -25,6 +25,9 @@ type speakersFixture struct {
 	rt *Runtime
 	h  http.Handler
 	nc *annotationsNextcloud
+	// canRewriteSummary is whether the caller may replace the summary: an
+	// administrator or a moderator of the room, as Nextcloud would answer.
+	canRewriteSummary bool
 }
 
 func newSpeakersFixture(t *testing.T) *speakersFixture {
@@ -58,7 +61,12 @@ func newSpeakersFixtureBehind(t *testing.T, front func(next http.Handler) http.H
 	s := newAnnotationService(rt, cfg, log.New(ioDiscard{}, "", 0))
 	mux := http.NewServeMux()
 	s.register(mux)
-	return &speakersFixture{rt: rt, h: mux, nc: nc}
+	f := &speakersFixture{rt: rt, h: mux, nc: nc}
+	// Who may replace a summary is the test's to say; uncached, so a test can
+	// change its mind between requests.
+	s.summaryRewrite = newSummaryRewritePermissions(func(context.Context, string, string) (bool, error) { return f.canRewriteSummary, nil })
+	s.summaryRewrite.ttl = 0
+	return f
 }
 
 // installModel makes the model inventory list the diarizer ready, as after

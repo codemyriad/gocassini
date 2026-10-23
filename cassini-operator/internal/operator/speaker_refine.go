@@ -108,7 +108,10 @@ func (rt *Runtime) withSpeakerEdits(build func(context.Context, buildTask) (stri
 		}
 		defer logFile.Close()
 		fmt.Fprintf(logFile, "rerun: replaying speaker edits revision %d\n", doc.Revision)
-		err = rt.applySpeakerEdits(ctx, task, builtPath, *doc, logFile)
+		// A rerun is an administrator's, and its build already wrote (and paid
+		// for) a fresh summary of the unedited transcript: rewriting it for the
+		// edited names is part of what they asked for.
+		err = rt.applySpeakerEdits(ctx, task, builtPath, *doc, true, logFile)
 		return rt.speakerEditsResult(ctx, task, builtPath, err)
 	}
 }
@@ -173,7 +176,13 @@ func (rt *Runtime) executeRefineCLI(ctx context.Context, task buildTask, doc spe
 	if err := copyDirectory(source, meetingPath); err != nil {
 		return meetingPath, fmt.Errorf("copy current meeting: %w", err)
 	}
-	if err := rt.applySpeakerEdits(ctx, task, meetingPath, doc, logFile); err != nil {
+	// The summary is rewritten only when the save asked for it, which only an
+	// administrator or a moderator of the room may do; otherwise it is kept.
+	rewriteSummary, err := rt.store.AttemptRewritesSummary(context.Background(), task.JobID, task.AttemptNumber)
+	if err != nil {
+		return meetingPath, err
+	}
+	if err := rt.applySpeakerEdits(ctx, task, meetingPath, doc, rewriteSummary, logFile); err != nil {
 		return meetingPath, err
 	}
 	if _, err := os.Stat(filepath.Join(meetingPath, "cassini.json")); err != nil {
@@ -186,7 +195,7 @@ func (rt *Runtime) executeRefineCLI(ctx context.Context, task buildTask, doc spe
 // diarize each split participant that has no stored turns yet (once, for
 // ever), hand the CLI the stored turns and the document, and keep its report
 // on the attempt until the attempt publishes.
-func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetingPath string, doc speakerEditsDoc, logFile io.Writer) error {
+func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetingPath string, doc speakerEditsDoc, rewriteSummary bool, logFile io.Writer) error {
 	workDir := filepath.Join(attemptLogsDir(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber), "speakers")
 	if err := os.RemoveAll(workDir); err != nil {
 		return fmt.Errorf("clear speaker edits dir: %w", err)
@@ -234,7 +243,11 @@ func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetin
 	}
 	// --recording: stored turns are applied only to the capture they were
 	// measured on, which the CLI checks by its SHA-256.
-	report, err := rt.runSpeakersCLI(ctx, env, logFile, "apply", meetingPath, "--edits", editsPath, "--turns-dir", turnsDir, "--recording", task.ArtifactRunPath, "--json")
+	summaryMode := speakerSummaryKeep
+	if rewriteSummary {
+		summaryMode = speakerSummaryRewrite
+	}
+	report, err := rt.runSpeakersCLI(ctx, env, logFile, "apply", meetingPath, "--edits", editsPath, "--turns-dir", turnsDir, "--recording", task.ArtifactRunPath, "--summary", summaryMode, "--json")
 	if err != nil {
 		return err
 	}
