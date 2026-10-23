@@ -7,10 +7,14 @@ page as a **bookmarklet** — no Nextcloud app or PHP changes — and is served 
 the cassini-live ExApp itself through the AppAPI proxy. D-830 is the parent
 effort; the UI spec is Chris's "Cassini Live Captions UI" artifact.
 
+The panel mounts as an extra **tab in Talk's right sidebar** (next to Chat /
+Participants / Shared items) and hides Talk's native caption overlay while it
+is on — the sidebar replaces it.
+
 ```
                    Talk call page (browser)
-                   ├── Talk's own 4-line overlay (drops your own lines)
-                   └── bookmarklet ──▶ transcript panel (shadow DOM)
+                   ├── Talk's own 4-line overlay  ✕ hidden while the tab is on
+                   └── bookmarklet ──▶ "Live transcript" sidebar tab (shadow DOM)
                                           ▲ 'transcript' events
                    OCA.Talk.SimpleWebRTC ─┘   (every caption, pre-filtering)
                           ▲ signalling WebSocket
@@ -107,6 +111,7 @@ Checks and caveats:
 
 No caption history (late joiners see only what arrives after they enable CC
 and open the panel), no pop-out page, no timestamps from the backend (the
-panel stamps arrival time), guests resolve by session id if no card name is
-found. Those are the next slices in D-830 (history route + SSE stream in
-cassini-live).
+panel stamps arrival time). Named users resolve from the signalling roster; a
+guest with no roster display name and no participant card falls back to a
+shortened session id. Those are the next slices in D-830 (history route + SSE
+stream in cassini-live).
