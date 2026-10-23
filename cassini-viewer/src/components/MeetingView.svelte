@@ -197,6 +197,9 @@
   let summaryRequestError = "";
   let summaryRequestFor: string | null = null;
   let summaryRequestTimer: ReturnType<typeof setTimeout> | undefined;
+  // Polls in a row that failed while a summary was being written.
+  let summaryRequestFailures = 0;
+  const SUMMARY_REQUEST_RETRY_MAX_MS = 60_000;
   $: summaryRequestOffered =
     surface === "app" &&
     !bundled &&
@@ -207,6 +210,7 @@
     summaryRequestFor = summaryRequestKey;
     summaryRequest = null;
     summaryRequestError = "";
+    summaryRequestFailures = 0;
     clearTimeout(summaryRequestTimer);
     if (summaryRequestKey && meeting) void loadSummaryRequest(meeting);
   }
@@ -216,11 +220,26 @@
     try {
       const next = await dataProvider.loadSummaryRequestState!(entry);
       if (meeting?.id !== entry.id) return;
+      summaryRequestFailures = 0;
       takeSummaryRequest(entry, next);
     } catch (error) {
-      // No state means nothing is offered; say why in the console.
       console.error("summary request state unavailable", entry.id, error);
-      if (meeting?.id === entry.id) summaryRequest = null;
+      if (meeting?.id !== entry.id) return;
+      if (summaryRequest?.state === "writing") {
+        // The summary is still being written: one lost answer must not leave
+        // the page waiting for ever, so ask again, a little later each time.
+        summaryRequestFailures += 1;
+        clearTimeout(summaryRequestTimer);
+        summaryRequestTimer = setTimeout(
+          () => {
+            if (meeting?.id === entry.id) void loadSummaryRequest(entry);
+          },
+          Math.min(summaryRequestPollMs * 2 ** summaryRequestFailures, SUMMARY_REQUEST_RETRY_MAX_MS),
+        );
+      } else {
+        // No state means nothing is offered.
+        summaryRequest = null;
+      }
     }
   }
 
