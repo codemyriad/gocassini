@@ -284,9 +284,17 @@ func (s *annotationService) writeSummary(w http.ResponseWriter, r *http.Request,
 		writeSpeakerEditsRateLimited(w, retryAfter)
 		return
 	}
-	attemptNumber, err := s.rt.store.QueueSummarizeAttempt(ctx, job.ID, formatUTCString(now))
+	// Whether a summary is there is decided again under the job's lock as the
+	// attempt is queued: one published since this request's view must not be
+	// replaced by someone who did not ask to, or may not.
+	mayReplace := request.Replace && s.canRewriteSummary(ctx, caller, job.ID)
+	attemptNumber, err := s.rt.queueSummarizeAttempt(ctx, job.ID, mayReplace, formatUTCString(now))
 	if err != nil {
 		release()
+		if errors.Is(err, errSummaryExists) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "has-summary"})
+			return
+		}
 		if errors.Is(err, ErrJobNotEligibleForRerun) {
 			writeJSONError(w, http.StatusConflict, "busy")
 			return
