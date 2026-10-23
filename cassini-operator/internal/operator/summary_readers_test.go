@@ -270,3 +270,52 @@ func TestNextcloudSummaryRewriteCheck(t *testing.T) {
 		}
 	}
 }
+
+// A reader's request to fill a missing summary must not replace one published
+// while it was being read (review of #401): the summary is checked again under
+// the job's lock, and only a request that may replace one can.
+func TestReaderSummaryRequestRefusesASummaryPublishedMeanwhile(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		body      string
+		moderator bool
+	}{
+		{"asked to fill a gap", `{}`, false},
+		{"asked to replace, but may not", `{"replace":true}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSummaryReadersFixture(t)
+			f.canRewriteSummary = tc.moderator
+			// The first estimate waits until the test lets it go.
+			f.rt.cfg.CassiniBin = writeFakeCassini(t, `
+if [ ! -f "$0.entered" ]; then
+  touch "$0.entered"
+  while [ ! -f "$0.release" ]; do sleep 0.01; done
+fi
+printf '[{"status":"estimated","words":2,"estimatedInputTokens":900}]\n'
+`)
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() { done <- annTestCall(f.h, http.MethodPost, "MEETING1/summary", "alice", tc.body) }()
+			for deadline := time.Now().Add(5 * time.Second); !pathExists(f.rt.cfg.CassiniBin + ".entered"); time.Sleep(time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Fatal("the estimate did not start")
+				}
+			}
+			giveMeetingASummary(t, f)
+			if err := os.WriteFile(f.rt.cfg.CassiniBin+".release", nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case rec := <-done:
+				if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "has-summary") {
+					t.Fatalf("request = %d %s, want 409 has-summary", rec.Code, rec.Body.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the request did not finish")
+			}
+			if job, err := f.rt.store.GetJob(context.Background(), "MEETING1"); err != nil || job.CurrentAttemptNumber != 1 {
+				t.Fatalf("an attempt was queued: %+v %v", job, err)
+			}
+		})
+	}
+}
