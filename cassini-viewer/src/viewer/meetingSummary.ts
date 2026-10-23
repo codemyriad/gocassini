@@ -13,7 +13,7 @@ export type SummaryRequestRunState = "idle" | "writing" | "failed";
 
 export interface SummaryRequestState {
   available: boolean;
-  /** not_published, no_transcript, summaries_off, no_source_audio or busy. */
+  /** not_published, no_transcript, summaries_off, no_local_copy or busy. */
   reason?: string;
   hasSummary: boolean;
   /** No summary, and one can be written now. */
