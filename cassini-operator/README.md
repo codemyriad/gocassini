@@ -398,11 +398,15 @@ seal and publish deliver it (marks and shares kept, as for a speaker-edit
   `words`, `estimated_input_tokens`, `provider`, `model`, `external` (the
   endpoint is not on this network, so it may be billed), `has_summary`, and
   `available` or a `reason` (`not_published`, `no_transcript`,
-  `summaries_off`, `no_source_audio`, `busy`).
+  `summaries_off`, `no_local_copy`, `busy`).
 - `POST` queues it, `202` with the new `attempt_number`. Replacing an
   existing summary needs `{"replace": true}` (`409 has_summary` otherwise).
-  Like a speaker edit, it needs the job's capture: once retention removed
-  it, `reason` is `no_source_audio`.
+  Unlike a rerun it does not need the capture: the summary is written into
+  the published meeting, so it works after retention removed the capture.
+  A job whose meeting is deleted after processing has nothing to write
+  into, and `reason` is `no_local_copy`. In the job list and the run, a
+  summarize attempt's `build` stage is its summary step
+  (`current_trigger_kind` is `summarize`).
 - `GET /summaries/missing` lists published meetings with a transcript and no
   summary, with the total calls and estimated tokens: the dry run of a
   backfill.
