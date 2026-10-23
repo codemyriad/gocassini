@@ -156,12 +156,60 @@ func localEndpoint(baseURL string) bool {
 	return !strings.Contains(host, ".")
 }
 
+// errSummaryExists refuses a request that did not ask to replace a summary,
+// for a meeting that has one by the time it would be queued.
+var errSummaryExists = errors.New("the meeting has a summary")
+
+// queueSummarizeAttempt queues a summarize attempt for jobID. Whether the
+// meeting has a summary is decided again here, under the job's artifact lock
+// that every build, seal and publish holds: a plan read before it can be stale
+// (another request's summary may have been published since), and a request
+// that did not ask to replace one must never replace one.
+func (rt *Runtime) queueSummarizeAttempt(ctx context.Context, jobID string, replace bool, queuedAt string) (int, error) {
+	unlock := rt.store.lockArtifacts(jobID)
+	defer unlock()
+	if !replace {
+		has, err := rt.publishedHasSummary(ctx, jobID)
+		if err != nil {
+			return 0, err
+		}
+		if has {
+			return 0, errSummaryExists
+		}
+	}
+	return rt.store.queueSummarizeAttemptLocked(ctx, jobID, queuedAt)
+}
+
+// publishedHasSummary says whether the meeting readers have carries a summary.
+func (rt *Runtime) publishedHasSummary(ctx context.Context, jobID string) (bool, error) {
+	source, _, err := rt.publishedSpeakerMeetingPath(ctx, jobID)
+	if err != nil {
+		return false, err
+	}
+	outcomes, err := readBundleStepOutcomes(source)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return outcomes.SummaryStatus == "completed" && pathExists(filepath.Join(source, "summary.md")), nil
+}
+
 // QueueSummarizeAttempt queues a summarize attempt for jobID, under the same
 // admission as a rerun: no archive or retention operation pending, the capture
-// still there (every attempt is dispatched from it), and the job at rest.
+// still there (every attempt is dispatched from it), and the job at rest. It
+// does not look at the summary; queueSummarizeAttempt does, and handlers use
+// that.
 func (s *Store) QueueSummarizeAttempt(ctx context.Context, jobID, queuedAt string) (int, error) {
 	unlock := s.lockArtifacts(jobID)
 	defer unlock()
+	return s.queueSummarizeAttemptLocked(ctx, jobID, queuedAt)
+}
+
+// queueSummarizeAttemptLocked is QueueSummarizeAttempt for a caller that
+// holds the job's artifact lock.
+func (s *Store) queueSummarizeAttemptLocked(ctx context.Context, jobID, queuedAt string) (int, error) {
 	job, err := s.GetJob(ctx, jobID)
 	if err != nil {
 		return 0, err
@@ -322,8 +370,12 @@ func (rt *Runtime) handleJobSummary(w http.ResponseWriter, r *http.Request, id s
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "has_summary"})
 		return
 	}
-	attemptNumber, err := rt.store.QueueSummarizeAttempt(r.Context(), id, nowUTCString())
+	attemptNumber, err := rt.queueSummarizeAttempt(r.Context(), id, body.Replace, nowUTCString())
 	if err != nil {
+		if errors.Is(err, errSummaryExists) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "has_summary"})
+			return
+		}
 		if errors.Is(err, ErrJobNotEligibleForRerun) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "unavailable", "reason": summaryUnavailableBusy})
 			return

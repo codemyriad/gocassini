@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeSummarizeCLI stands in for `cassini meetings summarize`. Every call is
@@ -215,5 +216,67 @@ func TestLocalEndpoint(t *testing.T) {
 		if got := localEndpoint(url); got != want {
 			t.Errorf("localEndpoint(%q) = %v, want %v", url, got, want)
 		}
+	}
+}
+
+// A plan read before a summary was published must not let a request that did
+// not ask to replace one replace it: the summary is checked again under the
+// job's lock when the attempt is queued (review of #400).
+func TestSummarizeRequestRefusesASummaryPublishedSinceItsPlan(t *testing.T) {
+	rt, _ := newSummarizeRuntime(t, "JOB1")
+	// The first estimate waits until the test lets it go.
+	rt.cfg.CassiniBin = writeFakeCassini(t, `
+if [ ! -f "$0.entered" ]; then
+  touch "$0.entered"
+  while [ ! -f "$0.release" ]; do sleep 0.01; done
+fi
+printf '[{"status":"estimated","words":2,"estimatedInputTokens":900}]\n'
+`)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		rt.jobDetailHandler(rec, httptest.NewRequest(http.MethodPost, "/jobs/JOB1/summary", strings.NewReader(`{}`)))
+		done <- rec
+	}()
+	for deadline := time.Now().Add(5 * time.Second); !pathExists(rt.cfg.CassiniBin + ".entered"); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the plan's estimate did not start")
+		}
+	}
+	// Meanwhile another request's summary is published.
+	meeting := canonicalMeetingPath(rt.cfg.WorkRoot, "JOB1")
+	if err := os.WriteFile(filepath.Join(meeting, "summary.md"), []byte("# Summary\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeArtifactManifest(t, meeting, func(m map[string]any) { m["files"] = map[string]any{"summary": "summary.md"} })
+	if err := os.WriteFile(rt.cfg.CassiniBin+".release", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "has_summary") {
+			t.Fatalf("stale request = %d %s, want 409 has_summary", rec.Code, rec.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request did not finish")
+	}
+	if job, err := rt.store.GetJob(context.Background(), "JOB1"); err != nil || job.CurrentAttemptNumber != 1 {
+		t.Fatalf("an attempt was queued: %+v %v", job, err)
+	}
+}
+
+func TestQueueSummarizeAttemptChecksTheSummaryUnderTheLock(t *testing.T) {
+	rt, _ := newSummarizeRuntime(t, "JOB1")
+	meeting := canonicalMeetingPath(rt.cfg.WorkRoot, "JOB1")
+	if err := os.WriteFile(filepath.Join(meeting, "summary.md"), []byte("# Summary\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeArtifactManifest(t, meeting, func(m map[string]any) { m["files"] = map[string]any{"summary": "summary.md"} })
+	if _, err := rt.queueSummarizeAttempt(context.Background(), "JOB1", false, nowUTCString()); !errors.Is(err, errSummaryExists) {
+		t.Fatalf("queue without replace = %v, want errSummaryExists", err)
+	}
+	if n, err := rt.queueSummarizeAttempt(context.Background(), "JOB1", true, nowUTCString()); err != nil || n != 2 {
+		t.Fatalf("queue with replace = %d %v", n, err)
 	}
 }
