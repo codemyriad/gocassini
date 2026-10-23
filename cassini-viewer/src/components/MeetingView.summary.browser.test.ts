@@ -71,6 +71,24 @@ describe("asking for a meeting's summary", () => {
     await expect.element(page.getByRole("button", { name: "Write summary", exact: true })).not.toBeInTheDocument();
   });
 
+  // Review of #402: one failed poll while the summary is being written must
+  // not stop the page from showing it once it is.
+  it("keeps waiting for the summary through a failed poll", async () => {
+    fixture = speakersFixture();
+    fixture.summaryRequest({ available: true, reason: undefined, canWrite: true });
+    mountView();
+    await expect.element(page.getByText("Loading meeting…")).not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Write summary", exact: true }).click();
+    fixture.loadSummaryRequestState.mockRejectedValueOnce(new Error("temporary network error"));
+    await page.getByRole("alertdialog").getByRole("button", { name: "Write summary", exact: true }).click();
+    const loadsBefore = fixture.loadSummaryRequestState.mock.calls.length;
+    await expect.poll(() => fixture.loadSummaryRequestState.mock.calls.length).toBeGreaterThan(loadsBefore + 1);
+    await expect.element(page.getByText(/Writing the summary/)).toBeVisible();
+
+    fixture.summaryWritten(SUMMARY);
+    await expect.element(page.getByText("The team agreed to ship on Friday.")).toBeVisible();
+  });
+
   it("offers to regenerate only to someone who may replace it", async () => {
     fixture = speakersFixture();
     fixture.summaryWritten(SUMMARY);
