@@ -16,6 +16,7 @@ import {
   isRerunnableJob,
   jobStatusLabel,
   jobStatusToneClass,
+  stageLabel,
   meetingLabel,
   OPERATOR_NAV,
   parseRequestJSON,
@@ -87,6 +88,18 @@ describe("Operator build resource status", () => {
     expect(hasResourceNotice(job)).toBe(false);
     expect(jobStatusLabel(job)).toBe("Queued");
     expect(jobStatusToneClass(job)).toBe("text-base-content/70");
+  });
+});
+
+describe("Operator summary attempt stages", () => {
+  it("calls a summarize attempt's build stage a summary, not a build", () => {
+    expect(stageLabel("build", "summarize")).toBe("Summary");
+    expect(stageLabel("build", "rerun")).toBe("Build");
+    expect(stageLabel("seal", "summarize")).toBe("Seal");
+    const running = { stage: "build", state: "running", build_retry_not_before: null };
+    expect(jobStatusLabel({ ...running, current_trigger_kind: "summarize" })).toBe("Writing summary");
+    expect(jobStatusLabel({ ...running, trigger_kind: "summarize" })).toBe("Writing summary");
+    expect(jobStatusLabel({ ...running, current_trigger_kind: "rerun" })).toBe("Building");
   });
 });
 

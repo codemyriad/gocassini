@@ -559,7 +559,7 @@ func parseJobPath(path string) (id string, action string, ok bool) {
 		if parts[0] == "" || parts[1] == "" {
 			return "", "", false
 		}
-		if parts[1] != "stop" && parts[1] != "rerun" && parts[1] != "cleanup" {
+		if parts[1] != "stop" && parts[1] != "rerun" && parts[1] != "cleanup" && parts[1] != "summary" {
 			return "", "", false
 		}
 		return parts[0], parts[1], true

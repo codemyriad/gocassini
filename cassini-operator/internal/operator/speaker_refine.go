@@ -82,6 +82,10 @@ func (rt *Runtime) withSpeakerEdits(build func(context.Context, buildTask) (stri
 		if err != nil {
 			return meetingPath, fmt.Errorf("load attempt kind: %w", err)
 		}
+		if kind == triggerKindSummarize {
+			builtPath, err := rt.executeSummarizeCLI(ctx, task)
+			return summarizeResult(ctx, builtPath, err)
+		}
 		if kind == triggerKindRefine {
 			if doc == nil {
 				return meetingPath, errors.New("refine attempt carries no speaker edits")

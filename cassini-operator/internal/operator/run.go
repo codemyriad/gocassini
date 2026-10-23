@@ -966,6 +966,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 	}{
 		{"/jobs", http.HandlerFunc(rt.jobsHandler)},
 		{"/jobs/", http.HandlerFunc(rt.jobDetailHandler)},
+		{"/summaries/missing", http.HandlerFunc(rt.missingSummariesHandler)},
 		{"/events", http.HandlerFunc(rt.eventsHandler)},
 		{"/status", http.HandlerFunc(rt.statusHandler)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
@@ -1496,9 +1497,13 @@ type Job struct {
 	Stage                string              `json:"stage"`
 	State                string              `json:"state"`
 	CurrentAttemptNumber int                 `json:"current_attempt_number"`
-	RerunCount           int                 `json:"rerun_count"`
-	ArtifactRunPath      *string             `json:"artifact_run_path"`
-	ArtifactMeetingPath  *string             `json:"artifact_meeting_path"`
+	// CurrentTriggerKind is what the current attempt does (record, rerun,
+	// refine, summarize), so a reader can name its stages: a summarize's
+	// build stage writes a summary and transcribes nothing.
+	CurrentTriggerKind  string  `json:"current_trigger_kind"`
+	RerunCount          int     `json:"rerun_count"`
+	ArtifactRunPath     *string `json:"artifact_run_path"`
+	ArtifactMeetingPath *string `json:"artifact_meeting_path"`
 	// ArtifactOpusPath is the canonical portable meeting, current/<id>.opus,
 	// promoted from the attempt the seal stage sealed. ArtifactOpusSHA256 is
 	// that file's digest, which the publish worker re-checks before delivering
@@ -1843,7 +1848,8 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
-       room_token, room_name, room_audience, room_audience_at
+       room_token, room_name, room_audience, room_audience_at,
+       COALESCE((SELECT trigger_kind FROM job_attempts a WHERE a.job_id = jobs.id AND a.attempt_number = jobs.current_attempt_number), '')
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -1881,7 +1887,8 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
-       room_token, room_name, room_audience, room_audience_at
+       room_token, room_name, room_audience, room_audience_at,
+       COALESCE((SELECT trigger_kind FROM job_attempts a WHERE a.job_id = jobs.id AND a.attempt_number = jobs.current_attempt_number), '')
 FROM jobs
 WHERE id = ?`, id)
 	job, err := scanJob(row)
@@ -1973,6 +1980,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&roomName,
 		&roomAudience,
 		&roomAudienceAt,
+		&job.CurrentTriggerKind,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2060,6 +2068,10 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rt.handleRerunJob(w, r, id)
+		return
+	}
+	if action == "summary" {
+		rt.handleJobSummary(w, r, id)
 		return
 	}
 	if r.Method != http.MethodGet {

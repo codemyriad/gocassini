@@ -595,7 +595,9 @@ SELECT trigger_kind, state FROM job_attempts WHERE job_id = ? AND attempt_number
 	if err != nil {
 		return false, fmt.Errorf("load the attempt that built %s: %w", jobID, err)
 	}
-	return kind != triggerKindRefine && (state == "failed" || state == "interrupted"), nil
+	// A refine or a summarize copies the published meeting, so a bundle one
+	// of them left behind is never an unpublished rebuild.
+	return kind != triggerKindRefine && kind != triggerKindSummarize && (state == "failed" || state == "interrupted"), nil
 }
 
 // speakerNow is the speaker edits surface's clock.

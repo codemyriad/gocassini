@@ -14,6 +14,7 @@ import type {
   Settings,
   SpeechModelInventory,
   SpeechModelJob,
+  SummaryPlan,
   SettingsEffective,
   SettingsQuality,
   SettingsUpdate,
@@ -139,6 +140,21 @@ export class OperatorClient {
 
   async retryMediaCleanup(jobId: string): Promise<{ status: string }> {
     return this.#request(`/jobs/${encodeURIComponent(jobId)}/cleanup`, { method: "POST" });
+  }
+
+  // What writing this run's summary would cost, before anything is sent.
+  async getJobSummary(jobId: string): Promise<SummaryPlan> {
+    return this.#request<SummaryPlan>(`/jobs/${encodeURIComponent(jobId)}/summary`);
+  }
+
+  // Queues a summarize attempt. replace must be true to rewrite a summary the
+  // meeting already has.
+  async writeJobSummary(jobId: string, replace: boolean): Promise<RerunJobResponse> {
+    return this.#request<RerunJobResponse>(`/jobs/${encodeURIComponent(jobId)}/summary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ replace }),
+    });
   }
 
   async rerunJob(jobId: string): Promise<RerunJobResponse> {

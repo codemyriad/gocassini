@@ -41,6 +41,7 @@
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
   import { pipelineStatus, retentionSpan, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
+  import { summaryStepCostText } from "./operator/summaryAction";
   import type { RetentionSettings } from "./operator/retention";
   import { onRetentionChanged } from "./operator/retentionSignal";
   import type {
@@ -508,6 +509,9 @@
   $: keptFor = keptSpan === null ? "" : keptSpan === "forever" ? "kept forever" : `for ${keptSpan}`;
 
   $: providers = llm?.providers ?? [];
+  // The endpoint new recordings' summaries go to, so Settings can say whether
+  // each call leaves this network (D-814).
+  $: summaryProviderRow = providers.find((row) => row.id === summary.provider) ?? null;
   // Null while the LLM settings have not been read: three states, and the
   // locked card belongs to exactly one of them.
   $: hasProvider = llm === null ? null : providers.length > 0;
@@ -786,7 +790,10 @@
             {:else if hasProvider === false}
               <p class="set-row-sub">Needs a provider. <button type="button" class="link" disabled={!transcriptionEnabled} on:click={() => dispatch("openProviders")}>Add one</button></p>
             {:else if hasProvider === true}
-              <p class="set-row-sub">Sends each transcript to the provider and writes the summary shown on the meeting.</p>
+              <p class="set-row-sub">Sends each transcript to the provider and writes the summary shown on the meeting: one call per recording.</p>
+              {#if summary.enabled && summaryProviderRow}
+                <p class="set-row-sub">{summaryStepCostText(providerName(summaryProviderRow.id), summaryProviderRow.base_url)}</p>
+              {/if}
               {#if savedTranscriptionOn && !transcriptionEnabled}
                 <p class="set-row-sub">A summary needs a transcript. While transcription is off, recordings get no summary.</p>
               {/if}
