@@ -240,10 +240,10 @@ type speakersApplyReport struct {
 	// Summary says what happened to summary.md: "none" (the meeting has no
 	// summary), "unchanged" (nothing to do, or already written for these
 	// exact edits), "regenerated" (rewritten for the new speakers),
-	// "restored" (the build's own summary is back), or "stale" (no summary
-	// model, or it failed: the summary still credits the speakers it was
-	// written for; the reason is on stderr, and applying the same edits again
-	// tries again).
+	// "restored" (an undo with rewrite put the build's own summary back), or
+	// "stale" (not asked to rewrite, no summary model, or it failed: the
+	// summary still credits the speakers it was written for; a failure's
+	// reason is on stderr, and applying the same edits again tries again).
 	Summary string `json:"summary"`
 	// SummarySHA256 says which summary the meeting now has: the SHA-256 of
 	// the summary.md apply wrote, as x-speakerEdits.summary records it on the
@@ -332,9 +332,11 @@ func runSpeakersApply(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini speakers apply ./meetings/meeting.meeting --edits ./edits.json --turns-dir ./turns [--recording ./runs/meeting.run] [--summary keep|rewrite] [--json]
 
-A meeting's summary names its speakers. By default an apply keeps the summary
-as it is and reports it "stale" (written before these edits); --summary rewrite
-asks the summary model for a new one, which costs a model call.
+A meeting's summary names its speakers. By default an apply never changes the
+summary, not even when it undoes every edit, and reports it "stale" when it was
+written for other speakers; --summary rewrite asks the summary model for a new
+one, which costs a model call, and when every edit is undone puts the build's
+own summary back for free.
 
 `)
 		fs.PrintDefaults()
@@ -563,18 +565,35 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 	}
 
 	if !effective {
-		// The kept copy of the build's summary goes last in an undo, so while
-		// it is there the summary still has to be put back, even when an
-		// interrupted undo already removed the raw-asr copy.
+		// Undoing every edit puts the build's summary back only when asked
+		// to rewrite: without rewrite the summary people last read stays,
+		// and so does the kept copy, so a later rewrite can still restore it.
+		// The kept copy goes last in a rewriting undo, so while it is there
+		// the summary still has to be put back, even when an interrupted
+		// undo already removed the raw-asr copy.
 		if fileExists(filepath.Join(root, speakersBaseSummary)) {
-			report.Summary = "restored"
+			if rewriteSummary {
+				report.Summary = "restored"
+			} else {
+				// SummarySHA256 stays "": the undone recording carries no
+				// record, and the summary on screen has not changed.
+				rewritten, err := speakerSummaryRewritten(root)
+				if err != nil {
+					return speakersApplyReport{}, err
+				}
+				if rewritten {
+					report.Summary = "stale"
+				}
+			}
 		}
 		if applied {
-			if err := restoreSpeakerBase(root, manifest, files, stash, primaryPath, baseRaw, base); err != nil {
+			if err := restoreSpeakerBase(root, manifest, files, stash, primaryPath, baseRaw, base, rewriteSummary); err != nil {
 				return speakersApplyReport{}, err
 			}
-		} else if err := restoreSpeakerSummary(root); err != nil {
-			return speakersApplyReport{}, err
+		} else if rewriteSummary {
+			if err := restoreSpeakerSummary(root); err != nil {
+				return speakersApplyReport{}, err
+			}
 		}
 	} else {
 		if separated {
@@ -978,15 +997,17 @@ func readBundleSpeakerEdits(manifest, files *orderedJSONObject) (speakerEditsRec
 
 // restoreSpeakerBase undoes every edit: the original transcript, captions and
 // manifest members come back as the build wrote them.
-func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash speakerDiarizationBase, primaryPath string, baseRaw []byte, base transcribe.TranscriptSpeakers) error {
+func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash speakerDiarizationBase, primaryPath string, baseRaw []byte, base transcribe.TranscriptSpeakers, restoreSummary bool) error {
 	if err := writeFileAtomic(primaryPath, baseRaw, 0o644); err != nil {
 		return fmt.Errorf("restore transcript: %w", err)
 	}
 	if err := regenerateSpeakerCaptions(root, base); err != nil {
 		return err
 	}
-	if err := putBackSpeakerSummary(root); err != nil {
-		return err
+	if restoreSummary {
+		if err := putBackSpeakerSummary(root); err != nil {
+			return err
+		}
 	}
 	if err := restoreBuildManifestMembers(manifest, files, stash); err != nil {
 		return err
@@ -1002,6 +1023,9 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 	}
 	if err := removeIfExists(filepath.Join(root, speakersRawASRTranscript)); err != nil {
 		return err
+	}
+	if !restoreSummary {
+		return nil
 	}
 	// After the raw-asr copy: while the build's summary is kept, the next
 	// apply knows the summary was rewritten and reports it restored.
@@ -1122,6 +1146,23 @@ func putBackSpeakerSummary(root string) error {
 		return fmt.Errorf("restore summary: %w", err)
 	}
 	return nil
+}
+
+// speakerSummaryRewritten says whether summary.md is no longer the build's own
+// summary kept beside it.
+func speakerSummaryRewritten(root string) (bool, error) {
+	current, err := os.ReadFile(filepath.Join(root, speakersSummaryFile))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read summary: %w", err)
+	}
+	original, err := os.ReadFile(filepath.Join(root, speakersBaseSummary))
+	if err != nil {
+		return false, fmt.Errorf("read original summary: %w", err)
+	}
+	return !bytes.Equal(current, original), nil
 }
 
 // restoreSpeakerSummary puts the build's own summary back and drops the copy.

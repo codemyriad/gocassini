@@ -129,8 +129,8 @@ A rename separates nobody, so it writes no `x-speakerDiarization`.
 | `transcript.raw-asr.words.v1.json` | The original transcript, byte for byte, listed as the `raw-asr` transcript. |
 | `speaker-edits.json` | The edits document as applied. |
 | `captions.vtt` | Regenerated from the separated transcript. |
-| `summary.md` | Rewritten for the edited speakers when the bundle has a summary and `--summary rewrite` asks for it (one call to the summary model). Kept as it was otherwise. |
-| `summary.raw-asr.md` | The build's summary, byte for byte, kept the first time the summary is rewritten. |
+| `summary.md` | Rewritten for the edited speakers when the bundle has a summary and `--summary rewrite` asks for it (one call to the summary model). Kept as it was otherwise, even by an undo of every edit. |
+| `summary.raw-asr.md` | The build's summary, byte for byte, kept the first time the summary is rewritten, until an undo with `--summary rewrite` puts it back. |
 | `manifest.json` | See below. `wordCount` is unchanged. |
 
 `manifest.json` changes in four places:
@@ -217,9 +217,16 @@ that transcribes the meeting replays the edits then.
 If apply is interrupted, the next apply finishes the job: the raw-asr copy is
 written before the manifest changes and removed only after an undo has put the
 manifest back, and while the manifest carries no `x-speakerDiarization` apply
-reads the build's values from the manifest itself. An undo removes
-`summary.raw-asr.md` last of all, so an undo that stopped part way still puts
-the build's summary back and says so (`"summary":"restored"`).
+reads the build's values from the manifest itself.
+
+Undoing every edit restores the transcript, but the summary only with
+`--summary rewrite`: whoever may not rewrite the summary may not change it back
+either. Without it `summary.md` stays the summary people last read, reported
+`"stale"` (with `summarySha256` `""`, as the undone manifest carries no
+`x-speakerEdits`), and `summary.raw-asr.md` stays beside it. A
+rewriting undo puts it back without a model call and removes
+`summary.raw-asr.md` last of all, so one that stopped part way still finishes
+and says so (`"summary":"restored"`).
 
 ## In the portable `.opus`
 

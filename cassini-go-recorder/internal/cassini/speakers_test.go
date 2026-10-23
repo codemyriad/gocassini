@@ -1302,6 +1302,62 @@ func TestSpeakersApplyRewritesTheSummaryAndUndoRestoresIt(t *testing.T) {
 	}
 }
 
+// A reader's undo must not change a summary people have read: without
+// --summary rewrite, undoing every edit leaves the rewritten summary and the
+// kept copy of the build's, so a later rewriting undo still restores it.
+func TestSpeakersApplyKeepUndoLeavesTheSummary(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	original := []byte("## Action items\n- Meeting room: book the hall\n")
+	writeSpeakersSummary(t, bundle, original)
+	rewritten := "## Action items\n- Mira: book the hall\n"
+	stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) { return rewritten, "test-model", nil })
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	if report := speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, speakersNamedMira)), turnsDir); report.Summary != "regenerated" {
+		t.Fatalf("summary = %q, want regenerated", report.Summary)
+	}
+	stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) {
+		t.Error("an undo called the summary model")
+		return "", "", errors.New("unexpected")
+	})
+
+	empty := writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":2,"splits":[],"merges":[],"labels":[]}`)
+	for range 2 {
+		code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", empty, "--turns-dir", turnsDir, "--json")
+		if code != 0 {
+			t.Fatalf("keep undo: exit %d stderr=%q", code, stderr)
+		}
+		var report speakersApplyReport
+		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+			t.Fatalf("decode report: %v\n%s", err, stdout)
+		}
+		// "" as the undone recording says: it carries no x-speakerEdits.
+		if report.Summary != "stale" || report.SummarySHA256 != "" {
+			t.Fatalf("summary after keep undo = %q (sha256 %q), want stale and no record", report.Summary, report.SummarySHA256)
+		}
+		if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); string(got) != rewritten {
+			t.Errorf("summary.md after keep undo = %q, want the summary people last read", got)
+		}
+		if got, _ := os.ReadFile(filepath.Join(bundle, speakersBaseSummary)); !bytes.Equal(got, original) {
+			t.Errorf("keep undo lost the build's summary: %q", got)
+		}
+		if fileExists(filepath.Join(bundle, speakersRawASRTranscript)) {
+			t.Error("keep undo left the raw-asr transcript: the transcript edits were not undone")
+		}
+	}
+
+	report := speakersApplyOK(t, bundle, empty, turnsDir)
+	if report.Summary != "restored" || report.SummarySHA256 != "" {
+		t.Fatalf("summary after rewrite undo = %q (sha256 %q), want restored", report.Summary, report.SummarySHA256)
+	}
+	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !bytes.Equal(got, original) {
+		t.Errorf("summary.md after rewrite undo = %q, want the build's", got)
+	}
+	if fileExists(filepath.Join(bundle, speakersBaseSummary)) {
+		t.Error("the kept copy of the build's summary survived the rewrite undo")
+	}
+}
+
 // The summary model is slow and can fail; it runs before apply writes
 // anything, so the bundle is as built for as long as it runs.
 func TestSpeakersApplyAsksForTheSummaryBeforeTouchingTheBundle(t *testing.T) {
