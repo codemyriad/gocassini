@@ -112,12 +112,32 @@ func (t TranscriptSpeakers) LogicalSpeakerCount() int {
 // labelled from its roster, with low-confidence words left out exactly as the
 // build leaves them out.
 func (t TranscriptSpeakers) Summarize(cfg LLMConfig) (string, error) {
+	streams, segments := t.summaryInput()
+	return buildMeetingSummaryFn(cfg, streams, segments)
+}
+
+// SummaryEstimate says what Summarize would send, without sending it: the
+// words the model would read and roughly how many input tokens that is.
+func (t TranscriptSpeakers) SummaryEstimate() (words, inputTokens int) {
+	streams, segments := t.summaryInput()
+	for _, segment := range segments {
+		words += len(strings.Fields(segment.Text))
+	}
+	if words == 0 {
+		return 0, 0
+	}
+	return words, EstimateSummaryInputTokens(streams, segments)
+}
+
+// summaryInput is the roster and segments the summary model reads, so the
+// call and its estimate cannot disagree about what is sent.
+func (t TranscriptSpeakers) summaryInput() ([]AudioStream, []Segment) {
 	streams := make([]AudioStream, len(t.file.Speakers))
 	for i, s := range t.file.Speakers {
 		streams[i] = AudioStream{Index: -1, SpeakerID: s.ID, SpeakerLabel: s.Label}
 	}
 	segments, _ := WithoutLowConfidenceWords(t.Segments())
-	return buildMeetingSummaryFn(cfg, streams, segments)
+	return streams, segments
 }
 
 // WithLabels returns a copy in which every listed speaker that roster names

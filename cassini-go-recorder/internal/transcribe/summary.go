@@ -76,6 +76,16 @@ func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segmen
 	return body + "\n", nil
 }
 
+// EstimateSummaryInputTokens says roughly how many input tokens the summary
+// step would send for this transcript: the system prompt plus the transcript
+// prose, at about four characters a token. It is for telling a person what a
+// summary will cost before anything is sent, not for billing: providers count
+// with their own tokenizers.
+func EstimateSummaryInputTokens(streams []AudioStream, segments []Segment) int {
+	chars := len(summarySystemPrompt(summaryV0Template)) + len(formatTranscriptForSummary(streams, segments))
+	return (chars + 3) / 4
+}
+
 func summarySystemPrompt(template string) string {
 	return strings.Replace(summaryV0Prompt, summaryTemplatePlaceholder, template, 1)
 }

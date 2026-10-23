@@ -203,7 +203,9 @@ func runSpeakersForTest(args ...string) (int, string, string) {
 
 func speakersApplyOK(t *testing.T, bundle, edits, turnsDir string) speakersApplyReport {
 	t.Helper()
-	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--json")
+	// Every caller of this helper exercises the summary rewrite; the default
+	// (keep) has tests of its own.
+	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--summary", "rewrite", "--json")
 	if code != 0 {
 		t.Fatalf("apply: exit %d stderr=%q", code, stderr)
 	}
@@ -1300,6 +1302,62 @@ func TestSpeakersApplyRewritesTheSummaryAndUndoRestoresIt(t *testing.T) {
 	}
 }
 
+// A reader's undo must not change a summary people have read: without
+// --summary rewrite, undoing every edit leaves the rewritten summary and the
+// kept copy of the build's, so a later rewriting undo still restores it.
+func TestSpeakersApplyKeepUndoLeavesTheSummary(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	original := []byte("## Action items\n- Meeting room: book the hall\n")
+	writeSpeakersSummary(t, bundle, original)
+	rewritten := "## Action items\n- Mira: book the hall\n"
+	stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) { return rewritten, "test-model", nil })
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	if report := speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, speakersNamedMira)), turnsDir); report.Summary != "regenerated" {
+		t.Fatalf("summary = %q, want regenerated", report.Summary)
+	}
+	stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) {
+		t.Error("an undo called the summary model")
+		return "", "", errors.New("unexpected")
+	})
+
+	empty := writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":2,"splits":[],"merges":[],"labels":[]}`)
+	for range 2 {
+		code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", empty, "--turns-dir", turnsDir, "--json")
+		if code != 0 {
+			t.Fatalf("keep undo: exit %d stderr=%q", code, stderr)
+		}
+		var report speakersApplyReport
+		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+			t.Fatalf("decode report: %v\n%s", err, stdout)
+		}
+		// "" as the undone recording says: it carries no x-speakerEdits.
+		if report.Summary != "stale" || report.SummarySHA256 != "" {
+			t.Fatalf("summary after keep undo = %q (sha256 %q), want stale and no record", report.Summary, report.SummarySHA256)
+		}
+		if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); string(got) != rewritten {
+			t.Errorf("summary.md after keep undo = %q, want the summary people last read", got)
+		}
+		if got, _ := os.ReadFile(filepath.Join(bundle, speakersBaseSummary)); !bytes.Equal(got, original) {
+			t.Errorf("keep undo lost the build's summary: %q", got)
+		}
+		if fileExists(filepath.Join(bundle, speakersRawASRTranscript)) {
+			t.Error("keep undo left the raw-asr transcript: the transcript edits were not undone")
+		}
+	}
+
+	report := speakersApplyOK(t, bundle, empty, turnsDir)
+	if report.Summary != "restored" || report.SummarySHA256 != "" {
+		t.Fatalf("summary after rewrite undo = %q (sha256 %q), want restored", report.Summary, report.SummarySHA256)
+	}
+	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !bytes.Equal(got, original) {
+		t.Errorf("summary.md after rewrite undo = %q, want the build's", got)
+	}
+	if fileExists(filepath.Join(bundle, speakersBaseSummary)) {
+		t.Error("the kept copy of the build's summary survived the rewrite undo")
+	}
+}
+
 // The summary model is slow and can fail; it runs before apply writes
 // anything, so the bundle is as built for as long as it runs.
 func TestSpeakersApplyAsksForTheSummaryBeforeTouchingTheBundle(t *testing.T) {
@@ -1334,7 +1392,8 @@ func TestSpeakersApplyKeepsTheSummaryWhenItCannotBeRewrittenAndRetries(t *testin
 
 	turnsDir := writeSpeakersTurns(t, tmp, false)
 	edits := writeSpeakersEdits(t, tmp, "split.json", speakersSplitDoc(1, speakersNoMergesNoLabels))
-	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--json")
+	// A rewrite was asked for and the model failed: stale, not "kept".
+	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", edits, "--turns-dir", turnsDir, "--summary", "rewrite", "--json")
 	if code != 0 {
 		t.Fatalf("apply: exit %d stderr=%q", code, stderr)
 	}
@@ -1719,5 +1778,51 @@ func TestSpeakersApplyAnInconclusiveSplitWithANameIsARename(t *testing.T) {
 	}
 	if got := rosterOf(t, filepath.Join(bundle, speakersDefaultTranscript)); got[1].Label != "Benedict" || got[0].ID != speakersRoomID {
 		t.Errorf("roster = %+v", got)
+	}
+}
+
+// A rewrite costs a model call, so an apply keeps the summary unless asked:
+// it stays byte for byte and is reported stale, and a later apply asked to
+// rewrite it still can (D-814).
+func TestSpeakersApplyKeepsTheSummaryUnlessAskedToRewriteIt(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	original := []byte("## Action items\n- Meeting room: book the hall\n")
+	writeSpeakersSummary(t, bundle, original)
+	calls := stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) {
+		return "## Action items\n- Mira: book the hall\n", "test-model", nil
+	})
+
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	named := writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, speakersNamedMira))
+	code, stdout, stderr := runSpeakersForTest("apply", bundle, "--edits", named, "--turns-dir", turnsDir, "--json")
+	if code != 0 {
+		t.Fatalf("apply: exit %d stderr=%q", code, stderr)
+	}
+	var report speakersApplyReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout)
+	}
+	if report.Summary != "stale" || *calls != 0 {
+		t.Fatalf("summary = %q after %d model calls, want stale and none", report.Summary, *calls)
+	}
+	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !bytes.Equal(got, original) {
+		t.Errorf("kept summary changed:\n%s", got)
+	}
+
+	// The same edits, now with a rewrite asked for: one call, a new summary.
+	if report := speakersApplyOK(t, bundle, named, turnsDir); report.Summary != "regenerated" || *calls != 1 {
+		t.Fatalf("rewrite: summary = %q after %d calls, want regenerated after 1", report.Summary, *calls)
+	}
+}
+
+func TestSpeakersApplyRefusesAnUnknownSummaryMode(t *testing.T) {
+	tmp := t.TempDir()
+	bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+	turnsDir := writeSpeakersTurns(t, tmp, false)
+	named := writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, speakersNamedMira))
+	code, _, stderr := runSpeakersForTest("apply", bundle, "--edits", named, "--turns-dir", turnsDir, "--summary", "maybe")
+	if code != speakersExitUsage || !strings.Contains(stderr, "--summary must be keep or rewrite") {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
 }

@@ -7,7 +7,48 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gocassini/internal/portable"
 )
+
+// A summary switched off and a meeting nobody spoke in both leave no
+// summary.md, and neither may be read as a failure.
+func TestWriteSummaryArtifactSaysWhyItSkipped(t *testing.T) {
+	prev := buildMeetingSummaryFn
+	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
+		t.Fatal("buildMeetingSummaryFn should not be called when the step is skipped")
+		return "", nil
+	}
+	t.Cleanup(func() { buildMeetingSummaryFn = prev })
+
+	configured := LLMConfig{APIKey: "k", BaseURL: "https://example.test/api/v1", Model: "m"}
+	off := configured
+	off.Disabled = true
+	for _, tc := range []struct {
+		name     string
+		llm      LLMConfig
+		segments []Segment
+		reason   string
+	}{
+		{"switched off", off, sampleSegments(), "disabled"},
+		{"no endpoint", LLMConfig{}, sampleSegments(), "not_configured"},
+		{"nobody spoke", configured, nil, "no_transcript"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			status, err := writeSummaryArtifact(tmp, sampleStreams(), tc.segments, BuildConfig{SummaryLLM: tc.llm}, &bytes.Buffer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := (portable.SummaryStatus{Status: "skipped", Reason: tc.reason}); status != want {
+				t.Fatalf("status = %+v, want %+v", status, want)
+			}
+			if _, err := os.Stat(filepath.Join(tmp, "summary.md")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected no summary.md, stat err=%v", err)
+			}
+		})
+	}
+}
 
 func TestWriteSummaryArtifactSkipsWhenLLMNotConfigured(t *testing.T) {
 	tmp := t.TempDir()
@@ -21,12 +62,12 @@ func TestWriteSummaryArtifactSkipsWhenLLMNotConfigured(t *testing.T) {
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	hasSummary, err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout)
+	status, err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout)
 	if err != nil {
 		t.Fatalf("expected no error when summary disabled, got %v", err)
 	}
-	if hasSummary {
-		t.Fatal("expected hasSummary=false when summary disabled")
+	if want := (portable.SummaryStatus{Status: "skipped", Reason: "not_configured"}); status != want {
+		t.Fatalf("status = %+v, want %+v", status, want)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "summary.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no summary.md when summary disabled, stat err=%v", err)
@@ -53,12 +94,12 @@ func TestWriteSummaryArtifactWarnsAndSkipsOnError(t *testing.T) {
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	hasSummary, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout)
+	status, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout)
 	if err != nil {
 		t.Fatalf("expected summary failure to be swallowed, got %v", err)
 	}
-	if hasSummary {
-		t.Fatal("expected hasSummary=false on warn-and-skip path")
+	if want := (portable.SummaryStatus{Status: "failed", Reason: "llm_failed"}); status != want {
+		t.Fatalf("status = %+v, want %+v", status, want)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "summary.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no summary.md after failure, stat err=%v", err)
@@ -85,12 +126,12 @@ func TestWriteSummaryArtifactWritesSummaryMd(t *testing.T) {
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
-	hasSummary, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{})
+	status, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
-	if !hasSummary {
-		t.Fatal("expected hasSummary=true after writing summary.md")
+	if want := (portable.SummaryStatus{Status: "completed", Model: "test-model"}); status != want {
+		t.Fatalf("status = %+v, want %+v", status, want)
 	}
 	got, err := os.ReadFile(filepath.Join(tmp, "summary.md"))
 	if err != nil {

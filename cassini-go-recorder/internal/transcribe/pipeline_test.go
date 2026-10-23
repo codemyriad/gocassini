@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gocassini/internal/portable"
 )
 
 type fixedWordsRecognizer struct{ words []Word }
@@ -126,6 +128,10 @@ func TestBuildMeetingArtifactOffAndFailedPreserveAudio(t *testing.T) {
 			}
 			if manifest.Processing == nil || manifest.Processing.Transcription.Status != want {
 				t.Fatalf("processing: %s", raw)
+			}
+			// No words, so no summary to try: it must not read as a failed one.
+			if got := manifest.Processing.MeetingSummary; got == nil || *got != (portable.SummaryStatus{Status: "skipped", Reason: "no_transcript"}) {
+				t.Fatalf("summary outcome: %s", raw)
 			}
 			if manifest.Provenance != nil || manifest.Files.Captions != "" || manifest.Files.Summary != "" {
 				t.Fatalf("fake recognition provenance: %s", raw)
@@ -439,6 +445,11 @@ func TestBuildMeetingArtifactKeepsPrimaryWhenAnAdditionalModelIsMissing(t *testi
 	}
 	if manifest.Processing == nil || manifest.Processing.Transcription.Status != "completed" {
 		t.Fatalf("a missing additional model downgraded the build: %s", raw)
+	}
+	// No summary endpoint in this build: the manifest says so rather than
+	// leaving a missing summary unexplained.
+	if got := manifest.Processing.MeetingSummary; got == nil || *got != (portable.SummaryStatus{Status: "skipped", Reason: "not_configured"}) {
+		t.Fatalf("summary outcome: %s", raw)
 	}
 	for _, tr := range manifest.Files.Transcripts {
 		if tr.ID == "stub-extra-model" {
