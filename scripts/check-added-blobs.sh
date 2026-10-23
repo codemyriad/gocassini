@@ -118,6 +118,13 @@ while IFS= read -r -d '' path; do
   # measure — but it must not read as a pass for a path that does exist.
   [ -n "$blob" ] || continue
 
+  # A submodule appears in the diff as a gitlink (mode 160000): "$head_ref:$path"
+  # then names a commit in ANOTHER repository, normally absent from this object
+  # store, and cat-file dies on it. There is no blob to measure — the in-tree
+  # entry is a 20-byte pointer — so a gitlink passes both rules by construction.
+  mode="$(git ls-tree -z "$head_ref" -- "$path" | head -c 6)"
+  [ "$mode" = "160000" ] && continue
+
   if [ -n "${allowed[$path]+set}" ]; then
     continue
   fi
