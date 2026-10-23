@@ -105,8 +105,11 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		if reason == "" {
 			reason = "disabled"
 		}
+		// The operator says why it switched transcription off. A crash, or the
+		// memory or GPU still not there at its retry ceiling, is a failure the
+		// meeting has to show; switched off or no usable model is a skip.
 		status := "skipped"
-		if reason == "transcription_failed" {
+		if reason == "transcription_failed" || reason == "insufficient_resources" {
 			status = "failed"
 		}
 		return writeUntranscribed(outputDir, mkvPath, recordedAtLocal, streams, srcDurationMS, audioDurationMS, sha256hex, enc, status, reason)

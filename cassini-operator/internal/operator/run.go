@@ -2090,7 +2090,36 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job), RecordingFileID: rt.recordingFileID(r.Context(), id)})
+	availability := rt.artifactAvailability(job)
+	rt.fillPublishedStepOutcomes(id, availability.PublishedAttempt, attempts)
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: availability, RecordingFileID: rt.recordingFileID(r.Context(), id)})
+}
+
+// fillPublishedStepOutcomes reads the outcomes of a published attempt built
+// before they were recorded from the bundle it published, so a meeting from
+// before D-854 still says it has no transcript or no summary. Nothing is
+// stored: the bundle stays the source, and a read that fails leaves the
+// attempt as it was.
+func (rt *Runtime) fillPublishedStepOutcomes(jobID string, published int, attempts []JobAttempt) {
+	if published <= 0 {
+		return
+	}
+	for i := range attempts {
+		a := &attempts[i]
+		if a.AttemptNumber != published || a.TranscriptionStatus != "" || a.SummaryStatus != "" {
+			continue
+		}
+		outcomes, err := readBundleStepOutcomes(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				rt.logger.Printf("step outcomes unreadable for published attempt id=%s attempt=%d: %v", jobID, published, err)
+			}
+			return
+		}
+		a.TranscriptionStatus, a.TranscriptionReason = outcomes.TranscriptionStatus, outcomes.TranscriptionReason
+		a.SummaryStatus, a.SummaryReason = outcomes.SummaryStatus, outcomes.SummaryReason
+		return
+	}
 }
 
 // recordingFileID looks up the delivered recording of job id by the name the

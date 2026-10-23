@@ -180,6 +180,14 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	if err := SetMeetingBundleRoom(builtMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
 		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, builtMeetingPath, err)
 	}
+	// What the transcription and summary steps did, onto the attempt, so the
+	// run can say it published without either (D-854, D-814). Best-effort and
+	// logged: a missing record costs the Operator a chip, never the meeting.
+	if outcomes, err := readBundleStepOutcomes(builtMeetingPath); err != nil {
+		rt.logger.Printf("step outcomes unreadable id=%s attempt=%d meeting=%s: %v", task.JobID, task.AttemptNumber, builtMeetingPath, err)
+	} else if err := rt.store.RecordAttemptStepOutcomes(context.Background(), task.JobID, task.AttemptNumber, outcomes); err != nil {
+		rt.logger.Printf("step outcomes update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+	}
 	// Current output denotes the last successful publication, never a build.
 	canonicalMeetingPath := builtMeetingPath
 	// Hand off to the seal worker, not to publish. Sealing the portable `.opus`
@@ -359,9 +367,19 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	atCeiling := task.DeferralCount >= rt.buildResourceDeferralLimit()
 	// keepAudio drops transcription from this build. At the retry ceiling it is
 	// better to publish the audio than to block the job.
+	//
+	// Running out of memory or GPU at the ceiling is a failure the run has to
+	// show (D-854); a model that cannot run at all is not something waiting
+	// would have fixed. The cause is kept on the attempt either way.
 	keepAudio := func(cause error) {
 		rt.logger.Printf("resource governor: job %s transcription unavailable, preserving audio: %v", task.JobID, cause)
-		device, model, mode, reason = deviceCPU, "", "off", "model_unavailable"
+		device, model, mode, reason = deviceCPU, "", "off", transcriptionReasonModelUnavailable
+		if transientResourceError(cause) {
+			reason = transcriptionReasonInsufficientResources
+		}
+		if err := rt.store.SetAttemptTranscriptionDetail(context.Background(), task.JobID, task.AttemptNumber, cause.Error()); err != nil {
+			rt.logger.Printf("transcription detail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+		}
 	}
 	if settings.TranscriptionEnabled {
 		selectedDevice, selectedModel, err := rt.admitTranscription(ctx, settings, limits)
@@ -420,8 +438,10 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		buildArgs = append(buildArgs, "--audio-encode", policy)
 	}
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, buildArgs...)
-	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
-	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
+	// The last of the build's output, so a crash can say why without the log.
+	tail := newTailBuffer(8 << 10)
+	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile, tail)
+	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile, tail)
 	buildEnv, err = rt.mediaScratchEnv(buildEnv, task.JobID, task.AttemptNumber)
 	if err != nil {
 		return meetingPath, err
@@ -447,9 +467,14 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		if cleanErr := os.RemoveAll(meetingPath); cleanErr != nil {
 			return meetingPath, fmt.Errorf("preserve audio after transcription failure: %w", cleanErr)
 		}
+		// Keep why it crashed (CUDA out of memory, a cuDNN failure…) before
+		// the media-only rebuild writes over the tail.
+		if detailErr := rt.store.SetAttemptTranscriptionDetail(context.Background(), task.JobID, task.AttemptNumber, crashDetail(tail.String(), err)); detailErr != nil {
+			rt.logger.Printf("transcription detail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, detailErr)
+		}
 		fallback := exec.CommandContext(ctx, rt.cfg.CassiniBin, append(buildArgs, "--transcription", "off")...)
 		fallback.Stdout, fallback.Stderr = cmd.Stdout, cmd.Stderr
-		fallback.Env = setEnvKey(setEnvKey(buildEnv, "CASSINI_TRANSCRIPTION", "off"), "CASSINI_TRANSCRIPTION_REASON", "transcription_failed")
+		fallback.Env = setEnvKey(setEnvKey(buildEnv, "CASSINI_TRANSCRIPTION", "off"), "CASSINI_TRANSCRIPTION_REASON", transcriptionReasonFailed)
 		fallback.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		fallback.Cancel = func() error { return killProcessGroup(fallback.Process) }
 		if fallbackErr := fallback.Run(); fallbackErr != nil {

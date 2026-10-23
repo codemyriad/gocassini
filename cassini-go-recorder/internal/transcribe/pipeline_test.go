@@ -160,6 +160,43 @@ func TestBuildMeetingArtifactOffAndFailedPreserveAudio(t *testing.T) {
 	}
 }
 
+// The operator switches transcription off with a reason, and the reason
+// decides whether the meeting shows a failure (D-854): a crash or resources
+// still missing at its retry ceiling fail; switched off or no usable model
+// skip.
+func TestBuildMeetingArtifactTranscriptionReasonDecidesFailedOrSkipped(t *testing.T) {
+	input := buildTwoTrackMeetingFromSmoke(t, t.TempDir())
+	for reason, want := range map[string]string{
+		"transcription_failed":   "failed",
+		"insufficient_resources": "failed",
+		"model_unavailable":      "skipped",
+		"":                       "skipped",
+	} {
+		t.Run(reason, func(t *testing.T) {
+			out := t.TempDir()
+			cfg := BuildConfig{TranscriptionMode: "off", TranscriptionReason: reason, CacheDir: t.TempDir()}
+			if err := BuildMeetingArtifact(context.Background(), input, out, cfg, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest artifactManifest
+			if err := json.Unmarshal(raw, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			wantReason := reason
+			if wantReason == "" {
+				wantReason = "disabled"
+			}
+			if got := manifest.Processing.Transcription; got.Status != want || got.Reason != wantReason {
+				t.Fatalf("transcription = %+v, want %s/%s", got, want, wantReason)
+			}
+		})
+	}
+}
+
 // The one test of the full wiring: attribution runs and its evidence reaches
 // the written transcript, a flagged word is excluded from the summary input
 // while staying in the canonical transcript (CASSINI_ATTRIBUTION_DROP unset),
