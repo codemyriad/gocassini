@@ -39,7 +39,9 @@
     },
   ];
 
-  type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before">;
+  // A job names its current attempt's kind, an attempt its own.
+  type AttemptKindOf = { current_trigger_kind?: string; trigger_kind?: string };
+  type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before"> & AttemptKindOf;
   type RerunnableJob = Pick<Job, "stage" | "state" | "artifact_run_path">;
 
   const STATUS_STAGE_LABELS: Record<string, string> = {
@@ -226,6 +228,17 @@
     return isBuildWaitingForResources(job) || isBuildBlocked(job);
   }
 
+  export function attemptKind(job: AttemptKindOf): string {
+    return job.trigger_kind ?? job.current_trigger_kind ?? "";
+  }
+
+  // A summarize attempt's build stage writes the summary into the published
+  // meeting and transcribes nothing, so it is not called a build.
+  export function stageLabel(key: string, kind: string): string {
+    if (key === "build" && kind === "summarize") return "Summary";
+    return STATUS_STAGE_LABELS[key] ?? key;
+  }
+
   export function jobStatusLabel(job: JobStatus): string {
     if (isBuildBlocked(job)) return "Build blocked";
     if (isBuildWaitingForResources(job)) return "Waiting for resources";
@@ -235,6 +248,7 @@
     if (job.state === "succeeded" && job.stage === "done") return "Published";
     if (job.state === "queued") return "Queued";
     if (job.state === "running") {
+      if (job.stage === "build" && attemptKind(job) === "summarize") return "Writing summary";
       const stage = STATUS_STAGE_LABELS[job.stage];
       return stage ? `${stage}ing` : "Running";
     }
@@ -892,7 +906,7 @@
       if (halted && index === lastTouched) {
         status = buildBlocked ? "blocked" : "failed";
       }
-      return { label: stage.label, status };
+      return { label: stageLabel(stage.key, attemptKind(job)), status };
     });
   }
 
