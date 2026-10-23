@@ -41,7 +41,7 @@ describe("summary action", () => {
 
   it("explains only the reasons an administrator can act on", () => {
     expect(summaryUnavailableText({ ...plan, available: false, reason: "summaries_off" })).toContain("Turn them on");
-    expect(summaryUnavailableText({ ...plan, available: false, reason: "no_source_audio" })).toContain("source recording is gone");
+    expect(summaryUnavailableText({ ...plan, available: false, reason: "no_local_copy" })).toContain("no longer keeps a copy");
     expect(summaryUnavailableText({ ...plan, available: false, reason: "no_transcript" })).toBeNull();
     expect(summaryUnavailableText({ ...plan, available: false, reason: "busy" })).toBeNull();
   });

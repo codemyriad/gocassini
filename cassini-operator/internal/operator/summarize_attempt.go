@@ -25,7 +25,10 @@ import (
 // bundle, runs `cassini meetings summarize` on the copy, and the ordinary seal
 // and publish carry the result into the delivered file, marks and shares
 // included. The summary has to go into the bundle, not only the .opus: speaker
-// edits and republishes seal again from the bundle.
+// edits and republishes seal again from the bundle. Nothing reads the
+// capture, so retention removing it does not stop a summary being written;
+// only a job whose meeting is deleted after processing has nothing to write
+// into.
 //
 // It always runs with --force. Whether replacing a summary is allowed is
 // decided when the attempt is queued, by whoever asked and what they
@@ -54,7 +57,7 @@ const (
 	summaryUnavailableNotPublished = "not_published"
 	summaryUnavailableNoTranscript = "no_transcript"
 	summaryUnavailableOff          = "summaries_off"
-	summaryUnavailableNoSource     = "no_source_audio"
+	summaryUnavailableNoCopy       = "no_local_copy"
 	summaryUnavailableBusy         = "busy"
 )
 
@@ -87,12 +90,17 @@ func (rt *Runtime) summaryPlanFor(ctx context.Context, job Job) (summaryPlan, er
 	provider, model, on := rt.summaryEndpoint()
 	plan.Provider, plan.Model, plan.External = provider.Name, model, on && !localEndpoint(provider.BaseURL)
 
-	source, _, err := rt.publishedSpeakerMeetingPath(ctx, job.ID)
+	source, published, err := rt.publishedSpeakerMeetingPath(ctx, job.ID)
 	if err != nil {
 		return plan, err
 	}
 	if _, err := os.Stat(filepath.Join(source, "cassini.json")); err != nil {
+		// Published, but the operator's own copy of the meeting, which the
+		// summary is written into, is gone with the recording's media.
 		plan.Reason = summaryUnavailableNotPublished
+		if published > 0 || deletesSourceMedia(job) {
+			plan.Reason = summaryUnavailableNoCopy
+		}
 		return plan, nil
 	}
 	outcomes, err := readBundleStepOutcomes(source)
@@ -111,9 +119,8 @@ func (rt *Runtime) summaryPlanFor(ctx context.Context, job Job) (summaryPlan, er
 		plan.Reason = summaryUnavailableNoTranscript
 	case !on:
 		plan.Reason = summaryUnavailableOff
-	case job.ArtifactRunPath == nil || strings.TrimSpace(*job.ArtifactRunPath) == "" ||
-		deletesSourceMedia(job) || rt.store.artifactSourceExpired(ctx, job.ID):
-		plan.Reason = summaryUnavailableNoSource
+	case job.ArtifactRunPath == nil || strings.TrimSpace(*job.ArtifactRunPath) == "" || deletesSourceMedia(job):
+		plan.Reason = summaryUnavailableNoCopy
 	case job.State != "succeeded" && job.State != "failed" && job.State != "interrupted" && job.State != "blocked":
 		plan.Reason = summaryUnavailableBusy
 	}
@@ -196,11 +203,10 @@ func (rt *Runtime) publishedHasSummary(ctx context.Context, jobID string) (bool,
 	return outcomes.SummaryStatus == "completed" && pathExists(filepath.Join(source, "summary.md")), nil
 }
 
-// QueueSummarizeAttempt queues a summarize attempt for jobID, under the same
-// admission as a rerun: no archive or retention operation pending, the capture
-// still there (every attempt is dispatched from it), and the job at rest. It
-// does not look at the summary; queueSummarizeAttempt does, and handlers use
-// that.
+// QueueSummarizeAttempt queues a summarize attempt for jobID: no archive or
+// retention operation pending and the job at rest, as for a rerun, but the
+// capture may be gone, since nothing is transcribed. It does not look at the
+// summary; queueSummarizeAttempt does, and handlers use that.
 func (s *Store) QueueSummarizeAttempt(ctx context.Context, jobID, queuedAt string) (int, error) {
 	unlock := s.lockArtifacts(jobID)
 	defer unlock()
@@ -215,9 +221,11 @@ func (s *Store) queueSummarizeAttemptLocked(ctx context.Context, jobID, queuedAt
 		return 0, err
 	}
 	if deletesSourceMedia(job) {
-		return 0, fmt.Errorf("%w: source media is deleted after processing", ErrJobNotEligibleForRerun)
+		return 0, fmt.Errorf("%w: the meeting is deleted after processing", ErrJobNotEligibleForRerun)
 	}
-	if pending, expired := s.artifactAdmission(ctx, jobID); pending || expired {
+	// An expired capture does not matter: the summary is written into the
+	// published meeting, and the seal packs that meeting's own audio.
+	if pending, _ := s.artifactAdmission(ctx, jobID); pending {
 		return 0, ErrJobNotEligibleForRerun
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

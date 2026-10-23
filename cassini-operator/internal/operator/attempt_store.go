@@ -214,12 +214,16 @@ WHERE id = ?`, jobID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifac
 	if readyRunPath == "" {
 		return 0, ErrJobNotEligibleForRerun
 	}
-	manifest, err := readRunManifest(filepath.Join(readyRunPath, "cassini.json"))
-	if err != nil || manifest.State != bundleStateReady || manifest.Stage != "ready" {
-		return 0, ErrJobNotEligibleForRerun
-	}
-	if _, err := requireReadyRunBundle(readyRunPath); err != nil {
-		return 0, ErrJobNotEligibleForRerun
+	// A summarize reads only the published meeting, so it is dispatched
+	// under the run path even after retention removed the capture.
+	if kind != triggerKindSummarize {
+		manifest, err := readRunManifest(filepath.Join(readyRunPath, "cassini.json"))
+		if err != nil || manifest.State != bundleStateReady || manifest.Stage != "ready" {
+			return 0, ErrJobNotEligibleForRerun
+		}
+		if _, err := requireReadyRunBundle(readyRunPath); err != nil {
+			return 0, ErrJobNotEligibleForRerun
+		}
 	}
 
 	nextAttemptNumber := currentAttemptNumber + 1

@@ -39,8 +39,8 @@ export function summaryUnavailableText(plan: SummaryPlan): string | null {
   switch (plan.reason) {
     case "summaries_off":
       return "Summaries are off. Turn them on in Settings › Publish pipeline to write one.";
-    case "no_source_audio":
-      return "The source recording is gone, so a summary can no longer be written for this run.";
+    case "no_local_copy":
+      return "This server no longer keeps a copy of the meeting, so a summary can't be written for this run.";
     default:
       return null;
   }

@@ -161,6 +161,40 @@ func TestSummarizeAttemptFailureLeavesThePublishedMeeting(t *testing.T) {
 	}
 }
 
+// Retention removing the capture does not stop a summary: it is written into
+// the published meeting, and the seal packs that meeting's audio (D-712: the
+// older meetings that need one are the ones whose capture has expired). A job
+// whose meeting is deleted after processing has nothing to write into.
+func TestSummarizeAttemptNeedsTheMeetingNotTheCapture(t *testing.T) {
+	rt, _ := newSummarizeRuntime(t, "JOB1")
+	if err := os.RemoveAll(canonicalRunPath(rt.cfg.WorkRoot, "JOB1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.store.db.Exec(`INSERT INTO artifact_availability(job_id,source) VALUES('JOB1','expired') ON CONFLICT(job_id) DO UPDATE SET source='expired'`); err != nil {
+		t.Fatal(err)
+	}
+	if code, plan := callJobSummary(t, rt, "JOB1", http.MethodGet, ""); code != http.StatusOK || plan["available"] != true {
+		t.Fatalf("plan with the capture expired = %d %v", code, plan)
+	}
+	if code, out := callJobSummary(t, rt, "JOB1", http.MethodPost, `{}`); code != http.StatusAccepted {
+		t.Fatalf("queue with the capture expired = %d %v", code, out)
+	}
+	waitForJobState(t, rt.store, "JOB1", "succeeded")
+	waitForPublishedAttempt(t, rt, "JOB1", 2)
+	if got := annTestRead(t, filepath.Join(canonicalMeetingPath(rt.cfg.WorkRoot, "JOB1"), "summary.md")); got != "# Summary\n\nWritten.\n" {
+		t.Fatalf("published summary = %q", got)
+	}
+
+	settings := STTSettings{MeetingFormat: "json", SourceRetention: sourceDeleteAfterProcessing, TranscriptionEnabled: true}
+	disposing, _ := json.Marshal(TriggerRequest{ProcessingPolicy: &recordingProcessingPolicy{MeetingFormat: "json", SourceRetention: sourceDeleteAfterProcessing, Transcription: &settings}})
+	if _, err := rt.store.db.Exec(`UPDATE jobs SET request_json = ? WHERE id = 'JOB1'`, string(disposing)); err != nil {
+		t.Fatal(err)
+	}
+	if code, plan := callJobSummary(t, rt, "JOB1", http.MethodGet, ""); code != http.StatusOK || plan["available"] != false || plan["reason"] != summaryUnavailableNoCopy {
+		t.Fatalf("plan for a meeting deleted after processing = %d %v", code, plan)
+	}
+}
+
 func TestSummaryUnavailableSaysWhy(t *testing.T) {
 	rt, _ := newSummarizeRuntime(t, "JOB1")
 	rt.setLLMSettings(LLMSettings{Providers: []LLMProvider{{ID: "p1", Name: "Local", BaseURL: "http://127.0.0.1:8080/v1"}}})

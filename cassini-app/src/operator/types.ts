@@ -14,6 +14,8 @@ export interface Job {
   stage: string;
   state: string;
   current_attempt_number: number;
+  /** What the current attempt does: record, rerun, refine or summarize. */
+  current_trigger_kind?: string;
   rerun_count: number;
   artifact_run_path: string | null;
   artifact_meeting_path: string | null;
@@ -106,7 +108,7 @@ export interface JobAttempt {
 export interface SummaryPlan {
   available: boolean;
   /** Why it cannot be written now: not_published, no_transcript,
-   *  summaries_off, no_source_audio or busy. */
+   *  summaries_off, no_local_copy or busy. */
   reason?: string;
   has_summary: boolean;
   calls: number;
