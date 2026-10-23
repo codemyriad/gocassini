@@ -136,6 +136,8 @@ func runMeetings(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return runMeetingsAnnotations(ctx, args[1:], stdout, stderr)
 	case "annotate":
 		return runMeetingsAnnotate(ctx, args[1:], stdout, stderr)
+	case "rename":
+		return runMeetingsRename(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown meetings command %q\n\n", args[0])
 		printMeetingsUsage(stderr)
@@ -164,6 +166,8 @@ Usage:
   cassini meetings tags
   cassini meetings annotations <meeting-id>
   cassini meetings annotate <meeting-id> --ops ./ops.json
+  cassini meetings rename <meeting-id> "Q4 hiring sync"
+  cassini meetings rename <meeting-id> --clear
   cassini meetings summarize ./Meeting.opus
 
 Commands:
@@ -175,6 +179,8 @@ Commands:
   tags         List the tags on the meetings you may read
   annotations  Print one meeting's tags and marks
   annotate     Add or remove marks on one meeting, as one batch of ops
+  rename       Rename one meeting for everyone with access (--clear restores
+               the default)
   summarize    Add a summary to already-sealed portable .opus files (reads local
                files and the LLM environment, not Nextcloud)
 

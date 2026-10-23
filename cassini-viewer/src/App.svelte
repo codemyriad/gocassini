@@ -70,6 +70,8 @@
   import MeetingView from "./components/MeetingView.svelte";
   import PreparePanel from "./components/PreparePanel.svelte";
   import TagManager from "./components/tags/TagManager.svelte";
+  import RoomNameDialog from "./components/RoomNameDialog.svelte";
+  import type { RoomNameState } from "./viewer/roomNames";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
   import { focusLayer } from "./components/ui/focusLayer";
@@ -132,6 +134,8 @@
   const CATALOG_REFRESH_INTERVAL_MS = 60_000;
   let catalogMode = false;
   let catalogRefreshRunning = false;
+  let catalogRequestGeneration = 0;
+  let editingRoomId: string | null = null;
   let catalogRefreshTimer: number | undefined;
 
   // Which room the list is narrowed to (D-654). null is "all meetings" — not
@@ -538,6 +542,7 @@
   }
 
   function handleShellKeydown(event: KeyboardEvent) {
+    if (editingRoomId) return;
     if (event.key !== "Escape" || event.defaultPrevented) {
       return;
     }
@@ -764,6 +769,25 @@
     );
   }
 
+  // A rename applies to everyone's view (D-862). A set title is folded into
+  // the catalog in place; a reset needs the recorded default back, which only
+  // the server knows, so it refetches the catalog instead. Either way a refresh
+  // already in flight was fetched pre-rename: invalidate it (and release the
+  // running guard) so a stale response can't revert the title, same as
+  // roomNameSaved.
+  function handleRenamed(event: CustomEvent<{ id: string; title: string | null }>) {
+    const { id, title } = event.detail;
+    ++catalogRequestGeneration;
+    catalogRefreshRunning = false;
+    if (title !== null) {
+      catalogMeetings = catalogMeetings.map((entry) =>
+        entry.id === id ? { ...entry, title } : entry,
+      );
+    } else {
+      void refreshCatalog();
+    }
+  }
+
   function readStoredTheme(): ThemeMode | null {
     try {
       const value = localStorage.getItem(THEME_STORAGE_KEY);
@@ -854,6 +878,14 @@
     );
   }
 
+  function roomNameSaved(state: RoomNameState) {
+    ++catalogRequestGeneration;
+    catalogRefreshRunning = false;
+    catalogMeetings = catalogMeetings.map((entry) => entry.roomId === state.roomId ? {...entry, roomDisplayName: state.displayName} : entry);
+    editingRoomId = null;
+    void refreshCatalog();
+  }
+
   async function refreshCatalog() {
     // Embedded mode keeps probing even when no catalog existed at mount time:
     // a fresh install can stay open while its first recording is published.
@@ -861,9 +893,10 @@
       return;
     }
     catalogRefreshRunning = true;
+    const generation = ++catalogRequestGeneration;
     try {
       const catalog = await dataProvider.loadCatalog();
-      if (destroyed || !catalog) {
+      if (destroyed || generation !== catalogRequestGeneration || !catalog) {
         return;
       }
       catalogMode = true;
@@ -883,13 +916,13 @@
       }
       pendingMeetingId = null;
     } catch (error) {
-      if (destroyed) {
+      if (destroyed || generation !== catalogRequestGeneration) {
         return;
       }
       // Preserve the last known-good list while surfacing the refresh failure.
       listError = error instanceof Error ? error.message : String(error);
     } finally {
-      catalogRefreshRunning = false;
+      if (generation === catalogRequestGeneration) catalogRefreshRunning = false;
     }
   }
 
@@ -1392,6 +1425,8 @@
     <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
+      editable={!!dataProvider.loadRoomName && !!dataProvider.saveRoomName}
+      on:rename={(event) => (editingRoomId = event.detail)}
       {selectedRoomKey}
       totalCount={catalogMeetings.length}
       open={railOpen}
@@ -1578,6 +1613,7 @@
             {insightSourceCounts}
             on:back={handleBackToList}
             on:enriched={handleEnriched}
+            on:renamed={handleRenamed}
             on:openInsight={(event) => openInsight(event.detail)}
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}
@@ -1637,6 +1673,16 @@
       />
     {/if}
   </div>
+{/if}
+
+<!-- Keep the modal inside the themed root: in Nextcloud's shadow DOM, the
+     color tokens are scoped here rather than on the document or shadow host. -->
+{#if editingRoomId}
+  {#key editingRoomId}
+    <RoomNameDialog roomId={editingRoomId} initialName={roomBuckets.find((room) => room.roomId === editingRoomId)?.name ?? editingRoomId} provider={dataProvider}
+      on:close={() => (editingRoomId = null)} on:saved={(event) => roomNameSaved(event.detail)}
+      on:unavailable={() => refreshCatalog()} />
+  {/key}
 {/if}
 </div><!-- /.cassini-root -->
 

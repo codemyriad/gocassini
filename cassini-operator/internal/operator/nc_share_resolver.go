@@ -95,6 +95,7 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 	}
 	result := directShareSnapshot{entries: []json.RawMessage{}, paths: map[string]string{}}
 	type datedEntry struct {
+		name      string
 		entry     json.RawMessage
 		dateLabel string
 	}
@@ -156,20 +157,58 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 			continue
 		}
 		result.paths[name] = recipientPath
-		dated = append(dated, datedEntry{entry: entry, dateLabel: dateLabel})
+		dated = append(dated, datedEntry{name: name, entry: entry, dateLabel: dateLabel})
 	}
 	// Stable newest-first presentation even though OCS can return user, group
 	// and Team shares in separate buckets.
 	sort.SliceStable(dated, func(i, j int) bool {
 		return dated[i].dateLabel > dated[j].dateLabel
 	})
+	// A rename lives in the annotations document; its projection is current the
+	// moment a rename commits, while the stored entry only catches up when the
+	// write-behind rewrites the file. Overlaying here keeps every consumer of
+	// this snapshot — catalog, meetings-list, search joins — agreeing (D-862).
+	// Best-effort: a failed overlay costs the renames' display, never access.
+	titles := map[string]string{}
+	if c.annotationTitles != nil && len(dated) > 0 {
+		names := make([]string, 0, len(dated))
+		for _, item := range dated {
+			names = append(names, item.name)
+		}
+		if resolved, err := c.annotationTitles.Titles(ctx, names); err == nil {
+			titles = resolved
+		}
+	}
 	for _, item := range dated {
+		if title := titles[item.name]; title != "" {
+			if overlaid, err := overlayEntryTitle(item.entry, title); err == nil {
+				item.entry = overlaid
+			}
+		}
 		result.entries = append(result.entries, item.entry)
+	}
+	if projected, err := metadata.projectRoomNames(ctx, result.entries); err == nil {
+		result.entries = projected
 	}
 	if c.sharePaths != nil {
 		c.sharePaths.put(caller, result.paths)
 	}
 	return result, nil
+}
+
+// overlayEntryTitle rewrites one catalog entry's title, keeping every other
+// field as stored — the entry-shape counterpart of overlayMeetingEntry.
+func overlayEntryTitle(entry json.RawMessage, title string) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(entry, &fields); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(title)
+	if err != nil {
+		return nil, err
+	}
+	fields["title"] = encoded
+	return json.Marshal(fields)
 }
 
 func (c ExAppConfig) recipientRecordingPath(ctx context.Context, client *http.Client, caller, opusName string, metadata *meetingMetadataStore) (string, error) {

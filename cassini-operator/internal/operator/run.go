@@ -109,6 +109,11 @@ type Runtime struct {
 	// meetingMetadata is a disposable description index. Visibility always
 	// comes from the caller's current Nextcloud shares, never from these rows.
 	meetingMetadata *meetingMetadataStore
+	// roomNameRetry backs off reconcile passes per room when its default keeps
+	// failing to reach a terminal source, bounding the repeated lineage proofs
+	// (full-file digest + CLI exec) for rooms that may never resolve.
+	roomNameRetryMu sync.Mutex
+	roomNameRetry   map[string]roomNameRetryState
 	// annotations is the marks projection (D-737); nil when it could not be
 	// opened, in which case writes still commit and only indexing is skipped.
 	annotations annotationIndex
@@ -287,6 +292,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// the binary's job is to be the operator, and a subcommand is the exception.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
+		case "clear-meeting-metadata":
+			return runClearMeetingMetadata(ctx, args[1:], stdout, stderr)
 		case "import-meeting-metadata":
 			return runImportMeetingMetadata(ctx, args[1:], stdout, stderr)
 		case backfillSearchCommand:
@@ -351,11 +358,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	exappCfg.meetingMetadata = runtime.meetingMetadata
 	exappCfg.lifecycle = store
+	// Conditional, so a missing store stays a nil interface rather than a
+	// non-nil interface around a nil pointer.
+	if annotations := runtime.annotationReads(); annotations != nil {
+		exappCfg.annotationTitles = annotations
+	}
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
+	runtime.startRoomNamesWorker()
 
 	// Resolve the publish destination. An explicit name always wins; an unset
 	// one is resolved from the deployment shape, and in an ExApp that must be
@@ -606,6 +619,7 @@ Usage:
 Commands:
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
+  clear-meeting-metadata  clear derived file-ID metadata, preserving room names
   import-meeting-metadata import catalog descriptions using destination file IDs
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
@@ -1025,6 +1039,10 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	exappCfg.lifecycle = rt.store
+	exappCfg.meetingMetadata = rt.meetingMetadata
+	if exappCfg.appAPIActive() && exappCfg.PublishSink == publishSinkNextcloudFiles {
+		root.HandleFunc("/rooms/", exappCfg.roomNameHandler)
+	}
 	annotations := newAnnotationService(rt, exappCfg, logger)
 	rt.remoteRetentionMu.Lock()
 	rt.remoteRetention = annotations
@@ -1168,6 +1186,7 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
 			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i])
 		}
+		rt.projectJobRoomNames(r.Context(), jobs)
 		writeJSON(w, http.StatusOK, jobs)
 	case http.MethodPost:
 		rt.handleCreateJob(w, r)
@@ -1547,7 +1566,8 @@ type Job struct {
 	// RoomName is the conversation's display name as it was when this job ran.
 	// Null for a non-Talk job, and for a Talk job whose name lookup never
 	// completed.
-	RoomName *string `json:"room_name"`
+	RoomName        *string `json:"room_name"`
+	RoomDisplayName string  `json:"room_display_name,omitempty"`
 	// RoomAudience is who had access to the Talk room while this recording was
 	// being made: a JSON array of Files share recipients (users, groups,
 	// Teams), captured at record time and never re-derived (D-769).
@@ -2090,6 +2110,9 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	projectedJobs := []Job{job}
+	rt.projectJobRoomNames(r.Context(), projectedJobs)
+	job = projectedJobs[0]
 	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job), RecordingFileID: rt.recordingFileID(r.Context(), id)})
 }
 

@@ -1,3 +1,6 @@
+import type { RoomNameState } from "./roomNames";
+export { RoomNameError } from "./roomNames";
+export type { RoomNameState } from "./roomNames";
 // DataProvider seam (D-415).
 //
 // App.svelte used to call the loadArtifact/catalog module functions directly
@@ -67,6 +70,8 @@ export interface LoadMeetingOptions {
 // whether a meeting is a packed `.opus` (audioPath) or a loose artifact
 // directory (artifactPath) — that routing lives in the implementation.
 export interface DataProvider {
+  loadRoomName?(roomId: string): Promise<RoomNameState>;
+  saveRoomName?(roomId: string, customName: string | null, expectRevision: number): Promise<RoomNameState>;
   // Runtime meeting catalog, or null when there is no catalog at all (a
   // standalone single-artifact export). An empty-but-present catalog is NOT
   // null — it means catalog/list mode with zero meetings.

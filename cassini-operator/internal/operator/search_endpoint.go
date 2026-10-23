@@ -74,16 +74,17 @@ type searchResponseHit struct {
 	// viewer's deep links take. Deliberately not the `.opus` basename: those
 	// coincide by convention only, and an agent piping the wrong one gets a 404
 	// phrased as a denial.
-	MeetingID string `json:"meetingId"`
-	Title     string `json:"title,omitempty"`
-	DateLabel string `json:"dateLabel,omitempty"`
-	RoomID    string `json:"roomId,omitempty"`
-	RoomName  string `json:"roomName,omitempty"`
-	SegmentID string `json:"segmentId"`
-	StartMS   int64  `json:"startMs"`
-	EndMS     int64  `json:"endMs"`
-	SpeakerID string `json:"speakerId,omitempty"`
-	Matched   string `json:"matched"`
+	MeetingID       string `json:"meetingId"`
+	Title           string `json:"title,omitempty"`
+	DateLabel       string `json:"dateLabel,omitempty"`
+	RoomID          string `json:"roomId,omitempty"`
+	RoomName        string `json:"roomName,omitempty"`
+	RoomDisplayName string `json:"roomDisplayName,omitempty"`
+	SegmentID       string `json:"segmentId"`
+	StartMS         int64  `json:"startMs"`
+	EndMS           int64  `json:"endMs"`
+	SpeakerID       string `json:"speakerId,omitempty"`
+	Matched         string `json:"matched"`
 	// Marks are the tags whose time-range marks this hit's range overlaps
 	// (D-737). Absent, not empty, when the meeting's marks are unknown: "no
 	// marks here" and "marks unknown" are different answers.
@@ -283,18 +284,19 @@ func (c ExAppConfig) serveSearch(
 			hitMarks = &marks[i]
 		}
 		response.Hits = append(response.Hits, searchResponseHit{
-			MeetingID: entry.id,
-			Title:     entry.title,
-			DateLabel: entry.dateLabel,
-			RoomID:    entry.roomID,
-			RoomName:  entry.roomName,
-			SegmentID: hit.SegmentID,
-			StartMS:   hit.StartMS,
-			EndMS:     hit.EndMS,
-			SpeakerID: hit.SpeakerID,
-			Matched:   hit.Matched,
-			Marks:     hitMarks,
-			Snippet:   snippetAround(hit.Text, flattenSearchGroups(results.Groups)),
+			MeetingID:       entry.id,
+			Title:           entry.title,
+			DateLabel:       entry.dateLabel,
+			RoomID:          entry.roomID,
+			RoomName:        entry.roomName,
+			RoomDisplayName: entry.roomDisplayName,
+			SegmentID:       hit.SegmentID,
+			StartMS:         hit.StartMS,
+			EndMS:           hit.EndMS,
+			SpeakerID:       hit.SpeakerID,
+			Matched:         hit.Matched,
+			Marks:           hitMarks,
+			Snippet:         snippetAround(hit.Text, flattenSearchGroups(results.Groups)),
 		})
 	}
 
@@ -373,12 +375,13 @@ func catalogEntryOpusName(audioPath, artifactPath string) string {
 
 // catalogHydration is what the caller's own catalog says about one meeting.
 type catalogHydration struct {
-	id        string
-	opusName  string
-	title     string
-	dateLabel string
-	roomID    string
-	roomName  string
+	id              string
+	opusName        string
+	title           string
+	dateLabel       string
+	roomID          string
+	roomName        string
+	roomDisplayName string
 }
 
 // decodeCatalogEntries reads the fields a hit is hydrated with, keyed by the
@@ -386,14 +389,15 @@ type catalogHydration struct {
 func decodeCatalogEntries(raw []byte) ([]catalogHydration, error) {
 	var catalog struct {
 		Meetings []struct {
-			ID           string `json:"id"`
-			Title        string `json:"title"`
-			DateLabel    string `json:"dateLabel"`
-			RoomID       string `json:"roomId"`
-			RoomName     string `json:"roomName"`
-			AudioPath    string `json:"audioPath"`
-			MeetingPath  string `json:"meetingPath"`
-			ArtifactPath string `json:"artifactPath"`
+			ID              string `json:"id"`
+			Title           string `json:"title"`
+			DateLabel       string `json:"dateLabel"`
+			RoomID          string `json:"roomId"`
+			RoomName        string `json:"roomName"`
+			RoomDisplayName string `json:"roomDisplayName"`
+			AudioPath       string `json:"audioPath"`
+			MeetingPath     string `json:"meetingPath"`
+			ArtifactPath    string `json:"artifactPath"`
 		} `json:"meetings"`
 	}
 	if err := json.Unmarshal(raw, &catalog); err != nil {
@@ -404,7 +408,7 @@ func decodeCatalogEntries(raw []byte) ([]catalogHydration, error) {
 		entries = append(entries, catalogHydration{
 			id: strings.TrimSpace(meeting.ID), opusName: catalogEntryOpusName(meetingPath(meeting.AudioPath, meeting.MeetingPath), meeting.ArtifactPath),
 			title: meeting.Title, dateLabel: meeting.DateLabel,
-			roomID: meeting.RoomID, roomName: meeting.RoomName,
+			roomID: meeting.RoomID, roomName: meeting.RoomName, roomDisplayName: meeting.RoomDisplayName,
 		})
 	}
 	return entries, nil

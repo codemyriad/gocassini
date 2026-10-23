@@ -22,10 +22,11 @@ type meetingsRoom struct {
 	// Selector is the value to paste into `meetings list --room` — the room's
 	// derived id. Kept as its own field rather than collapsed into RoomID so the
 	// contract "this is what --room takes" stays explicit at the point of use.
-	Selector string `json:"room"`
-	RoomID   string `json:"roomId,omitempty"`
-	RoomName string `json:"roomName,omitempty"`
-	Meetings int    `json:"meetings"`
+	Selector        string `json:"room"`
+	RoomID          string `json:"roomId,omitempty"`
+	RoomName        string `json:"roomName,omitempty"`
+	RoomDisplayName string `json:"roomDisplayName,omitempty"`
+	Meetings        int    `json:"meetings"`
 	// Latest and Earliest are the dateLabels of the newest and oldest readable
 	// meeting in the room, empty when none of them carried a usable label.
 	Latest   string `json:"latest,omitempty"`
@@ -116,7 +117,7 @@ Two rows can share a display name. Their distinct room ids are kept separate.
 	for _, room := range rooms {
 		fmt.Fprintf(stdout, "room=%s name=%s meetings=%d latest=%s earliest=%s\n",
 			blankMeetingsDash(room.Selector),
-			blankMeetingsDash(room.RoomName),
+			blankMeetingsDash(firstNonBlank(room.RoomDisplayName, room.RoomName)),
 			room.Meetings,
 			blankMeetingsDash(room.Latest),
 			blankMeetingsDash(room.Earliest),
@@ -151,14 +152,18 @@ func groupMeetingsByRoom(listing meetingsListing) (rooms []meetingsRoom, unattri
 		if !seen {
 			index[selector] = len(rooms)
 			rooms = append(rooms, meetingsRoom{
-				Selector: selector,
-				RoomID:   strings.TrimSpace(item.entry.RoomID),
-				RoomName: strings.TrimSpace(item.entry.RoomName),
+				Selector:        selector,
+				RoomID:          strings.TrimSpace(item.entry.RoomID),
+				RoomName:        strings.TrimSpace(item.entry.RoomName),
+				RoomDisplayName: strings.TrimSpace(item.entry.RoomDisplayName),
 			})
 			position = len(rooms) - 1
 		}
 		room := &rooms[position]
 		room.Meetings++
+		if room.RoomDisplayName == "" {
+			room.RoomDisplayName = strings.TrimSpace(item.entry.RoomDisplayName)
+		}
 		if room.RoomName == "" {
 			// An id-identified room whose first (newest) recording predates the
 			// room name being recorded still deserves a label if a later one

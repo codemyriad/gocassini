@@ -71,8 +71,8 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "c", roomId: "r-daily", roomName: "Daily" }),
     ]);
     expect(buckets).toEqual([
-      { key: "id:r-daily", name: "Daily", count: 2, hasRoom: true },
-      { key: "id:r-ops", name: "Ops & Infra", count: 1, hasRoom: true },
+      { key: "id:r-daily", roomId: "r-daily", name: "Daily", count: 2, hasRoom: true },
+      { key: "id:r-ops", roomId: "r-ops", name: "Ops & Infra", count: 1, hasRoom: true },
     ]);
   });
 
@@ -97,7 +97,7 @@ describe("buildRoomBuckets", () => {
       meeting({ id: "a", roomId: "r1", roomName: "Design" }),
     ]);
     expect(buckets).toEqual([
-      { key: "id:r1", name: "Design review", count: 2, hasRoom: true },
+      { key: "id:r1", roomId: "r1", name: "Design review", count: 2, hasRoom: true },
     ]);
   });
 
@@ -194,3 +194,12 @@ describe("hasRoom", () => {
     expect(hasRoom({ id: "m", title: "", dateLabel: "", roomName: "" })).toBe(false);
   });
 });
+
+ it("uses local display names without changing identity or original labels", () => {
+ const a=meeting({id:"a",roomId:"one",roomName:"Alice",roomDisplayName:"admin & Alice"});
+ const b=meeting({id:"b",roomId:"two",roomName:"Alice",roomDisplayName:"admin & Alice"});
+ expect(roomLabelOf(a)).toBe("admin & Alice");
+ expect(a.roomName).toBe("Alice");
+ expect(buildRoomBuckets([a,b])).toHaveLength(2);
+ expect(roomKeyOf(a)).toBe("id:one");
+ });

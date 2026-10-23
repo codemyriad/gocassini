@@ -134,9 +134,16 @@ type talkRoomState struct {
 	// when the lookup failed — an unknown room is treated as non-public, so a
 	// failed lookup can only ever over-restrict (D-552).
 	RoomPublic bool
-	Status     int
-	StartActor *talkActorData
-	StopActor  *talkActorData
+	// RoomType is spreed's raw conversation type, resolved alongside RoomName.
+	// Zero when the lookup failed — an unknown room keeps the room-name title
+	// default rather than guessing it is one-to-one (D-862).
+	RoomType int
+	// TitleParticipants freezes the 1:1 conversation's two account identities
+	// and names at recording start, independently of captured media tracks.
+	TitleParticipants []talkTitleParticipant
+	Status            int
+	StartActor        *talkActorData
+	StopActor         *talkActorData
 }
 
 func (rt *Runtime) talkWelcomeHandler(w http.ResponseWriter, r *http.Request) {
@@ -676,24 +683,28 @@ func (rt *Runtime) doTalkRequest(req *http.Request) error {
 // the room's participants and display name long after the recorder is gone
 // (talk_participants.go, talk_room_name.go).
 type talkJobBinding struct {
-	BackendURL string         `json:"backend_url"`
-	RoomToken  string         `json:"room_token"`
-	Owner      string         `json:"owner"`
-	RoomName   string         `json:"room_name,omitempty"`
-	RoomPublic bool           `json:"room_public,omitempty"`
-	Status     int            `json:"status,omitempty"`
-	StartActor *talkActorData `json:"start_actor,omitempty"`
+	BackendURL        string                 `json:"backend_url"`
+	RoomToken         string                 `json:"room_token"`
+	Owner             string                 `json:"owner"`
+	RoomName          string                 `json:"room_name,omitempty"`
+	RoomPublic        bool                   `json:"room_public,omitempty"`
+	RoomType          int                    `json:"room_type,omitempty"`
+	TitleParticipants []talkTitleParticipant `json:"title_participants,omitempty"`
+	Status            int                    `json:"status,omitempty"`
+	StartActor        *talkActorData         `json:"start_actor,omitempty"`
 }
 
 func encodeTalkBinding(state *talkRoomState) (string, error) {
 	body, err := json.Marshal(talkJobBinding{
-		BackendURL: state.BackendURL,
-		RoomToken:  state.RoomToken,
-		Owner:      state.Owner,
-		RoomName:   state.RoomName,
-		RoomPublic: state.RoomPublic,
-		Status:     state.Status,
-		StartActor: state.StartActor,
+		BackendURL:        state.BackendURL,
+		RoomToken:         state.RoomToken,
+		Owner:             state.Owner,
+		RoomName:          state.RoomName,
+		RoomPublic:        state.RoomPublic,
+		RoomType:          state.RoomType,
+		TitleParticipants: state.TitleParticipants,
+		Status:            state.Status,
+		StartActor:        state.StartActor,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode talk binding: %w", err)
@@ -710,13 +721,15 @@ func decodeTalkBinding(raw string) (talkRoomState, error) {
 		return talkRoomState{}, errors.New("talk binding is missing backend URL or room token")
 	}
 	return talkRoomState{
-		BackendURL: binding.BackendURL,
-		RoomToken:  binding.RoomToken,
-		Owner:      binding.Owner,
-		RoomName:   binding.RoomName,
-		RoomPublic: binding.RoomPublic,
-		Status:     binding.Status,
-		StartActor: binding.StartActor,
+		BackendURL:        binding.BackendURL,
+		RoomToken:         binding.RoomToken,
+		Owner:             binding.Owner,
+		RoomName:          binding.RoomName,
+		RoomPublic:        binding.RoomPublic,
+		RoomType:          binding.RoomType,
+		TitleParticipants: binding.TitleParticipants,
+		Status:            binding.Status,
+		StartActor:        binding.StartActor,
 	}, nil
 }
 

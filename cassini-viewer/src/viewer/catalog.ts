@@ -29,6 +29,8 @@ export interface MeetingCatalogEntry {
   // recording is not — and is stamped by the operator on every publish.
   roomId?: string;
   roomName?: string;
+  // Installation-local display projection; original roomName stays intact.
+  roomDisplayName?: string;
   // Which operator job and attempt produced the artifact (D-640). Both
   // optional; a meeting published by any other producer has neither. jobId
   // normally equals `id`, because the operator publishes its artifact under the
@@ -265,6 +267,7 @@ function validateMeetingCatalogEntry(
     // the whole meeting list.
     roomId: optionalRoomString(value.roomId),
     roomName: optionalRoomString(value.roomName),
+    roomDisplayName: optionalRoomString(value.roomDisplayName),
     jobId: optionalRoomString(value.jobId),
     attemptNumber: optionalPositiveInteger(value.attemptNumber),
     // Read leniently for the same reason, and with one extra: a value that is

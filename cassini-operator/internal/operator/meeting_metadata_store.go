@@ -7,16 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
 // meetingMetadataStore describes files already stored in Nextcloud. It never
-// records recipients or decides which caller can see a row. The complete index
-// can be discarded and rebuilt from owner inventory and portable recordings.
+// records recipients or decides which caller can see a row. Meeting rows are
+// derived; room_names in the SAME database are durable user data.
 const (
 	meetingMetadataFilename = "meetings.sqlite3"
-	meetingMetadataVersion  = 1
+	meetingMetadataVersion  = 2
 	meetingMetadataSchema   = `
 CREATE TABLE IF NOT EXISTS meeting_metadata (
   file_id     INTEGER PRIMARY KEY,
@@ -38,11 +40,49 @@ type meetingMetadataStore struct {
 func meetingMetadataPath(dbPath string) string { return sidecarPath(dbPath, meetingMetadataFilename) }
 
 func openMeetingMetadataStore(file string, logger *log.Logger) (*meetingMetadataStore, error) {
-	db, err := openSidecarDB(file, "meeting metadata", meetingMetadataSchema, meetingMetadataVersion, logger)
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		return nil, err
+	}
+	db, err := openSidecarAt(file, "meeting metadata and room names", true)
 	if err != nil {
 		return nil, err
 	}
-	return &meetingMetadataStore{sidecarDB: db}, nil
+	var tx *sql.Tx
+	fail := func(err error) (*meetingMetadataStore, error) {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+		_ = db.Close()
+		return nil, err
+	}
+	tx, err = db.db.Begin()
+	if err != nil {
+		return fail(err)
+	}
+	defer tx.Rollback()
+	var version int
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return fail(err)
+	}
+	if version < 0 || version > meetingMetadataVersion {
+		return fail(fmt.Errorf("unsupported meetings database version %d; preserving database", version))
+	}
+	if version < meetingMetadataVersion {
+		if _, err := tx.Exec(meetingMetadataSchema + roomNamesSchema); err != nil {
+			return fail(err)
+		}
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", meetingMetadataVersion)); err != nil {
+			return fail(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(err)
+	}
+	store := &meetingMetadataStore{sidecarDB: db}
+	if err := store.registerMetadataRooms(context.Background()); err != nil {
+		return fail(err)
+	}
+	return store, nil
 }
 
 func (s *meetingMetadataStore) Put(ctx context.Context, fileID int64, opusName string, entry json.RawMessage) error {
@@ -78,7 +118,14 @@ func (s *meetingMetadataStore) Put(ctx context.Context, fileID int64, opusName s
     opus_name=excluded.opus_name, date_label=excluded.date_label,
     entry_json=excluded.entry_json, indexed_at=excluded.indexed_at`,
 		fileID, opusName, probe.DateLabel, string(entry), nowUTCString())
-	return err
+	if err != nil {
+		return err
+	}
+	var room roomEntry
+	if json.Unmarshal(entry, &room) == nil {
+		return s.registerRoom(ctx, room.RoomID, room.RoomName)
+	}
+	return nil
 }
 
 // EntriesFor returns only locally described file IDs supplied by a fresh OCS

@@ -32,6 +32,22 @@ type Annotations struct {
 	TagNamespace string           `json:"tagNamespace"`
 	Tags         []AnnotationTag  `json:"tags"`
 	Items        []AnnotationItem `json:"items"`
+	// Meeting carries user-set meeting-level properties — today only the
+	// title (D-862). Absent on a meeting nobody renamed: readers then fall
+	// back to the sealed manifest title. Unlike marks, it is not bound to the
+	// audio digest — a name survives a republish untouched.
+	Meeting *AnnotationMeeting `json:"meeting,omitempty"`
+}
+
+// AnnotationMeeting is the user-set state of the meeting itself, as opposed to
+// marks on stretches of it.
+type AnnotationMeeting struct {
+	// Title overrides the sealed manifest title everywhere a meeting is named.
+	Title string `json:"title"`
+	// SetAtUTC and Actor say who set the title last, and when — the same
+	// self-declared attribution marks carry.
+	SetAtUTC string          `json:"setAtUtc"`
+	Actor    AnnotationActor `json:"actor"`
 }
 
 type AnnotationTag struct {
@@ -102,6 +118,10 @@ const (
 	MaxAnnotationTags       = 200
 	MaxAnnotationItems      = 2000
 	MaxAnnotationLabelRunes = 64
+	// MaxAnnotationTitleRunes matches the operator's room-name clamp
+	// (talkRoomNameMaxLen): a title longer than a room name may be is not a
+	// title.
+	MaxAnnotationTitleRunes = 200
 	maxAnnotationActorIDLen = 256
 	annotationIDRandomBytes = 16
 	annotationIDPrefixTag   = "tag"
@@ -232,6 +252,21 @@ func ValidateAnnotations(a *Annotations, durationMS int64) error {
 		}
 	}
 
+	if a.Meeting != nil {
+		if err := ValidateAnnotationTitle(a.Meeting.Title); err != nil {
+			return fmt.Errorf("annotations.meeting.title: %w", err)
+		}
+		if err := validateAnnotationTime(a.Meeting.SetAtUTC); err != nil {
+			return fmt.Errorf("annotations.meeting.setAtUtc: %w", err)
+		}
+		if strings.TrimSpace(a.Meeting.Actor.Kind) == "" {
+			return errors.New("annotations.meeting.actor.kind: must not be empty")
+		}
+		if id := a.Meeting.Actor.ID; strings.TrimSpace(id) == "" || len(id) > maxAnnotationActorIDLen {
+			return fmt.Errorf("annotations.meeting.actor.id: must be 1-%d bytes", maxAnnotationActorIDLen)
+		}
+	}
+
 	itemIDs := make(map[string]bool, len(a.Items))
 	for i, item := range a.Items {
 		at := fmt.Sprintf("annotations.items[%d]", i)
@@ -283,6 +318,40 @@ func ValidateAnnotationLabel(label string) error {
 		}
 	}
 	return nil
+}
+
+// ValidateAnnotationTitle checks a meeting title as a writer must store it:
+// already trimmed, 1-200 characters, no control characters.
+func ValidateAnnotationTitle(title string) error {
+	if title != strings.TrimSpace(title) {
+		return errors.New("must not start or end with whitespace")
+	}
+	if !utf8.ValidString(title) {
+		return errors.New("must be valid UTF-8")
+	}
+	n := utf8.RuneCountInString(title)
+	if n == 0 || n > MaxAnnotationTitleRunes {
+		return fmt.Errorf("must be 1-%d characters, got %d", MaxAnnotationTitleRunes, n)
+	}
+	for _, r := range title {
+		if unicode.IsControl(r) {
+			return errors.New("must not contain control characters")
+		}
+	}
+	return nil
+}
+
+// UserTitle is the tolerant consumer's read of a manifest's raw annotations
+// member: the user-set meeting title, or "" when there is none, the member is
+// absent, or it is in a format this reader does not know. Readers prefer it
+// over the sealed manifest title (D-862); it deliberately never fails, because
+// a malformed member must cost the override, not the meeting.
+func UserTitle(raw json.RawMessage) string {
+	doc, err := ParseAnnotations(raw)
+	if err != nil || doc == nil || doc.Meeting == nil {
+		return ""
+	}
+	return strings.TrimSpace(doc.Meeting.Title)
 }
 
 // The ids are random rather than time-ordered on purpose: a tag id is reused
