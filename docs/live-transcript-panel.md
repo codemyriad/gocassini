@@ -9,7 +9,11 @@ effort; the UI spec is Chris's "Cassini Live Captions UI" artifact.
 
 The panel mounts as an extra **tab in Talk's right sidebar** (next to Chat /
 Participants / Shared items) and hides Talk's native caption overlay while it
-is on — the sidebar replaces it.
+is on — the sidebar replaces it. It catches up late joiners: on a call start it
+fetches the conversation's transcript so far from the app and shows it above a
+"You joined here" divider, then the live continuation. It is scoped per
+conversation (two conversations never mix; a new call in the same conversation
+starts fresh) and appears only while Talk renders the sidebar on a call page.
 
 ```
                    Talk call page (browser)
@@ -109,9 +113,9 @@ Checks and caveats:
 
 ## What this is not (yet)
 
-No caption history (late joiners see only what arrives after they enable CC
-and open the panel), no pop-out page, no timestamps from the backend (the
-panel stamps arrival time). Named users resolve from the signalling roster; a
-guest with no roster display name and no participant card falls back to a
-shortened session id. Those are the next slices in D-830 (history route + SSE
-stream in cassini-live).
+No pop-out page and no live SSE stream yet (the pop-out/second-screen case from
+the spec). Catch-up history is in-memory and per-call, dropped when the call's
+caption session ends — there is no durable transcript of record here (that is
+the recording pipeline). Named users resolve from the signalling roster; a
+speaker who has already left the call, with no participant card, falls back to a
+shortened session id. Those remain next slices in D-830.
