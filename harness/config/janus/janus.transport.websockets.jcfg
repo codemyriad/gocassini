@@ -1,8 +1,8 @@
 general: {
   json = "indented"
   ws = true
+  # Signaling connects to ws://janus:28188; this port is not published.
   ws_port = 28188
-  ws_ip = "127.0.0.1"
   wss = false
 }
 

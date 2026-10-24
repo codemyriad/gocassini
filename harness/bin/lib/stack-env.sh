@@ -56,6 +56,14 @@ harness_stack_env_resolve() {
     fi
   fi
 
+  # HTTPS callbacks use the Docker-network certificate helper; an /etc/hosts
+  # override would bypass its alias. LAN HTTP keeps the explicit host mapping.
+  CASSINI_HARNESS_SIGNALING_HOST_ALIAS="${CASSINI_HARNESS_PUBLIC_HOST:-nextcloud-public.invalid}"
+  if [[ "$CASSINI_HARNESS_PUBLIC_MODE" == "remote-https" ]]; then
+    CASSINI_HARNESS_SIGNALING_HOST_ALIAS=nextcloud-public.invalid
+  fi
+  export CASSINI_HARNESS_SIGNALING_HOST_ALIAS
+
   CASSINI_HARNESS_PUBLIC_HOSTPORT=""
   if [[ -n "$CASSINI_HARNESS_PUBLIC_URL" ]]; then
     CASSINI_HARNESS_PUBLIC_HOSTPORT="$(harness_url_hostport "$CASSINI_HARNESS_PUBLIC_URL")"
