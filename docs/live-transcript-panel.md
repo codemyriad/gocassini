@@ -8,14 +8,15 @@ the cassini-live ExApp itself through the AppAPI proxy. D-830 is the parent
 effort; the UI spec is Chris's "Cassini Live Captions UI" artifact.
 
 The panel mounts as an extra **tab in Talk's right sidebar** (next to Chat /
-Participants / Shared items) and hides Talk's native caption overlay while it
-is on — the sidebar replaces it. The app transcribes every speaker in the call
-and records who joined when; the panel **polls** that server timeline, so it
-shows the whole conversation — including anything a viewer said before they
-enabled captions — with a "<name> joined" marker per participant (the viewer's
-own reads "You joined here"). It is scoped per conversation (two conversations
-never mix; a new call in the same conversation starts fresh) and appears only
-while Talk renders the sidebar on a call page.
+Participants / Shared items) and hides Talk's native caption overlay while it is
+on — the sidebar replaces it. Activating it also turns Talk's live captions on
+for you, so you are on the feed without clicking the CC button. It takes the live
+feed from Talk's signalling for near-instant text and polls the app's buffer
+every few seconds to fill any gaps and to add catch-up and a "<name> joined"
+marker per participant (the viewer's own reads "You joined here") — both sources
+share one sequence number, so nothing is dropped or doubled. It is scoped per
+conversation (two conversations never mix; a new call in the same conversation
+starts fresh) and appears only while Talk renders the sidebar on a call page.
 
 ```
                    Talk call page (browser)
