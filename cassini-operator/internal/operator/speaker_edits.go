@@ -299,7 +299,23 @@ FROM job_attempts WHERE job_id = ? AND attempt_number = ?`, jobID, attemptNumber
 // processing. The lock is waited for only briefly (speakerEditsLockWait): a
 // worker holds it for a whole build, seal or publish, and a person saving
 // names must not wait on one. A job whose lock stays taken is busy.
+// What a speaker-edit attempt does with the meeting's summary: keep it (the
+// default, no model call) or rewrite it for the edited speakers, which only
+// an administrator or a moderator of the room may ask for (D-814). The value
+// is passed to `cassini speakers apply --summary`.
+const (
+	speakerSummaryKeep    = "keep"
+	speakerSummaryRewrite = "rewrite"
+)
+
+// QueueSpeakerEdits saves doc and queues its refine, keeping the summary.
 func (s *Store) QueueSpeakerEdits(ctx context.Context, jobID string, expectRevision int, doc speakerEditsDoc, updatedBy, queuedAt string) (int, error) {
+	return s.QueueSpeakerEditsWithSummary(ctx, jobID, expectRevision, doc, speakerSummaryKeep, updatedBy, queuedAt)
+}
+
+// QueueSpeakerEditsWithSummary is QueueSpeakerEdits with the summary choice
+// made at save time, recorded on the attempt it queues.
+func (s *Store) QueueSpeakerEditsWithSummary(ctx context.Context, jobID string, expectRevision int, doc speakerEditsDoc, summaryMode, updatedBy, queuedAt string) (int, error) {
 	unlock, ok := s.lockArtifactsWithin(ctx, jobID, speakerEditsLockWait)
 	if !ok {
 		return 0, errSpeakerEditsBusy
@@ -369,6 +385,12 @@ ON CONFLICT(job_id) DO UPDATE SET
 			return revision, errSpeakerEditsBusy
 		}
 		return revision, err
+	}
+	if summaryMode == speakerSummaryRewrite {
+		if _, err := tx.ExecContext(ctx, `UPDATE job_attempts SET summary_mode = ? WHERE job_id = ? AND attempt_number = ?`,
+			speakerSummaryRewrite, jobID, attemptNumber); err != nil {
+			return revision, fmt.Errorf("record summary choice: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return revision, fmt.Errorf("commit speaker edits: %w", err)
@@ -599,4 +621,15 @@ WHERE job_id = ?4`, doc.Revision, snapshot.String, nullableString(report.String)
 		return fmt.Errorf("mark speaker edits applied: %w", err)
 	}
 	return nil
+}
+
+// AttemptRewritesSummary says whether a speaker-edit attempt was asked to
+// rewrite the meeting's summary.
+func (s *Store) AttemptRewritesSummary(ctx context.Context, jobID string, attemptNumber int) (bool, error) {
+	var mode string
+	if err := s.db.QueryRowContext(ctx, `SELECT summary_mode FROM job_attempts WHERE job_id = ? AND attempt_number = ?`,
+		jobID, attemptNumber).Scan(&mode); err != nil {
+		return false, fmt.Errorf("load summary choice: %w", err)
+	}
+	return mode == speakerSummaryRewrite, nil
 }

@@ -105,8 +105,11 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		if reason == "" {
 			reason = "disabled"
 		}
+		// The operator says why it switched transcription off. A crash, or the
+		// memory or GPU still not there at its retry ceiling, is a failure the
+		// meeting has to show; switched off or no usable model is a skip.
 		status := "skipped"
-		if reason == "transcription_failed" {
+		if reason == "transcription_failed" || reason == "insufficient_resources" {
 			status = "failed"
 		}
 		return writeUntranscribed(outputDir, mkvPath, recordedAtLocal, streams, srcDurationMS, audioDurationMS, sha256hex, enc, status, reason)
@@ -151,7 +154,12 @@ func writeUntranscribed(outputDir, mkvPath, recordedAtLocal string, streams []Au
 		RecordedAtLocal: recordedAtLocal,
 		SrcBasename:     filepath.Base(mkvPath), SrcDurationMS: srcDurationMS, DigestDurationMS: audioDurationMS, Streams: streams,
 		AudioEncode: &enc,
-		Processing:  &portable.Processing{Transcription: portable.TranscriptionStatus{Status: status, Reason: reason}},
+		// No words, so nothing for the summary step to read; saying so keeps a
+		// failed transcription from reading as a failed or switched-off summary.
+		Processing: &portable.Processing{
+			Transcription:  portable.TranscriptionStatus{Status: status, Reason: reason},
+			MeetingSummary: &portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonNoTranscript},
+		},
 	})
 }
 
@@ -323,7 +331,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		fmt.Fprintf(stdout, "  excluding %d low-confidence words from the summary input\n", removed)
 		summaryInput = filtered
 	}
-	hasSummary, err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout)
+	summaryStatus, err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout)
 	if err != nil {
 		return err
 	}
@@ -332,7 +340,10 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
 	if err := WriteManifest(manifestPath, ManifestInput{
-		Processing:        &portable.Processing{Transcription: portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision}},
+		Processing: &portable.Processing{
+			Transcription:  portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision},
+			MeetingSummary: &summaryStatus,
+		},
 		SrcBasename:       srcBasename,
 		RecordedAtLocal:   recordedAtLocal,
 		SrcDurationMS:     srcDurationMS,
@@ -345,7 +356,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		STTDevice:         cfg.Device,
 		Hints:             hintsProv,
 		SummaryModel:      cfg.SummaryLLM.Model,
-		HasSummary:        hasSummary,
+		HasSummary:        summaryStatus.Status == portable.SummaryCompleted,
 		Additional:        additionalTranscripts,
 		Attribution:       attrProv,
 		WordTimings:       wordEnds.provenance(),
@@ -931,23 +942,31 @@ func defaultDevice() string {
 	return "auto"
 }
 
-func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) (bool, error) {
-	if !cfg.SummaryLLM.IsConfigured() || len(segments) == 0 {
-		return false, nil
+// writeSummaryArtifact runs the summary step and says what it did, so the
+// manifest can tell a summary that was switched off from one that failed: both
+// leave no summary.md behind. A failed model call is still not a build error.
+func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) (portable.SummaryStatus, error) {
+	switch {
+	case cfg.SummaryLLM.Disabled:
+		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonDisabled}, nil
+	case !cfg.SummaryLLM.IsConfigured():
+		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonNotConfigured}, nil
+	case len(segments) == 0:
+		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonNoTranscript}, nil
 	}
 
 	fmt.Fprintln(stdout, "  generating meeting summary...")
 	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
 	if err != nil {
 		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)
-		return false, nil
+		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}, nil
 	}
 
 	summaryPath := filepath.Join(outputDir, "summary.md")
 	if err := os.WriteFile(summaryPath, []byte(body), 0o644); err != nil {
-		return false, fmt.Errorf("write summary: %w", err)
+		return portable.SummaryStatus{}, fmt.Errorf("write summary: %w", err)
 	}
-	return true, nil
+	return portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}, nil
 }
 
 // defaultCacheDir returns the default cache directory for models.

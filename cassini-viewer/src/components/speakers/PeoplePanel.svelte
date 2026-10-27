@@ -32,6 +32,11 @@
   export let session: SpeakersSession | null = null;
   export let samples: ReadonlyMap<string, VoiceSample> = new Map();
   export let playingSampleId: string | null = null;
+  // Whether the meeting has a summary, and what rewriting it would cost: a
+  // save keeps the summary unless someone allowed to asks for it to be
+  // rewritten for the new names, at that cost (D-814).
+  export let hasSummary = false;
+  export let summaryCost: string | null = null;
 
   // Below this much speech a voice is often a fragment of another one.
   const LITTLE_SPEECH_MS = 10_000;
@@ -113,6 +118,17 @@
   $: stale = reloadDue($store, shownVoices);
   $: nameable = editable && !locked && groups.some((group) => group.voices.length > 0 || ownNamed.has(group.device.id));
   $: summaryStale = server?.report?.summary === "stale";
+  // Offered with the Save of a change, to those the operator lets rewrite a
+  // summary; off by default, because it costs a model call.
+  let rewriteSummary = false;
+  $: rewriteOffered = Boolean(changed && hasSummary && server?.canRewriteSummary);
+  $: if (!rewriteOffered) rewriteSummary = false;
+
+  async function save() {
+    const asked = rewriteOffered && rewriteSummary;
+    const saved = await session?.saveEdits(shownLabels, asked ? "rewrite" : "keep");
+    if (saved) rewriteSummary = false;
+  }
   $: inconclusive = (server?.report?.inconclusive ?? []).filter(
     (id) => doc && isSplit(doc, id) && !groups.some((group) => group.device.id === id && group.voices.length > 0),
   );
@@ -349,7 +365,10 @@
       {#if $store.error || problem || inconclusive.length > 0 || summaryStale || $store.saving || server.state !== "idle" || $store.reloading || stale || changed}
         <div class="pp-footer">
           {#if summaryStale}
-            <p class="pp-note" role="status">The summary was written before these speaker changes.</p>
+            <p class="pp-note" role="status">
+              The summary was written before these speaker changes.{#if !server.canRewriteSummary}
+                An administrator or a moderator of the room can rewrite it.{/if}
+            </p>
           {/if}
           {#each inconclusive as id (id)}
             <p class="pp-note" role="status">
@@ -382,6 +401,15 @@
               {/if}
             </p>
             {#if changed}
+              {#if rewriteOffered}
+                <label class="pp-rewrite">
+                  <input type="checkbox" class="checkbox checkbox-xs" bind:checked={rewriteSummary} disabled={busy || locked} />
+                  <span>
+                    Also rewrite the summary for these names
+                    {#if summaryCost}<span class="pp-rewrite-cost">{summaryCost}</span>{/if}
+                  </span>
+                </label>
+              {/if}
               <div class="pp-actions">
                 <button type="button" class="btn btn-ghost btn-xs" on:click={() => session?.discard()}>Cancel</button>
                 <button
@@ -389,7 +417,7 @@
                   class="btn btn-neutral btn-xs"
                   disabled={busy || locked || Boolean(problem)}
                   title={busy ? "Wait until the recording is updated" : undefined}
-                  on:click={() => session?.saveEdits(shownLabels)}
+                  on:click={save}
                 >
                   Save
                 </button>
@@ -656,6 +684,23 @@
     padding: 0 12px 8px;
     font-size: 11.5px;
     line-height: 1.4;
+    color: var(--mf-muted);
+  }
+  .pp-rewrite {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    flex-basis: 100%;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--mf-strong);
+    cursor: pointer;
+  }
+  .pp-rewrite input {
+    margin-top: 1px;
+  }
+  .pp-rewrite-cost {
+    display: block;
     color: var(--mf-muted);
   }
   .pp-actions {

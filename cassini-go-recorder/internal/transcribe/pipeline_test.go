@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gocassini/internal/portable"
 )
 
 type fixedWordsRecognizer struct{ words []Word }
@@ -127,6 +129,10 @@ func TestBuildMeetingArtifactOffAndFailedPreserveAudio(t *testing.T) {
 			if manifest.Processing == nil || manifest.Processing.Transcription.Status != want {
 				t.Fatalf("processing: %s", raw)
 			}
+			// No words, so no summary to try: it must not read as a failed one.
+			if got := manifest.Processing.MeetingSummary; got == nil || *got != (portable.SummaryStatus{Status: "skipped", Reason: "no_transcript"}) {
+				t.Fatalf("summary outcome: %s", raw)
+			}
 			if manifest.Provenance != nil || manifest.Files.Captions != "" || manifest.Files.Summary != "" {
 				t.Fatalf("fake recognition provenance: %s", raw)
 			}
@@ -149,6 +155,43 @@ func TestBuildMeetingArtifactOffAndFailedPreserveAudio(t *testing.T) {
 			}
 			if mode == "off" && strings.Contains(stdout.String(), "STT policy") {
 				t.Fatal("off resolved STT policy")
+			}
+		})
+	}
+}
+
+// The operator switches transcription off with a reason, and the reason
+// decides whether the meeting shows a failure (D-854): a crash or resources
+// still missing at its retry ceiling fail; switched off or no usable model
+// skip.
+func TestBuildMeetingArtifactTranscriptionReasonDecidesFailedOrSkipped(t *testing.T) {
+	input := buildTwoTrackMeetingFromSmoke(t, t.TempDir())
+	for reason, want := range map[string]string{
+		"transcription_failed":   "failed",
+		"insufficient_resources": "failed",
+		"model_unavailable":      "skipped",
+		"":                       "skipped",
+	} {
+		t.Run(reason, func(t *testing.T) {
+			out := t.TempDir()
+			cfg := BuildConfig{TranscriptionMode: "off", TranscriptionReason: reason, CacheDir: t.TempDir()}
+			if err := BuildMeetingArtifact(context.Background(), input, out, cfg, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest artifactManifest
+			if err := json.Unmarshal(raw, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			wantReason := reason
+			if wantReason == "" {
+				wantReason = "disabled"
+			}
+			if got := manifest.Processing.Transcription; got.Status != want || got.Reason != wantReason {
+				t.Fatalf("transcription = %+v, want %s/%s", got, want, wantReason)
 			}
 		})
 	}
@@ -439,6 +482,11 @@ func TestBuildMeetingArtifactKeepsPrimaryWhenAnAdditionalModelIsMissing(t *testi
 	}
 	if manifest.Processing == nil || manifest.Processing.Transcription.Status != "completed" {
 		t.Fatalf("a missing additional model downgraded the build: %s", raw)
+	}
+	// No summary endpoint in this build: the manifest says so rather than
+	// leaving a missing summary unexplained.
+	if got := manifest.Processing.MeetingSummary; got == nil || *got != (portable.SummaryStatus{Status: "skipped", Reason: "not_configured"}) {
+		t.Fatalf("summary outcome: %s", raw)
 	}
 	for _, tr := range manifest.Files.Transcripts {
 		if tr.ID == "stub-extra-model" {

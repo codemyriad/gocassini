@@ -14,6 +14,8 @@ export interface Job {
   stage: string;
   state: string;
   current_attempt_number: number;
+  /** What the current attempt does: record, rerun, refine or summarize. */
+  current_trigger_kind?: string;
   rerun_count: number;
   artifact_run_path: string | null;
   artifact_meeting_path: string | null;
@@ -91,6 +93,31 @@ export interface JobAttempt {
   publish_finished_at: string | null;
   interrupted_at: string | null;
   completed_at: string | null;
+  // What the transcription and summary steps did (D-854, D-814). Absent until
+  // the attempt is built, and for attempts built before this was recorded
+  // (the published one is then read from its bundle).
+  transcription_status?: string;
+  transcription_reason?: string;
+  transcription_detail?: string;
+  summary_status?: string;
+  summary_reason?: string;
+}
+
+// What writing (or rewriting) a meeting's summary would do and cost, as
+// GET /jobs/{id}/summary says before anyone confirms it (D-814).
+export interface SummaryPlan {
+  available: boolean;
+  /** Why it cannot be written now: not_published, no_transcript,
+   *  summaries_off, no_local_copy or busy. */
+  reason?: string;
+  has_summary: boolean;
+  calls: number;
+  words: number;
+  estimated_input_tokens: number;
+  provider?: string;
+  model?: string;
+  /** The endpoint is not on this network, so the call may be billed. */
+  external: boolean;
 }
 
 export interface JobDetailResponse {

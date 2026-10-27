@@ -253,6 +253,19 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- Writing a meeting's summary calls a language model, which may be
+           billed: what it would cost is a GET, queueing it a POST, and both
+           are administrator-only (D-814, D-712). -->
+      <route>
+        <url>^operator\/jobs\/[^\/]+\/summary\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/summaries\/missing\/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <route>
         <url>^operator\/events\/?$</url>
         <verb>GET</verb>
@@ -453,6 +466,15 @@ Summaries and questions use whichever language model you connect, so their ratin
            the meeting the caller can read. -->
       <route>
         <url>^annotations\/meetings\/[^\/]+\/speakers\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- A meeting's summary, for its readers (D-814): what writing one
+           would cost (GET), and asking for it (POST). Any reader may fill a
+           missing summary; replacing one is checked in the operator against
+           Nextcloud's admin group and the meeting's Talk room. -->
+      <route>
+        <url>^annotations\/meetings\/[^\/]+\/summary\/?$</url>
         <verb>GET,POST</verb>
         <access_level>USER</access_level>
       </route>

@@ -318,6 +318,9 @@ func annTestService(t *testing.T, ncURL, bin string, index annotationIndex) (htt
 	if s == nil {
 		t.Fatal("the service must mount for an AppAPI deployment on the Nextcloud sink with a CLI")
 	}
+	// Who may replace a summary is asked of Nextcloud's admin group and the
+	// Talk room; this fake Nextcloud serves neither, so nobody may.
+	s.summaryRewrite = newSummaryRewritePermissions(func(context.Context, string, string) (bool, error) { return false, nil })
 	mux := http.NewServeMux()
 	s.register(mux)
 	return mux, &logs

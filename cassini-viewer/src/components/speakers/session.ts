@@ -13,9 +13,14 @@ import {
   type SpeakerEditsState,
 } from "../../viewer/speakerEdits";
 import { isVoiceId, voiceParent, type SpeakerOverlay } from "../../core/speakers";
+import type { SpeakerSummaryChoice } from "../../viewer/meetingSummary";
 
 export type LoadSpeakerEdits = () => Promise<SpeakerEditsState>;
-export type SaveSpeakerEdits = (expectRevision: number, doc: SpeakerEditsDoc) => Promise<SpeakerEditsState>;
+export type SaveSpeakerEdits = (
+  expectRevision: number,
+  doc: SpeakerEditsDoc,
+  summary?: SpeakerSummaryChoice,
+) => Promise<SpeakerEditsState>;
 
 export interface SpeakersState {
   // "off" when this surface cannot change speakers; "failed" when the operator
@@ -305,13 +310,15 @@ export function createSpeakersSession(options: { pollMs?: number; retryMs?: numb
     }
   }
 
-  async function write(next: (doc: SpeakerEditsDoc) => SpeakerEditsDoc, clearPending: boolean) {
+  async function write(next: (doc: SpeakerEditsDoc) => SpeakerEditsDoc, clearPending: boolean, summary: SpeakerSummaryChoice = "keep") {
     const { server, saving, pending: submitted } = get(state);
     if (!save || !server || saving) return false;
     const current = generation;
     state.update((s) => ({ ...s, saving: true, error: "" }));
     try {
-      const answer = await save(server.revision, speakerEditsBody(next(server.doc)));
+      // Keep is what no choice means: only a rewrite is passed on.
+      const body = speakerEditsBody(next(server.doc));
+      const answer = await (summary === "rewrite" ? save(server.revision, body, summary) : save(server.revision, body));
       if (current !== generation) return false;
       // Only what was sent is saved: a name typed while the save was on its
       // way stays pending.
@@ -336,9 +343,10 @@ export function createSpeakersSession(options: { pollMs?: number; retryMs?: numb
     // "Treat as one person again".
     unsplit: (speakerId: string, currentLabels: ReadonlyMap<string, string>) =>
       write((doc) => withoutSplit(applyPending(doc, get(state).pending, currentLabels), speakerId), true),
-    // Save: every typed name and pick, in one request.
-    saveEdits: (currentLabels: ReadonlyMap<string, string>) =>
-      write((doc) => applyPending(doc, get(state).pending, currentLabels), true),
+    // Save: every typed name and pick, in one request. The summary is kept
+    // unless the reader, allowed to, asked for it to be rewritten.
+    saveEdits: (currentLabels: ReadonlyMap<string, string>, summary: SpeakerSummaryChoice = "keep") =>
+      write((doc) => applyPending(doc, get(state).pending, currentLabels), true, summary),
     // A failed apply is retried by saving the same document again: a new
     // revision is what makes the operator try once more.
     retry: () => write((doc) => doc, false),
