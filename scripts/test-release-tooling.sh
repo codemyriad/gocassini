@@ -88,6 +88,8 @@ eq "0.2.1-rc.1 on release/0.2" "release/0.2" "$(rv_release_branch 0.2.1-rc.1)"
 eq "1.0.0-alpha.1 on main" "main" "$(rv_release_branch 1.0.0-alpha.1)"
 eq "1.10.0 on release/1.10" "release/1.10" "$(rv_release_branch 1.10.0)"
 
+eq "release-version.sh branch (used by the release workflows)" "release/0.2" "$("$SCRIPT_DIR/release-version.sh" branch 0.2.1)"
+
 echo "rv_same_line — MAJOR.MINOR"
 if rv_same_line 0.2.1 0.2.0-beta.3; then ok "0.2.1 and 0.2.0-beta.3 share a line"; else bad "0.2.1 and 0.2.0-beta.3 should share a line"; fi
 if rv_same_line 0.2.1 0.3.0-alpha.1; then bad "0.2.1 and 0.3.0-alpha.1 should not share a line"; else ok "0.2.1 and 0.3.0-alpha.1 are different lines"; fi
