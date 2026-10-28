@@ -477,6 +477,20 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>POST</verb>
         <access_level>USER</access_level>
       </route>
+      <!--
+        USER: the MCP server (D-813). An agent outside Cassini reads meetings
+        as the person who connected it: Nextcloud checks their app password
+        and names them in the proxy headers, and every tool reads through the
+        same caller-visible set as published/… — so there is no second access
+        decision here. POST only: the server is stateless Streamable HTTP with
+        JSON replies, so GET (an event stream) and DELETE (a session) have
+        nothing to answer. Every tool is read-only.
+      -->
+      <route>
+        <url>^mcp\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
       <!-- Cassini-local room names; fresh recording read access authorizes edits. -->
       <route>
         <url>^rooms\/[^\/]+\/name\/?$</url>

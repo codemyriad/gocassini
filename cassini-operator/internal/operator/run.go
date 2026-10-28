@@ -1098,6 +1098,15 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 			}()
 		}
 	}
+	// The MCP server (D-813): agents outside Cassini read meetings as the
+	// person who connected them. A sibling of insights on the ROOT mux —
+	// appinfo/info.xml declares `^mcp\/?$`, POST, USER — so it sits inside the
+	// AppAPI middleware that names the caller. Nil, and unmounted, wherever no
+	// caller could be named (see newMCPHandler).
+	if mcp := newMCPHandler(exappCfg, search, annotations, logger); mcp != nil {
+		root.Handle(mcpURLPath, mcp)
+		root.Handle(mcpURLPath+"/{$}", mcp)
+	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)
 
