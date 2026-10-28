@@ -285,8 +285,12 @@ func syncDir(path string) error {
 // a failed upgrade never leaves an install with neither model, and only while
 // they hold the inference lock (transcribe.RemoveReplacedModels), so a build
 // standing in with a retired model never loses its files mid-run. It returns
-// the ids it removed.
+// the ids it removed. With none of them on disk it takes no lock, so checking
+// a model that replaces nothing installed never waits for a download.
 func (s *Store) RemoveReplaced(ctx context.Context, m Model) ([]string, error) {
+	if !s.HasReplaced(m) {
+		return nil, nil
+	}
 	var removed []string
 	err := s.locked(ctx, func() error {
 		for _, id := range m.Replaces {
@@ -308,4 +312,18 @@ func (s *Store) RemoveReplaced(ctx context.Context, m Model) ([]string, error) {
 		return nil
 	})
 	return removed, err
+}
+
+// HasReplaced reports whether files of a retired model m replaces are still
+// on disk, in either layout RemoveReplaced deletes.
+func (s *Store) HasReplaced(m Model) bool {
+	for _, id := range m.Replaces {
+		if !safeName(id) {
+			return true // RemoveReplaced reports it
+		}
+		if _, err := os.Lstat(filepath.Join(s.Root, "models", id)); !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+	}
+	return false
 }

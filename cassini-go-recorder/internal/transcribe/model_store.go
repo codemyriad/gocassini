@@ -79,8 +79,13 @@ func installedCatalogueModel(s *modelstore.Store, id ModelID, revision string) (
 // holds that lock from resolving its model until its last recognizer is
 // closed, and it may be standing in with one of those models, which sherpa
 // opens lazily: removing the files without the lock could pull them from
-// under it.
+// under it. With nothing to remove it takes neither lock: checking a retired
+// model, which replaces nothing, must not wait for the download of the model
+// it stands in for, which holds the store lock throughout.
 func RemoveReplacedModels(ctx context.Context, s *modelstore.Store, m modelstore.Model) ([]string, error) {
+	if !s.HasReplaced(m) {
+		return nil, nil
+	}
 	unlock, err := lockModelRuntime(ctx, s.Root)
 	if err != nil {
 		return nil, err

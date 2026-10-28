@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -300,6 +301,35 @@ func TestModelsProbeChecksARetiredModelButNeverInstallsIt(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "downloads")); !os.IsNotExist(err) {
 		t.Fatalf("a download started: %v", err)
+	}
+}
+
+// The operator checks v3 before it stands in while Ultra downloads, and the
+// download holds the store lock until it is done. v3 replaces nothing, so its
+// check returns at once instead of waiting for that lock.
+func TestRetiredModelProbeDoesNotWaitForADownload(t *testing.T) {
+	stubModelRuntime(t, true)
+	root := t.TempDir()
+	fakeInstallShipped(t, root, "silero-vad")
+	fakeInstallRetired(t, root, "parakeet-tdt-0.6b-v3-int8")
+
+	lock, err := os.OpenFile(filepath.Join(root, ".models.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	var stdout, stderr bytes.Buffer
+	if code := runModels(ctx, []string{"probe", "parakeet-tdt-0.6b-v3-int8", "--cache-root", root}, &stdout, &stderr); code != 0 || strings.Contains(stderr.String(), "warning") {
+		t.Fatalf("probe while a download held the store lock = %d: %s", code, stderr.String())
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("probe waited %s for the store lock", took)
 	}
 }
 
