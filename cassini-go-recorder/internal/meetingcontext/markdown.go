@@ -89,6 +89,15 @@ func renderMeetingMarkdown(bundle MeetingContext, opts RenderOpts) string {
 		fmt.Fprintf(buf, "- Speakers: %s\n", strings.Join(labels, ", "))
 	}
 	fmt.Fprintf(buf, "- Words: %d\n", bundle.WordCount)
+	if bundle.Window != nil {
+		// Said up front, because a transcript that starts mid-meeting reads
+		// as the whole of it otherwise.
+		end := "the end"
+		if bundle.Window.ToMS != nil {
+			end = formatTimestamp(*bundle.Window.ToMS)
+		}
+		fmt.Fprintf(buf, "- Window: %s to %s — only the passages overlapping it are below\n", formatTimestamp(bundle.Window.FromMS), end)
+	}
 	fmt.Fprintf(buf, "- Transcript source: `%s`\n\n", bundle.TranscriptSource)
 
 	fmt.Fprint(buf, "## Summary\n\n")

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -41,7 +42,12 @@ func mcpUpstream(t *testing.T, visible map[string][]string) *httptest.Server {
 // middleware, which names the caller from X-Test-User.
 func serveMCP(t *testing.T, cfg ExAppConfig, logs *bytes.Buffer) string {
 	t.Helper()
-	handler := newMCPHandler(cfg, searchDeps{}, nil, log.New(logs, "", 0))
+	return serveMCPWith(t, cfg, searchDeps{}, logs)
+}
+
+func serveMCPWith(t *testing.T, cfg ExAppConfig, deps searchDeps, logs *bytes.Buffer) string {
+	t.Helper()
+	handler := newMCPHandler(cfg, deps, nil, log.New(logs, "", 0))
 	if handler == nil {
 		t.Fatal("no MCP handler for an AppAPI deployment publishing to Nextcloud Files")
 	}
@@ -248,5 +254,154 @@ func TestMeetingsRoomsRoute(t *testing.T) {
 	proxy(rec, callerReq(http.MethodGet, "/published/"+meetingsRoomsPath, ""), meetingsRoomsPath)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("no caller answered %d, want the loud 502", rec.Code)
+	}
+}
+
+// search answers where, never what: the route's hits carry a snippet of the
+// segment for the viewer, and none of it may reach an agent — reading what was
+// said goes through context, which reads the recording as the caller.
+func TestMCPSearchCarriesNoTranscriptText(t *testing.T) {
+	index := newTestSearchStore(t)
+	seedSearchable(t, index, "JOB1.opus", seg("seg_7", "S1", 14_000, 18_500, "we discussed the acquisition at length"))
+	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus", "JOB2.opus"}}.server(t)
+	defer srv.Close()
+	var logs bytes.Buffer
+	endpoint := serveMCPWith(t, searchTestConfig(srv.URL), searchDeps{index: index}, &logs)
+
+	var got mcpserver.SearchResult
+	result := mcpCall(t, endpoint, "alice", "search", map[string]any{"query": "acquisition"}, &got)
+	if result.IsError {
+		t.Fatalf("search failed: %s", mcpErrorText(result))
+	}
+	if len(got.Hits) != 1 || got.Hits[0].MeetingID != "MEET-1" || got.Hits[0].StartMS != 14_000 || got.Hits[0].SpeakerID != "S1" {
+		t.Fatalf("hits = %+v", got.Hits)
+	}
+	if got.Coverage.Visible != 2 || got.Coverage.Searched != 1 {
+		t.Fatalf("coverage = %+v", got.Coverage)
+	}
+	wire, _ := json.Marshal(result)
+	for _, leaked := range []string{"discussed", "at length", "snippet"} {
+		if strings.Contains(string(wire), leaked) {
+			t.Fatalf("search result carries transcript text (%q): %s", leaked, wire)
+		}
+	}
+	if strings.Contains(logs.String(), "acquisition") {
+		t.Fatalf("the query reached the log: %s", logs.String())
+	}
+
+	result = mcpCall(t, endpoint, "alice", "search", map[string]any{"query": "  "}, nil)
+	if !result.IsError {
+		t.Fatal("an empty query was answered")
+	}
+}
+
+// context reads the meetings as the caller through the published path, passes
+// a window through to the CLI, and answers in the container form whatever the
+// CLI printed.
+func TestMCPContextReadsAWindow(t *testing.T) {
+	srv, _ := stubRecordingsDAV(t, contextCatalog, []byte("OPUSBYTES"), "MEETING1.opus")
+	document := `{"version":"cassini.meetings.context.v1","meeting":{"id":"MEETING1","title":"Daily Standup"},` +
+		`"transcriptSource":"derived-from-words","wordCount":12,"window":{"fromMs":60000,"toMs":120000},` +
+		`"segments":[{"speaker":"S1","speakerLabel":"Alice","startMs":61000,"endMs":64000,"text":"We decided to ship on Friday."}],` +
+		`"summary":{"present":false}}`
+	bin, argvPath, _ := echoingCassini(t, document)
+	var logs bytes.Buffer
+	endpoint := serveMCP(t, contextTestConfig(srv.URL, bin), &logs)
+
+	var got mcpserver.ContextResult
+	result := mcpCall(t, endpoint, "alice", "context", map[string]any{"ids": []string{"MEETING1"}, "fromMs": 60000, "toMs": 120000}, &got)
+	if result.IsError {
+		t.Fatalf("context failed: %s", mcpErrorText(result))
+	}
+	argv := strings.Join(readArgv(t, argvPath), " ")
+	for _, want := range []string{"--json", "--from 60000", "--to 120000"} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("argv %q does not carry %s", argv, want)
+		}
+	}
+	if got.Version != contextDocumentVersion || len(got.Meetings) != 1 {
+		t.Fatalf("result = %+v", got)
+	}
+	meeting := got.Meetings[0]
+	if meeting.Meeting.ID != "MEETING1" || meeting.Window == nil || len(meeting.Segments) != 1 || meeting.Segments[0].StartMS != 61_000 {
+		t.Fatalf("meeting = %+v", meeting)
+	}
+}
+
+// A bundle is all of its meetings or none: an id the caller may not read
+// fails it, phrased as absence. A window that holds nothing is refused before
+// anything is read.
+func TestMCPContextRefusals(t *testing.T) {
+	srv, fetched := stubRecordingsDAV(t, contextCatalog, []byte("OPUSBYTES"), "MEETING1.opus")
+	bin := writeFakeCassini(t, "echo 'the CLI must not run' >&2\nexit 9\n")
+	var logs bytes.Buffer
+	endpoint := serveMCP(t, contextTestConfig(srv.URL, bin), &logs)
+
+	result := mcpCall(t, endpoint, "alice", "context", map[string]any{"ids": []string{"MEETING1", "SECRET"}}, nil)
+	if !result.IsError || !strings.Contains(mcpErrorText(result), "not a meeting you can read") {
+		t.Fatalf("an unreadable id did not fail the bundle: %s", mcpErrorText(result))
+	}
+	if strings.Contains(mcpErrorText(result), "SECRET") {
+		t.Fatalf("the refusal names the id: %s", mcpErrorText(result))
+	}
+
+	*fetched = nil
+	for _, args := range []map[string]any{
+		{"ids": []string{"MEETING1"}, "fromMs": 120000, "toMs": 60000},
+		{"ids": []string{}},
+		{"ids": []string{"../etc/passwd"}},
+		{"ids": []string{"MEETING1", "MEETING1"}},
+	} {
+		result := mcpCall(t, endpoint, "alice", "context", args, nil)
+		if !result.IsError {
+			t.Errorf("%v was accepted", args)
+		}
+	}
+	if len(*fetched) != 0 {
+		t.Fatalf("a refused request fetched recordings: %v", *fetched)
+	}
+}
+
+// Both forms of the document decode to the one container form.
+func TestDecodeContextDocumentForms(t *testing.T) {
+	one := `{"version":"cassini.meetings.context.v1","meeting":{"id":"A","title":"a"},"transcriptSource":"derived-from-words","wordCount":0,"segments":[],"summary":{"present":false}}`
+	many := `{"version":"cassini.meetings.context.v1","meetings":[` + one + `,` + strings.Replace(one, `"A"`, `"B"`, 1) + `]}`
+	for doc, want := range map[string]string{one: "A", many: "A,B"} {
+		got, err := decodeContextDocument([]byte(doc))
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		var ids []string
+		for _, meeting := range got.Meetings {
+			ids = append(ids, meeting.Meeting.ID)
+		}
+		if strings.Join(ids, ",") != want {
+			t.Fatalf("ids = %v, want %s", ids, want)
+		}
+	}
+	if _, err := decodeContextDocument([]byte(`{"version":"cassini.meetings.context.v2","meeting":{}}`)); err == nil {
+		t.Fatal("an unknown version was read")
+	}
+}
+
+// The published route takes the same window, so the viewer and the CLI can
+// read a stretch too.
+func TestMeetingsContextRouteParsesAWindow(t *testing.T) {
+	request, err := parseMeetingsContextRequest(url.Values{"ids": {"MEETING1"}, "fromMs": {"60000"}, "toMs": {"120000"}})
+	if err != nil || request.window == nil || request.window.fromMS != 60_000 || *request.window.toMS != 120_000 {
+		t.Fatalf("request = %+v, err = %v", request, err)
+	}
+	request, err = parseMeetingsContextRequest(url.Values{"ids": {"MEETING1"}, "fromMs": {"60000"}})
+	if err != nil || request.window == nil || request.window.toMS != nil {
+		t.Fatalf("an open-ended window: %+v, %v", request, err)
+	}
+	for _, bad := range []url.Values{
+		{"ids": {"MEETING1"}, "fromMs": {"-1"}},
+		{"ids": {"MEETING1"}, "fromMs": {"ten"}},
+		{"ids": {"MEETING1"}, "fromMs": {"5000"}, "toMs": {"5000"}},
+	} {
+		if _, err := parseMeetingsContextRequest(bad); err == nil {
+			t.Errorf("%v was accepted", bad)
+		}
 	}
 }

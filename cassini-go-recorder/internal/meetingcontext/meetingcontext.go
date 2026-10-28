@@ -51,7 +51,14 @@ type MeetingContext struct {
 	SourceTranscriptID     string `json:"sourceTranscriptId,omitempty"`
 	SourceTranscriptFormat string `json:"sourceTranscriptFormat,omitempty"`
 	Language               string `json:"language,omitempty"`
-	WordCount              int    `json:"wordCount"`
+	// WordCount is the whole meeting's, window or not.
+	WordCount int `json:"wordCount"`
+
+	// Window is set when the caller asked for a stretch of the meeting:
+	// Segments then holds only the passages overlapping it, and everything
+	// else still describes the whole meeting. Its presence is what tells a
+	// reader the transcript is partial on purpose.
+	Window *Window `json:"window,omitempty"`
 
 	Segments []Segment `json:"segments"`
 	Summary  Summary   `json:"summary"`
@@ -101,6 +108,60 @@ type Summary struct {
 	Format   string `json:"format,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Markdown string `json:"markdown,omitempty"`
+}
+
+// Window is a stretch of a meeting, in milliseconds from the start of the
+// recording. ToMS nil means to the end.
+type Window struct {
+	FromMS int64  `json:"fromMs"`
+	ToMS   *int64 `json:"toMs,omitempty"`
+}
+
+// Contains reports whether a passage from startMS to endMS overlaps the
+// window. A passage straddling either edge is kept whole: cutting it would put
+// words in a speaker's mouth that the passage, read whole, does not say.
+func (w Window) Contains(startMS, endMS int64) bool {
+	// A passage that ends exactly where the window starts does not overlap
+	// it; an instantaneous one sitting on that edge does.
+	end := max(endMS, startMS)
+	if end < w.FromMS || (end == w.FromMS && startMS < end) {
+		return false
+	}
+	if w.ToMS != nil && startMS >= *w.ToMS {
+		return false
+	}
+	return true
+}
+
+// Validate refuses a window that can never hold anything.
+func (w Window) Validate() error {
+	if w.FromMS < 0 {
+		return fmt.Errorf("a window cannot start before the recording does")
+	}
+	if w.ToMS != nil && *w.ToMS <= w.FromMS {
+		return fmt.Errorf("a window must end after it starts")
+	}
+	return nil
+}
+
+// WithWindow returns the bundle narrowed to the passages overlapping w in
+// every meeting, each marked with the window. The meetings are copied; b is
+// left as it was.
+func (b Bundle) WithWindow(w Window) Bundle {
+	narrowed := Bundle{Meetings: make([]MeetingContext, 0, len(b.Meetings))}
+	for _, meeting := range b.Meetings {
+		window := w
+		meeting.Window = &window
+		kept := make([]Segment, 0, len(meeting.Segments))
+		for _, segment := range meeting.Segments {
+			if w.Contains(segment.StartMS, segment.EndMS) {
+				kept = append(kept, segment)
+			}
+		}
+		meeting.Segments = kept
+		narrowed.Meetings = append(narrowed.Meetings, meeting)
+	}
+	return narrowed
 }
 
 // Bundle is the document cassini.meetings.context.v1 describes: one or more
