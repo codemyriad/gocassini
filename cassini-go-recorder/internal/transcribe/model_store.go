@@ -45,6 +45,14 @@ func InstalledModel(root string, id ModelID, revision string, _ io.Writer) (Mode
 	}
 	return resolveModelPaths(s.Dir(m), spec, id), nil
 }
+
+// ModelReady reports whether shipped model id is installed and has passed its
+// runtime check on device under this runtime (`cassini models probe`).
+func ModelReady(root string, id ModelID, device string) bool {
+	s := modelstore.New(root)
+	m, err := s.Catalogue.Model(string(id), "")
+	return err == nil && s.Ready(m, device, ModelRuntimeFingerprint())
+}
 func InstalledVAD(root string, id ModelID, revision string, _ io.Writer) (string, error) {
 	s := modelstore.New(root)
 	m, err := installedCatalogueModel(s, id, revision)

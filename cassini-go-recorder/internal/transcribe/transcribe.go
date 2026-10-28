@@ -7,6 +7,7 @@ import (
 	"gocassini/internal/modelstore"
 	"gocassini/internal/portable"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -67,6 +68,7 @@ var (
 	// no multi-hundred-MB model download.
 	ensureModelFn           = InstalledModel
 	ensureVADFn             = InstalledVAD
+	modelReadyFn            = ModelReady
 	buildSpeakerEnvelopesFn = BuildSpeakerEnvelopes
 )
 
@@ -225,11 +227,13 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	// --- 3. Resolve already installed STT model and VAD ---
 	fmt.Fprintf(stdout, "  resolving installed model %s...\n", cfg.ModelID)
 	modelPaths, err := ensureModelFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
-	if err != nil && cfg.StandIn != nil {
+	if err != nil && cfg.StandIn != nil && errors.Is(err, fs.ErrNotExist) && modelReadyFn(cfg.CacheDir, ModelID(cfg.StandIn.For), cfg.Device) {
 		// The retired files were removed after the operator admitted this
-		// build. That happens only once their replacement has passed its
-		// runtime check, so transcribe with the replacement instead of
-		// keeping only the audio.
+		// build, by a runtime check of their replacement run outside it
+		// (RemoveReplacedModels), so transcribe with the replacement instead
+		// of keeping only the audio. Retired files that are there but no
+		// longer intact, or a replacement that has not passed its check on
+		// this device, keep only the audio: the build was not admitted for it.
 		fmt.Fprintf(stdout, "  retired %s is gone (%v); using %s, which replaced it\n", cfg.ModelID, err, cfg.StandIn.For)
 		cfg.ModelID, cfg.ModelRevision, cfg.StandIn = ModelID(cfg.StandIn.For), "", nil
 		if m, e := modelstore.Shipped().Model(string(cfg.ModelID), ""); e == nil {

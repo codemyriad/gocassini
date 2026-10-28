@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -200,14 +202,37 @@ func TestStandInBuildRecordsWhy(t *testing.T) {
 	}
 }
 
+// stubModelReady makes ready the models that ready names, on the CPU.
+func stubModelReady(t *testing.T, ready ...ModelID) {
+	t.Helper()
+	prev := modelReadyFn
+	modelReadyFn = func(_ string, id ModelID, device string) bool {
+		for _, r := range ready {
+			if id == r && device == "cpu" {
+				return true
+			}
+		}
+		return false
+	}
+	t.Cleanup(func() { modelReadyFn = prev })
+}
+
 // The v3 files can go between the operator's admission and the build taking
 // the inference lock, when Ultra passes a check run outside the operator.
 // They go only once Ultra has passed it, so the build uses Ultra instead of
 // keeping only the audio.
 func TestStandInWhoseFilesAreGoneUsesItsReplacement(t *testing.T) {
+	// What the real resolution reports for removed files.
+	if _, err := InstalledModel(t.TempDir(), ModelParakeetV3Int8, v3Int8Revision, io.Discard); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("removed v3: %v", err)
+	}
+	if ModelReady(t.TempDir(), ModelParakeetUltraInt8, "cpu") {
+		t.Fatal("an empty store has a ready model")
+	}
+	stubModelReady(t, ModelParakeetUltraInt8)
 	processing, log, resolved := standInBuild(t, func(id ModelID, _ string) (ModelPaths, error) {
 		if id == ModelParakeetV3Int8 {
-			return ModelPaths{}, errors.New("model is not installed/verified")
+			return ModelPaths{}, fmt.Errorf("model is not installed/verified: %w", fs.ErrNotExist)
 		}
 		return ModelPaths{ModelType: "stub", SampleRate: 16000}, nil
 	})
@@ -219,5 +244,40 @@ func TestStandInWhoseFilesAreGoneUsesItsReplacement(t *testing.T) {
 	}
 	if !strings.Contains(log, "retired parakeet-tdt-0.6b-v3-int8 is gone") || !strings.Contains(log, "using parakeet-ultra-0.6b-int8, which replaced it") {
 		t.Fatalf("log:\n%s", log)
+	}
+}
+
+// The build was admitted and sized for v3, so it switches to Ultra only when
+// v3's files are gone and Ultra has passed its check here, which is what
+// removing them requires. v3 files that are there but changed, or an Ultra
+// that failed its check, keep the audio as any unavailable model does.
+func TestStandInFallsBackOnlyToAReadyReplacement(t *testing.T) {
+	cases := []struct {
+		name  string
+		v3Err error
+		ready []ModelID
+	}{
+		{name: "v3 files changed", v3Err: errors.New("installed file changed: encoder.int8.onnx"), ready: []ModelID{ModelParakeetUltraInt8}},
+		{name: "Ultra not ready", v3Err: fmt.Errorf("model is not installed/verified: %w", fs.ErrNotExist)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stubModelReady(t, c.ready...)
+			processing, log, resolved := standInBuild(t, func(id ModelID, _ string) (ModelPaths, error) {
+				if id == ModelParakeetV3Int8 {
+					return ModelPaths{}, c.v3Err
+				}
+				return ModelPaths{ModelType: "stub", SampleRate: 16000}, nil
+			})
+			if !reflect.DeepEqual(resolved, []string{"parakeet-tdt-0.6b-v3-int8@" + v3Int8Revision}) {
+				t.Fatalf("resolved %v", resolved)
+			}
+			if got := processing.Transcription; got.Status != "skipped" || got.Reason != "model_unavailable" || got.StandIn != nil {
+				t.Fatalf("transcription %+v", got)
+			}
+			if strings.Contains(log, "is gone") {
+				t.Fatalf("log:\n%s", log)
+			}
+		})
 	}
 }
