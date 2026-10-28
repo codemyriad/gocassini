@@ -96,6 +96,10 @@ const (
 	envReadableDisabled = "CASSINI_READABLE_DISABLED"
 	envLLMTimeoutSec    = "CASSINI_LLM_TIMEOUT_SEC"
 	envLLMMaxTokens     = "CASSINI_LLM_MAX_TOKENS"
+	// envSummaryTemplate is the workflow the publish pipeline's summary step
+	// runs (internal/transcribe: SummaryTemplateEnv). Unset means the shipped
+	// summarise (D-819).
+	envSummaryTemplate = "CASSINI_SUMMARY_TEMPLATE"
 
 	llmStepSummary = "SUMMARY"
 	llmStepInsight = "INSIGHT"
@@ -140,6 +144,7 @@ func inheritedLLMEnv() map[string]bool {
 		// Retired names an older deploy may still carry: the readable-cleanup
 		// kill switch and its per-step wire (the cleanup step was removed).
 		envReadableDisabled: true, "READABLE_BASE_URL": true, "READABLE_API_KEY": true, "READABLE_MODEL": true,
+		envSummaryTemplate: true,
 	}
 	for _, step := range []string{llmStepSummary, llmStepInsight} {
 		b, k, m, t, n := llmStepEnv(step)
@@ -508,6 +513,9 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 	}
 	summaryProvider, summaryOK := s.provider(s.Summary)
 	out = s.appendStepEnv(out, llmStepSummary, summaryProvider, modelFor(summaryProvider, s.Summary.Model), summaryOK)
+	if template := strings.TrimSpace(s.Summary.Template); template != "" {
+		out = append(out, envSummaryTemplate+"="+template)
+	}
 	insightProvider, insightModel, insightOK := s.insightEndpoint()
 	out = s.appendStepEnv(out, llmStepInsight, insightProvider, insightModel, insightOK)
 	return out

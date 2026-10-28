@@ -78,7 +78,7 @@ func TestMeetingsSummarizeWritesASummaryIntoABundle(t *testing.T) {
 		t.Errorf("LLM requests = %d, want 1", requests)
 	}
 	const want = "# Meeting Summary\n\nRecovered for the bundle.\n"
-	if got := string(readFileBytes(t, filepath.Join(bundleDir, "summary.md"))); got != want {
+	if got := summaryBody(t, readFileBytes(t, filepath.Join(bundleDir, "summary.md"))); got != want {
 		t.Errorf("summary.md = %q, want %q", got, want)
 	}
 
@@ -114,7 +114,7 @@ func TestMeetingsSummarizeWritesASummaryIntoABundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read packed meeting: %v", err)
 	}
-	if string(meeting.SummaryMarkdown) != want || meeting.SummaryModel() != "test-summary-model" {
+	if summaryBody(t, meeting.SummaryMarkdown) != want || meeting.SummaryModel() != "test-summary-model" {
 		t.Errorf("packed summary = %q by %q", meeting.SummaryMarkdown, meeting.SummaryModel())
 	}
 	sealed := decodePortableManifestFromOpus(t, opusPath)

@@ -543,3 +543,16 @@ describe("stripLeadingHeading", () => {
     expect(stripLeadingHeading("", "What did we decide?")).toBe("");
   });
 });
+
+describe("meeting summary front matter (D-819)", () => {
+  it("is cut from a summary the same way as from an insight", () => {
+    const summary =
+      '---\nworkflow:\n  id: "resumen"\n  version: "v3"\n  sha256: "abc"\n---\n\n# Resumen\n\nHola.\n';
+    expect(stripInsightFrontMatter(summary)).toBe("# Resumen\n\nHola.\n");
+  });
+
+  it("is cut before the meeting view renders a summary", async () => {
+    const { default: source } = await import("../components/MeetingView.svelte?raw");
+    expect(source).toContain("marked.parse(stripInsightFrontMatter(markdown)");
+  });
+});

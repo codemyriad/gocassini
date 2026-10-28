@@ -160,6 +160,11 @@ A save is checked before it is kept: a template that would not run is refused
 with the reason, and the file is left as it was. Every save is a new version, so
 an insight still records exactly which template bytes wrote it.
 
+To summarise every new meeting with your own template, choose it as the
+template in **Operator › Publish pipeline › Summary**. Templates that take the
+reader's own question are not offered there, because a summary has nobody to ask.
+Each summary records the id, version and hash of the template that wrote it.
+
 Custom templates are files on the app's persistent volume
 (`operator/templates/<id>.md`), so they survive app updates. A file dropped
 there by hand appears in the panel as **Custom**; one that cannot run is listed

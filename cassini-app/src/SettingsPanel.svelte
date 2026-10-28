@@ -386,10 +386,9 @@
   // id the registry resolves, so a build that stopped shipping this one opens
   // on a different template instead of on an error.
   const SHIPPED_SUMMARY_TEMPLATE = "summarise";
-  // Off until the publish pipeline reads the chosen template back (D-719):
-  // internal/transcribe/summary.go still runs the shipped prompt, so the
-  // choice would be saved and ignored. The policy still resolves and saves it.
-  const SUMMARY_TEMPLATE_CHOICE = false;
+  // The publish pipeline reads the chosen template back (D-819): the operator
+  // hands it to the build as CASSINI_SUMMARY_TEMPLATE, and the summary records
+  // the id, version and hash of the template that wrote it.
 
   // The templates this step can actually run: every one EXCEPT a freeform one.
   //
@@ -828,7 +827,6 @@
                      template it runs rather than hiding a prompt of its own. A
                      free-text "workflow" field asked an administrator to know an
                      id the registry could have told them. -->
-                {#if SUMMARY_TEMPLATE_CHOICE}
                 <label class="op-field">
                   <span class="op-field-label">Insight template</span>
                   <select
@@ -863,19 +861,13 @@
                       Templates could not be listed.
                     </span>
                   {/if}
-                  <!-- The field is saved and served; the publish pipeline does not
-                       resolve it yet (internal/transcribe/summary.go splices the
-                       shipped prompt directly). Saying so beats a control that
-                       silently does nothing — delete this line when the pipeline
-                       reads it back (D-719). -->
                   <span class="pipe-help">
-                    Your choice is saved, but summaries still use the built-in template for now.
+                    Meetings published from now on are summarised with this template.
                   </span>
                   <button type="button" class="link-btn pipe-link" on:click={() => dispatch("openTemplates")}>
                     Edit templates
                   </button>
                 </label>
-                {/if}
               </fieldset>
               {/if}
             {/if}

@@ -98,6 +98,7 @@
   import {
     formatInsightCreated,
     insightHeadline,
+    stripInsightFrontMatter,
     type InsightRecord,
   } from "../viewer/insights";
   import type { DataProvider } from "../viewer/dataProvider";
@@ -466,7 +467,9 @@
     if (typeof markdown !== "string" || markdown.trim() === "") {
       return "";
     }
-    const rawHtml = marked.parse(markdown, { async: false }) as string;
+    // A summary records the template that wrote it as front matter (D-819),
+    // as an insight document does; it is provenance, not something to read.
+    const rawHtml = marked.parse(stripInsightFrontMatter(markdown), { async: false }) as string;
     return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
   }
 

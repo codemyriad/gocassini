@@ -562,7 +562,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 		Provenance: source.Artifact.Provenance,
 	})
 	if len(source.SummaryMarkdown) > 0 {
-		manifest.Summary = buildPortableSummaryMetadata(source.Artifact.Provenance)
+		manifest.Summary = buildPortableSummaryMetadata(source.Artifact.Provenance, source.SummaryMarkdown)
 		manifest.Attachments = append(manifest.Attachments, map[string]any{
 			"name":          "summary.md",
 			"mime":          "text/markdown",
@@ -572,14 +572,31 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	return manifest, nil
 }
 
-func buildPortableSummaryMetadata(prov *portable.Provenance) map[string]any {
-	meta := map[string]any{
-		"format":          "markdown",
-		"templateVersion": "v0",
-	}
+func buildPortableSummaryMetadata(prov *portable.Provenance, summaryMarkdown []byte) map[string]any {
+	meta := summaryTemplateMetadata(summaryMarkdown)
 	if prov != nil && prov.MeetingSummary != nil {
 		if model := strings.TrimSpace(prov.MeetingSummary.Model); model != "" {
 			meta["model"] = model
+		}
+	}
+	return meta
+}
+
+// summaryTemplateMetadata is the manifest's summary block as far as the
+// template goes (D-819). A summary written since the summary step recorded its
+// template carries it in its own front matter, and the manifest says exactly
+// that; an older one says the shipped version, which is approximate for a
+// meeting summarised before a template change.
+func summaryTemplateMetadata(summaryMarkdown []byte) map[string]any {
+	meta := map[string]any{
+		"format":          "markdown",
+		"templateVersion": transcribe.SummaryWorkflowVersion,
+	}
+	if ref, _, ok := transcribe.SummaryWorkflowOf(string(summaryMarkdown)); ok {
+		meta["templateId"] = ref.ID
+		meta["templateVersion"] = ref.Version
+		if ref.SHA256 != "" {
+			meta["templateSha256"] = ref.SHA256
 		}
 	}
 	return meta

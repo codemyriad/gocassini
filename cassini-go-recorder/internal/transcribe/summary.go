@@ -61,7 +61,8 @@ func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segmen
 		return "", fmt.Errorf("no transcript segments to summarize")
 	}
 
-	systemPrompt := summarySystemPrompt(summaryV0Template)
+	workflow := ResolveSummaryWorkflow()
+	systemPrompt := workflow.SystemPrompt()
 	userPrompt := formatTranscriptForSummary(streams, segments)
 
 	body, err := ChatCompletion(context.Background(), cfg, systemPrompt, userPrompt)
@@ -73,7 +74,7 @@ func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segmen
 	if body == "" {
 		return "", fmt.Errorf("LLM returned an empty summary")
 	}
-	return body + "\n", nil
+	return summaryFrontMatter(workflow.Ref()) + body + "\n", nil
 }
 
 // EstimateSummaryInputTokens says roughly how many input tokens the summary

@@ -353,10 +353,7 @@ func summaryInputFromMeeting(meeting inspectpkg.ExtractedMeeting) ([]transcribe.
 func applySummaryToPortableDocument(document map[string]any, body string, model string) {
 	trimmedModel := strings.TrimSpace(model)
 
-	meta := map[string]any{
-		"format":          "markdown",
-		"templateVersion": "v0",
-	}
+	meta := summaryTemplateMetadata([]byte(body))
 	if trimmedModel != "" {
 		meta["model"] = trimmedModel
 	}

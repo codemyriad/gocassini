@@ -1038,3 +1038,44 @@ func TestPutLLMSettingsStoresTheProviderModelAndTheChoiceShowsIt(t *testing.T) {
 		t.Fatalf("choices = %+v, want the default model on the choice", choices)
 	}
 }
+
+// D-819: the summary step's template reaches the pipeline as
+// CASSINI_SUMMARY_TEMPLATE, and a stale one inherited from the deploy
+// environment never does.
+func TestLLMChildEnvNamesTheSummaryTemplate(t *testing.T) {
+	s := LLMSettings{
+		Providers: []LLMProvider{{ID: "hosted", Name: "OpenRouter", BaseURL: openRouterBaseURL}},
+		Summary:   LLMStep{Enabled: true, Provider: "hosted", Template: "resumen"},
+	}
+	env := s.ChildEnv([]string{"PATH=/bin", envSummaryTemplate + "=stale"})
+	if got, ok := envValue(env, envSummaryTemplate); !ok || got != "resumen" {
+		t.Fatalf("%s = %q (present=%v), want resumen; env=%v", envSummaryTemplate, got, ok, env)
+	}
+
+	s.Summary.Template = ""
+	env = s.ChildEnv([]string{"PATH=/bin", envSummaryTemplate + "=stale"})
+	if got, ok := envValue(env, envSummaryTemplate); ok {
+		t.Fatalf("%s = %q with no template set, want it absent (the built-in)", envSummaryTemplate, got)
+	}
+}
+
+// The build and the re-summarise both start from rt.childEnv(), so both see the
+// template and the directory it may live in.
+func TestRuntimeChildEnvCarriesTheSummaryTemplateAndItsDirectory(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TemplatesRoot = "/data/operator/templates"
+	rt.llmMu.Lock()
+	rt.llm = LLMSettings{
+		Providers: []LLMProvider{{ID: "hosted", Name: "OpenRouter", BaseURL: openRouterBaseURL}},
+		Summary:   LLMStep{Enabled: true, Provider: "hosted", Template: "resumen"},
+	}
+	rt.llmMu.Unlock()
+	env := rt.childEnv()
+	if got := childEnvValue(env, envSummaryTemplate); got != "resumen" {
+		t.Errorf("%s = %q", envSummaryTemplate, got)
+	}
+	if got := childEnvValue(env, envTemplatesDir); got != "/data/operator/templates" {
+		t.Errorf("%s = %q", envTemplatesDir, got)
+	}
+}
