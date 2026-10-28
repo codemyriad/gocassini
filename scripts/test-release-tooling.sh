@@ -379,6 +379,54 @@ rm -rf "$BARE" "$OTHER"
 
 rm -rf "$PR"
 
+echo "sync-release-changelog.sh — a branch release back to main"
+SY="$(mktemp -d)"
+git -C "$SY" init -q -b main
+git -C "$SY" config user.email t@t
+git -C "$SY" config user.name t
+mkdir -p "$SY/scripts" "$SY/appinfo" "$SY/changelog.d"
+cp "$SCRIPT_DIR"/{lib-release-version.sh,fold-changelog.sh,extract-release-notes.sh,prepare-release.sh,sync-release-changelog.sh} "$SY/scripts/"
+printf '<?xml version="1.0"?>\n<info><version>0.2.0</version><external-app><docker-install><image-tag>0.2.0</image-tag></docker-install></external-app></info>\n' > "$SY/appinfo/info.xml"
+printf '# Changelog\n\n## [Unreleased]\n\n## [0.2.0] - 2026-10-13\n\n### Added\n- Initial.\n' > "$SY/CHANGELOG.md"
+printf '# Fragments\n' > "$SY/changelog.d/README.md"
+git -C "$SY" add -A; git -C "$SY" commit -qm init; git -C "$SY" tag v0.2.0
+# commit_frag <name> <entry> — commit one fragment on the current branch.
+commit_frag() { printf '### Fixed\n- %s\n' "$2" > "$SY/changelog.d/$1"; git -C "$SY" add -A; git -C "$SY" commit -qm "$1"; }
+sy_prep() { ( cd "$SY" && ./scripts/prepare-release.sh "$@" ) >/dev/null 2>&1; }
+sync_cl() { ( cd "$SY" && ./scripts/sync-release-changelog.sh "$@" ) 2>&1; }
+
+# main: a feature ships in 0.3.0-alpha.1, then a fix lands and is cherry-picked
+# onto release/0.2 next to a fix written on the branch only; 0.2.1 is cut there.
+commit_frag 70.feature.md "A feature."
+sy_prep --bump minor
+commit_frag 60.fix.md "A fix from main."
+fix="$(git -C "$SY" rev-parse HEAD)"
+git -C "$SY" switch -q -c release/0.2 v0.2.0
+git -C "$SY" cherry-pick -x "$fix" >/dev/null
+commit_frag 65.branch-only.md "A fix only on the branch."
+sy_prep --bump patch
+git -C "$SY" switch -q main
+
+out="$(sync_cl --version 0.2.1)"
+cl="$SY/CHANGELOG.md"
+if grep -qF "## [0.2.1]" "$cl"; then ok "sync adds the release's section to main"; else bad "sync should add the 0.2.1 section (got: $out)"; fi
+order="$(grep -o '^## \[[^]]*\]' "$cl" | tr '\n' ' ')"
+eq "sections in version order" "## [Unreleased] ## [0.3.0-alpha.1] ## [0.2.1] ## [0.2.0] " "$order"
+if awk '/^## \[0.2.1\]/{s=1;next} /^## \[/{s=0} s' "$cl" | grep -qF -- "- A fix only on the branch."; then ok "section copied as tagged, entries included"; else bad "section should carry the release's entries"; fi
+if [[ ! -e "$SY/changelog.d/60.fix.md" ]]; then ok "sync removes the released fragment from main"; else bad "sync should remove 60.fix.md"; fi
+if grep -qF "65.branch-only.md is not on this branch" <<<"$out"; then ok "sync names a fragment written only on the release branch"; else bad "sync should note the branch-only fragment (got: $out)"; fi
+eq "sync commits once" "chore(release): bring the 0.2.1 changelog to main" "$(git -C "$SY" log -1 --format=%s)"
+if git -C "$SY" diff --quiet HEAD; then ok "worktree clean after sync"; else bad "worktree should be clean after sync"; fi
+
+out="$(sync_cl --version 0.2.1 || true)"
+if grep -qF "already has a 0.2.1 section" <<<"$out"; then ok "sync refuses a release already on main"; else bad "sync should refuse a second run (got: $out)"; fi
+out="$(sync_cl --version 0.3.0-alpha.1 || true)"
+if grep -qF "cut on main" <<<"$out"; then ok "sync refuses a release cut on main"; else bad "sync should refuse a main release (got: $out)"; fi
+git -C "$SY" switch -q release/0.2
+out="$(sync_cl --version 0.2.1 || true)"
+if grep -qF "not release/0.2" <<<"$out"; then ok "sync refuses to run on a release branch"; else bad "sync should refuse release/0.2 (got: $out)"; fi
+rm -rf "$SY"
+
 echo "build/validate-appstore-tarball.sh — packaging"
 # Build against the real repo's source files, writing only into a temp dir.
 SRCV="$(rv_read_version "$(git rev-parse --show-toplevel)/appinfo/info.xml")"
