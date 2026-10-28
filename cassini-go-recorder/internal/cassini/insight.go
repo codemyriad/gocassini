@@ -155,7 +155,7 @@ Usage:
 
 Commands:
   run        Run one workflow over one or more context bundles
-  workflows  List the workflows this build ships, with their versions and hashes
+  workflows  List the workflows this deployment can run, with their versions and hashes
 `+"\n")
 }
 
@@ -176,17 +176,21 @@ func runInsightWorkflows(args []string, stdout, stderr io.Writer) int {
   cassini insight workflows
   cassini insight workflows --json
 
-List the workflows this build ships. Each one is a prompt compiled into this
-binary, identified by id, version and the SHA-256 of the exact bytes it sends —
-which is what an insight document records, so a document and this listing can be
-compared rather than assumed to match.
+List the workflows this deployment can run, each identified by id, version
+and the SHA-256 of the exact bytes it sends — which is what an insight
+document records, so a document and this listing can be compared rather than
+assumed to match.
 
 --json adds each workflow's instruction verbatim: the system prompt with its
 template already spliced in, byte for byte as the model receives it.
 
-Naming one on `+"`cassini insight run --workflow <id>`"+` runs it. A workflow
-whose bytes do not resolve is not listed and cannot be named, which is the
-point: an id you can select is an id that will run.
+Naming one on `+"`cassini insight run --workflow <id>`"+` runs it.
+
+Custom templates are read from the directory `+workflows.TemplatesDirEnv+`
+names, one <id>.md file each (front matter: name, question, description, version; the body
+is the instruction). They are listed with origin "Custom". A custom file that
+cannot run is still listed, with its "error", and naming it is refused, so a
+template someone added never disappears without a reason.
 
 `+"\n")
 		fs.PrintDefaults()
@@ -227,6 +231,9 @@ point: an id you can select is an id that will run.
 		fmt.Fprintf(stdout, "name=%s\n", entry.Name)
 		fmt.Fprintf(stdout, "asks=%s\n", entry.Question)
 		fmt.Fprintf(stdout, "about=%s\n", entry.Description)
+		if entry.Error != "" {
+			fmt.Fprintf(stdout, "broken=%s\n", entry.Error)
+		}
 	}
 	fmt.Fprintf(stdout, "\nnote=--json adds each workflow's instruction, the exact bytes this build sends to the model\n")
 	return 0
@@ -306,13 +313,20 @@ is not a warning:
 		return 2
 	}
 
-	registry, err := insightWorkflows()
+	set, err := workflows.Load()
 	if err != nil {
 		fmt.Fprintf(stderr, "insight run failed: build the workflow registry: %v\n", err)
 		return 1
 	}
+	registry := set.Registry
 	workflow, known := registry.Lookup(*workflowID)
 	if !known {
+		// A custom template that is listed and broken is the caller's to fix,
+		// so it is a bad request, and the reason is the one the panel shows.
+		if problem := set.Problem(*workflowID); problem != "" {
+			fmt.Fprintf(stderr, "insight run configuration error: the custom template %q cannot run: %s\n", *workflowID, problem)
+			return 2
+		}
 		fmt.Fprintf(stderr, "insight run configuration error: unknown workflow %q, expected one of: %s\n", *workflowID, strings.Join(registry.IDs(), ", "))
 		return 2
 	}

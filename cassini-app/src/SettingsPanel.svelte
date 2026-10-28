@@ -16,7 +16,7 @@
   import { fly } from "svelte/transition";
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
   import { ChevronDown, Info, TriangleAlert } from "@lucide/svelte";
-  import { OperatorClient, OperatorHttpError } from "./operator/client";
+  import { OperatorClient, OperatorHttpError, runnableWorkflows } from "./operator/client";
   import SpeechModels from "./SpeechModels.svelte";
   import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
   import ModelCombobox from "./ModelCombobox.svelte";
@@ -406,7 +406,7 @@
   // — a `$:` has not recomputed by then, and reading one there resolved the
   // step's template against an empty list.
   function summaryCandidates(list: InsightWorkflow[]): InsightWorkflow[] {
-    return list.filter((workflow) => !workflowTakesQuestion(workflow));
+    return runnableWorkflows(list).filter((workflow) => !workflowTakesQuestion(workflow));
   }
 
   $: summaryTemplates = summaryCandidates(workflows);

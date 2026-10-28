@@ -307,12 +307,15 @@ export interface InsightWorkflow {
   question: string;
   description: string;
   // Where the bytes came from — "Built in" for everything shipped in the
-  // image. Derived by the recorder, so a second resolver would say something
-  // else here without any row being edited to admit it.
+  // image, "Custom" for a template file on the app's volume (D-819). Derived
+  // by the recorder, never written on a row.
   origin: string;
   // The system prompt with its template already spliced in: the exact bytes
   // sent to the model, not a description of them.
   instruction: string;
+  // Set on a custom template that cannot run, saying why. Such a row has no
+  // hash, cannot be chosen, and is listed so an administrator can fix it.
+  error: string;
 }
 
 export interface SpeechModel {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import insightTemplatesPanelSource from "./InsightTemplatesPanel.svelte?raw";
 import { shortHash } from "./InsightTemplatesPanel.svelte";
-import { OperatorClient } from "./operator/client";
+import { OperatorClient, runnableWorkflows } from "./operator/client";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -44,6 +44,21 @@ describe("insight template registry", () => {
     expect(workflows[0].sha256).toHaveLength(64);
     // The bytes, not a description of them: the panel shows what is sent.
     expect(workflows[0].instruction).toBe("You are a meeting-summary editor.");
+  });
+
+  it("keeps a broken custom template with its reason, and drops a row with neither hash nor reason", async () => {
+    stubWorkflowsResponse([
+      { id: "summarise", version: "v0", sha256: "abc123", origin: "Built in" },
+      { id: "roto", origin: "Custom", error: "the front matter needs a version" },
+      { id: "mystery", origin: "Custom" },
+    ]);
+
+    const workflows = await new OperatorClient("https://operator.test").listInsightWorkflows();
+
+    expect(workflows.map((w) => w.id)).toEqual(["summarise", "roto"]);
+    expect(workflows[1].error).toBe("the front matter needs a version");
+    // Nowhere a template runs offers the broken one.
+    expect(runnableWorkflows(workflows).map((w) => w.id)).toEqual(["summarise"]);
   });
 
   it("drops a workflow with no id or no content hash rather than offering it", async () => {
@@ -96,6 +111,11 @@ describe("InsightTemplatesPanel", () => {
     expect(insightTemplatesPanelSource).toContain("{workflow.instruction}");
     expect(insightTemplatesPanelSource).toContain("{workflow.version}");
     expect(insightTemplatesPanelSource).toContain("{workflow.origin}");
+  });
+
+  it("shows why a custom template cannot run instead of hiding it", () => {
+    expect(insightTemplatesPanelSource).toContain("cannot run: {workflow.error}");
+    expect(insightTemplatesPanelSource).toContain("`${workflow.origin}:${workflow.id}`");
   });
 
   it("keeps the panel's claim about where these templates are used true", () => {

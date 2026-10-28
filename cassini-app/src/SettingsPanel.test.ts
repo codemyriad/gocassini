@@ -193,7 +193,7 @@ describe("SettingsPanel template picker", () => {
     // registry's bytes, the same way the Prepare panel decides whether to show
     // a question box.
     expect(settingsPanelSource).toContain(
-      "return list.filter((workflow) => !workflowTakesQuestion(workflow));",
+      "return runnableWorkflows(list).filter((workflow) => !workflowTakesQuestion(workflow));",
     );
     expect(settingsPanelSource).toContain("{#each summaryTemplates as workflow (workflow.id)}");
   });

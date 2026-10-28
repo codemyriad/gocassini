@@ -31,7 +31,21 @@ type workflowView struct {
 	Origin      string `json:"origin"`
 	// Instruction contains the rendered system prompt whose bytes SHA256 identifies.
 	Instruction string `json:"instruction"`
+	// Error is set on a custom template that cannot run, saying why. Such an
+	// entry has no hash and can be neither chosen nor run (D-819).
+	Error string `json:"error,omitempty"`
 }
+
+// envTemplatesDir is the variable the recorder reads custom templates from
+// (internal/insight/workflows: TemplatesDirEnv).
+const envTemplatesDir = "CASSINI_TEMPLATES_DIR"
+
+// originBuiltIn is the recorder's origin for a workflow compiled into it
+// (internal/insight/workflows: OriginBuiltIn).
+const originBuiltIn = "Built in"
+
+// runnable reports whether a listed workflow can be chosen and run.
+func (w workflowView) runnable() bool { return w.Error == "" }
 
 func (rt *Runtime) settingsWorkflowsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -46,7 +60,7 @@ func (rt *Runtime) settingsWorkflowsHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	entries, err := readWorkflowRegistry(r.Context(), bin)
+	entries, err := rt.readWorkflowRegistry(r.Context())
 	if err != nil {
 		rt.logger.Printf("settings workflows: %v", err)
 		writeJSONError(w, http.StatusBadGateway, "the workflow registry could not be read")
@@ -55,9 +69,15 @@ func (rt *Runtime) settingsWorkflowsHandler(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, entries)
 }
 
+// readWorkflowRegistry lists the workflows this deployment can run, custom
+// templates included, through the recorder CLI.
+func (rt *Runtime) readWorkflowRegistry(ctx context.Context) ([]workflowView, error) {
+	return readWorkflowRegistry(ctx, strings.TrimSpace(rt.cfg.CassiniBin), rt.cfg.TemplatesRoot)
+}
+
 // readWorkflowRegistry runs the recorder CLI within the caller's context.
 // A successful empty registry is a non-nil slice so the API encodes [] rather than null.
-func readWorkflowRegistry(ctx context.Context, bin string) ([]workflowView, error) {
+func readWorkflowRegistry(ctx context.Context, bin, templatesDir string) ([]workflowView, error) {
 	ctx, cancel := context.WithTimeout(ctx, workflowsTimeout)
 	defer cancel()
 
@@ -73,6 +93,9 @@ func readWorkflowRegistry(ctx context.Context, bin string) ([]workflowView, erro
 	// This helper also serves USER insight requests. The child needs no
 	// Nextcloud credentials; APP_SECRET would let it act as any account.
 	cmd.Env = contextChildEnv(os.Environ())
+	if dir := strings.TrimSpace(templatesDir); dir != "" {
+		cmd.Env = setEnvKey(cmd.Env, envTemplatesDir, dir)
+	}
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("cassini insight workflows --json: %w: %s", err, strings.TrimSpace(stderr.buf.String()))
 	}
@@ -93,8 +116,16 @@ func readWorkflowRegistry(ctx context.Context, bin string) ([]workflowView, erro
 // validateWorkflowListing checks the fields needed to display and identify a workflow.
 func validateWorkflowListing(entries []workflowView) error {
 	for _, entry := range entries {
-		if strings.TrimSpace(entry.ID) == "" || strings.TrimSpace(entry.SHA256) == "" {
-			return errors.New("the workflow registry holds an entry with no id or no content hash")
+		if strings.TrimSpace(entry.ID) == "" {
+			return errors.New("the workflow registry holds an entry with no id")
+		}
+		// A broken custom template is listed so the panel can say what is
+		// wrong with it; it has no hash because it has no bytes that run.
+		if !entry.runnable() {
+			continue
+		}
+		if strings.TrimSpace(entry.SHA256) == "" {
+			return fmt.Errorf("workflow %q was printed with no content hash", entry.ID)
 		}
 		if strings.TrimSpace(entry.Version) == "" || strings.TrimSpace(entry.Name) == "" ||
 			strings.TrimSpace(entry.Instruction) == "" {

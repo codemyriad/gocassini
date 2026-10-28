@@ -54,7 +54,7 @@
 
   import ModelCombobox from "./ModelCombobox.svelte";
   import { loadConfig } from "./operator/config";
-  import type { OperatorClient } from "./operator/client";
+  import { runnableWorkflows, type OperatorClient } from "./operator/client";
   import type { InsightWorkflow } from "./operator/types";
   import type { OperatorPanel } from "./surfaceRouting";
   import {
@@ -196,7 +196,7 @@
     workflowsAsked = true;
     workflowsError = "";
     try {
-      workflows = await operatorClient.listInsightWorkflows();
+      workflows = runnableWorkflows(await operatorClient.listInsightWorkflows());
       // Opened on a real template rather than on a synthetic "this deployment's
       // default" row. That row named no template, disclosed no question, and
       // read as a setting rather than a choice — and the thing it stood for is

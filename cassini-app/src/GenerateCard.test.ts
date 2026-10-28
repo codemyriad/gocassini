@@ -39,6 +39,10 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("This runs the template your administrator configured");
   });
 
+  it("never offers a custom template that cannot run", () => {
+    expect(generateCardSource).toContain("runnableWorkflows(await operatorClient.listInsightWorkflows())");
+  });
+
   it("lists no runs, its own included", () => {
     // It used to open on a listing of every previous run, then on the one it
     // started; both were a second place insights are shown, free to disagree

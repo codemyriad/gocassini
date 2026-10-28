@@ -183,7 +183,9 @@ const insightRegistryJSON = `[` +
 	`{"id":"summarise","version":"v0","sha256":"aaaa","name":"Meeting summary","question":"Summarise what happened.",` +
 	`"description":"One document per meeting.","origin":"Built in","instruction":"Summarise these meetings."},` +
 	`{"id":"ask","version":"v0","sha256":"bbbb","name":"Ask your own","question":"Whatever you want to know.",` +
-	`"description":"An answer to your question.","origin":"Built in","instruction":"Answer this: {{QUESTION}}"}` +
+	`"description":"An answer to your question.","origin":"Built in","instruction":"Answer this: {{QUESTION}}"},` +
+	`{"id":"roto","version":"","sha256":"","name":"roto","question":"","description":"","origin":"Custom","instruction":"",` +
+	`"error":"the front matter needs a version"}` +
 	`]`
 
 func insightRegistryCassini(t *testing.T) string {
@@ -242,6 +244,7 @@ func TestCreateInsightRefusesABadRequestBeforeTouchingNextcloud(t *testing.T) {
 		{"the same meeting twice", `{"meetingIds":["MEETING1","MEETING1"]}`, "more than once"},
 		{"an unknown workflow", `{"meetingIds":["MEETING1"],"workflow":"decisions"}`, "no workflow called"},
 		{"an unknown workflow says what there is", `{"meetingIds":["MEETING1"],"workflow":"decisions"}`, "this deployment ships summarise, ask"},
+		{"a custom template that cannot run", `{"meetingIds":["MEETING1"],"workflow":"roto"}`, "cannot run: the front matter needs a version"},
 		{"a workflow id of the wrong shape", `{"meetingIds":["MEETING1"],"workflow":"a b/c"}`, "not a workflow id"},
 		{"a question no workflow slot holds", `{"meetingIds":["MEETING1"],"question":"why?"}`, "takes none of yours"},
 		{"a workflow with no question", `{"meetingIds":["MEETING1"],"workflow":"ask"}`, "needs a question"},

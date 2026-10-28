@@ -2,8 +2,11 @@ package operator
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -213,5 +216,64 @@ func TestWorkflowListingRefusesAQuestionlessWorkflowWithNoSlotForOne(t *testing.
 	}
 	if !strings.Contains(err.Error(), "mute") {
 		t.Fatalf("the refusal does not name the workflow: %v", err)
+	}
+}
+
+// D-819: the listing reads the templates directory the operator resolved, so
+// the panel and every run see the same custom set, and a broken custom file is
+// relayed with its reason rather than failing the whole listing.
+func TestSettingsWorkflowsListsCustomTemplatesFromTheTemplatesRoot(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	seen := filepath.Join(t.TempDir(), "env")
+	rt.cfg.TemplatesRoot = filepath.Join(t.TempDir(), "templates")
+	listing := `[` + strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(oneWorkflowJSON), "["), "]") +
+		`,{"id":"roto","version":"","sha256":"","name":"roto","question":"","description":"","origin":"Custom","instruction":"","error":"the front matter needs a version"}]`
+	rt.cfg.CassiniBin = writeFakeCassini(t, "printf '%s' \"$CASSINI_TEMPLATES_DIR\" > "+seen+"\nprintf '%s' '"+listing+"'\n")
+
+	rec := httptest.NewRecorder()
+	rt.settingsWorkflowsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings/workflows", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var entries []workflowView
+	if err := json.Unmarshal(rec.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Origin != "Custom" || entries[1].Error == "" {
+		t.Fatalf("entries = %+v, want the built-in and the broken custom one with its reason", entries)
+	}
+	got, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != rt.cfg.TemplatesRoot {
+		t.Errorf("the CLI read templates from %q, want %q", got, rt.cfg.TemplatesRoot)
+	}
+}
+
+func TestChildEnvNamesTheTemplatesRoot(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TemplatesRoot = "/data/operator/templates"
+	if got := childEnvValue(rt.childEnv(), envTemplatesDir); got != rt.cfg.TemplatesRoot {
+		t.Errorf("%s = %q, want %q", envTemplatesDir, got, rt.cfg.TemplatesRoot)
+	}
+}
+
+func TestTemplatesRootDefaultsBesideTheModelCacheOnTheVolume(t *testing.T) {
+	persist := t.TempDir()
+	t.Setenv(envAppPersistentStorage, persist)
+	t.Setenv(envTemplatesDir, "")
+	t.Setenv("CASSINI_CACHE_ROOT", "")
+	cfg, _, err := loadConfig(nil, io.Discard)
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if want := filepath.Join(persist, "operator", "templates"); cfg.TemplatesRoot != want {
+		t.Errorf("TemplatesRoot = %q, want %q", cfg.TemplatesRoot, want)
+	}
+	if filepath.Dir(cfg.TemplatesRoot) != filepath.Dir(cfg.ModelCacheRoot) {
+		t.Errorf("templates %q are not beside the model cache %q", cfg.TemplatesRoot, cfg.ModelCacheRoot)
 	}
 }

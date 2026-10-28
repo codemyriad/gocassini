@@ -434,7 +434,7 @@ func (e *insightRegistryUnavailableError) Unwrap() error { return e.err }
 // registry's own listing order is the one statement of "the first one we offer"
 // that the settings panel and this share.
 func (s *insightService) resolveWorkflow(r *http.Request, request insightCreateRequest) (workflowView, error) {
-	entries, err := readWorkflowRegistry(r.Context(), strings.TrimSpace(s.rt.cfg.CassiniBin))
+	entries, err := s.rt.readWorkflowRegistry(r.Context())
 	if err != nil {
 		return workflowView{}, &insightRegistryUnavailableError{err: err}
 	}
@@ -450,16 +450,29 @@ func (s *insightService) resolveWorkflow(r *http.Request, request insightCreateR
 	chosen := entries[0]
 	if wanted != "" {
 		found := false
+		problem := ""
 		for _, entry := range entries {
-			if entry.ID == wanted {
-				chosen, found = entry, true
-				break
+			if entry.ID != wanted {
+				continue
 			}
+			// A custom file can share a built-in's id and be listed broken
+			// beside it; the runnable one is the one that answers to the id.
+			if !entry.runnable() {
+				problem = entry.Error
+				continue
+			}
+			chosen, found = entry, true
+			break
+		}
+		if !found && problem != "" {
+			return workflowView{}, fmt.Errorf("the template %q cannot run: %s", wanted, problem)
 		}
 		if !found {
 			ids := make([]string, 0, len(entries))
 			for _, entry := range entries {
-				ids = append(ids, entry.ID)
+				if entry.runnable() {
+					ids = append(ids, entry.ID)
+				}
 			}
 			return workflowView{}, fmt.Errorf("no workflow called %q; this deployment ships %s", wanted, strings.Join(ids, ", "))
 		}

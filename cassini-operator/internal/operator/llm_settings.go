@@ -597,6 +597,16 @@ func (rt *Runtime) childEnv() []string {
 	if root := strings.TrimSpace(rt.cfg.ModelCacheRoot); root != "" {
 		env = setEnvKey(env, envCacheRoot, root)
 	}
+	return rt.withTemplatesDir(env)
+}
+
+// withTemplatesDir names the custom templates directory to a child, so every
+// command that resolves a workflow id — the listing, an insight run, the
+// publish pipeline's summary step — reads the same set (D-819).
+func (rt *Runtime) withTemplatesDir(env []string) []string {
+	if dir := strings.TrimSpace(rt.cfg.TemplatesRoot); dir != "" {
+		return setEnvKey(env, envTemplatesDir, dir)
+	}
 	return env
 }
 

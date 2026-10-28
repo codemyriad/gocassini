@@ -597,6 +597,13 @@ function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {
       description: asString(item.description),
       origin: asString(item.origin),
       instruction: asString(item.instruction),
+      error: asString(item.error),
     }))
-    .filter((item) => item.id !== "" && item.sha256 !== "");
+    .filter((item) => item.id !== "" && (item.sha256 !== "" || item.error !== ""));
+}
+
+// runnableWorkflows drops the broken custom templates the registry lists for
+// the panel's sake: they cannot be chosen anywhere a template runs (D-819).
+export function runnableWorkflows<T extends { error?: string }>(list: readonly T[]): T[] {
+  return list.filter((workflow) => !workflow.error);
 }

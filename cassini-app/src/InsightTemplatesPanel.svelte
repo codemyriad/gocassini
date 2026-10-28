@@ -90,7 +90,7 @@
     <div class="op-panel-title">
       <h1>Insight templates</h1>
     </div>
-    <p>Used for insights and meeting summaries. For now, only the templates that come with Cassini are available.</p>
+    <p>Used for insights and meeting summaries. Built-in templates come with Cassini; custom ones are files in the app's templates folder.</p>
   </div>
   <div class="op-panel-actions">
     <button
@@ -124,8 +124,10 @@
   <!-- Dimmed rather than hidden while there is no endpoint: the templates
        are real and worth reading, they just have nowhere to be sent. -->
   <section class="tpl-list">
-    {#each workflows as workflow (workflow.id)}
-      <article class="op-tint tpl-card" class:off={hasProvider === false}>
+    <!-- Keyed by origin as well as id: a custom file named after a built-in is
+         listed beside it, broken, and the two must not collide. -->
+    {#each workflows as workflow (`${workflow.origin}:${workflow.id}`)}
+      <article class="op-tint tpl-card" class:off={hasProvider === false || workflow.error !== ""}>
         <div class="set-row-main">
           <h3 class="set-row-name">{workflow.name}</h3>
           {#if workflow.description}
@@ -137,6 +139,14 @@
           <div class="tpl-origin">{workflow.origin}</div>
         {/if}
 
+        {#if workflow.error}
+          <!-- A custom file that will not run is shown with the reason, never
+               dropped: the administrator who added it needs to know why it is
+               not on offer. -->
+          <p class="tpl-error" role="note">
+            <code>{workflow.id}.md</code> cannot run: {workflow.error}
+          </p>
+        {:else}
         <!-- The question is the affordance: it says what the template asks,
              and opening it says how it asks for it. A template with no
              question of its own (the asker's) opens on a plain label. -->
@@ -154,6 +164,7 @@
             </p>
           </div>
         </details>
+        {/if}
       </article>
     {/each}
   </section>
@@ -209,6 +220,16 @@
     overflow: auto;
     font-family: inherit;
     white-space: pre-wrap;
+  }
+  .tpl-error {
+    flex-basis: 100%;
+    margin: 8px 0 0;
+    font-size: 12.5px;
+    color: var(--color-error);
+  }
+  .tpl-error code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
   }
   .tpl-origin {
     flex: none;
