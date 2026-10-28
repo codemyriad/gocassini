@@ -232,6 +232,11 @@ type Runtime struct {
 	settingsMu   sync.RWMutex
 	settings     STTSettings
 	settingsPath string
+	// settingsWriteMu serializes every read-modify-write of the STT policy
+	// (PUT /settings, the GET refresh from disk, the retired-model
+	// migration), so a writer never saves a copy older than another
+	// writer's. settingsMu only guards the in-memory copy.
+	settingsWriteMu sync.Mutex
 	// LLM policy (D-696): persisted beside the STT policy, guarded the same way
 	// for job-spawn reads against PUT /settings/llm writes.
 	llmMu           sync.RWMutex

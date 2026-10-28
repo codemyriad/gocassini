@@ -14,6 +14,11 @@ import (
 // inventory could not be read, or the install could not be queued.
 var speechModelCheckRetry = 30 * time.Second
 
+// errSettingsChangedDuringMigration is returned by migrateRetiredSpeechModel
+// when Settings changed what transcribes while it queued the install; the
+// retried check migrates the settings as they are now.
+var errSettingsChangedDuringMigration = errors.New("settings changed while the retired speech model was being migrated; checking again")
+
 // errModelDownloadsDisabled is returned by ensureModelInstall for a model that
 // is not installed on an operator that may not download one.
 var errModelDownloadsDisabled = errors.New("downloads are disabled")
@@ -131,13 +136,26 @@ func (rt *Runtime) migrateRetiredSpeechModel(ctx context.Context) (bool, error) 
 		}
 	}
 
-	previous := s.ActiveModel
-	s.ActiveModel, s.ActiveRevision = target.ID, target.Revision
-	if err := Save(rt.settingsPath, s); err != nil {
+	// The inventory read and the enqueue are slow, and Settings may have been
+	// saved meanwhile: move the pin on the settings as they are now, and only
+	// if they still select the retired model on the same tier and device.
+	// Everything else in them is kept as the other writer left it.
+	rt.settingsWriteMu.Lock()
+	defer rt.settingsWriteMu.Unlock()
+	now := rt.currentSettings()
+	if now.ActiveModel != s.ActiveModel || now.ActiveRevision != s.ActiveRevision ||
+		normalizeQuality(now.Quality) != normalizeQuality(s.Quality) || settingsDevice(now) != device ||
+		(now.TranscriptionEnabled && !s.TranscriptionEnabled) {
+		// The next check looks again.
+		return false, errSettingsChangedDuringMigration
+	}
+	previous := now.ActiveModel
+	now.ActiveModel, now.ActiveRevision = target.ID, target.Revision
+	if err := Save(rt.settingsPath, now); err != nil {
 		return false, fmt.Errorf("save settings: %w", err)
 	}
-	rt.setSettings(s)
-	rt.logger.Printf("stt_settings migrated: %s is retired; selected %s (%s) for quality=%s on %s", previous, target.ID, target.Revision, normalizeQuality(s.Quality), device)
+	rt.setSettings(now)
+	rt.logger.Printf("stt_settings migrated: %s is retired; selected %s (%s) for quality=%s on %s", previous, target.ID, target.Revision, normalizeQuality(now.Quality), device)
 	return true, nil
 }
 

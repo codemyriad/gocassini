@@ -700,7 +700,9 @@ func (rt *Runtime) settingsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 	// Re-read from disk so an out-of-band edit (or a peer process) is reflected,
-	// and refresh the in-memory copy used at job spawn time.
+	// and refresh the in-memory copy used at job spawn time. Under the write
+	// lock, so a load taken before a concurrent save cannot replace it.
+	rt.settingsWriteMu.Lock()
 	s, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration)
 	if err != nil {
 		// Disk unreadable: fall back to the in-memory copy rather than 500, so
@@ -709,6 +711,7 @@ func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 	} else {
 		rt.setSettings(s)
 	}
+	rt.settingsWriteMu.Unlock()
 	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
 }
 
@@ -735,7 +738,11 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start from the current settings so unspecified override fields are
-	// preserved; the host display fields are refreshed below.
+	// preserved; the host display fields are refreshed below. The write lock
+	// is held until the result is saved, so no other writer's change made in
+	// between (the retired-model migration, another PUT) is overwritten.
+	rt.settingsWriteMu.Lock()
+	defer rt.settingsWriteMu.Unlock()
 	current := rt.currentSettings()
 	updated := current
 	if in.Quality != nil {
