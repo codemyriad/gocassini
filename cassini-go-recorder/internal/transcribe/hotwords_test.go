@@ -417,8 +417,12 @@ func TestDecodingDefaultsToGreedyWithoutHints(t *testing.T) {
 				t.Fatalf("%q %s: provenance %+v", value, name, prov)
 			}
 			if strings.TrimSpace(value) == "" || value == "unset" {
-				if !strings.Contains(prov.Reason, "off by default") || !strings.Contains(prov.Reason, envHintsDisabled+"=0") {
-					t.Fatalf("%q %s: default reason %q does not say how to turn hints on", value, name, prov.Reason)
+				// Only a bundle that could apply the vocabulary is told how
+				// to turn hints on: CTC cannot beam-search for hotwords, and
+				// the int8 bundle has no bpe.vocab to encode them.
+				offersSwitch := strings.Contains(prov.Reason, envHintsDisabled+"=0")
+				if !strings.Contains(prov.Reason, "off by default") || offersSwitch != (name == "ultra") {
+					t.Fatalf("%q %s: default reason %q", value, name, prov.Reason)
 				}
 			}
 			speakers, err := speakerDecoders(t.TempDir(), vocabulary, []AudioStream{{Index: 1, SpeakerLabel: "Silvio"}}, dec)

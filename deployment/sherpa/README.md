@@ -50,8 +50,8 @@ check above is unaffected. The [distribution manifest](https://dist.gocassini.co
 interface-version-2 models with an explicit valid-frame count and padding
 masked before the output convolution. Use this runtime with those exports.
 The old immutable version-1 model URLs remain available for `.5` clients.
-Parakeet and Silero model files are unchanged. No application feature uses
-diarization yet. The Cassini Linux, macOS and Windows libraries provide this
+Parakeet and Silero model files are unchanged. "Separate voices" (0.2.0) uses
+it through `cassini speakers diarize`. The Cassini Linux, macOS and Windows libraries provide this
 capability; the stock Linux arm32 package does not. The native source is retained by the
 [`v1.13.7-cassini-nemotron-v2` tag](https://github.com/codemyriad/sherpa-onnx/tree/v1.13.7-cassini-nemotron-v2).
 

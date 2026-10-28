@@ -94,13 +94,19 @@ func hintsEnabled() bool {
 }
 
 // hintsOffReason is the provenance reason of a vocabulary that was not
-// applied because biasing is off, naming how it was turned off.
-func hintsOffReason() string {
-	if strings.TrimSpace(os.Getenv(envHintsDisabled)) == "" {
-		return "decoder hints are off by default: greedy decoding keeps speech that beam search can drop; " +
-			"set " + envHintsDisabled + "=0 to apply the vocabulary with modified_beam_search"
+// applied because biasing is off, naming how it was turned off. It offers the
+// research switch only for a model that could apply the vocabulary with it: a
+// CTC model cannot beam-search for hotwords, and a bundle without bpe.vocab
+// cannot encode the terms.
+func hintsOffReason(paths ModelPaths) string {
+	if strings.TrimSpace(os.Getenv(envHintsDisabled)) != "" {
+		return "disabled by configuration (" + envHintsDisabled + ")"
 	}
-	return "disabled by configuration (" + envHintsDisabled + ")"
+	reason := "decoder hints are off by default (" + envHintsDisabled + " unset): greedy decoding keeps speech that beam search can drop"
+	if paths.EncoderFile == "" || paths.BpeVocabFile == "" {
+		return reason + "; this model cannot apply them"
+	}
+	return reason + "; set " + envHintsDisabled + "=0 to apply the vocabulary with modified_beam_search"
 }
 
 // DecoderConfig is the resolved decoder setup for one recognizer: which search
@@ -318,7 +324,7 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 			ParticipantTermCount: vocabulary.ParticipantTermCount,
 			DecodingMethod:       cfg.Method,
 			Applied:              false,
-			Reason:               hintsOffReason(),
+			Reason:               hintsOffReason(paths),
 		}, nil
 	}
 
