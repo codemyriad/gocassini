@@ -238,7 +238,7 @@ log "OK   build log contains no 'downloading ...' line (STT model + VAD both ins
 
 # ---- Assertion 5 (CUDA only): the GPU was ACTUALLY used ----
 if (( GPU_ASSERT )); then
-  # 5a. Negative proof. sherpa-onnx v1.13.7 (csrc/session.cc) logs
+  # 5a. Negative proof. sherpa-onnx (csrc/session.cc, 1.13.7 and 2.0.1) logs
   #     "Please compile with -DSHERPA_ONNX_ENABLE_GPU=ON. Available
   #     providers: %s. Fallback to cpu!" to stderr — and carries on, exit 0 —
   #     when the bundled onnxruntime has no CUDA provider. It logs NOTHING on

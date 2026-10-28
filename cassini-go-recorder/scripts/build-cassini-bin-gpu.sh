@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the normal reference-frontend pipeline with CUDA ONNX Runtime.
+# Build the normal transcription pipeline with CUDA ONNX Runtime.
 # Requires the same build tools as build-cassini-bin.sh; CUDA/cuDNN are needed
 # only when running the binary. Output: dist/cassini-bin plus sibling .so files.
 set -euo pipefail
