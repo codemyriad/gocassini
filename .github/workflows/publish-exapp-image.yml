@@ -557,7 +557,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: cassini-go-recorder/go.mod
 
       - name: Install host validation tools
         run: |
@@ -1109,7 +1109,7 @@ jobs:
         run: git lfs pull
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: cassini-go-recorder/go.mod
       - name: Confirm bot media fixture is materialized
         run: |
           set -euo pipefail
