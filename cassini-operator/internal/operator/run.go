@@ -93,8 +93,14 @@ type Runtime struct {
 	// see cachedModelInventory.
 	modelInventoryMu    sync.Mutex
 	modelInventoryCache map[string]modelInventoryEntry
-	recordingSetup      recordingSetup
-	ctx                 context.Context
+	// standInCheckFailed remembers the retired models (id/revision/device)
+	// whose runtime check failed when a build wanted one as a stand-in, so a
+	// deferred build does not check it again on every retry. A restart, which
+	// is what a runtime change takes, forgets it.
+	standInMu          sync.Mutex
+	standInCheckFailed map[string]bool
+	recordingSetup     recordingSetup
+	ctx                context.Context
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.

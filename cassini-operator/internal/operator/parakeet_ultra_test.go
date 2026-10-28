@@ -48,8 +48,8 @@ func TestParakeetUltraTreatment(t *testing.T) {
 			t.Fatalf("%s does not report the reference frontend", m)
 		}
 	}
-	if !modelSupportsCUDA(modelParakeetUltraFp32) || modelSupportsCUDA(modelParakeetUltraInt8) || modelSupportsCUDA(modelParakeet110M) || modelSupportsCUDA("parakeet-tdt-0.6b-v3") {
-		t.Fatal("only Ultra fp32 runs on CUDA")
+	if !modelSupportsCUDA(modelParakeetUltraFp32) || modelSupportsCUDA(modelParakeetUltraInt8) || modelSupportsCUDA(modelParakeet110M) || modelSupportsCUDA(modelParakeetV3Int8) {
+		t.Fatal("only fp32 runs on CUDA")
 	}
 	if usesReferenceFrontend(modelParakeet110M) {
 		t.Fatal("the 110M model reports the reference frontend")

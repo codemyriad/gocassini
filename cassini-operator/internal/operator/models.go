@@ -37,6 +37,10 @@ type modelInfo struct {
 	// replaces Parakeet v3). Settings pinned to one of them move to the model
 	// their tier now uses; see migrateRetiredSpeechModel.
 	Replaces []string `json:"replaces,omitempty"`
+	// ReplacedBy marks a retired model whose files are still installed: the
+	// model that replaced it, which a build may let it stand in for until that
+	// one is ready (see admitStandIn). Such a row is never selectable.
+	ReplacedBy string `json:"replaced_by,omitempty"`
 }
 type modelProgress struct {
 	Version   int    `json:"version"`
@@ -136,8 +140,15 @@ func (rt *Runtime) modelInventory(ctx context.Context, device string) ([]modelIn
 	}
 	return models, nil
 }
+
+// findModel returns a model that can be selected, installed or checked for
+// a setting. A retired model is never one of them: only admitStandIn looks at
+// those rows.
 func findModel(models []modelInfo, id, revision string) (modelInfo, error) {
 	for _, m := range models {
+		if m.ReplacedBy != "" {
+			continue
+		}
 		if m.ID == id && (revision == "" || m.Revision == revision) {
 			return m, nil
 		}
@@ -199,10 +210,18 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 400, "device must be cpu or cuda")
 			return
 		}
-		models, err := rt.cachedModelInventory(r.Context(), device)
+		inventory, err := rt.cachedModelInventory(r.Context(), device)
 		if err != nil {
 			writeJSONError(w, 503, err.Error())
 			return
+		}
+		// Settings offers what can be installed and selected; a retired model
+		// only ever stands in, unseen.
+		models := []modelInfo{}
+		for _, m := range inventory {
+			if m.ReplacedBy == "" {
+				models = append(models, m)
+			}
 		}
 		jobs, err := rt.modelJobs(r.Context())
 		if err != nil {
@@ -416,7 +435,9 @@ func (rt *Runtime) runModelJob(job modelJob) {
 		// Network transfer never holds the inference gate. The expensive probe
 		// shares the same admission gate and memory/VRAM policy as meeting builds.
 		// A build holds the gate for its whole run, so wait for it in a way
-		// Cancel can interrupt.
+		// Cancel can interrupt. The probe removes the files of the model this
+		// one replaces, so holding the gate is also what keeps it from
+		// removing them under a build standing in with them.
 		for !rt.buildExecutionMu.TryLock() {
 			select {
 			case <-ctx.Done():

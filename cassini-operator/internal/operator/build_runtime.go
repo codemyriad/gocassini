@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -320,6 +321,15 @@ func transientResourceError(err error) bool {
 // recording, so a selected model that is not installed is waited for (and
 // installed, see awaitModelInstall) like the replacement of a retired pin,
 // instead of being reported as unavailable.
+//
+// Wherever the selected model would make the build wait or go without a
+// transcript, the retired model it replaces stands in when its files are
+// still installed and pass their runtime check here (see admitStandIn): the
+// returned settings then name that model, with StandInFor set. Everything
+// else happens as without one, so the selected model's install is still
+// queued or left running. The caller holds buildExecutionMu for the whole
+// build, which keeps an install job's probe from removing the stand-in's
+// files meanwhile.
 func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings, limits resourceLimits, dispose bool) (string, STTSettings, error) {
 	device, err := resolveDeviceForSettings(settings)
 	if err != nil {
@@ -351,17 +361,38 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 		settings.ActiveModel, settings.ActiveRevision = replacement.ID, replacement.Revision
 		selected = replacement
 	}
+	// standIn is what admission returns where the selected model cannot run:
+	// the retired model it replaces, when that can, or else cause unchanged.
+	standIn := func(cause error, reason string) (string, STTSettings, error) {
+		retired, ok := rt.admitStandIn(ctx, inventory, selected, device, limits, retiredPin)
+		if !ok {
+			return "", settings, cause
+		}
+		detail := cause.Error()
+		var wait *resourceUnavailableError
+		if errors.As(cause, &wait) {
+			detail = wait.detail
+		}
+		if reason == standInReasonRuntimeCheckFailed {
+			detail = "failed its runtime check: " + detail
+		}
+		rt.logger.Printf("resource governor: speech model %s is not ready (%s: %s); this build transcribes with retired %s (%s), which it replaces, as a stand-in on %s", selected.ID, reason, detail, retired.ID, retired.Revision, device)
+		settings.ActiveModel, settings.ActiveRevision = retired.ID, retired.Revision
+		settings.StandInFor, settings.StandInReason, settings.StandInDetail = selected.ID, reason, detail
+		return device, settings, nil
+	}
 	if !selected.Installed {
 		job, hasJob := rt.modelJobFor(ctx, selected.ID, selected.Revision, device)
 		if hasJob && modelJobRunning(job) {
 			// Being installed (after an upgrade replaced the model, typically):
 			// waiting is what makes this transcript possible.
-			return "", settings, &resourceUnavailableError{resource: "speech model " + selected.ID, detail: "being installed (" + modelJobProgressText(job) + ")", awaitsModel: true}
+			return standIn(&resourceUnavailableError{resource: "speech model " + selected.ID, detail: "being installed (" + modelJobProgressText(job) + ")", awaitsModel: true}, standInReasonInstalling)
 		}
 		if hasJob && job.State == "ready" {
 			// The install may have finished after the inventory was read.
 			rt.invalidateModelInventory()
 			if fresh, err := rt.modelInventory(ctx, device); err == nil {
+				inventory = fresh
 				if m, err := findModel(fresh, selected.ID, selected.Revision); err == nil {
 					selected = m
 				}
@@ -374,9 +405,10 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 			// have moved on since this job saved its pin, and nothing may
 			// install a model that is missing for any other reason. Neither is
 			// this recording's fault: wait for the model, never fail it.
-			return "", settings, rt.awaitModelInstall(ctx, selected, device, retiredPin)
+			wait := rt.awaitModelInstall(ctx, selected, device, retiredPin)
+			return standIn(wait, rt.notInstalledReason(ctx, selected, device))
 		}
-		return "", settings, fmt.Errorf("speech model %s %s is not installed", selected.ID, selected.Revision)
+		return standIn(fmt.Errorf("speech model %s %s is not installed", selected.ID, selected.Revision), rt.notInstalledReason(ctx, selected, device))
 	}
 	if !selected.Ready {
 		// A runtime change rechecks existing files without a model request.
@@ -385,11 +417,103 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 		}
 		probe := modelJob{Model: selected.ID, Revision: selected.Revision, Device: device}
 		if err := rt.modelCommand(ctx, &probe, "probe", false); err != nil {
-			return "", settings, err
+			if transientResourceError(err) {
+				// The stand-in would need the same memory.
+				return "", settings, err
+			}
+			return standIn(err, standInReasonRuntimeCheckFailed)
 		}
 		rt.invalidateModelInventory()
 	}
 	return device, settings, nil
+}
+
+// Why the selected model was not ready when a retired one stood in for it,
+// as the transcript records it (portable.TranscriptionStandIn.Reason).
+const (
+	standInReasonInstalling         = "installing"
+	standInReasonInstallFailed      = "install_failed"
+	standInReasonDownloadsDisabled  = "downloads_disabled"
+	standInReasonNotInstalled       = "not_installed"
+	standInReasonRuntimeCheckFailed = "runtime_check_failed"
+)
+
+// notInstalledReason says why a model that is not installed is missing, from
+// its install job and the download policy.
+func (rt *Runtime) notInstalledReason(ctx context.Context, m modelInfo, device string) string {
+	job, ok := rt.modelJobFor(ctx, m.ID, m.Revision, device)
+	switch {
+	case ok && modelJobRunning(job):
+		return standInReasonInstalling
+	case ok && (job.State == "failed" || job.State == "cancelled"):
+		return standInReasonInstallFailed
+	case rt.cfg.DisallowModelDownload:
+		return standInReasonDownloadsDisabled
+	}
+	return standInReasonNotInstalled
+}
+
+// admitStandIn returns the retired model that stands in for selected on
+// device while selected is not ready: one selected Replaces whose files are
+// still installed (`models list` marks it replaced_by selected), preferring
+// the job's own retired pin. The CUDA path runs only an fp32 one. A stand-in
+// that has not passed its runtime check on this runtime is checked here,
+// first, as the selected model would be; one that fails is not tried again
+// until a restart. Nothing here ever downloads a retired model: there is
+// only what an upgraded install still has.
+func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, selected modelInfo, device string, limits resourceLimits, retiredPin string) (modelInfo, bool) {
+	for _, m := range rt.standInCandidates(inventory, selected, device, retiredPin) {
+		if m.Ready {
+			return m, true
+		}
+		if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, m.ID), rt.logger.Printf); err != nil {
+			return modelInfo{}, false
+		}
+		probe := modelJob{Model: m.ID, Revision: m.Revision, Device: device}
+		if err := rt.modelCommand(ctx, &probe, "probe", false); err != nil {
+			rt.logger.Printf("resource governor: retired %s (%s) cannot stand in for %s on %s: %v", m.ID, m.Revision, selected.ID, device, err)
+			if transientResourceError(err) || ctx.Err() != nil {
+				// Memory may free up; check it again on the next attempt.
+				return modelInfo{}, false
+			}
+			rt.standInMu.Lock()
+			if rt.standInCheckFailed == nil {
+				rt.standInCheckFailed = map[string]bool{}
+			}
+			rt.standInCheckFailed[standInKey(m, device)] = true
+			rt.standInMu.Unlock()
+			continue
+		}
+		rt.invalidateModelInventory()
+		m.Ready = true
+		return m, true
+	}
+	return modelInfo{}, false
+}
+
+// standInCandidates lists the installed retired models that may stand in for
+// selected on device, retiredPin first, leaving out any whose runtime check
+// failed since the start.
+func (rt *Runtime) standInCandidates(inventory []modelInfo, selected modelInfo, device, retiredPin string) []modelInfo {
+	rt.standInMu.Lock()
+	defer rt.standInMu.Unlock()
+	var candidates []modelInfo
+	for _, m := range inventory {
+		if m.ReplacedBy != selected.ID || !slices.Contains(selected.Replaces, m.ID) || !m.Installed || m.Device != device ||
+			(isCUDA(device) && !modelSupportsCUDA(m.ID)) || rt.standInCheckFailed[standInKey(m, device)] {
+			continue
+		}
+		if m.ID == retiredPin {
+			candidates = append([]modelInfo{m}, candidates...)
+		} else {
+			candidates = append(candidates, m)
+		}
+	}
+	return candidates
+}
+
+func standInKey(m modelInfo, device string) string {
+	return m.ID + "/" + m.Revision + "/" + device
 }
 
 // awaitModelInstall queues the install of a speech model a build waits for
@@ -399,7 +523,8 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 // waits on. A failed or cancelled install is not retried from here, so a broken
 // download does not restart on every deferral: Settings shows it with a retry,
 // and a restart retries the active model's install. A "ready" job whose files
-// are gone runs again.
+// are gone runs again. The build may still not wait: admitTranscription lets
+// an installed retired model stand in while the model is missing.
 func (rt *Runtime) awaitModelInstall(ctx context.Context, m modelInfo, device, retired string) error {
 	wait := &resourceUnavailableError{resource: "speech model " + m.ID, awaitsModel: true}
 	why := "is not installed"
@@ -488,7 +613,8 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		switch {
 		case err == nil:
 			// A retired pin runs as its replacement: the child gets the model
-			// and revision admission checked, not the retired ones.
+			// and revision admission checked, not the retired ones. A retired
+			// model standing in for its replacement is what admission checked.
 			settings = admitted
 			device, model, mode, reason = selectedDevice, admitted.ActiveModel, "on", ""
 		case ctx.Err() != nil:
@@ -506,7 +632,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 			keepAudio(err)
 		}
 	}
-	rt.logger.Printf("resource governor: job %s transcription=%s device=%s model=%s reason=%s", task.JobID, mode, device, model, reason)
+	rt.logger.Printf("resource governor: job %s transcription=%s device=%s model=%s reason=%s stand_in_for=%s", task.JobID, mode, device, model, reason, settings.StandInFor)
 	if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, model), rt.logger.Printf); err != nil {
 		if dispose || mode != "on" || !atCeiling || !transientResourceError(err) {
 			return meetingPath, err

@@ -94,9 +94,11 @@ func (rt *Runtime) ensureModelInstall(ctx context.Context, m modelInfo, device s
 // catalogue has retired (Parakeet v3, replaced by Parakeet Ultra) to the model
 // their quality tier uses on their device, and queues it through the ordinary
 // install job: the download, then the runtime check. Settings shows the job's
-// progress, and builds wait for it rather than publishing without a transcript
-// (see admitTranscription). The replaced model's files are removed by
-// `cassini models probe` once the new model has passed its runtime check.
+// progress. Meanwhile builds transcribe with the replaced model's files while
+// they are still installed, and otherwise wait for the new model rather than
+// publish without a transcript (see admitTranscription). Those files are
+// removed by `cassini models probe` once the new model has passed its runtime
+// check.
 //
 // The install is queued before the new pin is saved. A crash or a failed
 // enqueue in between leaves the old pin, so the next attempt migrates again

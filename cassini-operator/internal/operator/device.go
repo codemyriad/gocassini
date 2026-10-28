@@ -24,6 +24,11 @@ const (
 	modelParakeetUltraInt8 = "parakeet-ultra-0.6b-int8"
 	// modelParakeet110M is the small CTC model: fastest on CPU, least accurate.
 	modelParakeet110M = "parakeet-tdt-ctc-110m-en-int8"
+	// modelParakeetV3Int8 and modelParakeetV3Fp32 are NVIDIA's Parakeet v3,
+	// which Ultra replaced at the same precision. Retired: an install that
+	// still has their files transcribes with them while Ultra is not ready.
+	modelParakeetV3Int8 = "parakeet-tdt-0.6b-v3-int8"
+	modelParakeetV3Fp32 = "parakeet-tdt-0.6b-v3"
 )
 
 // probeNVIDIADevice reports whether an NVIDIA device node is visible. It is a
@@ -72,6 +77,10 @@ var speechModelSpecs = map[string]speechModelSpec{
 	// (sherpa-onnx-go-linux v1.13.7-cassini.7) on top of the v3 patch.
 	modelParakeetUltraInt8: {referenceMarkers: []string{parakeetV3ReferenceMarker, parakeetUltraReferenceMarker}, buildPeakMB: 2048, downloadMB: 465},
 	modelParakeetUltraFp32: {cuda: true, referenceMarkers: []string{parakeetV3ReferenceMarker, parakeetUltraReferenceMarker}, buildPeakMB: 3584, downloadMB: 1485},
+	// The retired v3 models are never selected or downloaded; a build runs one
+	// only as a stand-in for the Ultra model replacing it (admitStandIn).
+	modelParakeetV3Int8: {referenceMarkers: []string{parakeetV3ReferenceMarker}, buildPeakMB: 1792},
+	modelParakeetV3Fp32: {cuda: true, referenceMarkers: []string{parakeetV3ReferenceMarker}, buildPeakMB: 3584},
 }
 
 // modelSupportsCUDA reports whether the CUDA path installs and runs a model.
@@ -137,7 +146,8 @@ func modelForQuality(quality, device string) string {
 // earlier batch), against v3 int8's 1,807; it is charged 2048. Ultra fp32's
 // host RSS in CUDA builds was within 2% of v3 fp32's (2,105 vs 2,146 MiB); its
 // CPU build was not measured, so it is charged v3 fp32's CPU figure above,
-// rounded up to 3584.
+// rounded up to 3584. v3 is still charged for the builds it stands in for
+// while Ultra is not ready: int8 1792, fp32 3584.
 //
 // The fp32 figure is why "best" is not the CPU default: it is the only tier
 // that transcribes slower than the meeting it is transcribing.
