@@ -66,6 +66,13 @@ cleanup() {
       log "build log:"
       sed 's/^/    /' "${LOG_DIR}/build.log" || true
     fi
+    # Steps that redirect into LOG_DIR fail silently otherwise (doctor,
+    # install, the models list).
+    for f in "${LOG_DIR}"/*.log "${LOG_DIR}"/*.json; do
+      [[ -s "$f" && "$f" != "${LOG_DIR}/build.log" && "$f" != "${LOG_DIR}/container.log" ]] || continue
+      log "${f##*/} (last 40 lines):"
+      tail -n 40 "$f" | sed 's/^/    /' || true
+    done
   fi
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   docker volume rm "${MODEL_VOLUME}" >/dev/null 2>&1 || true
