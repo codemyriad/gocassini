@@ -23,7 +23,9 @@
 #
 # The Ultra column was measured 2026-10-14 with a native `cassini build` on
 # sherpa-onnx-go-linux v1.13.7-cassini.8 (greedy decoding, as the int8 bundle
-# ships without bpe.vocab).
+# ships without bpe.vocab), and again 2026-10-28 on sherpa-onnx-go-linux/v2
+# v2.0.1-cassini.1 (upstream NeMo log-guard frontend): the same counts on every
+# row, 24 words at 15s.
 #
 # Without the fix the 6s/8s/9s rows would print "0" and the script
 # would exit non-zero. The 7s row is informational because the model
