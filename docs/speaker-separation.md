@@ -487,11 +487,12 @@ under the store root. The catalogue also carries the fp32 export,
 `nemotron-3-diarization` (163 MiB download); Settings does not offer it, and
 diarize uses it only when the int8 export is not installed.
 
-Diarization also needs the Cassini sherpa-onnx runtime with Nemotron support
-(`v1.13.7-cassini.6` or later; the version string contains
-`.nemotron-diarization-v2`). Linux amd64/arm64 builds have it, and macOS
-(arm64, x86_64) builds have it since `v1.13.7-cassini.8`; the
-stock Linux arm32 library does not. There `models list` reports
+Diarization also needs the Cassini sherpa-onnx runtime with Nemotron support:
+`v2.0.1-cassini.1` or later, whose version string contains
+`.nemotron-diarization-v2` on a 2.0.1 base. The model goes through the
+Sortformer segmentation member of k2-fsa/sherpa-onnx#4032 (the 1.13.7 Cassini
+runtimes took it in the Pyannote slot). Linux amd64/arm64, macOS (arm64,
+x86_64) and Windows builds have it; the stock Linux arm32 library does not. There `models list` reports
 `"runtime_supported": false`, Settings says the runtime cannot run it, and
 diarize exits 3.
 

@@ -1,59 +1,70 @@
-# Cassini native Parakeet frontend
+# Cassini native speech runtime
 
-CPU builds use the prebuilt Cassini libraries from
+The recorder links sherpa-onnx 2.0.1 through `github.com/k2-fsa/sherpa-onnx-go/v2`
+v2.0.1, with its platform modules replaced by Cassini's prebuilt libraries:
 [codemyriad/sherpa-onnx-go-linux](https://github.com/codemyriad/sherpa-onnx-go-linux)
 (amd64, arm64),
 [codemyriad/sherpa-onnx-go-macos](https://github.com/codemyriad/sherpa-onnx-go-macos)
 (arm64, x86_64) and
 [codemyriad/sherpa-onnx-go-windows](https://github.com/codemyriad/sherpa-onnx-go-windows)
-(x64; its 386 DLL is also Cassini's, but the stock Go wrapper does not compile
-for windows/386), all at `v1.13.7-cassini.8` from the same native source. The
-recorder itself does not build for Windows yet (the model store uses Unix file
-locking and `statfs`); the Windows module is pinned so it is ready when it does. Each
-fork's GitHub workflow builds the library on a native runner and transcribes a
-quiet sample with Parakeet v3 and Parakeet Ultra before release. The Go wrapper
-and platform declarations match upstream v1.13.7. Standard `go build`, `go run`
-and `go test` work without compiling sherpa-onnx. Linux arm32 still uses the
-stock v1.13.7 library, which cannot load Parakeet Ultra: there only the fast
-tier's 110M model transcribes. The patched frontend is reported in doctor,
-operator status and transcription provenance.
+(x64, 386, arm64), all at `v2.0.1-cassini.1` (module paths `.../v2`) from the
+same native source. The recorder itself does not build for Windows yet (the
+model store uses Unix file locking and `statfs`); the Windows module is pinned
+so it is ready when it does. Each fork's GitHub workflow builds the library on
+a runner and, before release, checks the version string, transcribes a quiet
+sample with Parakeet v3 and the production Parakeet Ultra bundle, and runs
+Nemotron diarization through Sortformer. The macOS arm64 library was
+cross-built on an Intel runner; its runtime probe on Apple silicon is still
+pending (see the fork's CASSINI.md). Standard `go build`, `go run` and
+`go test` work without compiling sherpa-onnx. Linux arm32 uses the stock 2.0.1
+library: it has upstream's quiet-audio fix, but cannot load Parakeet Ultra or
+diarize, so there only the fast tier's 110M model transcribes.
+
+The native source is the
+[`v2.0.1-cassini-1` tag](https://github.com/codemyriad/sherpa-onnx/tree/v2.0.1-cassini-1)
+of codemyriad/sherpa-onnx (commit `c810dfcf`), three commits on upstream v2.0.1:
+
+1. **Nemotron-3-Diarization (Sortformer)**, the net diff of upstream PR
+   k2-fsa/sherpa-onnx#4032 (still open upstream). The model goes in
+   `Segmentation.Sortformer.Model`; no embedding model or clustering is needed.
+   The [distribution manifest](https://dist.gocassini.com/manifest.json)
+   selects interface-version-2 exports, which this runtime accepts unchanged.
+   "Separate voices" (0.2.0) uses it through `cassini speakers diarize`.
+2. **NeMo TDT joiner detection from the joiner's output size.** Upstream
+   selects TDT only when the encoder url contains `tdt`; Moondream Parakeet
+   Ultra exports keep `https://huggingface.co/moondream/parakeet-ultra` and
+   stock 2.0.1 exits the process while loading them. With the patch a joiner
+   whose output is larger than the vocabulary is TDT. Not yet proposed upstream.
+3. **Markers.** `GetVersion()` reports
+   `2.0.1+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2`.
+
+The feature frontend is upstream's: since v2.0.1 (k2-fsa/sherpa-onnx#3999) NeMo
+models skip the log floor and use an additive `FLT_EPSILON/2` guard, which is
+what makes quiet audio decode. It replaces Cassini's Parakeet reference
+frontend (`+cassini-parakeet-v3-reference-v1`, 1.13.7 runtimes up to
+`v1.13.7-cassini.8`); on Ultra int8 the two measure the same (MAI WER 9.18 vs
+9.33, not significant), though about 5% of words in a transcript differ. The
+recorder keeps its whole-utterance boundary policy for Parakeet Ultra (whole
+VAD spans, 30 ms of recorded context, no synthetic padding) and records the
+frontend as `nativeFrontend: "nemo-log-guard"` in provenance. Doctor and the
+operator's `/status` (`stt.runtime_supports_model`) report whether the runtime
+can run the selected model.
+
+What the recorder reads from the version string:
+
+| Check | Needs | Without it |
+|---|---|---|
+| Any model | base version 2.0.1 or later: the C API this build links (VAD segment start is `int64`; the diarization config gained the Sortformer member) | the recognizer refuses to start; a 1.13.7 library on the library path would be handed structures it lays out differently |
+| Parakeet Ultra (both precisions) | `.parakeet-tdt-joiner-v1` | refused before loading (stock sherpa would exit) |
+| Nemotron diarization | `.nemotron-diarization-v2` on 2.0.1 or later | `runtime_supported: false`, diarize exits 3 |
 
 CUDA still requires native compilation. `build.sh` downloads the immutable
-commit recorded in that script from the `v1.13.7-cassini` source fork and verifies
-its SHA-256. It applies no local patches. ONNX Runtime archives are pinned by
-that release's CMake files. No model weights change.
-
-The frontend activates only for the exact NVIDIA Parakeet TDT 0.6B v3 metadata
-URL, 128 features, 16 kHz and per-feature normalization. Since
-`v1.13.7-cassini.7` it also activates for the four known Moondream Parakeet
-Ultra URLs (`https://huggingface.co/moondream/parakeet-ultra`, alone or with a
-` (parakeet-tdt architecture)`, ` (parakeet-tdt-0.6b-v3 architecture)` or
-` (retrained nvidia/parakeet-tdt-0.6b-v3)` suffix), and any Ultra URL selects
-TDT decoding. Earlier runtimes run such exports on the legacy frontend, and the
-plain Ultra URL exits the process at load. The frontend uses centered Hann
-framing, global preemphasis, Nyquist mel filters, an additive log guard and
-sample-variance normalization. Other model frontends retain upstream behavior.
-The Cassini release reports `+cassini-parakeet-v3-reference-v1`; libraries
-without that marker use the standard decode policy instead of preventing startup.
-The `.7` version appends `.parakeet-ultra-v1` after the existing markers, so v3
-behavior and the existing marker checks are unchanged. Its native source is retained by
-the [`v1.13.7-cassini-parakeet-ultra-v1` tag](https://github.com/codemyriad/sherpa-onnx/tree/v1.13.7-cassini-parakeet-ultra-v1).
-Cassini pins `.8`: the same source and amd64 library as `.7`, with the arm64
-library rebuilt natively on an arm64 runner instead of cross-compiled.
-
-Since `v1.13.7-cassini.6` the native library also carries NVIDIA
-Nemotron-3-Diarization (end-to-end speaker diarization for up to 8 speakers).
-The stock Go wrapper reaches it through `OfflineSpeakerDiarization`: pass the
-model as `Segmentation.Pyannote.Model`; no embedding model or clustering is
-needed. The version gains `.nemotron-diarization-v2`, so the frontend marker
-check above is unaffected. The [distribution manifest](https://dist.gocassini.com/manifest.json) selects
-interface-version-2 models with an explicit valid-frame count and padding
-masked before the output convolution. Use this runtime with those exports.
-The old immutable version-1 model URLs remain available for `.5` clients.
-Parakeet and Silero model files are unchanged. "Separate voices" (0.2.0) uses
-it through `cassini speakers diarize`. The Cassini Linux, macOS and Windows libraries provide this
-capability; the stock Linux arm32 package does not. The native source is retained by the
-[`v1.13.7-cassini-nemotron-v2` tag](https://github.com/codemyriad/sherpa-onnx/tree/v1.13.7-cassini-nemotron-v2).
+commit recorded in that script from the source fork and verifies its SHA-256.
+It applies no local patches, checks that the built library reports the
+expected version, and records it in `cassini-native-buildinfo.txt`. ONNX
+Runtime archives are pinned by that release's CMake files: 1.28.2 (CUDA:
+`onnxruntime-linux-x64-gpu_cuda12-1.28.2-patched.zip`). No model weights
+change.
 
 ```sh
 # CPU: Go and a C compiler
