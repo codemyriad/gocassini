@@ -21,3 +21,10 @@ type annotationIndex interface {
 	// rebuild of a never-built index runs.
 	Namespace(ctx context.Context) (string, error)
 }
+
+// annotationTitleSource is the one projection read catalog resolution needs:
+// the user-set meeting titles among a set of recordings (D-862). Narrower than
+// annotationIndex so ExAppConfig does not carry the whole write surface.
+type annotationTitleSource interface {
+	Titles(ctx context.Context, names []string) (map[string]string, error)
+}

@@ -1526,6 +1526,7 @@ names in the original meeting are not assumed to exist locally.
 pack files -> Nextcloud Files -> destination file IDs + admin read shares
                                       |
 catalog metadata --------------------> meetings.sqlite3
+                                       + room_names (durable local names)
 recording transcripts ---------------> search.sqlite3 (rebuild)
 recording annotations --------------> annotations.sqlite3 (import)
 ```
@@ -1537,6 +1538,19 @@ names and other catalog-only fields. Search and annotation backfills must finish
 without read/index errors; recordings with no transcript are reported explicitly
 as outside search coverage. Startup verifies the complete admin listing
 against the catalog, including metadata. Keep the pack out of version control.
+
+Room names use an additional lookup in `meetings.sqlite3`. Published-pack imports
+ignore source-local `roomDisplayName` projections and register missing mappings
+from original `roomId`/`roomName`; existing destination names win. The room ID is
+preserved without deriving it again from this installation's pepper.
+
+Operator-volume seeding preserves that lookup and runs
+`cassini-operator clear-meeting-metadata` offline to discard only source-bound
+Nextcloud file IDs. It requires an image containing that command. Never remove
+the whole meetings database to rebuild the index: it now contains user edits.
+Stop the operator before copying/restoring SQLite files and retain a coherent
+database/WAL backup. Reverting to an older image also requires its pre-upgrade
+database backup because the old opener deletes unknown database versions.
 
 ### 9.6 Seeding the installed operator volume
 

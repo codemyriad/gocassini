@@ -594,7 +594,7 @@ func plansForPulled(plans []seedPackPlan, pulled []seedPackMeeting) []seedPackPl
 }
 
 // writeSeedPackCatalog writes the pack's index, re-emitting each entry exactly
-// as the server sent it.
+// as the server sent it, except for installation-local display projections.
 //
 // Verbatim on purpose. The entries carry fields this build may not know about,
 // and every consumer downstream — the viewer, the operator, the CLI itself —
@@ -603,7 +603,16 @@ func plansForPulled(plans []seedPackPlan, pulled []seedPackMeeting) []seedPackPl
 func writeSeedPackCatalog(outDir, version string, plans []seedPackPlan) error {
 	meetings := make([]json.RawMessage, 0, len(plans))
 	for _, plan := range plans {
-		meetings = append(meetings, plan.raw)
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(plan.raw, &fields); err != nil {
+			return err
+		}
+		delete(fields, "roomDisplayName")
+		raw, err := json.Marshal(fields)
+		if err != nil {
+			return err
+		}
+		meetings = append(meetings, raw)
 	}
 	body, err := json.MarshalIndent(struct {
 		Version  string            `json:"version"`

@@ -254,8 +254,40 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
     return true;
   }
 
+  // A title changes the same document and token as a mark. Use the shared
+  // queue, and reconcile its answer before the next queued mark is compiled.
+  // Unlike optimistic marks, the title editor waits for success and owns its
+  // error display, so preserve rejection even though the queue catches errors.
+  function setTitle(title: string): Promise<AnnotationResult> {
+    const current = generation;
+    return new Promise((resolve, reject) => {
+      lastTurn = schedule(async () => {
+        try {
+          if (current !== generation || !apply || !confirmed) {
+            throw new Error("The meeting's annotations are not ready. Reopen the meeting and try again.");
+          }
+          if (blocked) {
+            throw new Error("Confirm the pending annotation update before renaming this meeting.");
+          }
+          const answer = await apply({ requestId: identifier(), stateToken: confirmed.stateToken,
+            ops: [{ op: "set-title", title }] });
+          if (current === generation && receive(answer)) onChanged(answer);
+          resolve(answer);
+        } catch (error) {
+          if (current === generation && error instanceof AnnotationError && error.status === 409 && loader) {
+            try { receive(await loader()); }
+            catch { /* Subsequent writes still fail closed with the old token. */ }
+          }
+          reject(error);
+        } finally {
+          if (current === generation) schedulePoll();
+        }
+      });
+    });
+  }
+
   return {
-    subscribe: state.subscribe, open, write, receive, retryWrite,
+    subscribe: state.subscribe, open, write, receive, retryWrite, setTitle,
     dismissError() { if (!blocked) state.update((s) => ({ ...s, error: "" })); },
     retrySync: () => write({ ops: [], retrySync: true }),
     // A registry retains this session while the overlay is closed. Stop reads,

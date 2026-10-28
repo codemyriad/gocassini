@@ -189,7 +189,11 @@ type ExAppConfig struct {
 	sharePaths      *recordingSharePathCache
 	meetingMetadata *meetingMetadataStore
 	lifecycle       *Store
-	onEnabled       func(bool)
+	// annotationTitles overlays user-set meeting titles (renames, D-862) onto
+	// the catalog entries directShareSnapshot serves. Nil degrades to the
+	// entries' own titles.
+	annotationTitles annotationTitleSource
+	onEnabled        func(bool)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build

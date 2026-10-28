@@ -33,6 +33,7 @@ export interface MeetingSearchHit {
   readonly dateLabel: string;
   readonly roomId: string;
   readonly roomName: string;
+  readonly roomDisplayName?: string;
   readonly segmentId: string;
   readonly startMs: number;
   readonly endMs: number;
@@ -209,6 +210,7 @@ export function materializeSearchResponse(value: unknown): MeetingSearchOutcome 
       dateLabel: optionalString(raw.dateLabel) ?? "",
       roomId: optionalString(raw.roomId) ?? "",
       roomName: optionalString(raw.roomName) ?? "",
+      roomDisplayName: optionalString(raw.roomDisplayName),
       segmentId: optionalString(raw.segmentId) ?? "",
       startMs: finiteNumber(raw.startMs) ?? 0,
       endMs: finiteNumber(raw.endMs) ?? 0,

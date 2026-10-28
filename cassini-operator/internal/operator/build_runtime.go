@@ -176,8 +176,13 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// when it has no room, and it is the only lineage a `.opus` published
 	// through `cassini publish <bundle>` would otherwise carry.
 	// Best-effort: a failed stamp costs the room, never the meeting.
-	roomToken, meetingTitle := rt.talkRoomForJob(task.JobID)
-	if err := SetMeetingBundleRoom(builtMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
+	roomToken, roomName := rt.talkRoomForJob(task.JobID)
+	// The title and the room name part ways for one-to-one rooms: Talk names
+	// those after the counterpart, so the default title becomes both
+	// participants instead ("Alex & Chris", D-862). The room name field keeps
+	// the room's own display name either way.
+	meetingTitle := rt.defaultMeetingTitle(task.JobID, roomName)
+	if err := SetMeetingBundleRoom(builtMeetingPath, meetingTitle, roomToken, roomName, task.JobID, task.AttemptNumber); err != nil {
 		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, builtMeetingPath, err)
 	}
 	// What the transcription and summary steps did, onto the attempt, so the

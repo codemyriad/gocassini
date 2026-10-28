@@ -509,13 +509,21 @@ func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting, 
 		roomID = strings.TrimSpace(meeting.Manifest.Meeting.RoomID)
 	}
 
+	// A user-set rename (the annotations document's meeting.title, D-862)
+	// wins over the sealed title, the same precedence the catalog applies.
+	title := portable.UserAnnotationTitle(meeting.Manifest.Annotations)
+	if title == "" {
+		title = meeting.Manifest.Meeting.Title
+	}
+
 	input := meetingcontext.BuildInput{
 		ID:                     catalogID,
-		Title:                  meeting.Manifest.Meeting.Title,
+		Title:                  title,
 		CreatedAtUTC:           meeting.Manifest.Meeting.CreatedAtUTC,
 		DurationMS:             meeting.Manifest.Meeting.DurationMS,
 		RoomID:                 roomID,
 		RoomName:               entry.RoomName,
+		RoomDisplayName:        entry.RoomDisplayName,
 		SourceTranscriptID:     meeting.Transcript.TranscriptID,
 		SourceTranscriptFormat: meeting.Transcript.Format,
 		Language:               meeting.Transcript.Language,

@@ -10,6 +10,7 @@
     FileText,
     ArrowLeft,
     CassetteTape,
+    Pencil,
     Search,
     Trash2,
     X,
@@ -55,7 +56,12 @@
   } from "../core/speakers";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
-  import type { AnnotationResult, MeetingTag, VocabularyTag } from "../viewer/annotations";
+  import {
+    describeAnnotationError,
+    type AnnotationResult,
+    type MeetingTag,
+    type VocabularyTag,
+  } from "../viewer/annotations";
   import { createWordHighlighter } from "../core/wordHighlight";
   import {
     keyboardEventTargetsControl,
@@ -155,12 +161,61 @@
     enriched: MeetingCatalogEntry;
     openInsight: InsightRecord;
     tagsChanged: AnnotationResult;
+    // The meeting was renamed (or, with a null title, reset to its default).
+    // The shell folds a rename into its catalog; a reset needs the server's
+    // default back, so the shell refetches (D-862).
+    renamed: { id: string; title: string | null };
     deleteMeeting: void;
     // The audio would not play. Said out loud because the embed has no other
     // way to tell the page around it; src/public.ts re-dispatches it (D-838).
     playbackerror: string;
   }>();
   const localMarks = createMarksSession((result) => dispatch("tagsChanged", result));
+
+  // Renaming the meeting (D-862). Offered exactly where marks can be written:
+  // access to the meeting is the only gate, and the rename applies to
+  // everyone's view. The write goes through the same annotations route as a
+  // tag, so it sticks in the meeting file.
+  let renaming = false;
+  let renameDraft = "";
+  let renameBusy = false;
+  let renameError = "";
+  let renameInputEl: HTMLInputElement | null = null;
+  $: canRename = Boolean(meeting && applyAnnotations);
+
+  function startRename() {
+    renameDraft = meeting?.title ?? "";
+    renameError = "";
+    renaming = true;
+    void tick().then(() => {
+      renameInputEl?.focus();
+      renameInputEl?.select();
+    });
+  }
+
+  function cancelRename() {
+    renaming = false;
+    renameError = "";
+  }
+
+  async function submitRename(title: string) {
+    if (!applyAnnotations || !meeting || renameBusy) {
+      return;
+    }
+    renameBusy = true;
+    renameError = "";
+    const meetingId = meeting.id;
+    try {
+      await marks.setTitle(title);
+      const trimmed = title.trim();
+      dispatch("renamed", { id: meetingId, title: trimmed === "" ? null : trimmed });
+      renaming = false;
+    } catch (error) {
+      renameError = describeAnnotationError(error);
+    } finally {
+      renameBusy = false;
+    }
+  }
 
   // Separating the voices on a shared device, and naming them. Offered only to
   // a reader in the app whose provider can both read and save speaker edits —
@@ -1527,9 +1582,62 @@
       </button>
     {/if}
 
-    <h1 class="mv-title flex-1 min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
-      {meeting ? meeting.title : "Meeting transcript viewer"}
-    </h1>
+    {#if renaming}
+      <form
+        class="mv-rename flex-1 min-w-0 flex items-center gap-2"
+        on:submit|preventDefault={() => void submitRename(renameDraft)}
+      >
+        <input
+          bind:this={renameInputEl}
+          bind:value={renameDraft}
+          class="input input-bordered input-sm flex-1 min-w-0"
+          maxlength="200"
+          disabled={renameBusy}
+          aria-label="Meeting title"
+          on:keydown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              cancelRename();
+            }
+          }}
+        />
+        {#if renameError}
+          <span class="text-error text-xs flex-none max-w-48 truncate" role="alert" title={renameError}>
+            {renameError}
+          </span>
+        {/if}
+        <button type="submit" class="btn btn-primary btn-xs flex-none" disabled={renameBusy}>Save</button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs flex-none"
+          disabled={renameBusy}
+          title="Restore the default title"
+          on:click={() => void submitRename("")}
+        >
+          Reset
+        </button>
+        <button type="button" class="btn btn-ghost btn-xs flex-none" disabled={renameBusy} on:click={cancelRename}>
+          Cancel
+        </button>
+      </form>
+    {:else}
+      <div class="flex flex-1 min-w-0 items-center gap-2">
+        <h1 class="mv-title min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
+          {meeting ? meeting.title : "Meeting transcript viewer"}
+        </h1>
+        {#if canRename}
+          <button
+            type="button"
+            class="btn btn-ghost btn-square btn-xs flex-none"
+            aria-label="Rename meeting"
+            title="Rename meeting"
+            on:click={startRename}
+          >
+            <Pencil size={16} aria-hidden="true" />
+          </button>
+        {/if}
+      </div>
+    {/if}
 
     <!-- Status info: artifact mode, transcript switcher, timing precision. -->
     <div class="flex flex-none items-center gap-1 text-base-content/70">

@@ -78,7 +78,13 @@ docker run --rm \
 # Nextcloud IDs belong to the source instance, and transcript indexes must be
 # verified against the destination archive. A combined seed takes annotations
 # from its portable meeting pack; preflight rejects unconfirmed source edits.
-derived="meetings.sqlite3 search.sqlite3"
+# Room names in meetings.sqlite3 are durable; discard only its file-ID index.
+docker run --rm --volumes-from "$CONTAINER_NAME" \
+  -e CASSINI_OPERATOR_WORK_ROOT=/nc_app_gocassini_data/operator/jobs \
+  -e CASSINI_OPERATOR_DB_PATH=/nc_app_gocassini_data/operator/jobs.sqlite3 \
+  --entrypoint /usr/local/bin/cassini-operator "$image" clear-meeting-metadata
+
+derived="search.sqlite3"
 if [[ -n "${CASSINI_HARNESS_SEED_PUBLISHED_DIR:-}" ]]; then
   derived="$derived annotations.sqlite3"
 fi

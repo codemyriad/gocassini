@@ -1,3 +1,4 @@
+import { requestRoomName } from "./roomNames";
 import {
   StaticCatalogProvider,
   OperatorListProvider,
@@ -48,6 +49,8 @@ import { nextcloudRootPath } from "./operator/ncSetup";
 // absent (see StaticCatalogProvider) rather than a second, browser-side
 // assembly of a published format that would look right and drift.
 export class AppDataProvider extends StaticCatalogProvider {
+  loadRoomName(roomId: string) { return requestRoomName(roomId); }
+  saveRoomName(roomId: string, customName: string | null, expectRevision: number) { return requestRoomName(roomId, {customName, expectRevision}); }
   // The operator list discovers recordings that still need annotation import.
   // Keep static asset loading/search, and the list's older-operator fallback.
   private readonly listing = new OperatorListProvider();

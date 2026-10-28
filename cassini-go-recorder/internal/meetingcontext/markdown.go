@@ -61,14 +61,18 @@ func renderMeetingMarkdown(bundle MeetingContext, opts RenderOpts) string {
 	// beside it, because the id is what `meetings list --room` takes and the
 	// name is not — an agent that copies the label instead of the id gets an
 	// empty list and no explanation.
-	if bundle.Meeting.RoomID != "" || bundle.Meeting.RoomName != "" {
+	roomName := bundle.Meeting.RoomDisplayName
+	if roomName == "" {
+		roomName = bundle.Meeting.RoomName
+	}
+	if bundle.Meeting.RoomID != "" || roomName != "" {
 		switch {
-		case bundle.Meeting.RoomName != "" && bundle.Meeting.RoomID != "":
-			fmt.Fprintf(buf, "- Room: %s (`%s`)\n", bundle.Meeting.RoomName, bundle.Meeting.RoomID)
+		case roomName != "" && bundle.Meeting.RoomID != "":
+			fmt.Fprintf(buf, "- Room: %s (`%s`)\n", roomName, bundle.Meeting.RoomID)
 		case bundle.Meeting.RoomID != "":
 			fmt.Fprintf(buf, "- Room: `%s`\n", bundle.Meeting.RoomID)
 		default:
-			fmt.Fprintf(buf, "- Room: %s\n", bundle.Meeting.RoomName)
+			fmt.Fprintf(buf, "- Room: %s\n", roomName)
 		}
 	}
 	if bundle.Meeting.CreatedAtUTC != "" {
