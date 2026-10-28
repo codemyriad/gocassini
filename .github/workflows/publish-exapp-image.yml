@@ -780,7 +780,7 @@ jobs:
           DF=deployment/Dockerfile.exapp.cuda.base
           # Pin the nvidia base by digest (catches silent upstream re-pushes).
           # Retry: Docker Hub anonymous manifest reads occasionally rate-limit.
-          NV_REF="nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04"
+          NV_REF="nvidia/cuda:12.9.1-cudnn-runtime-ubuntu22.04"
           NV_DIGEST=""
           for attempt in 1 2 3; do
             if NV_DIGEST="$(docker buildx imagetools inspect "$NV_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')" \
@@ -796,6 +796,7 @@ jobs:
             "$(deployment/sherpa/build.sh --fingerprint)" \
             "$NV_DIGEST" \
             "$(sha256sum "$DF" | cut -d' ' -f1)" \
+            "$(sha256sum deployment/sherpa/check-cuda-runtime.sh | cut -d' ' -f1)" \
             | sha256sum | cut -c1-16)"
           BASE_REF="${{ env.REGISTRY }}/${{ github.repository_owner }}/gocassini-cuda-base:${BASE_HASH}"
           echo "base_ref=${BASE_REF}" >> "$GITHUB_OUTPUT"

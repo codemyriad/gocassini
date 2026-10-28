@@ -10,7 +10,10 @@ COPY deployment/sherpa /tmp/cassini-sherpa
 RUN /tmp/cassini-sherpa/build.sh cuda /out/lib /tmp/native-build
 
 # ---- Base substrate: nvidia/cuda runtime + node + CUDA libs ----
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+# ONNX Runtime 1.28.2's CUDA provider (sherpa-onnx 2.0.1) imports libcudart
+# symbols that the CUDA 12.4 runtime lacks (cudaLibraryGetKernel and others);
+# 12.9 with cuDNN 9 is what the v2.0.1-cassini-1 CUDA libraries were validated on.
+FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu22.04
 LABEL io.gocassini.image-role=base-cuda
 
 RUN apt-get update \
@@ -22,3 +25,8 @@ RUN apt-get update \
 
 # Native CUDA libraries are reused independently from application binaries.
 COPY --from=sherpa-cuda-fetcher /out/lib /opt/cassini/lib
+# Fail the build if any native library, the CUDA provider included (ORT opens
+# it only when a session asks for CUDA), does not resolve against this image's
+# CUDA runtime.
+COPY deployment/sherpa/check-cuda-runtime.sh /tmp/check-cuda-runtime.sh
+RUN /tmp/check-cuda-runtime.sh /opt/cassini/lib && rm /tmp/check-cuda-runtime.sh

@@ -86,7 +86,9 @@ names the model, rather than starting and failing at the network.
 A device change is not a data migration.
 
 1. Install the NVIDIA driver and Container Toolkit on the engine that runs the
-   app, and check `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`.
+   app, and check `docker run --rm --gpus all nvidia/cuda:12.9.1-base-ubuntu22.04 nvidia-smi`
+   (the driver must support CUDA 12.9: 575 or newer, or a 535 to 570
+   data-centre branch).
 2. Set the deploy daemon's **Compute device** to CUDA (or register a second
    daemon for a GPU node and register Cassini against it).
 3. Confirm `/operator/status` shows `"device": "cuda"` with
