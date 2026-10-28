@@ -5,9 +5,49 @@ the Docker image (`ghcr.io/codemyriad/gocassini:<version>` + `:<version>-cuda`)
 and the App Store package (`gocassini.tar.gz`). The git tag `v<version>` and the
 manifest's `<image-tag>` must equal `<version>` — CI enforces it.
 
+## Branches
+
+Cassini keeps one branch per minor version and ships from it, as Nextcloud does
+with its `stableXX` branches.
+
+- **`main` is the next minor.** Features land only here. Keep it releasable,
+  but don't ship from it once its minor has a branch; only that minor's
+  `-alpha` releases are tagged on main.
+- **`release/X.Y` is the X.Y line.** It is branched from main at X.Y's first
+  `-beta` (or `-rc`), and every later X.Y tag, `X.Y.0` and each `X.Y.Z` patch,
+  is cut from it. `release/0.2` is the exception: 0.2.0 shipped before this
+  convention, so the branch starts at the `v0.2.0` tag.
+- **Fixes land on main first, then get cherry-picked.** Merge the fix to main,
+  then bring it over with `git cherry-pick -x` in a PR to `release/X.Y` (label
+  the main PR `backport release/X.Y`). A fix goes straight to the release
+  branch only when it doesn't apply to main, and its PR says why.
+- **Release branches take fixes only:** bug fixes, security fixes, docs, and
+  the release commit itself. No features and no refactors. A change that needs
+  a feature waits for the next minor.
+- **Only the latest `release/X.Y` gets fixes.** The previous branch gets
+  security fixes until the next minor's `.0` ships; older branches are frozen.
+
+```text
+main          ──●── v0.2.0 ──●──●──●──●──●──   (features: next minor)
+                       │          fix│     fix│
+                       │             ▼ -x     ▼ -x
+release/0.2            └─────────────●── v0.2.1 ──●── v0.2.2
+```
+
+The tooling is catching up with this convention: cutting from a release
+branch ([D-881]), syncing a branch release's changelog back to main ([D-882]),
+`:latest` only for the highest stable release ([D-883]), and protection plus the
+backport bot for `release/**` ([D-884]).
+
+[D-881]: https://linear.app/code-myriad/issue/D-881
+[D-882]: https://linear.app/code-myriad/issue/D-882
+[D-883]: https://linear.app/code-myriad/issue/D-883
+[D-884]: https://linear.app/code-myriad/issue/D-884
+
 ## Cut a release
 
-One guided command:
+One guided command, run on the version's `release/X.Y` branch (see
+[Branches](#branches)):
 
 ```bash
 ./scripts/prepare-release.sh --push
