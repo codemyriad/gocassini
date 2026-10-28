@@ -74,3 +74,8 @@ inserts a `## [<version>] - <date>` section right after `## [Unreleased]`
 (defaulting the date to today), and removes the consumed fragments on `--write`.
 `README.md` is never treated as a fragment. `scripts/prepare-release.sh` calls
 this as part of the full release flow.
+
+A release cut on a `release/X.Y` branch consumes the fragments cherry-picked
+there, while main keeps its copies. `scripts/sync-release-changelog.sh
+--version X.Y.Z`, run on a branch from main, copies that release's section into
+main's `CHANGELOG.md` and deletes those fragments, so they aren't released twice.
