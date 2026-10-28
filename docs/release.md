@@ -10,9 +10,9 @@ manifest's `<image-tag>` must equal `<version>` — CI enforces it.
 Cassini keeps one branch per minor version and ships from it, as Nextcloud does
 with its `stableXX` branches.
 
-- **`main` is the next minor.** Features land only here. Keep it releasable,
-  but don't ship from it once its minor has a branch; only that minor's
-  `-alpha` releases are tagged on main.
+- **`main` is the next release** — a minor, or a major if it breaks something
+  (see [Patches and majors](#patches-and-majors)). Features land only here.
+  Keep it releasable, but only its `-alpha` releases are tagged on main.
 - **`release/X.Y` is the X.Y line.** It is branched from main at X.Y's first
   `-beta` (or `-rc`), and every later X.Y tag, `X.Y.0` and each `X.Y.Z` patch,
   is cut from it. `release/0.2` is the exception: 0.2.0 shipped before this
@@ -32,7 +32,7 @@ with its `stableXX` branches.
   the previous line. Other branches are frozen.
 
 ```text
-main          ──●── v0.2.0 ──●──●──●──●──●──   (features: next minor)
+main          ──●── v0.2.0 ──●──●──●──●──●──   (features: next release)
                        │          fix│     fix│
                        │             ▼ -x     ▼ -x
 release/0.2            └─────────────●── v0.2.1 ──●── v0.2.2
@@ -43,8 +43,11 @@ release/0.2            └─────────────●── v0.2.
 Neither needs a branch of its own.
 
 - **A patch (`X.Y.Z`, Z > 0)** is cut on `release/X.Y`: the branch's previous
-  tag plus the fixes cherry-picked since. Patches skip alpha and beta: go
-  straight to stable with `--version X.Y.Z`. For a risky fix (a migration, the
+  tag plus the fixes cherry-picked since. Patches skip alpha and beta: those
+  stages mean features still landing or under test, and a patch has none. Each
+  fix already passed CI on main and again in its cherry-pick PR, so go straight
+  to stable with `--version X.Y.Z`. What CI doesn't prove is that a fix behaves
+  the same on the branch's older code; for a risky one (a migration, the
   recording pipeline, anything CI can't exercise), cut `X.Y.Z-rc.1`, run it on
   staging, then promote it.
 - **A security fix** lands on main and is cherry-picked to every branch still
