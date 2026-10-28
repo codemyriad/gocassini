@@ -47,8 +47,10 @@ The feature frontend is upstream's: since v2.0.1 (k2-fsa/sherpa-onnx#3999) NeMo
 models skip the log floor and use an additive `FLT_EPSILON/2` guard, which is
 what makes quiet audio decode. It replaces Cassini's Parakeet reference
 frontend (`+cassini-parakeet-v3-reference-v1`, 1.13.7 runtimes up to
-`v1.13.7-cassini.8`); on Ultra int8 the two measure the same (MAI WER 9.18 vs
-9.33, not significant), though about 5% of words in a transcript differ. The
+`v1.13.7-cassini.8`). On Ultra int8 (CPU) the two measure the same (MAI WER
+9.18 vs 9.24, not significant); on Ultra fp32 (CUDA) 7.31 vs 7.92, also not
+significant, all of it from one passage of one meeting. About 4-5% of words in
+a transcript differ. The
 recorder keeps its whole-utterance boundary policy for Parakeet Ultra (whole
 VAD spans, 30 ms of recorded context, no synthetic padding) and records the
 frontend as `nativeFrontend: "nemo-log-guard"` in provenance. Doctor and the
