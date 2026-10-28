@@ -9,18 +9,28 @@ RUN apt-get update \
 COPY deployment/sherpa /tmp/cassini-sherpa
 RUN /tmp/cassini-sherpa/build.sh cuda /out/lib /tmp/native-build
 
-# ---- Base substrate: nvidia/cuda runtime + node + CUDA libs ----
+# ---- Base substrate: nvidia/cuda base + node + the CUDA libraries ORT uses ----
 # ONNX Runtime 1.28.2's CUDA provider (sherpa-onnx 2.0.1) imports libcudart
-# symbols that the CUDA 12.4 runtime lacks (cudaLibraryGetKernel and others);
-# 12.9 with cuDNN 9 is what the v2.0.1-cassini-1 CUDA libraries were validated on.
-FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu22.04
+# symbols that the CUDA 12.4 runtime lacks (cudaLibraryGetKernel and others).
+# The 12.9 "base" flavour has only cudart and the forward-compat driver; the
+# provider needs cuBLAS/cuBLASLt and cuRAND (linked) and cuDNN 9 (dlopen), and
+# cuDNN's runtime-compiled engines use NVRTC and nvJitLink. These are the
+# versions the v2.0.1-cassini-1 CUDA libraries were validated with. The full
+# cudnn-runtime image would add NPP, cuSPARSE, NCCL, cuFFT and more, about 1.2 GB
+# compressed that nothing here uses.
+FROM nvidia/cuda:12.9.1-base-ubuntu22.04
 LABEL io.gocassini.image-role=base-cuda
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl libopus0 tini gnupg \
+      libcublas-12-9=12.9.2.10-1 libcurand-12-9=10.3.10.19-1 \
+      cuda-nvrtc-12-9=12.9.86-1 libnvjitlink-12-9=12.9.86-1 \
+      libcudnn9-cuda-12=9.27.0.42-1 \
+ && apt-mark hold libcublas-12-9 libcurand-12-9 cuda-nvrtc-12-9 libnvjitlink-12-9 libcudnn9-cuda-12 \
  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
+ && ldconfig \
  && rm -rf /var/lib/apt/lists/*
 
 # Native CUDA libraries are reused independently from application binaries.

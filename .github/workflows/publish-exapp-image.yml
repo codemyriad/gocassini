@@ -780,7 +780,7 @@ jobs:
           DF=deployment/Dockerfile.exapp.cuda.base
           # Pin the nvidia base by digest (catches silent upstream re-pushes).
           # Retry: Docker Hub anonymous manifest reads occasionally rate-limit.
-          NV_REF="nvidia/cuda:12.9.1-cudnn-runtime-ubuntu22.04"
+          NV_REF="nvidia/cuda:12.9.1-base-ubuntu22.04"
           NV_DIGEST=""
           for attempt in 1 2 3; do
             if NV_DIGEST="$(docker buildx imagetools inspect "$NV_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')" \
