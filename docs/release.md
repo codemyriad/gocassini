@@ -24,8 +24,12 @@ with its `stableXX` branches.
 - **Release branches take fixes only:** bug fixes, security fixes, docs, and
   the release commit itself. No features and no refactors. A change that needs
   a feature waits for the next minor.
-- **Only the latest `release/X.Y` gets fixes.** The previous branch gets
-  security fixes until the next minor's `.0` ships; older branches are frozen.
+- **Only the latest `release/X.Y` gets fixes.** An older branch gets security
+  fixes for as long as it is the newest Cassini release for a Nextcloud major
+  Cassini still supports, or until the next minor's `.0` ships, whichever is
+  later. The App Store serves each server the highest release compatible with
+  its Nextcloud version, so dropping a Nextcloud major leaves its servers on
+  the previous line. Other branches are frozen.
 
 ```text
 main          ──●── v0.2.0 ──●──●──●──●──●──   (features: next minor)
@@ -33,6 +37,29 @@ main          ──●── v0.2.0 ──●──●──●──●──�
                        │             ▼ -x     ▼ -x
 release/0.2            └─────────────●── v0.2.1 ──●── v0.2.2
 ```
+
+### Patches and majors
+
+Neither needs a branch of its own.
+
+- **A patch (`X.Y.Z`, Z > 0)** is cut on `release/X.Y`: the branch's previous
+  tag plus the fixes cherry-picked since. Patches skip alpha and beta: go
+  straight to stable with `--version X.Y.Z`. For a risky fix (a migration, the
+  recording pipeline, anything CI can't exercise), cut `X.Y.Z-rc.1`, run it on
+  staging, then promote it.
+- **A security fix** lands on main and is cherry-picked to every branch still
+  supported, each getting its own patch tag.
+- **A major (`X.0.0`)** is a minor that breaks something, and gets the same
+  `release/X.0` branch. Main isn't numbered in advance: whether its next
+  release is a minor or a major is decided when the branch is created, from
+  what is on main. Anything under *Removed*, or a breaking *Changed* entry,
+  makes it a major.
+- **Breaking, for Cassini:** dropping a supported Nextcloud major
+  (`ci/nextcloud-compatibility.json`); a data or layout migration with no way
+  back; removing or changing an operator route, CLI command or settings key;
+  a new required install step, such as an AppAPI or Talk prerequisite.
+- **While on 0.x**, semver lets any minor break things. Name breaking changes
+  in the changelog anyway, so the habit is in place by 1.0.
 
 ## Cut a release
 
@@ -101,6 +128,7 @@ X.Y.Z-alpha.1 → X.Y.Z-beta.1 → X.Y.Z-rc.1 → X.Y.Z-rc.2 → X.Y.Z
 Every bump restarts the ladder at `-alpha.1`; advance with
 `--promote beta|rc.1|rc.2|stable`. You can skip stages: `--version 0.3.0` goes
 straight to stable, and `rc.1 → stable` is fine (one RC instead of two).
+Patches skip the ladder (see [Patches and majors](#patches-and-majors)).
 Suffixed versions upload as App Store pre-releases automatically.
 
 Cassini supports the maintained Nextcloud majors recorded in
