@@ -208,15 +208,15 @@ type Runtime struct {
 	// speakers surface is about to read. Tests use it to promote and prune
 	// that bundle under the read.
 	speakerMeetingReading func(path string)
-	// referenceFrontendProbe reports whether the active sherpa runtime includes
-	// the Parakeet v3 reference frontend optimization. Tests stub it.
-	referenceFrontendProbe func() (known bool, isReference bool)
-	refFrontendMu          sync.Mutex
-	refFrontendBin         string
-	refFrontendModel       string
-	refFrontendKnown       bool
-	refFrontendIsRef       bool
-	refFrontendChecked     time.Time
+	// speechRuntimeProbe reports whether the active sherpa runtime can run
+	// the selected speech model. Tests stub it.
+	speechRuntimeProbe   func() (known bool, ok bool)
+	speechRuntimeMu      sync.Mutex
+	speechRuntimeBin     string
+	speechRuntimeModel   string
+	speechRuntimeKnown   bool
+	speechRuntimeOK      bool
+	speechRuntimeChecked time.Time
 	// computeReadiness coalesces and briefly caches the nvidia-smi-backed
 	// readiness probe so status polling cannot create a subprocess storm.
 	computeReadiness *computeStatusProbe

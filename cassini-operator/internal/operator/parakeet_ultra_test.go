@@ -12,8 +12,13 @@ import (
 )
 
 const (
-	cassini6Runtime = "1.13.7+cassini-parakeet-v3-reference-v1.nemotron-diarization-v2"
-	cassini7Runtime = cassini6Runtime + ".parakeet-ultra-v1"
+	// sherpa-onnx-go-*/v2 v2.0.1-cassini.1.
+	cassiniRuntime = "2.0.1+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2"
+	// cassini.7/.8: reference frontend and Ultra url selection on the 1.13.7
+	// C API the recorder no longer links.
+	cassini8Runtime = "1.13.7+cassini-parakeet-v3-reference-v1.nemotron-diarization-v2.parakeet-ultra-v1"
+	// Stock 2.0.1 (Linux arm32): no joiner-size TDT detection.
+	stock201Runtime = "2.0.1"
 )
 
 // Parakeet Ultra replaced v3 on every tier: fp32 on every CUDA tier and the
@@ -31,7 +36,7 @@ func TestModelForQualityUsesUltraEverywhere(t *testing.T) {
 	}
 }
 
-// Both Ultra precisions need the Ultra runtime marker; only fp32 runs on CUDA.
+// Both Ultra precisions need the TDT joiner marker; only fp32 runs on CUDA.
 // The int8 build is sized from its measured 1,893 MiB peak.
 func TestParakeetUltraTreatment(t *testing.T) {
 	if got := modelBuildPeakMB(modelParakeetUltraInt8); got < 1893 || got%512 != 0 {
@@ -44,29 +49,33 @@ func TestParakeetUltraTreatment(t *testing.T) {
 		if modelDownloadMB(m) <= 0 {
 			t.Fatalf("%s has no download size; the panel would not say how long the wait is", m)
 		}
-		if !usesReferenceFrontend(m) {
-			t.Fatalf("%s does not report the reference frontend", m)
+		if !modelNeedsRuntimeMarkers(m) {
+			t.Fatalf("%s does not check the runtime", m)
 		}
 	}
 	if !modelSupportsCUDA(modelParakeetUltraFp32) || modelSupportsCUDA(modelParakeetUltraInt8) || modelSupportsCUDA(modelParakeet110M) || modelSupportsCUDA("parakeet-tdt-0.6b-v3") {
 		t.Fatal("only Ultra fp32 runs on CUDA")
 	}
-	if usesReferenceFrontend(modelParakeet110M) {
-		t.Fatal("the 110M model reports the reference frontend")
+	if modelNeedsRuntimeMarkers(modelParakeet110M) {
+		t.Fatal("the 110M model needs runtime markers")
 	}
 	cases := []struct {
 		model, version string
 		want           bool
 	}{
-		{modelParakeetUltraInt8, cassini6Runtime, false},
-		{modelParakeetUltraInt8, cassini7Runtime, true},
-		{modelParakeetUltraFp32, cassini6Runtime, false},
-		{modelParakeetUltraFp32, cassini7Runtime, true},
+		{modelParakeetUltraInt8, cassiniRuntime, true},
+		{modelParakeetUltraInt8, cassini8Runtime, false},
+		{modelParakeetUltraInt8, stock201Runtime, false},
+		{modelParakeetUltraFp32, cassiniRuntime, true},
+		{modelParakeetUltraFp32, cassini8Runtime, false},
 		{modelParakeetUltraFp32, "sherpa=1.13.7", false},
-		{modelParakeet110M, cassini7Runtime, false},
+		{modelParakeetUltraFp32, "sherpa=2.0.1\nfrontend=nemo-log-guard\ntdt_joiner=parakeet-tdt-joiner-v1\n", false},
+		{modelParakeetUltraFp32, "sherpa=" + cassiniRuntime + "\nfrontend=nemo-log-guard\nbackend=cuda\n", true},
+		{modelParakeetUltraFp32, "sherpa_version=" + cassiniRuntime + "\n", true},
+		{modelParakeet110M, cassiniRuntime, false},
 	}
 	for _, c := range cases {
-		if got := runtimeSelectsReferenceFrontend(c.model, c.version); got != c.want {
+		if got := runtimeRunsModel(c.model, c.version); got != c.want {
 			t.Errorf("%s on %q: %v, want %v", c.model, c.version, got, c.want)
 		}
 	}
@@ -287,38 +296,38 @@ func TestBuildWaitsForAModelBeingInstalled(t *testing.T) {
 	}
 }
 
-// /status names the Ultra-specific problem when the runtime predates the Ultra
-// selection, instead of reporting the reference frontend as active because the
-// v3 marker is there.
-func TestStatusReportsUltraReferenceFrontendFromBuildInfo(t *testing.T) {
+// /status names the Ultra-specific problem when the runtime cannot load Ultra:
+// a 1.13.7 Cassini runtime keeps its old markers but not the C API, and stock
+// 2.0.1 lacks the joiner-size TDT detection.
+func TestStatusReportsUltraRuntimeFromBuildInfo(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	rt.cancel()
 	rt.workerWG.Wait()
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	rt.cfg.CassiniBin = ""
-	rt.referenceFrontendProbe = nil
+	rt.speechRuntimeProbe = nil
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
 	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, Quality: sttQualityBalanced, Source: sttSourceUser})
 	for _, c := range []struct {
 		version string
 		want    bool
-	}{{cassini6Runtime, false}, {cassini7Runtime, true}} {
+	}{{cassini8Runtime, false}, {stock201Runtime, false}, {cassiniRuntime, true}} {
 		info := filepath.Join(t.TempDir(), "buildinfo.txt")
 		if err := os.WriteFile(info, []byte("sherpa_version="+c.version+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv(envNativeBuildInfo, info)
-		rt.refFrontendChecked = rt.refFrontendChecked.AddDate(-1, 0, 0)
+		rt.speechRuntimeChecked = rt.speechRuntimeChecked.AddDate(-1, 0, 0)
 		rec := httptest.NewRecorder()
 		rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
 		var resp statusResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 			t.Fatal(err)
 		}
-		if resp.STT.ReferenceFrontend == nil || *resp.STT.ReferenceFrontend != c.want {
-			t.Fatalf("%q: reference_frontend = %v, want %v", c.version, resp.STT.ReferenceFrontend, c.want)
+		if resp.STT.RuntimeSupportsModel == nil || *resp.STT.RuntimeSupportsModel != c.want {
+			t.Fatalf("%q: runtime_supports_model = %v, want %v", c.version, resp.STT.RuntimeSupportsModel, c.want)
 		}
 		if !c.want && !strings.Contains(resp.STT.Warning, "Parakeet Ultra") {
 			t.Fatalf("%q: warning %q does not name Parakeet Ultra", c.version, resp.STT.Warning)

@@ -1,6 +1,9 @@
 package operator
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // Device and model identifiers shared by the resource governor, the settings
 // API and /status.
@@ -53,25 +56,28 @@ func cudaCapableHost() bool {
 type speechModelSpec struct {
 	// cuda: an fp32 model the CUDA path installs and runs.
 	cuda bool
-	// referenceMarkers are the native runtime markers that select the
-	// Parakeet reference frontend for this model; empty for a model without it.
-	// They mirror ReferenceRuntimeMarkers in the recorder's models.go.
-	referenceMarkers []string
+	// runtimeMarkers are the native runtime markers the recorder needs before
+	// it loads this model; empty for a model without any. They mirror
+	// RuntimeMarkers in the recorder's models.go.
+	runtimeMarkers []string
 	// buildPeakMB and downloadMB: see modelBuildPeakMB and modelDownloadMB.
 	buildPeakMB, downloadMB int
 }
 
-const (
-	parakeetV3ReferenceMarker    = "+cassini-parakeet-v3-reference-v1"
-	parakeetUltraReferenceMarker = ".parakeet-ultra-v1"
-)
+// parakeetTDTJoinerMarker is in the version of a runtime that detects a NeMo
+// TDT joiner from its output size, which plain-url Parakeet Ultra exports need
+// to load at all (sherpa-onnx-go-*/v2 v2.0.1-cassini.1).
+const parakeetTDTJoinerMarker = ".parakeet-tdt-joiner-v1"
+
+// minRuntimeBase is the oldest sherpa-onnx release whose C API the recorder's
+// Go wrapper matches; it mirrors minRuntimeBase in the recorder.
+var minRuntimeBase = [3]int{2, 0, 1}
 
 var speechModelSpecs = map[string]speechModelSpec{
 	modelParakeet110M: {buildPeakMB: 512, downloadMB: 100},
-	// Both Ultra precisions need the Ultra runtime selection
-	// (sherpa-onnx-go-linux v1.13.7-cassini.7) on top of the v3 patch.
-	modelParakeetUltraInt8: {referenceMarkers: []string{parakeetV3ReferenceMarker, parakeetUltraReferenceMarker}, buildPeakMB: 2048, downloadMB: 465},
-	modelParakeetUltraFp32: {cuda: true, referenceMarkers: []string{parakeetV3ReferenceMarker, parakeetUltraReferenceMarker}, buildPeakMB: 3584, downloadMB: 1485},
+	// Both Ultra precisions load only where the joiner-size TDT detection is.
+	modelParakeetUltraInt8: {runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 2048, downloadMB: 465},
+	modelParakeetUltraFp32: {cuda: true, runtimeMarkers: []string{parakeetTDTJoinerMarker}, buildPeakMB: 3584, downloadMB: 1485},
 }
 
 // modelSupportsCUDA reports whether the CUDA path installs and runs a model.
@@ -79,22 +85,64 @@ func modelSupportsCUDA(model string) bool {
 	return speechModelSpecs[strings.TrimSpace(model)].cuda
 }
 
-// usesReferenceFrontend reports whether a model runs on the Parakeet reference
-// frontend when the runtime has it.
-func usesReferenceFrontend(model string) bool {
-	return len(speechModelSpecs[strings.TrimSpace(model)].referenceMarkers) > 0
+// modelNeedsRuntimeMarkers reports whether a model loads only on a runtime
+// carrying specific markers, which is what /status checks for it.
+func modelNeedsRuntimeMarkers(model string) bool {
+	return len(speechModelSpecs[strings.TrimSpace(model)].runtimeMarkers) > 0
 }
 
-// runtimeSelectsReferenceFrontend reports whether a native runtime version
-// string carries every marker this model's reference frontend needs.
-func runtimeSelectsReferenceFrontend(model, version string) bool {
-	markers := speechModelSpecs[strings.TrimSpace(model)].referenceMarkers
+// runtimeRunsModel reports whether a native runtime version string, or a
+// cassini-native-buildinfo.txt document carrying one, has the 2.0.1 C API and
+// every marker this model needs.
+func runtimeRunsModel(model, info string) bool {
+	markers := speechModelSpecs[strings.TrimSpace(model)].runtimeMarkers
+	if len(markers) == 0 {
+		return false
+	}
+	version := runtimeVersionFromBuildInfo(info)
+	if !runtimeBaseAtLeast(version, minRuntimeBase) {
+		return false
+	}
 	for _, marker := range markers {
 		if !strings.Contains(version, marker) {
 			return false
 		}
 	}
-	return len(markers) > 0
+	return true
+}
+
+// runtimeVersionFromBuildInfo returns the sherpa= (or sherpa_version=) value
+// of a buildinfo document, or the trimmed text when it is a bare version.
+func runtimeVersionFromBuildInfo(info string) string {
+	for _, line := range strings.Split(info, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && (key == "sherpa" || key == "sherpa_version") {
+			return strings.TrimSpace(value)
+		}
+	}
+	return strings.TrimSpace(info)
+}
+
+// runtimeBaseAtLeast compares the release part of a sherpa version
+// ("2.0.1" of "2.0.1+cassini...") with min.
+func runtimeBaseAtLeast(version string, min [3]int) bool {
+	if i := strings.IndexAny(version, "+-"); i >= 0 {
+		version = version[:i]
+	}
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return false
+		}
+		if n != min[i] {
+			return n > min[i]
+		}
+	}
+	return true
 }
 
 // modelServesQuality reports whether a prepared model may transcribe for a
