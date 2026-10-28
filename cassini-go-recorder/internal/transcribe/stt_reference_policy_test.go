@@ -75,7 +75,10 @@ func TestUnpatchedRuntimeDegradesGracefullyToStandardPolicy(t *testing.T) {
 	}
 }
 
+// With biasing turned back on, a hint-capable bundle of either Ultra
+// precision keeps the vocabulary and beam search.
 func TestReferenceFrontendRetainsVocabularyHints(t *testing.T) {
+	enableHints(t)
 	for _, id := range []ModelID{ModelParakeetUltra, ModelParakeetUltraInt8} {
 		dir := t.TempDir()
 		paths := transducerPaths(t)
@@ -120,6 +123,7 @@ func TestReferenceSkipsChunksWithoutTwoFeatureFrames(t *testing.T) {
 }
 
 func TestReferenceINT8WithoutHintTokenizerUsesGreedy(t *testing.T) {
+	enableHints(t)
 	paths := transducerPaths(t)
 	paths.ModelID = ModelParakeetUltraInt8
 	paths.BpeVocabFile = ""

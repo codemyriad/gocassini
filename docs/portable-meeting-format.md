@@ -222,9 +222,11 @@ and attachments, entry/body language, and `meeting.roomId` remain. Older files
 with the retired members still open because readers ignore unknown metadata.
 
 A speech-to-text step may carry a `hints` record describing the decoder biasing
-that ran. It is absent when the pass ran unbiased; `applied: false` with a
-`reason` means a vocabulary was configured but could not be used, which is a
-different thing from no vocabulary at all and must not be reported as success.
+that ran. It is absent when the pass had no vocabulary and ran unbiased;
+`applied: false` with a `reason` means a vocabulary was there but was not used,
+which is a different thing from no vocabulary at all and must not be reported
+as success. Biasing is off by default, so a current build records
+`applied: false` with `decodingMethod: "greedy_search"` and a reason saying so.
 `participantTermCount` and `participantScore`, when present, describe the
 automatic participant-name pool and its lower per-token score.
 `ownNameExcluded: true` means each participant track omitted its speaker's own

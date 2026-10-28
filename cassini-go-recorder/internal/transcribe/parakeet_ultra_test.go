@@ -97,18 +97,25 @@ func TestParakeetUltraNeedsUltraRuntimeMarker(t *testing.T) {
 	}
 }
 
-// Ultra fp32 ships bpe.vocab and beam-searches with hints. Ultra int8 decodes
-// greedily, as v3 int8 did: on it greedy search omitted less speech than the
-// unbiased beam decoder, at 22% less CPU and half the peak memory. Its spec
-// names no vocabulary, so even a bpe.vocab that ends up in its directory
-// cannot switch it to beam search.
+// Both Ultra precisions decode greedily by default, without hints (D-867).
+// With biasing turned back on, Ultra fp32 ships bpe.vocab and beam-searches
+// with hints, while Ultra int8 still decodes greedily, as v3 int8 did: on it
+// greedy search omitted less speech than the unbiased beam decoder, at 22%
+// less CPU and half the peak memory. Its spec names no vocabulary, so even a
+// bpe.vocab that ends up in its directory cannot switch it to beam search.
 func TestParakeetUltraDecoders(t *testing.T) {
 	t.Setenv(envHintsDisabled, "")
 	fp32 := transducerPaths(t)
 	fp32.ModelID = ModelParakeetUltra
-	dec, _, err := resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{}, fp32)
+	dec, hints, err := resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{Terms: []string{"Cassini"}}, fp32)
+	if err != nil || dec.Method != decodingGreedySearch || dec.Biased() || hints == nil || hints.Applied {
+		t.Fatalf("Ultra fp32 by default decodes with %+v, hints %+v, %v", dec, hints, err)
+	}
+
+	enableHints(t)
+	dec, _, err = resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{}, fp32)
 	if err != nil || dec.Method != decodingModifiedBeamSearch {
-		t.Fatalf("Ultra fp32 with bpe.vocab decodes with %+v, %v", dec, err)
+		t.Fatalf("Ultra fp32 with bpe.vocab and hints on decodes with %+v, %v", dec, err)
 	}
 
 	dir := t.TempDir()
@@ -121,7 +128,7 @@ func TestParakeetUltraDecoders(t *testing.T) {
 	if int8Paths.BpeVocabFile != "" {
 		t.Fatalf("Ultra int8 resolved a vocabulary: %s", int8Paths.BpeVocabFile)
 	}
-	dec, hints, err := resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{Terms: []string{"Cassini"}}, int8Paths)
+	dec, hints, err = resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{Terms: []string{"Cassini"}}, int8Paths)
 	if err != nil || dec.Method != decodingGreedySearch {
 		t.Fatalf("Ultra int8 decodes with %+v, %v", dec, err)
 	}

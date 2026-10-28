@@ -9,7 +9,17 @@ import (
 )
 
 // The operator-configured vocabulary ("Participant and project vocabulary")
-// biases the decoder towards spellings it would otherwise never produce.
+// can bias the decoder towards spellings it would otherwise never produce.
+//
+// Biasing is off by default (D-867): every tier decodes with greedy search and
+// no hotwords. Beam search, which hotwords require, dropped whole passages of
+// speech on real meetings (D-865), and the name-recognition benefit of the
+// hints was never measured, so preserving speech wins over dictionary biasing.
+// CASSINI_STT_HINTS_DISABLED is the switch: unset, empty or true keeps biasing
+// off; only an explicit false ("0", "false", "no", "off") turns the
+// vocabulary and modified_beam_search back on, for research. Search
+// spellings (the operator's search aliases) are independent of all this: they
+// expand queries, never decoding.
 //
 // This is contextual biasing, not correction. sherpa-onnx builds a context
 // graph from the terms and adds a per-token bonus while the beam search is
@@ -20,10 +30,11 @@ import (
 // Two hard requirements come from sherpa-onnx itself
 // (offline-recognizer-transducer-nemo-impl.h):
 //
-//  1. hotwords are read only under decoding_method=modified_beam_search. Hint-capable
-//     participant transducer passes therefore use beam search, whether or not a vocabulary
-//     is set: one decoder for everyone, rather than a decoder that changes
-//     under the operator depending on whether a text box is empty.
+//  1. hotwords are read only under decoding_method=modified_beam_search. With
+//     biasing re-enabled, hint-capable participant transducer passes therefore
+//     use beam search whether or not a vocabulary is set: one decoder for
+//     everyone, rather than a decoder that changes under the operator
+//     depending on whether a text box is empty.
 //  2. modeling_unit must be "bpe" AND bpe_vocab must name a real file. With
 //     bpe_vocab empty the recognizer fails to construct; with modeling_unit
 //     left unset the terms are tokenised as whole words, fail to encode, and
@@ -62,16 +73,43 @@ const (
 	// inspection.
 	hotwordsFileName = "hotwords.txt"
 
+	// envHintsDisabled is the D-867 switch. Biasing is off unless it is
+	// explicitly false; see hintsEnabled.
 	envHintsDisabled = "CASSINI_STT_HINTS_DISABLED"
 	envHintsScore    = "CASSINI_STT_HINTS_SCORE"
 )
+
+// hintsEnabled reports whether decoder biasing, and the beam search it needs,
+// is on for this build. It is off by default: only an explicit false value of
+// CASSINI_STT_HINTS_DISABLED turns it on. Anything else, including an unset or
+// empty variable (the compose file passes one through empty) and a value that
+// is not a boolean, keeps greedy decoding.
+func hintsEnabled() bool {
+	switch strings.TrimSpace(strings.ToLower(os.Getenv(envHintsDisabled))) {
+	case "0", "false", "no", "off":
+		return true
+	default:
+		return false
+	}
+}
+
+// hintsOffReason is the provenance reason of a vocabulary that was not
+// applied because biasing is off, naming how it was turned off.
+func hintsOffReason() string {
+	if strings.TrimSpace(os.Getenv(envHintsDisabled)) == "" {
+		return "decoder hints are off by default: greedy decoding keeps speech that beam search can drop; " +
+			"set " + envHintsDisabled + "=0 to apply the vocabulary with modified_beam_search"
+	}
+	return "disabled by configuration (" + envHintsDisabled + ")"
+}
 
 // DecoderConfig is the resolved decoder setup for one recognizer: which search
 // to run, and the hotword biasing to run it with. A nil *DecoderConfig leaves
 // sherpa on its own default, which is greedy search.
 type DecoderConfig struct {
-	// Method is the sherpa decoding_method. Hint-capable participant models use
-	// beam search; CTC, tokenizer-less v3 INT8, and v3 merged fallback use greedy.
+	// Method is the sherpa decoding_method. Every pass uses greedy search by
+	// default. With biasing re-enabled, hint-capable participant models use
+	// beam search; CTC, tokenizer-less INT8 and the merged fallback stay greedy.
 	Method string
 	// MaxActivePaths is the beam width, meaningful only under beam search.
 	MaxActivePaths int
@@ -267,9 +305,26 @@ func resolveDecoder(workDir string, terms []string, paths ModelPaths) (*DecoderC
 
 func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, paths ModelPaths) (*DecoderConfig, *HintsProvenance, error) {
 	terms := vocabulary.Terms
-	// A CTC model cannot beam-search for hotwords in sherpa, so it keeps the
-	// decoder it has always had. If a vocabulary is configured, say plainly
-	// that this tier cannot use it.
+	if !hintsEnabled() {
+		// The default (D-867): greedy search on every model and no hotwords.
+		// A vocabulary that was there to apply is recorded as not applied,
+		// with the decoder that ran, so the transcript cannot read as biased.
+		cfg := &DecoderConfig{Method: decodingGreedySearch}
+		if len(terms) == 0 {
+			return cfg, nil, nil
+		}
+		return cfg, &HintsProvenance{
+			TermCount:            len(terms),
+			ParticipantTermCount: vocabulary.ParticipantTermCount,
+			DecodingMethod:       cfg.Method,
+			Applied:              false,
+			Reason:               hintsOffReason(),
+		}, nil
+	}
+
+	// Biasing re-enabled for research. A CTC model cannot beam-search for
+	// hotwords in sherpa, so it keeps greedy search. If a vocabulary is
+	// configured, say plainly that this tier cannot use it.
 	if paths.EncoderFile == "" {
 		cfg := &DecoderConfig{Method: decodingGreedySearch}
 		if len(terms) == 0 {
@@ -283,9 +338,9 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 		}, nil
 	}
 
-	// Hint-capable participant transducers use beam search, vocabulary or not. One
-	// code path is the point: the decoder does not change under the operator
-	// depending on whether a text box happens to be empty.
+	// Hint-capable participant transducers then use beam search, vocabulary or
+	// not. One code path is the point: the decoder does not change under the
+	// operator depending on whether a text box happens to be empty.
 	cfg := &DecoderConfig{Method: decodingModifiedBeamSearch, MaxActivePaths: hotwordsMaxActivePaths}
 	// The int8 bundle is published without the vocabulary hints need, and on
 	// it the unbiased beam decoder omits more speech than greedy in recorded
@@ -294,23 +349,6 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 		cfg = &DecoderConfig{Method: decodingGreedySearch}
 	}
 
-	if envBool(envHintsDisabled) {
-		// The kill switch restores the previous decoder as well as dropping the
-		// hotwords. Turning biasing off while leaving beam search on would give
-		// an operator no way back to the output they had before, which is the
-		// one thing a kill switch has to be able to do.
-		cfg = &DecoderConfig{Method: decodingGreedySearch}
-		if len(terms) == 0 {
-			return cfg, nil, nil
-		}
-		return cfg, &HintsProvenance{
-			TermCount:            len(terms),
-			ParticipantTermCount: vocabulary.ParticipantTermCount,
-			DecodingMethod:       cfg.Method,
-			Applied:              false,
-			Reason:               "disabled by configuration (" + envHintsDisabled + ")",
-		}, nil
-	}
 	if len(terms) == 0 {
 		return cfg, nil, nil
 	}

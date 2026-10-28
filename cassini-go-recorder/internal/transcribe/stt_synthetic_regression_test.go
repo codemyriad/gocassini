@@ -84,6 +84,7 @@ func newSyntheticRegressionRecognizer(t *testing.T) *Recognizer {
 	// Never make an explicit regression run silently download gigabytes or
 	// skip the recognition assertion because a model is missing.
 	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
+	// The production default: greedy search without hints (D-867).
 	t.Setenv(envHintsDisabled, "")
 	// CI runs fp32 Parakeet Ultra; CASSINI_ASR_REGRESSION_MODEL checks another
 	// cached model (the int8 CPU default) against the same phrases.

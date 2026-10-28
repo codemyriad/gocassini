@@ -327,7 +327,9 @@ func boundaryProductionDecoder(dir string, fixture boundaryFixture, streams []Au
 }
 
 func TestBoundaryProductionVocabularyMatchesBuild(t *testing.T) {
-	t.Setenv(envHintsDisabled, "")
+	// Biasing is off by default (D-867); this checks the research path a
+	// bench run gets with CASSINI_STT_HINTS_DISABLED=0, then the default.
+	t.Setenv(envHintsDisabled, "0")
 	t.Setenv(envHintsScore, "2")
 	streams := []AudioStream{{Index: 2, SpeakerLabel: "Silvio"}, {Index: 5, SpeakerLabel: "Chris"}}
 	fixture := boundaryFixture{StreamIndex: 2, DeriveParticipantHints: true, ConfiguredVocabulary: []string{"Librocco"}}
@@ -369,5 +371,16 @@ func TestBoundaryProductionVocabularyMatchesBuild(t *testing.T) {
 	fixture.HotwordsFile = "manual.txt"
 	if _, _, err = boundaryProductionDecoder(t.TempDir(), fixture, streams, paths); err == nil {
 		t.Fatal("accepted contradictory manual and automatic hints")
+	}
+
+	// The production default decodes greedily without hotwords, like a build.
+	t.Setenv(envHintsDisabled, "")
+	fixture.HotwordsFile = ""
+	got, prov, err = boundaryProductionDecoder(t.TempDir(), fixture, streams, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Method != decodingGreedySearch || got.Biased() || prov == nil || prov.Applied || prov.DecodingMethod != decodingGreedySearch {
+		t.Fatalf("default bench decoder %+v provenance %+v, want greedy and unapplied", got, prov)
 	}
 }

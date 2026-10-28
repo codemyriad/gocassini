@@ -260,9 +260,10 @@ func newVADModelConfig(modelPath string, sampleRate int) sherpa.VadModelConfig {
 	return cfg
 }
 
-// Decoding methods sherpa-onnx accepts for an offline recognizer. Hotwords are
-// read only under modified beam search; greedy search is the faster default
-// every unbiased pass keeps using.
+// Decoding methods sherpa-onnx accepts for an offline recognizer. Greedy search
+// is the default on every tier and device (D-867). Hotwords are read only
+// under modified beam search, which a build uses only when biasing is turned
+// back on with CASSINI_STT_HINTS_DISABLED=0 (see hintsEnabled).
 const (
 	decodingGreedySearch       = "greedy_search"
 	decodingModifiedBeamSearch = "modified_beam_search"

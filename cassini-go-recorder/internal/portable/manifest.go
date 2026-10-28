@@ -200,7 +200,8 @@ type ProcessingStep struct {
 }
 
 // HintsProvenance says what decoder biasing a speech-to-text pass actually
-// applied, and when it could not, why. Absent means the pass ran unbiased.
+// applied, and when it did not, why. Absent means the pass had no vocabulary
+// and ran unbiased.
 type HintsProvenance struct {
 	TermCount            int     `json:"termCount"`
 	Score                float32 `json:"score,omitempty"`

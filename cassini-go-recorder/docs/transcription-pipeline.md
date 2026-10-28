@@ -13,7 +13,7 @@ This document describes the post-recording transcription pipeline that turns a f
 | Audio + STT | `internal/transcribe/audio.go`, `models.go`, `stt.go` | ffmpeg probe/mix, model download/cache, sherpa-onnx recognizer |
 | Segmentation + format | `internal/transcribe/format.go` | Segment assembly, JSON/VTT emitters, manifest writer |
 | LLM integration | `internal/transcribe/llm.go` | OpenAI-compatible HTTP client for the summary call |
-| Decoder hints | `internal/transcribe/hotwords.go` | Applies vocabulary where supported; records why hints cannot be used otherwise |
+| Decoder hints | `internal/transcribe/hotwords.go` | Picks the decoder (greedy by default); applies vocabulary only when re-enabled and supported; records why hints were not used otherwise |
 | Summary generation (V4) | `internal/transcribe/summary.go` | System prompt assembly and transcript flattening; the prompt bytes come from the workflow registry |
 | Template (V0 contract) | `internal/insight/workflows/prompts/summarise-template.v0.md` | The summary's section structure — single source of truth |
 
@@ -27,7 +27,7 @@ This document describes the post-recording transcription pipeline that turns a f
 | 2 | Mix to WebM | `MixDownToWebM` produces a single mono 48 kHz Opus track from all speaker streams | `meeting.webm` |
 | 3 | Hash audio | `PCMsha256FromWebM` computes the decoded-PCM SHA-256 for integrity tracking | — |
 | 4 | Ensure model + VAD | `EnsureModel` and `EnsureVAD` download/verify STT and VAD models in the cache dir | — |
-| 5 | Create recognizer | `NewRecognizer` loads the sherpa-onnx model on the chosen device (`cpu`/`cuda`), biased towards configured vocabulary and participant names when supported and enabled (see Decoder hints below) | — |
+| 5 | Create recognizer | `NewRecognizer` loads the sherpa-onnx model on the chosen device (`cpu`/`cuda`), with greedy decoding; biased towards configured vocabulary and participant names only when hints are re-enabled and supported (see Decoder hints below) | — |
 | 6 | Per-speaker transcribe | For each input stream: extract floats, transcribe, assemble into segments | — |
 | 7 | Merge + sort + write words | `MergeAndSortSegments` then `writeTranscriptWithHash(version="transcript.words.v1")` | `transcript.words.v1.json` |
 | 8 | Captions | `WriteCaptionsVTT` renders the canonical transcript as WebVTT | `captions.vtt` |
@@ -115,7 +115,7 @@ Relevant environment variables read by `DefaultBuildConfig()` include:
 | `CASSINI_LLM_MAX_TOKENS` | `SummaryLLM.MaxTokens` (default 4096) |
 | `CASSINI_SUMMARY_DISABLED` | `SummaryLLM.Disabled` |
 | `CASSINI_TRANSCRIPTION_TERMS` | `Vocabulary` (JSON array of preferred spellings) |
-| `CASSINI_STT_HINTS_DISABLED` | turns decoder biasing off while keeping the vocabulary |
+| `CASSINI_STT_HINTS_DISABLED` | decoder biasing switch: unset, empty or true keeps hints off and greedy search on (the default); only an explicit false (`0`, `false`, `no`, `off`) turns hints and `modified_beam_search` back on |
 | `CASSINI_STT_HINTS_SCORE` | overrides the hotword boost (default 2.0) |
 | `CASSINI_CACHE_ROOT` | `CacheDir` (default cache location) |
 
@@ -150,45 +150,60 @@ The acceptance criteria from D-242 map to:
 ## Decoder hints (the participant and project vocabulary)
 
 The operator-configured vocabulary reaches the recorder as
-`CASSINI_TRANSCRIPTION_TERMS`, a JSON array of preferred spellings. It is
-applied to supported **decoders**, not to finished text.
+`CASSINI_TRANSCRIPTION_TERMS`, a JSON array of preferred spellings. When hints
+are on it is applied to supported **decoders**, not to finished text.
+
+**Hints are off by default (D-867).** Every tier and device decodes with
+`greedy_search` and no hotwords. Beam search, which hotwords require, dropped
+whole passages of speech on real meetings (D-865), and the name-recognition
+benefit of the hints was never measured, so preserving speech wins over
+dictionary biasing. A build that had a vocabulary to apply (configured terms or
+participant names) records it in `provenance.speechToText.hints` with
+`applied: false`, `decodingMethod: "greedy_search"` and a reason that says hints
+are off and how to turn them on. Search spellings (the operator's search
+aliases) are unaffected: they expand search queries and never touch decoding.
+
+`CASSINI_STT_HINTS_DISABLED` is the switch. Unset, empty, true or any value
+that is not a boolean keeps hints off. Only an explicit false (`0`, `false`,
+`no`, `off`) turns them back on, for research; the rest of this section
+describes that mode.
 
 Parakeet Ultra (FP32 and INT8, Moondream's post-training of Parakeet v3) uses
-the model-reference frontend while retaining modified beam search and supported
-vocabulary hints on participant tracks. The INT8 bundle is published without
-`bpe.vocab` and decodes greedily: it cannot encode hints, and unbiased beam
-search lost more speech than greedy in recorded tests (as it did for v3 INT8),
-at more CPU and about twice the peak memory. Its detected speech spans
-retain 30 ms of surrounding recorded audio, remain whole within VAD resource
-limits, and receive no synthetic decoder tail. Normal CPU/CUDA builds and the
-developer CLI include the required patched native runtime.
+the model-reference frontend. With hints re-enabled, FP32 uses modified beam
+search and vocabulary hints on participant tracks. The INT8 bundle is
+published without `bpe.vocab` and decodes greedily either way: it cannot encode
+hints, and unbiased beam search lost more speech than greedy in recorded tests
+(as it did for v3 INT8), at more CPU and about twice the peak memory. Its
+detected speech spans retain 30 ms of surrounding recorded audio, remain whole
+within VAD resource limits, and receive no synthetic decoder tail. Normal
+CPU/CUDA builds and the developer CLI include the required patched native
+runtime.
 
-Hint-capable participant transducers use `modified_beam_search`, whether or not
-a vocabulary is set. Hotwords are only read under beam search, and a decoder
-that changed under the operator depending on whether a text box happened to be
-empty would be worse than one that is simply stable. When a vocabulary is set
-and the model can take it, `hotwords.go` writes a hotwords file into the build
-directory and the recognizer builds a context graph from the terms. A term is
-more likely to be emitted when its acoustic evidence is ambiguous. Operator
-terms use the configured score (2 by default). Participant names added
-automatically from the recording metadata are capped at 0.5: stronger scores
-made short names overwhelm weak evidence and repeat, while 0.5 kept them as a
-nudge in full-meeting comparisons. Each participant track omits its speaker's
-own name and retains the other participant names; the mixed fallback
-has no single speaker. Parakeet Ultra’s merged-audio recovery fallback uses unbiased
-greedy decoding because beam search lost speech in its separate non-VAD tests.
-Only an accepted fallback replaces the final hint provenance with an explicit
-unapplied reason; an attempted but rejected fallback leaves participant hints
-reported as applied. Other model families retain their existing fallback policy.
-`CASSINI_STT_HINTS_DISABLED=1` restores the previous `greedy_search` decoder
-with or without configured terms. When terms were requested, provenance records
-that the switch disabled them. An accepted fallback with no requested hints does
-not invent a hint-provenance record.
+With hints re-enabled, hint-capable participant transducers use
+`modified_beam_search`, whether or not a vocabulary is set. Hotwords are only
+read under beam search, and a decoder that changed under the operator depending
+on whether a text box happened to be empty would be worse than one that is
+simply stable. When a vocabulary is set and the model can take it,
+`hotwords.go` writes a hotwords file into the build directory and the
+recognizer builds a context graph from the terms. A term is more likely to be
+emitted when its acoustic evidence is ambiguous. Operator terms use the
+configured score (2 by default, `CASSINI_STT_HINTS_SCORE`). Participant names
+added automatically from the recording metadata are capped at 0.5: stronger
+scores made short names overwhelm weak evidence and repeat, while 0.5 kept them
+as a nudge in full-meeting comparisons. Each participant track omits its
+speaker's own name and retains the other participant names; the mixed fallback
+has no single speaker. Parakeet Ultra’s merged-audio recovery fallback uses
+unbiased greedy decoding because beam search lost speech in its separate
+non-VAD tests. Only an accepted fallback replaces the final hint provenance
+with an explicit unapplied reason; an attempted but rejected fallback leaves
+participant hints reported as applied. Other model families retain their
+existing fallback policy. An accepted fallback with no requested hints does not
+invent a hint-provenance record.
 
 The CTC tier keeps greedy search. sherpa-onnx has no hotword support for CTC, so
 the wider beam would cost decode time and buy nothing.
 
-Applying hints requires both of these model properties:
+Applying re-enabled hints requires both of these model properties:
 
 1. the model must use a supported beam-search transducer decoder. Parakeet
    Ultra FP32 supports hints; the `nemo_ctc` tier uses greedy decoding and cannot be biased.
@@ -201,7 +216,7 @@ Applying hints requires both of these model properties:
    upstream `scripts/nemo/generate_bpe_vocab.py` rather than deriving a
    flat-score substitute at runtime.
 
-When terms exist and either requirement does not hold, the build records
+When hints are re-enabled, terms exist and either requirement does not hold, the build records
 `provenance.speechToText.hints` with
 `applied: false` and a reason, and decodes unbiased. A vocabulary that could not
 be applied is always visible in the manifest rather than silently ignored.
