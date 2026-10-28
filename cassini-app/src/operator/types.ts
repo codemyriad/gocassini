@@ -289,8 +289,18 @@ export interface StorageStatus {
 }
 
 // --- Insight templates (D-718): mirror GET <basePath>/settings/workflows.
-// Read-only. The workflows are prompts compiled into the recorder image, so
-// there is nothing to write back and no PUT to write it with.
+// Built-ins are compiled into the recorder image and cannot be written; custom
+// templates are files on the app's volume, written with
+// PUT/DELETE <basePath>/settings/workflows/<id> (D-819).
+
+// What the panel sends to save a custom template. The version is the
+// operator's to bump, so it is not part of the request.
+export interface InsightTemplateDraft {
+  name: string;
+  question: string;
+  description: string;
+  instruction: string;
+}
 
 export interface InsightWorkflow {
   id: string;

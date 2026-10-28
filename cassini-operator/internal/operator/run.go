@@ -241,6 +241,10 @@ type Runtime struct {
 	llmMu           sync.RWMutex
 	llm             LLMSettings
 	llmSettingsPath string
+	// templatesMu serialises custom template saves and deletes (D-819): each
+	// one writes a file and then re-reads the registry to check it, and two
+	// interleaved would check each other's file.
+	templatesMu sync.Mutex
 	// storageUsage is an explicitly refreshed, process-local index. GET reads it
 	// in constant time; only POST /storage/usage performs filesystem and WebDAV
 	// traversal. storageUsageRefreshMu keeps two administrator-triggered scans
@@ -1008,6 +1012,8 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// is what the recorder ships, and an exact pattern wins over the prefix
 		// (D-718).
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
+		// One custom template, written or removed from the panel (D-819).
+		{"/settings/workflows/", http.HandlerFunc(rt.settingsWorkflowHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},

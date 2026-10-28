@@ -56,7 +56,7 @@
   import { loadConfig } from "./operator/config";
   import { runnableWorkflows, type OperatorClient } from "./operator/client";
   import type { InsightWorkflow } from "./operator/types";
-  import type { OperatorPanel } from "./surfaceRouting";
+  import { applyPanel, applySurface, type OperatorPanel } from "./surfaceRouting";
   import {
     createInsight,
     listAIProviders,
@@ -187,6 +187,24 @@
   });
   $: if (!nameTouched) {
     name = suggestedName;
+  }
+
+  // "Edit templates": the panel that writes them, reached the way the setup
+  // card reaches its panels — a real link whose ordinary click becomes an
+  // in-page surface switch, rebuilt from the fragment at the moment it is
+  // followed, because the viewer rewrites the fragment as it navigates.
+  function templatesUrl(): string {
+    const url = new URL(window.location.href);
+    url.hash = applyPanel(applySurface(window.location.hash, "operator"), "templates").replace(/^#/, "");
+    return url.toString();
+  }
+
+  function openTemplates(event: MouseEvent) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    dispatch("open", { panel: "templates", href: templatesUrl() });
   }
 
   async function loadWorkflows() {
@@ -349,6 +367,7 @@
             <ChevronDown size={14} class="gc-select-chevron" aria-hidden="true" />
           </span>
         </label>
+        <a class="link link-primary text-xs tpl-edit-link" href={templatesUrl()} on:click={openTemplates}>Edit templates</a>
 
         {#if questionAccepted}
           <!-- The template whose question is yours. Offered only by one with
@@ -518,6 +537,9 @@
   }
   /* The label and the control are one line while there is room for both: a
      picker under its own name reads as a form where this is one choice. */
+  .tpl-edit-link {
+    justify-self: end;
+  }
   .tpl-field-row {
     display: flex;
     flex-wrap: wrap;

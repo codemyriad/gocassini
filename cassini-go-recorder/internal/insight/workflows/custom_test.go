@@ -238,3 +238,17 @@ func TestParseCustomTemplateReadsTheScalarForms(t *testing.T) {
 		t.Errorf("parsed %+v", tpl)
 	}
 }
+
+// The operator writes this exact shape from the panel (cassini-operator
+// settings_workflows_write.go, pinned there on the rendered bytes); it must
+// read back to the same values, Go-quoted escapes included.
+func TestParseCustomTemplateReadsWhatTheOperatorWrites(t *testing.T) {
+	file := "---\nname: \"Say \\\"hi\\\" — ¡ya!\"\nquestion: \"\"\ndescription: \"a\\\\b\"\nversion: 4\n---\n\nAnswer {{QUESTION}}\n"
+	tpl, err := ParseCustomTemplate("hola", []byte(file))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if tpl.Name != `Say "hi" — ¡ya!` || tpl.Question != "" || tpl.Description != `a\b` || tpl.Version != 4 || tpl.Instruction != "Answer {{QUESTION}}" {
+		t.Errorf("parsed %+v", tpl)
+	}
+}

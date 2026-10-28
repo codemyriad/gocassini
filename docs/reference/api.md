@@ -409,6 +409,35 @@ prefixed with one of the first four tokens.
 
 A failure is never an empty `200`.
 
+### Insight templates
+
+The templates a run can name. Built-in ones are compiled into the recorder;
+custom ones are `<id>.md` files in the templates directory on the app's volume
+(`operator/templates` under `APP_PERSISTENT_STORAGE`, or `--templates-root` /
+`CASSINI_TEMPLATES_DIR`). Each file is front matter (`name`, `question`,
+`description`, `version`) and the instruction as the body; an empty `question`
+means the template takes the caller's, which the instruction then carries as
+`{{QUESTION}}`.
+
+```http
+GET /operator/settings/workflows                 (ADMIN)
+PUT /operator/settings/workflows/<id>            (ADMIN)
+DELETE /operator/settings/workflows/<id>         (ADMIN)
+```
+
+- `GET` mirrors `cassini insight workflows --json`: `id`, `version`, `sha256`,
+  `name`, `question`, `description`, `origin` (`Built in` or `Custom`) and the
+  `instruction` the model receives. A custom file that cannot run is listed
+  with an `error` and no `sha256`, and a run that names it is a `400` carrying
+  that reason
+- `PUT` takes `{"name", "question", "description", "instruction"}`, writes the
+  file with the previous version plus one, and asks the recorder to list it
+  again. A file the recorder will not run is put back as it was and the save is
+  a `400` with the recorder's reason; otherwise the answer is the saved entry.
+  A built-in id is a `400`: start a custom template from it instead
+- `DELETE` removes a custom template. A built-in is a `400`, a missing one a
+  `404`, and one that is the configured summary or insight template a `409`
+
 ## What the API does not try to be
 
 The current API is not:

@@ -872,7 +872,7 @@
                     Your choice is saved, but summaries still use the built-in template for now.
                   </span>
                   <button type="button" class="link-btn pipe-link" on:click={() => dispatch("openTemplates")}>
-                    View insight templates
+                    Edit templates
                   </button>
                 </label>
                 {/if}

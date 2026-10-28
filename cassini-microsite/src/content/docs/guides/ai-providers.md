@@ -146,6 +146,25 @@ bundle — the document `cassini meetings context` prints. See
 [Agent access via the CLI](/docs/guides/agent-access) for how that bundle is
 assembled, and under whose permissions.
 
+
+## Your own templates
+
+An administrator can write templates of their own in **Operator › Insight
+templates**. **Start from this** on a built-in template copies its instruction
+into a new custom template; give it an id and a name, change the instruction and
+the shape of the document it asks for (for example, to write in Spanish), and
+save. **Edit** and **Delete** work on custom templates only; the built-in ones
+stay as shipped.
+
+A save is checked before it is kept: a template that would not run is refused
+with the reason, and the file is left as it was. Every save is a new version, so
+an insight still records exactly which template bytes wrote it.
+
+Custom templates are files on the app's persistent volume
+(`operator/templates/<id>.md`), so they survive app updates. A file dropped
+there by hand appears in the panel as **Custom**; one that cannot run is listed
+with the reason instead of disappearing.
+
 ## Related
 
 - [Privacy and data processing](/docs/guides/privacy) — what is sent, by whom,

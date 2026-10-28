@@ -39,6 +39,11 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("This runs the template your administrator configured");
   });
 
+  it("links an administrator to the templates panel from the picker", () => {
+    expect(generateCardSource).toContain(">Edit templates</a>");
+    expect(generateCardSource).toContain('dispatch("open", { panel: "templates", href: templatesUrl() });');
+  });
+
   it("never offers a custom template that cannot run", () => {
     expect(generateCardSource).toContain("runnableWorkflows(await operatorClient.listInsightWorkflows())");
   });

@@ -133,11 +133,65 @@ describe("InsightTemplatesPanel", () => {
     expect(insightTemplatesPanelSource).toContain("Templates could not be listed.");
   });
 
-  it("offers no way to author or edit a template", () => {
-    // Read-only for this pass: prompts are authored in the repository and
-    // compiled into the image, and there is no PUT behind this panel.
-    expect(insightTemplatesPanelSource).not.toContain("<textarea");
-    expect(insightTemplatesPanelSource).not.toContain("<input");
-    expect(insightTemplatesPanelSource).not.toMatch(/put[A-Z]/);
+  it("edits custom templates and starts new ones only from a built-in", () => {
+    // Built-ins are compiled into the image: the only thing to do with one
+    // here is copy it. A custom one is a file the operator writes.
+    expect(insightTemplatesPanelSource).toContain("Start from this");
+    expect(insightTemplatesPanelSource).toContain("client.saveInsightTemplate(editor.id, editor.draft)");
+    expect(insightTemplatesPanelSource).toContain("client.deleteInsightTemplate(workflow.id)");
+    expect(insightTemplatesPanelSource).toContain("{#if isCustom(workflow)}");
+    // One textarea, for the instruction; the version is never typed.
+    expect(insightTemplatesPanelSource.match(/<textarea/g)).toHaveLength(1);
+    expect(insightTemplatesPanelSource).not.toContain("draft.version");
+  });
+
+  it("shows the operator's refusal of a save, which carries the recorder's reason", () => {
+    expect(insightTemplatesPanelSource).toContain("saveError = error instanceof Error ? error.message : String(error);");
+    expect(insightTemplatesPanelSource).toContain('<div class="err-box" role="alert">{saveError}</div>');
+  });
+});
+
+describe("insight template writes", () => {
+  it("PUTs a custom template by id and DELETEs it", async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push([url, init]);
+        const body =
+          init?.method === "DELETE"
+            ? { id: "resumen", deleted: true }
+            : { id: "resumen", version: "v1", sha256: "abc", name: "Resumen", origin: "Custom", instruction: "I" };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      }),
+    );
+    const client = new OperatorClient("https://operator.test");
+
+    const saved = await client.saveInsightTemplate("resumen", {
+      name: "Resumen",
+      question: "Q",
+      description: "",
+      instruction: "I",
+    });
+    await client.deleteInsightTemplate("resumen");
+
+    expect(saved.version).toBe("v1");
+    expect(calls[0][0]).toBe("https://operator.test/settings/workflows/resumen");
+    expect(calls[0][1]?.method).toBe("PUT");
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ name: "Resumen", question: "Q", description: "", instruction: "I" });
+    expect(calls[1][0]).toBe("https://operator.test/settings/workflows/resumen");
+    expect(calls[1][1]?.method).toBe("DELETE");
+  });
+
+  it("raises a refused save with the operator's reason", async () => {
+    stubWorkflowsResponse({ error: "the template was not saved: the front matter needs a name" }, 400);
+    await expect(
+      new OperatorClient("https://operator.test").saveInsightTemplate("x", {
+        name: "",
+        question: "",
+        description: "",
+        instruction: "I",
+      }),
+    ).rejects.toThrow("the front matter needs a name");
   });
 });

@@ -1,6 +1,7 @@
 import type { RecordingReadiness, RecordingSetupUpdate } from "./readiness";
 import type { RetentionSettings } from "./retention";
 import type {
+  InsightTemplateDraft,
   InsightWorkflow,
   Job,
   JobAttempt,
@@ -278,6 +279,27 @@ export class OperatorClient {
 
   async listInsightWorkflows(): Promise<InsightWorkflow[]> {
     return normalizeInsightWorkflows(await this.#request<unknown>("/settings/workflows"));
+  }
+
+  // Writes one custom template. The operator checks it against the recorder's
+  // registry and refuses (400, with the recorder's reason) one that would not
+  // run, so a rejection here is the message to show.
+  async saveInsightTemplate(id: string, draft: InsightTemplateDraft): Promise<InsightWorkflow> {
+    const saved = normalizeInsightWorkflows([
+      await this.#request<unknown>(`/settings/workflows/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      }),
+    ]);
+    if (saved.length !== 1) {
+      throw new Error("the saved template came back in a shape this app does not understand");
+    }
+    return saved[0];
+  }
+
+  async deleteInsightTemplate(id: string): Promise<void> {
+    await this.#request<unknown>(`/settings/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   openEventStream(handlers: OperatorStreamHandlers): EventSource {
