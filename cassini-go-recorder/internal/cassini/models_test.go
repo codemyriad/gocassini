@@ -17,11 +17,27 @@ import (
 // the catalogue sizes, which is all Installed() checks.
 func fakeInstallShipped(t *testing.T, root, id string) modelstore.Model {
 	t.Helper()
-	s := modelstore.New(root)
-	m, err := s.Catalogue.Model(id, "")
+	m, err := modelstore.Shipped().Model(id, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	return fakeInstall(t, root, m)
+}
+
+// fakeInstallRetired does the same for a retired model, as an install upgraded
+// from a version that shipped it still has it.
+func fakeInstallRetired(t *testing.T, root, id string) modelstore.Model {
+	t.Helper()
+	m, err := modelstore.Shipped().RetiredModel(id, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fakeInstall(t, root, m)
+}
+
+func fakeInstall(t *testing.T, root string, m modelstore.Model) modelstore.Model {
+	t.Helper()
+	s := modelstore.New(root)
 	dir := s.Dir(m)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -194,5 +210,94 @@ func TestModelsProbeRemovesTheReplacedModelOnlyAfterItRuns(t *testing.T) {
 	// fp32 v3 is replaced by fp32 Ultra, not by this model.
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatalf("removed a model the probed one does not replace: %v", err)
+	}
+}
+
+// An install upgraded from a version that shipped Parakeet v3 still has its
+// files until Ultra passes its runtime check. The inventory lists such a
+// model as its own row, marked with the model that replaced it, so the
+// operator can stand in with it; an install without those files lists
+// exactly what it did before.
+func TestModelsListShowsAnInstalledRetiredModel(t *testing.T) {
+	stubModelRuntime(t, true)
+	root := t.TempDir()
+	fakeInstallShipped(t, root, "silero-vad")
+	fresh := listModels(t, root, "cpu")
+	for id := range fresh {
+		if strings.HasPrefix(id, "parakeet-tdt-0.6b-v3") {
+			t.Fatalf("an install without v3 lists %s", id)
+		}
+	}
+
+	fakeInstallRetired(t, root, "parakeet-tdt-0.6b-v3-int8")
+	fakeInstallRetired(t, root, "parakeet-tdt-0.6b-v3")
+	views := listModels(t, root, "cpu")
+	if len(views) != len(fresh)+2 {
+		t.Fatalf("rows %d, want %d", len(views), len(fresh)+2)
+	}
+	v3 := views["parakeet-tdt-0.6b-v3-int8"]
+	if v3.ReplacedBy != "parakeet-ultra-0.6b-int8" || !v3.Installed || v3.Ready || v3.Revision != "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf" || v3.Kind != modelstore.KindSpeech {
+		t.Fatalf("retired row = %+v", v3)
+	}
+	if views["parakeet-ultra-0.6b-int8"].ReplacedBy != "" {
+		t.Fatal("a shipped model is marked as replaced")
+	}
+
+	// Ready once it has passed its runtime check here.
+	probeInstalledModelFn = func(_ context.Context, s *modelstore.Store, m modelstore.Model, device string) error {
+		return s.MarkReady(m, device, transcribe.ModelRuntimeFingerprint())
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runModels(context.Background(), []string{"probe", "parakeet-tdt-0.6b-v3-int8", "--cache-root", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("probe = %d: %s", code, stderr.String())
+	}
+	if v3 = listModels(t, root, "cpu")["parakeet-tdt-0.6b-v3-int8"]; !v3.Ready {
+		t.Fatalf("checked retired row = %+v", v3)
+	}
+
+	// CUDA runs only fp32, so only fp32 v3 can stand in there.
+	cuda := listModels(t, root, "cuda")
+	if _, ok := cuda["parakeet-tdt-0.6b-v3-int8"]; ok {
+		t.Fatal("v3 int8 is listed for CUDA")
+	}
+	if cuda["parakeet-tdt-0.6b-v3"].ReplacedBy != "parakeet-ultra-0.6b" {
+		t.Fatalf("v3 fp32 on CUDA = %+v", cuda["parakeet-tdt-0.6b-v3"])
+	}
+
+	stdout.Reset()
+	if code := runModels(context.Background(), []string{"list", "--cache-root", root}, &stdout, &stderr); code != 0 {
+		t.Fatal(stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "(retired; stands in for parakeet-ultra-0.6b-int8 until it is ready)") {
+		t.Fatalf("text listing:\n%s", stdout.String())
+	}
+}
+
+// A retired model's files can be checked, so a stand-in runs only where it
+// works, but nothing installs, imports or packs one: no v3 download ever
+// starts.
+func TestModelsProbeChecksARetiredModelButNeverInstallsIt(t *testing.T) {
+	asr, _ := stubModelRuntime(t, true)
+	root := t.TempDir()
+	fakeInstallShipped(t, root, "silero-vad")
+	fakeInstallRetired(t, root, "parakeet-tdt-0.6b-v3-int8")
+
+	var stdout, stderr bytes.Buffer
+	if code := runModels(context.Background(), []string{"probe", "parakeet-tdt-0.6b-v3-int8", "--cache-root", root}, &stdout, &stderr); code != 0 || *asr != 1 {
+		t.Fatalf("probe = %d (%d checks): %s", code, *asr, stderr.String())
+	}
+	for _, args := range [][]string{
+		{"install", "parakeet-tdt-0.6b-v3-int8"},
+		{"install", "parakeet-tdt-0.6b-v3", "--device", "cuda"},
+		{"import", "parakeet-tdt-0.6b-v3-int8", "--from", root, "--revision", "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"},
+		{"pack", "parakeet-tdt-0.6b-v3-int8", "--out", filepath.Join(t.TempDir(), "v3.pack")},
+	} {
+		stderr.Reset()
+		if code := runModels(context.Background(), append(args, "--cache-root", root), &stdout, &stderr); code == 0 || !strings.Contains(stderr.String(), "is retired and is never installed") {
+			t.Fatalf("%v = %d: %s", args, code, stderr.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "downloads")); !os.IsNotExist(err) {
+		t.Fatalf("a download started: %v", err)
 	}
 }

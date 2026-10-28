@@ -18,9 +18,11 @@ import (
 
 // InstalledModel and InstalledVAD never acquire files. Runtime processing uses
 // only this store; the old archive helper remains for explicit benchmark tools.
+// They also resolve a retired model this binary keeps as a stand-in, from the
+// files an install still has.
 func InstalledModel(root string, id ModelID, revision string, _ io.Writer) (ModelPaths, error) {
 	s := modelstore.New(root)
-	m, err := s.Catalogue.Model(string(id), revision)
+	m, err := installedCatalogueModel(s, id, revision)
 	if err != nil {
 		return ModelPaths{}, err
 	}
@@ -45,7 +47,7 @@ func InstalledModel(root string, id ModelID, revision string, _ io.Writer) (Mode
 }
 func InstalledVAD(root string, id ModelID, revision string, _ io.Writer) (string, error) {
 	s := modelstore.New(root)
-	m, err := s.Catalogue.Model(string(id), revision)
+	m, err := installedCatalogueModel(s, id, revision)
 	if err != nil {
 		return "", err
 	}
@@ -57,6 +59,19 @@ func InstalledVAD(root string, id ModelID, revision string, _ io.Writer) (string
 		return "", fmt.Errorf("Silero VAD is not installed: %w", err)
 	}
 	return filepath.Join(s.Dir(v), v.Files[0].Path), nil
+}
+
+// installedCatalogueModel is the catalogue entry of a model to load: a
+// shipped one, or a retired one this binary keeps as a stand-in.
+func installedCatalogueModel(s *modelstore.Store, id ModelID, revision string) (modelstore.Model, error) {
+	m, retired, err := s.Catalogue.Lookup(string(id), revision)
+	if err != nil {
+		return modelstore.Model{}, err
+	}
+	if retired && !knownModels[id].Retired {
+		return modelstore.Model{}, fmt.Errorf("model %s is retired; this version does not run it", id)
+	}
+	return m, nil
 }
 
 // InstalledDiarizer describes an installed catalogue diarization model. Like

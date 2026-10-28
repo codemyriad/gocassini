@@ -25,6 +25,10 @@ type modelView struct {
 	// RuntimeSupported is set for diarization models only: whether this
 	// binary's native runtime can run them at all.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
+	// ReplacedBy is set on a retired model an install still has: the shipped
+	// model that replaced it, which it can stand in for until that one is
+	// ready. Such a row is never offered for install or selection.
+	ReplacedBy string `json:"replaced_by,omitempty"`
 }
 
 // listModelView is one `models list` row. A speech model counts its VAD in
@@ -126,6 +130,18 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			}
 			views = append(views, listModelView(s, m, *device))
 		}
+		// A retired model is listed only while its files are installed, so a
+		// build can stand in with it; nothing else ever lists one.
+		for _, m := range s.Catalogue.Retired {
+			if s.Complete(m) != nil || (*device == "cuda" && !transcribe.SupportsCUDA(transcribe.ModelID(m.ID))) {
+				continue
+			}
+			view := listModelView(s, m, *device)
+			if r, ok := s.Catalogue.Replacement(m.ID); ok {
+				view.ReplacedBy = r.ID
+			}
+			views = append(views, view)
+		}
 		if *jsonOutput {
 			if err := enc.Encode(views); err != nil {
 				return fail(err)
@@ -135,6 +151,9 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 				line := fmt.Sprintf("%s  %s  %s  installed=%t ready=%t download=%d bytes", v.ID, v.Kind, v.Revision, v.Installed, v.Ready, v.DownloadBytes)
 				if v.RuntimeSupported != nil && !*v.RuntimeSupported {
 					line += "  (this runtime cannot run it)"
+				}
+				if v.ReplacedBy != "" {
+					line += fmt.Sprintf("  (retired; stands in for %s until it is ready)", v.ReplacedBy)
 				}
 				fmt.Fprintln(stdout, line)
 			}
@@ -157,8 +176,17 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			return fail(fmt.Errorf("raw-file import requires --model and --revision; package: %w", err))
 		}
 	}
+	// Only a runtime check reaches a retired model, for the stand-in an
+	// install with its files may run: install, import and pack refuse it, so
+	// nothing ever downloads one.
 	m, err := s.Catalogue.Model(*modelID, *revision)
+	if command == "probe" {
+		m, _, err = s.Catalogue.Lookup(*modelID, *revision)
+	}
 	if err != nil {
+		if r, ok := s.Catalogue.Replacement(*modelID); ok {
+			return fail(fmt.Errorf("%s is retired and is never installed; %s replaced it", *modelID, r.ID))
+		}
 		return fail(err)
 	}
 	if m.Kind == modelstore.KindVAD {

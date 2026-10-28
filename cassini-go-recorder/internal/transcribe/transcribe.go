@@ -24,7 +24,16 @@ type BuildConfig struct {
 	ModelID             ModelID // defaults to defaultModelID
 	// ReplacedModelID is the retired id the configuration named when ModelID
 	// stands in for it (see ResolveModel); the build log says so.
-	ReplacedModelID  ModelID
+	ReplacedModelID ModelID
+	// StandIn is set when ModelID is a retired model the operator asked to
+	// stand in for its replacement, which is not ready (CASSINI_STT_STAND_IN_*,
+	// checked by StandInFor). The manifest records it. Never part of the
+	// resume fingerprint: its detail changes as a download progresses, and
+	// ModelID already tells a stand-in build from one with the replacement.
+	StandIn *portable.TranscriptionStandIn `json:"-"`
+	// StandInIgnored is a stand-in request DefaultBuildConfig refused because
+	// the model is not a retired one that model replaced; the log says so.
+	StandInIgnored   ModelID    `json:"-"`
 	AdditionalModels []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
 	CacheDir         string     // root cache directory, e.g. ~/.cache/cassini
 	SummaryLLM       LLMConfig  // optional; if not configured, skip summary generation
@@ -186,6 +195,16 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	if cfg.ReplacedModelID != "" {
 		fmt.Fprintf(stdout, "  STT model %s is retired; using %s, which replaces it\n", cfg.ReplacedModelID, cfg.ModelID)
 	}
+	if cfg.StandInIgnored != "" {
+		requested := cfg.ReplacedModelID
+		if requested == "" {
+			requested = cfg.ModelID
+		}
+		fmt.Fprintf(stdout, "  STT stand-in for %s ignored: %s is not a retired model it replaced\n", cfg.StandInIgnored, requested)
+	}
+	if cfg.StandIn != nil {
+		fmt.Fprintf(stdout, "  STT model %s stands in for %s, which is not ready (%s)\n", cfg.ModelID, cfg.StandIn.For, cfg.StandIn.Detail)
+	}
 	fmt.Fprintf(stdout, "  STT policy: backend=%s device=%s model=%s threads=%d quality=%s\n",
 		backend,
 		cfg.Device, cfg.ModelID, cfg.NumThreads, NormalizeQuality(string(cfg.Quality)))
@@ -199,13 +218,25 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	}
 	defer unlock()
 	if cfg.ModelRevision == "" {
-		if m, e := modelstore.Shipped().Model(string(cfg.ModelID), ""); e == nil {
+		if m, _, e := modelstore.Shipped().Lookup(string(cfg.ModelID), ""); e == nil {
 			cfg.ModelRevision = m.Revision
 		}
 	}
 	// --- 3. Resolve already installed STT model and VAD ---
 	fmt.Fprintf(stdout, "  resolving installed model %s...\n", cfg.ModelID)
 	modelPaths, err := ensureModelFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
+	if err != nil && cfg.StandIn != nil {
+		// The retired files were removed after the operator admitted this
+		// build. That happens only once their replacement has passed its
+		// runtime check, so transcribe with the replacement instead of
+		// keeping only the audio.
+		fmt.Fprintf(stdout, "  retired %s is gone (%v); using %s, which replaced it\n", cfg.ModelID, err, cfg.StandIn.For)
+		cfg.ModelID, cfg.ModelRevision, cfg.StandIn = ModelID(cfg.StandIn.For), "", nil
+		if m, e := modelstore.Shipped().Model(string(cfg.ModelID), ""); e == nil {
+			cfg.ModelRevision = m.Revision
+		}
+		modelPaths, err = ensureModelFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
+	}
 	if err != nil {
 		return fmt.Errorf("%w: %v", errModelUnavailable, err)
 	}
@@ -347,7 +378,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	srcBasename := filepath.Base(mkvPath)
 	if err := WriteManifest(manifestPath, ManifestInput{
 		Processing: &portable.Processing{
-			Transcription:  portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision},
+			Transcription:  portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision, StandIn: cfg.StandIn},
 			MeetingSummary: &summaryStatus,
 		},
 		SrcBasename:       srcBasename,
@@ -857,6 +888,16 @@ func DefaultInsightLLMConfig() LLMConfig {
 	return cfg
 }
 
+// The operator sets these for one build, when it admits a retired model to
+// transcribe in place of its replacement: the replacement, and why it is not
+// ready (a portable.StandInReason* value and a description). They are not
+// configuration.
+const (
+	envSTTStandInFor    = "CASSINI_STT_STAND_IN_FOR"
+	envSTTStandInReason = "CASSINI_STT_STAND_IN_REASON"
+	envSTTStandInDetail = "CASSINI_STT_STAND_IN_DETAIL"
+)
+
 // DefaultBuildConfig returns a BuildConfig populated from standard environment
 // variables. The caller should override Device and CacheDir as needed.
 func DefaultBuildConfig() BuildConfig {
@@ -868,11 +909,26 @@ func DefaultBuildConfig() BuildConfig {
 	// Leave an unset model empty: BuildMeetingArtifact derives it from the
 	// quality tier and the resolved device (GPU -> fp32, CPU -> int8). An
 	// explicit CASSINI_STT_MODEL still wins.
-	// A retired id (Parakeet v3) resolves to the model that replaced it.
+	// A retired id (Parakeet v3) resolves to the model that replaced it,
+	// unless the operator asks for it to stand in for that model, which is
+	// not ready yet (CASSINI_STT_STAND_IN_FOR, set for one build only).
 	primary, revision, replaced := ModelID(""), os.Getenv("CASSINI_STT_REVISION"), ModelID("")
+	var standIn *portable.TranscriptionStandIn
+	var standInIgnored ModelID
 	if explicit := strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")); explicit != "" {
-		resolved := ResolveModel(explicit, revision, "", "")
-		primary, revision, replaced = resolved.ID, resolved.Revision, resolved.Replaces
+		standInFor := ModelID(strings.TrimSpace(os.Getenv(envSTTStandInFor)))
+		if standInFor != "" && StandInFor(ModelID(explicit), standInFor) {
+			primary = ModelID(explicit)
+			standIn = &portable.TranscriptionStandIn{
+				For:    string(standInFor),
+				Reason: strings.TrimSpace(os.Getenv(envSTTStandInReason)),
+				Detail: strings.TrimSpace(os.Getenv(envSTTStandInDetail)),
+			}
+		} else {
+			resolved := ResolveModel(explicit, revision, "", "")
+			primary, revision, replaced = resolved.ID, resolved.Revision, resolved.Replaces
+			standInIgnored = standInFor
+		}
 	}
 
 	var additional []ModelID
@@ -898,6 +954,8 @@ func DefaultBuildConfig() BuildConfig {
 		Device:              defaultDevice(),
 		ModelID:             primary,
 		ReplacedModelID:     replaced,
+		StandIn:             standIn,
+		StandInIgnored:      standInIgnored,
 		AdditionalModels:    additional,
 		SummaryLLM:          summaryLLM,
 		NumThreads:          envInt("CASSINI_STT_NUM_THREADS"),
