@@ -34,16 +34,6 @@ main          ──●── v0.2.0 ──●──●──●──●──�
 release/0.2            └─────────────●── v0.2.1 ──●── v0.2.2
 ```
 
-The tooling is catching up with this convention: cutting from a release
-branch ([D-881]), syncing a branch release's changelog back to main ([D-882]),
-`:latest` only for the highest stable release ([D-883]), and protection plus the
-backport bot for `release/**` ([D-884]).
-
-[D-881]: https://linear.app/code-myriad/issue/D-881
-[D-882]: https://linear.app/code-myriad/issue/D-882
-[D-883]: https://linear.app/code-myriad/issue/D-883
-[D-884]: https://linear.app/code-myriad/issue/D-884
-
 ## Cut a release
 
 One guided command, run on the version's `release/X.Y` branch (see
