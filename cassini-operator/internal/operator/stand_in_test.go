@@ -393,7 +393,7 @@ func TestStandInOnCUDAIsFp32Only(t *testing.T) {
 // A CPU stand-in build is charged its own measured peak.
 func TestMinFreeMemForRetiredV3(t *testing.T) {
 	limits := resourceLimits{cpuMemHeadroomMB: 1024, minFreeMemMB: 6144}
-	for model, want := range map[string]int{v3Int8: 2816, modelParakeetV3Fp32: 4608} {
+	for model, want := range map[string]int{v3Int8: 3072, modelParakeetV3Fp32: 4608} {
 		if got := limits.minFreeMemForBuild(deviceCPU, model); got != want {
 			t.Errorf("%s: %d MiB, want %d", model, got, want)
 		}
@@ -406,11 +406,31 @@ func TestMinFreeMemForRetiredV3(t *testing.T) {
 	}
 }
 
-// Readiness sizes the next build for the model it will load.
+// Admission returns a memory wait for a model it must check without trying
+// its stand-in, which would have to wait as well.
+func TestStandInNeedsNoLessMemory(t *testing.T) {
+	limits := resourceLimits{cpuMemHeadroomMB: 1024, minFreeMemMB: 6144}
+	for retired, replacement := range map[string]string{v3Int8: modelParakeetUltraInt8, modelParakeetV3Fp32: modelParakeetUltraFp32} {
+		if r, u := limits.minFreeMemForBuild(deviceCPU, retired), limits.minFreeMemForBuild(deviceCPU, replacement); r < u {
+			t.Errorf("%s needs %d MiB, less than the %d MiB of %s", retired, r, u, replacement)
+		}
+	}
+}
+
+// Readiness sizes the next build for the model it will load: the stand-in
+// while Ultra is not installed, and Ultra once it is, since a build checks it
+// and runs it when it passes.
 func TestReadinessSizesBuildsForTheStandIn(t *testing.T) {
 	rt := standInRuntime(t, false, false, true, true)
 	if model, err := rt.admitModelForDevice(ultraInt8Settings(), deviceCPU); err != nil || model != v3Int8 {
 		t.Fatalf("readiness: %q %v", model, err)
+	}
+	rt = standInRuntime(t, true, false, true, true)
+	if model, err := rt.admitModelForDevice(ultraInt8Settings(), deviceCPU); err != nil || model != modelParakeetUltraInt8 {
+		t.Fatalf("readiness with Ultra unchecked: %q %v", model, err)
+	}
+	if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelParakeetUltraInt8 {
+		t.Fatalf("build with Ultra unchecked: %+v %v", admitted, err)
 	}
 }
 

@@ -79,7 +79,7 @@ var speechModelSpecs = map[string]speechModelSpec{
 	modelParakeetUltraFp32: {cuda: true, referenceMarkers: []string{parakeetV3ReferenceMarker, parakeetUltraReferenceMarker}, buildPeakMB: 3584, downloadMB: 1485},
 	// The retired v3 models are never selected or downloaded; a build runs one
 	// only as a stand-in for the Ultra model replacing it (admitStandIn).
-	modelParakeetV3Int8: {referenceMarkers: []string{parakeetV3ReferenceMarker}, buildPeakMB: 1792},
+	modelParakeetV3Int8: {referenceMarkers: []string{parakeetV3ReferenceMarker}, buildPeakMB: 2048},
 	modelParakeetV3Fp32: {cuda: true, referenceMarkers: []string{parakeetV3ReferenceMarker}, buildPeakMB: 3584},
 }
 
@@ -147,7 +147,10 @@ func modelForQuality(quality, device string) string {
 // host RSS in CUDA builds was within 2% of v3 fp32's (2,105 vs 2,146 MiB); its
 // CPU build was not measured, so it is charged v3 fp32's CPU figure above,
 // rounded up to 3584. v3 is still charged for the builds it stands in for
-// while Ultra is not ready: int8 1792, fp32 3584.
+// while Ultra is not ready: int8 2048 (its 1,807 rounded up like the rest;
+// before Ultra it was charged 1792 from the D-702 figure), fp32 3584. A
+// stand-in thus never needs less than the model it stands in for, which
+// admission relies on when that model's check waits for memory.
 //
 // The fp32 figure is why "best" is not the CPU default: it is the only tier
 // that transcribes slower than the meeting it is transcribing.
