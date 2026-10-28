@@ -7,8 +7,13 @@ v2.0.1, with its platform modules replaced by Cassini's prebuilt libraries:
 [codemyriad/sherpa-onnx-go-macos](https://github.com/codemyriad/sherpa-onnx-go-macos)
 (arm64, x86_64) and
 [codemyriad/sherpa-onnx-go-windows](https://github.com/codemyriad/sherpa-onnx-go-windows)
-(x64, 386, arm64), all at `v2.0.1-cassini.1` (module paths `.../v2`) from the
-same native source. The recorder itself does not build for Windows yet (the
+(x64, 386, arm64), at `v2.0.1-cassini.1` (Linux) and `v2.0.1-cassini.2`
+(macOS, Windows; module paths `.../v2`) from the same native source. The macOS
+and Windows `.2` tags ship only the C API library and ONNX Runtime: `.1` also
+kept upstream's stock C++ wrapper library, built against the C diarization
+config without #4032's `sortformer` member, so it disagreed with the C API on
+that struct's layout. Go never links the C++ wrapper; the Linux fork rebuilds
+it from the same source. The recorder itself does not build for Windows yet (the
 model store uses Unix file locking and `statfs`); the Windows module is pinned
 so it is ready when it does. Each fork's GitHub workflow builds the library on
 a runner and, before release, checks the version string, transcribes a quiet
