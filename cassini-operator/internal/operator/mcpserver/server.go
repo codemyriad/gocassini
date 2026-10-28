@@ -39,6 +39,8 @@ type Reader interface {
 	List(ctx context.Context, caller string, in ListInput) (ListResult, error)
 	Tags(ctx context.Context, caller string) (TagsResult, error)
 	Annotations(ctx context.Context, caller string, in AnnotationsInput) (AnnotationsResult, error)
+	Search(ctx context.Context, caller string, in SearchInput) (SearchResult, error)
+	Context(ctx context.Context, caller string, in ContextInput) (ContextResult, error)
 }
 
 // CallerFunc returns the authenticated caller of the request ctx belongs to,
@@ -80,6 +82,12 @@ func NewServer(reader Reader, caller CallerFunc, logger *log.Logger) *mcp.Server
 	addTool(server, t, "list",
 		"Which meetings may this account read, optionally only a room's, a date range's or a tag's? Newest first.",
 		reader.List)
+	addTool(server, t, "search",
+		"Where was this said, across the meetings this account may read? References only (meeting, speaker, startMs), never the words; read them with context.",
+		reader.Search)
+	addTool(server, t, "context",
+		"Give me those meetings as one document to read: summary and transcript, each passage with its speaker and startMs. fromMs/toMs read just a stretch.",
+		reader.Context)
 	addTool(server, t, "tags",
 		"Which tags are on the meetings this account may read? A tag's label or id is what list takes as tag.",
 		func(ctx context.Context, caller string, _ struct{}) (TagsResult, error) {

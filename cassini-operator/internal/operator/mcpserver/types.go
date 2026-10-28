@@ -134,3 +134,135 @@ type SyncStatus struct {
 	Confirmed int64  `json:"confirmed"`
 	Error     string `json:"error,omitempty"`
 }
+
+// SearchInput is one search. Only Query is required.
+type SearchInput struct {
+	Query   string `json:"query" jsonschema:"the words to look for"`
+	Speaker string `json:"speaker,omitempty" jsonschema:"only moments this speaker id said"`
+	Room    string `json:"room,omitempty" jsonschema:"only meetings from this room id"`
+	Tag     string `json:"tag,omitempty" jsonschema:"only meetings carrying this tag label or id"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"how many moments to return (default 20, max 100)"`
+}
+
+// SearchResult is `meetings search --json`: where something was said, never
+// what. There is no text field anywhere in it, by construction — reading what
+// was said is context's job, which reads the recording as the caller.
+type SearchResult struct {
+	Hits []SearchHit `json:"hits"`
+	// Widened reports that requiring every word found nothing and the query
+	// was retried as "any of them", which answers a different question.
+	Widened bool `json:"widened,omitempty"`
+	// Searched is what was actually looked for after expanding the spellings
+	// transcription produces for a word.
+	Searched [][]string `json:"searched,omitempty"`
+	// Coverage: Searched below Visible means some readable meetings are not
+	// indexed yet, and "nothing found" covers only the rest.
+	Coverage SearchCoverage `json:"coverage"`
+}
+
+// SearchHit is one moment: which meeting, who, and where in the recording.
+type SearchHit struct {
+	MeetingID       string `json:"meetingId"`
+	Title           string `json:"title,omitempty"`
+	DateLabel       string `json:"dateLabel,omitempty"`
+	RoomID          string `json:"roomId,omitempty"`
+	RoomName        string `json:"roomName,omitempty"`
+	RoomDisplayName string `json:"roomDisplayName,omitempty"`
+	SegmentID       string `json:"segmentId"`
+	StartMS         int64  `json:"startMs"`
+	EndMS           int64  `json:"endMs"`
+	SpeakerID       string `json:"speakerId,omitempty"`
+	// Matched says why it matched: "alias" means one of the spellings
+	// transcription produces for a word, not the word itself.
+	Matched string `json:"matched"`
+	// Marks are the tags whose marked stretches this moment overlaps.
+	Marks []SearchMark `json:"marks,omitempty"`
+}
+
+// SearchMark is a tag on the stretch a hit falls in.
+type SearchMark struct {
+	TagID string `json:"tagId"`
+	Label string `json:"label"`
+}
+
+// SearchCoverage is what an answer can honestly claim to have covered.
+type SearchCoverage struct {
+	Visible  int `json:"visible"`
+	Searched int `json:"searched"`
+}
+
+// ContextInput names the meetings to read, and optionally a stretch of them.
+type ContextInput struct {
+	IDs    []string `json:"ids" jsonschema:"1 to 20 meeting ids, in the order to read them"`
+	FromMS *int64   `json:"fromMs,omitempty" jsonschema:"read only from this point, in milliseconds from the start (a search hit's startMs, less a minute, reads around it)"`
+	ToMS   *int64   `json:"toMs,omitempty" jsonschema:"read only up to this point, in milliseconds from the start"`
+}
+
+// ContextResult is cassini.meetings.context.v1 in its container form: every
+// element of Meetings is one complete meeting document. (The CLI prints a
+// single meeting as the bare document; a tool keeps one shape.)
+type ContextResult struct {
+	Version  string           `json:"version"`
+	Meetings []MeetingContext `json:"meetings"`
+}
+
+// MeetingContext is one meeting as an agent reads it.
+type MeetingContext struct {
+	Version  string           `json:"version"`
+	Meeting  ContextMeeting   `json:"meeting"`
+	Speakers []ContextSpeaker `json:"speakers,omitempty"`
+	// TranscriptSource is "derived-from-words": the prose was assembled from
+	// speech recognition, and must not be presented as edited text.
+	TranscriptSource       string `json:"transcriptSource"`
+	SourceTranscriptID     string `json:"sourceTranscriptId,omitempty"`
+	SourceTranscriptFormat string `json:"sourceTranscriptFormat,omitempty"`
+	Language               string `json:"language,omitempty"`
+	// WordCount is the whole meeting's, window or not.
+	WordCount int `json:"wordCount"`
+	// Window is set when only a stretch was asked for: Segments then holds
+	// only the passages overlapping it.
+	Window   *ContextWindow   `json:"window,omitempty"`
+	Segments []ContextSegment `json:"segments"`
+	Summary  ContextSummary   `json:"summary"`
+}
+
+// ContextMeeting is what the meeting was.
+type ContextMeeting struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	CreatedAtUTC    string `json:"createdAtUtc,omitempty"`
+	DurationMS      int64  `json:"durationMs,omitempty"`
+	RoomID          string `json:"roomId,omitempty"`
+	RoomName        string `json:"roomName,omitempty"`
+	RoomDisplayName string `json:"roomDisplayName,omitempty"`
+}
+
+// ContextSpeaker is one member of the meeting's roster.
+type ContextSpeaker struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// ContextWindow is the stretch a windowed document holds.
+type ContextWindow struct {
+	FromMS int64  `json:"fromMs"`
+	ToMS   *int64 `json:"toMs,omitempty"`
+}
+
+// ContextSegment is one speaker-attributed passage. StartMS is the minute to
+// cite.
+type ContextSegment struct {
+	Speaker      string `json:"speaker,omitempty"`
+	SpeakerLabel string `json:"speakerLabel,omitempty"`
+	StartMS      int64  `json:"startMs"`
+	EndMS        int64  `json:"endMs"`
+	Text         string `json:"text"`
+}
+
+// ContextSummary is the generated summary, when there is one.
+type ContextSummary struct {
+	Present  bool   `json:"present"`
+	Format   string `json:"format,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Markdown string `json:"markdown,omitempty"`
+}

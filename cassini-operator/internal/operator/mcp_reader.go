@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"cassini-operator/internal/operator/appapi"
 	"cassini-operator/internal/operator/mcpserver"
@@ -185,6 +188,127 @@ func (m *mcpReader) Annotations(ctx context.Context, caller string, in mcpserver
 	}
 	return result, nil
 }
+
+func (m *mcpReader) Search(ctx context.Context, caller string, in mcpserver.SearchInput) (mcpserver.SearchResult, error) {
+	response, err := m.exapp.searchMeetings(ctx, m.client, caller, searchParams{
+		Query: in.Query, Speaker: in.Speaker, Room: in.Room, Tag: in.Tag, Limit: in.Limit,
+	}, m.search, m.logger)
+	if err != nil {
+		return mcpserver.SearchResult{}, mcpRefusal(err)
+	}
+	// References only. The route's hits carry a bounded snippet for the
+	// viewer; this result has nowhere to put one, so no transcript text read
+	// from the index can reach an agent — reading what was said goes through
+	// context, which reads the recording as the caller and so crosses
+	// Nextcloud's own permission check. The CLI drops it the same way.
+	result := mcpserver.SearchResult{
+		Hits:     make([]mcpserver.SearchHit, 0, len(response.Hits)),
+		Widened:  response.Widened,
+		Searched: response.Searched,
+		Coverage: mcpserver.SearchCoverage{Visible: response.Coverage.Visible, Searched: response.Coverage.Searched},
+	}
+	for _, hit := range response.Hits {
+		var marks []mcpserver.SearchMark
+		if hit.Marks != nil {
+			for _, mark := range *hit.Marks {
+				marks = append(marks, mcpserver.SearchMark{TagID: mark.TagID, Label: mark.Label})
+			}
+		}
+		result.Hits = append(result.Hits, mcpserver.SearchHit{
+			MeetingID: hit.MeetingID, Title: hit.Title, DateLabel: hit.DateLabel,
+			RoomID: hit.RoomID, RoomName: hit.RoomName, RoomDisplayName: hit.RoomDisplayName,
+			SegmentID: hit.SegmentID, StartMS: hit.StartMS, EndMS: hit.EndMS,
+			SpeakerID: hit.SpeakerID, Matched: hit.Matched, Marks: marks,
+		})
+	}
+	return result, nil
+}
+
+func (m *mcpReader) Context(ctx context.Context, caller string, in mcpserver.ContextInput) (mcpserver.ContextResult, error) {
+	ids, err := validateContextIDs(in.IDs)
+	if err != nil {
+		return mcpserver.ContextResult{}, err
+	}
+	request := meetingsContextRequest{ids: ids, asJSON: true}
+	if in.FromMS != nil || in.ToMS != nil {
+		var from int64
+		if in.FromMS != nil {
+			from = *in.FromMS
+		}
+		if request.window, err = newContextWindow(from, in.ToMS); err != nil {
+			return mcpserver.ContextResult{}, err
+		}
+	}
+	if strings.TrimSpace(m.exapp.CassiniBin) == "" {
+		return mcpserver.ContextResult{}, errors.New("reading meetings is not available on this deployment; this is not an empty result")
+	}
+	document, err := m.exapp.meetingsContextDocument(ctx, m.client, caller, request, m.logger)
+	if err != nil {
+		var read *readFailure
+		if errors.As(err, &read) && read.status == http.StatusNotFound {
+			// A bundle is all of its meetings or none, so say which rule
+			// failed it rather than which meeting.
+			return mcpserver.ContextResult{}, errors.New("one of those ids is not a meeting you can read; list reports the ids you can")
+		}
+		return mcpserver.ContextResult{}, mcpRefusal(err)
+	}
+	defer document.Close()
+	raw, err := io.ReadAll(document)
+	if err != nil {
+		m.logf("mcp: context caller=%s: read document: %v", caller, err)
+		return mcpserver.ContextResult{}, errors.New("the meetings could not be read; this is not an empty result")
+	}
+	result, err := decodeContextDocument(raw)
+	if err != nil {
+		m.logf("mcp: context caller=%s: decode document: %v", caller, err)
+		return mcpserver.ContextResult{}, errors.New("the meetings could not be read; this is not an empty result")
+	}
+	return result, nil
+}
+
+// decodeContextDocument reads either form of cassini.meetings.context.v1 into
+// the container form the tool always answers in: one meeting is printed as the
+// bare document, several under "meetings".
+func decodeContextDocument(raw []byte) (mcpserver.ContextResult, error) {
+	var probe struct {
+		Version  string          `json:"version"`
+		Meetings json.RawMessage `json:"meetings"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return mcpserver.ContextResult{}, err
+	}
+	if probe.Version != contextDocumentVersion {
+		return mcpserver.ContextResult{}, fmt.Errorf("the document declares version %q", probe.Version)
+	}
+	result := mcpserver.ContextResult{Version: contextDocumentVersion}
+	if len(probe.Meetings) > 0 {
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return mcpserver.ContextResult{}, err
+		}
+	} else {
+		var one mcpserver.MeetingContext
+		if err := json.Unmarshal(raw, &one); err != nil {
+			return mcpserver.ContextResult{}, err
+		}
+		result.Meetings = []mcpserver.MeetingContext{one}
+	}
+	if len(result.Meetings) == 0 {
+		return mcpserver.ContextResult{}, errors.New("the document carries no meetings")
+	}
+	for i := range result.Meetings {
+		// Never null on the wire: a meeting with no speech in the window is an
+		// empty transcript, not a missing one.
+		if result.Meetings[i].Segments == nil {
+			result.Meetings[i].Segments = []mcpserver.ContextSegment{}
+		}
+	}
+	return result, nil
+}
+
+// contextDocumentVersion is the cassini.meetings.context.v1 version string.
+// The contract lives in the CLI's module, which this one does not import; the
+// document is the CLI's output, and this is the one field read to trust it.
+const contextDocumentVersion = "cassini.meetings.context.v1"
 
 func (m *mcpReader) logf(format string, args ...any) {
 	if m.logger != nil {

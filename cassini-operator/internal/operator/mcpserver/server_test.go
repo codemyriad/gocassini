@@ -46,6 +46,14 @@ func (f fakeReader) Tags(context.Context, string) (TagsResult, error) {
 	return TagsResult{Tags: []Tag{}, Meetings: []MeetingTags{}}, f.err
 }
 
+func (f fakeReader) Search(_ context.Context, _ string, in SearchInput) (SearchResult, error) {
+	return SearchResult{Hits: []SearchHit{{MeetingID: "m1", SegmentID: "s1", StartMS: 60_000, EndMS: 65_000, Matched: "exact"}}}, f.err
+}
+
+func (f fakeReader) Context(_ context.Context, _ string, in ContextInput) (ContextResult, error) {
+	return ContextResult{Version: "cassini.meetings.context.v1", Meetings: []MeetingContext{}}, f.err
+}
+
 func (f fakeReader) Annotations(_ context.Context, _ string, in AnnotationsInput) (AnnotationsResult, error) {
 	return AnnotationsResult{MeetingID: in.ID}, f.err
 }
@@ -127,7 +135,7 @@ func TestToolsAreTheReadVerbsAllReadOnly(t *testing.T) {
 		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 			t.Errorf("tool %s is not marked read-only", tool.Name)
 		}
-		if len(tool.Description) > 200 {
+		if len(tool.Description) > 160 {
 			t.Errorf("tool %s description is %d characters; keep it short", tool.Name, len(tool.Description))
 		}
 		if tool.OutputSchema == nil {
@@ -135,7 +143,7 @@ func TestToolsAreTheReadVerbsAllReadOnly(t *testing.T) {
 		}
 	}
 	sort.Strings(names)
-	if got := strings.Join(names, ","); got != "annotations,list,rooms,tags" {
+	if got := strings.Join(names, ","); got != "annotations,context,list,rooms,search,tags" {
 		t.Fatalf("tools = %s", got)
 	}
 }
