@@ -68,6 +68,7 @@
     type TagMatch,
   } from "./viewer/listTags";
   import { createMeetingMarksSessions } from "./components/marking/sessions";
+  import ImportPanel from "./components/import/ImportPanel.svelte";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
@@ -1288,6 +1289,25 @@
   // provider cannot, and then there is no type filter, no card and no document
   // — the honest reading of a build with no operator behind it.
   $: insightsOffered = typeof dataProvider.listInsights === "function";
+
+  // Import exists only where a provider can stage, start and list (D-828): the
+  // in-Nextcloud build. Without it there is no tab switcher at all, so the
+  // static, public and bundled builds render pixel-identically.
+  $: importsOffered =
+    typeof dataProvider.stageImportUpload === "function" &&
+    typeof dataProvider.startImports === "function" &&
+    typeof dataProvider.listImports === "function";
+  // Which half of Browse the right-hand pane shows. The Import tab is a
+  // persistent workbench, not an overlay: Escape and the layer bookkeeping are
+  // untouched by it.
+  let browseTab: "meetings" | "import" = "meetings";
+  // True while imports are staging or running server-side — the dot on the tab
+  // label, reported by the panel (which stays mounted so the dot is honest
+  // before the tab is first opened).
+  let importActivity = false;
+  $: if (!importsOffered) {
+    browseTab = "meetings";
+  }
   // Which kinds the browse list is showing. Owned here rather than in the list
   // because the control that changes it is in the rail: two components reading
   // one filter cannot each keep their own copy of it.
@@ -1504,8 +1524,33 @@
     />
   </div>
 {:else}
-  <div class="browse-shell">
-    <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
+  <div class="browse-shell" class:with-tabs={importsOffered}>
+    {#if importsOffered}
+      <!-- Second-level tabs, visually subordinate to the shell's Browse/Operator
+           nav above. A segmented control rather than another nav bar. -->
+      <div class="browse-tabs" inert={topLayer > 0} role="tablist" aria-label="Browse sections">
+        <button
+          type="button"
+          role="tab"
+          class="browse-tab"
+          class:active={browseTab === "meetings"}
+          aria-selected={browseTab === "meetings"}
+          on:click={() => (browseTab = "meetings")}
+        >Meetings</button>
+        <button
+          type="button"
+          role="tab"
+          class="browse-tab"
+          class:active={browseTab === "import"}
+          aria-selected={browseTab === "import"}
+          on:click={() => (browseTab = "import")}
+        >
+          Import
+          {#if importActivity}<span class="tab-dot" role="status" aria-label="Imports are running"></span>{/if}
+        </button>
+      </div>
+    {/if}
+    <div class="contents" class:tab-hidden={browseTab === "import"} inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
       editable={!!dataProvider.loadRoomName && !!dataProvider.saveRoomName}
@@ -1535,7 +1580,7 @@
     />
     </div>
 
-    <div class="contents" inert={topLayer > 0}>
+    <div class="contents" class:tab-hidden={browseTab === "import"} inert={topLayer > 0}>
     <MeetingList
       meetings={roomMeetings}
       types={browseTypes}
@@ -1600,8 +1645,17 @@
     />
     </div>
 
+    {#if importsOffered}
+      <ImportPanel
+        {dataProvider}
+        active={browseTab === "import"}
+        on:activity={(event) => (importActivity = event.detail)}
+        on:imported={() => void refreshCatalog()}
+      />
+    {/if}
+
     {#if selectionBarUp}
-      <div class="selection-dock" bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
+      <div class="selection-dock" class:tab-hidden={browseTab === "import"} bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
         <SelectionBar
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
@@ -1812,6 +1866,52 @@
     min-height: 0;
     overflow: hidden;
     background-color: var(--color-base-100);
+  }
+  /* With the Import tab offered, a tabs row spans both columns above the rail
+     and the list (D-828). Only then: without it the single implicit row keeps
+     the layout every other build has. */
+  .browse-shell.with-tabs {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .browse-tabs {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 2px;
+    width: max-content;
+    margin: 8px 12px 0;
+    padding: 2px;
+    border: 1px solid var(--color-base-300);
+    border-radius: calc(var(--radius-box, 12px) - 2px);
+    background: var(--color-base-200);
+  }
+  .browse-tab {
+    position: relative;
+    padding: 4px 16px;
+    border-radius: calc(var(--radius-box, 12px) - 4px);
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--color-base-content);
+    opacity: 0.65;
+    cursor: pointer;
+  }
+  .browse-tab.active {
+    background: var(--color-base-100);
+    opacity: 1;
+    box-shadow: 0 1px 2px oklch(0% 0 0 / 0.12);
+  }
+  .tab-dot {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-primary);
+  }
+  /* Hides a pane the inactive tab owns. !important because the wrappers carry
+     Tailwind's `.contents` (display: contents), which would otherwise win. */
+  .tab-hidden {
+    display: none !important;
   }
 
   .shell-scrim {
