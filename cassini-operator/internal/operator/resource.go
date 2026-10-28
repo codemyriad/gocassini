@@ -119,7 +119,8 @@ type resourceUnavailableError struct {
 	// job to build/blocked immediately instead of scheduling retries forever.
 	permanent bool
 	// awaitsModel means the build waits for its speech model: being
-	// installed, or replacing a retired one. A job whose source media is
+	// installed, replacing a retired one, or missing from a
+	// delete-after-processing job's selection. A job whose source media is
 	// deleted after processing keeps waiting past the retry ceiling rather
 	// than fail and lose the recording without a transcript.
 	awaitsModel bool

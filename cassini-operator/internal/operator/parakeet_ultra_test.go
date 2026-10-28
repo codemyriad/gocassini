@@ -265,7 +265,7 @@ func TestBuildWaitsForAModelBeingInstalled(t *testing.T) {
 	settings := STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: strings.Repeat("b", 64), Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser}
 	rt.setSettings(settings)
 
-	_, _, err := rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv())
+	_, _, err := rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv(), false)
 	if err == nil || transientResourceError(err) {
 		t.Fatalf("missing model with no install running: %v (transient=%v)", err, transientResourceError(err))
 	}
@@ -278,7 +278,7 @@ func TestBuildWaitsForAModelBeingInstalled(t *testing.T) {
 	if err := rt.updateModelJob(job); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv())
+	_, _, err = rt.admitTranscription(rt.ctx, settings, resourceLimitsFromEnv(), false)
 	if !transientResourceError(err) || !strings.Contains(err.Error(), "downloading, 25%") {
 		t.Fatalf("admission while downloading: %v", err)
 	}

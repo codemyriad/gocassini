@@ -198,12 +198,19 @@ func modelJobRunning(j modelJob) bool {
 // runningModelJob returns the queued or working install job of a model
 // revision on a device, if any.
 func (rt *Runtime) runningModelJob(ctx context.Context, model, revision, device string) (modelJob, bool) {
+	j, ok := rt.modelJobFor(ctx, model, revision, device)
+	return j, ok && modelJobRunning(j)
+}
+
+// modelJobFor returns the install job of a model revision on a device, in
+// whatever state, if there is one (enqueueModel keeps at most one).
+func (rt *Runtime) modelJobFor(ctx context.Context, model, revision, device string) (modelJob, bool) {
 	jobs, err := rt.modelJobs(ctx)
 	if err != nil {
 		return modelJob{}, false
 	}
 	for _, j := range jobs {
-		if j.Model == model && j.Revision == revision && j.Device == device && modelJobRunning(j) {
+		if j.Model == model && j.Revision == revision && j.Device == device {
 			return j, true
 		}
 	}

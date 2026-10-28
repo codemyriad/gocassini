@@ -119,9 +119,10 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 					return
 				}
 				// Failing a delete-after-processing job deletes its source media.
-				// A speech model that is being installed, or that replaces a
-				// retired one, is worth waiting for past the ceiling: losing the
-				// recording without a transcript is not.
+				// A speech model that is being installed, that replaces a
+				// retired one, or that the job's saved settings select and is
+				// not installed is worth waiting for past the ceiling: losing
+				// the recording without a transcript is not.
 				if !unavailable.permanent && unavailable.awaitsModel && deletesSourceMedia(job) {
 					ceiling = false
 				}
@@ -313,7 +314,13 @@ func transientResourceError(err error) bool {
 // replaces it on that tier and device, at its revision. A non-permanent
 // *resourceUnavailableError means waiting may help; any other error means this
 // build cannot transcribe.
-func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings, limits resourceLimits) (string, STTSettings, error) {
+//
+// dispose says the job deletes its source media once it is processed. Its
+// build cannot publish audio without a transcript, and failing it deletes the
+// recording, so a selected model that is not installed is waited for (and
+// installed, see awaitModelInstall) like the replacement of a retired pin,
+// instead of being reported as unavailable.
+func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings, limits resourceLimits, dispose bool) (string, STTSettings, error) {
 	device, err := resolveDeviceForSettings(settings)
 	if err != nil {
 		return "", settings, err
@@ -345,16 +352,29 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 		selected = replacement
 	}
 	if !selected.Installed {
-		if job, ok := rt.runningModelJob(ctx, selected.ID, selected.Revision, device); ok {
+		job, hasJob := rt.modelJobFor(ctx, selected.ID, selected.Revision, device)
+		if hasJob && modelJobRunning(job) {
 			// Being installed (after an upgrade replaced the model, typically):
 			// waiting is what makes this transcript possible.
 			return "", settings, &resourceUnavailableError{resource: "speech model " + selected.ID, detail: "being installed (" + modelJobProgressText(job) + ")", awaitsModel: true}
 		}
-		if retiredPin != "" {
+		if hasJob && job.State == "ready" {
+			// The install may have finished after the inventory was read.
+			rt.invalidateModelInventory()
+			if fresh, err := rt.modelInventory(ctx, device); err == nil {
+				if m, err := findModel(fresh, selected.ID, selected.Revision); err == nil {
+					selected = m
+				}
+			}
+		}
+	}
+	if !selected.Installed {
+		if retiredPin != "" || dispose {
 			// Nothing else installs the replacement when the global settings
-			// have moved on since this job saved its pin. The retirement is
-			// not this recording's fault: wait for the model, never fail it.
-			return "", settings, rt.awaitReplacementInstall(ctx, selected, device, retiredPin)
+			// have moved on since this job saved its pin, and nothing may
+			// install a model that is missing for any other reason. Neither is
+			// this recording's fault: wait for the model, never fail it.
+			return "", settings, rt.awaitModelInstall(ctx, selected, device, retiredPin)
 		}
 		return "", settings, fmt.Errorf("speech model %s %s is not installed", selected.ID, selected.Revision)
 	}
@@ -372,14 +392,20 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 	return device, settings, nil
 }
 
-// awaitReplacementInstall queues the install of the model replacing a retired
-// pin, when downloads are allowed and no earlier attempt has finished, and
-// returns the transient condition the build waits on. A failed or cancelled
-// install is not retried from here, so a broken download does not restart on
-// every deferral: Settings shows it with a retry, and a restart retries the
-// active model's install. A "ready" job whose files are gone runs again.
-func (rt *Runtime) awaitReplacementInstall(ctx context.Context, m modelInfo, device, retired string) error {
+// awaitModelInstall queues the install of a speech model a build waits for
+// (the model replacing a retired pin, when retired names it, or the missing
+// model of a delete-after-processing job), when downloads are allowed and no
+// earlier attempt has finished, and returns the transient condition the build
+// waits on. A failed or cancelled install is not retried from here, so a broken
+// download does not restart on every deferral: Settings shows it with a retry,
+// and a restart retries the active model's install. A "ready" job whose files
+// are gone runs again.
+func (rt *Runtime) awaitModelInstall(ctx context.Context, m modelInfo, device, retired string) error {
 	wait := &resourceUnavailableError{resource: "speech model " + m.ID, awaitsModel: true}
+	why := "is not installed"
+	if retired != "" {
+		why = "replaces retired " + retired
+	}
 	job, err := rt.ensureModelInstall(ctx, m, device, false)
 	if err == nil && job.State == "ready" {
 		// A finished install whose files are gone: run it again.
@@ -387,13 +413,16 @@ func (rt *Runtime) awaitReplacementInstall(ctx context.Context, m modelInfo, dev
 	}
 	switch {
 	case errors.Is(err, errModelDownloadsDisabled):
-		wait.detail = fmt.Sprintf("replaces retired %s and is not installed; downloads are disabled, so import it with cassini models import", retired)
+		if retired != "" {
+			why += " and is not installed"
+		}
+		wait.detail = fmt.Sprintf("%s; downloads are disabled, so import it with cassini models import", why)
 	case err != nil:
-		wait.detail = fmt.Sprintf("replaces retired %s; its install could not be queued: %v", retired, err)
+		wait.detail = fmt.Sprintf("%s; its install could not be queued: %v", why, err)
 	case modelJobRunning(job):
-		wait.detail = fmt.Sprintf("replaces retired %s; being installed (%s)", retired, modelJobProgressText(job))
+		wait.detail = fmt.Sprintf("%s; being installed (%s)", why, modelJobProgressText(job))
 	default:
-		wait.detail = fmt.Sprintf("replaces retired %s; its install ended %s", retired, job.State)
+		wait.detail = fmt.Sprintf("%s; its install ended %s", why, job.State)
 		if job.Error != "" {
 			wait.detail += " (" + job.Error + ")"
 		}
@@ -455,7 +484,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		}
 	}
 	if settings.TranscriptionEnabled {
-		selectedDevice, admitted, err := rt.admitTranscription(ctx, settings, limits)
+		selectedDevice, admitted, err := rt.admitTranscription(ctx, settings, limits, dispose)
 		switch {
 		case err == nil:
 			// A retired pin runs as its replacement: the child gets the model
