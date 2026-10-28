@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 'release/**'
     tags:
       - 'v*'
   pull_request:
@@ -180,7 +181,7 @@ jobs:
       version: ${{ steps.ffmpeg.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      # Only needed to read the label off the current main image on tag builds.
+      # Only needed to read the label off the release line's branch image on tag builds.
       - name: Log in to the container registry
         if: github.ref_type == 'tag'
         uses: docker/login-action@v3
@@ -197,16 +198,18 @@ jobs:
           # human is already looking.
           #
           # A release must not be the first place a given FFmpeg appears. Tag
-          # builds therefore inherit the version the current main image was
-          # built with, rather than resolving upstream again: a release
-          # published minutes after an upstream one would otherwise ship an
-          # FFmpeg no main build has ever gated, and rebuilding that tag later
-          # would produce a different binary. Pinning here also decouples
-          # rollback — reverting a release no longer silently reverts FFmpeg
-          # along with our code.
+          # builds therefore inherit the version the current image of the
+          # branch the release is cut on (main for alphas, release/X.Y for the
+          # rest of the line) was built with, rather than resolving upstream
+          # again: a release published minutes after an upstream one would
+          # otherwise ship an FFmpeg no branch build has ever gated, and
+          # rebuilding that tag later would produce a different binary. Pinning
+          # here also decouples rollback — reverting a release no longer
+          # silently reverts FFmpeg along with our code.
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            main_image="${REGISTRY}/${IMAGE}:branch-main"
-            validated="$(docker buildx imagetools inspect "$main_image" \
+            line_branch="$(./scripts/release-version.sh branch "${GITHUB_REF_NAME#v}")"
+            branch_image="${REGISTRY}/${IMAGE}:branch-${line_branch//\//-}"
+            validated="$(docker buildx imagetools inspect "$branch_image" \
               --format '{{ json .Image }}' 2>/dev/null \
               | jq -r '
                   if .config? then
@@ -222,11 +225,11 @@ jobs:
                 ' || true)"
             case "${validated}" in
               "" | latest | *[!0-9.]* | .* | *..* | *.)
-                echo "::warning::${main_image} carries no validated FFmpeg version" \
+                echo "::warning::${branch_image} carries no validated FFmpeg version" \
                   "(got '${validated:-none}'); falling back to resolving upstream"
                 ;;
               *)
-                echo "Pinning FFmpeg ${validated}, as already gated by the current main image"
+                echo "Pinning FFmpeg ${validated}, as already gated by ${branch_image}"
                 echo "version=${validated}" >> "$GITHUB_OUTPUT"
                 exit 0
                 ;;
