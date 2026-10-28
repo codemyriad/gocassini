@@ -377,10 +377,14 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 // returns the transient condition the build waits on. A failed or cancelled
 // install is not retried from here, so a broken download does not restart on
 // every deferral: Settings shows it with a retry, and a restart retries the
-// active model's install.
+// active model's install. A "ready" job whose files are gone runs again.
 func (rt *Runtime) awaitReplacementInstall(ctx context.Context, m modelInfo, device, retired string) error {
 	wait := &resourceUnavailableError{resource: "speech model " + m.ID, awaitsModel: true}
 	job, err := rt.ensureModelInstall(ctx, m, device, false)
+	if err == nil && job.State == "ready" {
+		// A finished install whose files are gone: run it again.
+		job, err = rt.ensureModelInstall(ctx, m, device, true)
+	}
 	switch {
 	case errors.Is(err, errModelDownloadsDisabled):
 		wait.detail = fmt.Sprintf("replaces retired %s and is not installed; downloads are disabled, so import it with cassini models import", retired)

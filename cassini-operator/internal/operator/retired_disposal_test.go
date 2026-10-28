@@ -139,6 +139,19 @@ func TestDisposalJobPinnedToV3WithoutADownload(t *testing.T) {
 	if j := onlyModelJob(t, rt); j.State != "failed" {
 		t.Fatalf("admission restarted a failed install: %+v", j)
 	}
+
+	// A job that finished but whose files are gone runs again.
+	job.State, job.Error = "ready", ""
+	if err := rt.updateModelJob(job); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = rt.admitTranscription(rt.ctx, snapshot, resourceLimitsFromEnv())
+	if !transientResourceError(err) || !strings.Contains(err.Error(), "being installed (queued)") {
+		t.Fatalf("stale ready install: %v", err)
+	}
+	if j := onlyModelJob(t, rt); j.State != "queued" {
+		t.Fatalf("stale ready install not requeued: %+v", j)
+	}
 }
 
 // Past the ceiling, a disposal job still fails on any other resource
