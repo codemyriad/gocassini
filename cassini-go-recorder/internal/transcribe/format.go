@@ -248,10 +248,13 @@ type AttributionProvenance struct {
 }
 
 type provStep struct {
-	Backend           string `json:"backend"`
-	Model             string `json:"model,omitempty"`
-	Device            string `json:"device,omitempty"`
-	ReferenceFrontend *bool  `json:"referenceFrontend,omitempty"`
+	Backend string `json:"backend"`
+	Model   string `json:"model,omitempty"`
+	Device  string `json:"device,omitempty"`
+	// NativeFrontend names the native feature frontend a Parakeet
+	// boundary-policy model ran on ("nemo-log-guard"). Manifests written on
+	// the 1.13.7 runtimes carry referenceFrontend instead.
+	NativeFrontend string `json:"nativeFrontend,omitempty"`
 	// Encoder is the url and comment from the encoder's ONNX metadata: the
 	// export that actually loaded, which the model id alone does not prove.
 	Encoder *EncoderProvenance `json:"encoder,omitempty"`
@@ -332,10 +335,10 @@ type ManifestInput struct {
 	SummaryModel string
 	HasSummary   bool
 
-	Additional        []AdditionalTranscript
-	Attribution       *AttributionProvenance
-	WordTimings       *WordTimingProvenance
-	ReferenceFrontend *bool
+	Additional     []AdditionalTranscript
+	Attribution    *AttributionProvenance
+	WordTimings    *WordTimingProvenance
+	NativeFrontend string
 	// Encoder is the primary model's encoder metadata, or nil.
 	Encoder *EncoderProvenance
 }
@@ -355,7 +358,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		primaryID := sanitizeTranscriptID(string(in.STTModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 			ID: primaryID, Path: "transcript.words.v1.json", Default: true,
-			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, ReferenceFrontend: in.ReferenceFrontend, Encoder: in.Encoder, Hints: in.Hints},
+			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, NativeFrontend: in.NativeFrontend, Encoder: in.Encoder, Hints: in.Hints},
 		})
 		for _, extra := range in.Additional {
 			extraBackend := extra.Backend
@@ -376,12 +379,12 @@ func WriteManifest(path string, in ManifestInput) error {
 
 	prov := &provenanceInfo{
 		SpeechToText: &provStep{
-			Backend:           in.STTBackend,
-			Model:             string(in.STTModelID),
-			Device:            in.STTDevice,
-			ReferenceFrontend: in.ReferenceFrontend,
-			Encoder:           in.Encoder,
-			Hints:             in.Hints,
+			Backend:        in.STTBackend,
+			Model:          string(in.STTModelID),
+			Device:         in.STTDevice,
+			NativeFrontend: in.NativeFrontend,
+			Encoder:        in.Encoder,
+			Hints:          in.Hints,
 		},
 		Attribution: in.Attribution,
 		// nil here writes no wordTimings key at all, which is what a consumer

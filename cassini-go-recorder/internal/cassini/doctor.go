@@ -177,44 +177,40 @@ func collectDoctorChecks(target string) []doctorCheck {
 // to substring-match these across a module boundary, against its own second
 // copy of the strings that nothing kept in agreement; it now reads the
 // speech.runtime check by id, so these are free to be reworded (D-798). They
-// stay named so the two summaries below phrase the same fact the same way —
-// not because anything parses them.
+// stay named so tests can find them, not because anything parses them.
 const (
-	SpeechEngineRefActiveMarker   = "reference frontend active"
-	SpeechEngineRefInactiveMarker = "reference frontend optimization inactive"
+	SpeechEngineFrontendMarker    = "NeMo log-guard frontend, whole-utterance boundary policy"
+	SpeechEngineUnsupportedMarker = "cannot run this model"
 )
 
 func nativeRuntimeCheck(modelID transcribe.ModelID) doctorCheck {
 	return nativeRuntimeCheckForVersion(modelID, transcribe.RuntimeVersion())
 }
 
-// nativeRuntimeCheckForVersion asks the model's own spec which runtime markers
-// it needs: Parakeet Ultra needs the Ultra selection on top of the v3 patch, so
-// a runtime that is "reference" for v3 is not necessarily reference for Ultra.
+// nativeRuntimeCheckForVersion asks the model's own spec what the runtime must
+// carry: every model needs the 2.0.1 C API this binary links, and Parakeet
+// Ultra needs the joiner-size TDT detection on top. warn means a build with
+// this model will fail to transcribe; ok means it runs as specified.
 func nativeRuntimeCheckForVersion(modelID transcribe.ModelID, ver string) doctorCheck {
-	return nativeRuntimeCheckWithState(modelID, ver, transcribe.ReferenceFrontendActive(modelID, ver))
-}
-
-func nativeRuntimeCheckWithState(modelID transcribe.ModelID, ver string, hasRef bool) doctorCheck {
-	if !transcribe.UsesParakeetV3ReferencePolicy(modelID) {
+	if err := transcribe.CheckNativeRuntime(modelID, ver); err != nil {
 		return doctorCheck{
 			ID:      "speech.runtime",
-			Status:  doctorOK,
-			Summary: fmt.Sprintf("speech engine runtime %s", ver),
+			Status:  doctorWarn,
+			Summary: fmt.Sprintf("speech engine runtime %s (%s: %v)", ver, SpeechEngineUnsupportedMarker, err),
+			Advice:  "verify that the Go module replace directives for github.com/codemyriad/sherpa-onnx-go-*/v2 are intact and no other libsherpa-onnx-c-api is shadowing on LD_LIBRARY_PATH",
 		}
 	}
-	if hasRef {
+	if transcribe.UsesParakeetBoundaryPolicy(modelID) {
 		return doctorCheck{
 			ID:      "speech.runtime",
 			Status:  doctorOK,
-			Summary: fmt.Sprintf("speech engine runtime %s (%s)", ver, SpeechEngineRefActiveMarker),
+			Summary: fmt.Sprintf("speech engine runtime %s (%s)", ver, SpeechEngineFrontendMarker),
 		}
 	}
 	return doctorCheck{
 		ID:      "speech.runtime",
-		Status:  doctorWarn,
-		Summary: fmt.Sprintf("speech engine runtime %s (%s; falling back to standard decode profile)", ver, SpeechEngineRefInactiveMarker),
-		Advice:  "verify that Go module replace directives for github.com/codemyriad/sherpa-onnx-go are intact and no unpatched libsherpa-onnx-c-api.so is shadowing on LD_LIBRARY_PATH",
+		Status:  doctorOK,
+		Summary: fmt.Sprintf("speech engine runtime %s", ver),
 	}
 }
 

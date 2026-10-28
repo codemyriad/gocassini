@@ -664,7 +664,12 @@
           "type": "string"
         },
         "referenceFrontend": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Written by recorders on the 1.13.7 sherpa runtimes: whether Cassini's Parakeet reference frontend was active."
+        },
+        "nativeFrontend": {
+          "type": "string",
+          "description": "The native feature frontend a Parakeet boundary-policy model ran on, e.g. \"nemo-log-guard\" (sherpa-onnx 2.0.1 and later)."
         },
         "encoder": {
           "type": "object",

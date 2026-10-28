@@ -13,11 +13,6 @@ import (
 	"gocassini/internal/modelstore"
 )
 
-const (
-	cassini6RuntimeVersion = "1.13.7+cassini-parakeet-v3-reference-v1.nemotron-diarization-v2"
-	stockRuntimeVersion    = "1.13.7"
-)
-
 // Parakeet Ultra is v3 post-trained: same architecture, tokenizer and
 // features. Both precisions get the reference boundary policy; only fp32 runs
 // on CUDA. The gates read these spec fields, never the ids.
@@ -30,8 +25,8 @@ func TestParakeetUltraSpecs(t *testing.T) {
 		if spec.ModelType != "nemo_transducer" || spec.SampleRate != 16000 || spec.FeatureDim != 128 {
 			t.Fatalf("%s spec %+v", id, spec)
 		}
-		if !usesParakeetV3ReferencePolicy(id) || !spec.RefuseWithoutReferenceRuntime {
-			t.Fatalf("%s does not get the Parakeet reference policy, or loads without it", id)
+		if !usesParakeetBoundaryPolicy(id) || !reflect.DeepEqual(spec.RuntimeMarkers, []string{parakeetTDTJoinerRuntimeMarker}) {
+			t.Fatalf("%s does not get the Parakeet boundary policy, or loads without the TDT joiner detection", id)
 		}
 	}
 	if vadDecodePolicyForModel(ModelParakeetUltra) != vadDecodePolicyForModel(ModelParakeetUltraInt8) {
@@ -53,46 +48,6 @@ func TestParakeetUltraSpecs(t *testing.T) {
 	for id, want := range map[ModelID]int{ModelParakeet110M: 1536, ModelParakeetUltraInt8: 2816, ModelParakeetUltra: 4608, "nemotron-3-diarization-int8": 1024, "nemotron-3-diarization": 1536, "unknown": 4608} {
 		if got := probeMemoryFloor(id, "cpu"); got != want {
 			t.Fatalf("probeMemoryFloor(%s, cpu) = %d, want %d", id, got, want)
-		}
-	}
-}
-
-// Both Ultra precisions need the Ultra selection on top of the v3 patch. A
-// runtime without it would run an honest-URL Ultra export on the legacy
-// frontend (or exit while loading it), so Ultra is refused before sherpa sees it.
-func TestParakeetUltraNeedsUltraRuntimeMarker(t *testing.T) {
-	cases := []struct {
-		id      ModelID
-		version string
-		isRef   bool
-		refuse  bool
-	}{
-		{ModelParakeetUltra, cassiniRuntimeVersion, true, false},
-		{ModelParakeetUltra, cassini6RuntimeVersion, false, true},
-		{ModelParakeetUltra, stockRuntimeVersion, false, true},
-		{ModelParakeetUltraInt8, cassiniRuntimeVersion, true, false},
-		{ModelParakeetUltraInt8, cassini6RuntimeVersion, false, true},
-		{ModelParakeetUltraInt8, stockRuntimeVersion, false, true},
-		{ModelParakeet110M, stockRuntimeVersion, false, false},
-	}
-	for _, c := range cases {
-		isRef, warn := checkReferenceRuntime(c.id, c.version)
-		if isRef != c.isRef {
-			t.Errorf("%s on %q: reference=%v, want %v", c.id, c.version, isRef, c.isRef)
-		}
-		if usesParakeetV3ReferencePolicy(c.id) && !isRef && !strings.Contains(warn, string(c.id)) {
-			t.Errorf("%s on %q: warning %q does not name the model", c.id, c.version, warn)
-		}
-		policy, gotRef, _ := effectiveVADPolicy(c.id, c.version, true)
-		if gotRef != c.isRef || (c.isRef && policy != vadDecodePolicyForModel(c.id)) {
-			t.Errorf("%s on %q: effective policy ref=%v %+v", c.id, c.version, gotRef, policy)
-		}
-		err := refuseWithoutReferenceRuntime(c.id, c.version)
-		if (err != nil) != c.refuse {
-			t.Errorf("%s on %q: refuse=%v (%v), want %v", c.id, c.version, err != nil, err, c.refuse)
-		}
-		if err != nil && !strings.Contains(err.Error(), parakeetUltraRuntimeMarker) {
-			t.Errorf("refusal %q does not name the missing marker", err)
 		}
 	}
 }

@@ -224,7 +224,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	// records what its decoder declared, and the claim survives only if all of
 	// them made it. See wordEndGuarantee in backend.go.
 	wordEnds := &wordEndGuarantee{}
-	refGuarantee := &referenceFrontendGuarantee{}
+	frontendGuarantee := &nativeFrontendGuarantee{}
 
 	// Resolve the vocabulary pool once before any pass runs. Each participant
 	// track derives a decoder that omits its own name; the manifest
@@ -256,15 +256,15 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		}
 	}
 	pass := passConfig{
-		ModelPaths:         modelPaths,
-		VADPath:            vadPath,
-		Backend:            backend,
-		Device:             cfg.Device,
-		NumThreads:         cfg.NumThreads,
-		Decoder:            decoder,
-		SpeakerDecoders:    speakerDecoderMap,
-		Guarantee:          wordEnds,
-		ReferenceGuarantee: refGuarantee,
+		ModelPaths:        modelPaths,
+		VADPath:           vadPath,
+		Backend:           backend,
+		Device:            cfg.Device,
+		NumThreads:        cfg.NumThreads,
+		Decoder:           decoder,
+		SpeakerDecoders:   speakerDecoderMap,
+		Guarantee:         wordEnds,
+		FrontendGuarantee: frontendGuarantee,
 	}
 
 	segments, err := transcribePass(ctx, mkvPath, streams, pass, stdout)
@@ -350,24 +350,24 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 			Transcription:  portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision},
 			MeetingSummary: &summaryStatus,
 		},
-		SrcBasename:       srcBasename,
-		RecordedAtLocal:   recordedAtLocal,
-		SrcDurationMS:     srcDurationMS,
-		DigestDurationMS:  audioDurationMS,
-		AudioEncode:       &enc,
-		Streams:           streams,
-		Segments:          segments,
-		STTBackend:        backend,
-		STTModelID:        cfg.ModelID,
-		STTDevice:         cfg.Device,
-		Hints:             hintsProv,
-		SummaryModel:      cfg.SummaryLLM.Model,
-		HasSummary:        summaryStatus.Status == portable.SummaryCompleted,
-		Additional:        additionalTranscripts,
-		Attribution:       attrProv,
-		WordTimings:       wordEnds.provenance(),
-		ReferenceFrontend: refGuarantee.provenance(cfg.ModelID),
-		Encoder:           encoderProvenance(modelPaths.EncoderFile),
+		SrcBasename:      srcBasename,
+		RecordedAtLocal:  recordedAtLocal,
+		SrcDurationMS:    srcDurationMS,
+		DigestDurationMS: audioDurationMS,
+		AudioEncode:      &enc,
+		Streams:          streams,
+		Segments:         segments,
+		STTBackend:       backend,
+		STTModelID:       cfg.ModelID,
+		STTDevice:        cfg.Device,
+		Hints:            hintsProv,
+		SummaryModel:     cfg.SummaryLLM.Model,
+		HasSummary:       summaryStatus.Status == portable.SummaryCompleted,
+		Additional:       additionalTranscripts,
+		Attribution:      attrProv,
+		WordTimings:      wordEnds.provenance(),
+		NativeFrontend:   frontendGuarantee.provenance(cfg.ModelID),
+		Encoder:          encoderProvenance(modelPaths.EncoderFile),
 	}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
@@ -435,9 +435,9 @@ type passConfig struct {
 	// SpeakerDecoders overrides Decoder for participant streams whose own
 	// label was removed. Mixed fallback has no speaker to exclude and selects
 	// its decoder separately through mergedFallbackDecoder.
-	SpeakerDecoders    map[int]*DecoderConfig
-	Guarantee          *wordEndGuarantee
-	ReferenceGuarantee *referenceFrontendGuarantee
+	SpeakerDecoders   map[int]*DecoderConfig
+	Guarantee         *wordEndGuarantee
+	FrontendGuarantee *nativeFrontendGuarantee
 }
 
 // withThreads returns a copy running on a different thread budget, for the
@@ -448,7 +448,7 @@ func (p passConfig) withThreads(n int) passConfig {
 }
 
 func (p passConfig) newRecognizer() (SpeechRecognizer, error) {
-	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee, p.ReferenceGuarantee)
+	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee, p.FrontendGuarantee)
 }
 
 func (p passConfig) decoderForStream(stream AudioStream) *DecoderConfig {
@@ -1168,14 +1168,14 @@ func applyAttributionReported(mkvPath string, streams []AudioStream, segments []
 // Mixed recovery has different acoustics from isolated participant tracks.
 // Keep its validated unbiased decoder without mutating participant settings.
 func mergedFallbackDecoder(paths ModelPaths, base *DecoderConfig) *DecoderConfig {
-	if usesParakeetV3ReferencePolicy(paths.ModelID) {
+	if usesParakeetBoundaryPolicy(paths.ModelID) {
 		return &DecoderConfig{Method: decodingGreedySearch}
 	}
 	return base
 }
 
 func mergedFallbackHints(paths ModelPaths, original *HintsProvenance, accepted bool) *HintsProvenance {
-	if original == nil || !accepted || !usesParakeetV3ReferencePolicy(paths.ModelID) {
+	if original == nil || !accepted || !usesParakeetBoundaryPolicy(paths.ModelID) {
 		return original
 	}
 	result := *original
