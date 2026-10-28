@@ -775,7 +775,7 @@ adding `--reset` automatically.
 
 ```bash
 docker pull debian:bookworm-slim
-docker pull golang:1.24-bookworm
+docker pull golang:1.25-bookworm
 docker pull node:22-bookworm
 docker pull node:22-bookworm-slim
 ```
