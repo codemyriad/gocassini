@@ -124,9 +124,10 @@ type resourceUnavailableError struct {
 	permanent bool
 	// awaitsModel means the build waits for its speech model: being
 	// installed, replacing a retired one, or missing from a
-	// delete-after-processing job's selection. A job whose source media is
-	// deleted after processing keeps waiting past the retry ceiling rather
-	// than fail and lose the recording without a transcript.
+	// delete-after-processing job's selection, with no retired model on disk
+	// to stand in for it (admitStandIn). A job whose source media is deleted
+	// after processing keeps waiting past the retry ceiling rather than fail
+	// and lose the recording without a transcript.
 	awaitsModel bool
 }
 
@@ -135,10 +136,15 @@ func (e *resourceUnavailableError) Error() string {
 }
 
 // admitModelForDevice returns the selected model when transcription is on and
-// that model is installed and has passed its runtime check on device. With
-// transcription off it returns "" and no error. When transcription is on but
-// cannot run, the error says why, and readiness reports it; builds then keep
-// the audio with the smaller audio-processing budget.
+// that model is installed and has passed its runtime check on device. While
+// it is not installed, an installed retired model it replaces stands in for
+// it in builds, so that model is returned instead: it is the one a build
+// loads. While it is installed but not yet checked, a build checks it and
+// runs it if it passes, so it is returned as long as a stand-in would run if
+// it fails; that stand-in needs no more memory. With transcription off it
+// returns "" and no error. When transcription is on but cannot run, the error
+// says why, and readiness reports it; builds then keep the audio with the
+// smaller audio-processing budget.
 func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (string, error) {
 	if !settings.TranscriptionEnabled {
 		return "", nil
@@ -160,8 +166,17 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 	if err != nil {
 		return "", fmt.Errorf("speech model %s is not one this version can run; select a quality in Settings: %w", settings.ActiveModel, err)
 	}
+	if !m.Installed || !m.Ready {
+		if candidates := rt.standInCandidates(inventory, m, device, ""); len(candidates) > 0 {
+			if m.Installed {
+				return m.ID, nil
+			}
+			return candidates[0].ID, nil
+		}
+	}
 	if !m.Installed {
 		if job, ok := rt.runningModelJob(ctx, m.ID, m.Revision, device); ok {
+			// No retired model on disk can stand in (it would be returned above).
 			return "", fmt.Errorf("speech model %s is being installed (%s); recordings wait for it", m.ID, modelJobProgressText(job))
 		}
 		return "", fmt.Errorf("speech model %s is not installed; install it in Settings", m.ID)

@@ -74,7 +74,31 @@ type TranscriptionStatus struct {
 	Reason   string `json:"reason,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Revision string `json:"revision,omitempty"`
+	// StandIn is set when Model is a retired model that transcribed in place
+	// of the model replacing it, which was not ready on this device.
+	StandIn *TranscriptionStandIn `json:"standIn,omitempty"`
 }
+
+// TranscriptionStandIn says which model a retired one stood in for, and why
+// that model was not ready.
+type TranscriptionStandIn struct {
+	// For is the model that replaced the retired one and was not ready.
+	For string `json:"for"`
+	// Reason is one of the StandInReason values.
+	Reason string `json:"reason,omitempty"`
+	// Detail is the operator's description of the replacement's state.
+	Detail string `json:"detail,omitempty"`
+}
+
+// Why the replacement of a retired model was not ready, as
+// TranscriptionStandIn.Reason records it.
+const (
+	StandInReasonInstalling         = "installing"
+	StandInReasonInstallFailed      = "install_failed"
+	StandInReasonDownloadsDisabled  = "downloads_disabled"
+	StandInReasonNotInstalled       = "not_installed"
+	StandInReasonRuntimeCheckFailed = "runtime_check_failed"
+)
 
 type Manifest struct {
 	Processing *Processing `json:"processing,omitempty"`

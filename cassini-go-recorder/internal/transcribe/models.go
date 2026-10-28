@@ -36,6 +36,13 @@ const (
 	// without bpe.vocab, so it decodes greedily.
 	ModelParakeetUltraInt8 ModelID = "parakeet-ultra-0.6b-int8"
 
+	// ModelParakeetV3Int8 and ModelParakeetV3 are NVIDIA's Parakeet TDT 0.6B
+	// v3, which Parakeet Ultra replaced at the same precision. Retired: a
+	// stand-in only, loaded from the files an upgraded install still has
+	// while Ultra is not ready (see modelSpec.Retired).
+	ModelParakeetV3Int8 ModelID = "parakeet-tdt-0.6b-v3-int8"
+	ModelParakeetV3     ModelID = "parakeet-tdt-0.6b-v3"
+
 	defaultModelID = ModelParakeetUltraInt8
 
 	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
@@ -89,6 +96,11 @@ type modelSpec struct {
 	// ProbeMemoryMB is the free RAM a CPU runtime check needs; 0 charges the
 	// largest speech floor.
 	ProbeMemoryMB int
+	// Retired marks an id an earlier version shipped. It is never selected
+	// (ModelForQuality, ResolveModel) and never downloaded (no URL): a build
+	// loads it only as an explicit stand-in for the model replacing it, while
+	// that model is not ready (see StandInFor).
+	Retired bool
 }
 
 // Parakeet Ultra exports keep the plain Moondream url, so they load only on a
@@ -139,6 +151,41 @@ var knownModels = map[ModelID]modelSpec{
 		ParakeetBoundaryPolicy: true,
 		CUDA:                   true,
 		ProbeMemoryMB:          4608,
+	},
+	// The retired v3 bundles, on the boundary policy the last version that
+	// shipped them ran them with. Their encoders carry NVIDIA's tdt url, so
+	// any 2.0.1 runtime loads them: they need no runtime marker. The int8
+	// bundle was published without bpe.vocab, like Ultra int8, so it decodes
+	// greedily.
+	ModelParakeetV3Int8: {
+		EncoderFile: "encoder.int8.onnx",
+		DecoderFile: "decoder.int8.onnx",
+		JoinerFile:  "joiner.int8.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  128,
+
+		ParakeetBoundaryPolicy: true,
+		GreedyWithoutBpeVocab:  true,
+		ProbeMemoryMB:          2816,
+		Retired:                true,
+	},
+	ModelParakeetV3: {
+		EncoderFile:  "encoder.onnx",
+		DecoderFile:  "decoder.onnx",
+		JoinerFile:   "joiner.onnx",
+		WeightsFile:  "encoder.weights",
+		TokensFile:   "tokens.txt",
+		BpeVocabFile: "bpe.vocab",
+		ModelType:    "nemo_transducer",
+		SampleRate:   16000,
+		FeatureDim:   128,
+
+		ParakeetBoundaryPolicy: true,
+		CUDA:                   true,
+		ProbeMemoryMB:          4608,
+		Retired:                true,
 	},
 }
 

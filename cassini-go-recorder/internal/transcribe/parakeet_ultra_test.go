@@ -35,7 +35,7 @@ func TestParakeetUltraSpecs(t *testing.T) {
 	if !SupportsCUDA(ModelParakeetUltra) {
 		t.Fatal("Ultra fp32 must install and probe on CUDA")
 	}
-	for _, id := range []ModelID{ModelParakeetUltraInt8, ModelParakeet110M, "parakeet-tdt-0.6b-v3", "unknown"} {
+	for _, id := range []ModelID{ModelParakeetUltraInt8, ModelParakeet110M, ModelParakeetV3Int8, "unknown"} {
 		if SupportsCUDA(id) {
 			t.Fatalf("%s must not run on CUDA", id)
 		}

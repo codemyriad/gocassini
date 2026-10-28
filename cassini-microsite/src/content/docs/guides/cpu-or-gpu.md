@@ -61,9 +61,10 @@ public test sets we ran, and on recorded meetings it dropped far fewer passages;
 on a CPU its int8 build was also more accurate than v3's on our own meetings, at
 slightly less CPU time. An install that used v3 moves to Ultra when it is
 upgraded: it downloads the Ultra model for its tier (about 465 MB on a CPU,
-1.5 GB on a GPU), recordings made meanwhile wait for it, and v3's files are
-deleted once Ultra has passed its check. Meetings already transcribed keep their
-v3 transcripts.
+1.5 GB on a GPU), and recordings made meanwhile are transcribed with v3, whose
+files stay until Ultra has passed its check; a host without them waits for
+Ultra. Such a transcript says that v3 stood in for Ultra. Meetings already
+transcribed keep their v3 transcripts.
 
 Models download into the model cache on the persistent volume when an
 administrator installs them in Settings. On a host with no outbound network

@@ -49,6 +49,14 @@ type STTSettings struct {
 	HardwareFingerprint string     `json:"hardware_fingerprint"`
 	DetectedGPU         bool       `json:"detected_gpu"`
 	Cores               int        `json:"cores"`
+
+	// StandInFor, StandInReason and StandInDetail are set by build admission
+	// alone, for one build: ActiveModel is then a retired model standing in
+	// for StandInFor, which is not ready (see admitStandIn). They are never
+	// saved, in the settings or in a job's snapshot of them.
+	StandInFor    string `json:"-"`
+	StandInReason string `json:"-"`
+	StandInDetail string `json:"-"`
 }
 
 const (
@@ -66,6 +74,11 @@ const (
 	envTranscriptionTerms   = "CASSINI_TRANSCRIPTION_TERMS"
 	// Every model command and build uses the operator's resolved persistent root.
 	envCacheRoot = "CASSINI_CACHE_ROOT"
+	// The stand-in of one admitted build: the recorder keeps a retired
+	// CASSINI_STT_MODEL only when these name the model replacing it.
+	envSTTStandInFor    = "CASSINI_STT_STAND_IN_FOR"
+	envSTTStandInReason = "CASSINI_STT_STAND_IN_REASON"
+	envSTTStandInDetail = "CASSINI_STT_STAND_IN_DETAIL"
 	// Meeting builds always forbid acquisition; installation jobs use the
 	// operator policy instead of inheriting a possibly stale shell value.
 	envDisallowModelDownload = "CASSINI_DISALLOW_MODEL_DOWNLOAD"
@@ -471,6 +484,8 @@ func Save(path string, s STTSettings) error {
 //     operator's GPU/RAM admission budget.
 //   - CASSINI_TRANSCRIPTION_TERMS carries the optional, normalized preferred
 //     spellings the recorder biases the speech recogniser towards.
+//   - CASSINI_STT_STAND_IN_* are always stripped, and set only for a build
+//     admission let a retired model stand in for its replacement.
 func (s STTSettings) ChildEnv(base []string) []string {
 	// Always strip the STT keys, then re-append exactly what the policy
 	// dictates. Stripping unconditionally (rather than only when there is no
@@ -487,6 +502,9 @@ func (s STTSettings) ChildEnv(base []string) []string {
 		envSTTModel:                    true,
 		envSTTAdditionalModels:         true,
 		envTranscriptionTerms:          true,
+		envSTTStandInFor:               true,
+		envSTTStandInReason:            true,
+		envSTTStandInDetail:            true,
 	}
 
 	out := make([]string, 0, len(base)+4)
@@ -508,6 +526,9 @@ func (s STTSettings) ChildEnv(base []string) []string {
 	out = append(out, "CASSINI_TRANSCRIPTION="+mode, envDisallowModelDownload+"=1")
 	if s.ActiveModel != "" {
 		out = append(out, envSTTModel+"="+s.ActiveModel, "CASSINI_STT_REVISION="+s.ActiveRevision)
+	}
+	if s.StandInFor != "" {
+		out = append(out, envSTTStandInFor+"="+s.StandInFor, envSTTStandInReason+"="+s.StandInReason, envSTTStandInDetail+"="+s.StandInDetail)
 	}
 	out = append(out, envSTTQuality+"="+normalizeQuality(s.Quality))
 	if s.DeviceOverride != "" {

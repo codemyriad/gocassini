@@ -140,15 +140,28 @@ func ResolveModelID(explicitModel, quality, device string) ModelID {
 }
 
 // ReplacementModelID returns the shipped model that replaced a retired id, and
-// whether id is retired. A model this binary knows is never retired.
+// whether id is retired. A model this binary runs is never retired; one it
+// keeps only as a stand-in (modelSpec.Retired) is.
 func ReplacementModelID(id ModelID) (ModelID, bool) {
-	if _, known := knownModels[id]; known {
+	if spec, known := knownModels[id]; known && !spec.Retired {
 		return id, false
 	}
 	if m, ok := modelstore.Shipped().Replacement(string(id)); ok {
 		return ModelID(m.ID), true
 	}
 	return id, false
+}
+
+// StandInFor reports whether retired may stand in for model: retired is a
+// model this binary keeps only as a stand-in, and the shipped catalogue says
+// model replaced it. Any other pair is refused, so a build never runs a
+// retired model in place of one that does not supersede it.
+func StandInFor(retired, model ModelID) bool {
+	if !knownModels[retired].Retired {
+		return false
+	}
+	m, ok := modelstore.Shipped().Replacement(string(retired))
+	return ok && ModelID(m.ID) == model
 }
 
 // DefaultNumThreads returns a sensible intra-op thread count for sequential

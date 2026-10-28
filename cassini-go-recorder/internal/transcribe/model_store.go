@@ -18,9 +18,11 @@ import (
 
 // InstalledModel and InstalledVAD never acquire files. Runtime processing uses
 // only this store; the old archive helper remains for explicit benchmark tools.
+// They also resolve a retired model this binary keeps as a stand-in, from the
+// files an install still has.
 func InstalledModel(root string, id ModelID, revision string, _ io.Writer) (ModelPaths, error) {
 	s := modelstore.New(root)
-	m, err := s.Catalogue.Model(string(id), revision)
+	m, err := installedCatalogueModel(s, id, revision)
 	if err != nil {
 		return ModelPaths{}, err
 	}
@@ -43,9 +45,17 @@ func InstalledModel(root string, id ModelID, revision string, _ io.Writer) (Mode
 	}
 	return resolveModelPaths(s.Dir(m), spec, id), nil
 }
+
+// ModelReady reports whether shipped model id is installed and has passed its
+// runtime check on device under this runtime (`cassini models probe`).
+func ModelReady(root string, id ModelID, device string) bool {
+	s := modelstore.New(root)
+	m, err := s.Catalogue.Model(string(id), "")
+	return err == nil && s.Ready(m, device, ModelRuntimeFingerprint())
+}
 func InstalledVAD(root string, id ModelID, revision string, _ io.Writer) (string, error) {
 	s := modelstore.New(root)
-	m, err := s.Catalogue.Model(string(id), revision)
+	m, err := installedCatalogueModel(s, id, revision)
 	if err != nil {
 		return "", err
 	}
@@ -57,6 +67,39 @@ func InstalledVAD(root string, id ModelID, revision string, _ io.Writer) (string
 		return "", fmt.Errorf("Silero VAD is not installed: %w", err)
 	}
 	return filepath.Join(s.Dir(v), v.Files[0].Path), nil
+}
+
+// installedCatalogueModel is the catalogue entry of a model to load: a
+// shipped one, or a retired one this binary keeps as a stand-in.
+func installedCatalogueModel(s *modelstore.Store, id ModelID, revision string) (modelstore.Model, error) {
+	m, retired, err := s.Catalogue.Lookup(string(id), revision)
+	if err != nil {
+		return modelstore.Model{}, err
+	}
+	if retired && !knownModels[id].Retired {
+		return modelstore.Model{}, fmt.Errorf("model %s is retired; this version does not run it", id)
+	}
+	return m, nil
+}
+
+// RemoveReplacedModels deletes the files of the retired models m replaces
+// (modelstore.Store.RemoveReplaced) while holding the inference lock. A build
+// holds that lock from resolving its model until its last recognizer is
+// closed, and it may be standing in with one of those models, which sherpa
+// opens lazily: removing the files without the lock could pull them from
+// under it. With nothing to remove it takes neither lock: checking a retired
+// model, which replaces nothing, must not wait for the download of the model
+// it stands in for, which holds the store lock throughout.
+func RemoveReplacedModels(ctx context.Context, s *modelstore.Store, m modelstore.Model) ([]string, error) {
+	if !s.HasReplaced(m) {
+		return nil, nil
+	}
+	unlock, err := lockModelRuntime(ctx, s.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return s.RemoveReplaced(ctx, m)
 }
 
 // InstalledDiarizer describes an installed catalogue diarization model. Like
