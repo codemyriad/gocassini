@@ -342,7 +342,8 @@ eq "patch goes straight to stable" "0.2.1" "$(rv_read_version "$PR/appinfo/info.
 if git -C "$PR" rev-parse -q --verify refs/tags/v0.2.1 >/dev/null; then ok "tag v0.2.1 created"; else bad "tag v0.2.1 should be created"; fi
 out="$(prep --version 0.3.0-alpha.2 --allow-empty-changelog 2>&1 || true)"
 if grep -qF "cut on main, not release/0.2" <<<"$out"; then ok "prepare-release refuses an alpha on a release branch"; else bad "prepare-release should refuse an alpha on release/0.2 (got: $out)"; fi
-out="$(git -C "$PR" switch -q --detach && prep --version 0.2.2 --allow-empty-changelog 2>&1 || true)"
+git -C "$PR" switch -q --detach
+out="$(prep --version 0.2.2 --allow-empty-changelog 2>&1 || true)"
 if grep -qF "HEAD is detached" <<<"$out"; then ok "prepare-release refuses a detached HEAD"; else bad "prepare-release should refuse a detached HEAD (got: $out)"; fi
 
 # --push pushes the release branch + tag to origin (0.3.0-alpha.1 -> beta.1 on
