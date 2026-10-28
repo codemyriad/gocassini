@@ -139,6 +139,40 @@ func TestRetiredRowsAreNotSelectable(t *testing.T) {
 	}
 }
 
+// Settings never lists v3, but it says which model v3 stands in for, so the
+// status strip can say recordings are still transcribed.
+func TestSettingsNamesTheStandIn(t *testing.T) {
+	rt := standInRuntime(t, false, false, true, false)
+	listed := func() map[string]modelInfo {
+		t.Helper()
+		rec := modelRequest(rt, http.MethodGet, "/settings/models?device=cpu", "")
+		var body struct {
+			Models []modelInfo `json:"models"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("GET models = %d %s", rec.Code, rec.Body.String())
+		}
+		byID := map[string]modelInfo{}
+		for _, m := range body.Models {
+			byID[m.ID] = m
+		}
+		return byID
+	}
+	models := listed()
+	if models[modelParakeetUltraInt8].StandIn != v3Int8 || models[modelParakeetUltraFp32].StandIn != modelParakeetV3Fp32 || models[modelParakeet110M].StandIn != "" {
+		t.Fatalf("listed %+v", models)
+	}
+	// Not one whose check failed.
+	rt.standInCheckFailed = map[string]bool{standInKey(modelInfo{ID: v3Int8, Revision: v3Int8Rev}, deviceCPU): true}
+	if m := listed()[modelParakeetUltraInt8]; m.StandIn != "" {
+		t.Fatalf("a failed stand-in is named: %+v", m)
+	}
+	rt = standInRuntime(t, true, true, true, true)
+	if m := listed()[modelParakeetUltraInt8]; m.StandIn != "" {
+		t.Fatalf("a ready model names a stand-in: %+v", m)
+	}
+}
+
 // The startup migration moves a v3 pin to Ultra and queues the download
 // whether or not the v3 files are still there.
 func TestRetiredPinMigratesWhileV3IsStillInstalled(t *testing.T) {

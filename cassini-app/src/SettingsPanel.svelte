@@ -469,6 +469,7 @@
     modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
     download: runningDownload(modelInventory),
     activeModelDownload: settings?.active_model ? runningDownload(modelInventory, settings.active_model) : null,
+    activeModelStandIn: !!modelInventory?.models.find((m) => m.id === settings?.active_model)?.stand_in,
     summaryEnabled: llm?.summary.enabled === true,
     providerName: llm ? providerName(llm.summary.provider) : "",
     hasProvider: llm === null ? null : llm.providers.length > 0,

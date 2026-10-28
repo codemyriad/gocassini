@@ -118,4 +118,15 @@ describe("helpers", () => {
     const unsized = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, download: { percent: null }, activeModelDownload: { percent: null } });
     expect(unsized.transcribe.reason).toBe("downloading the model");
   });
+
+  it("says the previous model transcribes while the saved one is not ready", () => {
+    const downloading = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, download: { percent: 40 }, activeModelDownload: { percent: 40 }, activeModelStandIn: true });
+    expect(downloading.transcribe).toEqual({ state: "On · Balanced · CPU", tone: "busy", reason: "downloading the model · 40% · previous model transcribes meanwhile" });
+    // A failed install, or downloads disabled: still not healthy, but not
+    // publishing without a transcript either.
+    const missing = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, activeModelDownload: null, activeModelStandIn: true });
+    expect(missing.transcribe).toEqual({ state: "On · Balanced · CPU", tone: "amber", reason: "model not installed · previous model transcribes meanwhile" });
+    // Once the saved model is installed it runs, whatever is left on disk.
+    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: true, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
+  });
 });

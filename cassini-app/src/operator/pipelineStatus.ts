@@ -30,6 +30,9 @@ export interface PipelineInput {
    *  transcribed with the model it replaces while that one's files are still
    *  installed. */
   activeModelDownload?: { percent: number | null } | null;
+  /** Whether the model the saved one replaced is still installed and
+   *  transcribes recordings until the saved one is ready. */
+  activeModelStandIn?: boolean;
   summaryEnabled: boolean;
   /** Display name of the saved summary provider. */
   providerName: string;
@@ -89,12 +92,16 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
     const state = `On · ${(input.activeModel && MODEL_TIERS[input.activeModel]) || QUALITY_LABELS[input.quality] || input.quality} · ${input.device === "cuda" ? "GPU" : "CPU"}`;
     // Switched on with a model that is not there: recordings publish without a
     // transcript, so the strip must not read as healthy. One being installed
-    // is different: recordings wait for it, or are transcribed with v3 while
-    // its files are still installed.
+    // is different: recordings wait for it. Either way, while the model it
+    // replaced is still installed (v3, after the upgrade to Ultra), recordings
+    // are transcribed with that one meanwhile, and the strip says so.
     const installing = input.activeModelDownload;
+    const meanwhile = input.activeModelInstalled === false && input.activeModelStandIn ? " · previous model transcribes meanwhile" : "";
     if (input.activeModelInstalled === false && installing) {
       const reason = installing.percent === null ? "downloading the model" : `downloading the model · ${installing.percent}%`;
-      transcribe = { state, tone: "busy", reason };
+      transcribe = { state, tone: "busy", reason: reason + meanwhile };
+    } else if (meanwhile) {
+      transcribe = { state, tone: "amber", reason: "model not installed" + meanwhile };
     } else {
       transcribe = input.activeModelInstalled === false
         ? { state, tone: "amber", reason: "model not installed" }

@@ -41,6 +41,10 @@ type modelInfo struct {
 	// model that replaced it, which a build may let it stand in for until that
 	// one is ready (see admitStandIn). Such a row is never selectable.
 	ReplacedBy string `json:"replaced_by,omitempty"`
+	// StandIn is set only in Settings' listing, on a model that is not ready:
+	// the installed retired model builds transcribe with meanwhile, unless
+	// its own runtime check fails.
+	StandIn string `json:"stand_in,omitempty"`
 }
 type modelProgress struct {
 	Version   int    `json:"version"`
@@ -216,12 +220,18 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Settings offers what can be installed and selected; a retired model
-		// only ever stands in, unseen.
+		// only ever stands in, named on the model it stands in for.
 		models := []modelInfo{}
 		for _, m := range inventory {
-			if m.ReplacedBy == "" {
-				models = append(models, m)
+			if m.ReplacedBy != "" {
+				continue
 			}
+			if !m.Ready {
+				if candidates := rt.standInCandidates(inventory, m, device, ""); len(candidates) > 0 {
+					m.StandIn = candidates[0].ID
+				}
+			}
+			models = append(models, m)
 		}
 		jobs, err := rt.modelJobs(r.Context())
 		if err != nil {
