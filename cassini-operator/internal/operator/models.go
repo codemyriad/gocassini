@@ -343,41 +343,38 @@ func (rt *Runtime) startModelWorker() {
 			rt.logger.Printf("model job recovery: %v", err)
 			return
 		}
-		// An upgrade can retire the pinned model. Move the pin and queue the
-		// replacement before the readiness recheck below looks at it.
-		migrated, migrationErr := rt.migrateRetiredSpeechModel(rt.ctx)
-		if migrationErr != nil {
-			rt.logger.Printf("stt_settings: retired speech model check: %v", migrationErr)
-		}
-		lastMigrationAttempt := time.Now()
-		// App/native-runtime changes invalidate readiness, not the model bytes.
-		settings := rt.currentSettings()
-		if settings.TranscriptionEnabled && settings.ActiveModel != "" {
-			device, e := resolveDeviceForSettings(settings)
-			if e == nil {
-				if models, e := rt.modelInventory(rt.ctx, device); e == nil {
-					if m, e := findModel(models, settings.ActiveModel, settings.ActiveRevision); e == nil && m.Installed && !m.Ready {
-						j, e := rt.enqueueModel(rt.ctx, m, device)
-						if e == nil && j.State == "ready" {
-							_, _ = rt.store.db.ExecContext(rt.ctx, `UPDATE model_install_jobs SET state='queued' WHERE id=? AND state='ready'`, j.ID)
-						}
-					}
-				}
+		// An upgrade can retire the pinned model: move the pin and queue the
+		// replacement. Then make sure the active model is installed and checked
+		// on this runtime, or on its way: app/native-runtime changes invalidate
+		// readiness, not the model bytes, and an install interrupted before its
+		// job was saved has to be queued again. Either step retries until it
+		// succeeds, so a slow first start or a failed enqueue cannot leave
+		// transcription waiting on an install nobody queued.
+		checkSpeechModel := func() error {
+			if _, err := rt.migrateRetiredSpeechModel(rt.ctx); err != nil {
+				return fmt.Errorf("retired speech model check: %w", err)
 			}
+			if err := rt.recoverActiveSpeechModel(rt.ctx); err != nil {
+				return fmt.Errorf("active speech model check: %w", err)
+			}
+			return nil
 		}
+		checkErr := checkSpeechModel()
+		if checkErr != nil {
+			rt.logger.Printf("stt_settings: %v", checkErr)
+		}
+		lastCheck := time.Now()
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
 			if rt.ctx.Err() != nil {
 				return
 			}
-			// The check needs the model inventory; retry one that failed (a slow
-			// first start) rather than leave the install on a retired model.
-			if !migrated && migrationErr != nil && time.Since(lastMigrationAttempt) > retiredModelRetry {
-				migrated, migrationErr = rt.migrateRetiredSpeechModel(rt.ctx)
-				lastMigrationAttempt = time.Now()
-				if migrationErr != nil {
-					rt.logger.Printf("stt_settings: retired speech model check: %v", migrationErr)
+			if checkErr != nil && time.Since(lastCheck) > speechModelCheckRetry {
+				checkErr = checkSpeechModel()
+				lastCheck = time.Now()
+				if checkErr != nil {
+					rt.logger.Printf("stt_settings: %v", checkErr)
 				}
 			}
 			jobs, err := rt.modelJobs(rt.ctx)
