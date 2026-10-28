@@ -96,16 +96,23 @@ func (e *meetingsListBadRequest) Error() string { return e.msg }
 
 // parseMeetingsListFilter validates query parameters into a filter.
 func parseMeetingsListFilter(query url.Values) (meetingsListFilter, error) {
+	return newMeetingsListFilter(query.Get("from"), query.Get("to"), query.Get("room"), query.Get("tag"))
+}
+
+// newMeetingsListFilter validates the narrowing a caller asked for, whichever
+// surface it arrived through: the list route's query string or an MCP tool's
+// arguments. Every error it returns is the caller's to fix.
+func newMeetingsListFilter(from, to, room, tag string) (meetingsListFilter, error) {
 	var filter meetingsListFilter
 	var err error
-	if raw := strings.TrimSpace(query.Get("from")); raw != "" {
+	if raw := strings.TrimSpace(from); raw != "" {
 		filter.from, err = parseMeetingsListBound(raw, false)
 		if err != nil {
 			return meetingsListFilter{}, fmt.Errorf("from: %w", err)
 		}
 		filter.hasFrom = true
 	}
-	if raw := strings.TrimSpace(query.Get("to")); raw != "" {
+	if raw := strings.TrimSpace(to); raw != "" {
 		filter.to, err = parseMeetingsListBound(raw, true)
 		if err != nil {
 			return meetingsListFilter{}, fmt.Errorf("to: %w", err)
@@ -121,8 +128,8 @@ func parseMeetingsListFilter(query url.Values) (meetingsListFilter, error) {
 			"from %s is after to %s, which can never match anything; did you swap them?",
 			filter.from.Format(meetingsListStampLayout), filter.to.Format(meetingsListStampLayout))}
 	}
-	filter.room = strings.TrimSpace(query.Get("room"))
-	if filter.tag, err = parseTagParam(query); err != nil {
+	filter.room = strings.TrimSpace(room)
+	if filter.tag, err = validateTagParam(tag); err != nil {
 		return meetingsListFilter{}, err
 	}
 	return filter, nil
@@ -283,16 +290,7 @@ func parseMeetingsListDateLabel(label string) (time.Time, bool) {
 }
 
 // serveMeetingsList answers `published/meetings-list` for one caller.
-//
-// The visible set comes from resolveCatalogForCaller — the same resolution
-// catalog.json uses, so this endpoint adds a query surface and NOT a second
-// access-control path. What differs is only how an outcome maps to a status:
-// here every substrate failure is loud, and 200 with an empty list means one
-// thing only, that the caller may genuinely read no matching meeting.
-// tags is the tag index, nil when it could not be opened: a `tag` request is
-// then 503, never an unnarrowed list.
 func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWriter, r *http.Request, client *http.Client, caller string, deps searchDeps, logger *log.Logger) {
-	tags := deps.annotations
 	filter, err := parseMeetingsListFilter(r.URL.Query())
 	if err != nil {
 		// Validated BEFORE the network calls: a malformed date is the caller's
@@ -301,15 +299,48 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if filter.tag != "" && tags == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, tagIndexUnavailableMessage)
+	response, err := c.meetingsList(ctx, client, caller, filter, deps, logger)
+	if err != nil {
+		writeReadFailure(w, r, err)
 		return
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("meetings list: encode response caller=%s: %v", caller, err)
+		}
+		writeJSONError(w, http.StatusInternalServerError, "could not encode the meeting list")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// The list changes after every publish, and AppAPI's proxy would otherwise
+	// give this response a one-hour browser freshness window — hiding newly
+	// published meetings, and pinning a stale visible set after a revocation.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// meetingsList is the caller's meetings, narrowed by filter.
+//
+// The visible set comes from resolveCatalogForCaller — the same resolution
+// catalog.json uses, so this adds a query surface and NOT a second
+// access-control path. What differs is only how an outcome maps to a status:
+// here every substrate failure is loud, and an empty list means one thing
+// only, that the caller may genuinely read no matching meeting.
+// deps.annotations is the tag index, nil when it could not be opened: a `tag`
+// request is then 503, never an unnarrowed list. Every failure is a
+// *readFailure.
+func (c ExAppConfig) meetingsList(ctx context.Context, client *http.Client, caller string, filter meetingsListFilter, deps searchDeps, logger *log.Logger) (meetingsListResponse, error) {
+	tags := deps.annotations
+	if filter.tag != "" && tags == nil {
+		return meetingsListResponse{}, readFail(http.StatusServiceUnavailable, tagIndexUnavailableMessage)
 	}
 
 	resolved, err := c.resolveCatalogForCaller(ctx, client, caller, logger)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
-		return
+		return meetingsListResponse{}, readFail(http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
 	}
 
 	var envelope struct {
@@ -323,8 +354,7 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 		if logger != nil {
 			logger.Printf("meetings list: parse resolved catalog caller=%s: %v", caller, err)
 		}
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
-		return
+		return meetingsListResponse{}, readFail(http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
 	}
 
 	response := meetingsListResponse{Version: envelope.Version, Meetings: envelope.Meetings}
@@ -345,8 +375,7 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 			if logger != nil {
 				logger.Printf("meetings list: tag narrowing failed caller=%s: %v", caller, err)
 			}
-			writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
-			return
+			return meetingsListResponse{}, readFail(http.StatusBadGateway, tagIndexUnreadableMessage)
 		}
 	}
 	if filter.active() {
@@ -367,21 +396,5 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 	if response.Meetings == nil {
 		response.Meetings = []json.RawMessage{}
 	}
-
-	body, err := json.Marshal(response)
-	if err != nil {
-		if logger != nil {
-			logger.Printf("meetings list: encode response caller=%s: %v", caller, err)
-		}
-		writeJSONError(w, http.StatusInternalServerError, "could not encode the meeting list")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	// The list changes after every publish, and AppAPI's proxy would otherwise
-	// give this response a one-hour browser freshness window — hiding newly
-	// published meetings, and pinning a stale visible set after a revocation.
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	return response, nil
 }

@@ -1,10 +1,10 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -27,7 +27,13 @@ const (
 // parseTagParam reads `tag=`: a label, matched case-insensitively, or a tag id.
 // Blank means no narrowing, as a blank `room` does.
 func parseTagParam(query url.Values) (string, error) {
-	tag := strings.TrimSpace(query.Get("tag"))
+	return validateTagParam(query.Get("tag"))
+}
+
+// validateTagParam is parseTagParam for a value that did not arrive in a query
+// string.
+func validateTagParam(raw string) (string, error) {
+	tag := strings.TrimSpace(raw)
 	if utf8.RuneCountInString(tag) > maxTagParamRunes {
 		return "", &meetingsListBadRequest{fmt.Sprintf(
 			"tag is at most %d characters — no label or tag id is longer, so this could never match", maxTagParamRunes)}
@@ -53,46 +59,47 @@ type meetingTagsEntry struct {
 // serveTags answers GET annotations/tags: the tag vocabulary across the caller's
 // visible meetings, with coverage.
 func (s *annotationService) serveTags(w http.ResponseWriter, r *http.Request, caller string) {
+	vocabulary, err := s.tagVocabulary(r.Context(), caller)
+	if err != nil {
+		writeReadFailure(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, vocabulary)
+}
+
+// tagVocabulary is the tag vocabulary across the caller's visible meetings,
+// with coverage. Every failure is a *readFailure.
+func (s *annotationService) tagVocabulary(ctx context.Context, caller string) (tagVocabularyResponse, error) {
 	// Search's budget: each answer costs Nextcloud a PROPFIND and a catalog GET.
 	if allowed, wait := s.rt.searchLimiter.allow(caller); !allowed {
-		seconds := int(wait.Seconds())
-		if seconds < 1 {
-			seconds = 1
-		}
-		w.Header().Set("Retry-After", strconv.Itoa(seconds))
-		writeJSONError(w, http.StatusTooManyRequests,
+		return tagVocabularyResponse{}, readRateLimited(wait,
 			"too many requests; each one asks Nextcloud what you may read, so they are rate limited — retry shortly")
-		return
 	}
 	store := s.rt.annotationReads()
 	if store == nil {
 		// Before Nextcloud is asked anything.
-		writeJSONError(w, http.StatusServiceUnavailable, tagIndexUnavailableMessage)
-		return
+		return tagVocabularyResponse{}, readFail(http.StatusServiceUnavailable, tagIndexUnavailableMessage)
 	}
-	entries, ok := s.exapp.resolveVisibleMeetings(r.Context(), w, s.client, caller, s.logger, "annotations tags")
-	if !ok {
-		return
+	entries, err := s.exapp.visibleMeetings(ctx, s.client, caller, s.logger, "annotations tags")
+	if err != nil {
+		return tagVocabularyResponse{}, err
 	}
 	visible := visibleOpusNames(entries)
 
-	tags, err := store.Vocabulary(r.Context(), visible)
+	tags, err := store.Vocabulary(ctx, visible)
 	if err != nil {
 		s.logf("annotations tags: vocabulary caller=%s: %v", caller, err)
-		writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
-		return
+		return tagVocabularyResponse{}, readFail(http.StatusBadGateway, tagIndexUnreadableMessage)
 	}
-	coverage, err := store.Coverage(r.Context(), visible)
+	coverage, err := store.Coverage(ctx, visible)
 	if err != nil {
 		s.logf("annotations tags: coverage caller=%s: %v", caller, err)
-		writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
-		return
+		return tagVocabularyResponse{}, readFail(http.StatusBadGateway, tagIndexUnreadableMessage)
 	}
-	byMeeting, err := store.meetingTags(r.Context(), visible)
+	byMeeting, err := store.meetingTags(ctx, visible)
 	if err != nil {
 		s.logf("annotations tags: meeting tags caller=%s: %v", caller, err)
-		writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
-		return
+		return tagVocabularyResponse{}, readFail(http.StatusBadGateway, tagIndexUnreadableMessage)
 	}
 	meetings := []meetingTagsEntry{}
 	for _, entry := range entries {
@@ -100,5 +107,5 @@ func (s *annotationService) serveTags(w http.ResponseWriter, r *http.Request, ca
 			meetings = append(meetings, meetingTagsEntry{MeetingID: entry.id, Tags: marks})
 		}
 	}
-	writeJSON(w, http.StatusOK, tagVocabularyResponse{Tags: tags, Meetings: meetings, Coverage: coverage})
+	return tagVocabularyResponse{Tags: tags, Meetings: meetings, Coverage: coverage}, nil
 }
