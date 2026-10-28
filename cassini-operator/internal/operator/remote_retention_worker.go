@@ -349,7 +349,7 @@ func (s *annotationService) recoverRemoteRetentionPass(ctx context.Context) (rem
 }
 
 func (s *annotationService) resumeRemoteRetention(ctx context.Context, op remoteRetentionOperation) error {
-	if logicalMeetingName(op.Name) != op.Name || op.Name == "" || op.Action != "retire" {
+	if logicalMeetingName(op.Name) != op.Name || op.Name == "" || (op.Action != "retire" && op.Action != remoteRetentionActionDelete) {
 		return fmt.Errorf("invalid retirement intent")
 	}
 	if err := retentionLeafPath(op.Source); err != nil {
@@ -366,7 +366,31 @@ func (s *annotationService) resumeRemoteRetention(ctx context.Context, op remote
 }
 func (s *annotationService) finishRemoteRetention(ctx context.Context, op remoteRetentionOperation) error {
 	op.InputETag = ""
-	return s.rt.store.saveRemoteOperation(ctx, op, "completed")
+	if op.Action != remoteRetentionActionDelete {
+		return s.rt.store.saveRemoteOperation(ctx, op, "completed")
+	}
+	// The remote journal must remain recoverable until local disposal is
+	// durably admitted. Commit both together so a crash or canceled request
+	// cannot leave a completed delete without its cleanup obligation.
+	raw, err := json.Marshal(op)
+	if err != nil {
+		return remoteRetentionJournalError{err}
+	}
+	tx, err := s.rt.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return remoteRetentionJournalError{err}
+	}
+	defer tx.Rollback()
+	if err := enqueueDeletedMeetingDisposal(ctx, tx, op.Name); err != nil {
+		return remoteRetentionJournalError{err}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_retention_operation SET operation_json=?,status='completed',last_error='',updated_at=? WHERE name=?`, raw, nowUTCString(), op.Name); err != nil {
+		return remoteRetentionJournalError{err}
+	}
+	if err := tx.Commit(); err != nil {
+		return remoteRetentionJournalError{err}
+	}
+	return nil
 }
 func (s *annotationService) recoverRemoteRetentionAtStartup(ctx context.Context) error {
 	pending, err := s.rt.store.pendingRemoteOperations(ctx)

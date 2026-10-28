@@ -307,6 +307,15 @@ could not use.
 
 ## Deletion & uninstall
 
+- **Anyone who can open a meeting can delete it** (D-861). Delete, offered in
+  the viewer on the meeting and on a selection, removes the published recording
+  for everyone: the file moves into the Cassini service account's own trash bin
+  (emptied on Nextcloud's schedule; no regular user can see or restore it), the
+  meeting leaves the list, search, tags and the agent CLI, and the operator
+  reclaims the job's local working artifacts, keeping only the job and attempt
+  rows as a log. Insights that read the meeting keep their delivered answer in
+  the requester's own files and say the source is no longer available.
+  Nextcloud versions and backups remain under Nextcloud's own policies.
 - **Recording media can be deleted after processing.** Select **Nothing** under
   **Keep after each recording** to delete audio, video and raw packet logs after
   successful publication or terminal failure. Transcription artifacts, including

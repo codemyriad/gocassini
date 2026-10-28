@@ -358,7 +358,7 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 		ctx, cancel := context.WithTimeout(base, annotateRequestTimeout)
 		sum := sha256.Sum256([]byte(job.ID + "/" + name))
 		request.RequestID = hex.EncodeToString(sum[:])
-		expired := errors.Is(s.exapp.meetingNotRetired(ctx, name), errMeetingRetired)
+		goneReason := s.exapp.retiredMeetingReason(ctx, name)
 		rel, err := s.exapp.recipientRecordingPath(ctx, s.client, job.Actor, name, s.exapp.meetingMetadata)
 		if err == nil {
 			_, err = s.commitAndRecord(ctx, name, name, rel, nil, job.Actor, request)
@@ -374,18 +374,18 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 		if err != nil {
 			s.logf("annotations: %s job %s: %s: %v", job.Kind, job.ID, name, err)
 			failure = &tagJobFailure{Meeting: cmp.Or(titles[name], name), Error: tagJobError(err)}
-			if expired {
+			if goneReason != "" {
 				failure.Meeting = name
-				failure.Error = "expired"
+				failure.Error = goneReason
 			}
 		}
 		release, lockErr := annotationMutationLocks.acquire(base, s.rt.annotationReads().path)
 		if lockErr != nil {
 			return
 		}
-		if failure != nil && errors.Is(s.exapp.meetingNotRetired(base, name), errMeetingRetired) {
+		if reason := s.exapp.retiredMeetingReason(base, name); failure != nil && reason != "" {
 			failure.Meeting = name
-			failure.Error = "expired"
+			failure.Error = reason
 		}
 		s.jobs.progress(job, failure)
 		err = s.updateTagJob(job)

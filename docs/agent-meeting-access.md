@@ -68,7 +68,11 @@ Three consequences worth internalising before you build on this:
 - **One command writes, and it writes only marks.** `meetings annotate` POSTs
   a batch of tags for one meeting (see [Tags and marks](#6-tags-and-marks)).
   Everything else is `GET` and `HEAD`. Starting, stopping and re-running jobs
-  stays on the operator's admin routes, off the agent path entirely.
+  stays on the operator's admin routes, off the agent path entirely. The viewer
+  additionally offers deleting a meeting (`POST
+  annotations/meetings/<id>/delete`, D-861) under the same rule — anyone who
+  can read a meeting can delete it — but the CLI deliberately does not expose
+  that route.
 
 ## Before you begin
 

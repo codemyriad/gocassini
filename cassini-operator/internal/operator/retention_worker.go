@@ -172,7 +172,7 @@ func (rt *Runtime) expireJobArtifacts(ctx context.Context, id string, s retentio
 		return nil
 	}
 	if deletesSourceMedia(job) {
-		state := rt.mediaCleanupStatus(job)
+		state := rt.mediaCleanupStatus(job, false)
 		if state.Status != "completed" {
 			return nil
 		}

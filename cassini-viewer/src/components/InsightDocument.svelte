@@ -2,7 +2,7 @@
   import { createEventDispatcher, tick } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, ExternalLink, FileText, MessageSquare, Pencil } from "@lucide/svelte";
+  import { Calendar, ExternalLink, FileText, FileX, MessageSquare, Pencil } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import ExportMenu from "./ExportMenu.svelte";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
@@ -40,6 +40,11 @@
   // uncounted — the section itself disappears rather than announcing that
   // there was material they cannot see.
   export let sources: MeetingCatalogEntry[] = [];
+  // How many of the run's recorded sources are gone from this caller's catalog
+  // (deleted, or no longer shared — the shell cannot tell which, and says so).
+  // The answer itself stays readable: the document lives in the creator's own
+  // files (D-861).
+  export let missingSourceCount = 0;
   export let documentMarkdown = "";
   export let documentError = "";
   export let documentLoading = false;
@@ -393,12 +398,16 @@
 
   <div class="ins-body">
     <!-- 1. The material. -->
-    {#if sources.length > 0}
+    {#if sources.length > 0 || missingSourceCount > 0}
       <!-- One card: the count heads the list it counts, inside it. -->
       <section class="ins-sources ins-card">
         <h3 class="ins-card-title">
-          Context from {sources.length}
-          {sources.length === 1 ? "meeting" : "meetings"}
+          {#if sources.length > 0}
+            Context from {sources.length}
+            {sources.length === 1 ? "meeting" : "meetings"}
+          {:else}
+            Context sources
+          {/if}
         </h3>
         <ul>
           {#each sources as source (source.id)}
@@ -414,6 +423,20 @@
               </button>
             </li>
           {/each}
+          {#if missingSourceCount > 0}
+            <!-- A dead row, not a silent shrink (D-861): the answer below was
+                 read from meetings that are gone — deleted, or no longer shared
+                 with this reader; the shell cannot tell which and claims
+                 neither. Nothing to open, so it is not a button. -->
+            <li class="ins-source-missing" role="note">
+              <FileX size={14} aria-hidden="true" />
+              <span>
+                {missingSourceCount === 1
+                  ? "1 source meeting is no longer available (deleted, or no longer shared with you)."
+                  : `${missingSourceCount} source meetings are no longer available (deleted, or no longer shared with you).`}
+              </span>
+            </li>
+          {/if}
         </ul>
       </section>
     {/if}
@@ -786,6 +809,17 @@
     font-size: 0.71875rem;
     font-variant-numeric: tabular-nums;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  .ins-source-missing {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  .ins-source-missing :global(svg) {
+    flex: none;
   }
 
   /* On the same card as the sources. */

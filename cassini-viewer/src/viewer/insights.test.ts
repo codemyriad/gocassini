@@ -16,6 +16,7 @@ import {
   insightRoomKeys,
   insightsForMeeting,
   isLastBrowseType,
+  missingInsightSources,
   resolveInsightSources,
   stripInsightFrontMatter,
   toggleBrowseType,
@@ -135,6 +136,23 @@ describe("resolveInsightSources", () => {
     );
 
     expect(resolved.get("i1")).toEqual([]);
+  });
+});
+
+describe("missingInsightSources", () => {
+  it("counts the recorded sources absent from the caller's catalog (D-861)", () => {
+    const record = insight({ id: "i1", meetingIds: ["m1", "gone", "also-gone"] });
+    const resolved = resolveInsightSources([record], [meeting({ id: "m1" })]).get("i1") ?? [];
+
+    // The count discloses nothing new: meetingIds is the creator's own record.
+    expect(missingInsightSources(record, resolved)).toBe(2);
+  });
+
+  it("answers zero when every source is still readable", () => {
+    const record = insight({ id: "i1", meetingIds: ["m1"] });
+    const resolved = resolveInsightSources([record], [meeting({ id: "m1" })]).get("i1") ?? [];
+
+    expect(missingInsightSources(record, resolved)).toBe(0);
   });
 });
 

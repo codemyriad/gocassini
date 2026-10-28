@@ -137,6 +137,9 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 	if deletesSourceMedia(fresh) {
 		return Job{}, fmt.Errorf("%w: source media is scheduled for deletion after processing", ErrJobNotEligibleForRerun)
 	}
+	if s.meetingDeleted(ctx, fresh.ID) {
+		return Job{}, fmt.Errorf("%w: the meeting was deleted", ErrJobNotEligibleForRerun)
+	}
 	if pending, expired := s.artifactAdmission(ctx, job.ID); pending || expired {
 		return Job{}, ErrJobNotEligibleForRerun
 	}

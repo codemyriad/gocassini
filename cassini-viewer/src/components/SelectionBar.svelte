@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { cubicOut } from "svelte/easing";
-  import { ChevronDown, FileText, Tag, TriangleAlert, X } from "@lucide/svelte";
+  import { ChevronDown, FileText, Tag, Trash2, TriangleAlert, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
   import type { MeetingTags } from "../viewer/listTags";
@@ -43,6 +43,10 @@
   // reader who has since changed room or search with no way to see WHICH
   // meetings a bundle would carry.
   export let entries: readonly MeetingCatalogEntry[] = [];
+  // Whether this deployment can delete meetings (D-861); the shell owns the
+  // confirmation, this bar only asks for the picked set.
+  export let deletable = false;
+  export let deleteBusy = false;
   // Of those, the ones the current narrowing is not showing.
   export let hiddenIds: ReadonlySet<string> = new Set();
   // Each picked meeting's tags, for the list behind the count. Whole-meeting
@@ -67,6 +71,7 @@
     unpick: MeetingCatalogEntry;
     open: MeetingCatalogEntry;
     retryTag: void;
+    delete: void;
   }>();
 
   // Whether the list of picks is open. Closed by default: the bar floats over
@@ -157,6 +162,17 @@
         >
           <Tag size={14} aria-hidden="true" />
           Tag
+        </button>
+      {/if}
+      {#if deletable}
+        <button
+          type="button"
+          class="selbar-tag selbar-delete"
+          disabled={deleteBusy}
+          on:click={() => dispatch("delete")}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+          Delete
         </button>
       {/if}
       <button
@@ -422,6 +438,10 @@
     background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
 
+  .selbar-delete:hover:not(:disabled),
+  .selbar-delete:focus-visible {
+    color: var(--color-error);
+  }
   .selbar-tag {
     display: inline-flex;
     align-items: center;
