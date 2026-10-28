@@ -22,8 +22,10 @@
   //
   // # Who chooses what
   //
-  // The TEMPLATE picker is admin-only, because the registry is ADMIN at the
-  // proxy and a control that 403s when opened is worse than none.
+  // The TEMPLATE picker is for everybody too (D-819). It reads
+  // `operator/insights/workflows`, a USER route carrying each template's name,
+  // question and whether it takes one — never the instruction, which stays on
+  // the ADMIN settings route. Only an administrator is offered "Edit templates".
   //
   // The PROVIDER picker is for everybody. Choosing which of the configured
   // endpoints answers your question is the asker's decision — it is where
@@ -54,15 +56,16 @@
 
   import ModelCombobox from "./ModelCombobox.svelte";
   import { loadConfig } from "./operator/config";
-  import { runnableWorkflows, type OperatorClient } from "./operator/client";
-  import type { InsightWorkflow } from "./operator/types";
+  import type { OperatorClient } from "./operator/client";
   import { applyPanel, applySurface, type OperatorPanel } from "./surfaceRouting";
   import {
     createInsight,
     listAIProviders,
     listAIProviderModels,
+    listInsightTemplates,
     workflowTakesQuestion,
     type AIProviderChoice,
+    type InsightTemplateChoice,
     type InsightRun,
   } from "./insights/client";
 
@@ -72,11 +75,9 @@
   // surface, and a second reading of it would be a second answer.
   export let entries: readonly MeetingCatalogEntry[] = [];
 
-  // The operator API client, or null for anyone the admin probe denied.
-  // `operator/settings/workflows` is ADMIN at the proxy, so a non-admin cannot
-  // list templates at all — null is that fact, and the card offers no template
-  // control rather than one that 403s when opened. Their run carries no
-  // workflow, which the operator reads as "this deployment's configured one".
+  // The operator API client, or null for anyone the admin probe denied. It
+  // decides only whether "Edit templates" is offered: the picker itself reads
+  // the USER template list, so it is the same for everybody.
   export let operatorClient: OperatorClient | null = null;
 
   // `created` carries the run the operator answered with — a record that
@@ -94,7 +95,7 @@
   // first template listed" rather than to an error.
   const SHIPPED_DEFAULT_WORKFLOW = "summarise";
 
-  let workflows: InsightWorkflow[] = [];
+  let workflows: InsightTemplateChoice[] = [];
   // A registry that could not be read is not a registry with nothing in it.
   // Either way Generate still works — an insight with no template named runs
   // whatever the deployment configured — so this narrows the picker rather than
@@ -155,7 +156,7 @@
   // same one that produced this client. There is no second notion of admin here
   // to drift from the first.
   $: isAdmin = operatorClient !== null;
-  $: if (operatorClient && !workflowsAsked) {
+  $: if (operatorBasePath !== "" && !workflowsAsked) {
     void loadWorkflows();
   }
   // Not gated on operatorClient: this route is USER, and the whole point is
@@ -178,9 +179,10 @@
   // waits for it rather than sending a request the operator will refuse.
   $: questionMissing = questionAccepted && question.trim() === "";
 
-  // A non-admin cannot read the registry, so their default says "Insight"
-  // rather than guessing which template the deployment runs. The question is
-  // not part of it: it is quoted in the insight instead (see insightName.ts).
+  // With no template list (an operator older than this build), the default
+  // says "Insight" rather than guessing which template the deployment runs.
+  // The question is not part of it: it is quoted in the insight instead (see
+  // insightName.ts).
   $: suggestedName = defaultInsightName({
     templateName: chosenWorkflowEntry?.name ?? null,
     entries,
@@ -208,13 +210,10 @@
   }
 
   async function loadWorkflows() {
-    if (!operatorClient) {
-      return;
-    }
     workflowsAsked = true;
     workflowsError = "";
     try {
-      workflows = runnableWorkflows(await operatorClient.listInsightWorkflows());
+      workflows = await listInsightTemplates(operatorBasePath);
       // Opened on a real template rather than on a synthetic "this deployment's
       // default" row. That row named no template, disclosed no question, and
       // read as a setting rather than a choice — and the thing it stood for is
@@ -352,7 +351,7 @@
       </p>
     </div>
 
-    {#if isAdmin}
+    {#if workflows.length > 0}
       <!-- One box: the template you pick and what it will ask are the same
            decision, so they are not two controls with a gap between them. -->
       <div class="tpl-box">
@@ -367,7 +366,9 @@
             <ChevronDown size={14} class="gc-select-chevron" aria-hidden="true" />
           </span>
         </label>
-        <a class="link link-primary text-xs tpl-edit-link" href={templatesUrl()} on:click={openTemplates}>Edit templates</a>
+        {#if isAdmin}
+          <a class="link link-primary text-xs tpl-edit-link" href={templatesUrl()} on:click={openTemplates}>Edit templates</a>
+        {/if}
 
         {#if questionAccepted}
           <!-- The template whose question is yours. Offered only by one with
@@ -396,17 +397,16 @@
         {@render nameField()}
       </div>
 
-      {#if workflowsError}
-        <p class="text-xs text-warning">Templates could not be listed. The configured one runs.</p>
-      {/if}
     {:else}
-      <!-- The template registry is ADMIN at the proxy, so there is no picker to
-           offer. Saying which template runs is the honest substitute for a
-           control that would 403 when opened. -->
+      <!-- No list to pick from: still loading, or an operator that does not
+           serve one. Saying which template runs is the honest substitute. -->
       <p class="ins-card-sub">
         This runs the template your administrator configured for insights.
       </p>
       {@render nameField()}
+      {#if workflowsError}
+        <p class="text-xs text-warning">Templates could not be listed. The configured one runs.</p>
+      {/if}
     {/if}
 
     <!-- Where this question goes. Offered to EVERYBODY, not only

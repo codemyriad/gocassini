@@ -111,12 +111,12 @@ An insight asks one question of several meetings and keeps the answer.
    takes a question you type: the answer in at most three sentences, the
    evidence with who said what, and what these meetings do not answer.
 
-   Picking the provider is offered to everyone, not only administrators: which
-   of the configured endpoints sees your transcripts is the asker's decision.
-   The list carries each endpoint's name and nothing more. A person who is not
-   an administrator sees no template picker, because the template registry is
-   admin-only; their run uses the template the administrator configured, and the
-   card says so.
+   Picking the template and the provider is offered to everyone, not only
+   administrators: what to ask and which of the configured endpoints sees your
+   transcripts are the asker's decisions. The template list carries each
+   template's name and what it asks, not its instruction, and the provider list
+   carries each endpoint's name and nothing more. Administrators also get an
+   **Edit templates** link to change them.
 4. **Press Generate.** The run appears at the top of the Browse list as
    `queued`, then `running`, then a result or a failure. Two runs are performed
    at a time; the rest wait, and say they are queued.

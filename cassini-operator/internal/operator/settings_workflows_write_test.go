@@ -240,3 +240,76 @@ func manifestAccess(routes []manifestRoute, path, verb string) string {
 	}
 	return ""
 }
+
+// D-819 V4: everybody may pick a template by name, and nobody but an
+// administrator sees what it sends.
+func TestInsightWorkflowsListsNamesOnlyForEveryone(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "roto.md"), []byte("BROKEN"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("seed = %d %s", rec.Code, rec.Body.String())
+	}
+
+	mux := http.NewServeMux()
+	for _, route := range operatorAPIRoutes(rt, ExAppConfig{}) {
+		mux.Handle(route.pattern, route.handler)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/insights/workflows", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Error("the list may be cached by the proxy")
+	}
+	if strings.Contains(rec.Body.String(), "instruction") || strings.Contains(rec.Body.String(), "sha256") {
+		t.Errorf("the USER list carries prompt bytes or hashes: %s", rec.Body.String())
+	}
+	var choices []workflowChoice
+	if err := json.Unmarshal(rec.Body.Bytes(), &choices); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{}
+	for _, choice := range choices {
+		ids = append(ids, choice.Origin+":"+choice.ID)
+	}
+	if strings.Join(ids, ",") != "Built in:summarise,Custom:resumen" {
+		t.Errorf("choices = %v, want the runnable ones only", ids)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/insights/workflows", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST = %d, want 405", rec.Code)
+	}
+}
+
+func TestInsightWorkflowsSaysWhichTakeAQuestion(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = insightRegistryCassini(t)
+	rec := httptest.NewRecorder()
+	rt.insightWorkflowsHandler(rec, httptest.NewRequest(http.MethodGet, "/insights/workflows", nil))
+	var choices []workflowChoice
+	if err := json.Unmarshal(rec.Body.Bytes(), &choices); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body.String())
+	}
+	takes := map[string]bool{}
+	for _, choice := range choices {
+		takes[choice.ID] = choice.TakesQuestion
+	}
+	if takes["summarise"] || !takes["ask"] || len(takes) != 2 {
+		t.Errorf("takesQuestion = %v, want ask only (and no broken roto)", takes)
+	}
+}
+
+func TestManifestRoutesTheTemplateNamesForEveryUser(t *testing.T) {
+	if got := manifestAccess(manifestRoutes(t), "operator/insights/workflows", "GET"); got != "USER" {
+		t.Errorf("GET operator/insights/workflows = %q, want USER", got)
+	}
+}

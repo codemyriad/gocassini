@@ -312,7 +312,8 @@ Behavior:
   without being asked, and withheld from one that needs it the prompt would go
   out with its placeholder still in it. Either mistake is a `400`. The shipped
   `ask` workflow ("Ask your own question") takes one and requires it; every
-  other shipped workflow asks its own
+  other shipped workflow asks its own. A custom template takes one when its
+  `question` is empty (see [Insight templates](#insight-templates))
 - `provider` is optional — the id of one of the configured AI endpoints
   (`GET /operator/ai/providers` lists them). Absent, the deployment's
   configured insight endpoint answers; an unknown id is a `400`
@@ -420,10 +421,16 @@ means the template takes the caller's, which the instruction then carries as
 `{{QUESTION}}`.
 
 ```http
+GET /operator/insights/workflows                 (USER)
 GET /operator/settings/workflows                 (ADMIN)
 PUT /operator/settings/workflows/<id>            (ADMIN)
 DELETE /operator/settings/workflows/<id>         (ADMIN)
 ```
+
+- `GET /operator/insights/workflows` is what anybody generating an insight
+  picks from: `id`, `name`, `question`, `description`, `takesQuestion` and
+  `origin` for each template that can run, and never the instruction. It is
+  sent `Cache-Control: no-store`
 
 - `GET` mirrors `cassini insight workflows --json`: `id`, `version`, `sha256`,
   `name`, `question`, `description`, `origin` (`Built in` or `Custom`) and the

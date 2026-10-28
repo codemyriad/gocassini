@@ -140,6 +140,61 @@ export async function listAIProviderModels(
   return readChoices(payload);
 }
 
+// InsightTemplateChoice is one template as somebody choosing between them sees
+// it: `GET operator/insights/workflows`, USER-readable (D-819). A name, what it
+// asks, whether it asks for a question, and never the instruction it sends:
+// those bytes stay on the ADMIN settings route.
+export interface InsightTemplateChoice {
+  id: string;
+  name: string;
+  question: string;
+  description: string;
+  takesQuestion: boolean;
+  origin: string;
+}
+
+// listInsightTemplates is the Prepare picker's data, for everyone.
+export async function listInsightTemplates(
+  operatorBasePath: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<InsightTemplateChoice[]> {
+  const base = operatorBasePath.replace(/\/+$/, "");
+  // no-store, as for the endpoint list: AppAPI caches a proxied GET for an
+  // hour, and this list changes the moment an administrator saves a template.
+  const response = await fetchImpl(`${base}/insights/workflows`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const served = await readServedMessage(response);
+    throw new InsightRequestError(
+      response.status,
+      served !== ""
+        ? `The insight templates could not be listed: ${served}`
+        : `The insight templates could not be listed (HTTP ${response.status}).`,
+    );
+  }
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  const choices: InsightTemplateChoice[] = [];
+  for (const entry of payload) {
+    if (isRecord(entry) && typeof entry.id === "string" && entry.id !== "") {
+      choices.push({
+        id: entry.id,
+        name: typeof entry.name === "string" && entry.name !== "" ? entry.name : entry.id,
+        question: typeof entry.question === "string" ? entry.question : "",
+        description: typeof entry.description === "string" ? entry.description : "",
+        takesQuestion: entry.takesQuestion === true,
+        origin: typeof entry.origin === "string" ? entry.origin : "",
+      });
+    }
+  }
+  return choices;
+}
+
 function readChoices(payload: unknown): AIProviderChoice[] {
   if (!Array.isArray(payload)) {
     return [];
@@ -222,7 +277,15 @@ const QUESTION_PLACEHOLDER = "{{QUESTION}}";
 // registered in internal/insight/workflows/workflows.go — so the box appears for
 // it and for nothing else. A workflow added later that takes a question shows
 // the box on its own rather than waiting for this file to be edited.
-export function workflowTakesQuestion(workflow: { instruction?: string } | null): boolean {
+//
+// The names-only list everybody reads (D-819) carries no instruction, so it
+// carries the operator's answer to the same question, read off the same bytes.
+export function workflowTakesQuestion(
+  workflow: { instruction?: string; takesQuestion?: boolean } | null,
+): boolean {
+  if (typeof workflow?.takesQuestion === "boolean") {
+    return workflow.takesQuestion;
+  }
   return (workflow?.instruction ?? "").includes(QUESTION_PLACEHOLDER);
 }
 

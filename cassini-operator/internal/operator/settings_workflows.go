@@ -138,3 +138,54 @@ func validateWorkflowListing(entries []workflowView) error {
 	}
 	return nil
 }
+
+// workflowChoice is one template as somebody choosing between them sees it:
+// GET operator/insights/workflows, USER-readable (D-819). Everything needed to
+// pick one and to know whether it asks for a question, and never the
+// instruction: the prompt bytes stay on the ADMIN settings route.
+type workflowChoice struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Question      string `json:"question"`
+	Description   string `json:"description"`
+	TakesQuestion bool   `json:"takesQuestion"`
+	Origin        string `json:"origin"`
+}
+
+// insightWorkflowsHandler lists the templates any caller may run, by name.
+// Broken custom templates are left out: nobody can run them, and why they are
+// broken is the administrator's to read on the ADMIN route.
+func (rt *Runtime) insightWorkflowsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if strings.TrimSpace(rt.cfg.CassiniBin) == "" {
+		writeJSONError(w, http.StatusServiceUnavailable, "no cassini binary is configured, so the templates cannot be listed")
+		return
+	}
+	entries, err := rt.readWorkflowRegistry(r.Context())
+	if err != nil {
+		rt.logger.Printf("insight workflows: %v", err)
+		writeJSONError(w, http.StatusBadGateway, "the templates could not be listed")
+		return
+	}
+	choices := make([]workflowChoice, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.runnable() {
+			continue
+		}
+		choices = append(choices, workflowChoice{
+			ID:            entry.ID,
+			Name:          entry.Name,
+			Question:      entry.Question,
+			Description:   entry.Description,
+			TakesQuestion: strings.Contains(entry.Instruction, insightQuestionPlaceholder),
+			Origin:        entry.Origin,
+		})
+	}
+	// no-store, as for the provider list: AppAPI caches a proxied GET for an
+	// hour, and this list changes the moment an administrator saves a template.
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, choices)
+}

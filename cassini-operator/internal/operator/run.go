@@ -1003,6 +1003,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/status", http.HandlerFunc(rt.statusHandler)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
 		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
+		// The template names every caller may pick from (D-819), USER at the
+		// proxy; the instruction bytes stay on /settings/workflows (ADMIN).
+		{"/insights/workflows", http.HandlerFunc(rt.insightWorkflowsHandler)},
 		{"/ai/providers/", http.HandlerFunc(rt.aiProviderModelsHandler)},
 		{"/settings", http.HandlerFunc(rt.settingsHandler)},
 		{"/settings/models", http.HandlerFunc(rt.modelsHandler)},

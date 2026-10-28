@@ -404,6 +404,17 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>GET</verb>
         <access_level>USER</access_level>
       </route>
+      <!--
+        USER: the insight templates anybody may pick when generating an
+        insight (D-819). Id, name, question, description, whether it takes a
+        question, and origin: never the instruction, which stays on the ADMIN
+        operator/settings/workflows route.
+      -->
+      <route>
+        <url>^operator\/insights\/workflows\/?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
 
       <!--
         USER: insights. Five operations over four paths — create a run

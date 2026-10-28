@@ -32,20 +32,23 @@ describe("GenerateCard", () => {
 
   it("has no second notion of admin", () => {
     // The client is null for exactly the people the operator boundary probe
-    // denied, and `operator/settings/workflows` is ADMIN at the proxy — so the
-    // template picker exists precisely where it would not 403.
+    // denied; it decides whether "Edit templates" is offered, and nothing else.
     expect(generateCardSource).toContain("$: isAdmin = operatorClient !== null;");
     expect(generateCardSource).toContain("{#if isAdmin}");
     expect(generateCardSource).toContain("This runs the template your administrator configured");
   });
 
-  it("links an administrator to the templates panel from the picker", () => {
-    expect(generateCardSource).toContain(">Edit templates</a>");
-    expect(generateCardSource).toContain('dispatch("open", { panel: "templates", href: templatesUrl() });');
+  it("offers every user the template picker, from the names-only list (D-819)", () => {
+    expect(generateCardSource).toContain("workflows = await listInsightTemplates(operatorBasePath);");
+    expect(generateCardSource).toContain('$: if (operatorBasePath !== "" && !workflowsAsked) {');
+    expect(generateCardSource).toContain("{#if workflows.length > 0}");
+    // The ADMIN registry, with its instruction bytes, is not read here.
+    expect(generateCardSource).not.toContain("listInsightWorkflows");
   });
 
-  it("never offers a custom template that cannot run", () => {
-    expect(generateCardSource).toContain("runnableWorkflows(await operatorClient.listInsightWorkflows())");
+  it("links an administrator to the templates panel from the picker", () => {
+    expect(generateCardSource).toMatch(/\{#if isAdmin\}\s*<a [^>]*>Edit templates<\/a>/);
+    expect(generateCardSource).toContain('dispatch("open", { panel: "templates", href: templatesUrl() });');
   });
 
   it("lists no runs, its own included", () => {
@@ -133,11 +136,8 @@ describe("GenerateCard", () => {
   });
 
   it("never puts a raw workflow id in front of somebody who has no names", () => {
-    // The registry is ADMIN at the proxy, so a non-admin can look nothing up —
-    // and they have no picker either, so the only run this card ever shows them
-    // is one they started against the deployment's configured template. It is
-    // named by the question asked, or by the template's display name where this
-    // reader has one, never by the raw id.
+    // A run is named by the question asked, or by the template's display name
+    // where this reader has one, never by the raw id.
     expect(generateCardSource).not.toContain("run.workflowId");
   });
 
