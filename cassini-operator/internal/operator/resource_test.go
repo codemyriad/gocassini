@@ -76,8 +76,8 @@ func TestResourceLimitDefaultsCoverMeasuredWorkingSet(t *testing.T) {
 	if limits.minFreeMemMB != 6144 {
 		t.Fatalf("default RAM floor = %dMiB, want 6144MiB", limits.minFreeMemMB)
 	}
-	if limits.gpuMinFreeMB != 5500 {
-		t.Fatalf("default VRAM floor = %dMiB, want 5500MiB", limits.gpuMinFreeMB)
+	if limits.gpuMinFreeMB != 7168 {
+		t.Fatalf("default VRAM floor = %dMiB, want 7168MiB", limits.gpuMinFreeMB)
 	}
 }
 

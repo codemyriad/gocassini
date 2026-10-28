@@ -52,18 +52,22 @@ func resourceLimitsFromEnv() resourceLimits {
 	cpus := probeOnlineCPUs()
 	return resourceLimits{
 		cpuReserve: envIntDefault("CASSINI_BUILD_CPU_RESERVE", defaultCPUReserve(cpus)),
-		// Full-run measurements peaked at ~5.2GiB cgroup RAM and 4.63GiB
-		// VRAM. Keep conservative launch floors above those working sets so
-		// the build can load without consuming the host's last reserve.
+		// Full-run measurements peaked at ~5.2GiB cgroup RAM. Keep a
+		// conservative launch floor above that working set so the build can
+		// load without consuming the host's last reserve.
 		minFreeMemMB: envIntDefault("CASSINI_BUILD_MIN_FREE_MEM_MB", 6144),
 		// A CPU build's working set is dominated by the model it loads, which
 		// differs by an order of magnitude across the quality tiers, so its
 		// floor is derived per model (minFreeMemForBuild) rather than fixed:
 		// the model's measured peak plus this margin for the rest of the host.
 		cpuMemHeadroomMB: envIntDefault("CASSINI_BUILD_CPU_MEM_HEADROOM_MB", 1024),
-		gpuMinFreeMB:     envIntDefault("CASSINI_GPU_MIN_FREE_MB", 5500),
-		memWaitMax:       time.Duration(envIntDefault("CASSINI_BUILD_MEM_WAIT_SECS", 300)) * time.Second,
-		memPoll:          3 * time.Second,
+		// Greedy decoding of Parakeet Ultra fp32 on CUDA peaked at 6,904MiB of
+		// video memory over 19 real builds (2026-10-28, RTX 5060), above the
+		// ~5.7GiB of the beam search it replaced. 7GiB clears that peak and
+		// still admits a build on an idle 8GiB card (7,627MiB free).
+		gpuMinFreeMB: envIntDefault("CASSINI_GPU_MIN_FREE_MB", 7168),
+		memWaitMax:   time.Duration(envIntDefault("CASSINI_BUILD_MEM_WAIT_SECS", 300)) * time.Second,
+		memPoll:      3 * time.Second,
 	}
 }
 
