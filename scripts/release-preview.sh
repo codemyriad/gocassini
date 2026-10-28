@@ -5,7 +5,8 @@
 # fragments (so you can see what would ship BEFORE choosing a bump), and the
 # concrete next moves:
 #   - on a stable version: the patch / minor / major candidates, with semver
-#     guidance, so the changelog tells you which to pick.
+#     guidance and the branch each is cut on, so the changelog tells you which
+#     to pick.
 #   - mid-prerelease: how to advance the ladder (and that you can skip stages
 #     or jump straight to stable).
 #
@@ -32,18 +33,20 @@ echo
 read -r _maj _min _pat pretype _prenum <<<"$(rv_parse "$current")"
 
 if [[ -z "$pretype" ]]; then
-  echo "This is a stable version — a release starts a new prerelease train at -alpha.1."
+  patch="$(rv_bump patch "$current")"
+  echo "This is a stable version — a patch goes straight to stable (--version ${patch}-rc.1"
+  echo "for a risky fix); a minor or major starts a prerelease train at -alpha.1."
   echo "Pick the bump from the changes above:"
-  printf '  %-6s → %-16s %s\n' patch "$(rv_bump patch "$current")" "backward-compatible fixes only"
-  printf '  %-6s → %-16s %s\n' minor "$(rv_bump minor "$current")" "new features, no breaking changes"
-  printf '  %-6s → %-16s %s\n' major "$(rv_bump major "$current")" "breaking changes"
+  printf '  %-6s → %-16s %-36s on %s\n' patch "$patch" "backward-compatible fixes only" "$(rv_release_branch "$patch")"
+  printf '  %-6s → %-16s %-36s on %s\n' minor "$(rv_bump minor "$current")" "new features, no breaking changes" main
+  printf '  %-6s → %-16s %-36s on %s\n' major "$(rv_bump major "$current")" "breaking changes" main
   if [[ -z "${RELEASE_PREVIEW_NO_HINT:-}" ]]; then
     echo
     echo "Then:  ./scripts/prepare-release.sh --bump <patch|minor|major> --push"
   fi
 else
   base="${_maj}.${_min}.${_pat}"
-  echo "This is a prerelease — advance it along the ladder:"
+  echo "This is a prerelease — advance it along the ladder (beta onwards is cut on release/${_maj}.${_min}):"
   case "$pretype" in
     alpha) printf '  %-14s → %s\n' "promote beta"   "$(rv_promote beta "$current")" ;;
     beta)  printf '  %-14s → %s\n' "promote rc.1"   "$(rv_promote rc.1 "$current")" ;;

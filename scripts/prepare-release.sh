@@ -11,6 +11,10 @@
 #   ./scripts/prepare-release.sh --promote rc.1
 #   ./scripts/prepare-release.sh --version 0.3.0-beta.1
 #
+# It cuts only on the version's branch (docs/release.md#branches): main for
+# X.Y.0-alpha.N, release/X.Y for the rest of the X.Y line. It fetches origin's
+# tags first and refuses a branch that is behind origin.
+#
 # Options:
 #   --bump patch|minor|major       compute the next version from info.xml
 #   --promote beta|rc.1|rc.2|stable advance along the prerelease ladder
@@ -124,20 +128,49 @@ main() {
       || die "appinfo/info.xml is not well-formed"
   fi
 
+  # Cut on the version's branch (docs/release.md#branches).
+  local branch want
+  branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" \
+    || die "HEAD is detached; check out the branch v$target is cut on first"
+  want="$(rv_release_branch "$target")"
+  if [[ "$branch" != "$want" ]]; then
+    if [[ "$want" == release/* ]] \
+       && ! git -C "$root" rev-parse -q --verify "refs/heads/$want" >/dev/null \
+       && ! git -C "$root" rev-parse -q --verify "refs/remotes/origin/$want" >/dev/null; then
+      die "v$target is cut on $want, which doesn't exist yet; branch it from main at the first beta: git switch -c $want main"
+    fi
+    die "v$target is cut on $want, not $branch; git switch $want (see docs/release.md#branches)"
+  fi
+
+  # Fetch origin: the version check below must see every tag, including one cut
+  # in parallel elsewhere, and the branch must not be behind origin's.
+  if git -C "$root" remote get-url origin >/dev/null 2>&1; then
+    git -C "$root" fetch --quiet --tags origin \
+      || die "could not fetch tags from origin; the version check needs them"
+    if git -C "$root" rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null \
+       && ! git -C "$root" merge-base --is-ancestor "origin/$branch" HEAD; then
+      die "$branch is behind origin/$branch; pull it first"
+    fi
+  else
+    echo "warning: no origin remote; checking the version against local tags only" >&2
+  fi
+
   # Tag must not already exist.
   git -C "$root" rev-parse -q --verify "refs/tags/v$target" >/dev/null 2>&1 \
     && die "tag v$target already exists"
 
-  # Target must be greater than the latest conforming release tag.
+  # Target must be greater than the latest release tag in its own X.Y line.
+  # Lines move independently: 0.2.2 ships after 0.3.0-alpha.1.
   local latest="" t v
   while IFS= read -r t; do
     [[ -n "$t" ]] || continue
     v="${t#v}"
     rv_validate "$v" >/dev/null 2>&1 || continue
+    rv_same_line "$v" "$target" || continue
     if [[ -z "$latest" ]] || rv_gt "$v" "$latest"; then latest="$v"; fi
   done < <(git -C "$root" tag --list 'v*')
   if [[ -n "$latest" ]] && ! rv_gt "$target" "$latest"; then
-    die "target $target is not greater than latest release tag v$latest"
+    die "target $target is not greater than v$latest, the latest release tag in its line"
   fi
 
   # Fragment presence (unless explicitly allowed to be empty).
@@ -179,8 +212,7 @@ main() {
     echo "Created tag:    v$target"
   fi
 
-  local branch push_ref
-  branch="$(git -C "$root" rev-parse --abbrev-ref HEAD)"
+  local push_ref
   push_ref="$branch"
   [[ "$make_tag" -eq 1 ]] && push_ref="$branch v$target"
 
