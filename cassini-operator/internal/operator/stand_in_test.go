@@ -20,7 +20,8 @@ const (
 
 // standInScript is the fake recorder of these tests: `models list` reads the
 // inventory, `models probe` records the model it checked and fails for one
-// that has a fail-probe-<id> file, `models install` reports a download, and
+// that has a fail-probe-<id> file, or refuses it for lack of memory (exit 75)
+// for one that has a short-probe-<id> file, `models install` reports a download, and
 // `build` records its environment and writes a transcribed bundle.
 const standInScript = `#!/bin/sh
 set -eu
@@ -31,6 +32,7 @@ case "$1 $2" in
   echo "$3" >> "$r/probes"
   printf '%s\n' '{"version":1,"phase":"checking"}'
   if [ -e "$r/fail-probe-$3" ]; then echo 'probe refused' >&2; exit 1; fi
+  if [ -e "$r/short-probe-$3" ]; then echo 'not enough memory' >&2; exit 75; fi
   printf '%s\n' '{"version":1,"phase":"ready"}' ;;
 "models install")
   printf '%s\n' '{"version":1,"phase":"downloading","completed_bytes":5,"total_bytes":10}' ;;
@@ -184,7 +186,7 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "install failed", reason: "install_failed", detail: "is not installed", job: "failed", setup: func(t *testing.T, rt *Runtime) {
+		{name: "install failed", reason: "install_failed", detail: "its install failed; it can be retried in Settings", job: "failed", setup: func(t *testing.T, rt *Runtime) {
 			j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
 			if err != nil {
 				t.Fatal(err)
@@ -194,10 +196,22 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "downloads disabled", reason: "downloads_disabled", detail: "is not installed", setup: func(t *testing.T, rt *Runtime) {
+		{name: "downloads disabled", reason: "downloads_disabled", detail: "model downloads are disabled", setup: func(t *testing.T, rt *Runtime) {
 			rt.cfg.DisallowModelDownload = true
 		}},
-		{name: "runtime check failed", ultraInstalled: true, reason: "runtime_check_failed", detail: "failed its runtime check: probe:", setup: func(t *testing.T, rt *Runtime) {
+		// Nothing can retry the failed install while downloads are disabled.
+		{name: "downloads disabled after a failed install", reason: "downloads_disabled", detail: "model downloads are disabled", job: "failed", setup: func(t *testing.T, rt *Runtime) {
+			j, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.State, j.Error = "failed", "network down"
+			if err := rt.updateModelJob(j); err != nil {
+				t.Fatal(err)
+			}
+			rt.cfg.DisallowModelDownload = true
+		}},
+		{name: "runtime check failed", ultraInstalled: true, reason: "runtime_check_failed", detail: "failed its runtime check on cpu", setup: func(t *testing.T, rt *Runtime) {
 			if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "fail-probe-"+modelParakeetUltraInt8), nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -213,7 +227,7 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 			if err != nil || device != deviceCPU {
 				t.Fatalf("admission: %s %v", device, err)
 			}
-			if admitted.ActiveModel != v3Int8 || admitted.ActiveRevision != v3Int8Rev || admitted.StandInFor != modelParakeetUltraInt8 || admitted.StandInReason != c.reason || !strings.Contains(admitted.StandInDetail, c.detail) {
+			if admitted.ActiveModel != v3Int8 || admitted.ActiveRevision != v3Int8Rev || admitted.StandInFor != modelParakeetUltraInt8 || admitted.StandInReason != c.reason || !strings.HasPrefix(admitted.StandInDetail, c.detail) {
 				t.Fatalf("admitted %s/%s for %q (%s: %s)", admitted.ActiveModel, admitted.ActiveRevision, admitted.StandInFor, admitted.StandInReason, admitted.StandInDetail)
 			}
 			env, err := resourceLimitsFromEnv().applyToEnv(admitted.ChildEnv(nil), device, admitted.ActiveModel)
@@ -228,6 +242,12 @@ func TestBuildTranscribesWithV3WhileUltraDownloads(t *testing.T) {
 			after, _ := rt.modelJobs(rt.ctx)
 			if len(after) != len(before) || (c.job != "" && after[0].State != c.job) {
 				t.Fatalf("install jobs %+v, were %+v", after, before)
+			}
+			// The transcript gets a fixed sentence, not a command's output.
+			for _, raw := range []string{"network down", "probe refused", "exit status"} {
+				if strings.Contains(admitted.StandInDetail, raw) {
+					t.Fatalf("detail %q carries %q", admitted.StandInDetail, raw)
+				}
 			}
 			// The settings and a job's snapshot never carry the stand-in.
 			if raw, _ := json.Marshal(admitted); strings.Contains(strings.ToLower(string(raw)), "stand") || strings.Contains(string(raw), admitted.StandInDetail) {
@@ -431,6 +451,65 @@ func TestReadinessSizesBuildsForTheStandIn(t *testing.T) {
 	}
 	if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelParakeetUltraInt8 {
 		t.Fatalf("build with Ultra unchecked: %+v %v", admitted, err)
+	}
+}
+
+// A stand-in whose check only has to wait for memory makes the build wait,
+// instead of losing the transcript to the selected model's final error: an
+// ordinary job would publish the audio alone at once, and a
+// delete-after-processing job would fail.
+func TestStandInCheckThatMustWaitDefersTheBuild(t *testing.T) {
+	cases := []struct {
+		name           string
+		ultraInstalled bool
+		dispose        bool
+		setup          func(t *testing.T, rt *Runtime)
+	}{
+		{name: "downloads disabled, v3 check refused for memory", setup: func(t *testing.T, rt *Runtime) {
+			rt.cfg.DisallowModelDownload = true
+			if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, "short-probe-"+v3Int8), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "Ultra check failed, v3 check refused for memory", ultraInstalled: true, dispose: true, setup: func(t *testing.T, rt *Runtime) {
+			for _, f := range []string{"fail-probe-" + modelParakeetUltraInt8, "short-probe-" + v3Int8} {
+				if err := os.WriteFile(filepath.Join(rt.cfg.ModelCacheRoot, f), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rt := standInRuntime(t, c.ultraInstalled, false, true, false)
+			c.setup(t, rt)
+			_, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), c.dispose)
+			if !transientResourceError(err) || admitted.StandInFor != "" {
+				t.Fatalf("admission: %+v %v", admitted, err)
+			}
+			// Not remembered as failed: the next attempt checks it again.
+			if err := os.Remove(filepath.Join(rt.cfg.ModelCacheRoot, "short-probe-"+v3Int8)); err != nil {
+				t.Fatal(err)
+			}
+			if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), c.dispose); err != nil || admitted.ActiveModel != v3Int8 {
+				t.Fatalf("next attempt: %+v %v", admitted, err)
+			}
+		})
+	}
+
+	// Short of memory before the check even starts.
+	rt := standInRuntime(t, false, false, true, false)
+	rt.cfg.DisallowModelDownload = true
+	orig := probeAvailableMem
+	probeAvailableMem = func() int { return 1024 }
+	t.Cleanup(func() { probeAvailableMem = orig })
+	limits := resourceLimitsFromEnv()
+	limits.memWaitMax = 0
+	if _, _, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), limits, false); !transientResourceError(err) || !strings.Contains(err.Error(), "host memory") {
+		t.Fatalf("admission short of memory: %v", err)
+	}
+	if probes := probesRun(t, rt); len(probes) != 0 {
+		t.Fatalf("checked %v", probes)
 	}
 }
 

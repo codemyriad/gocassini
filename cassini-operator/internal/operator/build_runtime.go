@@ -362,21 +362,21 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 		selected = replacement
 	}
 	// standIn is what admission returns where the selected model cannot run:
-	// the retired model it replaces, when that can, or else cause unchanged.
-	standIn := func(cause error, reason string) (string, STTSettings, error) {
-		retired, ok := rt.admitStandIn(ctx, inventory, selected, device, limits, retiredPin)
+	// the retired model it replaces, when that can. When none can, it is cause
+	// unchanged, unless cause is final and the stand-in's own check only has
+	// to wait for memory: then the build waits too, rather than losing the
+	// transcript the stand-in can give it on a later attempt. reason and
+	// detail are what the transcript records; detail is a fixed sentence,
+	// never cause's text, which can carry a command's output.
+	standIn := func(cause error, reason, detail string) (string, STTSettings, error) {
+		retired, ok, waitErr := rt.admitStandIn(ctx, inventory, selected, device, limits, retiredPin)
 		if !ok {
+			if waitErr != nil && !transientResourceError(cause) {
+				return "", settings, waitErr
+			}
 			return "", settings, cause
 		}
-		detail := cause.Error()
-		var wait *resourceUnavailableError
-		if errors.As(cause, &wait) {
-			detail = wait.detail
-		}
-		if reason == standInReasonRuntimeCheckFailed {
-			detail = "failed its runtime check: " + detail
-		}
-		rt.logger.Printf("resource governor: speech model %s is not ready (%s: %s); this build transcribes with retired %s (%s), which it replaces, as a stand-in on %s", selected.ID, reason, detail, retired.ID, retired.Revision, device)
+		rt.logger.Printf("resource governor: speech model %s is not ready (%s: %v); this build transcribes with retired %s (%s), which it replaces, as a stand-in on %s", selected.ID, reason, cause, retired.ID, retired.Revision, device)
 		settings.ActiveModel, settings.ActiveRevision = retired.ID, retired.Revision
 		settings.StandInFor, settings.StandInReason, settings.StandInDetail = selected.ID, reason, detail
 		return device, settings, nil
@@ -386,7 +386,8 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 		if hasJob && modelJobRunning(job) {
 			// Being installed (after an upgrade replaced the model, typically):
 			// waiting is what makes this transcript possible.
-			return standIn(&resourceUnavailableError{resource: "speech model " + selected.ID, detail: "being installed (" + modelJobProgressText(job) + ")", awaitsModel: true}, standInReasonInstalling)
+			detail := "being installed (" + modelJobProgressText(job) + ")"
+			return standIn(&resourceUnavailableError{resource: "speech model " + selected.ID, detail: detail, awaitsModel: true}, standInReasonInstalling, detail)
 		}
 		if hasJob && job.State == "ready" {
 			// The install may have finished after the inventory was read.
@@ -406,22 +407,25 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 			// install a model that is missing for any other reason. Neither is
 			// this recording's fault: wait for the model, never fail it.
 			wait := rt.awaitModelInstall(ctx, selected, device, retiredPin)
-			return standIn(wait, rt.notInstalledReason(ctx, selected, device))
+			reason, detail := rt.notInstalledReason(ctx, selected, device)
+			return standIn(wait, reason, detail)
 		}
-		return standIn(fmt.Errorf("speech model %s %s is not installed", selected.ID, selected.Revision), rt.notInstalledReason(ctx, selected, device))
+		reason, detail := rt.notInstalledReason(ctx, selected, device)
+		return standIn(fmt.Errorf("speech model %s %s is not installed", selected.ID, selected.Revision), reason, detail)
 	}
 	if !selected.Ready {
 		// A runtime change rechecks existing files without a model request.
 		if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, selected.ID), rt.logger.Printf); err != nil {
+			// The stand-in needs no less memory (TestStandInNeedsNoLessMemory).
 			return "", settings, err
 		}
 		probe := modelJob{Model: selected.ID, Revision: selected.Revision, Device: device}
 		if err := rt.modelCommand(ctx, &probe, "probe", false); err != nil {
 			if transientResourceError(err) {
-				// The stand-in would need the same memory.
+				// The stand-in needs no less memory (TestStandInNeedsNoLessMemory).
 				return "", settings, err
 			}
-			return standIn(err, standInReasonRuntimeCheckFailed)
+			return standIn(err, standInReasonRuntimeCheckFailed, "failed its runtime check on "+device)
 		}
 		rt.invalidateModelInventory()
 	}
@@ -439,18 +443,20 @@ const (
 )
 
 // notInstalledReason says why a model that is not installed is missing, from
-// its install job and the download policy.
-func (rt *Runtime) notInstalledReason(ctx context.Context, m modelInfo, device string) string {
+// its install job and the download policy, as a stand-in's transcript records
+// it. With downloads disabled an earlier failed install cannot be retried, so
+// that is the reason.
+func (rt *Runtime) notInstalledReason(ctx context.Context, m modelInfo, device string) (reason, detail string) {
 	job, ok := rt.modelJobFor(ctx, m.ID, m.Revision, device)
 	switch {
 	case ok && modelJobRunning(job):
-		return standInReasonInstalling
-	case ok && (job.State == "failed" || job.State == "cancelled"):
-		return standInReasonInstallFailed
+		return standInReasonInstalling, "being installed (" + modelJobProgressText(job) + ")"
 	case rt.cfg.DisallowModelDownload:
-		return standInReasonDownloadsDisabled
+		return standInReasonDownloadsDisabled, "model downloads are disabled; it can be imported with cassini models import"
+	case ok && (job.State == "failed" || job.State == "cancelled"):
+		return standInReasonInstallFailed, "its install " + job.State + "; it can be retried in Settings"
 	}
-	return standInReasonNotInstalled
+	return standInReasonNotInstalled, "not installed"
 }
 
 // admitStandIn returns the retired model that stands in for selected on
@@ -459,22 +465,23 @@ func (rt *Runtime) notInstalledReason(ctx context.Context, m modelInfo, device s
 // the job's own retired pin. The CUDA path runs only an fp32 one. A stand-in
 // that has not passed its runtime check on this runtime is checked here,
 // first, as the selected model would be; one that fails is not tried again
-// until a restart. Nothing here ever downloads a retired model: there is
-// only what an upgraded install still has.
-func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, selected modelInfo, device string, limits resourceLimits, retiredPin string) (modelInfo, bool) {
+// until a restart. A check that has to wait for memory returns that error, so
+// the build can wait for it too. Nothing here ever downloads a retired model:
+// there is only what an upgraded install still has.
+func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, selected modelInfo, device string, limits resourceLimits, retiredPin string) (modelInfo, bool, error) {
 	for _, m := range rt.standInCandidates(inventory, selected, device, retiredPin) {
 		if m.Ready {
-			return m, true
+			return m, true, nil
 		}
 		if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, m.ID), rt.logger.Printf); err != nil {
-			return modelInfo{}, false
+			return modelInfo{}, false, err
 		}
 		probe := modelJob{Model: m.ID, Revision: m.Revision, Device: device}
 		if err := rt.modelCommand(ctx, &probe, "probe", false); err != nil {
 			rt.logger.Printf("resource governor: retired %s (%s) cannot stand in for %s on %s: %v", m.ID, m.Revision, selected.ID, device, err)
 			if transientResourceError(err) || ctx.Err() != nil {
 				// Memory may free up; check it again on the next attempt.
-				return modelInfo{}, false
+				return modelInfo{}, false, err
 			}
 			rt.standInMu.Lock()
 			if rt.standInCheckFailed == nil {
@@ -486,9 +493,9 @@ func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, sele
 		}
 		rt.invalidateModelInventory()
 		m.Ready = true
-		return m, true
+		return m, true, nil
 	}
-	return modelInfo{}, false
+	return modelInfo{}, false, nil
 }
 
 // standInCandidates lists the installed retired models that may stand in for

@@ -61,7 +61,7 @@
             "model": {"type": "string"},
             "revision": {"type": "string"},
             "standIn": {
-              "description": "Present when model is a retired model that ran in place of for, the model replacing it, which was not ready on this device. reason says why: installing, install_failed, downloads_disabled, not_installed or runtime_check_failed; detail is the operator's description of for's state.",
+              "description": "Present when model is a retired model that ran in place of for, the model replacing it, which was not ready on this device. reason says why: installing, install_failed, downloads_disabled, not_installed or runtime_check_failed; detail is a short sentence on for's state. The speech-to-text provenance step names the model that ran without marking the substitution.",
               "type": "object",
               "required": ["for"],
               "properties": {
