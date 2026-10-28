@@ -74,6 +74,21 @@ func installedCatalogueModel(s *modelstore.Store, id ModelID, revision string) (
 	return m, nil
 }
 
+// RemoveReplacedModels deletes the files of the retired models m replaces
+// (modelstore.Store.RemoveReplaced) while holding the inference lock. A build
+// holds that lock from resolving its model until its last recognizer is
+// closed, and it may be standing in with one of those models, which sherpa
+// opens lazily: removing the files without the lock could pull them from
+// under it.
+func RemoveReplacedModels(ctx context.Context, s *modelstore.Store, m modelstore.Model) ([]string, error) {
+	unlock, err := lockModelRuntime(ctx, s.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return s.RemoveReplaced(ctx, m)
+}
+
 // InstalledDiarizer describes an installed catalogue diarization model. Like
 // InstalledVAD it never acquires files, and it trusts the store's receipt: the
 // SHA-256 is the catalogue's, which the bytes were verified against when they

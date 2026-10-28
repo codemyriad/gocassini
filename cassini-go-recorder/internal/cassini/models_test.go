@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gocassini/internal/modelstore"
 	"gocassini/internal/transcribe"
@@ -299,5 +300,43 @@ func TestModelsProbeChecksARetiredModelButNeverInstallsIt(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "downloads")); !os.IsNotExist(err) {
 		t.Fatalf("a download started: %v", err)
+	}
+}
+
+// A build holds the inference lock from resolving its model until its last
+// recognizer is closed, and it may be standing in with the model Ultra
+// replaces. The probe that checks Ultra removes that model's files only once
+// it holds the lock itself, so it never pulls them from under such a build.
+func TestReplacedModelIsRemovedOnlyUnderTheInferenceLock(t *testing.T) {
+	stubModelRuntime(t, true)
+	root := t.TempDir()
+	fakeInstallShipped(t, root, "parakeet-ultra-0.6b-int8")
+	fakeInstallShipped(t, root, "silero-vad")
+	v3 := fakeInstallRetired(t, root, "parakeet-tdt-0.6b-v3-int8")
+
+	unlock, err := transcribe.LockModelRuntime(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	var stderr bytes.Buffer
+	go func() {
+		var stdout bytes.Buffer
+		done <- runModels(context.Background(), []string{"probe", "parakeet-ultra-0.6b-int8", "--cache-root", root}, &stdout, &stderr)
+	}()
+	select {
+	case code := <-done:
+		t.Fatalf("probe finished (%d) while a build held the inference lock: %s", code, stderr.String())
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, err := os.Stat(modelstore.New(root).Dir(v3)); err != nil {
+		t.Fatalf("v3 removed while a build held the inference lock: %v", err)
+	}
+	unlock()
+	if code := <-done; code != 0 {
+		t.Fatalf("probe = %d: %s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "models", v3.ID)); !os.IsNotExist(err) {
+		t.Fatalf("v3 still installed: %v", err)
 	}
 }
