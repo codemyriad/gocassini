@@ -233,7 +233,9 @@
     filter.trim() === "" ? meetings : meetings.filter((meeting) => localMatchIds.has(meeting.id));
   // Name/date matches keep the catalog's order and come first; meetings that
   // matched only on what was said follow, in the server's rank order.
-  $: visibleMeetings = filter.trim() === "" ? nameMatches : [...nameMatches, ...transcriptOnlyMeetings];
+  $: visibleMeetings = filter.trim() === "" || searchState === "searching"
+    ? nameMatches
+    : [...nameMatches, ...transcriptOnlyMeetings];
   // The shell owns the request; this only says what was typed.
   $: dispatch("query", filter);
   $: isSearching = searchState === "searching";
@@ -387,7 +389,7 @@
     <div class="resultline" role="status">
       {#if shown}
       {#if types.meetings}
-        <span>{narrowed ? `${visibleMeetings.length} of ${totalCount} meetings` : plural(totalCount, "meeting")}</span>
+        <span>{isSearching ? "Finding matching meetings…" : narrowed ? `${visibleMeetings.length} of ${totalCount} meetings` : plural(totalCount, "meeting")}</span>
       {/if}
       <!-- A count once a listing has come back and there is something to
            count, the fact that it did not when it failed, and nothing at all
@@ -515,9 +517,14 @@
       <div class="list-empty">
         <strong>Loading insights…</strong>
       </div>
+    {:else if isSearching && types.meetings}
+      <div class="list-empty" role="status">
+        <strong>Searching meetings…</strong>
+        <span>Looking for “{trimmedFilter}” in what was said.</span>
+      </div>
     {:else if feedItems.length === 0}
       <div class="list-empty">
-        <strong>Nothing matches</strong>
+        <strong>{searchProblem && types.meetings ? "Search could not finish" : "Nothing matches"}</strong>
         <span>
           {#if tagFilterCount > 0 && insightsOnly}
             Insights carry no tags, so a tag filter hides them.
