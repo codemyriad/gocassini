@@ -14,6 +14,7 @@
     "./tags/*": "./src/components/tags/*",
     "./insights": "./src/viewer/insights.ts",
     "./insightName": "./src/viewer/insightName.ts",
+    "./meetingSummary": "./src/viewer/meetingSummary.ts",
     "./app.css": "./src/app.css"
   },
   "scripts": {

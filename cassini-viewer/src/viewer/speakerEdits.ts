@@ -103,6 +103,9 @@ export interface SpeakerEditsState {
   report: SpeakerEditsReport | null;
   // null unless `state` is "applying"; absent from an operator older than it.
   progress?: SpeakerEditsProgress | null;
+  // Whether this reader may ask a save to rewrite the meeting's summary for
+  // the new speakers (D-814); absent from an older operator, which means no.
+  canRewriteSummary?: boolean;
 }
 
 // "unavailable" is the operator's answer to a save on a meeting whose

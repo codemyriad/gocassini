@@ -61,6 +61,16 @@
             "model": {"type": "string"},
             "revision": {"type": "string"}
           }
+        },
+        "meetingSummary": {
+          "description": "What the summary step did. Absent in files sealed before it was recorded, where a missing summary asserts nothing. completed: model names the model that wrote it. skipped: reason is disabled, not_configured or no_transcript. failed: reason is llm_failed.",
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": {"type": "string", "enum": ["completed", "skipped", "failed"]},
+            "reason": {"type": "string"},
+            "model": {"type": "string"}
+          }
         }
       }
     },

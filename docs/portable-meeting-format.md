@@ -287,9 +287,25 @@ it leaves the app: downloaded, shared, or handed to someone with no Nextcloud.
       "createdAtUtc": "2026-09-10T11:24:10Z",
       "actor": { "kind": "agent", "id": "alice" },
       "operationId": "op_01J9ZB6Q4H7T2N8K3M5P0R1S2Y" }
-  ]
+  ],
+  "meeting": {
+    "title": "Q4 hiring sync",
+    "setAtUtc": "2026-10-20T09:12:04Z",
+    "actor": { "kind": "person", "id": "alice" }
+  }
 }
 ```
+
+### The meeting member: a user-set title
+
+The optional **`meeting`** member carries user-set properties of the meeting
+itself rather than marks on stretches of it — today only a **title**. When
+present, `meeting.title` overrides the manifest's sealed `meeting.title`
+everywhere the recording is named; absent, readers fall back to the sealed
+title. The title is 1–200 characters, already trimmed, with no control
+characters; `setAtUtc` and `actor` follow the same rules as a mark's
+`createdAtUtc` and `actor`. Unlike marks, the title is not bound to
+`audioOpusSha256`: a rename survives a republish that changes the audio.
 
 ### Reader tolerance
 

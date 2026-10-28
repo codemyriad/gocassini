@@ -31,6 +31,10 @@ type annotationService struct {
 	stopping     bool
 	// speakerEdits limits how many speaker edits one person saves an hour.
 	speakerEdits *speakerEditLimiter
+	// summaryWrites limits how many summaries one person asks for an hour,
+	// and summaryRewrite says who may replace one (D-814).
+	summaryWrites  *speakerEditLimiter
+	summaryRewrite *summaryRewritePermissions
 }
 
 // newAnnotationService returns nil where no mark can be served, as
@@ -46,15 +50,18 @@ func newAnnotationService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *a
 		}
 		return nil
 	}
-	return &annotationService{
+	s := &annotationService{
 		rt:    rt,
 		exapp: exapp,
 		bin:   rt.cfg.CassiniBin,
 		// As the read proxy: recordings stream, so the request context governs.
-		client:       &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
-		logger:       logger,
-		speakerEdits: speakerEditLimiterFromEnv(),
+		client:        &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
+		logger:        logger,
+		speakerEdits:  speakerEditLimiterFromEnv(),
+		summaryWrites: summaryWriteLimiterFromEnv(),
 	}
+	s.summaryRewrite = newSummaryRewritePermissions(s.nextcloudSummaryRewriteCheck)
+	return s
 }
 
 // register mounts the routes; every answer is per-caller, so uncacheable.
@@ -86,6 +93,23 @@ func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.routeTags(w, r, caller, id)
+	case resource == "meetings" && strings.HasSuffix(id, "/delete") && !strings.Contains(strings.TrimSuffix(id, "/delete"), "/"):
+		// Delete the meeting everywhere (D-861): the same visibility rule as
+		// marking — anyone who can read a meeting can delete it.
+		meetingID := strings.TrimSuffix(id, "/delete")
+		if !isPlainMeetingID(meetingID) {
+			writeJSONError(w, http.StatusBadRequest, "that is not a meeting id")
+			return
+		}
+		caller, ok := s.caller(w, r)
+		if !ok {
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.deleteMeeting(w, r, caller, meetingID)
 	case resource == "meetings" && strings.HasSuffix(id, "/speakers") && !strings.Contains(strings.TrimSuffix(id, "/speakers"), "/"):
 		// Who spoke, as people corrected it (docs/speaker-separation.md).
 		meetingID := strings.TrimSuffix(id, "/speakers")
@@ -98,6 +122,18 @@ func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.routeSpeakers(w, r, caller, meetingID)
+	case resource == "meetings" && strings.HasSuffix(id, "/summary") && !strings.Contains(strings.TrimSuffix(id, "/summary"), "/"):
+		// The meeting's summary: what it would cost, and asking for it (D-814).
+		meetingID := strings.TrimSuffix(id, "/summary")
+		if !isPlainMeetingID(meetingID) {
+			writeJSONError(w, http.StatusBadRequest, "that is not a meeting id")
+			return
+		}
+		caller, ok := s.caller(w, r)
+		if !ok {
+			return
+		}
+		s.routeSummary(w, r, caller, meetingID)
 	case resource == "meetings" && id != "" && !strings.Contains(id, "/"):
 		if !isPlainMeetingID(id) {
 			// A statement about the id, not about what exists.

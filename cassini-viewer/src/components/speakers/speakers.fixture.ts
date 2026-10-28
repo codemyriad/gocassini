@@ -14,6 +14,7 @@ import {
   type SpeakerEditsReport,
   type SpeakerEditsState,
 } from "../../viewer/speakerEdits";
+import type { SummaryRequestState } from "../../viewer/meetingSummary";
 
 // A synthetic meeting: two Talk participants, one of them a meeting-room laptop
 // three people spoke into. Invented words only.
@@ -76,6 +77,9 @@ const ben = { id: BEN, label: "Ben Ortiz" };
 // The recording as published before anyone separated anything.
 export const original = (audioSrc: string) =>
   artifact(transcript(() => ROOM, [{ id: ROOM, label: ROOM_LABEL }, ben]), audioSrc);
+// …after Ben, never separated, was given another name.
+export const participantRenamed = (audioSrc: string) =>
+  artifact(transcript(() => ROOM, [{ id: ROOM, label: ROOM_LABEL }, { ...ben, label: "Benjamin Ortiz" }]), audioSrc);
 // The file names the device its voices came from (its roster entry marked
 // "x-separatedInto").
 const splitDevices = [{ id: ROOM, label: ROOM_LABEL }];
@@ -204,6 +208,15 @@ export function speakersFixture(
   // The summary the published recording has: its text, and the SHA-256 the
   // producer records for one rewritten for speaker edits ("" for the build's).
   let summary: { markdown: string | null; sha256: string } = { markdown: null, sha256: "" };
+  // Whether this reader may ask a save to rewrite the summary (D-814).
+  let canRewriteSummary = false;
+  // The meeting's summary as its readers can ask for it: nothing offered
+  // unless a test says otherwise.
+  let summaryRequest: SummaryRequestState = {
+    available: false, reason: "summaries_off", hasSummary: false, canWrite: false, canRegenerate: false,
+    calls: 1, words: 120, estimatedInputTokens: 900, provider: "Hosted", model: "summary-model", external: true,
+    state: "idle",
+  };
 
   const progress = () =>
     options.estimateMs === undefined
@@ -213,7 +226,7 @@ export function speakersFixture(
         : null;
   const snapshot = (): SpeakerEditsState => structuredClone({
     available, reason, revision, appliedRevision, state, lastError,
-    doc, participants: [{ id: ROOM, label: ROOM_LABEL }, ben], report, progress: progress(),
+    doc, participants: [{ id: ROOM, label: ROOM_LABEL }, ben], report, progress: progress(), canRewriteSummary,
   });
   const load = vi.fn(async (_entry: MeetingCatalogEntry) => snapshot());
   const save = vi.fn(async (_entry: MeetingCatalogEntry, expectRevision: number, body: SpeakerEditsDoc) => {
@@ -225,6 +238,11 @@ export function speakersFixture(
     lastError = "";
     queuedAt = time.clock.now();
     return snapshot();
+  });
+  const loadSummaryRequestState = vi.fn(async (_entry: MeetingCatalogEntry) => structuredClone(summaryRequest));
+  const requestSummary = vi.fn(async (_entry: MeetingCatalogEntry, _replace: boolean) => {
+    summaryRequest = { ...summaryRequest, state: "writing", canWrite: false, canRegenerate: false };
+    return structuredClone(summaryRequest);
   });
   const loadMeeting = vi.fn(async (_entry: MeetingCatalogEntry, options?: LoadMeetingOptions) => {
     if (options?.fresh || !cached) cached = published;
@@ -240,10 +258,26 @@ export function speakersFixture(
       id === "raw-asr" ? originalOfSeparated(audioSrc) : published,
     loadSpeakerEdits: load,
     saveSpeakerEdits: save,
+    loadSummaryRequestState,
+    requestSummary,
   };
 
   return {
-    provider, load, save, loadMeeting, audioSrc, time,
+    provider, load, save, loadMeeting, audioSrc, time, loadSummaryRequestState, requestSummary,
+    // What the operator says about asking for the summary from now on.
+    summaryRequest(next: Partial<SummaryRequestState>) {
+      summaryRequest = { ...summaryRequest, ...next };
+    },
+    // Whether this reader may have a save rewrite the summary.
+    canRewriteSummary(allowed: boolean) {
+      canRewriteSummary = allowed;
+    },
+    // The operator wrote the summary: the published recording carries it.
+    summaryWritten(markdown: string) {
+      summary = { markdown, sha256: "" };
+      published = { ...published, summary: markdown };
+      summaryRequest = { ...summaryRequest, state: "idle", hasSummary: true, canWrite: false };
+    },
     // Where the operator's apply is now.
     phase(next: SpeakerEditsPhase) {
       phase = next;

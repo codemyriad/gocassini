@@ -39,7 +39,9 @@
     },
   ];
 
-  type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before">;
+  // A job names its current attempt's kind, an attempt its own.
+  type AttemptKindOf = { current_trigger_kind?: string; trigger_kind?: string };
+  type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before"> & AttemptKindOf;
   type RerunnableJob = Pick<Job, "stage" | "state" | "artifact_run_path">;
 
   const STATUS_STAGE_LABELS: Record<string, string> = {
@@ -226,6 +228,17 @@
     return isBuildWaitingForResources(job) || isBuildBlocked(job);
   }
 
+  export function attemptKind(job: AttemptKindOf): string {
+    return job.trigger_kind ?? job.current_trigger_kind ?? "";
+  }
+
+  // A summarize attempt's build stage writes the summary into the published
+  // meeting and transcribes nothing, so it is not called a build.
+  export function stageLabel(key: string, kind: string): string {
+    if (key === "build" && kind === "summarize") return "Summary";
+    return STATUS_STAGE_LABELS[key] ?? key;
+  }
+
   export function jobStatusLabel(job: JobStatus): string {
     if (isBuildBlocked(job)) return "Build blocked";
     if (isBuildWaitingForResources(job)) return "Waiting for resources";
@@ -235,6 +248,7 @@
     if (job.state === "succeeded" && job.stage === "done") return "Published";
     if (job.state === "queued") return "Queued";
     if (job.state === "running") {
+      if (job.stage === "build" && attemptKind(job) === "summarize") return "Writing summary";
       const stage = STATUS_STAGE_LABELS[job.stage];
       return stage ? `${stage}ing` : "Running";
     }
@@ -260,7 +274,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
+  import { Activity, ArrowLeft, CassetteTape, ChevronRight, FileText, Inbox, Info, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
   import { fade } from "svelte/transition";
   import { guardLeave } from "./operator/unsaved";
   import { loadConfig } from "./operator/config";
@@ -269,8 +283,18 @@
     OperatorHttpError,
     type OperatorStateChangeEvent,
   } from "./operator/client";
-  import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
+  import type { Job, JobAttempt, JobDetailResponse, SummaryPlan } from "./operator/types";
+  import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
+  import { outcomeAttempt, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
+  import {
+    summaryActionLabel,
+    summaryConfirmTitle,
+    summaryCostText,
+    summaryEndpointText,
+    summaryReplaceText,
+    summaryUnavailableText,
+  } from "./operator/summaryAction";
   import Settings from "./Settings.svelte";
   import { applyJob, applyPanel, readJob, readPanel } from "./surfaceRouting";
 
@@ -631,6 +655,49 @@
     return ({ waiting: "Media deletion after processing", pending: "Media deletion pending", error: "Media deletion failed", completed: "Media deleted" } as Record<string, string>)[status] ?? status;
   }
 
+  // Writing a run's summary (D-814): what it would cost is loaded for a
+  // finished run, and nothing is queued before the administrator has read
+  // that and confirmed.
+  let summaryPlan: SummaryPlan | null = null;
+  let summaryPlanKey = "";
+  let confirmingSummary = false;
+  let submittingSummary = false;
+  let summaryError = "";
+
+  async function loadSummaryPlan(key: string, jobId: string) {
+    if (!operatorClient) return;
+    try {
+      const plan = await operatorClient.getJobSummary(jobId);
+      if (summaryPlanKey === key) summaryPlan = plan;
+    } catch (error) {
+      // No plan means no action offered; say why in the console rather than
+      // hide it.
+      console.error("summary plan unavailable", jobId, error);
+      if (summaryPlanKey === key) summaryPlan = null;
+    }
+  }
+
+  async function handleWriteSummary() {
+    if (!operatorClient || !selectedJob?.job || !summaryPlan?.available) return;
+    submittingSummary = true;
+    summaryError = "";
+    try {
+      await operatorClient.writeJobSummary(selectedJob.job.id, summaryPlan.has_summary);
+      confirmingSummary = false;
+      await refreshJobs();
+      await selectJob(selectedJob.job.id, { allowJobsRefresh: false });
+    } catch (error) {
+      const message = asMessage(error);
+      summaryError =
+        message === "has_summary" || message === "unavailable"
+          ? "The meeting changed since this was loaded. Check it and try again."
+          : message;
+    } finally {
+      submittingSummary = false;
+      updatePolling();
+    }
+  }
+
   async function handleRerunJob() {
     if (!operatorClient || !selectedJob?.job || !canRerunSelectedJob) {
       return;
@@ -756,7 +823,7 @@
     // (the selected job, or any active job in the list). refreshJobs re-arms
     // this, so it keeps polling until the work settles.
     const hasActiveWork =
-      (selectedJob != null && (isJobActive(selectedJob.job) || (selectedJob.availability?.media_cleanup != null && selectedJob.availability.media_cleanup.status !== "completed"))) ||
+      (selectedJob?.job != null && (isJobActive(selectedJob.job) || (selectedJob.availability?.media_cleanup != null && selectedJob.availability.media_cleanup.status !== "completed"))) ||
       jobs.some(job => isJobActive(job) || (job.media_cleanup != null && job.media_cleanup.status !== "completed"));
     if (!hasActiveWork) {
       return;
@@ -839,7 +906,7 @@
       if (halted && index === lastTouched) {
         status = buildBlocked ? "blocked" : "failed";
       }
-      return { label: stage.label, status };
+      return { label: stageLabel(stage.key, attemptKind(job)), status };
     });
   }
 
@@ -931,6 +998,28 @@
 
   $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
   $: stopApplies = selectedJob?.job.stage === "record" && selectedJob?.job.state === "running";
+
+  // The run's recording in Nextcloud Files (D-825), linked only when Nextcloud
+  // finds it for the signed-in administrator. Looked up once per file id, not
+  // on every poll of the detail.
+  let recordingFileId = 0;
+  let recordingHref = "";
+  $: void lookUpRecording(selectedJob?.recording_file_id ?? 0);
+
+  async function lookUpRecording(fileId: number) {
+    if (fileId === recordingFileId) {
+      return;
+    }
+    recordingFileId = fileId;
+    recordingHref = "";
+    if (fileId <= 0) {
+      return;
+    }
+    const path = await findRecordingInFiles(fileId);
+    if (fileId === recordingFileId && path !== "") {
+      recordingHref = recordingFilesUrl(window.location, path, fileId);
+    }
+  }
   $: jobFinished = selectedJob?.job.stage === "done";
   $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
@@ -941,6 +1030,37 @@
       : "");
   $: canStopSelectedJob = !submittingStop && stopApplies;
   $: canRerunSelectedJob = !submittingRerun && rerunApplies && !rerunBlockedReason;
+  // A run that published without a transcript or a summary says so (D-854,
+  // D-814), from the attempt it published.
+  $: outcomeSource = selectedJob ? outcomeAttempt(selectedJob) : null;
+  $: outcomeNotices = outcomeSource
+    ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)].filter(
+        (notice): notice is OutcomeNotice => notice !== null,
+      )
+    : [];
+  $: {
+    // One plan per finished run and state: a new attempt or an update reloads
+    // it, and leaves any open confirmation, which priced the old one.
+    const key =
+      selectedJob && jobFinished ? `${selectedJob.job.id}:${selectedJob.job.current_attempt_number}:${selectedJob.job.updated_at}` : "";
+    if (key !== summaryPlanKey) {
+      summaryPlanKey = key;
+      summaryPlan = null;
+      confirmingSummary = false;
+      summaryError = "";
+      if (key && selectedJob) void loadSummaryPlan(key, selectedJob.job.id);
+    }
+  }
+  const outcomeToneClasses: Record<OutcomeNotice["tone"], string> = {
+    error: "border-error/40 bg-error/10",
+    warning: "border-warning/50 bg-warning/10",
+    info: "border-base-content/15 bg-base-200/60",
+  };
+  const outcomeIconClasses: Record<OutcomeNotice["tone"], string> = {
+    error: "text-error",
+    warning: "text-warning",
+    info: "text-base-content/60",
+  };
 </script>
 
 <svelte:head>
@@ -1166,7 +1286,7 @@
                     <div class="card-body min-w-0 gap-1 p-3">
                       <div class="flex min-w-0 items-start justify-between gap-2">
                         <p class="min-w-0 flex-1 truncate text-sm font-medium" title={requestUrlLabel(job.request_json)}>
-                          {meetingLabel(job.request_json, job.id, job.room_name)}
+                          {meetingLabel(job.request_json, job.id, job.room_display_name || job.room_name)}
                         </p>
                         {#if job.current_attempt_number > 1}
                           <span class="badge badge-outline badge-sm shrink-0 border-base-content/20 text-base-content"
@@ -1183,7 +1303,7 @@
                           {/if}
                         </p>
                         {#if isBuildWaitingForResources(job)}
-                          <p class="truncate text-warning" title={formatTimestamp(job.build_retry_not_before)}>
+                          <p class="truncate text-warning" title={job.error || formatTimestamp(job.build_retry_not_before)}>
                             Next retry {formatTimestamp(job.build_retry_not_before)} · {job.build_deferral_count}
                             {job.build_deferral_count === 1 ? "deferral" : "deferrals"}
                           </p>
@@ -1193,6 +1313,9 @@
                         {/if}
                         {#if job.source_expired}
                           <span class="badge badge-outline badge-warning badge-sm mt-1" title="The source recording was deleted by retention. This job can no longer be rerun.">Recording deleted</span>
+                        {/if}
+                        {#if job.meeting_deleted}
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title="The published meeting was deleted by a user. Its local artifacts are reclaimed and this job can no longer be rerun.">Meeting deleted</span>
                         {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
@@ -1295,7 +1418,7 @@
                 <section class="op-tint run-detail-card grid gap-3">
                   <div class="min-w-0">
                     <h3 class="truncate text-lg font-semibold" title={requestUrlLabel(selectedJob.job.request_json)}>
-                      {meetingLabel(selectedJob.job.request_json, selectedJob.job.id, selectedJob.job.room_name)}
+                      {meetingLabel(selectedJob.job.request_json, selectedJob.job.id, selectedJob.job.room_display_name || selectedJob.job.room_name)}
                     </h3>
                     <p class="text-sm {jobStatusToneClass(selectedJob.job)}">
                       {jobStatusLabel(selectedJob.job)}
@@ -1335,6 +1458,55 @@
                         {#if cleanupQueuedJob === selectedJob.job.id}<p class="text-sm">Retry requested. Cleanup is checked within 30 seconds.</p>{/if}
                       {/if}
                     </div>
+                  {/if}
+                  {#each outcomeNotices as notice (notice.title)}
+                    <div class="flex items-start gap-2 rounded-box border p-3 text-sm {outcomeToneClasses[notice.tone]}" role="status">
+                      {#if notice.tone === "info"}
+                        <Info size={16} class="mt-0.5 shrink-0 {outcomeIconClasses[notice.tone]}" aria-hidden="true" />
+                      {:else}
+                        <TriangleAlert size={16} class="mt-0.5 shrink-0 {outcomeIconClasses[notice.tone]}" aria-hidden="true" />
+                      {/if}
+                      <div class="grid min-w-0 gap-1">
+                        <p class="font-medium">{notice.title}</p>
+                        {#if notice.detail}<p class="font-mono text-xs break-words text-base-content/75">{notice.detail}</p>{/if}
+                        {#if notice.hint}<p class="text-xs text-base-content/70">{notice.hint}</p>{/if}
+                      </div>
+                    </div>
+                  {/each}
+                  {#if summaryPlan}
+                    {#if confirmingSummary}
+                      <div
+                        class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3"
+                        role="alertdialog"
+                        aria-label={summaryConfirmTitle(summaryPlan)}
+                      >
+                        <p class="text-sm font-semibold">{summaryConfirmTitle(summaryPlan)}</p>
+                        <p class="text-sm">{summaryCostText(summaryPlan)}</p>
+                        <p class="text-xs text-base-content/70">{summaryEndpointText(summaryPlan)}</p>
+                        {#if summaryReplaceText(summaryPlan)}
+                          <p class="text-xs text-base-content/70">{summaryReplaceText(summaryPlan)}</p>
+                        {/if}
+                        <div class="flex flex-wrap items-center gap-2">
+                          <button class="btn btn-sm btn-primary" type="button" disabled={submittingSummary} on:click={handleWriteSummary}>
+                            {summaryActionLabel(summaryPlan)}
+                          </button>
+                          <button class="btn btn-sm btn-ghost" type="button" disabled={submittingSummary} on:click={() => (confirmingSummary = false)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    {:else if summaryPlan.available}
+                      <div>
+                        <button class="btn btn-sm" type="button" on:click={() => (confirmingSummary = true)}>
+                          <FileText size={15} aria-hidden="true" />{summaryActionLabel(summaryPlan)}
+                        </button>
+                      </div>
+                    {:else if summaryUnavailableText(summaryPlan)}
+                      <p class="text-xs text-base-content/60">{summaryUnavailableText(summaryPlan)}</p>
+                    {/if}
+                  {/if}
+                  {#if summaryError}
+                    <p class="text-sm text-error" role="alert">{summaryError}</p>
                   {/if}
                   {#if rerunBlockedReason && rerunVisible}
                     <div class="flex items-start gap-2 rounded-box border border-warning/50 bg-warning/10 p-3 text-sm" role="status">
@@ -1439,6 +1611,16 @@
                         {/if}
                       </dd>
                     </div>
+                    {#if recordingHref}
+                      <div class="min-w-0">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recording</dt>
+                        <dd class="text-sm">
+                          <a class="link link-hover text-primary" href={recordingHref} target="_blank" rel="noreferrer noopener">
+                            Open in Files
+                          </a>
+                        </dd>
+                      </div>
+                    {/if}
                     <div class="min-w-0">
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
                       <dd class="font-mono text-xs break-all">{selectedJob.job.id}</dd>

@@ -88,9 +88,10 @@ const (
 	// Filenames of cassini-app's embedded build (its vite.embedded.config.ts)
 	// under <DIST>/embedded/, served at /ui/viewer.{js,css} from
 	// CASSINI_VIEWER_DIST (which points at cassini-app's dist — D-420).
-	embeddedSubdir  = "embedded"
-	embeddedJSFile  = "embedded.js"
-	embeddedCSSFile = "embedded.css"
+	embeddedSubdir    = "embedded"
+	embeddedJSFile    = "embedded.js"
+	embeddedJSMapFile = "viewer.js.map"
+	embeddedCSSFile   = "embedded.css"
 )
 
 // Embedded UI assets. app.svg mirrors the repo-root img/app.svg (go:embed
@@ -188,7 +189,11 @@ type ExAppConfig struct {
 	sharePaths      *recordingSharePathCache
 	meetingMetadata *meetingMetadataStore
 	lifecycle       *Store
-	onEnabled       func(bool)
+	// annotationTitles overlays user-set meeting titles (renames, D-862) onto
+	// the catalog entries directShareSnapshot serves. Nil degrades to the
+	// entries' own titles.
+	annotationTitles annotationTitleSource
+	onEnabled        func(bool)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -488,6 +493,8 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 //   - /ui/viewer.js + /ui/viewer.css : cassini-app's embedded build (D-381/
 //     D-420), read from <ViewerDist>/embedded/ (ViewerDist points at cassini-app).
 //
+// /ui/viewer.js.map serves the matching external source map for all UI users.
+//
 // Each is a self-mounting IIFE + its stylesheet that runs DIRECTLY on the
 // nonce'd embedded page (no iframe). Anything else under /ui/ is a 404. The
 // proxy fetches these with the requesting user's access level, enforced by the
@@ -502,6 +509,8 @@ func (c ExAppConfig) uiAssetHandler(logger *log.Logger) http.Handler {
 		switch r.URL.Path {
 		case viewerJSPath:
 			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedJSFile, "text/javascript; charset=utf-8", logger)
+		case viewerJSPath + ".map":
+			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedJSMapFile, "application/json; charset=utf-8", logger)
 		case viewerCSSPath:
 			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
 		default:

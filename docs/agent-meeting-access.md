@@ -18,6 +18,7 @@ Give an agent what it needs to reason about your meetings:
 | `cassini meetings tags` | Which tags are on the meetings I may read? |
 | `cassini meetings annotations <id>` | What is marked in that meeting, and by whom? |
 | `cassini meetings annotate <id> --ops <file>` | Mark that meeting, or remove marks, in one batch. |
+| `cassini meetings rename <id> <title>` | Rename that meeting for everyone with access (`--clear` restores the default). |
 
 ## How it works
 
@@ -65,10 +66,16 @@ Three consequences worth internalising before you build on this:
   in it — so an agent can act on the difference. Against an older app reached
   through the `catalog.json` fallback the two are still indistinguishable, and
   the CLI says so rather than guessing.
-- **One command writes, and it writes only marks.** `meetings annotate` POSTs
-  a batch of tags for one meeting (see [Tags and marks](#6-tags-and-marks)).
-  Everything else is `GET` and `HEAD`. Starting, stopping and re-running jobs
-  stays on the operator's admin routes, off the agent path entirely.
+- **Two commands write, through one route.** `meetings annotate` POSTs a
+  batch of tags for one meeting (see [Tags and marks](#6-tags-and-marks)), and
+  `meetings rename` POSTs a title for one — the same annotations route, the
+  same visibility check. Everything else is `GET` and `HEAD`. Starting,
+  stopping and re-running jobs stays on the operator's admin routes, off the
+  agent path entirely. The viewer
+  additionally offers deleting a meeting (`POST
+  annotations/meetings/<id>/delete`, D-861) under the same rule — anyone who
+  can read a meeting can delete it — but the CLI deliberately does not expose
+  that route.
 
 ## Before you begin
 
@@ -413,6 +420,19 @@ annotated=01JZ8K3M4N5P6Q7R8S9T0VWXYZ revision=5 operation=op_… added=2 removed
 change=added mark=mk_…
 change=added mark=mk_…
 hint=undo this batch's marks with {"op": "undo-operation", "operationId": "op_…"}
+```
+
+Renaming goes through the same route as one `set-title` op, wrapped as its own
+command. The title shows for everyone with access and travels inside the
+meeting's portable file; `--clear` restores the recorded default.
+
+```bash
+./bin/cassini meetings rename 01JZ8K3M4N5P6Q7R8S9T0VWXYZ "Q4 hiring sync"
+./bin/cassini meetings rename 01JZ8K3M4N5P6Q7R8S9T0VWXYZ --clear
+```
+
+```text
+renamed=01JZ8K3M4N5P6Q7R8S9T0VWXYZ revision=6 caller=alice title=Q4 hiring sync
 ```
 
 | Op | Effect |

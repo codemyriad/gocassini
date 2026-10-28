@@ -25,12 +25,18 @@
   //
   // With a session (the app, with an operator behind it) it is also where the
   // speakers are changed: a device can be separated into voices or made one
-  // person again, and voices named or said to be the same person. Without one
+  // person again, a participant or a voice named, and voices said to be the
+  // same person. Without one
   // (an embed, a static export) it lists the speakers and offers nothing.
   export let groups: SpeakerGroup[] = [];
   export let session: SpeakersSession | null = null;
   export let samples: ReadonlyMap<string, VoiceSample> = new Map();
   export let playingSampleId: string | null = null;
+  // Whether the meeting has a summary, and what rewriting it would cost: a
+  // save keeps the summary unless someone allowed to asks for it to be
+  // rewritten for the new names, at that cost (D-814).
+  export let hasSummary = false;
+  export let summaryCost: string | null = null;
 
   // Below this much speech a voice is often a fragment of another one.
   const LITTLE_SPEECH_MS = 10_000;
@@ -59,12 +65,22 @@
     ? `${plural(people.voices, "voice")} on ${plural(people.devices, "device")}`
     : plural(people.voices, "participant");
 
+  // Devices nobody separated, or asked to: each is one person, named on its
+  // own row the way a voice is named on its.
+  $: ownNamed = new Set(
+    groups
+      .filter((group) => group.speaks && group.voices.length === 0 && !(doc && isSplit(doc, group.device.id)))
+      .map((group) => group.device.id),
+  );
   // What each speaker is called now: the saved name when there is one (it may
   // not be applied yet), else the recording's own label.
   $: docLabels = new Map((doc?.labels ?? []).map((entry) => [entry.speakerId, entry.label]));
-  $: shownLabels = new Map(
-    groups.flatMap((group) => group.voices).map((voice) => [voice.id, docLabels.get(voice.id) ?? voice.label]),
-  );
+  $: shownLabels = new Map([
+    ...groups
+      .filter((group) => ownNamed.has(group.device.id))
+      .map((group): [string, string] => [group.device.id, docLabels.get(group.device.id) ?? group.device.label]),
+    ...groups.flatMap((group) => group.voices).map((voice): [string, string] => [voice.id, docLabels.get(voice.id) ?? voice.label]),
+  ]);
   $: deviceLabels = new Map(groups.map((group) => [group.device.id, group.device.label]));
   $: savedMerges = new Map((doc?.merges ?? []).map((entry) => [entry.from, entry.into]));
   $: mergeOf = (id: string): string | null =>
@@ -100,8 +116,19 @@
   // Reload").
   $: shownVoices = new Set(groups.flatMap((group) => group.voices.map((voice) => voice.id)));
   $: stale = reloadDue($store, shownVoices);
-  $: nameable = editable && !locked && groups.some((group) => group.voices.length > 0);
+  $: nameable = editable && !locked && groups.some((group) => group.voices.length > 0 || ownNamed.has(group.device.id));
   $: summaryStale = server?.report?.summary === "stale";
+  // Offered with the Save of a change, to those the operator lets rewrite a
+  // summary; off by default, because it costs a model call.
+  let rewriteSummary = false;
+  $: rewriteOffered = Boolean(changed && hasSummary && server?.canRewriteSummary);
+  $: if (!rewriteOffered) rewriteSummary = false;
+
+  async function save() {
+    const asked = rewriteOffered && rewriteSummary;
+    const saved = await session?.saveEdits(shownLabels, asked ? "rewrite" : "keep");
+    if (saved) rewriteSummary = false;
+  }
   $: inconclusive = (server?.report?.inconclusive ?? []).filter(
     (id) => doc && isSplit(doc, id) && !groups.some((group) => group.device.id === id && group.voices.length > 0),
   );
@@ -208,7 +235,24 @@
         {@const split = isGroupSplit(group)}
         <li class="pp-device" class:pp-shared={split && !group.speaks}>
           <span class="mf-avatar" aria-hidden="true">{initials(group.device.label)}</span>
-          <span class="pp-name truncate">{group.device.label}</span>
+          {#if editable && ownNamed.has(group.device.id)}
+            {@const label = labelOf(group.device.id)}
+            <input
+              type="text"
+              class="input input-xs pp-input"
+              aria-label={`Name for ${label}`}
+              maxlength={MAX_SPEAKER_LABEL_LENGTH}
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Add a name"
+              disabled={locked}
+              value={pending.labels[group.device.id] ?? label}
+              on:input={(event) => session?.setLabel(group.device.id, event.currentTarget.value)}
+              on:focus={(event) => event.currentTarget.select()}
+            />
+          {:else}
+            <span class="pp-name truncate">{group.device.label}</span>
+          {/if}
           {#if editable}
             <button
               type="button"
@@ -321,7 +365,10 @@
       {#if $store.error || problem || inconclusive.length > 0 || summaryStale || $store.saving || server.state !== "idle" || $store.reloading || stale || changed}
         <div class="pp-footer">
           {#if summaryStale}
-            <p class="pp-note" role="status">The summary was written before these speaker changes.</p>
+            <p class="pp-note" role="status">
+              The summary was written before these speaker changes.{#if !server.canRewriteSummary}
+                An administrator or a moderator of the room can rewrite it.{/if}
+            </p>
           {/if}
           {#each inconclusive as id (id)}
             <p class="pp-note" role="status">
@@ -354,6 +401,15 @@
               {/if}
             </p>
             {#if changed}
+              {#if rewriteOffered}
+                <label class="pp-rewrite">
+                  <input type="checkbox" class="checkbox checkbox-xs" bind:checked={rewriteSummary} disabled={busy || locked} />
+                  <span>
+                    Also rewrite the summary for these names
+                    {#if summaryCost}<span class="pp-rewrite-cost">{summaryCost}</span>{/if}
+                  </span>
+                </label>
+              {/if}
               <div class="pp-actions">
                 <button type="button" class="btn btn-ghost btn-xs" on:click={() => session?.discard()}>Cancel</button>
                 <button
@@ -361,7 +417,7 @@
                   class="btn btn-neutral btn-xs"
                   disabled={busy || locked || Boolean(problem)}
                   title={busy ? "Wait until the recording is updated" : undefined}
-                  on:click={() => session?.saveEdits(shownLabels)}
+                  on:click={save}
                 >
                   Save
                 </button>
@@ -628,6 +684,23 @@
     padding: 0 12px 8px;
     font-size: 11.5px;
     line-height: 1.4;
+    color: var(--mf-muted);
+  }
+  .pp-rewrite {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    flex-basis: 100%;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--mf-strong);
+    cursor: pointer;
+  }
+  .pp-rewrite input {
+    margin-top: 1px;
+  }
+  .pp-rewrite-cost {
+    display: block;
     color: var(--mf-muted);
   }
   .pp-actions {

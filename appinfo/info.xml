@@ -265,6 +265,19 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- Writing a meeting's summary calls a language model, which may be
+           billed: what it would cost is a GET, queueing it a POST, and both
+           are administrator-only (D-814, D-712). -->
+      <route>
+        <url>^operator\/jobs\/[^\/]+\/summary\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/summaries\/missing\/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <route>
         <url>^operator\/events\/?$</url>
         <verb>GET</verb>
@@ -443,6 +456,13 @@ Summaries and questions use whichever language model you connect, so their ratin
         <access_level>USER</access_level>
       </route>
 
+      <!-- Cassini-local room names; fresh recording read access authorizes edits. -->
+      <route>
+        <url>^rooms\/[^\/]+\/name\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+
       <!-- USER: tags and marks (D-737). A meeting's annotations are read as the
            caller, so Nextcloud re-checks the ACL on the bytes; a write is made
            by the service account after the same visibility check every archive
@@ -465,6 +485,27 @@ Summaries and questions use whichever language model you connect, so their ratin
            the meeting the caller can read. -->
       <route>
         <url>^annotations\/meetings\/[^\/]+\/speakers\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- USER: delete a meeting (D-861). The rule above extends to deletion:
+           anyone who can read a meeting can delete it, public meetings
+           included. The caller's visibility is checked first; the owner then
+           moves the file into its own Nextcloud trashbin (no bypass — the bin
+           empties on Nextcloud's schedule) and the tombstone removes the
+           meeting from every Cassini surface. Outside the caller's readable
+           set the answer is the same 404 as for a meeting that never existed. -->
+      <route>
+        <url>^annotations\/meetings\/[^\/]+\/delete\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- A meeting's summary, for its readers (D-814): what writing one
+           would cost (GET), and asking for it (POST). Any reader may fill a
+           missing summary; replacing one is checked in the operator against
+           Nextcloud's admin group and the meeting's Talk room. -->
+      <route>
+        <url>^annotations\/meetings\/[^\/]+\/summary\/?$</url>
         <verb>GET,POST</verb>
         <access_level>USER</access_level>
       </route>
@@ -515,6 +556,12 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
       <route>
         <url>^ui\/viewer\.js$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- Source maps are part of the production UI, available to every user. -->
+      <route>
+        <url>^ui\/viewer\.js\.map$</url>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
       </route>

@@ -10,7 +10,9 @@
     FileText,
     ArrowLeft,
     CassetteTape,
+    Pencil,
     Search,
+    Trash2,
     X,
   } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
@@ -24,6 +26,14 @@
   import TranscriptWords from "./TranscriptWords.svelte";
   import ExportMenu from "./ExportMenu.svelte";
   import MeetingFacts from "./MeetingFacts.svelte";
+  import SummaryRequest from "./SummaryRequest.svelte";
+  import {
+    describeSummaryRequestError,
+    missingSummaryText,
+    summaryCostLine,
+    type SummaryRequestState,
+    type SummaryStatus,
+  } from "../viewer/meetingSummary";
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
@@ -46,7 +56,12 @@
   } from "../core/speakers";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
-  import type { AnnotationResult, MeetingTag, VocabularyTag } from "../viewer/annotations";
+  import {
+    describeAnnotationError,
+    type AnnotationResult,
+    type MeetingTag,
+    type VocabularyTag,
+  } from "../viewer/annotations";
   import { createWordHighlighter } from "../core/wordHighlight";
   import {
     keyboardEventTargetsControl,
@@ -86,7 +101,7 @@
     type InsightRecord,
   } from "../viewer/insights";
   import type { DataProvider } from "../viewer/dataProvider";
-  import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "../viewer/hashRouting";
+  import { buildViewerHash, readViewerHash, readViewerRange, viewerUrlWithHash, type ViewerTimeRange } from "../viewer/hashRouting";
   import { eventIsInside, followScrollTop, ownsLocationHash } from "../viewer/embedHost";
 
   // The single-meeting reading surface (D-420 V1). It is "smart": given a
@@ -111,6 +126,9 @@
   // decides how leaving is offered: a close control at every width, instead of
   // the narrow-viewport-only back arrow a two-column layout needed.
   export let inSheet = false;
+  // Whether this deployment can delete a meeting (D-861). The shell owns the
+  // confirmation and the actual call; this header only offers the control.
+  export let canDelete = false;
   export let isDesktop = false;
   export let prefersReducedMotion = false;
   // hasCatalog drives the "choose a meeting" empty-state copy (a list exists to
@@ -143,11 +161,61 @@
     enriched: MeetingCatalogEntry;
     openInsight: InsightRecord;
     tagsChanged: AnnotationResult;
+    // The meeting was renamed (or, with a null title, reset to its default).
+    // The shell folds a rename into its catalog; a reset needs the server's
+    // default back, so the shell refetches (D-862).
+    renamed: { id: string; title: string | null };
+    deleteMeeting: void;
     // The audio would not play. Said out loud because the embed has no other
     // way to tell the page around it; src/public.ts re-dispatches it (D-838).
     playbackerror: string;
   }>();
   const localMarks = createMarksSession((result) => dispatch("tagsChanged", result));
+
+  // Renaming the meeting (D-862). Offered exactly where marks can be written:
+  // access to the meeting is the only gate, and the rename applies to
+  // everyone's view. The write goes through the same annotations route as a
+  // tag, so it sticks in the meeting file.
+  let renaming = false;
+  let renameDraft = "";
+  let renameBusy = false;
+  let renameError = "";
+  let renameInputEl: HTMLInputElement | null = null;
+  $: canRename = Boolean(meeting && applyAnnotations);
+
+  function startRename() {
+    renameDraft = meeting?.title ?? "";
+    renameError = "";
+    renaming = true;
+    void tick().then(() => {
+      renameInputEl?.focus();
+      renameInputEl?.select();
+    });
+  }
+
+  function cancelRename() {
+    renaming = false;
+    renameError = "";
+  }
+
+  async function submitRename(title: string) {
+    if (!applyAnnotations || !meeting || renameBusy) {
+      return;
+    }
+    renameBusy = true;
+    renameError = "";
+    const meetingId = meeting.id;
+    try {
+      await marks.setTitle(title);
+      const trimmed = title.trim();
+      dispatch("renamed", { id: meetingId, title: trimmed === "" ? null : trimmed });
+      renaming = false;
+    } catch (error) {
+      renameError = describeAnnotationError(error);
+    } finally {
+      renameBusy = false;
+    }
+  }
 
   // Separating the voices on a shared device, and naming them. Offered only to
   // a reader in the app whose provider can both read and save speaker edits —
@@ -168,10 +236,99 @@
     openedSpeakersFor = speakersFor;
     void speakerSession.open(
       speakersFor ? () => dataProvider.loadSpeakerEdits!(meeting!) : null,
-      speakersFor ? (expectRevision, doc) => dataProvider.saveSpeakerEdits!(meeting!, expectRevision, doc) : null,
+      speakersFor
+        ? (expectRevision, doc, summary) =>
+            // Keep is what no choice means, so only a rewrite is passed on:
+            // a provider that predates the choice is called as it always was.
+            summary === "rewrite"
+              ? dataProvider.saveSpeakerEdits!(meeting!, expectRevision, doc, summary)
+              : dataProvider.saveSpeakerEdits!(meeting!, expectRevision, doc)
+        : null,
     );
   }
   onDestroy(() => speakerSession.close());
+
+  // Asking for the meeting's summary (D-814): offered in the app, where an
+  // operator can write one into the published meeting. While one is being
+  // written the state is polled, and once it is done the meeting is read
+  // again so the summary appears.
+  export let summaryRequestPollMs = 5000;
+  let summaryRequest: SummaryRequestState | null = null;
+  let summaryRequestError = "";
+  let summaryRequestFor: string | null = null;
+  let summaryRequestTimer: ReturnType<typeof setTimeout> | undefined;
+  // Polls in a row that failed while a summary was being written.
+  let summaryRequestFailures = 0;
+  const SUMMARY_REQUEST_RETRY_MAX_MS = 60_000;
+  $: summaryRequestOffered =
+    surface === "app" &&
+    !bundled &&
+    typeof dataProvider.loadSummaryRequestState === "function" &&
+    typeof dataProvider.requestSummary === "function";
+  $: summaryRequestKey = summaryRequestOffered && meeting ? meeting.id : null;
+  $: if (summaryRequestKey !== summaryRequestFor) {
+    summaryRequestFor = summaryRequestKey;
+    summaryRequest = null;
+    summaryRequestError = "";
+    summaryRequestFailures = 0;
+    clearTimeout(summaryRequestTimer);
+    if (summaryRequestKey && meeting) void loadSummaryRequest(meeting);
+  }
+  onDestroy(() => clearTimeout(summaryRequestTimer));
+
+  async function loadSummaryRequest(entry: MeetingCatalogEntry) {
+    try {
+      const next = await dataProvider.loadSummaryRequestState!(entry);
+      if (meeting?.id !== entry.id) return;
+      summaryRequestFailures = 0;
+      takeSummaryRequest(entry, next);
+    } catch (error) {
+      console.error("summary request state unavailable", entry.id, error);
+      if (meeting?.id !== entry.id) return;
+      if (summaryRequest?.state === "writing") {
+        // The summary is still being written: one lost answer must not leave
+        // the page waiting for ever, so ask again, a little later each time.
+        summaryRequestFailures += 1;
+        clearTimeout(summaryRequestTimer);
+        summaryRequestTimer = setTimeout(
+          () => {
+            if (meeting?.id === entry.id) void loadSummaryRequest(entry);
+          },
+          Math.min(summaryRequestPollMs * 2 ** summaryRequestFailures, SUMMARY_REQUEST_RETRY_MAX_MS),
+        );
+      } else {
+        // No state means nothing is offered.
+        summaryRequest = null;
+      }
+    }
+  }
+
+  function takeSummaryRequest(entry: MeetingCatalogEntry, next: SummaryRequestState) {
+    const wasWriting = summaryRequest?.state === "writing";
+    summaryRequest = next;
+    clearTimeout(summaryRequestTimer);
+    if (next.state === "writing") {
+      summaryRequestTimer = setTimeout(() => {
+        if (meeting?.id === entry.id) void loadSummaryRequest(entry);
+      }, summaryRequestPollMs);
+    } else if (wasWriting && next.state === "idle") {
+      void reloadForSpeakers();
+    }
+  }
+
+  async function askForSummary(replace: boolean) {
+    const entry = meeting;
+    if (!entry || !dataProvider.requestSummary) return;
+    summaryRequestError = "";
+    try {
+      const next = await dataProvider.requestSummary(entry, replace);
+      if (meeting?.id === entry.id) takeSummaryRequest(entry, next);
+    } catch (error) {
+      if (meeting?.id !== entry.id) return;
+      summaryRequestError = describeSummaryRequestError(error);
+      void loadSummaryRequest(entry);
+    }
+  }
   // A voice sample plays through the meeting's own player and stops itself:
   // `sampleStopMs` is where, and any other seek or pause cancels it.
   let sampleStopMs: number | null = null;
@@ -204,6 +361,8 @@
   let displayTranscript: DisplayTranscriptV1 | null = null;
   let readableTranscript: ReadableTranscriptV1 | null = null;
   let summaryMarkdown: string | null = null;
+  // What the summary step did, as the meeting file says (D-814).
+  let summaryStatus: SummaryStatus | undefined;
   let audioSrc = "";
   // Bumped when the file at `audioSrc` was republished, to replace the player.
   let audioGeneration = 0;
@@ -328,6 +487,51 @@
     return readViewerHash(hostHash());
   }
 
+  // A new request restores once; subsequent edits and clearing stay local.
+  let selectionRequest: { range: ViewerTimeRange | null } | null = null;
+  let lastSharedHash = "";
+  let locationRequest = 0;
+  let artifactRequest = 0;
+  let urlTranscriptRequest = 0;
+
+  function selectionHref(range: ViewerTimeRange): string {
+    return viewerHref(buildViewerHash({ meeting: meeting?.id, tx: currentTranscriptId, range }));
+  }
+
+  function restoreSharedSelection() {
+    if (!ownsHash) return;
+    const hash = hostHash();
+    lastSharedHash = hash;
+    const range = readViewerRange(hash);
+    selectionRequest = { range };
+    if (range) {
+      transcriptQuery = "";
+      onlyMatching = false;
+      activeTab = "transcript";
+      audioEl?.pause();
+      playing = false;
+      seekTo(range.startMs);
+    }
+  }
+
+  async function handleSharedLocation() {
+    const request = ++locationRequest;
+    await tick();
+    if (!ownsHash || loading || hostHash() === lastSharedHash) return;
+    const current = currentViewerHash();
+    if (!bundled && current.meeting !== meeting?.id) return;
+    if (meeting) await maybeApplyUrlTranscript(meeting);
+    if (request !== locationRequest) return;
+    restoreSharedSelection();
+    if (!readViewerRange(hostHash())) {
+      const time = parseTimeHash(hostHash());
+      if (time !== null) {
+        activeTab = "transcript";
+        seekTo(time);
+      }
+    }
+  }
+
   function viewerHref(hash: string): string {
     return viewerUrlWithHash(window.location.href, hash);
   }
@@ -350,6 +554,7 @@
     displayTranscript = artifact.displayTranscript;
     readableTranscript = artifact.readableTranscript;
     summaryMarkdown = artifact.summary;
+    summaryStatus = artifact.summaryStatus;
     audioSrc = artifact.audioSrc;
     transcriptionOnly = artifact.transcriptionOnly === true;
     captionsSrc = artifact.captionsSrc;
@@ -389,6 +594,10 @@
   }
 
   function resetLoadedArtifact() {
+    selectionRequest = null;
+    locationRequest += 1;
+    artifactRequest += 1;
+    urlTranscriptRequest += 1;
     exportRequestId += 1;
     audioRequestId += 1;
     copyRequestId += 1;
@@ -404,6 +613,7 @@
     displayTranscript = null;
     readableTranscript = null;
     summaryMarkdown = null;
+    summaryStatus = undefined;
     audioSrc = "";
     transcriptionOnly = false;
     captionsSrc = null;
@@ -502,21 +712,27 @@
     // state for *this* meeting rather than the previous meeting's transcript
     // bleeding through.
     resetLoadedArtifact();
+    const request = artifactRequest;
     loading = true;
     errorMessage = "";
     pendingSeekMs = parseTimeHash(hostHash());
     resetTabs();
     try {
       const artifact = await dataProvider.loadMeetingForEntry(entry);
+      if (request !== artifactRequest) return;
       applyArtifact(artifact);
       await maybeApplyUrlTranscript(entry);
+      if (request !== artifactRequest) return;
+      restoreSharedSelection();
       // Real speaker/segment/duration counts → shell updates the list card.
       dispatch("enriched", mergeMeetingRuntimeSummary(entry, artifact));
     } catch (error) {
+      if (request !== artifactRequest) return;
       resetLoadedArtifact();
+      loading = false;
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
-      loading = false;
+      if (request === artifactRequest) loading = false;
     }
   }
 
@@ -567,17 +783,21 @@
   }
 
   async function loadBundled() {
+    const request = ++artifactRequest;
     loading = true;
     errorMessage = "";
     pendingSeekMs = parseTimeHash(hostHash());
     resetTabs();
     try {
       const artifact = await dataProvider.loadBundledArtifact();
+      if (request !== artifactRequest) return;
       applyArtifact(artifact);
+      restoreSharedSelection();
     } catch (error) {
+      if (request !== artifactRequest) return;
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
-      loading = false;
+      if (request === artifactRequest) loading = false;
     }
   }
 
@@ -596,6 +816,8 @@
       const next = await dataProvider.switchTranscript(meeting, targetId);
       applySwitchedTranscript(next);
       writeTranscriptUrlParam(targetId);
+      selectionRequest = null;
+      lastSharedHash = hostHash();
     } catch (error) {
       // Surface inline next to the switcher; previous transcript stays visible.
       transcriptSwitchError = `Couldn't load that transcript: ${
@@ -628,31 +850,41 @@
       window.history.replaceState(
         {},
         "",
-        viewerHref(buildViewerHash({ meeting: current.meeting })),
+        viewerHref(buildViewerHash({ meeting: current.meeting, range: readViewerRange(hostHash()), timeMs: parseTimeHash(hostHash()) })),
       );
     }
   }
 
   async function maybeApplyUrlTranscript(entry: MeetingCatalogEntry) {
-    const requested = currentViewerHash().tx;
+    const request = ++urlTranscriptRequest;
+    const generation = artifactRequest;
+    transcriptSwitchPending = false;
+    let requested = currentViewerHash().tx || defaultTranscriptId;
     if (!requested || !(entry.meetingPath ?? entry.audioPath)) {
       return;
     }
     if (!availableTranscripts.some((descriptor) => descriptor.id === requested)) {
       clearTranscriptUrlParam();
-      return;
+      requested = defaultTranscriptId;
     }
-    if (requested === currentTranscriptId) {
+    if (!requested || requested === currentTranscriptId) {
       return;
     }
     transcriptSwitchPending = true;
     try {
       const next = await dataProvider.switchTranscript(entry, requested);
+      if (request !== urlTranscriptRequest || generation !== artifactRequest) return;
+      // Navigation during the initial load is picked up here: the location
+      // listener leaves that load responsible for applying the latest URL.
+      if (requested !== (currentViewerHash().tx || defaultTranscriptId)) {
+        await maybeApplyUrlTranscript(entry);
+        return;
+      }
       applySwitchedTranscript(next);
     } catch {
-      clearTranscriptUrlParam();
+      if (request === urlTranscriptRequest && generation === artifactRequest) clearTranscriptUrlParam();
     } finally {
-      transcriptSwitchPending = false;
+      if (request === urlTranscriptRequest) transcriptSwitchPending = false;
     }
   }
 
@@ -1130,13 +1362,20 @@
 
   onMount(() => {
     window.addEventListener("keydown", handleWindowKeydown);
+    window.addEventListener("hashchange", handleSharedLocation);
+    window.addEventListener("popstate", handleSharedLocation);
     if (bundled) {
       void loadBundled();
     }
   });
 
   onDestroy(() => {
+    artifactRequest += 1;
+    urlTranscriptRequest += 1;
+    locationRequest += 1;
     window.removeEventListener("keydown", handleWindowKeydown);
+    window.removeEventListener("hashchange", handleSharedLocation);
+    window.removeEventListener("popstate", handleSharedLocation);
     stopPlaybackClock();
     void localMarks.close();
   });
@@ -1293,6 +1532,17 @@
     }
   }
   $: hasSummaryTab = Boolean(summaryHtml) || linkedInsights.length > 0;
+  // A meeting with no summary says why, when its file says, and offers to
+  // write one where the operator can (D-814). A meeting with no transcript
+  // has its own message in the transcript, and nothing to summarize.
+  $: summaryReasonText = summaryHtml ? null : missingSummaryText(summaryStatus);
+  $: transcribedForSummary = !transcriptionStatus || transcriptionStatus.status === "completed";
+  $: writeSummaryShown =
+    !summaryHtml &&
+    transcribedForSummary &&
+    ((summaryRequest !== null && (summaryRequest.canWrite || summaryRequest.state !== "idle")) || summaryReasonText !== null);
+  $: regenerateSummaryShown =
+    Boolean(summaryHtml) && summaryRequest !== null && (summaryRequest.canRegenerate || summaryRequest.state !== "idle");
   $: shownTab = hasSummaryTab ? activeTab : ("transcript" as MeetingTab);
   $: overlayShown = Boolean(transcriptIndex) && (hasSummaryTab || displaySegments.length > 0);
   $: tabsOffset = overlayShown ? tabsHeight : 0;
@@ -1332,9 +1582,62 @@
       </button>
     {/if}
 
-    <h1 class="mv-title flex-1 min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
-      {meeting ? meeting.title : "Meeting transcript viewer"}
-    </h1>
+    {#if renaming}
+      <form
+        class="mv-rename flex-1 min-w-0 flex items-center gap-2"
+        on:submit|preventDefault={() => void submitRename(renameDraft)}
+      >
+        <input
+          bind:this={renameInputEl}
+          bind:value={renameDraft}
+          class="input input-bordered input-sm flex-1 min-w-0"
+          maxlength="200"
+          disabled={renameBusy}
+          aria-label="Meeting title"
+          on:keydown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              cancelRename();
+            }
+          }}
+        />
+        {#if renameError}
+          <span class="text-error text-xs flex-none max-w-48 truncate" role="alert" title={renameError}>
+            {renameError}
+          </span>
+        {/if}
+        <button type="submit" class="btn btn-primary btn-xs flex-none" disabled={renameBusy}>Save</button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs flex-none"
+          disabled={renameBusy}
+          title="Restore the default title"
+          on:click={() => void submitRename("")}
+        >
+          Reset
+        </button>
+        <button type="button" class="btn btn-ghost btn-xs flex-none" disabled={renameBusy} on:click={cancelRename}>
+          Cancel
+        </button>
+      </form>
+    {:else}
+      <div class="flex flex-1 min-w-0 items-center gap-2">
+        <h1 class="mv-title min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
+          {meeting ? meeting.title : "Meeting transcript viewer"}
+        </h1>
+        {#if canRename}
+          <button
+            type="button"
+            class="btn btn-ghost btn-square btn-xs flex-none"
+            aria-label="Rename meeting"
+            title="Rename meeting"
+            on:click={startRename}
+          >
+            <Pencil size={16} aria-hidden="true" />
+          </button>
+        {/if}
+      </div>
+    {/if}
 
     <!-- Status info: artifact mode, transcript switcher, timing precision. -->
     <div class="flex flex-none items-center gap-1 text-base-content/70">
@@ -1388,6 +1691,17 @@
           on:audio={downloadAudio}
         />
       {/if}
+      {#if canDelete && meeting}
+        <button
+          type="button"
+          class="btn btn-sm btn-square btn-quiet"
+          aria-label={`Delete ${meeting.title}`}
+          title="Delete this meeting"
+          on:click={() => dispatch("deleteMeeting")}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
+      {/if}
     </div>
 
 
@@ -1412,6 +1726,8 @@
             on:sample={(event) => playSample(event.detail.id, event.detail.startMs, event.detail.endMs)}
             on:stopSample={stopSample}
             on:reload={() => reloadForSpeakers()}
+            hasSummary={Boolean(summaryMarkdown)}
+            summaryCost={summaryRequest ? summaryCostLine(summaryRequest) : null}
             recording={artifactMetadata?.recording ?? null}
             timing={timingPrecision}
           />
@@ -1462,6 +1778,13 @@
       aria-labelledby={hasSummaryTab ? "mv-tab-summary" : undefined}
       hidden={shownTab !== "summary"}
     >
+    {#if hasSummaryTab && writeSummaryShown}
+      {#if summaryRequest}
+        <SummaryRequest state={summaryRequest} mode="write" reasonText={summaryReasonText} error={summaryRequestError} on:request={(event) => askForSummary(event.detail.replace)} />
+      {:else}
+        <p class="mv-nosummary">{summaryReasonText}</p>
+      {/if}
+    {/if}
     {#if summaryHtml || linkedInsights.length > 0}
       <section>
         <div>
@@ -1488,6 +1811,11 @@
               [&_blockquote]:border-l-[3px] [&_blockquote]:border-primary/60 [&_blockquote]:pl-3.5 [&_blockquote]:py-0.5 [&_blockquote]:text-base-content/80
               [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-base-300"
           >{@html summaryHtml}</div>
+          {#if regenerateSummaryShown && summaryRequest}
+            <div class="mv-summary-regenerate">
+              <SummaryRequest state={summaryRequest} mode="regenerate" error={summaryRequestError} on:request={(event) => askForSummary(event.detail.replace)} />
+            </div>
+          {/if}
           {/if}
           {#if linkedInsights.length > 0}
             <div class="mv-summary-insights" class:mv-summary-insights-only={!summaryHtml}>
@@ -1529,6 +1857,13 @@
       aria-labelledby={hasSummaryTab ? "mv-tab-transcript" : undefined}
       hidden={shownTab !== "transcript"}
     >
+    {#if !hasSummaryTab && writeSummaryShown}
+      {#if summaryRequest}
+        <SummaryRequest state={summaryRequest} mode="write" reasonText={summaryReasonText} error={summaryRequestError} on:request={(event) => askForSummary(event.detail.replace)} />
+      {:else}
+        <p class="mv-nosummary">{summaryReasonText}</p>
+      {/if}
+    {/if}
     {#if displaySegments.length === 0}
       <p class="text-base-content/70 text-sm leading-normal">
         {#if transcriptionStatus?.status === "failed"}Recording available. Transcription failed.
@@ -1544,6 +1879,8 @@
       <TranscriptFrame
         bind:this={transcriptFrame}
         session={marks}
+        {selectionRequest}
+        selectionHref={ownsHash ? selectionHref : null}
         vocabulary={tagVocabulary}
         words={timedWords}
         rows={transcriptRows}
@@ -1939,6 +2276,17 @@
   }
   .mv-tabbar-gap {
     height: calc(var(--tf-bleed) - 9px);
+  }
+  .mv-nosummary {
+    margin-bottom: 16px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .mv-summary-regenerate {
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-base-300);
   }
   .mv-tabrow {
     position: relative;

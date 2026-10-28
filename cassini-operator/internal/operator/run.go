@@ -109,6 +109,11 @@ type Runtime struct {
 	// meetingMetadata is a disposable description index. Visibility always
 	// comes from the caller's current Nextcloud shares, never from these rows.
 	meetingMetadata *meetingMetadataStore
+	// roomNameRetry backs off reconcile passes per room when its default keeps
+	// failing to reach a terminal source, bounding the repeated lineage proofs
+	// (full-file digest + CLI exec) for rooms that may never resolve.
+	roomNameRetryMu sync.Mutex
+	roomNameRetry   map[string]roomNameRetryState
 	// annotations is the marks projection (D-737); nil when it could not be
 	// opened, in which case writes still commit and only indexing is skipped.
 	annotations annotationIndex
@@ -275,6 +280,11 @@ type jobDetailResponse struct {
 	Availability artifactAvailability `json:"availability"`
 	Job          Job                  `json:"job"`
 	Attempts     []JobAttempt         `json:"attempts"`
+	// RecordingFileID is the Nextcloud file id of the job's delivered
+	// recording, from the meeting metadata index; 0 when it has none (D-825).
+	// It is not a grant: the operator page asks Nextcloud, as the signed-in
+	// admin, whether they can open it, and links to Files only if they can.
+	RecordingFileID int64 `json:"recording_file_id,omitempty"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -283,6 +293,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// the binary's job is to be the operator, and a subcommand is the exception.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
+		case "clear-meeting-metadata":
+			return runClearMeetingMetadata(ctx, args[1:], stdout, stderr)
 		case "import-meeting-metadata":
 			return runImportMeetingMetadata(ctx, args[1:], stdout, stderr)
 		case backfillSearchCommand:
@@ -347,11 +359,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	exappCfg.meetingMetadata = runtime.meetingMetadata
 	exappCfg.lifecycle = store
+	// Conditional, so a missing store stays a nil interface rather than a
+	// non-nil interface around a nil pointer.
+	if annotations := runtime.annotationReads(); annotations != nil {
+		exappCfg.annotationTitles = annotations
+	}
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
+	runtime.startRoomNamesWorker()
 
 	// Resolve the publish destination. An explicit name always wins; an unset
 	// one is resolved from the deployment shape, and in an ExApp that must be
@@ -602,6 +620,7 @@ Usage:
 Commands:
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
+  clear-meeting-metadata  clear derived file-ID metadata, preserving room names
   import-meeting-metadata import catalog descriptions using destination file IDs
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
@@ -962,6 +981,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 	}{
 		{"/jobs", http.HandlerFunc(rt.jobsHandler)},
 		{"/jobs/", http.HandlerFunc(rt.jobDetailHandler)},
+		{"/summaries/missing", http.HandlerFunc(rt.missingSummariesHandler)},
 		{"/events", http.HandlerFunc(rt.eventsHandler)},
 		{"/status", http.HandlerFunc(rt.statusHandler)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
@@ -1021,6 +1041,10 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	exappCfg.lifecycle = rt.store
+	exappCfg.meetingMetadata = rt.meetingMetadata
+	if exappCfg.appAPIActive() && exappCfg.PublishSink == publishSinkNextcloudFiles {
+		root.HandleFunc("/rooms/", exappCfg.roomNameHandler)
+	}
 	annotations := newAnnotationService(rt, exappCfg, logger)
 	rt.remoteRetentionMu.Lock()
 	rt.remoteRetention = annotations
@@ -1160,10 +1184,17 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "load recording availability")
 			return
 		}
+		deleted, err := rt.store.deletedMeetingJobs(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load meeting lifecycle")
+			return
+		}
 		for i := range jobs {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
-			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i])
+			jobs[i].MeetingDeleted = deleted[jobs[i].ID]
+			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i], jobs[i].MeetingDeleted)
 		}
+		rt.projectJobRoomNames(r.Context(), jobs)
 		writeJSON(w, http.StatusOK, jobs)
 	case http.MethodPost:
 		rt.handleCreateJob(w, r)
@@ -1486,15 +1517,20 @@ func (s *Store) Close() error {
 type Job struct {
 	MediaCleanup         *mediaCleanupStatus `json:"media_cleanup,omitempty"`
 	SourceExpired        bool                `json:"source_expired,omitempty"`
+	MeetingDeleted       bool                `json:"meeting_deleted,omitempty"`
 	ID                   string              `json:"id"`
 	Provider             string              `json:"provider"`
 	RequestJSON          string              `json:"request_json"`
 	Stage                string              `json:"stage"`
 	State                string              `json:"state"`
 	CurrentAttemptNumber int                 `json:"current_attempt_number"`
-	RerunCount           int                 `json:"rerun_count"`
-	ArtifactRunPath      *string             `json:"artifact_run_path"`
-	ArtifactMeetingPath  *string             `json:"artifact_meeting_path"`
+	// CurrentTriggerKind is what the current attempt does (record, rerun,
+	// refine, summarize), so a reader can name its stages: a summarize's
+	// build stage writes a summary and transcribes nothing.
+	CurrentTriggerKind  string  `json:"current_trigger_kind"`
+	RerunCount          int     `json:"rerun_count"`
+	ArtifactRunPath     *string `json:"artifact_run_path"`
+	ArtifactMeetingPath *string `json:"artifact_meeting_path"`
 	// ArtifactOpusPath is the canonical portable meeting, current/<id>.opus,
 	// promoted from the attempt the seal stage sealed. ArtifactOpusSHA256 is
 	// that file's digest, which the publish worker re-checks before delivering
@@ -1543,7 +1579,8 @@ type Job struct {
 	// RoomName is the conversation's display name as it was when this job ran.
 	// Null for a non-Talk job, and for a Talk job whose name lookup never
 	// completed.
-	RoomName *string `json:"room_name"`
+	RoomName        *string `json:"room_name"`
+	RoomDisplayName string  `json:"room_display_name,omitempty"`
 	// RoomAudience is who had access to the Talk room while this recording was
 	// being made: a JSON array of Files share recipients (users, groups,
 	// Teams), captured at record time and never re-derived (D-769).
@@ -1839,7 +1876,8 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
-       room_token, room_name, room_audience, room_audience_at
+       room_token, room_name, room_audience, room_audience_at,
+       COALESCE((SELECT trigger_kind FROM job_attempts a WHERE a.job_id = jobs.id AND a.attempt_number = jobs.current_attempt_number), '')
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -1877,7 +1915,8 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
-       room_token, room_name, room_audience, room_audience_at
+       room_token, room_name, room_audience, room_audience_at,
+       COALESCE((SELECT trigger_kind FROM job_attempts a WHERE a.job_id = jobs.id AND a.attempt_number = jobs.current_attempt_number), '')
 FROM jobs
 WHERE id = ?`, id)
 	job, err := scanJob(row)
@@ -1969,6 +2008,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&roomName,
 		&roomAudience,
 		&roomAudienceAt,
+		&job.CurrentTriggerKind,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2058,6 +2098,10 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		rt.handleRerunJob(w, r, id)
 		return
 	}
+	if action == "summary" {
+		rt.handleJobSummary(w, r, id)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w, http.MethodGet)
 		return
@@ -2086,7 +2130,57 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: rt.artifactAvailability(job)})
+	projectedJobs := []Job{job}
+	rt.projectJobRoomNames(r.Context(), projectedJobs)
+	job = projectedJobs[0]
+	job.MeetingDeleted = rt.store.meetingDeleted(r.Context(), job.ID)
+	availability := rt.artifactAvailability(job)
+	rt.fillPublishedStepOutcomes(id, availability.PublishedAttempt, attempts)
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: availability, RecordingFileID: rt.recordingFileID(r.Context(), id)})
+}
+
+// fillPublishedStepOutcomes reads the outcomes of a published attempt built
+// before they were recorded from the bundle it published, so a meeting from
+// before D-854 still says it has no transcript or no summary. Nothing is
+// stored: the bundle stays the source, and a read that fails leaves the
+// attempt as it was.
+func (rt *Runtime) fillPublishedStepOutcomes(jobID string, published int, attempts []JobAttempt) {
+	if published <= 0 {
+		return
+	}
+	for i := range attempts {
+		a := &attempts[i]
+		if a.AttemptNumber != published || a.TranscriptionStatus != "" || a.SummaryStatus != "" {
+			continue
+		}
+		outcomes, err := readBundleStepOutcomes(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				rt.logger.Printf("step outcomes unreadable for published attempt id=%s attempt=%d: %v", jobID, published, err)
+			}
+			return
+		}
+		a.TranscriptionStatus, a.TranscriptionReason = outcomes.TranscriptionStatus, outcomes.TranscriptionReason
+		a.SummaryStatus, a.SummaryReason = outcomes.SummaryStatus, outcomes.SummaryReason
+		return
+	}
+}
+
+// recordingFileID looks up the delivered recording of job id by the name the
+// Nextcloud Files sink gives it. A failed lookup only costs the Files link, so
+// it is logged and the detail is still served.
+func (rt *Runtime) recordingFileID(ctx context.Context, id string) int64 {
+	for _, name := range []string{id + ".opus", id + ".json"} {
+		fileID, err := rt.meetingMetadata.FileIDFor(ctx, name)
+		if err != nil {
+			rt.logger.Printf("recording file id lookup failed id=%s: %v", id, err)
+			return 0
+		}
+		if fileID > 0 {
+			return fileID
+		}
+	}
+	return 0
 }
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {

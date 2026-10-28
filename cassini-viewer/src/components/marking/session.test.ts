@@ -106,6 +106,78 @@ describe("a meeting's marks session", () => {
     expect(changed).not.toHaveBeenCalled();
   });
 
+  it("orders a rename between pending marks and advances the token for each write", async () => {
+    const changed = vi.fn();
+    const session = createMarksSession(changed);
+    const answer = (revision: number, items: AnnotationItem[]): AnnotationResult => ({
+      ...result({ ...doc, revision, items }), revision, stateToken: `epoch:${revision}`,
+    });
+    let finish: (value: AnnotationResult) => void = () => {};
+    const apply = vi.fn(() => new Promise<AnnotationResult>((resolve) => { finish = resolve; }));
+    await session.open(async () => answer(3, doc.items), apply);
+
+    session.write(removeRequest(["i1"]));
+    await settle();
+    const renamed = session.setTitle("Renamed");
+    session.write(removeRequest(["i2"]));
+    await settle();
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({ stateToken: "epoch:3" }));
+
+    finish(answer(4, doc.items.slice(1)));
+    await settle();
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({
+      stateToken: "epoch:4", ops: [{ op: "set-title", title: "Renamed" }],
+    }));
+    finish(answer(5, doc.items.slice(1)));
+    await renamed;
+    await settle();
+    expect(apply).toHaveBeenCalledTimes(3);
+    expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({
+      stateToken: "epoch:5", ops: [{ op: "unmark", itemId: "i2" }],
+    }));
+    finish(answer(6, doc.items.slice(2)));
+    await session.whenIdle();
+    expect(get(session).annotations?.stateToken).toBe("epoch:6");
+    expect(changed).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns a rename conflict to the editor and refreshes before the next mark", async () => {
+    const changed = vi.fn();
+    const session = createMarksSession(changed);
+    const conflict = new AnnotationError(409, "revision-conflict");
+    const load = vi.fn().mockResolvedValueOnce({ ...meeting(), stateToken: "epoch:3" })
+      .mockResolvedValueOnce({ ...meeting(), stateToken: "epoch:4" });
+    const apply = vi.fn().mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ ...result(), stateToken: "epoch:5" });
+    await session.open(load, apply);
+    const rejected = expect(session.setTitle("Renamed")).rejects.toBe(conflict);
+    session.write(removeRequest(["i1"]));
+    await rejected;
+    await session.whenIdle();
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({ stateToken: "epoch:4" }));
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls a rename's pending archive synchronization", async () => {
+    vi.useFakeTimers();
+    const session = createMarksSession(() => {});
+    const load = vi.fn().mockResolvedValueOnce({ ...meeting(), stateToken: "epoch:3" })
+      .mockResolvedValueOnce({ ...meeting(), stateToken: "epoch:4",
+        sync: { state: "saved", desired: 4, confirmed: 4 } });
+    const apply = vi.fn().mockResolvedValue({ ...result(), stateToken: "epoch:4",
+      sync: { state: "pending", desired: 4, confirmed: 3 } });
+    await session.open(load, apply);
+    await session.setTitle("Renamed");
+    expect(get(session).annotations?.sync?.state).toBe("pending");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(get(session).annotations?.sync?.state).toBe("saved");
+    expect(load).toHaveBeenCalledTimes(2);
+    await session.close();
+  });
+
   it("says where a refused write came from, so its error shows there", async () => {
     const session = createMarksSession(() => {});
     await session.open(async () => meeting(), async () => {

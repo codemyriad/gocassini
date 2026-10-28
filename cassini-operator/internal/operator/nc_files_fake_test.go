@@ -86,6 +86,17 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 				return
 			}
 			_, _ = w.Write(body)
+		case http.MethodDelete:
+			if _, ok := f.files[rel]; !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if match := r.Header.Get("If-Match"); match != "" && match != f.etagFor(rel) {
+				w.WriteHeader(http.StatusPreconditionFailed)
+				return
+			}
+			delete(f.files, rel)
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusOK)
 		}

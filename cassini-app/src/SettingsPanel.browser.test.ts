@@ -199,6 +199,16 @@ it("shows the saved settings in the status strip and moves only after Save", asy
   await expect.element(question).toHaveFocus();
   await expect.element(question.getByRole("combobox", { name: "Provider" })).toHaveValue("or");
 
+  const transcriptionSwitch = page.getByRole("checkbox", { name: "Transcribe every recording" });
+  const summarySwitch = page.getByRole("checkbox", { name: "Summarise every meeting" });
+  const provider = question.getByRole("combobox", { name: "Provider" });
+  await transcriptionSwitch.click();
+  for (const control of [summarySwitch, provider]) await expect.element(control).toBeDisabled();
+  await expect.element(strip.getByRole("button", { name: /^Transcribe/ })).toHaveTextContent("On · Balanced · CPU");
+  await transcriptionSwitch.click();
+  for (const control of [summarySwitch, provider]) await expect.element(control).toBeEnabled();
+  await expect.element(provider).toHaveValue("or");
+
   await page.getByRole("combobox", { name: "Published meeting" }).selectOptions("json");
   await expect.element(publish).toHaveTextContent("Audio + transcript");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -231,7 +241,7 @@ it("says how long kept media stays from the Recordings policy and follows the re
   await expect.element(page.getByRole("button", { name: /^Keep on server/ })).toHaveTextContent(/Audio only$/);
 });
 
-it("lets everything after the transcript change only once transcription is saved on", async () => {
+it("enables and disables dependent settings with the draft transcription switch", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
   const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
@@ -263,9 +273,15 @@ it("lets everything after the transcript change only once transcription is saved
   await expect.element(page.getByRole("region", { name: "What participants receive" })).toHaveFocus();
 
   await page.getByRole("checkbox", { name: "Transcribe every recording" }).click();
-  await expect.element(page.getByText("Save to set up the summary and what participants receive.")).toBeVisible();
-  await expect.element(format).toBeDisabled();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  for (const control of [addOne, format, audioOnly]) await expect.element(control).toBeEnabled();
+  await expect.element(summarySwitch).toBeDisabled(); // A provider is still required.
+  expect(writes).toHaveLength(0);
+  await expect.element(page.getByRole("button", { name: /^Transcribe/ })).toHaveTextContent("Off");
+  await page.getByRole("checkbox", { name: "Transcribe every recording" }).click();
+  for (const control of [summarySwitch, addOne, format, audioOnly]) await expect.element(control).toBeDisabled();
+  await expect.element(offLine).toBeVisible();
+  expect(writes).toHaveLength(0);
+  await page.getByRole("checkbox", { name: "Transcribe every recording" }).click();
   for (const control of [addOne, format, audioOnly]) await expect.element(control).toBeEnabled();
   await expect.element(offLine).not.toBeInTheDocument();
   await expect.element(page.getByText("Save to set up the summary and what participants receive.")).not.toBeInTheDocument();
@@ -278,6 +294,8 @@ it("lets everything after the transcript change only once transcription is saved
   await page.getByRole("checkbox", { name: "Transcribe every recording" }).click();
   await expect.element(page.getByRole("radio", { name: "Nothing", exact: true })).toBeDisabled();
   await expect.element(page.getByText("Unavailable while audio is published.")).toBeVisible();
+  for (const control of [summarySwitch, addOne, format, audioOnly]) await expect.element(control).toBeDisabled();
+  await expect.element(offLine).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => writes.at(-1)).toMatchObject({ transcription_enabled: false, meeting_format: "opus" });
   await expect.element(offLine).toBeVisible();

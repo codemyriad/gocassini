@@ -56,6 +56,10 @@ The portable `.opus` packer (`internal/cassini/portable_meeting.go`) embeds the 
 
 For files sealed **before** summaries existed, `cassini meetings summarize <meeting.opus>` backfills one without re-running transcription: it reads the transcript back out of the file, makes the same single LLM call `cassini build` would make (configured by the same environment variables), and rewrites the metadata through the stage-verify-rename path with the audio bytes untouched. A file that already carries a summary is skipped unless `--force` replaces it, and a backfilled summary is recognisable by `provenance.meetingSummary.source = "backfill"` in the manifest.
 
+The same command takes a meeting **bundle** (`cassini meetings summarize ./current/<job>.meeting`): it writes `summary.md` and the manifest entries a build with summaries on would have written, so sealing the bundle again carries the summary into the meeting file. The operator uses this, not the `.opus` path, because speaker edits and republishes seal again from the bundle. A bundle whose transcription did not complete is skipped. `--estimate` calls no model and writes nothing: it reports the words each summary would read and roughly how many input tokens that is, so the cost can be shown first; `--json` prints the reports as one JSON array.
+
+Step 9 records its outcome in the manifest as `processing.meetingSummary` beside `processing.transcription`: `completed` (with the model), `skipped` (`disabled`, `not_configured`, `no_transcript`) or `failed` (`llm_failed`; the error itself stays in the build log). A missing summary can therefore be told apart from one that was switched off or failed. Files sealed before this was recorded carry no `meetingSummary`, which asserts nothing.
+
 ## LLM integration
 
 There is one HTTP client, `ChatCompletion(ctx, cfg, system, user)` in `llm.go`,

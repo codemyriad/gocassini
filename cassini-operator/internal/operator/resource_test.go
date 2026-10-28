@@ -877,7 +877,8 @@ build)
   if [ -d "$out" ] && [ -n "$(ls -A "$out")" ]; then echo "output directory is not empty: $out" >&2; exit 1; fi
   mkdir -p "$out"
   if [ "$CASSINI_TRANSCRIPTION" = "on" ]; then
-    : > "$out/cassini.json"; : > "$out/.transcription-started"; exit 134
+    : > "$out/cassini.json"; : > "$out/.transcription-started"
+    echo "loading model…"; echo "CUDA error: out of memory" >&2; echo "aborting" >&2; exit 134
   fi
   echo '{}' > "$out/cassini.json"
   printf '%s' "$CASSINI_TRANSCRIPTION_REASON" > "$out/reason"
@@ -943,6 +944,19 @@ func TestExecuteBuildCLIFallbackRebuildsIntoACleanBundle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(meetingPath, ".transcription-started")); !os.IsNotExist(err) {
 		t.Fatalf("the crashed attempt's checkpoint survived into the fallback bundle (stat err = %v)", err)
 	}
+	// The run says why it crashed: the line naming the cause, not the last one.
+	if detail := attemptTranscriptionDetail(t, rt, jobID); detail != "CUDA error: out of memory" {
+		t.Fatalf("transcription detail = %q, want the out-of-memory line", detail)
+	}
+}
+
+func attemptTranscriptionDetail(t *testing.T, rt *Runtime, jobID string) string {
+	t.Helper()
+	attempt, err := rt.store.GetJobAttempt(context.Background(), jobID, 1)
+	if err != nil {
+		t.Fatalf("GetJobAttempt() error = %v", err)
+	}
+	return attempt.TranscriptionDetail
 }
 
 // A model check refused for lack of memory may run later. Below the retry
@@ -968,9 +982,14 @@ func TestExecuteBuildCLIDefersTransientTranscriptionAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeBuildCLI() at the retry ceiling = %v, want the audio preserved", err)
 	}
+	// Still short of resources at the ceiling is a failure the run shows, not
+	// a model that cannot run (D-854); the cause stays on the attempt.
 	reason, err := os.ReadFile(filepath.Join(meetingPath, "reason"))
-	if err != nil || string(reason) != "model_unavailable" {
-		t.Fatalf("ceiling bundle reason = %q (%v), want model_unavailable", reason, err)
+	if err != nil || string(reason) != "insufficient_resources" {
+		t.Fatalf("ceiling bundle reason = %q (%v), want insufficient_resources", reason, err)
+	}
+	if detail := attemptTranscriptionDetail(t, rt, jobID); detail == "" {
+		t.Fatal("no transcription detail kept for the dropped transcription")
 	}
 }
 
@@ -1006,9 +1025,12 @@ func TestExecuteBuildCLIKeepsAudioWhenModelRAMNeverFrees(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeBuildCLI() = %v, want the audio preserved", err)
 	}
+	if detail := attemptTranscriptionDetail(t, rt, jobID); !strings.Contains(detail, "memory") {
+		t.Fatalf("transcription detail = %q, want the memory shortfall", detail)
+	}
 	reason, err := os.ReadFile(filepath.Join(meetingPath, "reason"))
-	if err != nil || string(reason) != "model_unavailable" {
-		t.Fatalf("bundle reason = %q (%v), want model_unavailable", reason, err)
+	if err != nil || string(reason) != "insufficient_resources" {
+		t.Fatalf("bundle reason = %q (%v), want insufficient_resources", reason, err)
 	}
 }
 

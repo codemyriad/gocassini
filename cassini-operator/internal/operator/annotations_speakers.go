@@ -67,6 +67,10 @@ type speakerEditsResponse struct {
 	// Progress is where the pending refine is and how long it should take
 	// in all; null unless State is applying.
 	Progress *speakerEditsProgress `json:"progress"`
+	// CanRewriteSummary says this reader may ask a save to rewrite the
+	// meeting's summary for the new speakers (D-814): an administrator or a
+	// moderator of the room. Everyone else's saves keep it.
+	CanRewriteSummary bool `json:"canRewriteSummary"`
 }
 
 // speakerEditsProgress tells the page what an applying edit is waiting for.
@@ -122,7 +126,10 @@ type speakerParticipant struct {
 // the server's to set, so they are accepted and ignored.
 type speakerEditsRequest struct {
 	ExpectRevision *int `json:"expectRevision"`
-	Doc            *struct {
+	// Summary is what this save does with the meeting's summary: "keep" (the
+	// default) or "rewrite", one call to the summary model.
+	Summary string `json:"summary"`
+	Doc     *struct {
 		Format   string              `json:"format"`
 		Revision int                 `json:"revision"`
 		Splits   []speakerEditsSplit `json:"splits"`
@@ -153,17 +160,19 @@ func (s *annotationService) readSpeakers(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	state, err := s.rt.speakerEditsState(ctx, speakerJobID(opusName))
+	jobID := speakerJobID(opusName)
+	state, err := s.rt.speakerEditsState(ctx, jobID)
 	if err != nil {
 		s.logf("annotations: speakers meeting=%s: %v", meetingID, err)
 		writeJSONError(w, http.StatusInternalServerError, "speaker edits unavailable")
 		return
 	}
+	state.CanRewriteSummary = s.canRewriteSummary(ctx, caller, jobID)
 	writeJSON(w, http.StatusOK, state)
 }
 
 func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request, caller, meetingID string) {
-	expectRevision, doc, refusal := readSpeakerEditsRequest(w, r)
+	expectRevision, doc, summaryMode, refusal := readSpeakerEditsRequest(w, r)
 	if refusal != "" {
 		writeSpeakerEditsInvalid(w, refusal)
 		return
@@ -222,6 +231,12 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Rewriting the summary costs a model call and changes what every reader
+	// sees: only an administrator or a moderator of the room may ask for it.
+	if summaryMode == speakerSummaryRewrite && !s.canRewriteSummary(ctx, caller, jobID) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden", "reason": "summary-rewrite"})
+		return
+	}
 	now := s.rt.speakerNow()
 	release, retryAfter, allowed := s.speakerEdits.reserve(caller, now)
 	if !allowed {
@@ -229,7 +244,7 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		writeSpeakerEditsRateLimited(w, retryAfter)
 		return
 	}
-	revision, err := s.rt.store.QueueSpeakerEdits(ctx, jobID, expectRevision, doc, caller, formatUTCString(now))
+	revision, err := s.rt.store.QueueSpeakerEditsWithSummary(ctx, jobID, expectRevision, doc, summaryMode, caller, formatUTCString(now))
 	if err != nil {
 		// Nothing was queued, so the save does not count.
 		release()
@@ -261,6 +276,7 @@ func (s *annotationService) writeSpeakers(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusInternalServerError, "speaker edits unavailable")
 		return
 	}
+	state.CanRewriteSummary = s.canRewriteSummary(ctx, caller, jobID)
 	writeJSON(w, http.StatusOK, state)
 }
 
@@ -304,22 +320,31 @@ func writeSpeakerEditsInvalid(w http.ResponseWriter, message string) {
 
 // readSpeakerEditsRequest parses the body strictly. The returned message is
 // about the caller's own body, so it is safe to return.
-func readSpeakerEditsRequest(w http.ResponseWriter, r *http.Request) (int, speakerEditsDoc, string) {
+func readSpeakerEditsRequest(w http.ResponseWriter, r *http.Request) (int, speakerEditsDoc, string, string) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSpeakerEditsBodyBytes))
 	if err != nil {
-		return 0, speakerEditsDoc{}, "the request body could not be read"
+		return 0, speakerEditsDoc{}, "", "the request body could not be read"
 	}
 	var request speakerEditsRequest
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&request); err != nil {
-		return 0, speakerEditsDoc{}, `the request body must be {"expectRevision":n,"doc":{"splits":[…],"merges":[…],"labels":[…]}}`
+		return 0, speakerEditsDoc{}, "", `the request body must be {"expectRevision":n,"doc":{"splits":[…],"merges":[…],"labels":[…]},"summary":"keep"|"rewrite"}`
 	}
 	if request.ExpectRevision == nil || *request.ExpectRevision < 0 {
-		return 0, speakerEditsDoc{}, "expectRevision is required"
+		return 0, speakerEditsDoc{}, "", "expectRevision is required"
 	}
 	if request.Doc == nil {
-		return 0, speakerEditsDoc{}, "doc is required"
+		return 0, speakerEditsDoc{}, "", "doc is required"
+	}
+	// A client that predates the choice keeps the summary.
+	summaryMode := speakerSummaryKeep
+	switch request.Summary {
+	case "", speakerSummaryKeep:
+	case speakerSummaryRewrite:
+		summaryMode = speakerSummaryRewrite
+	default:
+		return 0, speakerEditsDoc{}, "", `summary must be "keep" or "rewrite"`
 	}
 	doc := speakerEditsDoc{
 		Format: speakerEditsFormat,
@@ -327,7 +352,7 @@ func readSpeakerEditsRequest(w http.ResponseWriter, r *http.Request) (int, speak
 		Merges: request.Doc.Merges,
 		Labels: request.Doc.Labels,
 	}.normalized()
-	return *request.ExpectRevision, doc, ""
+	return *request.ExpectRevision, doc, summaryMode, ""
 }
 
 // speakerJobID is the job a visible recording was published from: the direct
@@ -595,7 +620,9 @@ SELECT trigger_kind, state FROM job_attempts WHERE job_id = ? AND attempt_number
 	if err != nil {
 		return false, fmt.Errorf("load the attempt that built %s: %w", jobID, err)
 	}
-	return kind != triggerKindRefine && (state == "failed" || state == "interrupted"), nil
+	// A refine or a summarize copies the published meeting, so a bundle one
+	// of them left behind is never an unpublished rebuild.
+	return kind != triggerKindRefine && kind != triggerKindSummarize && (state == "failed" || state == "interrupted"), nil
 }
 
 // speakerNow is the speaker edits surface's clock.

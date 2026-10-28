@@ -129,8 +129,8 @@ A rename separates nobody, so it writes no `x-speakerDiarization`.
 | `transcript.raw-asr.words.v1.json` | The original transcript, byte for byte, listed as the `raw-asr` transcript. |
 | `speaker-edits.json` | The edits document as applied. |
 | `captions.vtt` | Regenerated from the separated transcript. |
-| `summary.md` | Rewritten for the edited speakers when the bundle has a summary (one call to the summary model). |
-| `summary.raw-asr.md` | The build's summary, byte for byte, kept the first time the summary is rewritten. |
+| `summary.md` | Rewritten for the edited speakers when the bundle has a summary and `--summary rewrite` asks for it (one call to the summary model). Kept as it was otherwise, even by an undo of every edit. |
+| `summary.raw-asr.md` | The build's summary, byte for byte, kept the first time the summary is rewritten, until an undo with `--summary rewrite` puts it back. |
 | `manifest.json` | See below. `wordCount` is unchanged. |
 
 `manifest.json` changes in four places:
@@ -175,7 +175,13 @@ hashes only.
 
 ### The summary
 
-The summary model is called before apply writes anything, and only when
+A rewrite costs a call to the summary model, so apply makes one only when
+asked: `--summary rewrite`. By default (`--summary keep`) `summary.md` is left
+as it was and the report says `"summary":"stale"`, the same note the People
+panel shows when a rewrite could not be made; a later apply with `--summary
+rewrite` still rewrites it.
+
+When asked, the summary model is called before apply writes anything, and only when
 `summary.md` is not already the one apply wrote from this exact edited
 transcript: a retried apply, a replay onto a bundle that already has the
 edits, or a new revision that changes nobody's words or name (the same
@@ -211,9 +217,16 @@ that transcribes the meeting replays the edits then.
 If apply is interrupted, the next apply finishes the job: the raw-asr copy is
 written before the manifest changes and removed only after an undo has put the
 manifest back, and while the manifest carries no `x-speakerDiarization` apply
-reads the build's values from the manifest itself. An undo removes
-`summary.raw-asr.md` last of all, so an undo that stopped part way still puts
-the build's summary back and says so (`"summary":"restored"`).
+reads the build's values from the manifest itself.
+
+Undoing every edit restores the transcript, but the summary only with
+`--summary rewrite`: whoever may not rewrite the summary may not change it back
+either. Without it `summary.md` stays the summary people last read, reported
+`"stale"` (with `summarySha256` `""`, as the undone manifest carries no
+`x-speakerEdits`), and `summary.raw-asr.md` stays beside it. A
+rewriting undo puts it back without a model call and removes
+`summary.raw-asr.md` last of all, so one that stopped part way still finishes
+and says so (`"summary":"restored"`).
 
 ## In the portable `.opus`
 
@@ -378,8 +391,19 @@ window would show, and edit, a meeting readers no longer have.
   republished (61 s decoding and diarizing, 9 s apply with the summary
   rewrite, 5 s seal and publish); the part that is not diarization took
   3–4 s on 3-minute meetings and about 14 s on the 64-minute one.
-- `POST {expectRevision, doc}` stores the next revision and queues a `refine`
-  attempt in one transaction. It is admitted the way a rerun is: under the
+- `GET` also says `canRewriteSummary`: whether this caller may ask a save to
+  rewrite the meeting's summary for the new speakers, which costs a call to
+  the summary model. It is true for a Nextcloud administrator and for an
+  owner or moderator of the meeting's Talk room (the people Talk lets record
+  it), asked of Nextcloud as the caller and remembered for a minute.
+- `POST {expectRevision, doc, summary}` stores the next revision and queues a `refine`
+  attempt in one transaction. `summary` is `"keep"` (the default, also for a
+  client that does not send it: the summary stays as it was and the report
+  says `stale`) or `"rewrite"`, which answers 403
+  `{"error":"forbidden","reason":"summary-rewrite"}` unless `canRewriteSummary`;
+  the choice is kept on the attempt and passed to `cassini speakers apply
+  --summary`. A rerun's replay of the edits always rewrites: its build has
+  just written, and paid for, a summary of the unedited transcript. It is admitted the way a rerun is: under the
   job's artifact lock, which every build, seal, publish and expiry of the job
   holds while it runs. The POST waits at most 2 s for that lock, so a save
   never hangs behind a whole build. It answers 200 with the `GET` shape, or:

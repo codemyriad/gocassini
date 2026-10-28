@@ -29,6 +29,7 @@
     clearSelection,
     countHiddenByView,
     describeSelectionGaps,
+    isSelected,
     reconcileSelection,
     selectedEntries,
     shouldShowSelectionBar,
@@ -40,6 +41,7 @@
     ALL_BROWSE_TYPES,
     filterInsightsByRoom,
     insightsForMeeting,
+    missingInsightSources,
     resolveInsightSources,
     toggleBrowseType,
     type BrowseType,
@@ -47,6 +49,7 @@
     type InsightRecord,
   } from "./viewer/insights";
   import {
+    AnnotationError,
     mergeVocabularyTags,
     tagsByMeeting,
     type AnnotationRequest,
@@ -70,6 +73,9 @@
   import MeetingView from "./components/MeetingView.svelte";
   import PreparePanel from "./components/PreparePanel.svelte";
   import TagManager from "./components/tags/TagManager.svelte";
+  import RoomNameDialog from "./components/RoomNameDialog.svelte";
+  import type { RoomNameState } from "./viewer/roomNames";
+  import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
   import { focusLayer } from "./components/ui/focusLayer";
@@ -132,6 +138,8 @@
   const CATALOG_REFRESH_INTERVAL_MS = 60_000;
   let catalogMode = false;
   let catalogRefreshRunning = false;
+  let catalogRequestGeneration = 0;
+  let editingRoomId: string | null = null;
   let catalogRefreshTimer: number | undefined;
 
   // Which room the list is narrowed to (D-654). null is "all meetings" — not
@@ -170,7 +178,7 @@
   // Prepare, then the rooms drawer (only ever open on a phone), then Manage
   // tags. Everything under it is inert, so neither Tab nor a screen reader
   // wanders into a page the reader cannot see for the drawer over it.
-  $: topLayer = tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
   $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
@@ -238,6 +246,16 @@
   let tagNotice = "";
   let tagRetryable = false;
   let tagManagerOpen = false;
+
+  // Delete a meeting (D-861). The ids already deleted keep the catalog's
+  // refresh poll from flashing a deleted row back before the next listing
+  // reflects it; a failure rolls its entry back in and says so.
+  const deletedMeetingIds = new Set<string>();
+  let deleteConfirm: MeetingCatalogEntry[] | null = null;
+  let deleteBusy = false;
+  let deleteNotice = "";
+  let deleteFailed: MeetingCatalogEntry[] = [];
+  $: canDelete = Boolean(dataProvider.deleteMeeting);
 
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
@@ -328,10 +346,12 @@
   }
 
   function seedListHistoryEntry(meetingId: string) {
-    // The "list" entry below the current page in the back stack never carries
-    // a transcript selection; tx is per-meeting state.
+    // Keep the requested transcript, seek, and selection on the meeting entry.
+    const hash = currentViewerHash().meeting === meetingId
+      ? window.location.hash
+      : buildViewerHash({ meeting: meetingId });
     window.history.replaceState({}, "", viewerHref(buildViewerHash({})));
-    window.history.pushState({}, "", viewerHref(buildViewerHash({ meeting: meetingId })));
+    window.history.pushState({}, "", viewerHref(hash));
   }
 
   function handleBackToList() {
@@ -536,6 +556,7 @@
   }
 
   function handleShellKeydown(event: KeyboardEvent) {
+    if (editingRoomId) return;
     if (event.key !== "Escape" || event.defaultPrevented) {
       return;
     }
@@ -751,6 +772,72 @@
     transcriptQueryForMeeting = (transcriptHits.get(meeting.id)?.length ?? 0) > 0 ? searchQuery : "";
   }
 
+  // Delete flows (D-861). The confirm dialog is the shell's: every entry point
+  // — sheet header, list row, selection bar — lands in requestDeleteMeetings
+  // and nothing deletes without passing the dialog.
+  function requestDeleteMeetings(entries: MeetingCatalogEntry[]) {
+    if (!canDelete || entries.length === 0 || deleteBusy) {
+      return;
+    }
+    deleteConfirm = entries;
+  }
+
+  async function runMeetingDeletes(entries: MeetingCatalogEntry[]) {
+    const remove = dataProvider.deleteMeeting?.bind(dataProvider);
+    if (!remove || deleteBusy) {
+      return;
+    }
+    deleteBusy = true;
+    deleteNotice = "";
+    const failed: MeetingCatalogEntry[] = [];
+    for (const entry of entries) {
+      // Optimistic: the row leaves the list before the operator answers, and
+      // the remembered id keeps the next catalog poll from flashing it back.
+      deletedMeetingIds.add(entry.id);
+      catalogMeetings = catalogMeetings.filter((listed) => listed.id !== entry.id);
+      if (selectedMeetingId === entry.id) {
+        handleBackToList();
+      }
+      // Unpick directly: a deliberate delete is not a "no longer in the
+      // archive" loss, so it must not land in the selection's dropped notice.
+      if (isSelected(selection, entry.id)) {
+        selection = toggleSelected(selection, entry.id);
+      }
+      try {
+        await remove(entry);
+      } catch (error) {
+        if (error instanceof AnnotationError && error.status === 404) {
+          // Already out of our readable set — somebody else deleted it, or a
+          // replayed request. Gone is the outcome either way.
+          continue;
+        }
+        deletedMeetingIds.delete(entry.id);
+        failed.push(entry);
+      }
+    }
+    if (failed.length > 0) {
+      // A poll may already have restored a failed target while later deletes
+      // were pending. Merge by id, keeping any fresher catalog entry.
+      const restored = new Map(failed.map((entry) => [entry.id, entry]));
+      for (const entry of catalogMeetings) {
+        restored.set(entry.id, entry);
+      }
+      catalogMeetings = sortMeetingCatalogEntries([...restored.values()]);
+      deleteNotice =
+        failed.length === 1
+          ? `“${failed[0].title}” could not be deleted.`
+          : `${failed.length} meetings could not be deleted.`;
+    }
+    deleteFailed = failed;
+    deleteBusy = false;
+  }
+
+  function confirmDeleteMeetings() {
+    const entries = deleteConfirm ?? [];
+    deleteConfirm = null;
+    void runMeetingDeletes(entries);
+  }
+
   // MeetingView reports the real speaker/segment/duration counts once a meeting
   // is loaded; fold them into the catalog so the list card shows actuals. The
   // derived `selectedMeeting` then carries the enriched entry back into
@@ -760,6 +847,25 @@
     catalogMeetings = catalogMeetings.map((entry) =>
       entry.id === enriched.id ? enriched : entry,
     );
+  }
+
+  // A rename applies to everyone's view (D-862). A set title is folded into
+  // the catalog in place; a reset needs the recorded default back, which only
+  // the server knows, so it refetches the catalog instead. Either way a refresh
+  // already in flight was fetched pre-rename: invalidate it (and release the
+  // running guard) so a stale response can't revert the title, same as
+  // roomNameSaved.
+  function handleRenamed(event: CustomEvent<{ id: string; title: string | null }>) {
+    const { id, title } = event.detail;
+    ++catalogRequestGeneration;
+    catalogRefreshRunning = false;
+    if (title !== null) {
+      catalogMeetings = catalogMeetings.map((entry) =>
+        entry.id === id ? { ...entry, title } : entry,
+      );
+    } else {
+      void refreshCatalog();
+    }
   }
 
   function readStoredTheme(): ThemeMode | null {
@@ -852,6 +958,14 @@
     );
   }
 
+  function roomNameSaved(state: RoomNameState) {
+    ++catalogRequestGeneration;
+    catalogRefreshRunning = false;
+    catalogMeetings = catalogMeetings.map((entry) => entry.roomId === state.roomId ? {...entry, roomDisplayName: state.displayName} : entry);
+    editingRoomId = null;
+    void refreshCatalog();
+  }
+
   async function refreshCatalog() {
     // Embedded mode keeps probing even when no catalog existed at mount time:
     // a fresh install can stay open while its first recording is published.
@@ -859,35 +973,39 @@
       return;
     }
     catalogRefreshRunning = true;
+    const generation = ++catalogRequestGeneration;
     try {
       const catalog = await dataProvider.loadCatalog();
-      if (destroyed || !catalog) {
+      if (destroyed || generation !== catalogRequestGeneration || !catalog) {
         return;
       }
+      // A meeting deleted from here stays gone even when the poll's listing
+      // still carries it (the delete and the listing can cross on the wire).
+      const listedMeetings = catalog.meetings.filter((entry) => !deletedMeetingIds.has(entry.id));
       catalogMode = true;
       bundledMode = false;
-      catalogMeetings = catalog.meetings;
+      catalogMeetings = listedMeetings;
       catalogPending = false;
       listError = "";
-      void hydrateCatalogMeetingMetadata(catalog.meetings);
+      void hydrateCatalogMeetingMetadata(listedMeetings);
       // A deep link that could not be satisfied at mount is satisfied here, the
       // first time a catalog actually arrives.
       if (!selectedMeetingId && pendingMeetingId !== null) {
-        applyCatalogSelection(catalog.meetings, pendingMeetingId);
+        applyCatalogSelection(listedMeetings, pendingMeetingId);
       } else if (selectedMeetingId) {
-        notFoundMessage = catalog.meetings.some((entry) => entry.id === selectedMeetingId)
+        notFoundMessage = listedMeetings.some((entry) => entry.id === selectedMeetingId)
           ? ""
           : `Meeting not found in catalog: ${selectedMeetingId}`;
       }
       pendingMeetingId = null;
     } catch (error) {
-      if (destroyed) {
+      if (destroyed || generation !== catalogRequestGeneration) {
         return;
       }
       // Preserve the last known-good list while surfacing the refresh failure.
       listError = error instanceof Error ? error.message : String(error);
     } finally {
-      catalogRefreshRunning = false;
+      if (generation === catalogRequestGeneration) catalogRefreshRunning = false;
     }
   }
 
@@ -1390,6 +1508,8 @@
     <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
+      editable={!!dataProvider.loadRoomName && !!dataProvider.saveRoomName}
+      on:rename={(event) => (editingRoomId = event.detail)}
       {selectedRoomKey}
       totalCount={catalogMeetings.length}
       open={railOpen}
@@ -1465,6 +1585,15 @@
       {tagNotice}
       {tagRetryable}
       on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
+      deletable={canDelete}
+      {deleteNotice}
+      deleteRetryable={deleteFailed.length > 0}
+      on:deleteMeeting={(event) => requestDeleteMeetings([event.detail])}
+      on:dismissDeleteNotice={() => {
+        deleteNotice = "";
+        deleteFailed = [];
+      }}
+      on:retryDelete={() => void runMeetingDeletes(deleteFailed)}
       on:clearTags={() => (selectedTagIds = [])}
       on:dismissTagNotice={() => annotationNotice ? meetingMarks.dismiss(annotationNotice.meetingId) : listTagSession.dismissNotice()}
       on:retryTag={() => annotationNotice ? meetingMarks.retry(annotationNotice.meetingId) : listTagSession.retry()}
@@ -1485,6 +1614,9 @@
           on:clear={handleClearSelection}
           on:prepare={() => (prepareOpen = true)}
           on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
+          deletable={canDelete}
+          {deleteBusy}
+          on:delete={() => requestDeleteMeetings([...pickedMeetings])}
           tags={dataProvider.applyAnnotationBatch ? vocabularyTags : null}
           tagSelected={bulkTagState.selected}
           tagMixed={bulkTagState.mixed}
@@ -1536,6 +1668,7 @@
           <InsightDocument
             insight={selectedInsight}
             sources={insightSources.get(selectedInsight.id) ?? []}
+            missingSourceCount={missingInsightSources(selectedInsight, insightSources.get(selectedInsight.id) ?? [])}
             documentMarkdown={insightDocument}
             documentError={insightDocumentError}
             documentLoading={insightDocumentLoading}
@@ -1576,7 +1709,10 @@
             {insightSourceCounts}
             on:back={handleBackToList}
             on:enriched={handleEnriched}
+            on:renamed={handleRenamed}
             on:openInsight={(event) => openInsight(event.detail)}
+            {canDelete}
+            on:deleteMeeting={() => selectedMeeting && requestDeleteMeetings([selectedMeeting])}
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}
             applyAnnotations={annotationCalls.apply}
@@ -1634,7 +1770,32 @@
         on:changed={() => refreshTags(true)}
       />
     {/if}
+
+    <!-- Deleting is the one action here that cannot be taken back, so it is
+         the one action behind a dialog (D-861). -->
+    {#if deleteConfirm}
+      <ConfirmDialog
+        title={deleteConfirm.length === 1
+          ? `Delete “${deleteConfirm[0].title}”?`
+          : `Delete ${deleteConfirm.length} meetings?`}
+        body="Deleting removes the recording, transcript and tags for everyone who can see it. This cannot be undone."
+        confirmLabel={deleteConfirm.length === 1 ? "Delete meeting" : `Delete ${deleteConfirm.length} meetings`}
+        busy={deleteBusy}
+        on:cancel={() => (deleteConfirm = null)}
+        on:confirm={confirmDeleteMeetings}
+      />
+    {/if}
   </div>
+{/if}
+
+<!-- Keep the modal inside the themed root: in Nextcloud's shadow DOM, the
+     color tokens are scoped here rather than on the document or shadow host. -->
+{#if editingRoomId}
+  {#key editingRoomId}
+    <RoomNameDialog roomId={editingRoomId} initialName={roomBuckets.find((room) => room.roomId === editingRoomId)?.name ?? editingRoomId} provider={dataProvider}
+      on:close={() => (editingRoomId = null)} on:saved={(event) => roomNameSaved(event.detail)}
+      on:unavailable={() => refreshCatalog()} />
+  {/key}
 {/if}
 </div><!-- /.cassini-root -->
 

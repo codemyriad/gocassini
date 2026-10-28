@@ -93,6 +93,23 @@ describe("groupSpeakers", () => {
     ]);
     expect(groups.map((group) => group.device.id)).toEqual(["ana"]);
   });
+
+  // A participant whose display name never reached the recorder keeps its
+  // placeholder in the operator's original roster; once renamed, the
+  // transcript is what says who they are.
+  it("calls a participant who speaks what the transcript calls them, not the original roster", () => {
+    const groups = groupSpeakers(
+      [
+        { id: "spk_chris", label: "Chris" },
+        { id: "room~1", label: "Mira" },
+      ],
+      [
+        { id: "spk_chris", label: "participant-IOv3iaL_" },
+        { id: "room", label: "Meeting room laptop" },
+      ],
+    );
+    expect(groups.map((group) => group.device.label)).toEqual(["Chris", "Meeting room laptop"]);
+  });
 });
 
 function segment(id: string, speaker: string, words: [number, number][]): TranscriptSegment {

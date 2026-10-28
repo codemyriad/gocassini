@@ -259,6 +259,15 @@ describe("AppDataProvider annotations", () => {
     ]);
   });
 
+  it("deletes a meeting through its action subpath (D-861)", async () => {
+    const fetchMock = respondWith(JSON.stringify({ meetingId: "m 1", deleted: true }));
+
+    await expect(new AppDataProvider().deleteMeeting(entry("m 1"))).resolves.toBeUndefined();
+    expect(calls(fetchMock)).toEqual([
+      { path: "annotations/meetings/m%201/delete", method: "POST", body: "{}", cache: "no-store" },
+    ]);
+  });
+
   it("polls the tag job, and reads no job as null", async () => {
     const fetchMock = respondWith(JSON.stringify({ job: null }));
 
@@ -359,6 +368,57 @@ describe("AppDataProvider speaker edits", () => {
       name: "SpeakerEditsError",
       code: "not-found",
     });
+  });
+});
+
+// A meeting's summary as its readers ask for it (D-814).
+describe("AppDataProvider summary requests", () => {
+  const state = {
+    available: true, hasSummary: false, canWrite: true, canRegenerate: false, calls: 1, words: 120,
+    estimatedInputTokens: 900, provider: "Hosted", model: "summary-model", external: true, state: "idle",
+  };
+  const calls = (fetchMock: ReturnType<typeof respondWith>) =>
+    (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(([url, init]) => ({
+      path: url.replace(PROXY_BASE, ""),
+      method: init.method ?? "GET",
+      body: init.body,
+      cache: init.cache,
+    }));
+
+  it("reads what a summary would cost and asks for one, past the proxy's cache", async () => {
+    const fetchMock = respondWith(JSON.stringify(state));
+    const provider = new AppDataProvider();
+    await expect(provider.loadSummaryRequestState(entry("m 1"))).resolves.toEqual(state);
+    await expect(provider.requestSummary(entry("m 1"), true)).resolves.toEqual(state);
+    expect(calls(fetchMock)).toEqual([
+      { path: "annotations/meetings/m%201/summary", method: "GET", body: undefined, cache: "no-store" },
+      { path: "annotations/meetings/m%201/summary", method: "POST", body: JSON.stringify({ replace: true }), cache: "no-store" },
+    ]);
+  });
+
+  it("sends the speaker edits' summary choice only when there is one", async () => {
+    const fetchMock = respondWith(JSON.stringify({}));
+    const provider = new AppDataProvider();
+    const doc = { splits: [], merges: [], labels: [] };
+    await provider.saveSpeakerEdits(entry("m1"), 2, doc);
+    await provider.saveSpeakerEdits(entry("m1"), 2, doc, "rewrite");
+    expect(calls(fetchMock).map((call) => call.body)).toEqual([
+      JSON.stringify({ expectRevision: 2, doc }),
+      JSON.stringify({ expectRevision: 2, doc, summary: "rewrite" }),
+    ]);
+  });
+
+  it.each([
+    [409, { error: "busy" }, "busy"],
+    [409, { error: "has-summary" }, "has-summary"],
+    [409, { error: "unavailable", reason: "summaries_off" }, "unavailable"],
+    // The operator's 403 carries a sentence; the status is the code.
+    [403, { error: "only an administrator or a moderator of the room can replace this summary" }, "forbidden"],
+    [429, { error: "rate-limited", retryAfterMs: 1000 }, "rate-limited"],
+    [404, { error: "meeting not found" }, "not-found"],
+  ])("reports a %i refusal of a summary request as %s", async (status, body, code) => {
+    respondWith(JSON.stringify(body), { status });
+    await expect(new AppDataProvider().requestSummary(entry("m1"), false)).rejects.toMatchObject({ status, code });
   });
 });
 

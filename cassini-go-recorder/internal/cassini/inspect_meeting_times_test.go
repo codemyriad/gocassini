@@ -27,3 +27,26 @@ func TestInspectMeetingTimes(t *testing.T) {
 		t.Fatal(dates)
 	}
 }
+
+func TestInspectMeetingIdentity(t *testing.T) {
+	requireFFMediaTools(t)
+	file := packFixtureOpus(t, t.TempDir(), "meeting")
+	meeting, err := inspectpkg.ExtractMeeting(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	if code := runInspect([]string{"--meeting-identity", file}, &out, &stderr); code != 0 {
+		t.Fatalf("inspect: %d %s", code, stderr.String())
+	}
+	var identity map[string]any
+	if err := json.Unmarshal(out.Bytes(), &identity); err != nil {
+		t.Fatal(err)
+	}
+	if len(identity) != 3 || identity["roomId"] != meeting.Manifest.Meeting.RoomID || identity["jobId"] != meeting.Manifest.Meeting.JobID || identity["attemptNumber"] != float64(meeting.Manifest.Meeting.AttemptNumber) {
+		t.Fatal(identity)
+	}
+	if code := runInspect([]string{"--meeting-identity", "--transcript", file}, &out, &stderr); code != 2 {
+		t.Fatalf("conflicting flags: %d", code)
+	}
+}

@@ -6,13 +6,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
+
+const talkNotificationTitlePrefix = "Meeting recording available: "
 
 type talkNotification struct {
 	Owner     string
 	RoomToken string
 	Message   string
+	MeetingID string
+	Link      string
 }
 
 // Only the Nextcloud Files sink posts recording links, using its existing
@@ -50,7 +58,94 @@ func (s *Store) prepareTalkNotification(ctx context.Context, jobID, appID string
 	if err != nil {
 		return nil, err
 	}
-	return &talkNotification{Owner: strings.TrimSpace(b.Owner), RoomToken: strings.TrimSpace(b.RoomToken), Message: "Recording available: " + link}, nil
+	return &talkNotification{Owner: strings.TrimSpace(b.Owner), RoomToken: strings.TrimSpace(b.RoomToken), MeetingID: jobID, Link: link, Message: talkNotificationTitlePrefix + "Untitled meeting"}, nil
+}
+
+// Metadata is best effort and comes only from this published attempt.
+// Keep the shared-items label compact; Talk renders it as a single link.
+func (n *talkNotification) enrich(sitePath, bundlePath, roomName string) {
+	parts := []string{}
+	type notificationCatalogEntry struct {
+		ID         string `json:"id"`
+		Title      string `json:"title"`
+		Date       string `json:"dateLabel"`
+		DurationMS int64  `json:"digestDurationMs"`
+	}
+	var entry notificationCatalogEntry
+	catalog, ok, err := loadSiteCatalog(sitePath)
+	if err == nil && ok {
+		for _, raw := range catalog.Meetings {
+			if json.Unmarshal(raw, &entry) == nil && entry.ID == n.MeetingID {
+				break
+			}
+			entry = notificationCatalogEntry{}
+		}
+	}
+	title := notificationText(roomName, 80)
+	if title == "" {
+		title = notificationText(entry.Title, 80)
+	}
+	if title != "" {
+		parts = append(parts, title)
+	} else {
+		parts = append(parts, "Untitled meeting")
+	}
+	if date := notificationDate(entry.Date); date != "" {
+		parts = append(parts, date)
+	}
+	if entry.DurationMS > 0 {
+		minutes := entry.DurationMS / 60000
+		if minutes == 0 {
+			parts = append(parts, "<1 min")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d min", minutes))
+		}
+	}
+	var transcript struct {
+		Speakers []struct {
+			Label string `json:"label"`
+		} `json:"speakers"`
+	}
+	if raw, err := os.ReadFile(filepath.Join(bundlePath, "transcript.words.v1.json")); err == nil && json.Unmarshal(raw, &transcript) == nil {
+		names := []string{}
+		seen := map[string]bool{}
+		for _, speaker := range transcript.Speakers {
+			name := notificationText(speaker.Label, 40)
+			if name != "" && !seen[name] {
+				names = append(names, name)
+				seen[name] = true
+			}
+		}
+		sort.Strings(names)
+		if len(names) > 0 {
+			label := strings.Join(names[:min(3, len(names))], ", ")
+			if len(names) > 3 {
+				label += fmt.Sprintf(" +%d", len(names)-3)
+			}
+			parts = append(parts, "Speakers: "+label)
+		}
+	}
+	n.Message = talkNotificationTitlePrefix + strings.Join(parts, " · ")
+}
+
+// Preserve the recorded calendar date rather than converting it to server time.
+func notificationDate(value string) string {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02", time.RFC3339} {
+		if date, err := time.Parse(layout, value); err == nil {
+			return date.Format("2 Jan")
+		}
+	}
+	return notificationText(value, 40)
+}
+
+func notificationText(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return value
 }
 
 func talkMeetingURL(base, appID, jobID string) (string, error) {

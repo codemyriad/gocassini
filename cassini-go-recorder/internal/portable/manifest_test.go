@@ -346,3 +346,31 @@ func TestSpeakerEditsAndSeparatedParticipantsSurviveTheWire(t *testing.T) {
 		t.Errorf("CASSINI_SPEAKER_COUNT = %q, want 2 people", tags["CASSINI_SPEAKER_COUNT"])
 	}
 }
+
+// The summary step's outcome is part of the published file, so a reader can
+// tell a summary that was switched off from one that failed.
+func TestSummaryOutcomeSurvivesTheWire(t *testing.T) {
+	manifest := publishedManifestFixture(Meeting{Title: "Weekly Sync", ProcessedAtUTC: "2026-03-13T10:02:00Z"})
+	manifest.Processing = &Processing{
+		Transcription:  TranscriptionStatus{Status: "completed", Model: "meeting-model"},
+		MeetingSummary: &SummaryStatus{Status: SummaryFailed, Reason: SummaryReasonLLMFailed},
+	}
+	decoded, err := DecodePublishedManifest(encodePublishedFixture(t, manifest).Main.JSON)
+	if err != nil {
+		t.Fatalf("DecodePublishedManifest: %v", err)
+	}
+	if decoded.Processing == nil || decoded.Processing.MeetingSummary == nil ||
+		*decoded.Processing.MeetingSummary != (SummaryStatus{Status: "failed", Reason: "llm_failed"}) {
+		t.Fatalf("summary outcome lost on the wire: %+v", decoded.Processing)
+	}
+
+	// A file sealed before the outcome was recorded says nothing about it.
+	manifest.Processing.MeetingSummary = nil
+	decoded, err = DecodePublishedManifest(encodePublishedFixture(t, manifest).Main.JSON)
+	if err != nil {
+		t.Fatalf("DecodePublishedManifest: %v", err)
+	}
+	if decoded.Processing == nil || decoded.Processing.MeetingSummary != nil {
+		t.Fatalf("absent outcome invented on the wire: %+v", decoded.Processing)
+	}
+}

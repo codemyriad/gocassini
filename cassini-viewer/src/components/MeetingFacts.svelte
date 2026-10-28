@@ -21,6 +21,10 @@
   export let speakerSession: SpeakersSession | null = null;
   export let voiceSamples: ReadonlyMap<string, VoiceSample> = new Map();
   export let playingSampleId: string | null = null;
+  // Whether the meeting has a summary, and what rewriting it would cost, for
+  // the People panel's choice at Save (D-814).
+  export let hasSummary = false;
+  export let summaryCost: string | null = null;
   export let recording: ArtifactRecordingFacts | null = null;
   export let timing: ArtifactTimingPrecision | null = null;
 
@@ -161,6 +165,8 @@
           session={speakerSession}
           samples={voiceSamples}
           {playingSampleId}
+          {hasSummary}
+          {summaryCost}
           on:sample
           on:stopSample
           on:reload

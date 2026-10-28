@@ -82,7 +82,7 @@ func TestRerunWaitsForRemoteRetentionCompletion(t *testing.T) {
 }
 
 func TestScrubRetiredBatchResult(t *testing.T) {
-	raw, err := scrubRetiredResult([]byte(`{"results":[{"meetingId":"m","annotations":{"private":"expired"}},{"meetingId":"other","annotations":{"keep":true}}]}`), "m.opus")
+	raw, err := scrubRetiredResult([]byte(`{"results":[{"meetingId":"m","annotations":{"private":"expired"}},{"meetingId":"other","annotations":{"keep":true}}]}`), "m.opus", meetingRetireReasonExpired)
 	if err != nil || strings.Contains(string(raw), "private") || !strings.Contains(string(raw), "keep") || !strings.Contains(string(raw), "expired") {
 		t.Fatalf("%s %v", raw, err)
 	}

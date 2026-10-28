@@ -8,12 +8,16 @@ export interface Job {
   media_cleanup?: MediaCleanupStatus;
 	/** True when retention has deleted the original source recording. */
 	source_expired?: boolean;
+	/** True when a user deleted the published meeting (D-861). */
+	meeting_deleted?: boolean;
   id: string;
   provider: string;
   request_json: string;
   stage: string;
   state: string;
   current_attempt_number: number;
+  /** What the current attempt does: record, rerun, refine or summarize. */
+  current_trigger_kind?: string;
   rerun_count: number;
   artifact_run_path: string | null;
   artifact_meeting_path: string | null;
@@ -48,6 +52,7 @@ export interface Job {
    * for a non-Talk job, for a job whose room-name lookup never completed, and
    * for any job recorded before the operator promoted the room to a column. */
   room_name: string | null;
+  room_display_name?: string;
 }
 
 export interface JobAttempt {
@@ -91,12 +96,40 @@ export interface JobAttempt {
   publish_finished_at: string | null;
   interrupted_at: string | null;
   completed_at: string | null;
+  // What the transcription and summary steps did (D-854, D-814). Absent until
+  // the attempt is built, and for attempts built before this was recorded
+  // (the published one is then read from its bundle).
+  transcription_status?: string;
+  transcription_reason?: string;
+  transcription_detail?: string;
+  summary_status?: string;
+  summary_reason?: string;
+}
+
+// What writing (or rewriting) a meeting's summary would do and cost, as
+// GET /jobs/{id}/summary says before anyone confirms it (D-814).
+export interface SummaryPlan {
+  available: boolean;
+  /** Why it cannot be written now: not_published, no_transcript,
+   *  summaries_off, no_local_copy or busy. */
+  reason?: string;
+  has_summary: boolean;
+  calls: number;
+  words: number;
+  estimated_input_tokens: number;
+  provider?: string;
+  model?: string;
+  /** The endpoint is not on this network, so the call may be billed. */
+  external: boolean;
 }
 
 export interface JobDetailResponse {
   availability?: { media_cleanup?: MediaCleanupStatus; source_retention?: string; source: string; output: string; published_attempt: number; rerun_blocked_reason?: string };
   job: Job;
   attempts: JobAttempt[];
+  // The Nextcloud file id of the run's delivered recording; absent when the
+  // operator has none indexed (D-825).
+  recording_file_id?: number;
 }
 
 export type SettingsQuality = "fast" | "balanced" | "best";

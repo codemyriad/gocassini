@@ -61,8 +61,9 @@ type meetingsCatalogEntry struct {
 	// Both are optional. A meeting published before the field existed carries
 	// neither until the catalog backfill gives it what its file still holds,
 	// and a meeting that came from no conversation at all never gets either.
-	RoomID   string `json:"roomId,omitempty"`
-	RoomName string `json:"roomName,omitempty"`
+	RoomID          string `json:"roomId,omitempty"`
+	RoomName        string `json:"roomName,omitempty"`
+	RoomDisplayName string `json:"roomDisplayName,omitempty"`
 	// JobID and AttemptNumber name the operator job and attempt that produced
 	// the recording (D-640). Optional — a meeting published by anything other
 	// than an operator job has neither.

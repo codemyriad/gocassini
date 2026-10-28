@@ -83,10 +83,10 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 		return "", err
 	}
 	item := upload{local: local, remote: remote, size: info.Size()}
-	// Only a refine re-seals the same meeting.webm, so only a refine can be
-	// sure the audio identity is unchanged. A rerun replaying speaker edits
-	// re-encodes the audio like any rerun, and keeps today's rerun rule.
-	if kind, edits, err := s.rt.store.AttemptSpeakerEdits(ctx, d.JobID, d.AttemptNumber); err == nil && edits != nil && kind == triggerKindRefine {
+	// Only a refine or a summarize re-seals the same meeting.webm, so only they
+	// can be sure the audio identity is unchanged. A rerun replaying speaker
+	// edits re-encodes the audio like any rerun, and keeps today's rerun rule.
+	if kind, edits, err := s.rt.store.AttemptSpeakerEdits(ctx, d.JobID, d.AttemptNumber); err == nil && ((edits != nil && kind == triggerKindRefine) || kind == triggerKindSummarize) {
 		item.keepMarks = true
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
@@ -118,6 +118,13 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 			return "", fmt.Errorf("index recording metadata: %w", err)
 		}
 	}
+	// Best-effort, like the room stamp at build time: a failed registration
+	// costs the room default, never the meeting. The reconcile worker's next
+	// pass retries it from the indexed entry.
+	if err := s.rt.registerPublishedRoom(ctx, d.JobID, entry); err != nil {
+		s.rt.logger.Printf("register room default job=%s: %v (reconciliation will retry)", d.JobID, err)
+	}
+
 	if !priorSuccess || !before.Exists {
 		audience, public, err := s.audienceForJob(ctx, d.JobID)
 		if err != nil {
