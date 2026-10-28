@@ -145,7 +145,7 @@ func TestShippedCatalogue(t *testing.T) {
 	}
 	for _, a := range c.Artifacts {
 		used := false
-		for _, m := range c.Models {
+		for _, m := range append(append([]Model{}, c.Models...), c.Retired...) {
 			for _, f := range m.Files {
 				used = used || f.Artifact == a.Key
 			}
@@ -766,5 +766,125 @@ func TestValidateRejectsAmbiguousReplacement(t *testing.T) {
 				t.Fatal("accepted")
 			}
 		})
+	}
+}
+
+// Parakeet v3 is gone from what can be installed or selected, but the
+// catalogue still describes the files an upgraded install has, exactly as the
+// last catalogue that shipped them did, so a build can stand in with them
+// until Ultra is ready. Their bytes are checked against these artifacts.
+func TestShippedCatalogueRetiresV3(t *testing.T) {
+	c := Shipped()
+	const tokens = "models/files/5b3811f0c23fefc86835981f0a23ecfb817999df272ad744c597e5b669ea1b4a/tokens.txt.zst"
+	want := map[string]struct {
+		revision, replacement string
+		files                 map[string]string
+		optional              string
+	}{
+		"parakeet-tdt-0.6b-v3-int8": {"5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf", "parakeet-ultra-0.6b-int8", map[string]string{
+			"encoder.int8.onnx": "models/files/cb9e98257d3bc2611b43d9897e67454e5893aff1ffc90229ca3fa7f9ed5bb22e/encoder.int8.onnx.zst",
+			"decoder.int8.onnx": "models/files/b14c3967107f0a5e4e9c0bde770c204202bde8d1a6255c27a863930e8c887c3d/decoder.int8.onnx.zst",
+			"joiner.int8.onnx":  "models/files/1ef3c78137d39d45cfad961be5a45bf7abd3c13fa721c7da2327b0eb3d0e8ce6/joiner.int8.onnx.zst",
+			"tokens.txt":        tokens,
+		}, ""},
+		"parakeet-tdt-0.6b-v3": {"9125e6a7beb392821f19a3633b80bb2847599580e34ed42a4128732978ad759c", "parakeet-ultra-0.6b", map[string]string{
+			"encoder.onnx":    "models/files/2dff6d02d238425491fe8a2a9db8db45bdeb290b9e34643f6ae66df62bf9fd34/encoder.onnx.zst",
+			"encoder.weights": "models/files/23a61cdbca1f606128fa9c2c05aa81457d3d0cce1aa7414a29f53ed5c626244d/encoder.weights.zst",
+			"decoder.onnx":    "models/files/e8038c3ce024db1f304cbdd59775ad1b063a6f2e8e49ea59e318721de4d606f4/decoder.onnx.zst",
+			"joiner.onnx":     "models/files/d74aa2809fe0186d99f961acfadceff72a7e42d9d56b51bd79f636d40609eeac/joiner.onnx.zst",
+			"tokens.txt":      tokens,
+			"bpe.vocab":       "models/files/4e074536b073a7d18ca034e3be779868696d67784765e4ac18511e8f607d4193/bpe.vocab.zst",
+		}, "bpe.vocab"},
+	}
+	if len(c.Retired) != len(want) {
+		t.Fatalf("retired models %d, want %d", len(c.Retired), len(want))
+	}
+	for id, w := range want {
+		if _, err := c.Model(id, ""); err == nil {
+			t.Fatalf("Model(%s) succeeds; a retired model must never be installed or selected", id)
+		}
+		m, err := c.RetiredModel(id, w.revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.Kind != KindSpeech || m.VADRevision != "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6" || len(m.Files) != len(w.files) {
+			t.Fatalf("%s: %+v", id, m)
+		}
+		for _, f := range m.Files {
+			if f.Artifact != w.files[f.Path] || f.Required != (f.Path != w.optional) {
+				t.Fatalf("%s/%s: %+v", id, f.Path, f)
+			}
+			if _, err := c.Artifact(f.Artifact); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if r, ok := c.Replacement(id); !ok || r.ID != w.replacement {
+			t.Fatalf("replacement of %s = %q %v", id, r.ID, ok)
+		}
+		if got, retired, err := c.Lookup(id, ""); err != nil || !retired || got.Revision != w.revision {
+			t.Fatalf("Lookup(%s) = %s %v %v", id, got.Revision, retired, err)
+		}
+	}
+	if _, retired, err := c.Lookup("parakeet-ultra-0.6b-int8", ""); err != nil || retired {
+		t.Fatalf("Lookup of a shipped model: retired=%v %v", retired, err)
+	}
+	// The weights are main's, byte for byte.
+	for key, digest := range map[string]string{
+		"models/files/cb9e98257d3bc2611b43d9897e67454e5893aff1ffc90229ca3fa7f9ed5bb22e/encoder.int8.onnx.zst": "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247",
+		"models/files/23a61cdbca1f606128fa9c2c05aa81457d3d0cce1aa7414a29f53ed5c626244d/encoder.weights.zst":   "3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8",
+	} {
+		if a, err := c.Artifact(key); err != nil || a.UncompressedSHA256 != digest {
+			t.Fatalf("%s: %+v %v", key, a, err)
+		}
+	}
+}
+
+func TestValidateRejectsBadRetiredModels(t *testing.T) {
+	cases := map[string]func(c *Catalogue){
+		"replaced by nothing": func(c *Catalogue) { c.Models[0].Replaces = nil },
+		"also shipped": func(c *Catalogue) {
+			c.Retired[0].ID = "test-diarizer"
+			c.Models[0].Replaces = []string{"test-diarizer"}
+		},
+		"missing artifact": func(c *Catalogue) { c.Retired[0].Files[0].Artifact = "models/files/gone.zst" },
+		"not speech":       func(c *Catalogue) { c.Retired[0].Kind = KindDiarization; c.Retired[0].VADRevision = "" },
+		"listed twice":     func(c *Catalogue) { c.Retired = append(c.Retired, c.Retired[0]) },
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, m, _ := fixture(t)
+			old := m
+			old.ID = "old-model"
+			old.Files = append([]File{}, m.Files...)
+			s.Catalogue.Retired = []Model{old}
+			s.Catalogue.Models[0].Replaces = []string{"old-model"}
+			if err := s.Catalogue.Validate(); err != nil {
+				t.Fatalf("fixture invalid: %v", err)
+			}
+			breakIt(&s.Catalogue)
+			if err := s.Catalogue.Validate(); err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+}
+
+// A retired model is never downloaded, whatever asks for it.
+func TestAcquireRefusesARetiredModel(t *testing.T) {
+	s, m, data := fixture(t)
+	var calls atomic.Int32
+	serve(t, s, data, &calls)
+	old := m
+	old.ID = "old-model"
+	s.Catalogue.Retired = []Model{old}
+	s.Catalogue.Models[0].Replaces = []string{"old-model"}
+	if err := s.Acquire(context.Background(), old); err == nil || !strings.Contains(err.Error(), "never downloaded") {
+		t.Fatalf("Acquire(retired) = %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("%d requests for a retired model", calls.Load())
+	}
+	if _, err := os.Stat(s.Dir(old)); err == nil {
+		t.Fatal("a retired model was installed")
 	}
 }
