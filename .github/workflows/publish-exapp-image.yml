@@ -280,11 +280,13 @@ jobs:
                 # git ref: validate-manifest guarantees the git tag is
                 # v<version> and that <image-tag> matches, so the published
                 # :X.Y.Z tag is exactly what a pinned AppAPI install pulls.
+                # A release never moves :latest: it tracks main (below), which
+                # staging and the canary pull, and a patch on an older line
+                # would otherwise point it back at that line.
                 VERSION="${{ needs.validate-manifest.outputs.app_version }}"
-                TAGS+=("${REF}:${VERSION}" "${REF}:latest")
+                TAGS+=("${REF}:${VERSION}")
                 for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
                   TAGS+=("${REF}:${VERSION}${suffix}")
-                  TAGS+=("${REF}:latest${suffix}")
                 done
               else
                 BRANCH="${GITHUB_REF##refs/heads/}"
@@ -876,9 +878,10 @@ jobs:
             push)
               if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
                 # Same source of truth as the CPU build: appinfo/info.xml
-                # <version>, validated against the git tag upstream.
+                # <version>, validated against the git tag upstream. Like
+                # :latest, :latest-cuda and :cuda track main only.
                 VERSION="${{ needs.validate-manifest.outputs.app_version }}"
-                TAGS+=("${REF}:${VERSION}-cuda" "${REF}:latest-cuda" "${REF}:cuda")
+                TAGS+=("${REF}:${VERSION}-cuda")
               else
                 BRANCH="${GITHUB_REF##refs/heads/}"
                 SAFE_BRANCH="$(printf '%s' "${BRANCH}" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
