@@ -26,9 +26,14 @@ fi
 for tool in cmake curl tar sha256sum; do
   command -v "$tool" >/dev/null || { echo "Missing build prerequisite: $tool" >&2; exit 1; }
 done
-version=1.13.7
-source_commit=0c2ee3f3f5f16bb06d234a0f98632810296ba0eb
-source_sha=b6998671b8d40c3a2f4a3a52ca1be82156353544fd1d0a8f28f85ef61db0f076
+# codemyriad/sherpa-onnx tag v2.0.1-cassini-1: upstream v2.0.1 + #4032 Sortformer
+# + NeMo TDT joiner-size detection + Cassini markers. The source's cmake pins
+# ONNX Runtime 1.28.2 (CUDA: onnxruntime-linux-x64-gpu_cuda12-1.28.2-patched.zip).
+version=2.0.1
+source_commit=c810dfcf409b2a72a13e9f0ac961ff55473e350d
+source_sha=2812247867348e6f22094fa5dd96097b41bdd33ca0be95d94bafcb0f68c4c12c
+# What GetVersion() reports; the recorder and operator read capabilities from it.
+runtime_version=${version}+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2
 fingerprint=$("$here/build.sh" --fingerprint)
 preinstalled=OFF
 ort_identity=pinned-upstream-archive
@@ -72,6 +77,8 @@ cmake -S "$source_dir" -B "$build_dir" \
   -DSHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=ON \
   -DSHERPA_ONNX_BUILD_C_API_EXAMPLES=OFF "$@"
 cmake --build "$build_dir" --target sherpa-onnx-c-api --parallel "${CASSINI_NATIVE_BUILD_JOBS:-2}"
+grep -aqF "$runtime_version" "$build_dir/lib/libsherpa-onnx-c-api.$extension" \
+  || { echo "Built library does not report $runtime_version" >&2; exit 1; }
 cp "$build_dir/lib/libsherpa-onnx-c-api.$extension" "$output/"
 ort=$(find "$build_dir/_deps" -path "*/lib/libonnxruntime.$extension" -print -quit)
 if [[ $preinstalled == ON ]]; then ort=$SHERPA_ONNXRUNTIME_LIB_DIR/libonnxruntime.$extension; fi
@@ -79,7 +86,7 @@ if [[ -z $ort ]]; then echo 'Pinned ONNX Runtime library missing from build depe
 cp -L "$(dirname "$ort")"/libonnxruntime*."$extension"* "$output/"
 if [[ $backend == cuda ]]; then test -f "$output/libonnxruntime_providers_cuda.so"; fi
 printf '%s\n' "$fingerprint" > "$output/cassini-native-inputs.sha256"
-printf 'sherpa=%s\nfrontend=+cassini-parakeet-v3-reference-v1\ndiarization=nemotron-diarization-v2\nultra=parakeet-ultra-v1\nbackend=%s\nsource_commit=%s\nsource_sha256=%s\n' \
-  "$version" "$backend" "$source_commit" "$source_sha" > "$output/cassini-native-buildinfo.txt"
+printf 'sherpa=%s\nfrontend=nemo-log-guard\ntdt_joiner=parakeet-tdt-joiner-v1\ndiarization=nemotron-diarization-v2\nonnxruntime=1.28.2\nbackend=%s\nsource_commit=%s\nsource_sha256=%s\n' \
+  "$runtime_version" "$backend" "$source_commit" "$source_sha" > "$output/cassini-native-buildinfo.txt"
 
 printf 'onnxruntime_identity=%s\n' "$ort_identity" >> "$output/cassini-native-buildinfo.txt"
