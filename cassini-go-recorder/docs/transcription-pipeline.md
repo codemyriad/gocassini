@@ -168,8 +168,10 @@ that is not a boolean keeps hints off. Only an explicit false (`0`, `false`,
 `no`, `off`) turns them back on, for research; the rest of this section
 describes that mode.
 
-Parakeet Ultra (FP32 and INT8, Moondream's post-training of Parakeet v3) uses
-the model-reference frontend. With hints re-enabled, FP32 uses modified beam
+Parakeet Ultra (FP32 and INT8, Moondream's post-training of Parakeet v3) runs
+on sherpa-onnx 2.0.1's NeMo frontend with upstream's log guard (provenance
+`nativeFrontend: "nemo-log-guard"`), which replaced Cassini's reference
+frontend of the 1.13.7 runtimes. With hints re-enabled, FP32 uses modified beam
 search and vocabulary hints on participant tracks. The INT8 bundle is
 published without `bpe.vocab` and decodes greedily either way: it cannot encode
 hints, and unbiased beam search lost more speech than greedy in recorded tests
