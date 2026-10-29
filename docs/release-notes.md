@@ -108,21 +108,21 @@ mechanism only when it helps them choose, configure or trust the change.
 > vocabulary no longer bias decoding: the beam search that hints need dropped
 > whole passages of speech."
 >
-> **To:** **Transcripts no longer lose passages of speech.** On a GPU, 0.2.0
-> could leave whole passages out of a transcript. Cassini no longer decodes
-> speech the way that lost them, and it now uses Parakeet Ultra. On a GPU,
-> transcription takes about 40% less time and is about as accurate.
+> **To:** **More accurate transcripts.** Cassini now transcribes with
+> Parakeet Ultra. On a GPU, 0.2.0 could leave whole passages out of a
+> transcript; 0.3.0 keeps them, and takes about 40% less time.
 >
-> And under *Before you upgrade*: the new model downloads on its own, and the
-> previous one keeps transcribing until it's ready. A GPU now needs 7 GiB of
-> free video memory, up from 5.5 GiB. Participant names no longer steer
+> And under *Before you upgrade*: Cassini downloads the new model on its own
+> and keeps using the old one until it has it. A GPU now needs 7 GiB of free
+> video memory, up from 5.5 GiB. Participant names no longer steer
 > transcription.
 
-The obvious headline would have been "more accurate transcripts". The
-measurements didn't support it: on a GPU, the accuracy difference on our own
-meetings was not significant. What changed for the reader was the missing
-speech and the speed. **Headline what the evidence shows, not what the change
-was meant to do.** Say so when something got slightly worse in exchange.
+"More accurate" is what the reader gets, but check where the gain comes from
+before you explain it. Here the measurements showed that on a GPU the new
+model alone was not significantly more accurate: the gain was the speech no
+longer lost. **Explain the headline with what the evidence shows, not with
+what the change was meant to do.** Say so when something got slightly worse in
+exchange.
 
 Give a number when you measured one and it means something to the reader.
 "About 30% smaller audio files" is useful. "WER 8.10 → 7.25 on the MAI silver
@@ -134,6 +134,11 @@ from the notes.
 Anything in the *Action* pile goes under *Before you upgrade*, even when the
 same change is also a highlight. Say what happens if nobody acts. Say where
 the setting is. Say how to go back, if they can.
+
+Say only what they need to decide or do. "Cassini downloads the new model and
+keeps using the old one until it has it" is enough; where the progress shows,
+how a retry works and what happens on a server that never had the old model
+belong in the developer changelog.
 
 ## Template
 
