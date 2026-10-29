@@ -204,6 +204,13 @@ type ProcessingStep struct {
 	Host     string `json:"host,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Version  string `json:"version,omitempty"`
+	// ReferenceFrontend and Encoder mirror the build manifest's
+	// speech-to-text step for the same reason as Hints: a field this struct
+	// does not declare is written by the build and dropped at pack time.
+	// ReferenceFrontend says whether every recognizer ran the model's
+	// reference frontend; Encoder names the ONNX export that actually loaded.
+	ReferenceFrontend *bool              `json:"referenceFrontend,omitempty"`
+	Encoder           *EncoderProvenance `json:"encoder,omitempty"`
 	// Hints records decoder biasing for a speech-to-text step. It mirrors the
 	// build manifest's shape field for field so the packer can carry it into
 	// the published file by plain JSON round-trip. Without this the record
@@ -221,6 +228,14 @@ type ProcessingStep struct {
 	// it reflects and whether the summary was rewritten for them. Raw JSON
 	// for the same reason as SpeakerDiarization.
 	SpeakerEdits json.RawMessage `json:"x-speakerEdits,omitempty"`
+}
+
+// EncoderProvenance is what a speech model encoder's own ONNX metadata says
+// it is: the url sherpa keys its frontend selection on and the comment where
+// a Cassini export records its weights and toolchain.
+type EncoderProvenance struct {
+	URL     string `json:"url,omitempty"`
+	Comment string `json:"comment,omitempty"`
 }
 
 // HintsProvenance says what decoder biasing a speech-to-text pass actually
