@@ -390,7 +390,7 @@ else
 fi
 eq "refused stable release changes nothing" "0.3.0-beta.1" "$(rv_read_version "$PR/appinfo/info.xml")"
 mkdir -p "$PR/cassini-microsite/src/content/changelog"
-printf -- '---\ntitle: "Release prep in one command"\ndate: 2026-07-10\nversion: 0.3.0\n---\n\nOne command prepares a release.\n' \
+printf -- '---\ntitle: "Release prep in one command"\ndate: 2026-07-10\nversion: 0.3.0\ndraft: true\n---\n\nOne command prepares a release.\n' \
   >"$PR/cassini-microsite/src/content/changelog/2026-07-10-v0-3-0.md"
 git -C "$PR" add -A && git -C "$PR" commit -q -m notes
 if prep --version 0.3.0 >/dev/null 2>&1; then ok "prepare-release cuts a stable version once it has notes"; else bad "prepare-release should cut a stable version with notes"; fi
@@ -399,6 +399,12 @@ if [[ "$(head -1 <<<"$body")" == "One command prepares a release." && "$body" ==
   ok "release body leads with the notes and folds the developer section"
 else
   bad "release body should lead with the notes and fold the developer section"
+fi
+if ! grep -q '^draft:' "$PR/cassini-microsite/src/content/changelog/2026-07-10-v0-3-0.md" \
+   && git -C "$PR" diff --quiet; then
+  ok "the release commit takes the notes out of draft"
+else
+  bad "the release commit should take the notes out of draft"
 fi
 
 rm -rf "$PR"
@@ -472,7 +478,9 @@ eq "--version prints one entry's body without frontmatter" "Notes for 0.2.0." "$
 eq "--version puts several entries under their titles" \
   "### First feature|First body.|### Second feature|Second body." \
   "$(un --version 0.2.1 | grep -v '^$' | paste -sd'|')"
-if un --version 0.3.0 >/dev/null 2>&1; then bad "a draft should not count as notes"; else ok "--version ignores drafts and fails without notes"; fi
+eq "--version counts a draft" "Draft body." "$(un --version 0.3.0)"
+if un --version 0.4.0 >/dev/null 2>&1; then bad "--version should fail without notes"; else ok "--version fails without notes"; fi
+rm "$NOTES/2026-07-20-v0-3-0.md"
 sources="$(un --sources)"
 if [[ "$sources" == *"Dev entry for 0.3.0."* && "$sources" == *"Pending entry."* && "$sources" != *"Dev entry for 0.2.1."* ]]; then
   ok "--sources covers what shipped since the last notes, and pending fragments"

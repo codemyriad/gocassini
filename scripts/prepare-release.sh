@@ -196,7 +196,7 @@ main() {
     "$SCRIPT_DIR/user-release-notes.sh" --version "$target" >/dev/null \
       || die "$target is stable and has no user-facing release notes. Draft them from
   ./scripts/user-release-notes.sh --sources
-following docs/release-notes.md, merge them, and run this again (or pass --no-user-notes)"
+following docs/release-notes.md, merge them as a draft, and run this again (or pass --no-user-notes)"
   fi
 
   # --- Mutate: version, changelog, release notes --------------------------
@@ -206,7 +206,10 @@ following docs/release-notes.md, merge them, and run this again (or pass --no-us
   notes_file="$notes_dir/gocassini-$target-notes.md"
   mkdir -p "$notes_dir"
 
-  local staged=("$info_xml")
+  local staged=("$info_xml") published
+  # Notes merged as a draft go on the site with this commit.
+  mapfile -t published < <("$SCRIPT_DIR/user-release-notes.sh" --publish "$target")
+  staged+=("${published[@]}")
   if [[ "$frag_count" -gt 0 ]]; then
     "$SCRIPT_DIR/fold-changelog.sh" --version "$target" --date "$date" --write \
       || die "changelog fold failed"
@@ -214,7 +217,8 @@ following docs/release-notes.md, merge them, and run this again (or pass --no-us
       || die "could not extract release notes for $target"
     staged+=("$root/CHANGELOG.md" "$root/changelog.d")
   else
-    printf 'Release %s.\n' "$target" >"$notes_file"
+    "$SCRIPT_DIR/user-release-notes.sh" --version "$target" >"$notes_file" 2>/dev/null \
+      || printf 'Release %s.\n' "$target" >"$notes_file"
     echo "note: --allow-empty-changelog set; CHANGELOG.md not modified"
   fi
 

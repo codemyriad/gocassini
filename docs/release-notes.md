@@ -36,12 +36,15 @@ Do this before cutting the release, on a branch, like any change.
    0.3.0". The `release-notes` skill follows this page.
 3. **Write** `cassini-microsite/src/content/changelog/<date>-v<version>.md`,
    with dots in the version written as dashes (`2026-11-04-v0-3-0.md`), using
-   [the template](#template). Use the planned release date.
+   [the template](#template). Use the planned release date, and keep
+   `draft: true`: the site deploys from main and hides drafts, so the notes
+   don't appear before the release does.
 4. **Review** against [the checklist](#checklist). Have someone who did not
    write the code read it.
 5. **Merge** it, then cut the release (`./scripts/prepare-release.sh`). The
-   release commit's `build/release/gocassini-<version>-notes.md` is the GitHub
-   release body. Read it before you push.
+   release commit removes `draft: true`, so the notes go on the site with the
+   release. `build/release/gocassini-<version>-notes.md` is the GitHub release
+   body. Read it before you push.
 
 `./scripts/user-release-notes.sh --version <v>` prints a version's notes,
 `--release-body <v>` the GitHub release body, and `--changelog` the
@@ -133,6 +136,7 @@ the setting is. Say how to go back, if they can.
 title: "<What this release is about, in under ten words>"
 date: YYYY-MM-DD
 version: X.Y.Z
+draft: true
 ---
 
 <One to three sentences: who should upgrade, and the one or two things that make it worth it.>
