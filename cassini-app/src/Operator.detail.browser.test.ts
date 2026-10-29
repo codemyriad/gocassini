@@ -104,8 +104,8 @@ it("keeps the outcome in view and folds the bookkeeping away", async () => {
 
   await userEvent.click(page.getByText("Attempt 1", { exact: true }));
   // Logs are read in place; one removed by retention cannot be opened.
-  await expect.element(page.getByRole("button", { name: "Record", exact: true })).toBeDisabled();
-  await userEvent.click(page.getByRole("button", { name: "Build", exact: true }));
+  await expect.element(page.getByRole("button", { name: "Record log", exact: true })).toBeDisabled();
+  await userEvent.click(page.getByRole("button", { name: "Build log", exact: true }));
   await expect.element(page.getByRole("region", { name: "Build log" })).toHaveTextContent("Chris: 640 words");
   await expect.element(page.getByRole("link", { name: "Download" })).toHaveAttribute("href", "/operator/jobs/01KSTANDUPRUN/attempts/1/logs/build?download=1");
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-log.png` });
