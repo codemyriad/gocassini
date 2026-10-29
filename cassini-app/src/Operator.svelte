@@ -1889,18 +1889,17 @@
                           {#if attemptLogs(attempt).length > 0}
                             <div class="grid gap-2">
                               <div class="flex flex-wrap items-center gap-1.5">
-                                <span class="mr-1 text-xs uppercase tracking-wide text-base-content/45">Logs</span>
                                 {#each attemptLogs(attempt) as log (log.stage)}
                                   {@const isOpen = openLog?.attempt === attempt.attempt_number && openLog?.stage === log.stage}
                                   <button
-                                    class="btn btn-xs {isOpen ? 'btn-active' : 'btn-ghost border-base-content/15'}"
+                                    class="btn btn-sm {isOpen ? 'btn-active' : 'btn-outline border-base-content/20'} font-normal"
                                     type="button"
                                     disabled={!log.present}
                                     title={log.present ? `Show the ${log.label.toLowerCase()} log` : "No longer on disk: retention or a cleanup removed it"}
                                     aria-expanded={isOpen}
                                     on:click={() => selectedJob && toggleLog(selectedJob.job.id, attempt.attempt_number, log)}
                                   >
-                                    {log.label}
+                                    <FileText size={14} aria-hidden="true" />{log.label} log
                                   </button>
                                 {/each}
                               </div>
