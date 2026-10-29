@@ -95,25 +95,34 @@ func modelSupportsCUDA(model string) bool {
 	return speechModelSpecs[strings.TrimSpace(model)].cuda
 }
 
+// isSpeechModel reports whether model is one this operator knows how to size
+// and check: every one of them needs the 2.0.1 C API, so /status checks the
+// runtime for each.
+func isSpeechModel(model string) bool {
+	_, ok := speechModelSpecs[strings.TrimSpace(model)]
+	return ok
+}
+
 // modelNeedsRuntimeMarkers reports whether a model loads only on a runtime
-// carrying specific markers, which is what /status checks for it.
+// carrying specific markers beyond the 2.0.1 base (Parakeet Ultra), so a stock
+// 2.0.1 runtime cannot run it either.
 func modelNeedsRuntimeMarkers(model string) bool {
 	return len(speechModelSpecs[strings.TrimSpace(model)].runtimeMarkers) > 0
 }
 
 // runtimeRunsModel reports whether a native runtime version string, or a
 // cassini-native-buildinfo.txt document carrying one, has the 2.0.1 C API and
-// every marker this model needs.
+// every marker this model needs. A model with no markers needs only the base,
+// as the recorder's CheckNativeRuntime does; an unknown model is never run.
 func runtimeRunsModel(model, info string) bool {
-	markers := speechModelSpecs[strings.TrimSpace(model)].runtimeMarkers
-	if len(markers) == 0 {
+	if !isSpeechModel(model) {
 		return false
 	}
 	version := runtimeVersionFromBuildInfo(info)
 	if !runtimeBaseAtLeast(version, minRuntimeBase) {
 		return false
 	}
-	for _, marker := range markers {
+	for _, marker := range speechModelSpecs[strings.TrimSpace(model)].runtimeMarkers {
 		if !strings.Contains(version, marker) {
 			return false
 		}

@@ -72,7 +72,14 @@ func TestParakeetUltraTreatment(t *testing.T) {
 		{modelParakeetUltraFp32, "sherpa=2.0.1\nfrontend=nemo-log-guard\ntdt_joiner=parakeet-tdt-joiner-v1\n", false},
 		{modelParakeetUltraFp32, "sherpa=" + cassiniRuntime + "\nfrontend=nemo-log-guard\nbackend=cuda\n", true},
 		{modelParakeetUltraFp32, "sherpa_version=" + cassiniRuntime + "\n", true},
-		{modelParakeet110M, cassiniRuntime, false},
+		// Every model needs the 2.0.1 C API; one without markers needs no more.
+		{modelParakeet110M, cassiniRuntime, true},
+		{modelParakeet110M, stock201Runtime, true},
+		{modelParakeet110M, cassini8Runtime, false},
+		{modelParakeet110M, "sherpa=1.13.7", false},
+		{modelParakeetV3Int8, stock201Runtime, true},
+		{modelParakeetV3Fp32, cassini8Runtime, false},
+		{"not-a-model", cassiniRuntime, false},
 	}
 	for _, c := range cases {
 		if got := runtimeRunsModel(c.model, c.version); got != c.want {
@@ -335,6 +342,59 @@ func TestStatusReportsUltraRuntimeFromBuildInfo(t *testing.T) {
 	}
 }
 
+// Every speech model needs the 2.0.1 C API: the recorder refuses the 110M
+// model and the retired v3 stand-ins on a 1.13.7 runtime as it does Ultra, so
+// /status reports the runtime for them too, and its warning names the model
+// and the base it needs, not Parakeet Ultra or the Cassini markers.
+func TestStatusReportsRuntimeForModelsWithoutMarkers(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cancel()
+	rt.workerWG.Wait()
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	rt.cfg.CassiniBin = ""
+	rt.speechRuntimeProbe = nil
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
+	for _, model := range []string{modelParakeet110M, modelParakeetV3Int8} {
+		rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: model, Quality: sttQualityBalanced, Source: sttSourceUser})
+		for _, c := range []struct {
+			version string
+			want    bool
+		}{{"1.13.7", false}, {cassini8Runtime, false}, {stock201Runtime, true}, {cassiniRuntime, true}} {
+			info := filepath.Join(t.TempDir(), "buildinfo.txt")
+			if err := os.WriteFile(info, []byte("sherpa="+c.version+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(envNativeBuildInfo, info)
+			rt.speechRuntimeChecked = rt.speechRuntimeChecked.AddDate(-1, 0, 0)
+			rec := httptest.NewRecorder()
+			rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+			var resp statusResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.STT.ModelID != model {
+				t.Fatalf("%s: /status reports model %q", model, resp.STT.ModelID)
+			}
+			if resp.STT.RuntimeSupportsModel == nil || *resp.STT.RuntimeSupportsModel != c.want {
+				t.Errorf("%s on %q: runtime_supports_model = %v, want %v", model, c.version, resp.STT.RuntimeSupportsModel, c.want)
+				continue
+			}
+			if c.want {
+				if resp.STT.Warning != "" {
+					t.Errorf("%s on %q: warning %q on a runtime that runs it", model, c.version, resp.STT.Warning)
+				}
+				continue
+			}
+			if !strings.Contains(resp.STT.Warning, model) || !strings.Contains(resp.STT.Warning, "2.0.1") ||
+				strings.Contains(resp.STT.Warning, "Parakeet Ultra") || strings.Contains(resp.STT.Warning, "Cassini sherpa runtime") {
+				t.Errorf("%s on %q: warning %q, want one naming the model and the 2.0.1 base only", model, c.version, resp.STT.Warning)
+			}
+		}
+	}
+}
+
 // The CUDA image's runtime comes from deployment/sherpa/build.sh. When doctor
 // cannot answer, /status reads that build's build-info file, and must find the
 // 2.0.1 base and the joiner marker in it. The file is rebuilt here from
@@ -385,7 +445,7 @@ func TestStatusReadsUltraRuntimeFromNativeBuildScriptInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(envNativeBuildInfo, path)
-	for _, model := range []string{modelParakeetUltraFp32} {
+	for _, model := range []string{modelParakeetUltraFp32, modelParakeetV3Fp32} {
 		rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: model, Quality: sttQualityBalanced, Source: sttSourceUser})
 		rt.speechRuntimeChecked = rt.speechRuntimeChecked.AddDate(-1, 0, 0)
 		rec := httptest.NewRecorder()

@@ -250,13 +250,18 @@ func (rt *Runtime) doProbeSpeechRuntime(bin, model string) (known bool, ok bool)
 }
 
 // speechRuntimeWarning says what a runtime that cannot run the selected model
-// means: the recorder refuses to load it, so builds fail to transcribe.
+// means: the recorder refuses to load it, so builds fail to transcribe. A
+// model with markers (Parakeet Ultra) needs the Cassini runtime; any other
+// needs only the 2.0.1 C API, which a stock 2.0.1 library has too.
 func speechRuntimeWarning(model string) string {
-	name := model
-	if strings.Contains(model, "ultra") {
-		name = "Parakeet Ultra"
+	if modelNeedsRuntimeMarkers(model) {
+		name := model
+		if strings.Contains(model, "ultra") {
+			name = "Parakeet Ultra"
+		}
+		return name + " needs the Cassini sherpa runtime 2.0.1 (sherpa-onnx-go-*/v2 v2.0.1-cassini.1) or later (a stock or older runtime was found); builds with this model will fail to transcribe"
 	}
-	return name + " needs the Cassini sherpa runtime 2.0.1 (sherpa-onnx-go-*/v2 v2.0.1-cassini.1) or later (a stock or older runtime was found); builds with this model will fail to transcribe"
+	return model + " needs sherpa runtime 2.0.1 or later (sherpa-onnx-go-*/v2 v2.0.1-cassini.1 ships it; an older runtime was found); builds with this model will fail to transcribe"
 }
 
 type statusCheck struct {
@@ -315,7 +320,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
 	}
-	if modelNeedsRuntimeMarkers(effective.Model) {
+	if isSpeechModel(effective.Model) {
 		if known, ok := rt.probeSpeechRuntime(effective.Model); known {
 			resp.STT.RuntimeSupportsModel = &ok
 			if !ok {
