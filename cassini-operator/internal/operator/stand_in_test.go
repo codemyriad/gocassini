@@ -21,7 +21,9 @@ const (
 // standInScript is the fake recorder of these tests: `models list` reads the
 // inventory, `models probe` records the model it checked and fails for one
 // that has a fail-probe-<id> file, or refuses it for lack of memory (exit 75)
-// for one that has a short-probe-<id> file, `models install` reports a download, and
+// for one that has a short-probe-<id> file (and first replaces the inventory
+// with inventory-during-probe-<id>.json when there is one, as a command run
+// meanwhile would change it), `models install` reports a download, and
 // `build` records its environment and writes a transcribed bundle.
 const standInScript = `#!/bin/sh
 set -eu
@@ -31,6 +33,7 @@ case "$1 $2" in
 "models probe")
   echo "$3" >> "$r/probes"
   printf '%s\n' '{"version":1,"phase":"checking"}'
+  if [ -e "$r/inventory-during-probe-$3.json" ]; then mv "$r/inventory-during-probe-$3.json" "$r/inventory.json"; fi
   if [ -e "$r/fail-probe-$3" ]; then echo 'probe refused' >&2; exit 1; fi
   if [ -e "$r/short-probe-$3" ]; then echo 'not enough memory' >&2; exit 75; fi
   printf '%s\n' '{"version":1,"phase":"ready"}' ;;
@@ -583,5 +586,29 @@ func TestModelJobProbeWaitsForARunningBuild(t *testing.T) {
 	<-done
 	if probes := probesRun(t, rt); len(probes) != 1 || probes[0] != modelParakeetUltraInt8 {
 		t.Fatalf("probes %v", probes)
+	}
+}
+
+// A `cassini models import` run outside the operator can finish Ultra and
+// remove v3 between admission's inventory read and its v3 check. The failed
+// check then must not cost an ordinary recording its transcript: Ultra is
+// ready by then, and the build uses it.
+func TestStandInGoneBecauseUltraBecameReadyUsesUltra(t *testing.T) {
+	rt := standInRuntime(t, false, false, true, false)
+	writeStandInInventory(t, rt, deviceCPU, true, true, false, false)
+	root := rt.cfg.ModelCacheRoot
+	if err := os.Rename(filepath.Join(root, "inventory.json"), filepath.Join(root, "inventory-during-probe-"+v3Int8+".json")); err != nil {
+		t.Fatal(err)
+	}
+	writeStandInInventory(t, rt, deviceCPU, false, false, true, false)
+	if err := os.WriteFile(filepath.Join(root, "fail-probe-"+v3Int8), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	device, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.ActiveRevision != ultraInt8Rev || admitted.StandInFor != "" {
+		t.Fatalf("admission: %q %+v %v", device, admitted, err)
+	}
+	if probes := probesRun(t, rt); len(probes) != 1 || probes[0] != v3Int8 {
+		t.Fatalf("checks %v", probes)
 	}
 }
