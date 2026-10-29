@@ -87,6 +87,45 @@ func TestNativeRuntimeCheck(t *testing.T) {
 	}
 }
 
+// D-798: the operator reads these checks, and it must key on something that
+// survives an editing pass.
+func TestEveryDoctorCheckCarriesAStableID(t *testing.T) {
+	t.Setenv("CASSINI_TRANSCRIPTION", "on")
+	for _, target := range []string{"all", "record", "build", "media", "unsupported"} {
+		seen := map[string]bool{}
+		for _, check := range collectDoctorChecks(target) {
+			if strings.TrimSpace(check.ID) == "" {
+				t.Errorf("target %q: check with no id: %+v", target, check)
+			}
+			if seen[check.ID] {
+				t.Errorf("target %q: duplicate id %q", target, check.ID)
+			}
+			seen[check.ID] = true
+		}
+	}
+}
+
+func TestDoctorTargetsKeepMediaChecksSeparateFromOptionalTranscription(t *testing.T) {
+	t.Setenv("CASSINI_TRANSCRIPTION", "on")
+	media := map[string]bool{}
+	for _, check := range collectDoctorChecks("media") {
+		media[check.ID] = true
+	}
+	if !media["ffmpeg"] || !media["ffprobe"] {
+		t.Fatalf("media target omitted media tools: %#v", media)
+	}
+	if media["speech.runtime"] || media["model.ready"] {
+		t.Fatalf("media target included optional transcription checks: %#v", media)
+	}
+
+	t.Setenv("CASSINI_TRANSCRIPTION", "off")
+	for _, check := range collectDoctorChecks("build") {
+		if check.ID == "speech.runtime" || strings.HasPrefix(check.ID, "model.") {
+			t.Fatalf("transcription disabled, but doctor reported %q", check.ID)
+		}
+	}
+}
+
 // The check the operator's speech-runtime probe looks up by id. Named here
 // so that renaming it fails a test in this module rather than silently costing
 // the operator its answer — which is exactly what the prose markers did.
