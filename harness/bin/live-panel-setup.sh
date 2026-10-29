@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Install the cassini-live captions ExApp (with the transcript panel) into a
-# running harness stack, built from the cassini-live submodule.
+# Install the cassini-live captions ExApp (with the transcript panel and the
+# admin diagnostics page) into a running harness stack, built from the
+# cassini-live submodule.
 #
 # Prerequisites: `./bin/cassini dev stack up --services full ...` is up, and
 # the cassini-live submodule is checked out (git submodule update --init).
@@ -100,8 +101,13 @@ status="$(curl -s -u admin:admin -o /dev/null -w '%{http_code}' \
   "$NC_LOCAL_URL/index.php/apps/app_api/proxy/$APP_ID/panel/")"
 [[ "$status" == "200" ]] || fail "panel install page answered $status through the proxy"
 
-log "done. Captions and the transcript panel are live."
+status="$(curl -s -u admin:admin -o /dev/null -w '%{http_code}' \
+  "$NC_LOCAL_URL/index.php/apps/app_api/proxy/$APP_ID/diagnostics/")"
+[[ "$status" == "200" ]] || fail "diagnostics page answered $status through the proxy"
+
+log "done. Captions, the transcript panel and the diagnostics page are live."
 log "  open Nextcloud at:     $NC_LOCAL_URL/ (admin/admin) — use THIS host, not 127.0.0.1"
 log "  bookmarklet pickup:    $NC_LOCAL_URL/index.php/apps/app_api/proxy/$APP_ID/panel/"
+log "  diagnostics (admin):   $NC_LOCAL_URL/index.php/apps/app_api/proxy/$APP_ID/diagnostics/"
 log "  create a test room:    ./bin/cassini dev room create --name 'Live panel test'"
 log "  then: join the call, enable closed captions (CC in the call menu), click the bookmarklet"

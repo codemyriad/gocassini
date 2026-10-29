@@ -122,3 +122,6 @@ caption session ends — there is no durable transcript of record here (that is
 the recording pipeline). Named users resolve from the signalling roster; a
 speaker who has already left the call, with no participant card, falls back to a
 shortened session id. Those remain next slices in D-830.
+
+See also [the diagnostics page](live-diagnostics-page.md): the same app serves
+administrators a live view of how captions are being made.

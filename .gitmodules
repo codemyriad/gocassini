@@ -1,4 +1,4 @@
 [submodule "cassini-live"]
 	path = cassini-live
 	url = ../cassini-live
-	branch = feat/d-830-live-ui-hpb-feed
+	branch = feat/d-886-diagnostics-page
