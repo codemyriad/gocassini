@@ -7,6 +7,7 @@
     formatMultiplier,
     formatSpan,
     meetingLengthMs,
+    processingSpeed,
     runProcessing,
     spanMs,
     stepSpeed,
@@ -96,6 +97,13 @@
       // Ignore invalid JSON payload
     }
     return {};
+  }
+
+  export function captureModeLabel(requestJSON: string): string {
+    const mode = parseRequestJSON(requestJSON).capture_mode;
+    if (mode === "audio-only") return "Audio only";
+    if (mode === "audio-video") return "Audio and video";
+    return "Unknown (older recording)";
   }
 
   export function requestUrlLabel(requestJSON: string): string {
@@ -938,6 +946,24 @@
     return `${Math.round(hours / 24)}d ago`;
   }
 
+  // Where an attempt's artifacts and logs sit inside the operator's container,
+  // for whoever debugs it there.
+  function attemptPaths(attempt: JobAttempt): { label: string; path: string; missing: boolean }[] {
+    const entries: [string, string | null, string?][] = [
+      ["Run artifact", attempt.artifact_run_path],
+      ["Meeting artifact", attempt.artifact_meeting_path],
+      ["Sealed meeting", attempt.artifact_opus_path],
+      ["Site artifact", attempt.artifact_site_path],
+      ["Record log", attempt.record_log_path, "record_log"],
+      ["Build log", attempt.build_log_path, "build_log"],
+      ["Seal log", attempt.seal_log_path, "seal_log"],
+      ["Publish log", attempt.publish_log_path, "publish_log"],
+    ];
+    return entries
+      .filter((entry): entry is [string, string, string?] => !!entry[1])
+      .map(([label, path, key]) => ({ label, path, missing: key !== undefined && attempt.files_present?.[key] === false }));
+  }
+
   function attemptStageLabel(attempt: JobAttempt): string {
     return `${attempt.attempt_number} · ${attempt.stage} / ${attempt.state}`;
   }
@@ -1297,7 +1323,7 @@
                       <div class="min-w-0 text-xs">
                         <p class="truncate">
                           <span class={jobStatusToneClass(job)}>{jobStatusLabel(job)}</span>
-                          <span class="text-base-content/50"> · {relativeTime(job.updated_at)}</span>
+                          <span class="text-base-content/50" title={formatTimestamp(job.record_started_at ?? job.created_at)}> · {relativeTime(job.record_started_at ?? job.created_at)}</span>
                           {#if formatDuration(job.record_started_at, job.record_finished_at)}
                             <span class="text-base-content/50"> · {formatDuration(job.record_started_at, job.record_finished_at)}</span>
                           {/if}
@@ -1585,32 +1611,57 @@
                       </dl>
                     </div>
                   {/if}
+                  <!-- What an administrator checks a run for. The rest is folded
+                       into Technical details below (D-816). -->
                   <dl class="mt-2 grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {#if selectedJob.job.record_started_at}
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recorded</dt>
+                        <dd class="text-sm">
+                          {formatTimestamp(selectedJob.job.record_started_at)}{#if formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}<span class="text-base-content/60">{" · "}{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</span>{/if}
+                        </dd>
+                      </div>
+                    {/if}
+                    {#if runSpeed}
+                      <div class="sm:col-span-2">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                        <dd class="text-sm" class:text-warning={runSpeed.factor !== null && runSpeed.factor < 1}>
+                          {describeProcessing(runSpeed)}
+                        </dd>
+                      </div>
+                    {/if}
                     <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Provider</dt>
-                      <dd class="text-sm">{selectedJob.job.provider}</dd>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Capture</dt>
+                      <dd class="text-sm">{captureModeLabel(selectedJob.job.request_json)}</dd>
                     </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Capture mode</dt>
-                      <dd class="text-sm">{parseRequestJSON(selectedJob.job.request_json).capture_mode === "audio-only" ? "Audio only" : parseRequestJSON(selectedJob.job.request_json).capture_mode === "audio-video" ? "Audio and video" : "Unknown (older recording)"}</dd>
-                    </div>
-                    <div class="min-w-0">
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting URL</dt>
-                      <dd class="text-sm break-all">
-                        {#if isHttpUrl(requestUrlLabel(selectedJob.job.request_json))}
+                    {#if selectedJob.job.stop_reason && !hasJobError(selectedJob.job) && selectedJob.job.state !== "stopped"}
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stopped because</dt>
+                        <dd class="text-sm">{formatStopReason(selectedJob.job.stop_reason)}</dd>
+                      </div>
+                    {/if}
+                    {#if selectedJob.job.interrupted_at}
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Interrupted</dt>
+                        <dd class="text-sm">{formatTimestamp(selectedJob.job.interrupted_at)}</dd>
+                      </div>
+                    {/if}
+                    {#if isHttpUrl(requestUrlLabel(selectedJob.job.request_json))}
+                      <div class="min-w-0">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Conversation</dt>
+                        <dd class="text-sm">
                           <a
                             class="link link-hover text-primary"
                             href={requestUrlLabel(selectedJob.job.request_json)}
+                            title={requestUrlLabel(selectedJob.job.request_json)}
                             target="_blank"
                             rel="noreferrer noopener"
                           >
-                            {requestUrlLabel(selectedJob.job.request_json)}
+                            Open in Talk
                           </a>
-                        {:else}
-                          {requestUrlLabel(selectedJob.job.request_json)}
-                        {/if}
-                      </dd>
-                    </div>
+                        </dd>
+                      </div>
+                    {/if}
                     {#if recordingHref}
                       <div class="min-w-0">
                         <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recording</dt>
@@ -1621,65 +1672,40 @@
                         </dd>
                       </div>
                     {/if}
-                    <div class="min-w-0">
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
-                      <dd class="font-mono text-xs break-all">{selectedJob.job.id}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Current attempt</dt>
-                      <dd class="text-sm">{selectedJob.job.current_attempt_number}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Reruns</dt>
-                      <dd class="text-sm">{selectedJob.job.rerun_count}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Interrupted</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.interrupted_at)}</dd>
-                    </div>
-                    {#if selectedJob.job.stop_reason}
+                    {#if selectedJob.job.completed_at}
                       <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop reason</dt>
-                        <dd class="text-sm">{formatStopReason(selectedJob.job.stop_reason)}</dd>
-                      </div>
-                    {/if}
-                    {#if formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}
-                      <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record duration</dt>
-                        <dd class="text-sm">{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</dd>
-                      </div>
-                    {/if}
-                    {#if runSpeed}
-                      <div class="col-span-2">
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
-                        <dd class="text-sm" class:text-warning={runSpeed.factor !== null && runSpeed.factor < 1}>
-                          {describeProcessing(runSpeed)}
-                        </dd>
-                      </div>
-                    {/if}
-                    {#if selectedJob.job.stop_requested_at}
-                      <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop requested</dt>
-                        <dd class="text-sm">{formatTimestamp(selectedJob.job.stop_requested_at)}</dd>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
+                        <dd class="text-sm">{formatTimestamp(selectedJob.job.completed_at)}</dd>
                       </div>
                     {/if}
                   </dl>
 
-                  <div class="my-2 h-px w-full bg-base-content/12" aria-hidden="true"></div>
-                  <dl class="mt-1 grid gap-x-6 gap-y-3 grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Created</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.created_at)}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Updated</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.updated_at)}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.completed_at)}</dd>
-                    </div>
-                  </dl>
+                  <details class="group">
+                    <summary class="flex w-fit cursor-pointer list-none items-center gap-1 text-xs text-base-content/60 hover:text-base-content">
+                      <ChevronRight size={12} class="shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+                      Technical details
+                    </summary>
+                    <dl class="mt-2 grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <div class="min-w-0 sm:col-span-2 lg:col-span-3">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
+                        <dd class="font-mono text-xs break-all">{selectedJob.job.id}</dd>
+                      </div>
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Created</dt>
+                        <dd class="text-sm">{formatTimestamp(selectedJob.job.created_at)}</dd>
+                      </div>
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Updated</dt>
+                        <dd class="text-sm">{formatTimestamp(selectedJob.job.updated_at)}</dd>
+                      </div>
+                      {#if selectedJob.job.stop_requested_at}
+                        <div>
+                          <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop requested</dt>
+                          <dd class="text-sm">{formatTimestamp(selectedJob.job.stop_requested_at)}</dd>
+                        </div>
+                      {/if}
+                    </dl>
+                  </details>
                 </section>
 
                 <section class="mt-4 grid gap-3">
@@ -1691,6 +1717,7 @@
                   </div>
                   <div class="grid gap-3">
                     {#each selectedJob.attempts as attempt (attempt.attempt_number)}
+                      {@const attemptSpeed = processingSpeed(attempt, meetingMs)}
                       <details class="group overflow-hidden rounded-box border border-base-300">
                         <summary
                           class="flex cursor-pointer list-none items-center gap-2 bg-base-200/50 px-3 py-2 transition group-open:bg-base-200 hover:bg-base-200"
@@ -1705,8 +1732,10 @@
                             <span class="ml-2 capitalize">{attempt.trigger_kind}</span>
                             <span class="mx-1.5 text-base-content/40">·</span>
                             <span class={jobStatusToneClass(attempt)}>{jobStatusLabel(attempt)}</span>
-                            {#if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
-                              <span class="text-base-content/50"> · {formatDuration(attempt.record_started_at, attempt.record_finished_at)}</span>
+                            {#if attemptSpeed}
+                              <span class="text-base-content/50"> · processed in {formatSpan(attemptSpeed.ms)}</span>
+                            {:else if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
+                              <span class="text-base-content/50"> · recorded {formatDuration(attempt.record_started_at, attempt.record_finished_at)}</span>
                             {/if}
                           </span>
                         </summary>
@@ -1797,85 +1826,36 @@
                             </div>
                           </div>
 
-                          <dl class="grid gap-x-6 gap-y-3 grid-cols-2 sm:grid-cols-3">
-                            <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Queued</dt>
-                              <dd class="text-sm">{formatTimestamp(attempt.record_queued_at)}</dd>
-                            </div>
-                            <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
-                              <dd class="text-sm">{formatTimestamp(attempt.completed_at)}</dd>
-                            </div>
-                            {#if attempt.stop_reason}
+                          <!-- Timestamps and on-disk paths are for debugging inside the
+                               container; folded so they do not bury the outcome (D-816). -->
+                          <details class="group/tech">
+                            <summary class="flex w-fit cursor-pointer list-none items-center gap-1 text-xs text-base-content/60 hover:text-base-content">
+                              <ChevronRight size={12} class="shrink-0 transition-transform group-open/tech:rotate-90" aria-hidden="true" />
+                              Technical details
+                            </summary>
+                            <dl class="mt-2 grid gap-x-6 gap-y-3 grid-cols-2 sm:grid-cols-3">
                               <div>
-                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop reason</dt>
-                                <dd class="text-sm">{formatStopReason(attempt.stop_reason)}</dd>
+                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Queued</dt>
+                                <dd class="text-sm">{formatTimestamp(attempt.record_queued_at ?? attempt.build_queued_at)}</dd>
                               </div>
-                            {/if}
-                            {#if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
                               <div>
-                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record duration</dt>
-                                <dd class="text-sm">{formatDuration(attempt.record_started_at, attempt.record_finished_at)}</dd>
+                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
+                                <dd class="text-sm">{formatTimestamp(attempt.completed_at)}</dd>
                               </div>
-                            {/if}
-                          </dl>
-
-                          {#if attempt.artifact_run_path || attempt.artifact_meeting_path || attempt.artifact_opus_path || attempt.artifact_site_path || attempt.record_log_path || attempt.build_log_path || attempt.seal_log_path || attempt.publish_log_path}
-                            <div class="my-1 h-px w-full bg-base-content/12" aria-hidden="true"></div>
-                            <dl class="grid gap-3">
-                              {#if attempt.artifact_run_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run artifact</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.artifact_run_path}</dd>
+                              {#if attempt.stop_reason && !hasJobError(attempt) && attempt.state !== "stopped"}
+                                <div>
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stopped because</dt>
+                                  <dd class="text-sm">{formatStopReason(attempt.stop_reason)}</dd>
                                 </div>
                               {/if}
-                              {#if attempt.artifact_meeting_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting artifact</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.artifact_meeting_path}</dd>
+                              {#each attemptPaths(attempt) as entry (entry.label)}
+                                <div class="col-span-2 min-w-0 sm:col-span-3">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{entry.label}</dt>
+                                  <dd class="font-mono text-xs break-all">{entry.path}{entry.missing ? " (no longer on disk)" : ""}</dd>
                                 </div>
-                              {/if}
-                              {#if attempt.artifact_opus_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Sealed meeting</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.artifact_opus_path}</dd>
-                                  {#if attempt.artifact_opus_sha256}
-                                    <dd class="font-mono text-xs break-all text-base-content/45">sha256 {attempt.artifact_opus_sha256}</dd>
-                                  {/if}
-                                </div>
-                              {/if}
-                              {#if attempt.artifact_site_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Site artifact</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.artifact_site_path}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.record_log_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}{attempt.files_present?.record_log === false ? " (unavailable)" : ""}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.build_log_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Build log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}{attempt.files_present?.build_log === false ? " (unavailable)" : ""}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.seal_log_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Seal log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}{attempt.files_present?.seal_log === false ? " (unavailable)" : ""}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.publish_log_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Publish log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}{attempt.files_present?.publish_log === false ? " (unavailable)" : ""}</dd>
-                                </div>
-                              {/if}
+                              {/each}
                             </dl>
-                          {/if}
+                          </details>
                         </div>
                       </details>
                     {/each}
