@@ -74,23 +74,25 @@ One guided command, run on the version's `release/X.Y` branch (see
 ```
 
 It previews the pending changes, asks for your choice, confirms, then bumps the
-version, folds the changelog, commits, tags `v<version>`, and pushes:
+version, folds the changelog, commits, tags `v<version>`, and pushes. It first
+fetches origin's tags, and refuses to cut on the wrong branch or on one that is
+behind origin:
 
 ```text
 $ ./scripts/prepare-release.sh --push
 Current version: 0.2.0
 
 Pending changes (changelog.d/):
-  ### Added
-  - Auto-retry Talk recordings that drop mid-call.
+  ### Fixed
+  - Recordings that drop mid-call are retried.
 
-  patch  → 0.2.1-alpha.1    backward-compatible fixes only
-  minor  → 0.3.0-alpha.1    new features, no breaking changes
-  major  → 1.0.0-alpha.1    breaking changes
+  patch  → 0.2.1            backward-compatible fixes only       on release/0.2
+  minor  → 0.3.0-alpha.1    new features, no breaking changes    on main
+  major  → 1.0.0-alpha.1    breaking changes                     on main
 
-Choose a bump [patch/minor/major] (or a version, q to quit): minor
-Preparing release: 0.2.0 -> 0.3.0-alpha.1
-Cut v0.3.0-alpha.1 and push it? [y/N] y
+Choose a bump [patch/minor/major] (or a version, q to quit): patch
+Preparing release: 0.2.0 -> 0.2.1
+Cut v0.2.1 and push it? [y/N] y
 ```
 
 Then approve the `release` deployment in **Actions** (one click) — that signs the
@@ -99,8 +101,9 @@ package, creates the GitHub release, and publishes to the App Store.
 **Non-interactive** (scripting) — pass the choice; drop `--push` to stay local:
 
 ```bash
-./scripts/prepare-release.sh --bump minor --push        # 0.2.0        → 0.3.0-alpha.1
-./scripts/prepare-release.sh --promote rc.1 --push      # 0.3.0-beta.1 → 0.3.0-rc.1
+./scripts/prepare-release.sh --bump patch --push        # 0.2.0        → 0.2.1          (release/0.2)
+./scripts/prepare-release.sh --bump minor --push        # 0.2.0        → 0.3.0-alpha.1  (main)
+./scripts/prepare-release.sh --promote rc.1 --push      # 0.3.0-beta.1 → 0.3.0-rc.1     (release/0.3)
 ./scripts/prepare-release.sh --version 0.3.0 --push     # straight to stable
 ./scripts/release-preview.sh                            # just show what's pending
 ```
@@ -128,10 +131,12 @@ existing tag (`publish_appstore=false` = signed GitHub release only, no store).
 X.Y.Z-alpha.1 → X.Y.Z-beta.1 → X.Y.Z-rc.1 → X.Y.Z-rc.2 → X.Y.Z
 ```
 
-Every bump restarts the ladder at `-alpha.1`; advance with
+A minor or major bump starts the ladder at `-alpha.1`; advance with
 `--promote beta|rc.1|rc.2|stable`. You can skip stages: `--version 0.3.0` goes
 straight to stable, and `rc.1 → stable` is fine (one RC instead of two).
-Patches skip the ladder (see [Patches and majors](#patches-and-majors)).
+Before the first `--promote beta`, create `release/X.Y` from main and switch to
+it. Patches skip the ladder: `--bump patch` goes straight to `X.Y.Z` (see
+[Patches and majors](#patches-and-majors)).
 Suffixed versions upload as App Store pre-releases automatically.
 
 Cassini supports the maintained Nextcloud majors recorded in

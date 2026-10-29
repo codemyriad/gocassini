@@ -67,14 +67,31 @@ rejects rv_validate 0.2.0-gamma.1  # unknown prerelease type
 rejects rv_validate 0.2.0-alpha.1+build   # build metadata
 rejects rv_validate 0.2.0+meta            # build metadata
 
-echo "rv_bump — patch/minor/major restart at alpha.1"
-transition rv_bump patch 0.2.0 0.2.1-alpha.1
+echo "rv_bump — minor/major restart at alpha.1, a patch goes straight to stable"
+transition rv_bump patch 0.2.0 0.2.1
+transition rv_bump patch 0.2.9 0.2.10
+transition_fails rv_bump patch 0.3.0-rc.1
 transition rv_bump minor 0.2.0 0.3.0-alpha.1
 transition rv_bump major 0.2.0 1.0.0-alpha.1
 # From a prerelease the suffix is dropped and the base re-targeted.
 transition rv_bump minor 0.2.0-alpha.1 0.3.0-alpha.1
 transition rv_bump major 1.4.9-rc.2 2.0.0-alpha.1
 transition_fails rv_bump sideways 0.2.0
+
+echo "rv_release_branch — main for the next release's alphas, release/X.Y otherwise"
+eq "0.3.0-alpha.2 on main" "main" "$(rv_release_branch 0.3.0-alpha.2)"
+eq "0.3.0-beta.1 on release/0.3" "release/0.3" "$(rv_release_branch 0.3.0-beta.1)"
+eq "0.3.0-rc.1 on release/0.3" "release/0.3" "$(rv_release_branch 0.3.0-rc.1)"
+eq "0.3.0 on release/0.3" "release/0.3" "$(rv_release_branch 0.3.0)"
+eq "0.2.1 on release/0.2" "release/0.2" "$(rv_release_branch 0.2.1)"
+eq "0.2.1-rc.1 on release/0.2" "release/0.2" "$(rv_release_branch 0.2.1-rc.1)"
+eq "1.0.0-alpha.1 on main" "main" "$(rv_release_branch 1.0.0-alpha.1)"
+eq "1.10.0 on release/1.10" "release/1.10" "$(rv_release_branch 1.10.0)"
+
+echo "rv_same_line — MAJOR.MINOR"
+if rv_same_line 0.2.1 0.2.0-beta.3; then ok "0.2.1 and 0.2.0-beta.3 share a line"; else bad "0.2.1 and 0.2.0-beta.3 should share a line"; fi
+if rv_same_line 0.2.1 0.3.0-alpha.1; then bad "0.2.1 and 0.3.0-alpha.1 should not share a line"; else ok "0.2.1 and 0.3.0-alpha.1 are different lines"; fi
+if rv_same_line 1.2.0 0.2.0; then bad "1.2.0 and 0.2.0 should not share a line"; else ok "1.2.0 and 0.2.0 are different lines"; fi
 
 echo "rv_promote — ladder"
 transition rv_promote beta   0.2.0-alpha.1 0.2.0-beta.1
@@ -253,7 +270,7 @@ rm -rf "$REPO"
 
 echo "prepare-release.sh — end-to-end (local commit + tag)"
 PR="$(mktemp -d)"
-git -C "$PR" init -q
+git -C "$PR" init -q -b main
 git -C "$PR" config user.email t@t
 git -C "$PR" config user.name t
 mkdir -p "$PR/scripts" "$PR/appinfo" "$PR/changelog.d"
@@ -307,19 +324,58 @@ if [[ -z "$(git -C "$PR" remote)" ]]; then ok "prepare-release added no remote /
 if git -C "$PR" diff --quiet && git -C "$PR" diff --cached --quiet; then ok "worktree clean after prepare-release"; else bad "worktree should be clean after commit"; fi
 
 # Re-running for a non-greater version is rejected (tag collision / ordering).
-if prep --version 0.2.0 >/dev/null 2>&1; then bad "prepare-release should reject a non-greater version"; else ok "prepare-release rejects non-greater version"; fi
+if prep --version 0.3.0-alpha.1 --allow-empty-changelog >/dev/null 2>&1; then bad "prepare-release should reject a non-greater version"; else ok "prepare-release rejects non-greater version"; fi
 
-# --push pushes the release commit + tag to origin (0.3.0-alpha.1 -> beta.1).
+# Each version is cut on its own branch (docs/release.md#branches).
+out="$(prep --version 0.2.1 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "cut on release/0.2, which doesn't exist yet" <<<"$out"; then ok "prepare-release refuses a patch on main and says how to create the release branch"; else bad "prepare-release should refuse a patch on main (got: $out)"; fi
+out="$(prep --promote beta --allow-empty-changelog 2>&1 || true)"
+if grep -qF "git switch -c release/0.3 main" <<<"$out"; then ok "prepare-release refuses the first beta on main"; else bad "prepare-release should refuse a beta on main (got: $out)"; fi
+
+# A patch on an older line ships after the next minor's alpha: the version is
+# checked against its own X.Y line only.
+git -C "$PR" switch -q -c release/0.2 v0.2.0
+printf '### Fixed\n- Fixed a crash.\n' >"$PR/changelog.d/60.fix.md"
+git -C "$PR" add -A; git -C "$PR" commit -qm fix
+if prep --bump patch >/dev/null 2>&1; then ok "prepare-release cuts 0.2.1 on release/0.2 after 0.3.0-alpha.1"; else bad "prepare-release should cut 0.2.1 on release/0.2"; fi
+eq "patch goes straight to stable" "0.2.1" "$(rv_read_version "$PR/appinfo/info.xml")"
+if git -C "$PR" rev-parse -q --verify refs/tags/v0.2.1 >/dev/null; then ok "tag v0.2.1 created"; else bad "tag v0.2.1 should be created"; fi
+out="$(prep --version 0.3.0-alpha.2 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "cut on main, not release/0.2" <<<"$out"; then ok "prepare-release refuses an alpha on a release branch"; else bad "prepare-release should refuse an alpha on release/0.2 (got: $out)"; fi
+git -C "$PR" switch -q --detach
+out="$(prep --version 0.2.2 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "HEAD is detached" <<<"$out"; then ok "prepare-release refuses a detached HEAD"; else bad "prepare-release should refuse a detached HEAD (got: $out)"; fi
+
+# --push pushes the release branch + tag to origin (0.3.0-alpha.1 -> beta.1 on
+# a new release/0.3).
 BARE="$(mktemp -d)/origin.git"; git init -q --bare "$BARE"
 git -C "$PR" remote add origin "$BARE"
-git -C "$PR" push -q origin HEAD
+git -C "$PR" switch -q main
+git -C "$PR" push -q origin main release/0.2 --tags
+git -C "$PR" switch -q -c release/0.3 main
 ( cd "$PR" && ./scripts/prepare-release.sh --promote beta --allow-empty-changelog --push ) >/dev/null 2>&1
-if git --git-dir="$BARE" tag --list | grep -qx v0.3.0-beta.1; then
-  ok "prepare-release --push pushes the release tag to origin"
+if git --git-dir="$BARE" tag --list | grep -qx v0.3.0-beta.1 \
+   && git --git-dir="$BARE" rev-parse -q --verify refs/heads/release/0.3 >/dev/null; then
+  ok "prepare-release --push pushes the release branch and tag to origin"
 else
-  bad "prepare-release --push should push the release tag to origin"
+  bad "prepare-release --push should push the release branch and tag to origin"
 fi
-rm -rf "$BARE"
+
+# Tags and branch heads cut elsewhere are fetched before the checks.
+OTHER="$(mktemp -d)"
+git clone -q "$BARE" "$OTHER"
+git -C "$OTHER" config user.email t@t; git -C "$OTHER" config user.name t
+git -C "$OTHER" tag v0.2.2 origin/release/0.2
+git -C "$OTHER" push -q origin v0.2.2
+git -C "$PR" switch -q release/0.2
+out="$(prep --version 0.2.2 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "tag v0.2.2 already exists" <<<"$out"; then ok "prepare-release fetches a tag cut elsewhere"; else bad "prepare-release should fetch origin's tags (got: $out)"; fi
+git -C "$OTHER" switch -q release/0.2
+git -C "$OTHER" commit -q --allow-empty -m "another fix"
+git -C "$OTHER" push -q origin release/0.2
+out="$(prep --version 0.2.3 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "release/0.2 is behind origin/release/0.2" <<<"$out"; then ok "prepare-release refuses a branch behind origin"; else bad "prepare-release should refuse a branch behind origin (got: $out)"; fi
+rm -rf "$BARE" "$OTHER"
 
 rm -rf "$PR"
 
@@ -476,7 +532,7 @@ rm -rf "$BD"
 
 echo "fold-changelog.sh --preview / release-preview.sh — decide the next move"
 PV="$(mktemp -d)"
-git -C "$PV" init -q
+git -C "$PV" init -q -b main
 git -C "$PV" config user.email t@t
 git -C "$PV" config user.name t
 mkdir -p "$PV/scripts" "$PV/appinfo" "$PV/changelog.d"
@@ -502,8 +558,8 @@ fi
 
 # release-preview on a STABLE version shows patch/minor/major candidates.
 sp="$(prev)"
-if grep -qF "0.2.1-alpha.1" <<<"$sp" && grep -qF "0.3.0-alpha.1" <<<"$sp" && grep -qF "1.0.0-alpha.1" <<<"$sp"; then
-  ok "release-preview shows patch/minor/major candidates on a stable version"
+if grep -qE "patch +→ 0\.2\.1 .*on release/0\.2" <<<"$sp" && grep -qE "0\.3\.0-alpha\.1 .*on main" <<<"$sp" && grep -qF "1.0.0-alpha.1" <<<"$sp"; then
+  ok "release-preview shows patch/minor/major candidates and their branches on a stable version"
 else
   bad "release-preview should show bump candidates on a stable version"
 fi
@@ -522,7 +578,7 @@ rm -rf "$PV"
 
 echo "prepare-release.sh — guided (interactive) mode"
 GD="$(mktemp -d)"
-git -C "$GD" init -q
+git -C "$GD" init -q -b main
 git -C "$GD" config user.email t@t
 git -C "$GD" config user.name t
 mkdir -p "$GD/scripts" "$GD/appinfo" "$GD/changelog.d"
