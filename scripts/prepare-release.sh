@@ -2,7 +2,7 @@
 # prepare-release.sh — turn a version decision into a local release commit+tag.
 #
 # One command bumps appinfo/info.xml, folds changelog.d/ into CHANGELOG.md,
-# extracts the release notes, commits as `release: <version>`, and tags
+# writes the release notes, commits as `release: <version>`, and tags
 # `v<version>` — all LOCALLY. It never pushes: the maintainer inspects the diff
 # and pushes the branch + tag intentionally (pushing the tag is what triggers
 # publish-exapp-image.yml to build the release images).
@@ -21,6 +21,7 @@
 #   --version X.Y.Z[-pre]          set an explicit target version
 #   --date YYYY-MM-DD              changelog date (default: today)
 #   --allow-empty-changelog        release even with no changelog.d fragments
+#   --no-user-notes                cut a stable version without user-facing notes
 #   --no-tag                       make the commit but skip creating the tag
 
 set -euo pipefail
@@ -34,7 +35,7 @@ usage() {
 Usage:
   ./scripts/prepare-release.sh [--push]                       # guided: preview + pick
   ./scripts/prepare-release.sh (--bump L | --promote T | --version V) [--date D]
-                               [--allow-empty-changelog] [--no-tag] [--push]
+                               [--allow-empty-changelog] [--no-user-notes] [--no-tag] [--push]
 
 With no --bump/--promote/--version, runs guided: shows the pending changes and
 the candidate versions, then asks you to choose.
@@ -42,13 +43,16 @@ the candidate versions, then asks you to choose.
 --push pushes the release commit + tag to origin after creating them. The tag
 push triggers the image build and the release workflow, so this one command is
 the whole release trigger.
+
+A stable version needs user-facing release notes first (docs/release-notes.md);
+--no-user-notes cuts it without them.
 EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
 
 main() {
-  local mode="" arg="" date="" allow_empty=0 make_tag=1 do_push=0
+  local mode="" arg="" date="" allow_empty=0 user_notes=1 make_tag=1 do_push=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --bump)                  mode="bump";    arg="${2:?--bump needs a level}"; shift 2 ;;
@@ -56,6 +60,7 @@ main() {
       --version)               mode="version"; arg="${2:?--version needs a value}"; shift 2 ;;
       --date)                  date="${2:?--date needs a value}"; shift 2 ;;
       --allow-empty-changelog) allow_empty=1; shift ;;
+      --no-user-notes)         user_notes=0; shift ;;
       --no-tag)                make_tag=0; shift ;;
       --push)                  do_push=1; shift ;;
       -h|--help)               usage; return 0 ;;
@@ -184,6 +189,16 @@ main() {
     die "no changelog.d fragments; add one or pass --allow-empty-changelog"
   fi
 
+  # A stable version is what most installs get, so it ships with notes written
+  # for them (docs/release-notes.md): the App Store, the GitHub release and the
+  # site show those, not the developer changelog.
+  if [[ "$target" != *-* && "$user_notes" -eq 1 ]]; then
+    "$SCRIPT_DIR/user-release-notes.sh" --version "$target" >/dev/null \
+      || die "$target is stable and has no user-facing release notes. Draft them from
+  ./scripts/user-release-notes.sh --sources
+following docs/release-notes.md, merge them, and run this again (or pass --no-user-notes)"
+  fi
+
   # --- Mutate: version, changelog, release notes --------------------------
   rv_write_version "$info_xml" "$target" || die "failed to update info.xml"
 
@@ -195,7 +210,7 @@ main() {
   if [[ "$frag_count" -gt 0 ]]; then
     "$SCRIPT_DIR/fold-changelog.sh" --version "$target" --date "$date" --write \
       || die "changelog fold failed"
-    "$SCRIPT_DIR/extract-release-notes.sh" --version "$target" >"$notes_file" \
+    "$SCRIPT_DIR/user-release-notes.sh" --release-body "$target" >"$notes_file" \
       || die "could not extract release notes for $target"
     staged+=("$root/CHANGELOG.md" "$root/changelog.d")
   else

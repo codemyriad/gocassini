@@ -1,6 +1,8 @@
 # Changelog
 
-All notable user-facing changes to Cassini will be documented in this file.
+Every change to Cassini, in detail: the developer record. The curated notes for
+people who run Cassini are at https://gocassini.com/changelog, and the App Store
+and GitHub releases show those (see [`docs/release-notes.md`](docs/release-notes.md)).
 
 This project follows semantic versioning for Nextcloud App Store releases.
 The version in `appinfo/info.xml`, the ExApp Docker image tag, and the release

@@ -274,7 +274,7 @@ git -C "$PR" init -q -b main
 git -C "$PR" config user.email t@t
 git -C "$PR" config user.name t
 mkdir -p "$PR/scripts" "$PR/appinfo" "$PR/changelog.d"
-cp "$SCRIPT_DIR"/{lib-release-version.sh,release-version.sh,fold-changelog.sh,extract-release-notes.sh,prepare-release.sh} "$PR/scripts/"
+cp "$SCRIPT_DIR"/{lib-release-version.sh,release-version.sh,fold-changelog.sh,extract-release-notes.sh,user-release-notes.sh,prepare-release.sh} "$PR/scripts/"
 cat >"$PR/appinfo/info.xml" <<'EOF'
 <?xml version="1.0"?>
 <info>
@@ -377,6 +377,30 @@ out="$(prep --version 0.2.3 --allow-empty-changelog 2>&1 || true)"
 if grep -qF "release/0.2 is behind origin/release/0.2" <<<"$out"; then ok "prepare-release refuses a branch behind origin"; else bad "prepare-release should refuse a branch behind origin (got: $out)"; fi
 rm -rf "$BARE" "$OTHER"
 
+# A stable version needs user-facing notes (docs/release-notes.md). 0.3.0 is
+# cut on release/0.3; origin is gone, so the checks use local tags.
+git -C "$PR" remote remove origin
+git -C "$PR" switch -q release/0.3
+printf '### Fixed\n- Fixed a thing.\n' >"$PR/changelog.d/61.fix.md"
+git -C "$PR" add -A && git -C "$PR" commit -q -m fragment
+if prep --version 0.3.0 >/dev/null 2>&1; then
+  bad "prepare-release should refuse a stable version without user-facing notes"
+else
+  ok "prepare-release refuses a stable version without user-facing notes"
+fi
+eq "refused stable release changes nothing" "0.3.0-beta.1" "$(rv_read_version "$PR/appinfo/info.xml")"
+mkdir -p "$PR/cassini-microsite/src/content/changelog"
+printf -- '---\ntitle: "Release prep in one command"\ndate: 2026-07-10\nversion: 0.3.0\n---\n\nOne command prepares a release.\n' \
+  >"$PR/cassini-microsite/src/content/changelog/2026-07-10-v0-3-0.md"
+git -C "$PR" add -A && git -C "$PR" commit -q -m notes
+if prep --version 0.3.0 >/dev/null 2>&1; then ok "prepare-release cuts a stable version once it has notes"; else bad "prepare-release should cut a stable version with notes"; fi
+body="$(cat "$PR/build/release/gocassini-0.3.0-notes.md" 2>/dev/null || true)"
+if [[ "$(head -1 <<<"$body")" == "One command prepares a release." && "$body" == *"<details>"*"- Fixed a thing."* ]]; then
+  ok "release body leads with the notes and folds the developer section"
+else
+  bad "release body should lead with the notes and fold the developer section"
+fi
+
 rm -rf "$PR"
 
 echo "sync-release-changelog.sh — a branch release back to main"
@@ -427,6 +451,46 @@ out="$(sync_cl --version 0.2.1 || true)"
 if grep -qF "not release/0.2" <<<"$out"; then ok "sync refuses to run on a release branch"; else bad "sync should refuse release/0.2 (got: $out)"; fi
 rm -rf "$SY"
 
+echo "user-release-notes.sh — curated notes"
+UN="$(mktemp -d)"
+git -C "$UN" init -q
+mkdir -p "$UN/changelog.d" "$UN/cassini-microsite/src/content/changelog"
+printf '%s\n' '# Changelog' '' '## [Unreleased]' '' \
+  '## [0.3.0] - 2026-07-20' '' '### Added' '- Dev entry for 0.3.0.' '' \
+  '## [0.2.1] - 2026-07-10' '' '### Fixed' '- Dev entry for 0.2.1.' '' \
+  '## [0.2.0] - 2026-07-01' '' '### Added' '- Dev entry for 0.2.0.' >"$UN/CHANGELOG.md"
+echo "# Fragments" >"$UN/changelog.d/README.md"
+printf '### Added\n- Pending entry.\n' >"$UN/changelog.d/70.pending.md"
+NOTES="$UN/cassini-microsite/src/content/changelog"
+printf -- '---\ntitle: Zero two\ndate: 2026-07-01\nversion: 0.2.0\n---\n\nNotes for 0.2.0.\n' >"$NOTES/2026-07-01-v0-2-0.md"
+printf -- '---\ntitle: "First feature"\ndate: 2026-07-10\nversion: "0.2.1"\n---\nFirst body.\n' >"$NOTES/2026-07-10-1-first.md"
+printf -- '---\ntitle: Second feature\ndate: 2026-07-10\nversion: 0.2.1\n---\nSecond body.\n' >"$NOTES/2026-07-10-2-second.md"
+printf -- '---\ntitle: Not yet\ndate: 2026-07-20\nversion: 0.3.0\ndraft: true\n---\nDraft body.\n' >"$NOTES/2026-07-20-v0-3-0.md"
+un() { ( cd "$UN" && "$SCRIPT_DIR/user-release-notes.sh" "$@" ); }
+
+eq "--version prints one entry's body without frontmatter" "Notes for 0.2.0." "$(un --version 0.2.0)"
+eq "--version puts several entries under their titles" \
+  "### First feature|First body.|### Second feature|Second body." \
+  "$(un --version 0.2.1 | grep -v '^$' | paste -sd'|')"
+if un --version 0.3.0 >/dev/null 2>&1; then bad "a draft should not count as notes"; else ok "--version ignores drafts and fails without notes"; fi
+sources="$(un --sources)"
+if [[ "$sources" == *"Dev entry for 0.3.0."* && "$sources" == *"Pending entry."* && "$sources" != *"Dev entry for 0.2.1."* ]]; then
+  ok "--sources covers what shipped since the last notes, and pending fragments"
+else
+  bad "--sources should cover only what shipped since the last notes, plus pending fragments"
+fi
+rendered="$(un --changelog)"
+if [[ "$rendered" == *"## [0.2.1] - 2026-07-10"*"### First feature"* \
+   && "$rendered" == *"## [0.3.0] - 2026-07-20"*"Dev entry for 0.3.0."* \
+   && "$rendered" != *"Dev entry for 0.2.1."* ]]; then
+  ok "--changelog uses notes where a version has them, the developer section otherwise"
+else
+  bad "--changelog should use notes where a version has them, the developer section otherwise"
+fi
+eq "--release-body without notes is the developer section" "### Added|- Dev entry for 0.3.0." \
+  "$(un --release-body 0.3.0 | paste -sd'|')"
+rm -rf "$UN"
+
 echo "build/validate-appstore-tarball.sh — packaging"
 # Build against the real repo's source files, writing only into a temp dir.
 SRCV="$(rv_read_version "$(git rev-parse --show-toplevel)/appinfo/info.xml")"
@@ -442,6 +506,12 @@ fi
 files="$(tar -tzf "$TARBALL" | grep -v '/$' | LC_ALL=C sort | tr '\n' ',')"
 expected="gocassini/CHANGELOG.md,gocassini/LICENSE,gocassini/appinfo/app.php,gocassini/appinfo/info.xml,gocassini/img/app.svg,"
 eq "package contains only expected files" "$expected" "$files"
+packaged_changelog="$(tar -xzOf "$TARBALL" gocassini/CHANGELOG.md)"
+if [[ "$packaged_changelog" == *"What changed in each Cassini release."* ]]; then
+  ok "package CHANGELOG.md is the user-facing rendering"
+else
+  bad "package CHANGELOG.md should be the user-facing rendering"
+fi
 # The listing is captured ONCE and grepped from a variable rather than piped.
 # `tar -tzf … | grep -q …` is a trap under `set -o pipefail`: grep -q exits at
 # the first match, tar is killed by SIGPIPE (141), and pipefail makes that the
@@ -584,7 +654,7 @@ git -C "$PV" init -q -b main
 git -C "$PV" config user.email t@t
 git -C "$PV" config user.name t
 mkdir -p "$PV/scripts" "$PV/appinfo" "$PV/changelog.d"
-cp "$SCRIPT_DIR"/{lib-release-version.sh,fold-changelog.sh,release-preview.sh} "$PV/scripts/"
+cp "$SCRIPT_DIR"/{lib-release-version.sh,fold-changelog.sh,extract-release-notes.sh,user-release-notes.sh,release-preview.sh} "$PV/scripts/"
 printf '# Changelog\n\n## [Unreleased]\n' > "$PV/CHANGELOG.md"
 printf '# Fragments\n' > "$PV/changelog.d/README.md"
 prev() { ( cd "$PV" && "$PV/scripts/release-preview.sh" ); }
@@ -630,7 +700,7 @@ git -C "$GD" init -q -b main
 git -C "$GD" config user.email t@t
 git -C "$GD" config user.name t
 mkdir -p "$GD/scripts" "$GD/appinfo" "$GD/changelog.d"
-cp "$SCRIPT_DIR"/{lib-release-version.sh,release-version.sh,fold-changelog.sh,extract-release-notes.sh,prepare-release.sh,release-preview.sh} "$GD/scripts/"
+cp "$SCRIPT_DIR"/{lib-release-version.sh,release-version.sh,fold-changelog.sh,extract-release-notes.sh,user-release-notes.sh,prepare-release.sh,release-preview.sh} "$GD/scripts/"
 printf '<?xml version="1.0"?>\n<info><version>0.2.0</version><external-app><docker-install><image-tag>0.2.0</image-tag></docker-install></external-app></info>\n' > "$GD/appinfo/info.xml"
 printf '# Changelog\n\n## [Unreleased]\n' > "$GD/CHANGELOG.md"
 printf '# Fragments\n' > "$GD/changelog.d/README.md"
