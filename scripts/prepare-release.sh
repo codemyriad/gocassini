@@ -231,6 +231,14 @@ Nothing has been pushed. Review the commit, then push intentionally:
   git push origin ${push_ref}
 EOF
   fi
+  if [[ "$branch" == release/* ]]; then
+    cat <<EOF
+
+Then bring this release's changelog back to main (docs/release.md#branches):
+  git switch -c chore/sync-${target}-changelog origin/main
+  ./scripts/sync-release-changelog.sh --version ${target}
+EOF
+  fi
 }
 
 main "$@"

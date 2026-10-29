@@ -98,6 +98,21 @@ Cut v0.2.1 and push it? [y/N] y
 Then approve the `release` deployment in **Actions** (one click) — that signs the
 package, creates the GitHub release, and publishes to the App Store.
 
+**After a release cut on `release/X.Y`, bring its changelog back to main.** The
+cut folded the branch's fragments and deleted them there, but the fixes were
+cherry-picked from main, so main still holds the same fragments. Left alone,
+they would be released again in the next minor's notes. On a branch from main:
+
+```bash
+git switch -c chore/sync-0.2.1-changelog origin/main
+./scripts/sync-release-changelog.sh --version 0.2.1
+git push -u origin chore/sync-0.2.1-changelog   # then open a PR to main
+```
+
+It adds the tagged `## [0.2.1]` section to `CHANGELOG.md` in version order and
+deletes the fragments that release consumed. `prepare-release.sh` prints these
+commands after a cut on a release branch.
+
 **Non-interactive** (scripting) — pass the choice; drop `--push` to stay local:
 
 ```bash
@@ -158,7 +173,9 @@ to its tested manifest.
 Changes are captured per-PR as fragments in
 [`changelog.d/`](../changelog.d/README.md), not by editing `CHANGELOG.md`.
 `prepare-release.sh` folds them in at release time; a malformed fragment fails
-the fold before anything is committed.
+the fold before anything is committed. A release cut on a release branch folds
+the branch's copies; `sync-release-changelog.sh` then removes them from main
+(see [Cut a release](#cut-a-release)).
 
 ## The `release` environment (one-time setup)
 
