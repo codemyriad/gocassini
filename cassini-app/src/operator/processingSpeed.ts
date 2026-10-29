@@ -88,8 +88,8 @@ export function runProcessing(detail: JobDetailResponse): Speed | null {
   return null;
 }
 
-// "12m to process a 58m meeting · 4.8× real time"
-export function describeProcessing(result: Speed, meetingMs: number | null): string {
-  if (result.factor === null || meetingMs === null) return `${formatSpan(result.ms)} to process`;
-  return `${formatSpan(result.ms)} to process a ${formatSpan(meetingMs)} meeting · ${formatFactor(result.factor)}`;
+// "12m · 4.8× real time": the meeting's length is shown beside it already.
+export function describeProcessing(result: Speed): string {
+  if (result.factor === null) return formatSpan(result.ms);
+  return `${formatSpan(result.ms)} · ${formatFactor(result.factor)}`;
 }
