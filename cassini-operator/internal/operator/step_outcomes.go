@@ -27,6 +27,11 @@ type stepOutcomes struct {
 	TranscriptionReason string
 	SummaryStatus       string
 	SummaryReason       string
+	// The models the steps ran (D-816); empty for a step that did not run.
+	TranscriptionModel    string
+	TranscriptionRevision string
+	TranscriptionDevice   string
+	SummaryModel          string
 }
 
 // Why the operator dropped transcription from a build, as the recorder's
@@ -58,14 +63,22 @@ func readBundleStepOutcomes(meetingPath string) (stepOutcomes, error) {
 		} `json:"files"`
 		Processing *struct {
 			Transcription *struct {
-				Status string `json:"status"`
-				Reason string `json:"reason"`
+				Status   string `json:"status"`
+				Reason   string `json:"reason"`
+				Model    string `json:"model"`
+				Revision string `json:"revision"`
 			} `json:"transcription"`
 			MeetingSummary *struct {
 				Status string `json:"status"`
 				Reason string `json:"reason"`
+				Model  string `json:"model"`
 			} `json:"meetingSummary"`
 		} `json:"processing"`
+		Provenance *struct {
+			SpeechToText *struct {
+				Device string `json:"device"`
+			} `json:"speechToText"`
+		} `json:"provenance"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return stepOutcomes{}, fmt.Errorf("parse artifact manifest: %w", err)
@@ -74,10 +87,16 @@ func readBundleStepOutcomes(meetingPath string) (stepOutcomes, error) {
 	if p := manifest.Processing; p != nil {
 		if t := p.Transcription; t != nil {
 			out.TranscriptionStatus, out.TranscriptionReason = strings.TrimSpace(t.Status), strings.TrimSpace(t.Reason)
+			out.TranscriptionModel, out.TranscriptionRevision = strings.TrimSpace(t.Model), strings.TrimSpace(t.Revision)
 		}
 		if s := p.MeetingSummary; s != nil {
 			out.SummaryStatus, out.SummaryReason = strings.TrimSpace(s.Status), strings.TrimSpace(s.Reason)
+			out.SummaryModel = strings.TrimSpace(s.Model)
 		}
+	}
+	// The device is only meaningful for a model that ran.
+	if pv := manifest.Provenance; pv != nil && pv.SpeechToText != nil && out.TranscriptionModel != "" {
+		out.TranscriptionDevice = strings.TrimSpace(pv.SpeechToText.Device)
 	}
 	if out.SummaryStatus == "" && strings.TrimSpace(manifest.Files.Summary) != "" {
 		out.SummaryStatus = "completed"
@@ -90,9 +109,11 @@ func readBundleStepOutcomes(meetingPath string) (stepOutcomes, error) {
 func (s *Store) RecordAttemptStepOutcomes(ctx context.Context, jobID string, attemptNumber int, o stepOutcomes) error {
 	if _, err := s.db.ExecContext(ctx, `
 UPDATE job_attempts
-SET transcription_status = ?, transcription_reason = ?, summary_status = ?, summary_reason = ?
+SET transcription_status = ?, transcription_reason = ?, summary_status = ?, summary_reason = ?,
+    transcription_model = ?, transcription_revision = ?, transcription_device = ?, summary_model = ?
 WHERE job_id = ? AND attempt_number = ?`,
-		o.TranscriptionStatus, o.TranscriptionReason, o.SummaryStatus, o.SummaryReason, jobID, attemptNumber); err != nil {
+		o.TranscriptionStatus, o.TranscriptionReason, o.SummaryStatus, o.SummaryReason,
+		o.TranscriptionModel, o.TranscriptionRevision, o.TranscriptionDevice, o.SummaryModel, jobID, attemptNumber); err != nil {
 		return fmt.Errorf("record step outcomes: %w", err)
 	}
 	return nil

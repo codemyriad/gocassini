@@ -104,6 +104,12 @@ export interface JobAttempt {
   transcription_detail?: string;
   summary_status?: string;
   summary_reason?: string;
+  // The models the steps ran (D-816): the speech model, its revision and the
+  // device it ran on ("cpu" or "cuda"), and the summary model.
+  transcription_model?: string;
+  transcription_revision?: string;
+  transcription_device?: string;
+  summary_model?: string;
 }
 
 // What writing (or rewriting) a meeting's summary would do and cost, as
