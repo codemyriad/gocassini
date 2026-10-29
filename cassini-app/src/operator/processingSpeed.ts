@@ -6,12 +6,14 @@ import type { Job, JobAttempt, JobDetailResponse } from "./types";
 
 type StageTimes = Job | JobAttempt;
 
-export const PROCESSING_STEPS = ["build", "seal", "publish"] as const;
-
 // Only these attempt kinds process the capture. A summarize writes a summary
 // and a refine replays speaker edits; timing either against the meeting would
 // read as hardware many times faster than it is.
 const CAPTURE_KINDS = new Set(["initial", "rerun"]);
+
+export function processesCapture(attempt: JobAttempt): boolean {
+  return CAPTURE_KINDS.has(attempt.trigger_kind);
+}
 
 export interface Speed {
   ms: number;
@@ -41,7 +43,9 @@ export function formatSpan(ms: number): string {
 }
 
 export function formatMultiplier(factor: number): string {
-  return `${factor < 10 ? factor.toFixed(1) : Math.round(factor).toLocaleString()}×`;
+  // Rounded before choosing the precision, or 9.97 would read "10.0×".
+  const tenths = Math.round(factor * 10) / 10;
+  return `${tenths < 10 ? tenths.toFixed(1) : Math.round(factor).toLocaleString()}×`;
 }
 
 export function formatFactor(factor: number): string {
@@ -59,29 +63,37 @@ function speed(ms: number | null, meetingMs: number | null): Speed | null {
   return { ms, factor: meetingMs && ms > 0 ? meetingMs / ms : null };
 }
 
-function times(row: StageTimes, key: string) {
+// Reads `${key}_queued_at` / `_started_at` / `_finished_at`, so a stage has
+// times only if the operator names its columns to match.
+export function stageTimes(row: StageTimes, key: string) {
   const r = row as unknown as Record<string, string | null | undefined>;
-  return { started: r[`${key}_started_at`], finished: r[`${key}_finished_at`] };
+  return {
+    queued: r[`${key}_queued_at`] ?? null,
+    started: r[`${key}_started_at`] ?? null,
+    finished: r[`${key}_finished_at`] ?? null,
+  };
 }
 
-// One step's time, once it has finished.
+// One step's time, once it has finished. A failed step is stamped finished
+// too, so the caller passes a meeting length only for a step that succeeded.
 export function stepSpeed(row: StageTimes, key: string, meetingMs: number | null): Speed | null {
-  const t = times(row, key);
+  const t = stageTimes(row, key);
   return speed(spanMs(t.started, t.finished), meetingMs);
 }
 
 // From the build starting to the meeting being published. Time spent queued
 // or waiting for resources before the build is not processing.
 export function processingSpeed(row: StageTimes, meetingMs: number | null): Speed | null {
-  return speed(spanMs(times(row, "build").started, times(row, "publish").finished), meetingMs);
+  return speed(spanMs(stageTimes(row, "build").started, stageTimes(row, "publish").finished), meetingMs);
 }
 
-// The run's figure: the newest attempt that processed the capture end to end.
+// The run's figure: the newest attempt that processed the capture and
+// published it. A failed publish is stamped finished too, so the state decides.
 export function runProcessing(detail: JobDetailResponse): Speed | null {
   const meetingMs = meetingLengthMs(detail.job);
   const attempts = [...detail.attempts].sort((a, b) => b.attempt_number - a.attempt_number);
   for (const attempt of attempts) {
-    if (!CAPTURE_KINDS.has(attempt.trigger_kind)) continue;
+    if (!processesCapture(attempt) || attempt.state !== "succeeded") continue;
     const result = processingSpeed(attempt, meetingMs);
     if (result) return result;
   }

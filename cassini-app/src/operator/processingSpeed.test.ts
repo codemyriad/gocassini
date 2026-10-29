@@ -23,7 +23,7 @@ const processed: Partial<JobAttempt> = {
   publish_finished_at: at(72),
 };
 const attempt = (n: number, kind: string, times: Partial<JobAttempt> = processed): JobAttempt =>
-  ({ attempt_number: n, trigger_kind: kind, ...times }) as JobAttempt;
+  ({ attempt_number: n, trigger_kind: kind, state: "succeeded", ...times }) as JobAttempt;
 const detail = (attempts: JobAttempt[]) => ({ job, attempts }) as JobDetailResponse;
 
 describe("processingSpeed", () => {
@@ -67,11 +67,22 @@ describe("runProcessing", () => {
     expect(runProcessing(detail([attempt(2, "rerun", { build_started_at: at(80) }), attempt(1, "initial")]))?.ms).toBe(12 * 60_000);
     expect(runProcessing(detail([attempt(1, "initial", {})]))).toBeNull();
   });
+
+  it("skips a rerun whose publish failed, though its publish is stamped finished", () => {
+    const failed = attempt(2, "rerun", { ...processed, build_started_at: at(66), state: "failed" });
+    expect(runProcessing(detail([failed, attempt(1, "initial")]))?.ms).toBe(12 * 60_000);
+    expect(runProcessing(detail([failed]))).toBeNull();
+  });
 });
 
 describe("formatFactor", () => {
   it("keeps a decimal under 10× and drops it above", () => {
     expect(formatFactor(0.42)).toBe("0.4× real time");
     expect(formatMultiplier(13.4)).toBe("13×");
+  });
+
+  it("rounds before choosing the precision", () => {
+    expect(formatMultiplier(9.94)).toBe("9.9×");
+    expect(formatMultiplier(9.97)).toBe("10×");
   });
 });

@@ -87,6 +87,24 @@ it("says how long the meeting took to process, past a summary written later", as
   await userEvent.click(page.getByText("Attempt 1", { exact: true }));
   await expect.element(page.getByText("10m · 5.8×", { exact: true })).toBeVisible();
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-steps.png` });
+
+  // Writing a summary says nothing about how fast the server transcribes.
+  await userEvent.click(page.getByText("Attempt 2", { exact: true }).last());
+  await expect.element(page.getByText("30s", { exact: true }).first()).toBeVisible();
+  expect(document.body.textContent).not.toContain("30s · ");
+});
+
+it("gives a failed step its time and no multiplier, and keeps the published figure", async () => {
+  serve("Retro", [
+    attempt(2, "rerun", { build_started_at: at(80), build_finished_at: at(90), seal_started_at: at(90), seal_finished_at: at(90.05), state: "failed" }),
+    attempt(1, "initial", { record_started_at: at(0), record_finished_at: at(58), ...times }),
+  ]);
+  await open("Retro");
+  await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByText("Attempt 2", { exact: true }).last());
+  await expect.element(page.getByText("10m · 5.8×", { exact: true }).first()).toBeVisible();
+  await expect.element(page.getByText("3s", { exact: true })).toBeVisible();
+  await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/03-failed-step.png` });
 });
 
 it("says nothing about processing before the meeting is published", async () => {
