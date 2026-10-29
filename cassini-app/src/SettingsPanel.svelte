@@ -40,7 +40,7 @@
   // panel already is.
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
-  import { pipelineStatus, retentionSpan, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
+  import { inUseModelState, pipelineStatus, retentionSpan, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
   import { summaryStepCostText } from "./operator/summaryAction";
   import type { RetentionSettings } from "./operator/retention";
   import { onRetentionChanged } from "./operator/retentionSignal";
@@ -497,6 +497,11 @@
     ? `the ${deviceLabel("cuda")}`
     : settings?.detected_gpu ? "the CPU" : "the CPU (no GPU found)";
   $: inUseModel = modelInventory?.models.find((m) => m.id === activeModel);
+  // While it is not installed: its own download, if one is running, and what
+  // recordings get meanwhile (the model it replaced, a wait, or nothing).
+  $: inUseDownload = inUseModel && !inUseModel.installed ? runningDownload(modelInventory, inUseModel.id) : null;
+  $: inUseState = transcriptionEnabled && inUseModel ? inUseModelState(inUseModel, inUseDownload) : null;
+  $: inUsePercent = inUseDownload?.percent == null ? "" : ` (${inUseDownload.percent}%)`;
   // The model the picked quality runs, which the switch turns on.
   $: qualityModel = modelInventory?.models.find((m) => m.id === speechModelFor(quality, selectedDevice));
 
@@ -668,15 +673,25 @@
                device is auto-selected; on a host with no usable GPU that is the
                CPU, said out loud (D-702). The facts and the override open under
                "Change". -->
-          <div class="in-use pipe-gap" class:in-use-warn={transcriptionEnabled && inUseModel && !inUseModel.installed}>
+          <div class="in-use pipe-gap" class:in-use-warn={inUseState === "missing"}>
             <!-- One sentence: what transcribes and where. Installed but not yet
                  runtime-checked is normal after any new build (the operator
-                 checks it before transcribing); only missing files mean
-                 recordings go without a transcript. -->
+                 checks it before transcribing). Missing files mean recordings
+                 go without a transcript, unless the model it replaced is still
+                 installed (it transcribes them meanwhile) or its download is
+                 running (they wait for it). -->
             <p class="in-use-text" role="status">
-              {#if transcriptionEnabled && inUseModel && !inUseModel.installed}
+              {#if inUseModel && inUseState === "missing"}
                 <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
                 <span><strong>{inUseModel.name}</strong> isn't installed, so recordings get no transcript.</span>
+              {:else if inUseModel && inUseState === "stand-in"}
+                {#if inUseDownload}
+                  <span>Downloading <strong>{inUseModel.name}</strong>{inUsePercent}; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
+                {:else}
+                  <span><strong>{inUseModel.name}</strong> isn't installed; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
+                {/if}
+              {:else if inUseModel && inUseState === "downloading"}
+                <span>Downloading <strong>{inUseModel.name}</strong>{inUsePercent}; recordings wait for it.</span>
               {:else if transcriptionEnabled && inUseModel}
                 <span>Transcribing with <strong>{inUseModel.name}</strong> on {runsOnLine}.</span>
               {:else}

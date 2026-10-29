@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pipelineStatus, retentionSpan, runningDownload, speechModelFor, type PipelineInput } from "./pipelineStatus";
+import { inUseModelState, pipelineStatus, retentionSpan, runningDownload, speechModelFor, type PipelineInput } from "./pipelineStatus";
 
 const fresh: PipelineInput = {
   meetingFormat: "opus", transcriptionEnabled: false, quality: "balanced", device: "cpu", modelInstalled: false,
@@ -128,5 +128,20 @@ describe("helpers", () => {
     expect(missing.transcribe).toEqual({ state: "On · Balanced · CPU", tone: "amber", reason: "model not installed · previous model transcribes meanwhile" });
     // Once the saved model is installed it runs, whatever is left on disk.
     expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: true, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
+  });
+});
+
+describe("inUseModelState", () => {
+  it("says recordings get no transcript only when nothing transcribes or installs the model", () => {
+    // After the upgrade Ultra downloads while v3 stands in: the Transcript card
+    // must not say recordings get no transcript, which the strip contradicts.
+    expect(inUseModelState({ installed: false, stand_in: "parakeet-tdt-0.6b-v3-int8" }, { percent: 40 })).toBe("stand-in");
+    // A failed install or downloads disabled, with v3 still there.
+    expect(inUseModelState({ installed: false, stand_in: "parakeet-tdt-0.6b-v3-int8" }, null)).toBe("stand-in");
+    // A fresh install: recordings wait for the download.
+    expect(inUseModelState({ installed: false }, { percent: null })).toBe("downloading");
+    expect(inUseModelState({ installed: false }, null)).toBe("missing");
+    // Installed runs (checked first if need be), whatever is left on disk.
+    expect(inUseModelState({ installed: true, stand_in: "parakeet-tdt-0.6b-v3-int8" }, null)).toBe("installed");
   });
 });
