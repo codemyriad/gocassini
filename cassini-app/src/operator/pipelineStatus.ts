@@ -17,7 +17,8 @@ export interface PipelineInput {
   /** The saved model new recordings transcribe with; it names the tier when set. */
   activeModel?: string;
   /** Whether that saved model's files are installed; null while unknown. Not
-   *  having passed the runtime check yet is fine: builds run it first. */
+   *  having passed the runtime check yet is fine: builds run it first, and
+   *  use the model it replaced (activeModelStandIn) when it fails. */
   activeModelInstalled?: boolean | null;
   /** The effective device from the hardware facts: "cuda" or "cpu". */
   device: string;
@@ -31,7 +32,8 @@ export interface PipelineInput {
    *  installed. */
   activeModelDownload?: { percent: number | null } | null;
   /** Whether the model the saved one replaced is still installed and
-   *  transcribes recordings until the saved one is ready. */
+   *  transcribes recordings until the saved one is ready: while its files are
+   *  missing, or installed but not through their runtime check. */
   activeModelStandIn?: boolean;
   summaryEnabled: boolean;
   /** Display name of the saved summary provider. */
@@ -76,15 +78,18 @@ export function runningDownload(inventory: SpeechModelInventory | null, model?: 
 }
 
 /** What happens to recordings with the model the Transcript card names, when
- *  its files are not there yet: the model it replaced transcribes them
- *  meanwhile ("stand-in"), they wait for its download ("downloading"), or they
- *  get no transcript ("missing"). An installed model is "installed", checked or
- *  not: builds check it first. */
+ *  it is not ready: the model it replaced transcribes them meanwhile
+ *  ("stand-in"), they wait for its download ("downloading"), or they get no
+ *  transcript ("missing"). The operator names a stand-in only for a model
+ *  that is not ready, so one whose files are installed but have not passed
+ *  their runtime check is "stand-in" too: builds check it first and fall back
+ *  to the stand-in when the check fails. Otherwise an installed model is
+ *  "installed", checked or not. */
 export type InUseModelState = "installed" | "stand-in" | "downloading" | "missing";
 
 export function inUseModelState(model: Pick<SpeechModel, "installed" | "stand_in">, download: { percent: number | null } | null): InUseModelState {
-  if (model.installed) return "installed";
   if (model.stand_in) return "stand-in";
+  if (model.installed) return "installed";
   return download ? "downloading" : "missing";
 }
 
@@ -107,14 +112,18 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
     // transcript, so the strip must not read as healthy. One being installed
     // is different: recordings wait for it. Either way, while the model it
     // replaced is still installed (v3, after the upgrade to Ultra), recordings
-    // are transcribed with that one meanwhile, and the strip says so.
+    // are transcribed with that one meanwhile, and the strip says so. So it
+    // does for an installed model that has not passed its runtime check: the
+    // operator names a stand-in only then, and builds use it when the check
+    // fails.
     const installing = input.activeModelDownload;
-    const meanwhile = input.activeModelInstalled === false && input.activeModelStandIn ? " · previous model transcribes meanwhile" : "";
+    const meanwhile = input.activeModelInstalled != null && input.activeModelStandIn ? " · previous model transcribes meanwhile" : "";
     if (input.activeModelInstalled === false && installing) {
       const reason = installing.percent === null ? "downloading the model" : `downloading the model · ${installing.percent}%`;
       transcribe = { state, tone: "busy", reason: reason + meanwhile };
     } else if (meanwhile) {
-      transcribe = { state, tone: "amber", reason: "model not installed" + meanwhile };
+      const why = input.activeModelInstalled ? "model check not passed" : "model not installed";
+      transcribe = { state, tone: "amber", reason: why + meanwhile };
     } else {
       transcribe = input.activeModelInstalled === false
         ? { state, tone: "amber", reason: "model not installed" }
