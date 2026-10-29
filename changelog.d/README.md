@@ -56,6 +56,12 @@ at release time rather than silently dropped.
 Good fragments are short and user/operator-facing. Do not list every file
 changed, implementation step, test helper, or agent action.
 
+Fragments are the developer record, and they can be detailed. The short notes
+that users read are written from them once per release, not per PR (see
+[`docs/release-notes.md`](../docs/release-notes.md)). A fragment helps whoever
+writes those notes when it says what someone will notice, and what an
+administrator has to do, if anything.
+
 ## Release Process
 
 Fragments are folded into `CHANGELOG.md` by `scripts/fold-changelog.sh`, not by
