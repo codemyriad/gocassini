@@ -7,16 +7,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"gocassini/internal/portable"
 )
 
 // EncoderProvenance is what the encoder's own ONNX metadata says it is. The
 // model id names what Cassini asked for; these name the export that actually
 // loaded, which is what sherpa keys its frontend selection on (url) and where
-// a Cassini export records its weights and toolchain (comment).
-type EncoderProvenance struct {
-	URL     string `json:"url,omitempty"`
-	Comment string `json:"comment,omitempty"`
-}
+// a Cassini export records its weights and toolchain (comment). It is the
+// portable type so the packer carries it into the published file.
+type EncoderProvenance = portable.EncoderProvenance
 
 // maxEncoderCommentBytes bounds the comment copied into every manifest.
 const maxEncoderCommentBytes = 2048

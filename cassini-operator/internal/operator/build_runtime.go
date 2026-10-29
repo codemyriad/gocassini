@@ -369,10 +369,24 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 	// detail are what the transcript records; detail is a fixed sentence,
 	// never cause's text, which can carry a command's output.
 	standIn := func(cause error, reason, detail string) (string, STTSettings, error) {
-		retired, ok, waitErr := rt.admitStandIn(ctx, inventory, selected, device, limits, retiredPin)
+		retired, ok, waitErr, checkFailed := rt.admitStandIn(ctx, inventory, selected, device, limits, retiredPin)
 		if !ok {
 			if waitErr != nil && !transientResourceError(cause) {
 				return "", settings, waitErr
+			}
+			if checkFailed {
+				// The stand-in's files may have gone because the selected model
+				// became ready meanwhile: a `cassini models import` or `install`
+				// run outside the operator removes them once its check passes,
+				// without the lock this build holds. Read the inventory again
+				// rather than lose the transcript to a model that is ready now.
+				rt.invalidateModelInventory()
+				if fresh, err := rt.modelInventory(ctx, device); err == nil {
+					if m, err := findModel(fresh, selected.ID, selected.Revision); err == nil && m.Installed && m.Ready {
+						rt.logger.Printf("resource governor: speech model %s (%s) became ready while its stand-in was checked; this build uses it", m.ID, m.Revision)
+						return device, settings, nil
+					}
+				}
 			}
 			return "", settings, cause
 		}
@@ -467,22 +481,24 @@ func (rt *Runtime) notInstalledReason(ctx context.Context, m modelInfo, device s
 // first, as the selected model would be; one that fails is not tried again
 // until a restart. A check that has to wait for memory returns that error, so
 // the build can wait for it too. Nothing here ever downloads a retired model:
-// there is only what an upgraded install still has.
-func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, selected modelInfo, device string, limits resourceLimits, retiredPin string) (modelInfo, bool, error) {
+// there is only what an upgraded install still has. checkFailed reports that
+// a stand-in failed its check in this call.
+func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, selected modelInfo, device string, limits resourceLimits, retiredPin string) (standIn modelInfo, ok bool, waitErr error, checkFailed bool) {
 	for _, m := range rt.standInCandidates(inventory, selected, device, retiredPin) {
 		if m.Ready {
-			return m, true, nil
+			return m, true, nil, false
 		}
 		if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, m.ID), rt.logger.Printf); err != nil {
-			return modelInfo{}, false, err
+			return modelInfo{}, false, err, checkFailed
 		}
 		probe := modelJob{Model: m.ID, Revision: m.Revision, Device: device}
 		if err := rt.modelCommand(ctx, &probe, "probe", false); err != nil {
 			rt.logger.Printf("resource governor: retired %s (%s) cannot stand in for %s on %s: %v", m.ID, m.Revision, selected.ID, device, err)
 			if transientResourceError(err) || ctx.Err() != nil {
 				// Memory may free up; check it again on the next attempt.
-				return modelInfo{}, false, err
+				return modelInfo{}, false, err, checkFailed
 			}
+			checkFailed = true
 			rt.standInMu.Lock()
 			if rt.standInCheckFailed == nil {
 				rt.standInCheckFailed = map[string]bool{}
@@ -493,9 +509,9 @@ func (rt *Runtime) admitStandIn(ctx context.Context, inventory []modelInfo, sele
 		}
 		rt.invalidateModelInventory()
 		m.Ready = true
-		return m, true, nil
+		return m, true, nil, false
 	}
-	return modelInfo{}, false, nil
+	return modelInfo{}, false, nil, checkFailed
 }
 
 // standInCandidates lists the installed retired models that may stand in for

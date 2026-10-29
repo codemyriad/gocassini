@@ -2,7 +2,7 @@
 // strip at the top of the Publishing card says it. Pure so the wording and the
 // warnings can be tested without mounting the panel.
 import type { RetentionPolicy } from "./retention";
-import type { SettingsQuality, SpeechModelInventory, SpeechModelJob } from "./types";
+import type { SettingsQuality, SpeechModel, SpeechModelInventory, SpeechModelJob } from "./types";
 
 export type StepTone = "on" | "off" | "amber" | "busy";
 export interface StepStatus { state: string; tone: StepTone; badge?: string; reason?: string }
@@ -73,6 +73,19 @@ export function runningDownload(inventory: SpeechModelInventory | null, model?: 
   if (!job) return null;
   const { completed_bytes: done, total_bytes: total } = job.progress;
   return { percent: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null };
+}
+
+/** What happens to recordings with the model the Transcript card names, when
+ *  its files are not there yet: the model it replaced transcribes them
+ *  meanwhile ("stand-in"), they wait for its download ("downloading"), or they
+ *  get no transcript ("missing"). An installed model is "installed", checked or
+ *  not: builds check it first. */
+export type InUseModelState = "installed" | "stand-in" | "downloading" | "missing";
+
+export function inUseModelState(model: Pick<SpeechModel, "installed" | "stand_in">, download: { percent: number | null } | null): InUseModelState {
+  if (model.installed) return "installed";
+  if (model.stand_in) return "stand-in";
+  return download ? "downloading" : "missing";
 }
 
 /** "30 days", "1 day" or "forever"; null when the policy is unknown. */

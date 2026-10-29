@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -238,5 +239,33 @@ func TestMergedFallbackDoesNotInventRequestedHints(t *testing.T) {
 				t.Fatalf("%s accepted=%v: invented hint request: %+v", id, accepted, got)
 			}
 		}
+	}
+}
+
+// A vocabulary that was never applied keeps the reason it was not: by default
+// that names the switch (CASSINI_STT_HINTS_DISABLED) that would apply it,
+// which the merged fallback's own reason does not. Only the decoder changes
+// to the greedy search the fallback ran.
+func TestMergedFallbackKeepsTheReasonHintsWereNotApplied(t *testing.T) {
+	t.Setenv(envHintsDisabled, "")
+	paths := ModelPaths{ModelID: ModelParakeetUltra, EncoderFile: "encoder.onnx", BpeVocabFile: "bpe.vocab"}
+	_, off, err := resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{Terms: []string{"Cassini", "Silvio"}, ParticipantTermCount: 1}, paths)
+	if err != nil || off == nil || off.Applied {
+		t.Fatalf("default build should record an unapplied vocabulary: %+v, %v", off, err)
+	}
+	got := mergedFallbackHints(paths, off, true)
+	if got.Reason != off.Reason || !strings.Contains(got.Reason, envHintsDisabled) {
+		t.Errorf("reason = %q, want the original %q", got.Reason, off.Reason)
+	}
+	if got.Applied || got.DecodingMethod != decodingGreedySearch || got.TermCount != 2 || got.ParticipantTermCount != 1 {
+		t.Errorf("merged provenance = %+v", got)
+	}
+
+	// Not applied under beam search (a bundle without bpe.vocab with hints
+	// on): the reason stays, the decoder becomes the fallback's.
+	beam := &HintsProvenance{TermCount: 2, DecodingMethod: decodingModifiedBeamSearch, Reason: "this model bundle ships no bpe.vocab"}
+	got = mergedFallbackHints(paths, beam, true)
+	if got.Reason != beam.Reason || got.DecodingMethod != decodingGreedySearch || beam.DecodingMethod != decodingModifiedBeamSearch {
+		t.Errorf("merged provenance = %+v (original %+v)", got, beam)
 	}
 }

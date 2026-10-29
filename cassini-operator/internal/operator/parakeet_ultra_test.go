@@ -334,3 +334,68 @@ func TestStatusReportsUltraRuntimeFromBuildInfo(t *testing.T) {
 		}
 	}
 }
+
+// The CUDA image's runtime comes from deployment/sherpa/build.sh. When doctor
+// cannot answer, /status reads that build's build-info file, and must find the
+// 2.0.1 base and the joiner marker in it. The file is rebuilt here from
+// build.sh's own version lines and printf, so a change to that format is
+// caught here.
+func TestStatusReadsUltraRuntimeFromNativeBuildScriptInfo(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "..", "..", "deployment", "sherpa", "build.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version, runtimeVersion, format string
+	for _, line := range strings.Split(string(script), "\n") {
+		if v, ok := strings.CutPrefix(line, "version="); ok {
+			version = v
+		}
+		if v, ok := strings.CutPrefix(line, "runtime_version="); ok {
+			runtimeVersion = v
+		}
+		if rest, ok := strings.CutPrefix(line, "printf 'sherpa=%s"); ok {
+			format = "sherpa=%s" + rest[:strings.Index(rest, "'")]
+		}
+	}
+	if version == "" || runtimeVersion == "" || format == "" {
+		t.Fatal("build.sh no longer has version=, runtime_version= and printf 'sherpa=...' build-info lines")
+	}
+	runtimeVersion = strings.ReplaceAll(runtimeVersion, "${version}", version)
+	values := []string{runtimeVersion, "cuda", "0c2ee3f3", "b6998671"}
+	info := format
+	for _, v := range values {
+		info = strings.Replace(info, "%s", v, 1)
+	}
+	if strings.Contains(info, "%s") {
+		t.Fatalf("build.sh's build-info printf takes more values than this test supplies: %q", format)
+	}
+	info = strings.ReplaceAll(info, `\n`, "\n") + "onnxruntime_identity=pinned-upstream-archive\n"
+
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cancel()
+	rt.workerWG.Wait()
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	rt.cfg.CassiniBin = ""
+	rt.speechRuntimeProbe = nil
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
+	path := filepath.Join(t.TempDir(), "cassini-native-buildinfo.txt")
+	if err := os.WriteFile(path, []byte(info), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envNativeBuildInfo, path)
+	for _, model := range []string{modelParakeetUltraFp32} {
+		rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: model, Quality: sttQualityBalanced, Source: sttSourceUser})
+		rt.speechRuntimeChecked = rt.speechRuntimeChecked.AddDate(-1, 0, 0)
+		rec := httptest.NewRecorder()
+		rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+		var resp statusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.STT.RuntimeSupportsModel == nil || !*resp.STT.RuntimeSupportsModel {
+			t.Errorf("%s: runtime_supports_model = %v, want true from build.sh's build-info (warning %q)", model, resp.STT.RuntimeSupportsModel, resp.STT.Warning)
+		}
+	}
+}

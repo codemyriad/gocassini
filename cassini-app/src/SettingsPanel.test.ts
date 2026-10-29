@@ -26,6 +26,16 @@ describe("SettingsPanel device policy", () => {
     expect(settingsPanelSource).toContain("on {runsOnLine}.");
     expect(settingsPanelSource).toContain("settings.effective.note");
   });
+
+  it("warns that recordings get no transcript only when that is what happens", () => {
+    // While Ultra downloads, v3 transcribes (stand_in) or recordings wait for
+    // the download; the warning is for a model nothing transcribes for.
+    expect(settingsPanelSource).toContain("inUseModelState(inUseModel, inUseDownload)");
+    expect(settingsPanelSource).toContain('class:in-use-warn={inUseState === "missing"}');
+    expect(settingsPanelSource).toContain('{#if inUseModel && inUseState === "missing"}');
+    expect(settingsPanelSource).toContain("the previous model transcribes recordings on {runsOnLine} meanwhile.");
+    expect(settingsPanelSource).toContain("; recordings wait for it.");
+  });
 });
 
 describe("SettingsPanel search spellings", () => {
