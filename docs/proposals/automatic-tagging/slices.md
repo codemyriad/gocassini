@@ -137,7 +137,7 @@ S6 and S7 are independent of each other.
 
 **Tests**
 
-- Migration 7 → 8, including a database that already holds marks and receipts.
+- Migration 7 → 9 and 8 → 9, including a database that already holds marks and receipts.
 - Worker state machine table test; crash recovery of `running` rows; backoff and `blocked` after 5 attempts.
 - Fake `cassini` script that emits deterministic vectors and counts calls.
 - Publish hook: `opus_name` read from the attempt catalog before the site is removed; a promotion failure leaves a `queued` row.
