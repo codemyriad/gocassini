@@ -108,20 +108,26 @@ mechanism only when it helps them choose, configure or trust the change.
 > vocabulary no longer bias decoding: the beam search that hints need dropped
 > whole passages of speech."
 >
-> **To:** **More accurate transcripts.** Cassini now transcribes with
-> Parakeet Ultra, a newer version of the same speech model. It no longer drops
-> stretches of speech, which could happen in long meetings and when people
-> talked over each other.
+> **To:** **Transcripts no longer lose passages of speech.** On a GPU, 0.2.0
+> could leave whole passages out of a transcript. Cassini no longer decodes
+> speech the way that lost them, and it now uses Parakeet Ultra. On a GPU,
+> transcription takes about 40% less time and is about as accurate.
 >
-> And under *Before you upgrade*: the new model downloads on its own after the
-> upgrade, and new recordings wait for it. A GPU now needs 7 GiB of free video
-> memory, up from 5.5 GiB. An 8 GiB card still qualifies if nothing else uses
-> it. Participant names no longer steer transcription, and the vocabulary
-> editor is gone from Settings.
+> And under *Before you upgrade*: the new model downloads on its own, and the
+> previous one keeps transcribing until it's ready. A GPU now needs 7 GiB of
+> free video memory, up from 5.5 GiB. Participant names no longer steer
+> transcription.
+
+The obvious headline would have been "more accurate transcripts". The
+measurements didn't support it: on a GPU, the accuracy difference on our own
+meetings was not significant. What changed for the reader was the missing
+speech and the speed. **Headline what the evidence shows, not what the change
+was meant to do.** Say so when something got slightly worse in exchange.
 
 Give a number when you measured one and it means something to the reader.
 "About 30% smaller audio files" is useful. "WER 8.10 → 7.25 on the MAI silver
-set" belongs in the developer changelog or a linked report.
+set" belongs in the developer changelog or a linked report. Link that report
+from the notes.
 
 ### 4. Tell administrators what to do
 
