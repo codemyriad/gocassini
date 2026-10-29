@@ -1236,11 +1236,22 @@ func mergedFallbackDecoder(paths ModelPaths, base *DecoderConfig) *DecoderConfig
 	return base
 }
 
+// mergedFallbackHints is the hints record of a build whose words came from the
+// merged-audio fallback, which decodes greedily without hints. A vocabulary
+// that was never applied keeps its own reason (hints off by default, or a
+// bundle that cannot take them), which names what would change it; only the
+// decoder it records changes to the one the fallback ran.
 func mergedFallbackHints(paths ModelPaths, original *HintsProvenance, accepted bool) *HintsProvenance {
 	if original == nil || !accepted || !usesParakeetV3ReferencePolicy(paths.ModelID) {
 		return original
 	}
 	result := *original
+	if !original.Applied {
+		if result.DecodingMethod != "" {
+			result.DecodingMethod = decodingGreedySearch
+		}
+		return &result
+	}
 	result.Applied = false
 	result.DecodingMethod = decodingGreedySearch
 	result.Score = 0
