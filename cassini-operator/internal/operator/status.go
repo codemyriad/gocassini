@@ -242,7 +242,36 @@ func (rt *Runtime) doProbeReferenceFrontend(bin, model string) (known bool, isRe
 	if err != nil {
 		return false, false
 	}
-	return true, runtimeSelectsReferenceFrontend(model, string(data))
+	return true, runtimeSelectsReferenceFrontend(model, nativeBuildInfoVersion(string(data)))
+}
+
+// nativeBuildInfoVersion returns a native build-info file's text with the
+// runtime version, as doctor reports it, added on its own line. The CPU images
+// write that version whole on one line (sherpa=1.13.7+cassini-…), but
+// deployment/sherpa/build.sh, which builds the CUDA image's runtime, writes
+// the base version and then each fork marker on its own key=value line
+// (frontend=+cassini-…, diarization=…, ultra=…). Those lines are the
+// version's '.'-separated parts, so they are joined back in that order: a
+// marker matched on its leading '.' (".parakeet-ultra-v1") is otherwise
+// missing from the file although the runtime has it.
+func nativeBuildInfoVersion(data string) string {
+	fields := map[string]string{}
+	for _, line := range strings.Split(data, "\n") {
+		if key, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			fields[key] = strings.TrimSpace(value)
+		}
+	}
+	base, frontend := fields["sherpa"], fields["frontend"]
+	if base == "" || frontend == "" || strings.Contains(base, "+") {
+		return data
+	}
+	version := base + frontend
+	for _, key := range []string{"diarization", "ultra"} {
+		if part := fields[key]; part != "" {
+			version += "." + part
+		}
+	}
+	return data + "\n" + version + "\n"
 }
 
 // referenceFrontendWarning says what a missing reference frontend means for

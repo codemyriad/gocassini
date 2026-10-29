@@ -325,3 +325,68 @@ func TestStatusReportsUltraReferenceFrontendFromBuildInfo(t *testing.T) {
 		}
 	}
 }
+
+// The CUDA image's runtime comes from deployment/sherpa/build.sh, whose
+// build-info file splits the version into key=value lines. When doctor cannot
+// answer, /status reads that file, and must find the Ultra marker in it as it
+// does in the CPU images' single-line form. The file is rebuilt here from
+// build.sh's own printf, so a change to that format is caught here.
+func TestStatusReadsUltraReferenceFrontendFromNativeBuildScriptInfo(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "..", "..", "deployment", "sherpa", "build.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version, format string
+	for _, line := range strings.Split(string(script), "\n") {
+		if v, ok := strings.CutPrefix(line, "version="); ok {
+			version = v
+		}
+		if rest, ok := strings.CutPrefix(line, "printf 'sherpa=%s"); ok {
+			format = "sherpa=%s" + rest[:strings.Index(rest, "'")]
+		}
+	}
+	if version == "" || format == "" {
+		t.Fatal("build.sh no longer has a version= line and a printf 'sherpa=...' build-info line")
+	}
+	values := []string{version, "cuda", "0c2ee3f3", "b6998671"}
+	info := format
+	for _, v := range values {
+		info = strings.Replace(info, "%s", v, 1)
+	}
+	if strings.Contains(info, "%s") {
+		t.Fatalf("build.sh's build-info printf takes more values than this test supplies: %q", format)
+	}
+	info = strings.ReplaceAll(info, `\n`, "\n") + "onnxruntime_identity=pinned-upstream-archive\n"
+
+	if got := nativeBuildInfoVersion(info); !strings.Contains(got, "\n"+cassini7Runtime+"\n") {
+		t.Fatalf("build.sh's build-info does not read back as %q:\n%s", cassini7Runtime, got)
+	}
+
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cancel()
+	rt.workerWG.Wait()
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	rt.cfg.CassiniBin = ""
+	rt.referenceFrontendProbe = nil
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
+	path := filepath.Join(t.TempDir(), "cassini-native-buildinfo.txt")
+	if err := os.WriteFile(path, []byte(info), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envNativeBuildInfo, path)
+	for _, model := range []string{modelParakeetUltraFp32, modelParakeetV3Fp32} {
+		rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: model, Quality: sttQualityBalanced, Source: sttSourceUser})
+		rt.refFrontendChecked = rt.refFrontendChecked.AddDate(-1, 0, 0)
+		rec := httptest.NewRecorder()
+		rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+		var resp statusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.STT.ReferenceFrontend == nil || !*resp.STT.ReferenceFrontend {
+			t.Errorf("%s: reference_frontend = %v, want true from build.sh's build-info (warning %q)", model, resp.STT.ReferenceFrontend, resp.STT.Warning)
+		}
+	}
+}
