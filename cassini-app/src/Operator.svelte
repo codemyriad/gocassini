@@ -1653,7 +1653,7 @@
                       <div class="col-span-2">
                         <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
                         <dd class="text-sm" class:text-warning={runSpeed.factor !== null && runSpeed.factor < 1}>
-                          {describeProcessing(runSpeed, meetingMs)}
+                          {describeProcessing(runSpeed)}
                         </dd>
                       </div>
                     {/if}

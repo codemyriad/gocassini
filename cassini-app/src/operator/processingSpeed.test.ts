@@ -33,7 +33,7 @@ describe("processingSpeed", () => {
     const result = processingSpeed(attempt(1, "initial"), meetingMs);
     expect(result?.ms).toBe(12 * 60_000);
     expect(result?.factor).toBeCloseTo(58 / 12);
-    expect(describeProcessing(result!, meetingMs)).toBe("12m to process a 58m meeting · 4.8× real time");
+    expect(describeProcessing(result!)).toBe("12m · 4.8× real time");
   });
 
   it("has nothing to say until the meeting is published", () => {
@@ -50,7 +50,7 @@ describe("processingSpeed", () => {
   it("gives the time alone when the meeting length is unknown", () => {
     const result = processingSpeed(attempt(1, "initial"), null);
     expect(result?.factor).toBeNull();
-    expect(describeProcessing(result!, null)).toBe("12m to process");
+    expect(describeProcessing(result!)).toBe("12m");
   });
 });
 

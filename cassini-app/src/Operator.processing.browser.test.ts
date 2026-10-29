@@ -81,7 +81,7 @@ it("says how long the meeting took to process, past a summary written later", as
     attempt(1, "initial", { record_started_at: at(0), record_finished_at: at(58), ...times }),
   ]);
   await open("Standup");
-  await expect.element(page.getByText("12m to process a 58m meeting · 4.8× real time", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/01-run.png` });
 
   await userEvent.click(page.getByText("Attempt 1", { exact: true }));
@@ -93,5 +93,5 @@ it("says nothing about processing before the meeting is published", async () => 
   serve("Review", [attempt(1, "initial", { record_started_at: at(0), record_finished_at: at(58), build_started_at: at(60) })]);
   await open("Review");
   await expect.element(page.getByRole("heading", { name: "Attempt history" })).toBeVisible();
-  expect(document.body.textContent).not.toContain("to process");
+  expect(document.body.textContent).not.toContain("real time");
 });
