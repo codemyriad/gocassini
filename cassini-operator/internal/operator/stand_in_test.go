@@ -19,7 +19,9 @@ const (
 )
 
 // standInScript is the fake recorder of these tests: `models list` reads the
-// inventory, `models probe` records the model it checked and fails for one
+// inventory (and then replaces it with inventory-after-list.json when there is
+// one, as a command finishing just after that read would change it), `models
+// probe` records the model it checked and fails for one
 // that has a fail-probe-<id> file, or refuses it for lack of memory (exit 75)
 // for one that has a short-probe-<id> file (and first replaces the inventory
 // with inventory-during-probe-<id>.json when there is one, as a command run
@@ -29,7 +31,9 @@ const standInScript = `#!/bin/sh
 set -eu
 r="$CASSINI_CACHE_ROOT"
 case "$1 $2" in
-"models list") cat "$r/inventory.json" ;;
+"models list")
+  cat "$r/inventory.json"
+  if [ -e "$r/inventory-after-list.json" ]; then mv "$r/inventory-after-list.json" "$r/inventory.json"; fi ;;
 "models probe")
   echo "$3" >> "$r/probes"
   printf '%s\n' '{"version":1,"phase":"checking"}'
@@ -609,6 +613,28 @@ func TestStandInGoneBecauseUltraBecameReadyUsesUltra(t *testing.T) {
 		t.Fatalf("admission: %q %+v %v", device, admitted, err)
 	}
 	if probes := probesRun(t, rt); len(probes) != 1 || probes[0] != v3Int8 {
+		t.Fatalf("checks %v", probes)
+	}
+}
+
+// `models list` reads the current models before the retired ones, without a
+// lock, so a `cassini models import` run outside the operator can finish Ultra
+// and remove v3 between the two: admission then sees Ultra not installed and
+// no v3 to stand in, so no check runs and fails. An ordinary recording still
+// must not go without a transcript: Ultra is ready by then, and the build uses
+// it.
+func TestNoStandInBecauseUltraBecameReadyDuringListUsesUltra(t *testing.T) {
+	rt := standInRuntime(t, true, true, false, false)
+	root := rt.cfg.ModelCacheRoot
+	if err := os.Rename(filepath.Join(root, "inventory.json"), filepath.Join(root, "inventory-after-list.json")); err != nil {
+		t.Fatal(err)
+	}
+	writeStandInInventory(t, rt, deviceCPU, false, false, false, false)
+	device, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.ActiveRevision != ultraInt8Rev || admitted.StandInFor != "" {
+		t.Fatalf("admission: %q %+v %v", device, admitted, err)
+	}
+	if probes := probesRun(t, rt); len(probes) != 0 {
 		t.Fatalf("checks %v", probes)
 	}
 }
