@@ -7,8 +7,10 @@
     formatMultiplier,
     formatSpan,
     meetingLengthMs,
+    processesCapture,
     runProcessing,
     spanMs,
+    stageTimes,
     stepSpeed,
   } from "./operator/processingSpeed";
 
@@ -859,8 +861,8 @@
     }).format(date);
   }
 
-  // stageTimes below reads `${key}_queued_at` / `_started_at` / `_finished_at`,
-  // so a stage appears here only if the operator names its columns to match.
+  // stageTimes reads `${key}_queued_at` / `_started_at` / `_finished_at`, so a
+  // stage appears here only if the operator names its columns to match.
   const STAGES = [
     { key: "record", label: "Record" },
     { key: "build", label: "Build" },
@@ -869,15 +871,6 @@
   ] as const;
 
   type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked";
-
-  function stageTimes(job: Job | JobAttempt, key: string) {
-    const row = job as unknown as Record<string, string | null | undefined>;
-    return {
-      queued: row[`${key}_queued_at`] ?? null,
-      started: row[`${key}_started_at`] ?? null,
-      finished: row[`${key}_finished_at`] ?? null,
-    };
-  }
 
   function stageProgress(job: Job | JobAttempt, recordingDeleted = false): Array<{ label: string; status: StageStatus }> {
     const buildBlocked = isBuildBlocked(job);
@@ -1779,7 +1772,9 @@
                             </div>
                             <div class="mt-1 flex gap-1 text-xs text-base-content/60">
                               {#each stageProgress(attempt) as stage, index}
-                                {@const step = STAGES[index].key === "record" ? null : stepSpeed(attempt, STAGES[index].key, meetingMs)}
+                                {@const step = STAGES[index].key === "record"
+                                  ? null
+                                  : stepSpeed(attempt, STAGES[index].key, stage.status === "done" && processesCapture(attempt) ? meetingMs : null)}
                                 <span class="min-w-0 flex-1">
                                   <span
                                     class="block"
