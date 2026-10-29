@@ -217,7 +217,7 @@ shows these numbers, for the reason in [What Settings shows](#what-settings-show
 Settings shows the size of `topics.sqlite3` in the status.
 
 **Upgrading to this version is one-way.** It moves the annotations database to
-schema 8, which an older Cassini refuses to open, and that takes tagging down.
+schema 9, which an older Cassini refuses to open, and that takes tagging down.
 Back up `annotations.sqlite3` before upgrading.
 
 ## What Settings shows
