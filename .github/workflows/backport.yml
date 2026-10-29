@@ -1,0 +1,46 @@
+# Backport — cherry-pick a merged fix onto a release branch.
+#
+# docs/release.md#branches: fixes merge to main first and are cherry-picked
+# (`-x`) onto release/X.Y. Label the PR `backport release/X.Y` (before or after
+# merging) and this opens the cherry-pick PR against that branch, carrying the
+# fix's changelog fragment with it. A conflict leaves a comment on the original
+# PR with the commands to do it by hand.
+#
+# A PR opened with the default GITHUB_TOKEN does not trigger other workflows, so
+# its required checks never start. Set the BACKPORT_TOKEN secret (a fine-grained
+# token or GitHub App token with contents + pull-requests write) to have CI run
+# on backport PRs; without it, close and reopen the backport PR to start CI.
+
+name: Backport
+
+on:
+  pull_request_target:
+    types: [closed, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  backport:
+    name: Open backport PRs
+    runs-on: ubuntu-latest
+    # Merged PRs only, and on `labeled` only for a backport label added after
+    # the merge. pull_request_target runs the base branch's workflow, and the
+    # action only cherry-picks the merged commits; no PR code is executed.
+    if: >-
+      github.event.pull_request.merged == true
+      && (github.event.action == 'closed'
+          || startsWith(github.event.label.name, 'backport '))
+    steps:
+      - uses: actions/checkout@v4
+      - uses: korthout/backport-action@v3
+        with:
+          github_token: ${{ secrets.BACKPORT_TOKEN || secrets.GITHUB_TOKEN }}
+          # `backport release/0.2` -> target branch release/0.2.
+          label_pattern: '^backport (release/[0-9]+\.[0-9]+)$'
+          # Our PRs merge with a merge commit; cherry-pick the PR's own commits.
+          merge_commits: skip
+          pull_title: '[${target_branch}] ${pull_title}'
+          pull_description: |-
+            Backport of #${pull_number} to `${target_branch}` (docs/release.md#branches).

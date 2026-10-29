@@ -16,6 +16,7 @@
 #   ./scripts/release-version.sh bump patch|minor|major
 #   ./scripts/release-version.sh promote beta|rc.1|rc.2|stable
 #   ./scripts/release-version.sh set X.Y.Z[-(alpha|beta|rc).N]
+#   ./scripts/release-version.sh branch X.Y.Z[-pre]   # the branch it is cut on
 
 set -euo pipefail
 
@@ -30,6 +31,7 @@ Usage:
   ./scripts/release-version.sh bump patch|minor|major
   ./scripts/release-version.sh promote beta|rc.1|rc.2|stable
   ./scripts/release-version.sh set X.Y.Z[-(alpha|beta|rc).N]
+  ./scripts/release-version.sh branch X.Y.Z[-(alpha|beta|rc).N]
 EOF
 }
 
@@ -77,6 +79,9 @@ main() {
       fi
       rv_write_version "$info_xml" "$explicit"
       report "$current" "$explicit"
+      ;;
+    branch)
+      rv_release_branch "${2:?usage: $0 branch X.Y.Z[-(alpha|beta|rc).N]}"
       ;;
     -h|--help|help|"")
       usage

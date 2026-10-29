@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - 'release/**'
     # Pure docs/planning changes touch no code, tests, or image — skip the
     # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
     # outside this list the workflow still runs, so a real code change is

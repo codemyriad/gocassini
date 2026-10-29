@@ -102,6 +102,20 @@ jobs:
       - name: Install xmllint
         run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends libxml2-utils
 
+      - name: Tag is on the branch its version is cut on
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          # docs/release.md#branches: X.Y.0-alpha.N on main, the rest of an X.Y
+          # line on release/X.Y. prepare-release.sh enforces this locally; this
+          # catches a tag made by hand.
+          branch="$(./scripts/release-version.sh branch "$VERSION")"
+          if ! git merge-base --is-ancestor HEAD "origin/${branch}" 2>/dev/null; then
+            echo "::error::v${VERSION} is cut on ${branch}, but its commit is not on origin/${branch} (see docs/release.md#branches)"
+            exit 1
+          fi
+
       - name: Manifest, tag and changelog agree with the version
         env:
           VERSION: ${{ steps.v.outputs.version }}
