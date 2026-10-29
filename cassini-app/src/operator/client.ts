@@ -1,4 +1,5 @@
 import type { RecordingReadiness, RecordingSetupUpdate } from "./readiness";
+import type { LogStage } from "./attemptModels";
 import type { RetentionSettings } from "./retention";
 import type {
   InsightWorkflow,
@@ -155,6 +156,28 @@ export class OperatorClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ replace }),
     });
+  }
+
+  // Where one step's log for an attempt is served; ?download=1 is the whole
+  // file as an attachment (D-816).
+  attemptLogUrl(jobId: string, attempt: number, stage: LogStage, download = false): string {
+    return `${this.#baseUrl}/jobs/${encodeURIComponent(jobId)}/attempts/${attempt}/logs/${stage}${download ? "?download=1" : ""}`;
+  }
+
+  // The end of one step's log, and whether anything before it was left out.
+  async getAttemptLog(jobId: string, attempt: number, stage: LogStage): Promise<{ text: string; truncated: boolean }> {
+    const response = await fetch(this.attemptLogUrl(jobId, attempt, stage), { headers: { Accept: "text/plain" } });
+    if (!response.ok) {
+      let message = `${response.status} ${response.statusText}`;
+      try {
+        const payload = (await response.json()) as { error?: string };
+        if (typeof payload.error === "string" && payload.error.trim() !== "") message = payload.error;
+      } catch {
+        // keep the status text
+      }
+      throw new OperatorHttpError(response.status, message);
+    }
+    return { text: await response.text(), truncated: response.headers.get("X-Cassini-Log-Truncated") === "1" };
   }
 
   async rerunJob(jobId: string): Promise<RerunJobResponse> {

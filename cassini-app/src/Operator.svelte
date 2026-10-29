@@ -280,7 +280,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { Activity, ArrowLeft, CassetteTape, ChevronRight, FileText, Inbox, Info, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
+  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Download, FileText, Inbox, Info, PanelLeft, RefreshCw, Square, TriangleAlert, X } from "@lucide/svelte";
   import { fade } from "svelte/transition";
   import { guardLeave } from "./operator/unsaved";
   import { loadConfig } from "./operator/config";
@@ -293,6 +293,7 @@
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
   import { outcomeAttempt, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
+  import { attemptLogs, speechModelLabel, summaryModelLabel, type AttemptLog } from "./operator/attemptModels";
   import {
     summaryActionLabel,
     summaryConfirmTitle,
@@ -946,22 +947,52 @@
     return `${Math.round(hours / 24)}d ago`;
   }
 
-  // Where an attempt's artifacts and logs sit inside the operator's container,
-  // for whoever debugs it there.
+  // The one log open in the run detail, read from the operator (D-816). Shown
+  // inline under its attempt: the app runs in a shadow root on Nextcloud's
+  // page, where a top-layer <dialog> does not reliably keep its styling.
+  interface OpenLog {
+    jobId: string;
+    attempt: number;
+    stage: AttemptLog["stage"];
+    label: string;
+    text: string;
+    truncated: boolean;
+    loading: boolean;
+    error: string;
+  }
+  let openLog: OpenLog | null = null;
+
+  async function toggleLog(jobId: string, attempt: number, log: AttemptLog) {
+    if (openLog && openLog.jobId === jobId && openLog.attempt === attempt && openLog.stage === log.stage) {
+      openLog = null;
+      return;
+    }
+    if (!operatorClient) return;
+    const opening: OpenLog = { jobId, attempt, stage: log.stage, label: log.label, text: "", truncated: false, loading: true, error: "" };
+    openLog = opening;
+    try {
+      const { text, truncated } = await operatorClient.getAttemptLog(jobId, attempt, log.stage);
+      if (openLog === opening) openLog = { ...opening, text, truncated, loading: false };
+    } catch (error) {
+      console.error("attempt log read failed", jobId, attempt, log.stage, error);
+      if (openLog === opening) openLog = { ...opening, loading: false, error: asMessage(error) };
+    }
+  }
+
+  $: if (openLog && openLog.jobId !== selectedJobId) openLog = null;
+
+  // Where an attempt's artifacts sit inside the operator's container, for
+  // whoever debugs it there. Its logs are read from the Logs row instead.
   function attemptPaths(attempt: JobAttempt): { label: string; path: string; missing: boolean }[] {
-    const entries: [string, string | null, string?][] = [
-      ["Run artifact", attempt.artifact_run_path],
-      ["Meeting artifact", attempt.artifact_meeting_path],
-      ["Sealed meeting", attempt.artifact_opus_path],
-      ["Site artifact", attempt.artifact_site_path],
-      ["Record log", attempt.record_log_path, "record_log"],
-      ["Build log", attempt.build_log_path, "build_log"],
-      ["Seal log", attempt.seal_log_path, "seal_log"],
-      ["Publish log", attempt.publish_log_path, "publish_log"],
+    const entries: [string, string | null, string][] = [
+      ["Run artifact", attempt.artifact_run_path, "run"],
+      ["Meeting artifact", attempt.artifact_meeting_path, "meeting"],
+      ["Sealed meeting", attempt.artifact_opus_path, "opus"],
+      ["Site artifact", attempt.artifact_site_path, "site"],
     ];
     return entries
-      .filter((entry): entry is [string, string, string?] => !!entry[1])
-      .map(([label, path, key]) => ({ label, path, missing: key !== undefined && attempt.files_present?.[key] === false }));
+      .filter((entry): entry is [string, string, string] => !!entry[1])
+      .map(([label, path, key]) => ({ label, path, missing: attempt.files_present?.[key] === false }));
   }
 
   function attemptStageLabel(attempt: JobAttempt): string {
@@ -1630,6 +1661,18 @@
                         </dd>
                       </div>
                     {/if}
+                    {#if outcomeSource && speechModelLabel(outcomeSource)}
+                      <div class="min-w-0">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Speech model</dt>
+                        <dd class="text-sm break-words">{speechModelLabel(outcomeSource)}</dd>
+                      </div>
+                    {/if}
+                    {#if outcomeSource && summaryModelLabel(outcomeSource)}
+                      <div class="min-w-0">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Summary model</dt>
+                        <dd class="text-sm break-words">{summaryModelLabel(outcomeSource)}</dd>
+                      </div>
+                    {/if}
                     <div>
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Capture</dt>
                       <dd class="text-sm">{captureModeLabel(selectedJob.job.request_json)}</dd>
@@ -1825,6 +1868,72 @@
                               {/each}
                             </div>
                           </div>
+
+                          {#if speechModelLabel(attempt) || summaryModelLabel(attempt)}
+                            <dl class="grid gap-x-6 gap-y-3 grid-cols-2 sm:grid-cols-3">
+                              {#if speechModelLabel(attempt)}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Speech model</dt>
+                                  <dd class="text-sm break-words" title={attempt.transcription_revision ? `Revision ${attempt.transcription_revision}` : undefined}>{speechModelLabel(attempt)}</dd>
+                                </div>
+                              {/if}
+                              {#if summaryModelLabel(attempt)}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Summary model</dt>
+                                  <dd class="text-sm break-words">{summaryModelLabel(attempt)}</dd>
+                                </div>
+                              {/if}
+                            </dl>
+                          {/if}
+
+                          {#if attemptLogs(attempt).length > 0}
+                            <div class="grid gap-2">
+                              <div class="flex flex-wrap items-center gap-1.5">
+                                <span class="mr-1 text-xs uppercase tracking-wide text-base-content/45">Logs</span>
+                                {#each attemptLogs(attempt) as log (log.stage)}
+                                  {@const isOpen = openLog?.attempt === attempt.attempt_number && openLog?.stage === log.stage}
+                                  <button
+                                    class="btn btn-xs {isOpen ? 'btn-active' : 'btn-ghost border-base-content/15'}"
+                                    type="button"
+                                    disabled={!log.present}
+                                    title={log.present ? `Show the ${log.label.toLowerCase()} log` : "No longer on disk: retention or a cleanup removed it"}
+                                    aria-expanded={isOpen}
+                                    on:click={() => selectedJob && toggleLog(selectedJob.job.id, attempt.attempt_number, log)}
+                                  >
+                                    {log.label}
+                                  </button>
+                                {/each}
+                              </div>
+                              {#if openLog && openLog.attempt === attempt.attempt_number}
+                                <div class="grid gap-1 rounded-box border border-base-300 bg-base-100" role="region" aria-label="{openLog.label} log">
+                                  <div class="flex items-center gap-2 border-b border-base-300 px-3 py-1.5 text-xs">
+                                    <span class="font-medium">{openLog.label} log</span>
+                                    {#if openLog.truncated}
+                                      <span class="text-base-content/55">· the end of it</span>
+                                    {/if}
+                                    <span class="flex-1"></span>
+                                    {#if operatorClient}
+                                      <a class="btn btn-ghost btn-xs" href={operatorClient.attemptLogUrl(openLog.jobId, openLog.attempt, openLog.stage, true)} download>
+                                        <Download size={12} aria-hidden="true" />Download
+                                      </a>
+                                    {/if}
+                                    <button class="btn btn-ghost btn-xs btn-square" type="button" aria-label="Close the log" on:click={() => (openLog = null)}>
+                                      <X size={12} aria-hidden="true" />
+                                    </button>
+                                  </div>
+                                  {#if openLog.loading}
+                                    <p class="px-3 py-2 text-xs text-base-content/60">Loading…</p>
+                                  {:else if openLog.error}
+                                    <p class="px-3 py-2 text-xs text-error" role="alert">{openLog.error}</p>
+                                  {:else if openLog.text === ""}
+                                    <p class="px-3 py-2 text-xs text-base-content/60">This step wrote nothing to its log.</p>
+                                  {:else}
+                                    <pre class="attempt-log max-h-80 overflow-auto px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all">{openLog.text}</pre>
+                                  {/if}
+                                </div>
+                              {/if}
+                            </div>
+                          {/if}
 
                           <!-- Timestamps and on-disk paths are for debugging inside the
                                container; folded so they do not bury the outcome (D-816). -->

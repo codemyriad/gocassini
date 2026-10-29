@@ -34,8 +34,11 @@ const attempt = {
   record_log_path: "/var/lib/cassini-operator/jobs/runs/Standup--attempt-001.logs/record.log",
   build_log_path: "/var/lib/cassini-operator/jobs/runs/Standup--attempt-001.logs/build.log",
   files_present: { record_log: false, build_log: true },
+  transcription_status: "completed", transcription_model: "parakeet-tdt-0.6b-v3", transcription_revision: "4a1c2e9", transcription_device: "cuda",
+  summary_status: "completed", summary_model: "gpt-4.1-mini",
   ...paths, ...stamps,
 };
+const buildLog = "loading model parakeet-tdt-0.6b-v3\ntranscribing 2 tracks\nAlex: 812 words\nChris: 640 words\ndone\n";
 
 // For review only: git-ignored, like the other UI suites' screenshots.
 const SHOTS = "../node_modules/.cache/vitest-screenshots/operator-detail";
@@ -54,6 +57,9 @@ beforeEach(() => {
     if (path === "/operator/jobs") return Response.json([job]);
     if (path === "/operator/jobs/01KSTANDUPRUN") {
       return Response.json({ job, attempts: [attempt], availability: { source: "present", output: "present", published_attempt: 1 } });
+    }
+    if (path === "/operator/jobs/01KSTANDUPRUN/attempts/1/logs/build") {
+      return new Response(buildLog, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
     return Response.json({});
   }));
@@ -82,6 +88,8 @@ it("keeps the outcome in view and folds the bookkeeping away", async () => {
   await expect.element(page.getByText("12m to process a 58m meeting · 4.8× real time", { exact: true })).toBeVisible();
   await expect.element(page.getByText("Audio only", { exact: true })).toBeVisible();
   await expect.element(page.getByText("Room empty", { exact: true }).first()).toBeVisible();
+  await expect.element(page.getByText("parakeet-tdt-0.6b-v3 on GPU", { exact: true }).first()).toBeVisible();
+  await expect.element(page.getByText("gpt-4.1-mini", { exact: true }).first()).toBeVisible();
   await expect.element(page.getByRole("link", { name: "Open in Talk" })).toHaveAttribute("href", "https://cloud.example.com/call/abc123");
 
   const text = document.querySelector(".op-detail-pane")!.textContent ?? "";
@@ -95,12 +103,21 @@ it("keeps the outcome in view and folds the bookkeeping away", async () => {
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/01-folded.png` });
 
   await userEvent.click(page.getByText("Attempt 1", { exact: true }));
-  await expect.element(page.getByText(attempt.build_log_path)).not.toBeVisible();
+  // Logs are read in place; one removed by retention cannot be opened.
+  await expect.element(page.getByRole("button", { name: "Record", exact: true })).toBeDisabled();
+  await userEvent.click(page.getByRole("button", { name: "Build", exact: true }));
+  await expect.element(page.getByRole("region", { name: "Build log" })).toHaveTextContent("Chris: 640 words");
+  await expect.element(page.getByRole("link", { name: "Download" })).toHaveAttribute("href", "/operator/jobs/01KSTANDUPRUN/attempts/1/logs/build?download=1");
+  await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-log.png` });
+  await userEvent.click(page.getByRole("button", { name: "Close the log" }));
+  await expect.element(page.getByRole("region", { name: "Build log" })).not.toBeInTheDocument();
+
   for (const disclosure of page.getByText("Technical details", { exact: true }).elements()) {
     await userEvent.click(disclosure);
   }
   await expect.element(page.getByText(job.id, { exact: true })).toBeVisible();
-  await expect.element(page.getByText(attempt.build_log_path, { exact: true })).toBeVisible();
-  await expect.element(page.getByText(`${attempt.record_log_path} (no longer on disk)`, { exact: true })).toBeVisible();
-  await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-unfolded.png` });
+  await expect.element(page.getByText(paths.artifact_opus_path, { exact: true })).toBeVisible();
+  // The logs' paths are not repeated now that they can be read.
+  expect(document.body.textContent).not.toContain(attempt.build_log_path);
+  await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/03-unfolded.png` });
 });

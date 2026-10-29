@@ -2068,6 +2068,10 @@ func nullableIntPtr(v sql.NullInt64) *int {
 }
 
 func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
+	if id, attempt, stage, ok := parseAttemptLogPath(r.URL.Path); ok {
+		rt.handleAttemptLog(w, r, id, attempt, stage)
+		return
+	}
 	id, action, ok := parseJobPath(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
@@ -2140,16 +2144,16 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 
 // fillPublishedStepOutcomes reads the outcomes of a published attempt built
 // before they were recorded from the bundle it published, so a meeting from
-// before D-854 still says it has no transcript or no summary. Nothing is
-// stored: the bundle stays the source, and a read that fails leaves the
-// attempt as it was.
+// before D-854 still says it has no transcript or no summary, and one from
+// before D-816 still names the models that made it. Nothing is stored: the
+// bundle stays the source, and a read that fails leaves the attempt as it was.
 func (rt *Runtime) fillPublishedStepOutcomes(jobID string, published int, attempts []JobAttempt) {
 	if published <= 0 {
 		return
 	}
 	for i := range attempts {
 		a := &attempts[i]
-		if a.AttemptNumber != published || a.TranscriptionStatus != "" || a.SummaryStatus != "" {
+		if a.AttemptNumber != published || !missingStepOutcomes(*a) {
 			continue
 		}
 		outcomes, err := readBundleStepOutcomes(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
@@ -2159,10 +2163,29 @@ func (rt *Runtime) fillPublishedStepOutcomes(jobID string, published int, attemp
 			}
 			return
 		}
-		a.TranscriptionStatus, a.TranscriptionReason = outcomes.TranscriptionStatus, outcomes.TranscriptionReason
-		a.SummaryStatus, a.SummaryReason = outcomes.SummaryStatus, outcomes.SummaryReason
+		if a.TranscriptionStatus == "" && a.SummaryStatus == "" {
+			a.TranscriptionStatus, a.TranscriptionReason = outcomes.TranscriptionStatus, outcomes.TranscriptionReason
+			a.SummaryStatus, a.SummaryReason = outcomes.SummaryStatus, outcomes.SummaryReason
+		}
+		if a.TranscriptionModel == "" {
+			a.TranscriptionModel, a.TranscriptionRevision = outcomes.TranscriptionModel, outcomes.TranscriptionRevision
+			a.TranscriptionDevice = outcomes.TranscriptionDevice
+		}
+		if a.SummaryModel == "" {
+			a.SummaryModel = outcomes.SummaryModel
+		}
 		return
 	}
+}
+
+// missingStepOutcomes says an attempt was built before its outcomes, or the
+// models of the steps that ran, were recorded on it.
+func missingStepOutcomes(a JobAttempt) bool {
+	if a.TranscriptionStatus == "" && a.SummaryStatus == "" {
+		return true
+	}
+	return (a.TranscriptionStatus == "completed" && a.TranscriptionModel == "") ||
+		(a.SummaryStatus == "completed" && a.SummaryModel == "")
 }
 
 // recordingFileID looks up the delivered recording of job id by the name the
