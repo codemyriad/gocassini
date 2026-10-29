@@ -150,11 +150,24 @@ assembled, and under whose permissions.
 ## Your own templates
 
 An administrator can write templates of their own in **Operator › Insight
-templates**. **Start from this** on a built-in template copies its instruction
-into a new custom template; give it an id and a name, change the instruction and
-the shape of the document it asks for (for example, to write in Spanish), and
-save. **Edit** and **Delete** work on custom templates only; the built-in ones
-stay as shipped.
+templates**. **Your templates** comes first: **New template** starts an empty
+one, and **Duplicate** on any template, built-in or your own, starts a copy of
+it there (for example, to write the summary in Spanish). Each template has:
+
+- **Name**: what people pick it by.
+- **Prompt**: the instruction the model receives, together with the transcripts.
+- **Asks the person for a question**: tick it for a template that shows a
+  question box, and put `{{QUESTION}}` in the prompt where the question goes.
+- **What it asks**: one sentence shown to the person choosing it (only when the
+  box is not ticked).
+- **What comes back**: the shape of the document it writes.
+
+The file name is made from the name when the template is first saved and stays
+the same after that; the editor shows it as **File**. It is what
+`cassini insight run --workflow <id>` and each insight's record call the
+template. **Edit** and **Delete** work on your own templates only. The
+**Built in** list, folded away once you have templates of your own, stays as
+shipped.
 
 A save is checked before it is kept: a template that would not run is refused
 with the reason, and the file is left as it was. Every save is a new version, so
