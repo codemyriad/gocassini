@@ -323,6 +323,9 @@ export interface SpeechModel {
   kind?: "speech" | "diarization";
   // Diarization only: whether this server's runtime can run it at all.
   runtime_supported?: boolean;
+  // Set while this model is not ready: the retired model it replaced whose
+  // files are still installed, which recordings are transcribed with meanwhile.
+  stand_in?: string;
 }
 export interface SpeechModelJob {
   id: string; model: string; revision: string; device: string; state: string; error?: string; updated_at: string;

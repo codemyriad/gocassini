@@ -4,7 +4,9 @@ import "strings"
 
 // searchAliasGroups maps names to common ASR spellings. Expansion happens at
 // query time so aliases can change without rebuilding the transcript index.
-// Decoder hints improve new recordings; these aliases also cover older ones.
+// Decoder hints are off by default (greedy decoding preserves more speech), so
+// these aliases are how search finds the usual misspellings, in new
+// recordings as well as older ones.
 var searchAliasGroups = [][]string{
 	{"cassini", "casini", "casino", "cassina", "cassino", "cassine", "castini"},
 	{"gocassini", "go cassini", "gokasini"},

@@ -741,3 +741,77 @@ func TestBuildMeetingArtifactPublishesTheWordTimingClaimADeclaringBackendMakes(t
 		t.Errorf("endsBoundedByAudio = %v, want true", timings["endsBoundedByAudio"])
 	}
 }
+
+// An install upgraded with a v3 pin in its environment transcribes with the
+// Ultra model that replaced it and says so; one pinned to an id no catalogue
+// knows keeps the audio, reports the model unavailable, and never falls back
+// to another model.
+func TestBuildMeetingArtifactWithRetiredOrUnknownModelPin(t *testing.T) {
+	requireFFMediaTools(t)
+	t.Setenv("CASSINI_ATTRIBUTION_DISABLED", "1")
+	registerFixedBackend(t, "fake-retired-pin", fixedTimedWords(12))
+	dir := t.TempDir()
+	mkv := buildTwoTrackMeetingFromSmoke(t, dir)
+
+	build := func(t *testing.T, model string) (artifactManifest, string, []ModelID) {
+		t.Helper()
+		t.Setenv("CASSINI_STT_MODEL", model)
+		t.Setenv("CASSINI_STT_REVISION", "")
+		var requested []ModelID
+		prevModel, prevVAD := ensureModelFn, ensureVADFn
+		ensureModelFn = func(cacheDir string, id ModelID, revision string, progress io.Writer) (ModelPaths, error) {
+			requested = append(requested, id)
+			if _, known := knownModels[id]; !known {
+				return InstalledModel(cacheDir, id, revision, progress)
+			}
+			return ModelPaths{ModelType: "stub", SampleRate: 16000}, nil
+		}
+		ensureVADFn = func(string, ModelID, string, io.Writer) (string, error) { return "", nil }
+		t.Cleanup(func() { ensureModelFn, ensureVADFn = prevModel, prevVAD })
+
+		cfg := DefaultBuildConfig()
+		cfg.TranscriptionMode, cfg.Device, cfg.Backend, cfg.CacheDir, cfg.NumThreads, cfg.SkipAttribution = "on", "cpu", "fake-retired-pin", t.TempDir(), 1, true
+		out := filepath.Join(t.TempDir(), "out")
+		if err := os.MkdirAll(out, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var stdout bytes.Buffer
+		if err := BuildMeetingArtifact(context.Background(), mkv, out, cfg, &stdout); err != nil {
+			t.Fatalf("BuildMeetingArtifact: %v\n%s", err, stdout.String())
+		}
+		raw, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest artifactManifest
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		return manifest, stdout.String(), requested
+	}
+
+	t.Run("retired v3 int8", func(t *testing.T) {
+		manifest, log, requested := build(t, "parakeet-tdt-0.6b-v3-int8")
+		if len(requested) != 1 || requested[0] != ModelParakeetUltraInt8 {
+			t.Fatalf("loaded %v", requested)
+		}
+		if !strings.Contains(log, "parakeet-tdt-0.6b-v3-int8 is retired; using parakeet-ultra-0.6b-int8") {
+			t.Fatalf("log does not explain the move:\n%s", log)
+		}
+		if p := manifest.Processing; p == nil || p.Transcription.Status != "completed" || p.Transcription.Model != string(ModelParakeetUltraInt8) {
+			t.Fatalf("processing %+v", manifest.Processing)
+		}
+	})
+	t.Run("unknown id", func(t *testing.T) {
+		manifest, log, requested := build(t, "no-such-model")
+		if len(requested) != 1 || requested[0] != "no-such-model" {
+			t.Fatalf("loaded %v", requested)
+		}
+		if p := manifest.Processing; p == nil || p.Transcription.Status != "skipped" || p.Transcription.Reason != "model_unavailable" {
+			t.Fatalf("processing %+v", manifest.Processing)
+		}
+		if !strings.Contains(log, "no-such-model") {
+			t.Fatalf("log does not name the model:\n%s", log)
+		}
+	})
+}

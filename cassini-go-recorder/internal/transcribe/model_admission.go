@@ -52,11 +52,10 @@ func probeMemoryFloor(model ModelID, device string) int {
 	if device == "cuda" {
 		return 6144
 	}
+	if mb := knownModels[model].ProbeMemoryMB; mb > 0 {
+		return mb
+	}
 	switch model {
-	case ModelParakeet110M:
-		return 1536
-	case ModelParakeet06BV3Int8:
-		return 2816
 	case "nemotron-3-diarization-int8":
 		return 1024
 	case "nemotron-3-diarization":

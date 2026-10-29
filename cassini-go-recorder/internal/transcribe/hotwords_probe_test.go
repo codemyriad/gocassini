@@ -11,6 +11,7 @@ import (
 )
 
 // TestProbeHotwordsOnRealAudio is a manual measurement harness, not a CI test.
+// It turns biasing back on (CASSINI_STT_HINTS_DISABLED=0) for its biased run.
 // It decodes one f32le PCM file with and without a vocabulary and prints both
 // transcripts, so the effect of biasing can be measured against a real
 // recording. Skipped unless CASSINI_PROBE_PCM is set.
@@ -19,6 +20,8 @@ func TestProbeHotwordsOnRealAudio(t *testing.T) {
 	if pcm == "" {
 		t.Skip("set CASSINI_PROBE_PCM to run the manual hotword probe")
 	}
+	// The probe measures biasing, which is off by default.
+	enableHints(t)
 	raw, err := os.ReadFile(pcm)
 	if err != nil {
 		t.Fatal(err)

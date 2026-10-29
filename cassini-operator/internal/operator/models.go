@@ -33,6 +33,18 @@ type modelInfo struct {
 	Kind string `json:"kind"`
 	// RuntimeSupported is set for diarizers: whether the runtime can run one.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
+	// Replaces lists retired model ids this model supersedes (Parakeet Ultra
+	// replaces Parakeet v3). Settings pinned to one of them move to the model
+	// their tier now uses; see migrateRetiredSpeechModel.
+	Replaces []string `json:"replaces,omitempty"`
+	// ReplacedBy marks a retired model whose files are still installed: the
+	// model that replaced it, which a build may let it stand in for until that
+	// one is ready (see admitStandIn). Such a row is never selectable.
+	ReplacedBy string `json:"replaced_by,omitempty"`
+	// StandIn is set only in Settings' listing, on a model that is not ready:
+	// the installed retired model builds transcribe with meanwhile, unless
+	// its own runtime check fails.
+	StandIn string `json:"stand_in,omitempty"`
 }
 type modelProgress struct {
 	Version   int    `json:"version"`
@@ -132,8 +144,15 @@ func (rt *Runtime) modelInventory(ctx context.Context, device string) ([]modelIn
 	}
 	return models, nil
 }
+
+// findModel returns a model that can be selected, installed or checked for
+// a setting. A retired model is never one of them: only admitStandIn looks at
+// those rows.
 func findModel(models []modelInfo, id, revision string) (modelInfo, error) {
 	for _, m := range models {
+		if m.ReplacedBy != "" {
+			continue
+		}
 		if m.ID == id && (revision == "" || m.Revision == revision) {
 			return m, nil
 		}
@@ -195,10 +214,24 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 400, "device must be cpu or cuda")
 			return
 		}
-		models, err := rt.cachedModelInventory(r.Context(), device)
+		inventory, err := rt.cachedModelInventory(r.Context(), device)
 		if err != nil {
 			writeJSONError(w, 503, err.Error())
 			return
+		}
+		// Settings offers what can be installed and selected; a retired model
+		// only ever stands in, named on the model it stands in for.
+		models := []modelInfo{}
+		for _, m := range inventory {
+			if m.ReplacedBy != "" {
+				continue
+			}
+			if !m.Ready {
+				if candidates := rt.standInCandidates(inventory, m, device, ""); len(candidates) > 0 {
+					m.StandIn = candidates[0].ID
+				}
+			}
+			models = append(models, m)
 		}
 		jobs, err := rt.modelJobs(r.Context())
 		if err != nil {
@@ -236,8 +269,8 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 400, "Speaker separation runs on the CPU; install it with device cpu")
 			return
 		}
-		if in.Device == "cuda" && in.Model != "parakeet-tdt-0.6b-v3" {
-			writeJSONError(w, 400, "CUDA requires the fp32 model")
+		if in.Device == "cuda" && !modelSupportsCUDA(in.Model) {
+			writeJSONError(w, 400, "CUDA requires an fp32 model")
 			return
 		}
 		if rt.cfg.DisallowModelDownload && !m.Installed {
@@ -339,26 +372,39 @@ func (rt *Runtime) startModelWorker() {
 			rt.logger.Printf("model job recovery: %v", err)
 			return
 		}
-		// App/native-runtime changes invalidate readiness, not the model bytes.
-		settings := rt.currentSettings()
-		if settings.TranscriptionEnabled && settings.ActiveModel != "" {
-			device, e := resolveDeviceForSettings(settings)
-			if e == nil {
-				if models, e := rt.modelInventory(rt.ctx, device); e == nil {
-					if m, e := findModel(models, settings.ActiveModel, settings.ActiveRevision); e == nil && m.Installed && !m.Ready {
-						j, e := rt.enqueueModel(rt.ctx, m, device)
-						if e == nil && j.State == "ready" {
-							_, _ = rt.store.db.ExecContext(rt.ctx, `UPDATE model_install_jobs SET state='queued' WHERE id=? AND state='ready'`, j.ID)
-						}
-					}
-				}
+		// An upgrade can retire the pinned model: move the pin and queue the
+		// replacement. Then make sure the active model is installed and checked
+		// on this runtime, or on its way: app/native-runtime changes invalidate
+		// readiness, not the model bytes, and an install interrupted before its
+		// job was saved has to be queued again. Either step retries until it
+		// succeeds, so a slow first start or a failed enqueue cannot leave
+		// transcription waiting on an install nobody queued.
+		checkSpeechModel := func() error {
+			if _, err := rt.migrateRetiredSpeechModel(rt.ctx); err != nil {
+				return fmt.Errorf("retired speech model check: %w", err)
 			}
+			if err := rt.recoverActiveSpeechModel(rt.ctx); err != nil {
+				return fmt.Errorf("active speech model check: %w", err)
+			}
+			return nil
 		}
+		checkErr := checkSpeechModel()
+		if checkErr != nil {
+			rt.logger.Printf("stt_settings: %v", checkErr)
+		}
+		lastCheck := time.Now()
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
 			if rt.ctx.Err() != nil {
 				return
+			}
+			if checkErr != nil && time.Since(lastCheck) > speechModelCheckRetry {
+				checkErr = checkSpeechModel()
+				lastCheck = time.Now()
+				if checkErr != nil {
+					rt.logger.Printf("stt_settings: %v", checkErr)
+				}
 			}
 			jobs, err := rt.modelJobs(rt.ctx)
 			if err == nil {
@@ -399,7 +445,9 @@ func (rt *Runtime) runModelJob(job modelJob) {
 		// Network transfer never holds the inference gate. The expensive probe
 		// shares the same admission gate and memory/VRAM policy as meeting builds.
 		// A build holds the gate for its whole run, so wait for it in a way
-		// Cancel can interrupt.
+		// Cancel can interrupt. The probe removes the files of the model this
+		// one replaces, so holding the gate is also what keeps it from
+		// removing them under a build standing in with them.
 		for !rt.buildExecutionMu.TryLock() {
 			select {
 			case <-ctx.Done():

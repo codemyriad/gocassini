@@ -27,8 +27,8 @@ for tool in cmake curl tar sha256sum; do
   command -v "$tool" >/dev/null || { echo "Missing build prerequisite: $tool" >&2; exit 1; }
 done
 version=1.13.7
-source_commit=7e87f9b23838daceb88d96422777851c41c80f99
-source_sha=cf484c2e3aa80c961f1184f6882554feaae365b289862c56ff5cf68dca40b708
+source_commit=0c2ee3f3f5f16bb06d234a0f98632810296ba0eb
+source_sha=b6998671b8d40c3a2f4a3a52ca1be82156353544fd1d0a8f28f85ef61db0f076
 fingerprint=$("$here/build.sh" --fingerprint)
 preinstalled=OFF
 ort_identity=pinned-upstream-archive
@@ -79,7 +79,7 @@ if [[ -z $ort ]]; then echo 'Pinned ONNX Runtime library missing from build depe
 cp -L "$(dirname "$ort")"/libonnxruntime*."$extension"* "$output/"
 if [[ $backend == cuda ]]; then test -f "$output/libonnxruntime_providers_cuda.so"; fi
 printf '%s\n' "$fingerprint" > "$output/cassini-native-inputs.sha256"
-printf 'sherpa=%s\nfrontend=+cassini-parakeet-v3-reference-v1\ndiarization=nemotron-diarization-v2\nbackend=%s\nsource_commit=%s\nsource_sha256=%s\n' \
+printf 'sherpa=%s\nfrontend=+cassini-parakeet-v3-reference-v1\ndiarization=nemotron-diarization-v2\nultra=parakeet-ultra-v1\nbackend=%s\nsource_commit=%s\nsource_sha256=%s\n' \
   "$version" "$backend" "$source_commit" "$source_sha" > "$output/cassini-native-buildinfo.txt"
 
 printf 'onnxruntime_identity=%s\n' "$ort_identity" >> "$output/cassini-native-buildinfo.txt"

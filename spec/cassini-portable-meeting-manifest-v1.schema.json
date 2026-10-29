@@ -59,7 +59,17 @@
             "status": {"type": "string", "enum": ["completed", "skipped", "failed"]},
             "reason": {"type": "string"},
             "model": {"type": "string"},
-            "revision": {"type": "string"}
+            "revision": {"type": "string"},
+            "standIn": {
+              "description": "Present when model is a retired model that ran in place of for, the model replacing it, which was not ready on this device. reason says why: installing, install_failed, downloads_disabled, not_installed or runtime_check_failed; detail is a short sentence on for's state. The speech-to-text provenance step names the model that ran without marking the substitution.",
+              "type": "object",
+              "required": ["for"],
+              "properties": {
+                "for": {"type": "string"},
+                "reason": {"type": "string", "enum": ["installing", "install_failed", "downloads_disabled", "not_installed", "runtime_check_failed"]},
+                "detail": {"type": "string"}
+              }
+            }
           }
         },
         "meetingSummary": {
@@ -665,6 +675,18 @@
         },
         "referenceFrontend": {
           "type": "boolean"
+        },
+        "encoder": {
+          "type": "object",
+          "description": "The url and comment from the speech model encoder's ONNX metadata: which export actually loaded.",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "comment": {
+              "type": "string"
+            }
+          }
         }
       }
     },

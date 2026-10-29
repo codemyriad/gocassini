@@ -45,6 +45,11 @@ type Model struct {
 	Revision    string `json:"source_sha256"`
 	VADRevision string `json:"vad_revision,omitempty"`
 	Files       []File `json:"files"`
+	// Replaces lists model ids that earlier catalogues shipped and this model
+	// supersedes. An install pinned to one of them moves to this model, and
+	// once this model passes its runtime check their files are removed. Until
+	// then a build may load those files as a stand-in (see RetiredModel).
+	Replaces []string `json:"replaces,omitempty"`
 }
 type Artifact struct {
 	Key                string `json:"key"`
@@ -56,9 +61,14 @@ type Artifact struct {
 	Encoding           string `json:"encoding"`
 }
 type Catalogue struct {
-	SchemaVersion int        `json:"schema_version"`
-	Models        []Model    `json:"models"`
-	Artifacts     []Artifact `json:"artifacts"`
+	SchemaVersion int     `json:"schema_version"`
+	Models        []Model `json:"models"`
+	// Retired lists models an earlier catalogue shipped and a current one
+	// Replaces, with their files, so an install that still has them can be
+	// listed, checked and loaded as a stand-in until the replacement is ready.
+	// Model never returns one, so nothing installs, imports or selects them.
+	Retired   []Model    `json:"retired_models,omitempty"`
+	Artifacts []Artifact `json:"artifacts"`
 }
 
 func Shipped() Catalogue {
@@ -76,6 +86,42 @@ func (c Catalogue) Model(id, revision string) (Model, error) {
 	}
 	return Model{}, fmt.Errorf("unsupported model/revision %q/%q; use a matching Cassini catalogue", id, revision)
 }
+
+// RetiredModel returns a retired model the catalogue still describes, for a
+// stand-in on an install that has its files. It is never downloaded.
+func (c Catalogue) RetiredModel(id, revision string) (Model, error) {
+	for _, m := range c.Retired {
+		if m.ID == id && (revision == "" || revision == m.Revision) {
+			return m, nil
+		}
+	}
+	return Model{}, fmt.Errorf("unknown retired model/revision %q/%q", id, revision)
+}
+
+// Lookup returns a current model, or else a retired one; retired says which.
+// Only code that reads installed files uses it: everything that installs or
+// selects a model uses Model.
+func (c Catalogue) Lookup(id, revision string) (m Model, retired bool, err error) {
+	if m, err := c.Model(id, revision); err == nil {
+		return m, false, nil
+	}
+	if m, err := c.RetiredModel(id, revision); err == nil {
+		return m, true, nil
+	}
+	return Model{}, false, fmt.Errorf("unsupported model/revision %q/%q; use a matching Cassini catalogue", id, revision)
+}
+
+// Replacement returns the catalogue model that supersedes a retired id.
+func (c Catalogue) Replacement(retired string) (Model, bool) {
+	for _, m := range c.Models {
+		for _, r := range m.Replaces {
+			if r == retired {
+				return m, true
+			}
+		}
+	}
+	return Model{}, false
+}
 func (c Catalogue) Artifact(key string) (Artifact, error) {
 	for _, a := range c.Artifacts {
 		if a.Key == key {
@@ -91,52 +137,104 @@ func (c Catalogue) Validate() error {
 	seen := map[string]bool{}
 	for _, m := range c.Models {
 		key := m.ID + "/" + m.Revision
-		if !safeName(m.ID) || !digest(m.Revision) || seen[key] || len(m.Files) == 0 {
+		if seen[key] {
 			return fmt.Errorf("invalid catalogue model %q", m.ID)
 		}
-		switch m.Kind {
-		case KindSpeech:
-			if !digest(m.VADRevision) {
-				return fmt.Errorf("missing pinned VAD revision for %s", m.ID)
-			}
-			v, e := c.Model(VADModelID, m.VADRevision)
-			if e != nil {
-				return e
-			}
-			if v.Kind != KindVAD {
-				return fmt.Errorf("%s pins %s, which is not a VAD model", m.ID, VADModelID)
-			}
-		case KindVAD:
-			if m.ID != VADModelID || m.VADRevision != "" {
-				return fmt.Errorf("invalid VAD model %q", m.ID)
-			}
-		case KindDiarization:
-			// Diarization runs on its own; a VAD pin would be installed and
-			// packed for nothing.
-			if m.VADRevision != "" {
-				return fmt.Errorf("diarization model %s pins a VAD revision", m.ID)
-			}
-		default:
-			return fmt.Errorf("catalogue model %s has unknown kind %q", m.ID, m.Kind)
+		if err := c.validateModel(m); err != nil {
+			return err
 		}
 		seen[key] = true
-		paths := map[string]bool{}
-		for _, f := range m.Files {
-			a, err := c.Artifact(f.Artifact)
-			if err != nil {
-				return err
+		for _, r := range m.Replaces {
+			if !safeName(r) || r == m.ID || r == VADModelID {
+				return fmt.Errorf("invalid replaced model %q for %s", r, m.ID)
 			}
-			if !safeName(f.Path) || paths[f.Path] || a.Size <= 0 || a.UncompressedSize <= 0 || !digest(a.SHA256) || !digest(a.UncompressedSHA256) || a.Encoding != "zstd-seekable" {
-				return fmt.Errorf("invalid catalogue file %s/%s", m.ID, f.Path)
+		}
+	}
+	// A retired id names models that no longer exist: replacing a current one
+	// would delete its files, and two replacements would make the move ambiguous.
+	replacedBy := map[string]string{}
+	for _, m := range c.Models {
+		for _, r := range m.Replaces {
+			if _, err := c.Model(r, ""); err == nil {
+				return fmt.Errorf("%s replaces %s, which the catalogue still ships", m.ID, r)
 			}
-			if !strings.HasPrefix(a.URL, "https://dist.gocassini.com/models/files/"+a.SHA256+"/") {
-				return fmt.Errorf("unexpected catalogue origin for %s", f.Path)
+			if other, ok := replacedBy[r]; ok && other != m.ID {
+				return fmt.Errorf("%s is replaced by both %s and %s", r, other, m.ID)
 			}
-			paths[f.Path] = true
+			replacedBy[r] = m.ID
+		}
+	}
+	// A retired model is described only to stand in for its replacement, so
+	// it must be a speech model that exactly one shipped model replaces.
+	retired := map[string]bool{}
+	for _, m := range c.Retired {
+		if retired[m.ID] {
+			return fmt.Errorf("retired model %s is listed twice", m.ID)
+		}
+		retired[m.ID] = true
+		if _, err := c.Model(m.ID, ""); err == nil {
+			return fmt.Errorf("retired model %s is also shipped", m.ID)
+		}
+		if m.Kind != KindSpeech || len(m.Replaces) != 0 {
+			return fmt.Errorf("retired model %s must be a speech model that replaces nothing", m.ID)
+		}
+		if _, ok := replacedBy[m.ID]; !ok {
+			return fmt.Errorf("retired model %s is not replaced by any shipped model", m.ID)
+		}
+		if err := c.validateModel(m); err != nil {
+			return err
 		}
 	}
 	_, err := c.Model(VADModelID, "")
 	return err
+}
+
+// validateModel checks one model's own entry: its id, revision and kind, its
+// VAD pin, and that every file is a published catalogue artifact.
+func (c Catalogue) validateModel(m Model) error {
+	if !safeName(m.ID) || !digest(m.Revision) || len(m.Files) == 0 {
+		return fmt.Errorf("invalid catalogue model %q", m.ID)
+	}
+	switch m.Kind {
+	case KindSpeech:
+		if !digest(m.VADRevision) {
+			return fmt.Errorf("missing pinned VAD revision for %s", m.ID)
+		}
+		v, e := c.Model(VADModelID, m.VADRevision)
+		if e != nil {
+			return e
+		}
+		if v.Kind != KindVAD {
+			return fmt.Errorf("%s pins %s, which is not a VAD model", m.ID, VADModelID)
+		}
+	case KindVAD:
+		if m.ID != VADModelID || m.VADRevision != "" {
+			return fmt.Errorf("invalid VAD model %q", m.ID)
+		}
+	case KindDiarization:
+		// Diarization runs on its own; a VAD pin would be installed and
+		// packed for nothing.
+		if m.VADRevision != "" {
+			return fmt.Errorf("diarization model %s pins a VAD revision", m.ID)
+		}
+	default:
+		return fmt.Errorf("catalogue model %s has unknown kind %q", m.ID, m.Kind)
+	}
+	paths := map[string]bool{}
+	for _, f := range m.Files {
+		a, err := c.Artifact(f.Artifact)
+		if err != nil {
+			return err
+		}
+		if !safeName(f.Path) || paths[f.Path] || a.Size <= 0 || a.UncompressedSize <= 0 || !digest(a.SHA256) || !digest(a.UncompressedSHA256) || a.Encoding != "zstd-seekable" {
+			return fmt.Errorf("invalid catalogue file %s/%s", m.ID, f.Path)
+		}
+		if !strings.HasPrefix(a.URL, "https://dist.gocassini.com/models/files/"+a.SHA256+"/") {
+			return fmt.Errorf("unexpected catalogue origin for %s", f.Path)
+		}
+		paths[f.Path] = true
+	}
+	return nil
 }
 
 // VADModelID is the voice activity detector every speech model pins.

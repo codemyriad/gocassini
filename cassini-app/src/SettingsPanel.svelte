@@ -40,7 +40,7 @@
   // panel already is.
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
-  import { pipelineStatus, retentionSpan, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
+  import { inUseModelState, pipelineStatus, retentionSpan, runningDownload, speechModelFor, type StepStatus } from "./operator/pipelineStatus";
   import { summaryStepCostText } from "./operator/summaryAction";
   import type { RetentionSettings } from "./operator/retention";
   import { onRetentionChanged } from "./operator/retentionSignal";
@@ -135,13 +135,11 @@
   let savedTranscription = "";
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
-  let transcriptionTermsText = "";
   let searchAliasesText = "";
   let savedSearchAliasesText = "";
 
   let savedQuality: SettingsQuality = "balanced";
   let savedDeviceOverride = "";
-  let savedTranscriptionTermsText = "";
 
   // The LLM half. Null when it could not be read, which is not the same as a
   // deployment with no providers: the summarisation step says so rather than
@@ -269,11 +267,9 @@
     savedTranscription = JSON.stringify([transcriptionEnabled,activeModel,activeRevision]);
     quality = next.quality;
     deviceOverride = next.device_override;
-    transcriptionTermsText = next.transcription_terms.join("\n");
     searchAliasesText = formatSearchAliases(next.search_aliases);
     savedQuality = next.quality;
     savedDeviceOverride = next.device_override;
-    savedTranscriptionTermsText = transcriptionTermsText;
     savedSearchAliasesText = searchAliasesText;
   }
 
@@ -332,7 +328,6 @@
             active_revision: activeRevision,
             ...(quality !== savedQuality ? { quality } : {}),
             device_override: deviceOverride,
-            transcription_terms: transcriptionTermsText.split(/\r?\n/),
             search_aliases: parseSearchAliases(searchAliasesText),
           }),
         );
@@ -473,6 +468,8 @@
     device: savedDevice,
     modelInstalled: modelInventory === null ? null : savedModel?.installed === true,
     download: runningDownload(modelInventory),
+    activeModelDownload: settings?.active_model ? runningDownload(modelInventory, settings.active_model) : null,
+    activeModelStandIn: !!modelInventory?.models.find((m) => m.id === settings?.active_model)?.stand_in,
     summaryEnabled: llm?.summary.enabled === true,
     providerName: llm ? providerName(llm.summary.provider) : "",
     hasProvider: llm === null ? null : llm.providers.length > 0,
@@ -500,6 +497,11 @@
     ? `the ${deviceLabel("cuda")}`
     : settings?.detected_gpu ? "the CPU" : "the CPU (no GPU found)";
   $: inUseModel = modelInventory?.models.find((m) => m.id === activeModel);
+  // While it is not installed: its own download, if one is running, and what
+  // recordings get meanwhile (the model it replaced, a wait, or nothing).
+  $: inUseDownload = inUseModel && !inUseModel.installed ? runningDownload(modelInventory, inUseModel.id) : null;
+  $: inUseState = transcriptionEnabled && inUseModel ? inUseModelState(inUseModel, inUseDownload) : null;
+  $: inUsePercent = inUseDownload?.percent == null ? "" : ` (${inUseDownload.percent}%)`;
   // The model the picked quality runs, which the switch turns on.
   $: qualityModel = modelInventory?.models.find((m) => m.id === speechModelFor(quality, selectedDevice));
 
@@ -517,17 +519,13 @@
   $: hasProvider = llm === null ? null : providers.length > 0;
   $: summaryModels = modelsByProvider[summary.provider] ?? [];
 
-  // Two stores, two dirty bits, and the transcription terms belong to the STT
-  // one: they ride the same PUT as quality and the device override, so a page
-  // whose only edit was a term must still send that request and must not send
-  // the LLM one.
+  // Save each settings store only when its fields have changed.
   $: sttDirty =
     settings !== null &&
     (sourceRetention !== savedSourceRetention || retainVideo !== savedRetainVideo || JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
       meetingFormat !== savedMeetingFormat ||
       quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
-      transcriptionTermsText !== savedTranscriptionTermsText ||
       searchAliasesText !== savedSearchAliasesText);
   $: summaryDirty = llm !== null && JSON.stringify(summary) !== savedSummary;
   $: isDirty = sttDirty || summaryDirty;
@@ -675,15 +673,25 @@
                device is auto-selected; on a host with no usable GPU that is the
                CPU, said out loud (D-702). The facts and the override open under
                "Change". -->
-          <div class="in-use pipe-gap" class:in-use-warn={transcriptionEnabled && inUseModel && !inUseModel.installed}>
+          <div class="in-use pipe-gap" class:in-use-warn={inUseState === "missing"}>
             <!-- One sentence: what transcribes and where. Installed but not yet
                  runtime-checked is normal after any new build (the operator
-                 checks it before transcribing); only missing files mean
-                 recordings go without a transcript. -->
+                 checks it before transcribing). Missing files mean recordings
+                 go without a transcript, unless the model it replaced is still
+                 installed (it transcribes them meanwhile) or its download is
+                 running (they wait for it). -->
             <p class="in-use-text" role="status">
-              {#if transcriptionEnabled && inUseModel && !inUseModel.installed}
+              {#if inUseModel && inUseState === "missing"}
                 <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
                 <span><strong>{inUseModel.name}</strong> isn't installed, so recordings get no transcript.</span>
+              {:else if inUseModel && inUseState === "stand-in"}
+                {#if inUseDownload}
+                  <span>Downloading <strong>{inUseModel.name}</strong>{inUsePercent}; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
+                {:else}
+                  <span><strong>{inUseModel.name}</strong> isn't installed; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
+                {/if}
+              {:else if inUseModel && inUseState === "downloading"}
+                <span>Downloading <strong>{inUseModel.name}</strong>{inUsePercent}; recordings wait for it.</span>
               {:else if transcriptionEnabled && inUseModel}
                 <span>Transcribing with <strong>{inUseModel.name}</strong> on {runsOnLine}.</span>
               {:else}
@@ -938,37 +946,10 @@
 
       <VoiceSeparationModel client={operatorClient} inventory={modelInventory} />
 
-      <!-- Both fields steer how names come out: one when transcribing, one when
-           searching what was transcribed. -->
-      <section class="op-tint pipe-step hints-card" aria-labelledby="transcript-hints-heading">
-        <h2 id="transcript-hints-heading" class="set-row-name op-card-title">Transcript hints</h2>
+      <section class="op-tint pipe-step search-spellings-card" aria-labelledby="search-spellings-heading">
+        <h2 id="search-spellings-heading" class="set-row-name op-card-title">Search spellings</h2>
         <div class="set-row-main pipe-text-step">
-          <div>
-            <h3 class="q-title">Vocabulary</h3>
-            <p class="set-row-sub">Saved names and preferred spellings for transcription hints.</p>
-          </div>
-          <label class="op-field">
-            <span class="pipe-field-head">
-              <span class="op-field-label">One term per line</span>
-              <span class="pipe-limit">(up to 100, 100 characters each)</span>
-            </span>
-            <textarea
-              bind:value={transcriptionTermsText}
-              class="op-input pipe-textarea"
-              maxlength={10_100}
-              placeholder={'Gocassini\nNextcloud Talk\nProject Cassini'}
-            ></textarea>
-          </label>
-          <ul class="pipe-notes">
-            <li>Participant names are added automatically on models that support hints.</li>
-            <li>Hints guide recognition toward preferred spellings; they do not guarantee the correct word. When hints cannot be used, the recording notes why.</li>
-          </ul>
-        </div>
-        <div class="set-row-main pipe-text-step hints-part">
-          <div>
-            <h3 class="q-title">Search spellings</h3>
-            <p class="set-row-sub">Common mishearings of a name, so searching for the name finds them too.</p>
-          </div>
+          <p class="set-row-sub">Common mishearings of a name, so searching for the name finds them too.</p>
           <label class="op-field">
             <span class="pipe-field-head">
               <span class="op-field-label">One name per line, then its spellings, separated by commas</span>
@@ -1391,13 +1372,9 @@
     line-height: 1.45;
     color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
   }
-  .hints-card {
+  .search-spellings-card {
     flex-direction: column;
     align-items: stretch;
-  }
-  .hints-part {
-    padding-top: 14px;
-    border-top: 1px solid var(--op-border, color-mix(in oklch, var(--color-base-content) 12%, transparent));
   }
   .pipe-text-step {
     display: grid;

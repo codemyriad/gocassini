@@ -64,6 +64,7 @@ func TestVocabularyForBuildPrefersConfiguredSpelling(t *testing.T) {
 // spelling. They therefore carry a smaller phrase-specific score: a score of 2
 // made the one-word name "Silvio" repeat hundreds of times on uncertain audio.
 func TestResolveBuildVocabularyCapsAutomaticParticipantScore(t *testing.T) {
+	enableHints(t)
 	dir := t.TempDir()
 	vocabulary := vocabularyForBuild(
 		[]string{"Librocco"},
@@ -87,6 +88,7 @@ func TestResolveBuildVocabularyCapsAutomaticParticipantScore(t *testing.T) {
 }
 
 func TestAutomaticParticipantScoreHonoursLowerOperatorScore(t *testing.T) {
+	enableHints(t)
 	t.Setenv(envHintsScore, "0.25")
 	vocabulary := vocabularyForBuild(nil, []AudioStream{{SpeakerLabel: "Silvio"}})
 	dec, prov, err := resolveDecoderVocabulary(t.TempDir(), vocabulary, transducerPaths(t))
@@ -106,6 +108,7 @@ func TestAutomaticParticipantScoreHonoursLowerOperatorScore(t *testing.T) {
 }
 
 func TestSpeakerDecodersOmitTheTracksOwnName(t *testing.T) {
+	enableHints(t)
 	dir := t.TempDir()
 	streams := []AudioStream{
 		{Index: 1, SpeakerLabel: "Silvio"},
@@ -160,6 +163,7 @@ func TestSpeakerDecodersOmitTheTracksOwnName(t *testing.T) {
 }
 
 func TestSpeakerDecodersOmitOwnNamesWhenAllWereConfiguredExplicitly(t *testing.T) {
+	enableHints(t)
 	dir := t.TempDir()
 	streams := []AudioStream{{Index: 1, SpeakerLabel: "Silvio"}, {Index: 2, SpeakerLabel: "Chris"}}
 	vocabulary := vocabularyForBuild([]string{"Silvio", "Chris", "Librocco"}, streams)
@@ -185,11 +189,12 @@ func TestSpeakerDecodersOmitOwnNamesWhenAllWereConfiguredExplicitly(t *testing.T
 	}
 }
 
-// Beam search is unconditional on a transducer: the decoder must not change
-// under the operator depending on whether the vocabulary box happens to be
-// empty. An empty vocabulary leaves no hints provenance, because there was
-// nothing to apply and nothing to explain.
+// With biasing turned back on, beam search is unconditional on a transducer:
+// the decoder must not change under the operator depending on whether the
+// vocabulary box happens to be empty. An empty vocabulary leaves no hints
+// provenance, because there was nothing to apply and nothing to explain.
 func TestResolveDecoderWithoutVocabularyStillBeamSearches(t *testing.T) {
+	enableHints(t)
 	dec, prov, err := resolveDecoder(t.TempDir(), nil, transducerPaths(t))
 	if err != nil {
 		t.Fatalf("resolveDecoder: %v", err)
@@ -208,6 +213,7 @@ func TestResolveDecoderWithoutVocabularyStillBeamSearches(t *testing.T) {
 // A CTC model has no hotword support in sherpa, so it keeps greedy search. The
 // wider beam would buy nothing and cost decode time.
 func TestResolveDecoderKeepsGreedySearchForCTC(t *testing.T) {
+	enableHints(t)
 	dir := t.TempDir()
 	ctc := ModelPaths{ModelFile: filepath.Join(dir, "model.onnx"), TokensFile: filepath.Join(dir, "tokens.txt")}
 	dec, prov, err := resolveDecoder(dir, nil, ctc)
@@ -225,6 +231,7 @@ func TestResolveDecoderKeepsGreedySearchForCTC(t *testing.T) {
 // A CTC model cannot be biased. The build must say so rather than decode
 // unbiased while the operator believes their vocabulary was applied.
 func TestResolveHintsReportsCTCModelAsUnapplied(t *testing.T) {
+	enableHints(t)
 	dir := t.TempDir()
 	ctc := ModelPaths{ModelFile: filepath.Join(dir, "model.onnx"), TokensFile: filepath.Join(dir, "tokens.txt")}
 	hints, prov, err := resolveDecoder(dir, []string{"Librocco"}, ctc)
@@ -243,6 +250,7 @@ func TestResolveHintsReportsCTCModelAsUnapplied(t *testing.T) {
 }
 
 func TestResolveHintsWritesHotwordsAndRecordsProvenance(t *testing.T) {
+	enableHints(t)
 	dir := t.TempDir()
 	paths := transducerPaths(t)
 	hints, prov, err := resolveDecoder(dir, []string{"Librocco", "Aire Spaces"}, paths)
@@ -267,8 +275,8 @@ func TestResolveHintsWritesHotwordsAndRecordsProvenance(t *testing.T) {
 	}
 }
 
-// The kill switch has to leave a trace: a build that ignored the vocabulary
-// because an operator disabled biasing must not look like one that applied it.
+// The switch has to leave a trace: a build that ignored the vocabulary because
+// an operator disabled biasing must not look like one that applied it.
 func TestResolveHintsRecordsTheDisableSwitch(t *testing.T) {
 	t.Setenv(envHintsDisabled, "1")
 	hints, prov, err := resolveDecoder(t.TempDir(), []string{"Librocco"}, transducerPaths(t))
@@ -300,6 +308,7 @@ func TestHintsScoreRejectsUnusableOverrides(t *testing.T) {
 // name the fix, rather than decode unbiased while the operator believes their
 // vocabulary was applied.
 func TestResolveHintsReportsMissingBpeVocabAsUnapplied(t *testing.T) {
+	enableHints(t)
 	dir := t.TempDir()
 	paths := ModelPaths{EncoderFile: filepath.Join(dir, "encoder.onnx"), TokensFile: filepath.Join(dir, "tokens.txt")}
 	hints, prov, err := resolveDecoder(dir, []string{"Librocco"}, paths)
@@ -341,9 +350,9 @@ func TestNormalizeVocabularyRejectsHotwordScoreSyntax(t *testing.T) {
 	}
 }
 
-// The kill switch has to be able to restore the output an operator had before
-// this feature existed. Dropping the hotwords but leaving beam search on would
-// leave them with a third behaviour and no way back.
+// Disabling biasing explicitly gives the same decoder as the default: greedy
+// search with no hotwords. Dropping the hotwords but leaving beam search on
+// would be a third behaviour nobody chose.
 func TestHintsDisabledSwitchAlsoRestoresGreedySearch(t *testing.T) {
 	t.Setenv(envHintsDisabled, "1")
 	dec, prov, err := resolveDecoder(t.TempDir(), []string{"Librocco"}, transducerPaths(t))
@@ -351,7 +360,7 @@ func TestHintsDisabledSwitchAlsoRestoresGreedySearch(t *testing.T) {
 		t.Fatalf("resolveDecoder: %v", err)
 	}
 	if dec.Method != decodingGreedySearch {
-		t.Errorf("decoder = %q, want the previous greedy search back", dec.Method)
+		t.Errorf("decoder = %q, want greedy search", dec.Method)
 	}
 	if dec.Biased() || prov == nil || prov.Applied {
 		t.Errorf("hints must be off and recorded as such, got dec=%+v prov=%+v", dec, prov)
@@ -363,5 +372,77 @@ func TestHintsDisabledSwitchRestoresGreedyWithoutVocabulary(t *testing.T) {
 	dec, prov, err := resolveDecoder(t.TempDir(), nil, transducerPaths(t))
 	if err != nil || dec.Method != decodingGreedySearch || dec.Biased() || dec.MaxActivePaths != 0 || prov != nil {
 		t.Fatalf("empty vocabulary ignored decoder kill switch: decoder=%+v provenance=%+v err=%v", dec, prov, err)
+	}
+}
+
+// enableHints turns decoder biasing back on for a test of the research path:
+// only an explicit false CASSINI_STT_HINTS_DISABLED does that.
+func enableHints(t *testing.T) {
+	t.Helper()
+	t.Setenv(envHintsDisabled, "0")
+}
+
+// Greedy search without hotwords is the default on every model (D-867): beam
+// search dropped speech, and preserving speech wins over dictionary biasing.
+// An unset or empty switch, a true value and anything that is not a boolean
+// all keep it; a vocabulary that was there is recorded as not applied, with
+// the decoder that ran and a reason that names the switch.
+func TestDecodingDefaultsToGreedyWithoutHints(t *testing.T) {
+	dir := t.TempDir()
+	ctc := ModelPaths{ModelFile: filepath.Join(dir, "model.onnx"), TokensFile: filepath.Join(dir, "tokens.txt")}
+	fp32 := transducerPaths(t)
+	fp32.ModelID = ModelParakeetUltra
+	int8 := transducerPaths(t)
+	int8.ModelID, int8.BpeVocabFile = ModelParakeetUltraInt8, ""
+	for _, value := range []string{"unset", "", " ", "1", "true", "TRUE", "yes", "on", "maybe"} {
+		if value == "unset" {
+			t.Setenv(envHintsDisabled, "")
+			os.Unsetenv(envHintsDisabled)
+		} else {
+			t.Setenv(envHintsDisabled, value)
+		}
+		if hintsEnabled() {
+			t.Fatalf("%s=%q enables hints", envHintsDisabled, value)
+		}
+		for name, paths := range map[string]ModelPaths{"ctc": ctc, "ultra": fp32, "ultra-int8": int8} {
+			vocabulary := vocabularyForBuild([]string{"Librocco"}, []AudioStream{{Index: 1, SpeakerLabel: "Silvio"}, {Index: 2, SpeakerLabel: "Chris"}})
+			dec, prov, err := resolveDecoderVocabulary(t.TempDir(), vocabulary, paths)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dec.Method != decodingGreedySearch || dec.Biased() || dec.MaxActivePaths != 0 {
+				t.Fatalf("%q %s: decoder %+v, want greedy without hotwords", value, name, dec)
+			}
+			if prov == nil || prov.Applied || prov.DecodingMethod != decodingGreedySearch || prov.TermCount != 3 || prov.ParticipantTermCount != 2 || !strings.Contains(prov.Reason, envHintsDisabled) {
+				t.Fatalf("%q %s: provenance %+v", value, name, prov)
+			}
+			if strings.TrimSpace(value) == "" || value == "unset" {
+				// Only a bundle that could apply the vocabulary is told how
+				// to turn hints on: CTC cannot beam-search for hotwords, and
+				// the int8 bundle has no bpe.vocab to encode them.
+				offersSwitch := strings.Contains(prov.Reason, envHintsDisabled+"=0")
+				if !strings.Contains(prov.Reason, "off by default") || offersSwitch != (name == "ultra") {
+					t.Fatalf("%q %s: default reason %q", value, name, prov.Reason)
+				}
+			}
+			speakers, err := speakerDecoders(t.TempDir(), vocabulary, []AudioStream{{Index: 1, SpeakerLabel: "Silvio"}}, dec)
+			if err != nil || len(speakers) != 0 {
+				t.Fatalf("%q %s: per-speaker hotwords %+v %v", value, name, speakers, err)
+			}
+			dec, prov, err = resolveDecoderVocabulary(t.TempDir(), decoderVocabulary{}, paths)
+			if err != nil || dec.Method != decodingGreedySearch || prov != nil {
+				t.Fatalf("%q %s: empty vocabulary %+v %+v %v", value, name, dec, prov, err)
+			}
+		}
+	}
+	for _, value := range []string{"0", "false", "FALSE", "no", "off", " off "} {
+		t.Setenv(envHintsDisabled, value)
+		if !hintsEnabled() {
+			t.Fatalf("%s=%q leaves hints off", envHintsDisabled, value)
+		}
+		dec, prov, err := resolveDecoder(t.TempDir(), []string{"Librocco"}, fp32)
+		if err != nil || dec.Method != decodingModifiedBeamSearch || !dec.Biased() || prov == nil || !prov.Applied {
+			t.Fatalf("%q: decoder %+v provenance %+v %v, want biased beam search", value, dec, prov, err)
+		}
 	}
 }

@@ -74,7 +74,31 @@ type TranscriptionStatus struct {
 	Reason   string `json:"reason,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Revision string `json:"revision,omitempty"`
+	// StandIn is set when Model is a retired model that transcribed in place
+	// of the model replacing it, which was not ready on this device.
+	StandIn *TranscriptionStandIn `json:"standIn,omitempty"`
 }
+
+// TranscriptionStandIn says which model a retired one stood in for, and why
+// that model was not ready.
+type TranscriptionStandIn struct {
+	// For is the model that replaced the retired one and was not ready.
+	For string `json:"for"`
+	// Reason is one of the StandInReason values.
+	Reason string `json:"reason,omitempty"`
+	// Detail is the operator's description of the replacement's state.
+	Detail string `json:"detail,omitempty"`
+}
+
+// Why the replacement of a retired model was not ready, as
+// TranscriptionStandIn.Reason records it.
+const (
+	StandInReasonInstalling         = "installing"
+	StandInReasonInstallFailed      = "install_failed"
+	StandInReasonDownloadsDisabled  = "downloads_disabled"
+	StandInReasonNotInstalled       = "not_installed"
+	StandInReasonRuntimeCheckFailed = "runtime_check_failed"
+)
 
 type Manifest struct {
 	Processing *Processing `json:"processing,omitempty"`
@@ -180,6 +204,13 @@ type ProcessingStep struct {
 	Host     string `json:"host,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Version  string `json:"version,omitempty"`
+	// ReferenceFrontend and Encoder mirror the build manifest's
+	// speech-to-text step for the same reason as Hints: a field this struct
+	// does not declare is written by the build and dropped at pack time.
+	// ReferenceFrontend says whether every recognizer ran the model's
+	// reference frontend; Encoder names the ONNX export that actually loaded.
+	ReferenceFrontend *bool              `json:"referenceFrontend,omitempty"`
+	Encoder           *EncoderProvenance `json:"encoder,omitempty"`
 	// Hints records decoder biasing for a speech-to-text step. It mirrors the
 	// build manifest's shape field for field so the packer can carry it into
 	// the published file by plain JSON round-trip. Without this the record
@@ -199,8 +230,17 @@ type ProcessingStep struct {
 	SpeakerEdits json.RawMessage `json:"x-speakerEdits,omitempty"`
 }
 
+// EncoderProvenance is what a speech model encoder's own ONNX metadata says
+// it is: the url sherpa keys its frontend selection on and the comment where
+// a Cassini export records its weights and toolchain.
+type EncoderProvenance struct {
+	URL     string `json:"url,omitempty"`
+	Comment string `json:"comment,omitempty"`
+}
+
 // HintsProvenance says what decoder biasing a speech-to-text pass actually
-// applied, and when it could not, why. Absent means the pass ran unbiased.
+// applied, and when it did not, why. Absent means the pass had no vocabulary
+// and ran unbiased.
 type HintsProvenance struct {
 	TermCount            int     `json:"termCount"`
 	Score                float32 `json:"score,omitempty"`

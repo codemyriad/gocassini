@@ -23,23 +23,27 @@ const (
 	// Kept for reference; superseded by 0.6B.
 	ModelParakeet110M ModelID = "parakeet-tdt-ctc-110m-en-int8"
 
-	// ModelParakeet06B is the NeMo Parakeet TDT 0.6B v2 int8 transducer model.
-	// Kept for reference; superseded by v3.
-	ModelParakeet06B ModelID = "parakeet-tdt-0.6b-v2-int8"
+	// ModelParakeetUltra is Moondream's Parakeet Ultra in fp32: parakeet-tdt-
+	// 0.6b-v3 post-trained by Moondream (same architecture, tokenizer and
+	// feature dim), exported by Cassini with the Moondream URL in its encoder
+	// metadata. Every CUDA tier and the CPU "best" tier run it. fp32 is the
+	// only precision the onnxruntime CUDA EP runs without fragmenting
+	// dynamic-int8 ops back to the CPU.
+	ModelParakeetUltra ModelID = "parakeet-ultra-0.6b"
 
-	// ModelParakeet06BV3Int8 is the NeMo Parakeet TDT 0.6B v3 int8 transducer
-	// model. CPU-bundled default in the gocassini ExApp image. Uses
-	// encoder+decoder+joiner architecture with feature dim 128 (v3 quirk;
-	// v2 used 80).
-	ModelParakeet06BV3Int8 ModelID = "parakeet-tdt-0.6b-v3-int8"
+	// ModelParakeetUltraInt8 is Cassini's dynamic int8 quantization of the
+	// same export: the balanced CPU tier and the default. It is published
+	// without bpe.vocab, so it decodes greedily.
+	ModelParakeetUltraInt8 ModelID = "parakeet-ultra-0.6b-int8"
 
-	// ModelParakeet06BV3 is the NeMo Parakeet TDT 0.6B v3 fp32 transducer model.
-	// CUDA-bundled default; same architecture as v3 int8. Exported from the
-	// official .nemo via scripts/nemo/parakeet-tdt-0.6b-v3/export_onnx.py.
-	// Runs ~2× faster than CPU at fp32 on CUDA; int8 fragments under CUDA EP.
-	ModelParakeet06BV3 ModelID = "parakeet-tdt-0.6b-v3"
+	// ModelParakeetV3Int8 and ModelParakeetV3 are NVIDIA's Parakeet TDT 0.6B
+	// v3, which Parakeet Ultra replaced at the same precision. Retired: a
+	// stand-in only, loaded from the files an upgraded install still has
+	// while Ultra is not ready (see modelSpec.Retired).
+	ModelParakeetV3Int8 ModelID = "parakeet-tdt-0.6b-v3-int8"
+	ModelParakeetV3     ModelID = "parakeet-tdt-0.6b-v3"
 
-	defaultModelID = ModelParakeet06BV3Int8
+	defaultModelID = ModelParakeetUltraInt8
 
 	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
 	sileroVADURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
@@ -72,43 +76,69 @@ type modelSpec struct {
 	ModelType    string // sherpa-onnx model type hint
 	SampleRate   int
 	FeatureDim   int
+
+	// ReferenceRuntimeMarkers lists the markers the native runtime version must
+	// all carry for sherpa to select the Parakeet reference frontend for this
+	// export. A model with any marker gets the reference boundary policy (whole
+	// VAD spans, 30ms context, no synthetic padding) and reports
+	// referenceFrontend in provenance; empty means the default policy.
+	ReferenceRuntimeMarkers []string
+	// RefuseWithoutReferenceRuntime makes loading fail before sherpa sees the
+	// export when a marker is missing. Set where the fallback is not a slower
+	// frontend but a broken one: a runtime without the Ultra selection runs an
+	// honest-URL Ultra export on the legacy frontend, or exits the process.
+	RefuseWithoutReferenceRuntime bool
+	// CUDA marks the precision the onnxruntime CUDA EP runs without
+	// fragmenting dynamic-int8 ops back to the CPU: the only models the CUDA
+	// path installs and probes.
+	CUDA bool
+	// GreedyWithoutBpeVocab keeps greedy search for a bundle published without
+	// bpe.vocab: its unbiased beam decoder omits more speech in recorded tests.
+	GreedyWithoutBpeVocab bool
+	// ProbeMemoryMB is the free RAM a CPU runtime check needs; 0 charges the
+	// largest speech floor.
+	ProbeMemoryMB int
+	// Retired marks an id an earlier version shipped. It is never selected
+	// (ModelForQuality, ResolveModel) and never downloaded (no URL): a build
+	// loads it only as an explicit stand-in for the model replacing it, while
+	// that model is not ready (see StandInFor).
+	Retired bool
 }
+
+// The runtime markers of the Parakeet reference frontend for Parakeet Ultra:
+// the v3 patch plus the Ultra URL selection that sherpa-onnx-go-linux
+// v1.13.7-cassini.7 added.
+var parakeetUltraReferenceMarkers = []string{parakeetReferenceRuntimeMarker, parakeetUltraRuntimeMarker}
 
 var knownModels = map[ModelID]modelSpec{
 	ModelParakeet110M: {
 		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
 			"sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2",
-		ModelFile:  "model.int8.onnx",
-		TokensFile: "tokens.txt",
-		ModelType:  "nemo_ctc",
-		SampleRate: 16000,
-		FeatureDim: 80,
+		ModelFile:     "model.int8.onnx",
+		TokensFile:    "tokens.txt",
+		ModelType:     "nemo_ctc",
+		SampleRate:    16000,
+		FeatureDim:    80,
+		ProbeMemoryMB: 1536,
 	},
-	ModelParakeet06B: {
-		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
-		EncoderFile:  "encoder.int8.onnx",
-		DecoderFile:  "decoder.int8.onnx",
-		JoinerFile:   "joiner.int8.onnx",
-		TokensFile:   "tokens.txt",
-		BpeVocabFile: "bpe.vocab",
-		ModelType:    "nemo_transducer",
-		SampleRate:   16000,
-		FeatureDim:   80,
+	// Same files and treatment as the v3 int8 bundle it replaces, published
+	// without bpe.vocab: on this model greedy search omits less speech than the
+	// unbiased beam decoder, at less CPU and half the peak memory.
+	ModelParakeetUltraInt8: {
+		EncoderFile: "encoder.int8.onnx",
+		DecoderFile: "decoder.int8.onnx",
+		JoinerFile:  "joiner.int8.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  128,
+
+		ReferenceRuntimeMarkers:       parakeetUltraReferenceMarkers,
+		RefuseWithoutReferenceRuntime: true,
+		GreedyWithoutBpeVocab:         true,
+		ProbeMemoryMB:                 2816,
 	},
-	ModelParakeet06BV3Int8: {
-		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
-			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
-		EncoderFile:  "encoder.int8.onnx",
-		DecoderFile:  "decoder.int8.onnx",
-		JoinerFile:   "joiner.int8.onnx",
-		TokensFile:   "tokens.txt",
-		BpeVocabFile: "bpe.vocab",
-		ModelType:    "nemo_transducer",
-		SampleRate:   16000,
-		FeatureDim:   128,
-	},
-	ModelParakeet06BV3: {
+	ModelParakeetUltra: {
 		EncoderFile:  "encoder.onnx",
 		DecoderFile:  "decoder.onnx",
 		JoinerFile:   "joiner.onnx",
@@ -118,7 +148,51 @@ var knownModels = map[ModelID]modelSpec{
 		ModelType:    "nemo_transducer",
 		SampleRate:   16000,
 		FeatureDim:   128,
+
+		ReferenceRuntimeMarkers:       parakeetUltraReferenceMarkers,
+		RefuseWithoutReferenceRuntime: true,
+		CUDA:                          true,
+		ProbeMemoryMB:                 4608,
 	},
+	// The retired v3 bundles, as the last version that shipped them ran them.
+	// A runtime without the v3 marker falls back to the standard decode
+	// profile rather than refusing them. The int8 bundle was published
+	// without bpe.vocab, like Ultra int8, so it decodes greedily.
+	ModelParakeetV3Int8: {
+		EncoderFile: "encoder.int8.onnx",
+		DecoderFile: "decoder.int8.onnx",
+		JoinerFile:  "joiner.int8.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  128,
+
+		ReferenceRuntimeMarkers: []string{parakeetReferenceRuntimeMarker},
+		GreedyWithoutBpeVocab:   true,
+		ProbeMemoryMB:           2816,
+		Retired:                 true,
+	},
+	ModelParakeetV3: {
+		EncoderFile:  "encoder.onnx",
+		DecoderFile:  "decoder.onnx",
+		JoinerFile:   "joiner.onnx",
+		WeightsFile:  "encoder.weights",
+		TokensFile:   "tokens.txt",
+		BpeVocabFile: "bpe.vocab",
+		ModelType:    "nemo_transducer",
+		SampleRate:   16000,
+		FeatureDim:   128,
+
+		ReferenceRuntimeMarkers: []string{parakeetReferenceRuntimeMarker},
+		CUDA:                    true,
+		ProbeMemoryMB:           4608,
+		Retired:                 true,
+	},
+}
+
+// SupportsCUDA reports whether the CUDA path installs and runs this model.
+func SupportsCUDA(id ModelID) bool {
+	return knownModels[id].CUDA
 }
 
 // DefaultModelID returns the model ID used when no model is explicitly configured.

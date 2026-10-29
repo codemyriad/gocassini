@@ -119,7 +119,7 @@ it("requires prepared transcription before saving deletion", async () => {
   open();
   await expect.element(page.getByText("Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.")).toBeVisible();
   await expect.element(page.getByText("Transcription must be on to keep nothing.")).toBeVisible();
-  await page.getByPlaceholder(/^Gocassini/).fill("Cassini");
+  await page.getByRole("textbox", { name: /One name per line/ }).fill("Cassini, casino");
   await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
 
   // Saved on and keeping nothing; switching transcription off in the draft.
@@ -137,9 +137,9 @@ it("requires prepared transcription before saving deletion", async () => {
 it("turns transcription on from the heading switch and shows the model as one row", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
-  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 700 * 1024 * 1024, installed_bytes: 0, installed: true, ready: true, device: "cpu" };
-  const best = { ...balanced, id: "parakeet-tdt-0.6b-v3", name: "Parakeet best", download_bytes: 2.2 * 1024 ** 3, installed: false, ready: false };
+  const best = { ...balanced, id: "parakeet-ultra-0.6b", name: "Parakeet best", download_bytes: 2.2 * 1024 ** 3, installed: false, ready: false };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
     if (path === "/operator/settings") {
@@ -168,9 +168,9 @@ it("turns transcription on from the heading switch and shows the model as one ro
 });
 
 it("shows the saved settings in the status strip and moves only after Save", async () => {
-  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-tdt-0.6b-v3-int8", active_revision: "r1",
+  let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8", active_revision: "r1",
     source_retention: "storage-policy", retain_video: false, effective: { device: "cpu", model: "", min_free_memory_mb: 0, note: "" } };
-  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -244,7 +244,7 @@ it("says how long kept media stays from the Recordings policy and follows the re
 it("enables and disables dependent settings with the draft transcription switch", async () => {
   let saved: Record<string, unknown> = { quality: "balanced", meeting_format: "opus", transcription_enabled: false };
   const writes: Record<string, unknown>[] = [];
-  const balanced = { id: "parakeet-tdt-0.6b-v3-int8", name: "Parakeet balanced", description: "", revision: "r1",
+  const balanced = { id: "parakeet-ultra-0.6b-int8", name: "Parakeet balanced", description: "", revision: "r1",
     download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
@@ -326,7 +326,7 @@ it("opens the hardware facts under Change and sends Add one to the providers", a
   await page.getByRole("button", { name: "Add one", exact: true }).click();
   expect(openProviders).toHaveBeenCalledTimes(1);
 
-  const hints = page.getByRole("region", { name: "Transcript hints" });
-  await expect.element(hints.getByRole("textbox", { name: /One term per line/ })).toBeVisible();
-  await expect.element(hints.getByRole("textbox", { name: /One name per line/ })).toBeVisible();
+  const spellings = page.getByRole("region", { name: "Search spellings" });
+  await expect.element(spellings.getByRole("textbox", { name: /One name per line/ })).toBeVisible();
+  await expect.element(page.getByRole("textbox", { name: /One term per line/ })).not.toBeInTheDocument();
 });

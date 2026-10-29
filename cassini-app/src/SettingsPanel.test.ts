@@ -26,6 +26,16 @@ describe("SettingsPanel device policy", () => {
     expect(settingsPanelSource).toContain("on {runsOnLine}.");
     expect(settingsPanelSource).toContain("settings.effective.note");
   });
+
+  it("warns that recordings get no transcript only when that is what happens", () => {
+    // While Ultra downloads, v3 transcribes (stand_in) or recordings wait for
+    // the download; the warning is for a model nothing transcribes for.
+    expect(settingsPanelSource).toContain("inUseModelState(inUseModel, inUseDownload)");
+    expect(settingsPanelSource).toContain('class:in-use-warn={inUseState === "missing"}');
+    expect(settingsPanelSource).toContain('{#if inUseModel && inUseState === "missing"}');
+    expect(settingsPanelSource).toContain("the previous model transcribes recordings on {runsOnLine} meanwhile.");
+    expect(settingsPanelSource).toContain("; recordings wait for it.");
+  });
 });
 
 describe("SettingsPanel search spellings", () => {
@@ -39,8 +49,7 @@ describe("SettingsPanel search spellings", () => {
 
   it("says what the setting does and does not do", () => {
     // It widens a search; it never rewrites a recording. An admin who thought
-    // this fixed transcripts would use it for the wrong job — the vocabulary
-    // above is that one.
+    // this fixed transcripts would use it for the wrong job.
     expect(settingsPanelSource).toContain("Doesn't change any transcript, only what search finds.");
   });
 });
@@ -153,18 +162,12 @@ describe("SettingsPanel layout", () => {
       [...[transcriptAt, qualityAt, modelsAt, summaryAt]].sort((a, b) => a - b));
   });
 
-  it("gives the transcript hints a card of their own", () => {
-    // Vocabulary and search spellings share one card: both steer how names
-    // come out, one when transcribing and one when searching.
-    const steps = settingsPanelSource.match(/<section\b[^>]*class="[^"\n]*\bpipe-step\b[^"\n]*"[^>]*>/g);
-    expect(steps?.length).toBe(1);
-    const hintsAt = settingsPanelSource.indexOf(">Transcript hints<");
-    const vocabularyAt = settingsPanelSource.indexOf(">Vocabulary<");
-    const spellingsAt = settingsPanelSource.indexOf(">Search spellings<");
-    expect(hintsAt).toBeGreaterThan(-1);
-    expect(hintsAt).toBeLessThan(vocabularyAt);
-    expect(vocabularyAt).toBeLessThan(spellingsAt);
-    expect(settingsPanelSource).not.toContain("rounded-box border border-base-300 bg-base-200 p-3");
+  it("keeps search spellings in their own card without transcription hints", () => {
+    expect(settingsPanelSource).toContain('aria-labelledby="search-spellings-heading"');
+    expect(settingsPanelSource).toContain(">Search spellings<");
+    expect(settingsPanelSource).not.toContain(">Transcript hints<");
+    expect(settingsPanelSource).not.toContain(">Vocabulary<");
+    expect(settingsPanelSource).not.toContain("transcription_terms:");
   });
 });
 
