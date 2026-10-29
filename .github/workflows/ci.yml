@@ -107,6 +107,9 @@ jobs:
         run: ./scripts/test-classify-recorder-integration-relevance.sh
       - name: Test newest-stable FFmpeg resolver
         run: ./deployment/ffmpeg/test-resolve-latest.sh
+      - name: Test the CUDA base image's library check
+        # Builds tiny shared libraries with cc; no CUDA, no image, no network.
+        run: ./deployment/sherpa/test-check-cuda-runtime.sh
       - name: Run offline harness regressions
         run: |
           ./harness/bin/test-base-helpers.sh

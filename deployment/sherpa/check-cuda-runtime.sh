@@ -26,7 +26,24 @@ status=0
 for name in libonnxruntime_providers_cuda.so libonnxruntime.so libsherpa-onnx-c-api.so; do
   lib=$lib_dir/$name
   [[ -f $lib ]] || { echo "missing $lib" >&2; status=1; continue; }
-  out=$(ldd -r "$lib" 2>&1) || true
+  # ldd exits 0 with unresolved libraries or symbols; it fails only when it
+  # cannot inspect the file at all ("not a dynamic executable": truncated,
+  # corrupt, or not ELF), which the greps below would read as clean.
+  if [[ $(head -c 4 "$lib" | od -An -tx1 | tr -d ' \n') != 7f454c46 ]]; then
+    echo "$name is not an ELF file" >&2; status=1; continue
+  fi
+  if ! out=$(ldd -r "$lib" 2>&1); then
+    echo "ldd cannot inspect $name:" >&2; echo "$out" >&2; status=1; continue
+  fi
+  # Every line must be a dependency (resolved or not found) or an undefined
+  # symbol; anything else (a GLIBC version not found, a loader error) is a
+  # failure the greps below do not look for.
+  unexpected=$(grep -vE '^[[:space:]]+[^[:space:]]+( => ([^[:space:]]+ \(0x[0-9a-f]+\)|not found)| \(0x[0-9a-f]+\))$|^undefined symbol: ' <<<"$out" || true)
+  if [[ -n $unexpected || -z $out ]]; then
+    echo "$name does not load against this CUDA runtime:" >&2
+    echo "${unexpected:-ldd printed nothing}" >&2
+    status=1; continue
+  fi
   missing=$(grep -F '=> not found' <<<"$out" | grep -vF 'libcuda.so.1' || true)
   # Provider_GetHost comes from libonnxruntime_providers_shared.so, which ORT
   # loads globally before the provider.
