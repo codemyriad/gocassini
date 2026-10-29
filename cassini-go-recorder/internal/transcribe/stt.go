@@ -192,9 +192,11 @@ func defaultVADDecodePolicy() vadDecodePolicy {
 // context avoids both that perturbation and arbitrary mid-utterance resets.
 // 30ms is Silero's reference speech-boundary margin, not an ASR score optimum.
 // The policy was tuned on Cassini's Parakeet reference frontend and measured
-// again on upstream's NeMo log-guard frontend (2.0.1, #3999): Ultra int8 MAI
-// WER 9.18 vs 9.33, not significant, so it stays. The model spec, not the id,
-// decides (ParakeetBoundaryPolicy).
+// again on upstream's NeMo log-guard frontend (2.0.1, #3999) as the Cassini
+// 2.0.1 runtime ships it: MAI WER 9.18 vs 9.24 on Ultra int8 (CPU) and 7.31 vs
+// 7.92 on Ultra fp32 (CUDA), neither significant, so it stays (see
+// deployment/sherpa/README.md). The model spec, not the id, decides
+// (ParakeetBoundaryPolicy).
 func usesParakeetBoundaryPolicy(id ModelID) bool {
 	return knownModels[id].ParakeetBoundaryPolicy
 }
