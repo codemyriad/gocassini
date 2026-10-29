@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,13 @@ type annotateWriteRequest struct {
 	OperationID    string            `json:"operationId"`
 	// TagStyles colour the tags this batch creates, and nothing else.
 	TagStyles []annotateTagStyle `json:"tagStyles"`
+	// Namespace is the deployment's tag namespace for a trusted write, which
+	// otherwise passes none and lets a file with no annotations mint one.
+	Namespace string `json:"-"`
+	// InTx runs inside the mutation's transaction, after the document is
+	// written: a topic confirm records its verdict there, so the mark and
+	// the verdict commit together.
+	InTx func(ctx context.Context, tx *sql.Tx, result annotateResult) error `json:"-"`
 }
 
 type annotateTagStyle struct {
@@ -160,6 +168,12 @@ func (s *annotationService) resolveVocabulary(ctx context.Context, ops []json.Ra
 			if err != nil {
 				return nil, "", fmt.Errorf("check the tag id of op %d: %w", i, err)
 			}
+			// A library topic's id is known to everyone who can tag.
+			if !known {
+				if known, err = s.libraryActive(ctx, id); err != nil {
+					return nil, "", fmt.Errorf("check the tag id of op %d: %w", i, err)
+				}
+			}
 			if known {
 				continue
 			}
@@ -168,6 +182,13 @@ func (s *annotationService) resolveVocabulary(ctx context.Context, ops []json.Ra
 		if err != nil {
 			// The label is user content, so the error is reported by position.
 			return nil, "", fmt.Errorf("resolve the label of op %d: %w", i, err)
+		}
+		if !found {
+			// Before minting a new id: a library topic with this label keeps
+			// one id for it, rather than a second on this file.
+			if tagID, found, err = s.libraryTagByLabel(ctx, label); err != nil {
+				return nil, "", fmt.Errorf("resolve the label of op %d: %w", i, err)
+			}
 		}
 		if !found && id == "" {
 			continue

@@ -96,6 +96,11 @@ func modelBuildPeakMB(model string) int {
 		return 1024
 	case "nemotron-3-diarization":
 		return 1536
+	case defaultEmbeddingModel:
+		// Topic suggestions: a measured peak RSS of 0.58 GB embedding
+		// batches of texts near the token cap, with room for the native
+		// runtime; the same floor the recorder's probe admission uses.
+		return 1536
 	default:
 		return 3584
 	}

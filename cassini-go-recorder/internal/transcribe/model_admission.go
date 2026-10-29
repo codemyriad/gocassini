@@ -61,6 +61,10 @@ func probeMemoryFloor(model ModelID, device string) int {
 		return 1024
 	case "nemotron-3-diarization":
 		return 1536
+	case "embeddinggemma-2-text-int8":
+		// Topic suggestions: a measured peak RSS of 0.58 GB embedding
+		// batches of texts near the 512-token cap, 0.31 GB for the probe.
+		return 1536
 	default:
 		return 4608
 	}
@@ -70,6 +74,12 @@ func probeMemoryFloor(model ModelID, device string) int {
 // Waiting can clear it, so `cassini models` exits 75 (EX_TEMPFAIL) and the
 // operator defers rather than giving up on transcription.
 var ErrRuntimeCheckDeferred = errors.New("runtime check deferred")
+
+// AdmitModelProbe is admitModelProbe for runtime checks that live outside
+// this package, such as the embedding model's in internal/topics.
+func AdmitModelProbe(ctx context.Context, model, device string) error {
+	return admitModelProbe(ctx, ModelID(model), device)
+}
 
 // A local import is allowed to publish verified bytes on a small host, but must
 // not mark them ready by starting a native probe without enough memory.

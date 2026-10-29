@@ -198,6 +198,11 @@ Summaries and questions use whichever language model you connect, so their ratin
         <display-name>Drop crosstalk words (optional)</display-name>
         <description>Set to 1 to delete words the acoustic evidence contradicts instead of annotating them. Intended for room systems where one microphone audibly picks up every participant. The manifest records how many words were removed.</description>
       </variable>
+      <variable>
+        <name>CASSINI_TOPICS_THREADS</name>
+        <display-name>Topic suggestion threads (optional)</display-name>
+        <description>How many CPU threads the optional topic suggestions model may use. Leave empty for the default: 4, or fewer on a smaller host. Values are clamped to 1-16. It changes only how fast transcripts are read, never the suggestions.</description>
+      </variable>
     </environment-variables>
 
     <routes>
@@ -274,6 +279,14 @@ Summaries and questions use whichever language model you connect, so their ratin
       <!-- Model acquisition is explicit and administrator-only (D-797). -->
       <route>
         <url>^operator\/settings\/models\/(install|jobs\/[^\/]+\/(cancel|retry))$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <!-- ADMIN: topic suggestions' two actions, queueing past meetings and
+           retrying blocked ones (docs/topic-suggestions.md). The settings
+           wildcard below allows only GET and PUT. -->
+      <route>
+        <url>^operator\/settings\/topics\/(backfill|retry)$</url>
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
@@ -492,6 +505,14 @@ Summaries and questions use whichever language model you connect, so their ratin
            can read (annotations/tags/…, D-746). -->
       <route>
         <url>^annotations\/tags(\/.*)?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- USER: topic suggestions (docs/topic-suggestions.md): the topic
+           library anyone who can tag may edit, and review. Every answer is
+           limited to the meetings the caller can read. -->
+      <route>
+        <url>^annotations\/topics(\/.*)?$</url>
         <verb>GET,POST</verb>
         <access_level>USER</access_level>
       </route>

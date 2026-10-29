@@ -36,6 +36,7 @@ Optional capability pass-through:
 | `CASSINI_STT_HINTS_SCORE` | override the decoder hotword boost (default `2.0`) |
 | `CASSINI_ATTRIBUTION_DISABLED` | skip the cross-track speaker-attribution measurement |
 | `CASSINI_ATTRIBUTION_DROP` | delete words the attribution evidence contradicts instead of annotating them |
+| `CASSINI_TOPICS_THREADS` | CPU threads the topic suggestions model uses (default `min(4, CPUs)`, clamped to 1–16); changes only the speed, never a vector |
 
 A base URL enables an LLM call; an API key is optional, so a keyless self-hosted
 OpenAI-compatible endpoint works. For a recorder run directly, the shared

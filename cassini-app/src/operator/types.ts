@@ -319,9 +319,10 @@ export interface SpeechModel {
   id: string; name: string; description: string; revision: string;
   download_bytes: number; installed_bytes: number; installed: boolean; ready: boolean; device: string;
   // "speech" transcribes; "diarization" separates the voices on a shared
-  // device and is never the transcription model. Absent from older operators.
-  kind?: "speech" | "diarization";
-  // Diarization only: whether this server's runtime can run it at all.
+  // device and "embedding" reads transcripts for topic suggestions; neither
+  // is ever the transcription model. Absent from older operators.
+  kind?: "speech" | "diarization" | "embedding";
+  // Diarization and embedding only: whether this server's runtime can run it.
   runtime_supported?: boolean;
 }
 export interface SpeechModelJob {
@@ -331,6 +332,30 @@ export interface SpeechModelJob {
 export interface SpeechModelInventory {
   models: SpeechModel[]; jobs: SpeechModelJob[]; downloads_allowed: boolean; device: string;
 }
+
+// TopicSettingsStatus is ADMIN `GET operator/settings/topics`
+// (docs/proposals/automatic-tagging): the switch and content-free work
+// counts. It never carries suggestion or verdict counts.
+export interface TopicSettingsStatus {
+  enabled: boolean;
+  threads: number;
+  available: boolean;
+  ready: boolean;
+  reason?: string;
+  modelRevision?: string;
+  scorerVersion: number;
+  enabledAt?: string;
+  backfillSince?: string;
+  counts: Record<string, number>;
+  unavailable: Record<string, number>;
+  oldestWaitingSeconds: number;
+  blocked: { meeting: string; reason: string; error?: string }[];
+  vectorsBytes: number;
+  estimateSecondsPerMeeting: number;
+  worker: { lastError?: string; paused?: string };
+}
+
+export interface TopicBackfillResult { queued: number; estimateSeconds: number }
 
 // StorageUsage is the first-pass accounting view (D-804): apparent file bytes
 // in the folders that hold a recording or its build artifacts. It deliberately

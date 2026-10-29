@@ -27,11 +27,12 @@ type modelInfo struct {
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
 	Device         string `json:"device"`
-	// Kind is speech or diarization (the CLI never lists the VAD). Settings
-	// shows a diarizer as an optional download, never as a transcription
-	// model.
+	// Kind is speech, diarization or embedding (the CLI never lists the
+	// VAD). Settings shows a diarizer and an embedding model as optional
+	// downloads, never as a transcription model.
 	Kind string `json:"kind"`
-	// RuntimeSupported is set for diarizers: whether the runtime can run one.
+	// RuntimeSupported is set for diarizers and embedding models: whether the
+	// runtime can run one.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
 }
 type modelProgress struct {
@@ -236,6 +237,10 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 400, "Speaker separation runs on the CPU; install it with device cpu")
 			return
 		}
+		if m.Kind == modelKindEmbedding && in.Device != "cpu" {
+			writeJSONError(w, 400, "Topic suggestions run on the CPU; install the model with device cpu")
+			return
+		}
 		if in.Device == "cuda" && in.Model != "parakeet-tdt-0.6b-v3" {
 			writeJSONError(w, 400, "CUDA requires the fp32 model")
 			return
@@ -347,6 +352,20 @@ func (rt *Runtime) startModelWorker() {
 				if models, e := rt.modelInventory(rt.ctx, device); e == nil {
 					if m, e := findModel(models, settings.ActiveModel, settings.ActiveRevision); e == nil && m.Installed && !m.Ready {
 						j, e := rt.enqueueModel(rt.ctx, m, device)
+						if e == nil && j.State == "ready" {
+							_, _ = rt.store.db.ExecContext(rt.ctx, `UPDATE model_install_jobs SET state='queued' WHERE id=? AND state='ready'`, j.ID)
+						}
+					}
+				}
+			}
+		}
+		// The embedding model's readiness survives restarts, so it is
+		// checked again in the background; a failure pauses suggestions.
+		if settings.TopicSuggestions.Enabled {
+			if models, e := rt.modelInventory(rt.ctx, deviceCPU); e == nil {
+				for _, m := range models {
+					if m.Kind == modelKindEmbedding && m.Installed {
+						j, e := rt.enqueueModel(rt.ctx, m, deviceCPU)
 						if e == nil && j.State == "ready" {
 							_, _ = rt.store.db.ExecContext(rt.ctx, `UPDATE model_install_jobs SET state='queued' WHERE id=? AND state='ready'`, j.ID)
 						}
@@ -505,7 +524,7 @@ func (rt *Runtime) modelCommand(ctx context.Context, job *modelJob, action strin
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) && exitErr.ExitCode() == modelExitTempFail {
 			// The recorder refused for lack of RAM or VRAM. Waiting can fix that.
-			return &resourceUnavailableError{resource: "memory for the speech model check", detail: detail}
+			return &resourceUnavailableError{resource: "memory for the model check", detail: detail}
 		}
 		return fmt.Errorf("%s: %w: %s", action, waitErr, detail)
 	}
