@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import insightTemplatesPanelSource from "./InsightTemplatesPanel.svelte?raw";
-import { shortHash } from "./InsightTemplatesPanel.svelte";
+import { asksProblem, placeholderProblem, shortHash, templateIdFromName } from "./InsightTemplatesPanel.svelte";
 import { OperatorClient, runnableWorkflows } from "./operator/client";
 
 afterEach(() => {
@@ -105,12 +105,12 @@ describe("InsightTemplatesPanel", () => {
     expect(insightTemplatesPanelSource).toContain("title={workflow.sha256}");
   });
 
-  it("renders the registry, opening each row onto the instruction it sends", () => {
-    expect(insightTemplatesPanelSource).toContain("{#each workflows as workflow");
+  it("renders the registry in two lists, opening each row onto the instruction it sends", () => {
+    expect(insightTemplatesPanelSource).toContain("{#each customs as workflow");
+    expect(insightTemplatesPanelSource).toContain("{#each builtIns as workflow");
     // The verbatim prompt, not the description beside it.
     expect(insightTemplatesPanelSource).toContain("{workflow.instruction}");
     expect(insightTemplatesPanelSource).toContain("{workflow.version}");
-    expect(insightTemplatesPanelSource).toContain("{workflow.origin}");
   });
 
   it("shows why a custom template cannot run instead of hiding it", () => {
@@ -133,21 +133,62 @@ describe("InsightTemplatesPanel", () => {
     expect(insightTemplatesPanelSource).toContain("Templates could not be listed.");
   });
 
-  it("edits custom templates and starts new ones only from a built-in", () => {
+  it("edits custom templates and only duplicates built-ins", () => {
     // Built-ins are compiled into the image: the only thing to do with one
     // here is copy it. A custom one is a file the operator writes.
-    expect(insightTemplatesPanelSource).toContain("Start from this");
-    expect(insightTemplatesPanelSource).toContain("client.saveInsightTemplate(editor.id, editor.draft)");
+    expect(insightTemplatesPanelSource).toContain("Duplicate");
+    expect(insightTemplatesPanelSource).not.toContain("Start from this");
+    expect(insightTemplatesPanelSource).toContain("client.saveInsightTemplate(id, toRequest(editor.draft))");
     expect(insightTemplatesPanelSource).toContain("client.deleteInsightTemplate(workflow.id)");
-    expect(insightTemplatesPanelSource).toContain("{#if isCustom(workflow)}");
-    // One textarea, for the instruction; the version is never typed.
+    // One textarea, for the prompt; the version and the id are never typed.
     expect(insightTemplatesPanelSource.match(/<textarea/g)).toHaveLength(1);
     expect(insightTemplatesPanelSource).not.toContain("draft.version");
+    expect(insightTemplatesPanelSource).not.toContain("bind:value={editor.id}");
   });
 
   it("shows the operator's refusal of a save, which carries the recorder's reason", () => {
     expect(insightTemplatesPanelSource).toContain("saveError = error instanceof Error ? error.message : String(error);");
     expect(insightTemplatesPanelSource).toContain('<div class="err-box" role="alert">{saveError}</div>');
+  });
+});
+
+describe("template id from a name", () => {
+  it("lowercases, folds accents and collapses everything else into single dashes", () => {
+    expect(templateIdFromName("Resumen", [])).toBe("resumen");
+    expect(templateIdFromName("  Résumé de la réunion!  ", [])).toBe("resume-de-la-reunion");
+    expect(templateIdFromName("Größe -- über / Ærø", [])).toBe("grosse-uber-aero");
+    expect(templateIdFromName("Meeting summary (copy)", [])).toBe("meeting-summary-copy");
+    expect(templateIdFromName("a___b...c", [])).toBe("a-b-c");
+  });
+
+  it("numbers a clash with any existing id, built-in or custom", () => {
+    expect(templateIdFromName("Summarise", ["summarise", "todos", "ask"])).toBe("summarise-2");
+    expect(templateIdFromName("Resumen", ["resumen", "Resumen-2"])).toBe("resumen-3");
+  });
+
+  it("still gives an id the operator accepts when the name has no letters it can keep", () => {
+    expect(templateIdFromName("会议纪要", [])).toBe("template");
+    expect(templateIdFromName("!!!", ["template"])).toBe("template-2");
+    const long = templateIdFromName("x".repeat(80) + " tail", []);
+    expect(long.length).toBeLessThanOrEqual(60);
+    expect(long).toMatch(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/);
+  });
+});
+
+describe("the question checkbox", () => {
+  it("requires {{QUESTION}} in the prompt when ticked, and its absence when not", () => {
+    expect(placeholderProblem(true, "Answer {{QUESTION}} from the transcripts.")).toBe("");
+    expect(placeholderProblem(false, "List the risks.")).toBe("");
+    expect(placeholderProblem(true, "List the risks.")).toContain("Put {{QUESTION}} in the prompt");
+    expect(placeholderProblem(false, "Answer {{QUESTION}}.")).toContain("Tick the box");
+  });
+
+  it("asks for a one-line 'What it asks' only when the template has no question box", () => {
+    // The recorder's rule: an empty question is the one that takes the
+    // person's, so an unticked template has to say what it asks.
+    expect(asksProblem(false, "")).not.toBe("");
+    expect(asksProblem(false, "List the risks.")).toBe("");
+    expect(asksProblem(true, "")).toBe("");
   });
 });
 
