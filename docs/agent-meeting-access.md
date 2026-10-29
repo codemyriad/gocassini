@@ -20,6 +20,10 @@ Give an agent what it needs to reason about your meetings:
 | `cassini meetings annotate <id> --ops <file>` | Mark that meeting, or remove marks, in one batch. |
 | `cassini meetings rename <id> <title>` | Rename that meeting for everyone with access (`--clear` restores the default). |
 
+An agent that speaks MCP can read the same meetings without the CLI: see
+[Connect an agent over MCP](#7-connect-an-agent-over-mcp). The Cassini app's
+**Connect an agent** tab shows the address and the steps.
+
 ## How it works
 
 The Cassini app serves a read surface. A command authenticates to Nextcloud
@@ -266,6 +270,18 @@ doing it. The failing id is named on stderr, because the 404 wording cannot be.
 pinned. Use it when the answer has to point at where something was said; the
 `--json` form always carries the raw timings whether or not it is set.
 
+`--from` and `--to` read just a stretch of each meeting: only the passages
+overlapping it, in milliseconds (what `search` and the JSON carry) or `MM:SS` /
+`H:MM:SS` (what `--timestamps` prints). Reading two minutes around a moment
+`search` found costs a fraction of the whole transcript. A passage straddling an
+edge is kept whole; the meeting's details, summary and word count still describe
+the whole meeting, and the document says which stretch it holds (a `- Window:`
+line, or `window` in the JSON).
+
+```bash
+./bin/cassini meetings context 01JZ8K3M… --from 12:00 --to 15:00
+```
+
 **Read this before quoting the transcript.** The transcript is *assembled from
 the recording's word timings*, and both output modes label it
 `derived-from-words`. A published meeting carries word-level timings and no
@@ -309,7 +325,7 @@ Two things follow from that, and both matter if you want the two paths to agree:
 ## 4. The same document, served to the Cassini app
 
 ```text
-GET published/meetings-context?ids=<id>,<id>[&format=json][&timestamps=true]
+GET published/meetings-context?ids=<id>,<id>[&format=json][&timestamps=true][&fromMs=<ms>][&toMs=<ms>]
 ```
 
 The app needs the same bundle the CLI prints, and "the same" is only true by
@@ -324,7 +340,7 @@ so it is `GET`/`HEAD` only and needs no new server route.
 | Answer | Means |
 |---|---|
 | `200` | The document, as `text/markdown` or `application/json` |
-| `400` | The query is wrong — no ids, a repeated id, more than 20, or an unreadable `format`/`timestamps`. Nothing was fetched. |
+| `400` | The query is wrong — no ids, a repeated id, more than 20, an unreadable `format`/`timestamps`, or a window that ends before it starts. Nothing was fetched. |
 | `404` | One of the ids is not in your readable set. Absent and denied are the same answer, as everywhere else here. |
 | `502` | The request could not be answered: Nextcloud Files was unreachable, the caller could not be identified, or the render failed. **Never** an empty document. |
 
@@ -488,6 +504,76 @@ narrowed them, so against such an app the command fails instead. The same
 answer adds a note when no meeting you can read carries the tag, or when some
 of your meetings are not in the tag index yet. With `--json`, those notes go to
 stderr as `warning=` lines.
+
+## 7. Connect an agent over MCP
+
+Cassini serves the same reads as an [MCP](https://modelcontextprotocol.io)
+server, so an agent can use them as tools without the CLI installed. In the
+Cassini app, the **Connect an agent** tab (beside *Meetings*) shows this
+instance's address and the three steps below.
+
+```text
+https://<your-nextcloud>/index.php/apps/app_api/proxy/gocassini/mcp
+```
+
+It authenticates exactly as the CLI does, with the account's
+[app password](#create-the-app-password), sent as a bearer token:
+`Authorization: Bearer <app password>`. Nextcloud checks it and names the account
+to Cassini, so the agent reads as that account and sees what it sees — no more.
+For Claude Code:
+
+```bash
+claude mcp add --transport http cassini \
+  https://<your-nextcloud>/index.php/apps/app_api/proxy/gocassini/mcp \
+  --header "Authorization: Bearer <app password>"
+```
+
+Other clients take the same address and header, usually as:
+
+```json
+{
+  "mcpServers": {
+    "cassini": {
+      "type": "http",
+      "url": "https://<your-nextcloud>/index.php/apps/app_api/proxy/gocassini/mcp",
+      "headers": { "Authorization": "Bearer <app password>" }
+    }
+  }
+}
+```
+
+Revoking the app password in **Settings → Security → Devices & sessions**
+disconnects the agent.
+
+| Tool | Answers | Returns |
+|------|---------|---------|
+| `rooms` | Which conversations does this account have recordings from? | `meetings rooms --json` |
+| `list` | Which meetings may this account read, optionally a room's (`room`), a date range's (`from`, `to`) or a tag's (`tag`)? | `meetings list --json` |
+| `search` | Where was this said? (`query`, optional `speaker`, `room`, `tag`, `limit`) | `meetings search --json`: references only |
+| `context` | Give me those meetings to read. (`ids`, optional `fromMs`, `toMs`) | `cassini.meetings.context.v1`, always as the `meetings` container |
+| `tags` | Which tags are on the meetings I may read? | `meetings tags --json` |
+| `annotations` | What is marked in that meeting, and by whom? (`id`) | `meetings annotations --json` |
+
+Every tool is **read-only**, and marked so, which lets careful clients skip the
+per-call confirmation. Marking, renaming and downloading the meeting file stay
+CLI-only for now. The rules are the CLI's:
+
+- **Access is Nextcloud's.** Each tool resolves your current shares exactly as
+  the matching CLI command does; a meeting you cannot read is reported exactly
+  as one that does not exist.
+- **`search` never returns what was said.** It names the meeting, the speaker
+  and `startMs`/`endMs`; reading the words is `context`, which fetches the
+  recording as you. To read around a hit, pass `fromMs` a minute before its
+  `startMs`.
+- **Failures are errors, never empty answers.** A tool that cannot answer — the
+  index unavailable, Nextcloud unreachable, a call that arrived without an
+  identity — returns a tool error saying so.
+
+The server is stateless and answers each `POST` with one JSON body (no event
+stream, no session), which is what passes through Nextcloud's AppAPI proxy
+unchanged. It exists only where Cassini runs as a Nextcloud app; a standalone
+operator, which cannot tell who is calling, does not serve it. Every call is
+logged with the calling account, never with its arguments.
 
 ## Exit codes
 
