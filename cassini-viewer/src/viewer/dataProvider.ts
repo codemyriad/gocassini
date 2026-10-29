@@ -66,6 +66,14 @@ export type { SpeakerEditsDoc, SpeakerEditsErrorCode, SpeakerEditsState } from "
 // How a meeting is (re)loaded. `fresh` skips every cache between the viewer and
 // the published file: the recording at that path was republished, and the copy
 // already read is the old one.
+// AgentConnection is what a person needs to connect an agent: the MCP
+// endpoint, and where Nextcloud makes the app password it authenticates with
+// (null when the page cannot tell).
+export interface AgentConnection {
+  endpoint: string;
+  appPasswordsUrl: string | null;
+}
+
 export interface LoadMeetingOptions {
   fresh?: boolean;
 }
@@ -255,6 +263,12 @@ export interface DataProvider {
   // named by its staged path only; sharing was decided at registration.
   startImports?(files: ImportFileRequest[]): Promise<ImportJobRecord[]>;
   listImports?(): Promise<ImportJobRecord[]>;
+  // Where an agent outside Cassini connects to read meetings as this person
+  // (D-813), for the "Connect an agent" tab. Optional like every capability
+  // here: only an operator behind Nextcloud serves the MCP endpoint, so a
+  // standalone export, the public view and a bundled artifact have no tab
+  // rather than instructions that cannot work.
+  agentConnection?(): AgentConnection;
   cancelImport?(id: string): Promise<void>;
   retryImport?(id: string): Promise<void>;
   removeImport?(id: string): Promise<void>;

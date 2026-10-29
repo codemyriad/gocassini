@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, RefreshCw, Settings, TextSearch, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
-  import CommandBlock from "./CommandBlock.svelte";
+  import CommandBlock from "cassini-viewer/ui/CommandBlock.svelte";
   import { checkLabels, checkStateLabel, checkTone, describeRefreshFailure, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, repairLabel, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;

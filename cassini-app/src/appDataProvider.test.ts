@@ -511,3 +511,26 @@ describe("AppDataProvider.insightFilesUrl", () => {
     );
   });
 });
+
+describe("AppDataProvider.agentConnection", () => {
+  it("puts the MCP endpoint beside the published archive, under the proxy", () => {
+    vi.stubGlobal("OC", { getRootPath: () => "" });
+    const connection = new AppDataProvider().agentConnection();
+    // The manifest declares `^mcp\/?$` at the app's root, a sibling of
+    // published/ — not under it.
+    expect(connection.endpoint).toBe(`${PROXY_BASE}mcp`);
+    expect(connection.appPasswordsUrl).toBe("https://cloud.example/index.php/settings/user/security");
+  });
+
+  it("finds the security settings under a Nextcloud served from a subdirectory", () => {
+    vi.stubGlobal("OC", { getRootPath: () => "/apps/cloud" });
+    expect(new AppDataProvider().agentConnection().appPasswordsUrl).toBe(
+      "https://cloud.example/apps/cloud/index.php/settings/user/security",
+    );
+  });
+
+  it("does not guess where app passwords are made when the page cannot say", () => {
+    vi.stubGlobal("OC", undefined);
+    expect(new AppDataProvider().agentConnection().appPasswordsUrl).toBeNull();
+  });
+});
