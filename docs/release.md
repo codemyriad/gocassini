@@ -129,7 +129,9 @@ commands after a cut on a release branch.
 
 The tag push triggers two workflows automatically:
 
-1. `publish-exapp-image.yml` — builds and pushes the `:<version>` images.
+1. `publish-exapp-image.yml` — builds and pushes the `:<version>` images. A
+   release never moves `:latest` (or `:latest-cuda`, `:cuda`): those track
+   main's newest build, which staging and the canary pull.
 2. `release.yml` — waits for the exact tagged image workflow and its complete
    compatibility evidence. It checks the commit, manifest, policy, required
    baselines and image digests, validates an unsigned package, then offers the

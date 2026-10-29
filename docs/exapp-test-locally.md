@@ -20,7 +20,8 @@ IMAGE_REF=cassini-exapp:local ./harness/bin/ci-smoke-exapp.sh
 IMAGE_REF=cassini-exapp:local ./harness/bin/ci-e2e-exapp.sh
 ```
 
-You can also pull a published image instead of building:
+You can also pull a published image instead of building. `:latest` is main's
+newest build; use `:X.Y.Z` for a release:
 
 ```bash
 docker pull ghcr.io/codemyriad/gocassini:latest
