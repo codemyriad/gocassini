@@ -344,6 +344,51 @@ func TestMigrateDownRemovesTheAttemptSummaryModeAndKeepsTheAttempt(t *testing.T)
 	}
 }
 
+func TestMigrateDownRemovesTheAttemptModelsAndKeepsTheAttempt(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "attempt_models")
+	if at < 0 {
+		t.Fatal("no attempt_models migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "job-models", nowUTCString())
+	if err := store.MarkBuildQueued(ctx, "job-models", "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	outcomes := stepOutcomes{TranscriptionStatus: "completed", TranscriptionModel: "parakeet-tdt-0.6b-v3", TranscriptionDevice: "cuda"}
+	if err := store.RecordAttemptStepOutcomes(ctx, "job-models", 1, outcomes); err != nil {
+		t.Fatalf("RecordAttemptStepOutcomes() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT transcription_model FROM job_attempts`); err == nil {
+		t.Fatal("job_attempts.transcription_model survived the down migration")
+	}
+	var status string
+	if err := store.db.QueryRow(`SELECT transcription_status FROM job_attempts WHERE job_id = ?`, "job-models").Scan(&status); err != nil || status != "completed" {
+		t.Fatalf("attempt after the down migration = %q, %v; want its outcome kept", status, err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	// Back up, the attempt is there and names no models until it is rebuilt.
+	attempt, err := store.GetJobAttempt(ctx, "job-models", 1)
+	if err != nil || attempt.TranscriptionModel != "" || attempt.TranscriptionStatus != "completed" {
+		t.Fatalf("GetJobAttempt() after re-upgrade = %+v, %v; want the attempt back without models", attempt, err)
+	}
+}
+
 // TestNewestMigrationHasARollbackTest is the tripwire: a rollback to the last
 // release is only known to work for a migration that has a down-and-up test in
 // this file. Adding a migration means adding its test and naming it here, or
@@ -359,6 +404,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"insight_document_file_id": true,
 		"attempt_step_outcomes":    true,
 		"attempt_summary_mode":     true,
+		"attempt_models":           true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {

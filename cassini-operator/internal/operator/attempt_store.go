@@ -67,6 +67,12 @@ type JobAttempt struct {
 	TranscriptionDetail string `json:"transcription_detail,omitempty"`
 	SummaryStatus       string `json:"summary_status,omitempty"`
 	SummaryReason       string `json:"summary_reason,omitempty"`
+	// The models the steps ran, from the same manifest (D-816): the speech
+	// model, its revision and the device it ran on, and the summary model.
+	TranscriptionModel    string `json:"transcription_model,omitempty"`
+	TranscriptionRevision string `json:"transcription_revision,omitempty"`
+	TranscriptionDevice   string `json:"transcription_device,omitempty"`
+	SummaryModel          string `json:"summary_model,omitempty"`
 }
 
 func insertInitialAttemptTx(tx *sql.Tx, job Job) error {
@@ -289,7 +295,8 @@ SELECT job_id, attempt_number, trigger_kind, request_json,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
-       transcription_status, transcription_reason, transcription_detail, summary_status, summary_reason
+       transcription_status, transcription_reason, transcription_detail, summary_status, summary_reason,
+       transcription_model, transcription_revision, transcription_device, summary_model
 FROM job_attempts
 WHERE job_id = ?
 ORDER BY attempt_number DESC`, jobID)
@@ -393,6 +400,10 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 		&attempt.TranscriptionDetail,
 		&attempt.SummaryStatus,
 		&attempt.SummaryReason,
+		&attempt.TranscriptionModel,
+		&attempt.TranscriptionRevision,
+		&attempt.TranscriptionDevice,
+		&attempt.SummaryModel,
 	)
 	if err != nil {
 		return JobAttempt{}, fmt.Errorf("scan job attempt: %w", err)

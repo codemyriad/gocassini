@@ -46,6 +46,30 @@ func TestReadBundleStepOutcomes(t *testing.T) {
 			want: stepOutcomes{TranscriptionStatus: "failed", TranscriptionReason: "insufficient_resources", SummaryStatus: "skipped", SummaryReason: "no_transcript"},
 		},
 		{
+			// The models that ran, and the device the speech model ran on (D-816).
+			name: "models",
+			manifest: map[string]any{
+				"processing": map[string]any{
+					"transcription":  map[string]any{"status": "completed", "model": "parakeet-tdt-0.6b-v3", "revision": "4a1c2e9"},
+					"meetingSummary": map[string]any{"status": "completed", "model": "gpt-4.1-mini"},
+				},
+				"provenance": map[string]any{"speechToText": map[string]any{"backend": "sherpa-onnx", "device": "cuda"}},
+			},
+			want: stepOutcomes{
+				TranscriptionStatus: "completed", TranscriptionModel: "parakeet-tdt-0.6b-v3", TranscriptionRevision: "4a1c2e9", TranscriptionDevice: "cuda",
+				SummaryStatus: "completed", SummaryModel: "gpt-4.1-mini",
+			},
+		},
+		{
+			// No model ran, so no device is claimed for one.
+			name: "transcription skipped",
+			manifest: map[string]any{
+				"processing": map[string]any{"transcription": map[string]any{"status": "skipped", "reason": "disabled"}},
+				"provenance": map[string]any{"speechToText": map[string]any{"device": "cpu"}},
+			},
+			want: stepOutcomes{TranscriptionStatus: "skipped", TranscriptionReason: "disabled"},
+		},
+		{
 			// Built before the summary outcome was recorded, with a summary.
 			name: "older bundle with a summary",
 			manifest: map[string]any{
@@ -186,5 +210,74 @@ func TestFillPublishedStepOutcomesReadsThePublishedBundle(t *testing.T) {
 	rt.fillPublishedStepOutcomes("job-none", 1, none)
 	if none[0].TranscriptionStatus != "" {
 		t.Fatalf("filled from nowhere: %+v", none[0])
+	}
+}
+
+// An attempt names the models that made its meeting (D-816).
+func TestRunBuildJobRecordsModels(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	const jobID = "job-models"
+	runPath := seedReadyRunBundle(t, rt.cfg.WorkRoot, jobID)
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
+		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
+			return meetingPath, err
+		}
+		writeArtifactManifest(t, meetingPath, func(m map[string]any) {
+			m["processing"] = map[string]any{
+				"transcription":  map[string]any{"status": "completed", "model": "parakeet-tdt-0.6b-v3", "revision": "4a1c2e9"},
+				"meetingSummary": map[string]any{"status": "completed", "model": "gpt-4.1-mini"},
+			}
+			m["provenance"] = map[string]any{"speechToText": map[string]any{"device": "cuda"}}
+		})
+		return meetingPath, nil
+	}
+
+	rt.runBuildJob(buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}, 1)
+	waitForJobState(t, rt.store, jobID, "succeeded")
+
+	attempt, err := rt.store.GetJobAttempt(context.Background(), jobID, 1)
+	if err != nil {
+		t.Fatalf("GetJobAttempt() error = %v", err)
+	}
+	if attempt.TranscriptionModel != "parakeet-tdt-0.6b-v3" || attempt.TranscriptionRevision != "4a1c2e9" ||
+		attempt.TranscriptionDevice != "cuda" || attempt.SummaryModel != "gpt-4.1-mini" {
+		t.Fatalf("attempt models = %q %q %q, summary %q", attempt.TranscriptionModel, attempt.TranscriptionRevision, attempt.TranscriptionDevice, attempt.SummaryModel)
+	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 || attempts[0].SummaryModel != "gpt-4.1-mini" {
+		t.Fatalf("listed attempts lack the models: %+v", attempts)
+	}
+}
+
+// An attempt published before models were recorded names them from the
+// bundle it published, without its recorded outcomes being replaced.
+func TestFillPublishedStepOutcomesAddsModels(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	const jobID = "job-models-older"
+	writeArtifactManifest(t, canonicalMeetingPath(rt.cfg.WorkRoot, jobID), func(m map[string]any) {
+		m["processing"] = map[string]any{
+			"transcription":  map[string]any{"status": "completed", "model": "parakeet-tdt-0.6b-v3"},
+			"meetingSummary": map[string]any{"status": "failed", "reason": "llm_failed"},
+		}
+		m["provenance"] = map[string]any{"speechToText": map[string]any{"device": "cpu"}}
+	})
+	attempts := []JobAttempt{{JobID: jobID, AttemptNumber: 1, TranscriptionStatus: "completed", SummaryStatus: "completed"}}
+	rt.fillPublishedStepOutcomes(jobID, 1, attempts)
+	got := attempts[0]
+	if got.TranscriptionModel != "parakeet-tdt-0.6b-v3" || got.TranscriptionDevice != "cpu" {
+		t.Fatalf("published attempt = %+v, want the bundle's models", got)
+	}
+	if got.SummaryStatus != "completed" {
+		t.Fatalf("recorded outcome replaced by the bundle's: %+v", got)
 	}
 }

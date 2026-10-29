@@ -253,6 +253,13 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- One step's log for an attempt, for an administrator reading why a
+           run failed (D-816). -->
+      <route>
+        <url>^operator\/jobs\/[^\/]+\/attempts\/[0-9]+\/logs\/(record|build|seal|publish)$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- Writing a meeting's summary calls a language model, which may be
            billed: what it would cost is a GET, queueing it a POST, and both
            are administrator-only (D-814, D-712). -->
