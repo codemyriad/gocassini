@@ -420,6 +420,9 @@ type AdditionalTranscript struct {
 	Path    string  // relative to outputDir, e.g. transcript-parakeet-tdt-06b-v2-int8.words.v1.json
 	ModelID ModelID // raw STT model id, kept for provenance
 	Backend string  // resolved STT backend id that produced this transcript
+	// NativeFrontend is this model's own nativeFrontend record (see
+	// nativeFrontendGuarantee), "" when it does not use the boundary policy.
+	NativeFrontend string
 }
 
 // ensureMergedFallback transcribes the already-mixed meeting.webm under a
@@ -800,6 +803,10 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		}
 		extra := primary
 		extra.ModelPaths = modelPaths
+		// The frontend is this model's own record: sharing the primary's
+		// would let a model without the boundary policy clear the primary
+		// transcript's nativeFrontend.
+		extra.FrontendGuarantee = &nativeFrontendGuarantee{}
 		extra.VADPath = vadPath
 		vocabulary := vocabularyForBuild(cfg.Vocabulary, streams)
 		extra.Decoder, _, err = resolveDecoderVocabulary(outputDir, vocabulary, modelPaths)
@@ -824,7 +831,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
 			return out, fmt.Errorf("write additional transcript %s: %w", id, err)
 		}
-		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: primary.Backend})
+		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: primary.Backend, NativeFrontend: extra.FrontendGuarantee.provenance(modelID)})
 	}
 	return out, nil
 }

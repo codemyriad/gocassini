@@ -369,7 +369,7 @@ func WriteManifest(path string, in ManifestInput) error {
 			}
 			files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 				ID: extra.ID, Path: extra.Path,
-				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: in.STTDevice},
+				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: in.STTDevice, NativeFrontend: extra.NativeFrontend},
 			})
 		}
 	}

@@ -815,3 +815,88 @@ func TestBuildMeetingArtifactWithRetiredOrUnknownModelPin(t *testing.T) {
 		}
 	})
 }
+
+// frontendRecognizer is a fixed-words recognizer that declares a native
+// frontend, as the sherpa Recognizer does for a boundary-policy model.
+type frontendRecognizer struct {
+	fixedWordsRecognizer
+	frontend string
+}
+
+func (r *frontendRecognizer) NativeFrontend() string { return r.frontend }
+
+// Each transcript's provenance records its own model's native frontend. An
+// additional model without the boundary policy (the 110M model declares no
+// frontend) must not clear the primary Ultra transcript's nativeFrontend,
+// which it did while every pass shared the primary's record.
+func TestAdditionalModelKeepsThePrimaryNativeFrontend(t *testing.T) {
+	requireFFMediaTools(t)
+	t.Setenv("CASSINI_STT_STREAM_CONCURRENCY", "")
+	prevModel, prevVAD := ensureModelFn, ensureVADFn
+	ensureModelFn = func(cacheDir string, id ModelID, revision string, progress io.Writer) (ModelPaths, error) {
+		return ModelPaths{ModelType: string(id), SampleRate: 16000}, nil
+	}
+	ensureVADFn = func(cacheDir string, id ModelID, revision string, progress io.Writer) (string, error) {
+		return "", nil
+	}
+	t.Cleanup(func() { ensureModelFn, ensureVADFn = prevModel, prevVAD })
+	const backend = "fake-native-frontend"
+	if err := RegisterRecognizerBackend(backend, func(paths ModelPaths, _, _ string, _ int, _ *DecoderConfig) (SpeechRecognizer, error) {
+		rec := &frontendRecognizer{fixedWordsRecognizer: fixedWordsRecognizer{words: fixedTimedWords(12)}}
+		if UsesParakeetBoundaryPolicy(ModelID(paths.ModelType)) {
+			rec.frontend = NativeFrontendNeMoLogGuard
+		}
+		return rec, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		backendMu.Lock()
+		delete(backendRegistry, backend)
+		backendMu.Unlock()
+	})
+
+	dir := t.TempDir()
+	mkv := buildTwoTrackMeetingFromSmoke(t, dir)
+	outDir := filepath.Join(dir, "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := BuildConfig{
+		Device:           "cpu",
+		Backend:          backend,
+		ModelID:          ModelParakeetUltraInt8,
+		AdditionalModels: []ModelID{ModelParakeet110M},
+		CacheDir:         t.TempDir(),
+		NumThreads:       1,
+		SkipAttribution:  true,
+	}
+	var stdout bytes.Buffer
+	if err := BuildMeetingArtifact(context.Background(), mkv, outDir, cfg, &stdout); err != nil {
+		t.Fatalf("BuildMeetingArtifact: %v\noutput:\n%s", err, stdout.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest artifactManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Provenance == nil || manifest.Provenance.SpeechToText == nil ||
+		manifest.Provenance.SpeechToText.NativeFrontend != NativeFrontendNeMoLogGuard {
+		t.Errorf("provenance.speechToText lost the Ultra pass's nativeFrontend: %s", raw)
+	}
+	want := map[string]string{
+		sanitizeTranscriptID(string(ModelParakeetUltraInt8)): NativeFrontendNeMoLogGuard,
+		sanitizeTranscriptID(string(ModelParakeet110M)):      "",
+	}
+	if len(manifest.Files.Transcripts) != len(want) {
+		t.Fatalf("transcripts %+v, want %d", manifest.Files.Transcripts, len(want))
+	}
+	for _, tr := range manifest.Files.Transcripts {
+		if tr.Provenance == nil || tr.Provenance.NativeFrontend != want[tr.ID] {
+			t.Errorf("files.transcripts[%s].provenance = %+v, want nativeFrontend %q", tr.ID, tr.Provenance, want[tr.ID])
+		}
+	}
+}
