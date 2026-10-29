@@ -19,7 +19,9 @@ const (
 )
 
 // standInScript is the fake recorder of these tests: `models list` reads the
-// inventory, `models probe` records the model it checked and fails for one
+// inventory (and then replaces it with inventory-after-list.json when there is
+// one, as a command finishing just after that read would change it), `models
+// probe` records the model it checked and fails for one
 // that has a fail-probe-<id> file, or refuses it for lack of memory (exit 75)
 // for one that has a short-probe-<id> file (and first replaces the inventory
 // with inventory-during-probe-<id>.json when there is one, as a command run
@@ -29,7 +31,9 @@ const standInScript = `#!/bin/sh
 set -eu
 r="$CASSINI_CACHE_ROOT"
 case "$1 $2" in
-"models list") cat "$r/inventory.json" ;;
+"models list")
+  cat "$r/inventory.json"
+  if [ -e "$r/inventory-after-list.json" ]; then mv "$r/inventory-after-list.json" "$r/inventory.json"; fi ;;
 "models probe")
   echo "$3" >> "$r/probes"
   printf '%s\n' '{"version":1,"phase":"checking"}'
@@ -173,6 +177,87 @@ func TestSettingsNamesTheStandIn(t *testing.T) {
 	rt = standInRuntime(t, true, true, true, true)
 	if m := listed()[modelParakeetUltraInt8]; m.StandIn != "" {
 		t.Fatalf("a ready model names a stand-in: %+v", m)
+	}
+}
+
+// Installed Ultra files that have not been checked yet (after a restart, or
+// while the install job waits to check them) are checked by the next build,
+// which transcribes with Ultra when the check passes: Settings names v3 only
+// once Ultra's check failed, and stops when one passes. A check refused for
+// memory, by a build or by the install job, says nothing about Ultra.
+func TestSettingsNamesTheStandInForAnInstalledModelOnlyAfterItsCheckFailed(t *testing.T) {
+	rt := standInRuntime(t, true, false, true, true)
+	root := rt.cfg.ModelCacheRoot
+	standIn := func() string {
+		t.Helper()
+		rec := modelRequest(rt, http.MethodGet, "/settings/models?device=cpu", "")
+		var body struct {
+			Models []modelInfo `json:"models"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("GET models = %d %s", rec.Code, rec.Body.String())
+		}
+		for _, m := range body.Models {
+			if m.ID == modelParakeetUltraInt8 {
+				return m.StandIn
+			}
+		}
+		t.Fatal("Ultra int8 not listed")
+		return ""
+	}
+	touch := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := standIn(); got != "" {
+		t.Fatalf("unchecked Ultra names stand-in %q", got)
+	}
+	// Its check passes: the build uses Ultra, as Settings said.
+	_, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.StandInFor != "" {
+		t.Fatalf("admission: %+v %v", admitted, err)
+	}
+
+	// Refused for memory, by a build and by the install job: still not named.
+	touch("short-probe-" + modelParakeetUltraInt8)
+	if _, _, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); !transientResourceError(err) {
+		t.Fatalf("admission short of memory: %v", err)
+	}
+	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.runModelJob(job)
+	if j := onlyModelJob(t, rt); j.State != "failed" {
+		t.Fatalf("install job %+v", j)
+	}
+	if got := standIn(); got != "" {
+		t.Fatalf("a check refused for memory names stand-in %q", got)
+	}
+	if err := os.Remove(filepath.Join(root, "short-probe-"+modelParakeetUltraInt8)); err != nil {
+		t.Fatal(err)
+	}
+
+	// It fails: v3 transcribes, and Settings says so.
+	touch("fail-probe-" + modelParakeetUltraInt8)
+	_, admitted, err = rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || admitted.ActiveModel != v3Int8 || admitted.StandInFor != modelParakeetUltraInt8 {
+		t.Fatalf("admission after a failed check: %+v %v", admitted, err)
+	}
+	if got := standIn(); got != v3Int8 {
+		t.Fatalf("failed Ultra names stand-in %q", got)
+	}
+	// It passes again: Ultra transcribes, and v3 is no longer named.
+	if err := os.Remove(filepath.Join(root, "fail-probe-"+modelParakeetUltraInt8)); err != nil {
+		t.Fatal(err)
+	}
+	if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelParakeetUltraInt8 {
+		t.Fatalf("admission after a passing check: %+v %v", admitted, err)
+	}
+	if got := standIn(); got != "" {
+		t.Fatalf("passed Ultra names stand-in %q", got)
 	}
 }
 
@@ -609,6 +694,28 @@ func TestStandInGoneBecauseUltraBecameReadyUsesUltra(t *testing.T) {
 		t.Fatalf("admission: %q %+v %v", device, admitted, err)
 	}
 	if probes := probesRun(t, rt); len(probes) != 1 || probes[0] != v3Int8 {
+		t.Fatalf("checks %v", probes)
+	}
+}
+
+// `models list` reads the current models before the retired ones, without a
+// lock, so a `cassini models import` run outside the operator can finish Ultra
+// and remove v3 between the two: admission then sees Ultra not installed and
+// no v3 to stand in, so no check runs and fails. An ordinary recording still
+// must not go without a transcript: Ultra is ready by then, and the build uses
+// it.
+func TestNoStandInBecauseUltraBecameReadyDuringListUsesUltra(t *testing.T) {
+	rt := standInRuntime(t, true, true, false, false)
+	root := rt.cfg.ModelCacheRoot
+	if err := os.Rename(filepath.Join(root, "inventory.json"), filepath.Join(root, "inventory-after-list.json")); err != nil {
+		t.Fatal(err)
+	}
+	writeStandInInventory(t, rt, deviceCPU, false, false, false, false)
+	device, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || device != deviceCPU || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.ActiveRevision != ultraInt8Rev || admitted.StandInFor != "" {
+		t.Fatalf("admission: %q %+v %v", device, admitted, err)
+	}
+	if probes := probesRun(t, rt); len(probes) != 0 {
 		t.Fatalf("checks %v", probes)
 	}
 }
