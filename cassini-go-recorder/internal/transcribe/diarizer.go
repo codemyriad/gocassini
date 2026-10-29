@@ -11,16 +11,11 @@ import (
 	"strconv"
 	"strings"
 
-	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
+	sherpa "github.com/k2-fsa/sherpa-onnx-go/v2/sherpa_onnx"
 )
 
-// nemotronDiarizationRuntimeMarker is in the native version string of a
-// sherpa-onnx build that runs the Nemotron v2 ONNX interface (PR #359). Stock
-// libraries (macOS, Windows, Linux arm32) lack it and cannot diarize.
-const nemotronDiarizationRuntimeMarker = ".nemotron-diarization-v2"
-
-// Settings shared with cassini-android (Diarization.kt). Threshold 0.5 is the
-// model's own activity threshold; the Go wrapper exposes no knob for it.
+// Settings shared with cassini-android (Diarization.kt). The activity threshold
+// stays at the model's own 0.5 (Sortformer.Threshold left at 0).
 const (
 	diarizationMinDurationOn  = 0.3
 	diarizationMinDurationOff = 0.5
@@ -81,7 +76,16 @@ type DiarizationModel struct {
 
 // HasDiarizationRuntime reports whether the linked sherpa-onnx can run Nemotron.
 func HasDiarizationRuntime() bool {
-	return strings.Contains(sherpa.GetVersion(), nemotronDiarizationRuntimeMarker)
+	return diarizationRuntime(sherpa.GetVersion())
+}
+
+// diarizationRuntime needs both the marker and the 2.0.1 C API: the model goes
+// through the Sortformer segmentation member (k2-fsa/sherpa-onnx#4032), which a
+// 1.13.7 runtime with the same marker does not have. Stock libraries (Linux
+// arm32) lack the marker; this gate is what keeps them from being handed a
+// config they lay out differently.
+func diarizationRuntime(version string) bool {
+	return runtimeABICompatible(version) && strings.Contains(version, nemotronDiarizationRuntimeMarker)
 }
 
 // ResolveDiarizationModel finds the Nemotron model: $CASSINI_DIARIZATION_MODEL,
@@ -153,7 +157,8 @@ func diarizeWithSherpa(model DiarizationModel, samples []float32, sampleRate, th
 		MinDurationOn:  diarizationMinDurationOn,
 		MinDurationOff: diarizationMinDurationOff,
 	}
-	cfg.Segmentation.Pyannote.Model = model.Path
+	// The Sortformer member of k2-fsa/sherpa-onnx#4032.
+	cfg.Segmentation.Sortformer.Model = model.Path
 	cfg.Segmentation.NumThreads = max(threads, 1)
 	// CUDA is untested for Nemotron; keep it on the CPU like the VAD.
 	cfg.Segmentation.Provider = "cpu"

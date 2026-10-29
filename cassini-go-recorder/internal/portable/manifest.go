@@ -204,11 +204,15 @@ type ProcessingStep struct {
 	Host     string `json:"host,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Version  string `json:"version,omitempty"`
-	// ReferenceFrontend and Encoder mirror the build manifest's
-	// speech-to-text step for the same reason as Hints: a field this struct
-	// does not declare is written by the build and dropped at pack time.
-	// ReferenceFrontend says whether every recognizer ran the model's
-	// reference frontend; Encoder names the ONNX export that actually loaded.
+	// NativeFrontend, ReferenceFrontend and Encoder mirror the build
+	// manifest's speech-to-text step for the same reason as Hints: a field
+	// this struct does not declare is written by the build and dropped at
+	// pack time. NativeFrontend names the native feature frontend a Parakeet
+	// boundary-policy model ran on (sherpa 2.0.1 and later);
+	// ReferenceFrontend is what recorders on the 1.13.7 runtimes wrote in its
+	// place, kept so their bundles pack whole; Encoder names the ONNX export
+	// that actually loaded.
+	NativeFrontend    string             `json:"nativeFrontend,omitempty"`
 	ReferenceFrontend *bool              `json:"referenceFrontend,omitempty"`
 	Encoder           *EncoderProvenance `json:"encoder,omitempty"`
 	// Hints records decoder biasing for a speech-to-text step. It mirrors the

@@ -28,7 +28,10 @@ That validation, recorded in `validation.json`, used Parakeet v3, the model
 Cassini shipped then. Since Parakeet Ultra replaced v3 (2026-10) the tests run
 fp32 Ultra; both Ultra builds pass every assertion unchanged: fp32 on CUDA
 (native runtime from codemyriad/sherpa-onnx `0c2ee3f3`) and int8 on the CPU
-(sherpa-onnx-go-linux `v1.13.7-cassini.8`).
+(sherpa-onnx-go-linux `v1.13.7-cassini.8`). Those were the 1.13.7 runtimes with
+Cassini's reference frontend; since the move to sherpa-onnx 2.0.1
+(`v2.0.1-cassini.1`) the CI job runs them on upstream's NeMo log-guard
+frontend.
 
 This is a reproduction of missing interior speech with invented audio. It does
 not establish that every real-meeting omission has the same native cause, or

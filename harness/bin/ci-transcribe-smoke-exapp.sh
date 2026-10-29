@@ -66,6 +66,13 @@ cleanup() {
       log "build log:"
       sed 's/^/    /' "${LOG_DIR}/build.log" || true
     fi
+    # Steps that redirect into LOG_DIR fail silently otherwise (doctor,
+    # install, the models list).
+    for f in "${LOG_DIR}"/*.log "${LOG_DIR}"/*.json; do
+      [[ -s "$f" && "$f" != "${LOG_DIR}/build.log" && "$f" != "${LOG_DIR}/container.log" ]] || continue
+      log "${f##*/} (last 40 lines):"
+      tail -n 40 "$f" | sed 's/^/    /' || true
+    done
   fi
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   docker volume rm "${MODEL_VOLUME}" >/dev/null 2>&1 || true
@@ -238,7 +245,7 @@ log "OK   build log contains no 'downloading ...' line (STT model + VAD both ins
 
 # ---- Assertion 5 (CUDA only): the GPU was ACTUALLY used ----
 if (( GPU_ASSERT )); then
-  # 5a. Negative proof. sherpa-onnx v1.13.7 (csrc/session.cc) logs
+  # 5a. Negative proof. sherpa-onnx (csrc/session.cc, 1.13.7 and 2.0.1) logs
   #     "Please compile with -DSHERPA_ONNX_ENABLE_GPU=ON. Available
   #     providers: %s. Fallback to cpu!" to stderr — and carries on, exit 0 —
   #     when the bundled onnxruntime has no CUDA provider. It logs NOTHING on

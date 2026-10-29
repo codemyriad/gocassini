@@ -14,8 +14,8 @@ import (
 // TestPackedPortableMeetingCarriesEncoderProvenance builds the artifact
 // manifest with the build's own writer, packs it, and reads the published
 // wire manifest back as raw JSON. The encoder record (which ONNX export
-// actually loaded) and the reference-frontend flag are written by every
-// Parakeet build; the packer reads them through typed structs, so a field
+// actually loaded) and the native frontend are written by every Parakeet
+// build; the packer reads them through typed structs, so a field
 // those structs do not declare is silently dropped at pack time and never
 // reaches the .opus the schema says carries it.
 func TestPackedPortableMeetingCarriesEncoderProvenance(t *testing.T) {
@@ -67,8 +67,8 @@ func TestPackedPortableMeetingCarriesEncoderProvenance(t *testing.T) {
 			if encoder["url"] != encoderTestURL || encoder["comment"] != "cassini export" {
 				t.Errorf("speechToText[%s].encoder = %v, want the encoder's url and comment", primary, step["encoder"])
 			}
-			if step["referenceFrontend"] != true {
-				t.Errorf("speechToText[%s].referenceFrontend = %v, want true", primary, step["referenceFrontend"])
+			if step["nativeFrontend"] != transcribe.NativeFrontendNeMoLogGuard {
+				t.Errorf("speechToText[%s].nativeFrontend = %v, want %q", primary, step["nativeFrontend"], transcribe.NativeFrontendNeMoLogGuard)
 			}
 
 			typed := decodePortableManifestFromOpus(t, outPath)
@@ -89,17 +89,16 @@ func packEncoderProvenanceFixture(t *testing.T, extra []transcribe.AdditionalTra
 	tmp := t.TempDir()
 	bundleDir := filepath.Join(tmp, "ultra.meeting")
 	manifestPath := filepath.Join(tmp, "manifest.json")
-	refFrontend := true
 	if err := transcribe.WriteManifest(manifestPath, transcribe.ManifestInput{
-		SrcBasename:       "source.mkv",
-		SrcDurationMS:     250,
-		DigestDurationMS:  250,
-		STTBackend:        "sherpa-onnx-go",
-		STTModelID:        "parakeet-ultra-0.6b-int8",
-		STTDevice:         "cpu",
-		ReferenceFrontend: &refFrontend,
-		Encoder:           &transcribe.EncoderProvenance{URL: encoderTestURL, Comment: "cassini export"},
-		Additional:        extra,
+		SrcBasename:      "source.mkv",
+		SrcDurationMS:    250,
+		DigestDurationMS: 250,
+		STTBackend:       "sherpa-onnx-go",
+		STTModelID:       "parakeet-ultra-0.6b-int8",
+		STTDevice:        "cpu",
+		NativeFrontend:   transcribe.NativeFrontendNeMoLogGuard,
+		Encoder:          &transcribe.EncoderProvenance{URL: encoderTestURL, Comment: "cassini export"},
+		Additional:       extra,
 	}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}

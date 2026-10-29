@@ -2762,7 +2762,7 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 		}
 		return sitePath, nil
 	}
-	rt.referenceFrontendProbe = func() (bool, bool) { return true, true }
+	rt.speechRuntimeProbe = func() (bool, bool) { return true, true }
 	// Stop the pipeline workers before t.TempDir cleanup removes WorkRoot;
 	// a still-running publish or requeue pass writing under it flakes the
 	// RemoveAll with "directory not empty" (D-584).

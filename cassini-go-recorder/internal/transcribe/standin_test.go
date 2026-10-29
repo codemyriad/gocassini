@@ -31,12 +31,12 @@ func TestRetiredV3Specs(t *testing.T) {
 		if !spec.Retired || spec.URL != "" || spec.ModelType != "nemo_transducer" || spec.SampleRate != 16000 || spec.FeatureDim != 128 {
 			t.Fatalf("%s spec %+v", id, spec)
 		}
-		// The v3 reference frontend, and the standard profile on a runtime
-		// without it rather than a refusal.
-		if !reflect.DeepEqual(spec.ReferenceRuntimeMarkers, []string{parakeetReferenceRuntimeMarker}) || spec.RefuseWithoutReferenceRuntime {
-			t.Fatalf("%s markers %v refuse=%v", id, spec.ReferenceRuntimeMarkers, spec.RefuseWithoutReferenceRuntime)
+		// The boundary policy v3 ran with, on any 2.0.1 runtime: its tdt url
+		// needs no joiner marker.
+		if len(spec.RuntimeMarkers) != 0 {
+			t.Fatalf("%s markers %v", id, spec.RuntimeMarkers)
 		}
-		if !usesParakeetV3ReferencePolicy(id) || !ReferenceFrontendActive(id, cassini6RuntimeVersion) || refuseWithoutReferenceRuntime(id, stockRuntimeVersion) != nil {
+		if !usesParakeetBoundaryPolicy(id) || CheckNativeRuntime(id, cassiniRuntimeVersion) != nil || CheckNativeRuntime(id, stockRuntimeVersion) != nil || CheckNativeRuntime(id, legacyCassiniRuntimeVersion) == nil {
 			t.Fatalf("%s does not run as v3 did", id)
 		}
 		if _, err := EnsureModel(t.TempDir(), id, io.Discard); err == nil || !strings.Contains(err.Error(), "has no archive download") {

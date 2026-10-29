@@ -458,8 +458,8 @@ func TestMinFreeMemForRetiredV3(t *testing.T) {
 	if !modelSupportsCUDA(modelParakeetV3Fp32) || modelSupportsCUDA(v3Int8) {
 		t.Fatal("only v3 fp32 runs on CUDA")
 	}
-	if !runtimeSelectsReferenceFrontend(v3Int8, cassini6Runtime) || modelDownloadMB(v3Int8) != 0 {
-		t.Fatal("v3 is not the model it was, or has a download")
+	if modelNeedsRuntimeMarkers(v3Int8) || modelNeedsRuntimeMarkers(modelParakeetV3Fp32) || modelDownloadMB(v3Int8) != 0 {
+		t.Fatal("v3 needs a runtime marker, or has a download")
 	}
 }
 

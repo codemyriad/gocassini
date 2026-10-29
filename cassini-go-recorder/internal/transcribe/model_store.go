@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
+	sherpa "github.com/k2-fsa/sherpa-onnx-go/v2/sherpa_onnx"
 
 	"gocassini/internal/modelstore"
 )
@@ -169,7 +169,7 @@ func ModelRuntimeFingerprint() string {
 	// neither affects the identity/path of the weights.
 	exe, _ := os.Executable()
 	st, _ := os.Stat(exe)
-	identity := fmt.Sprintf("%s/%s/%s/%t", runtime.GOOS, runtime.GOARCH, RuntimeVersion(), HasReferenceRuntime())
+	identity := fmt.Sprintf("%s/%s/%s/%s", runtime.GOOS, runtime.GOARCH, RuntimeVersion(), NativeFrontend(RuntimeVersion()))
 	if st != nil {
 		identity += fmt.Sprintf("/%d/%d/%s", st.Size(), st.ModTime().UnixNano(), os.Getenv("CUDA_VISIBLE_DEVICES"))
 	}

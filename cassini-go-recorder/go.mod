@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/gorilla/websocket v1.5.3
-	github.com/k2-fsa/sherpa-onnx-go v1.13.7
+	github.com/k2-fsa/sherpa-onnx-go/v2 v2.0.1
 	github.com/pion/rtcp v1.2.15
 	github.com/pion/rtp v1.8.25
 	github.com/pion/webrtc/v4 v4.0.11
@@ -12,9 +12,9 @@ require (
 
 require (
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.7 // indirect
-	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.7 // indirect
-	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.7 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-linux/v2 v2.0.1 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-macos/v2 v2.0.1 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-windows/v2 v2.0.1 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v3 v3.0.4 // indirect
 	github.com/pion/ice/v4 v4.0.7 // indirect
@@ -41,8 +41,8 @@ require (
 
 replace cassini-annotations => ../cassini-annotations
 
-replace github.com/k2-fsa/sherpa-onnx-go-linux => github.com/codemyriad/sherpa-onnx-go-linux v1.13.7-cassini.8
+replace github.com/k2-fsa/sherpa-onnx-go-linux/v2 => github.com/codemyriad/sherpa-onnx-go-linux/v2 v2.0.1-cassini.1
 
-replace github.com/k2-fsa/sherpa-onnx-go-macos => github.com/codemyriad/sherpa-onnx-go-macos v1.13.7-cassini.8
+replace github.com/k2-fsa/sherpa-onnx-go-macos/v2 => github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.2
 
-replace github.com/k2-fsa/sherpa-onnx-go-windows => github.com/codemyriad/sherpa-onnx-go-windows v1.13.7-cassini.8
+replace github.com/k2-fsa/sherpa-onnx-go-windows/v2 => github.com/codemyriad/sherpa-onnx-go-windows/v2 v2.0.1-cassini.2

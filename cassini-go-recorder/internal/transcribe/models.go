@@ -77,17 +77,15 @@ type modelSpec struct {
 	SampleRate   int
 	FeatureDim   int
 
-	// ReferenceRuntimeMarkers lists the markers the native runtime version must
-	// all carry for sherpa to select the Parakeet reference frontend for this
-	// export. A model with any marker gets the reference boundary policy (whole
-	// VAD spans, 30ms context, no synthetic padding) and reports
-	// referenceFrontend in provenance; empty means the default policy.
-	ReferenceRuntimeMarkers []string
-	// RefuseWithoutReferenceRuntime makes loading fail before sherpa sees the
-	// export when a marker is missing. Set where the fallback is not a slower
-	// frontend but a broken one: a runtime without the Ultra selection runs an
-	// honest-URL Ultra export on the legacy frontend, or exits the process.
-	RefuseWithoutReferenceRuntime bool
+	// RuntimeMarkers lists the markers the native runtime version must all
+	// carry to load this export. Loading fails before sherpa sees the export
+	// when one is missing (CheckNativeRuntime): the fallback is not a slower
+	// frontend but a process exit.
+	RuntimeMarkers []string
+	// ParakeetBoundaryPolicy decodes whole VAD spans with 30ms of recorded
+	// context and no synthetic padding, and records the native frontend in
+	// provenance; false means the default 10 s window policy.
+	ParakeetBoundaryPolicy bool
 	// CUDA marks the precision the onnxruntime CUDA EP runs without
 	// fragmenting dynamic-int8 ops back to the CPU: the only models the CUDA
 	// path installs and probes.
@@ -105,10 +103,10 @@ type modelSpec struct {
 	Retired bool
 }
 
-// The runtime markers of the Parakeet reference frontend for Parakeet Ultra:
-// the v3 patch plus the Ultra URL selection that sherpa-onnx-go-linux
-// v1.13.7-cassini.7 added.
-var parakeetUltraReferenceMarkers = []string{parakeetReferenceRuntimeMarker, parakeetUltraRuntimeMarker}
+// Parakeet Ultra exports keep the plain Moondream url, so they load only on a
+// runtime that detects the TDT joiner from its output size
+// (sherpa-onnx-go-*/v2 v2.0.1-cassini.1).
+var parakeetUltraRuntimeMarkers = []string{parakeetTDTJoinerRuntimeMarker}
 
 var knownModels = map[ModelID]modelSpec{
 	ModelParakeet110M: {
@@ -133,10 +131,10 @@ var knownModels = map[ModelID]modelSpec{
 		SampleRate:  16000,
 		FeatureDim:  128,
 
-		ReferenceRuntimeMarkers:       parakeetUltraReferenceMarkers,
-		RefuseWithoutReferenceRuntime: true,
-		GreedyWithoutBpeVocab:         true,
-		ProbeMemoryMB:                 2816,
+		RuntimeMarkers:         parakeetUltraRuntimeMarkers,
+		ParakeetBoundaryPolicy: true,
+		GreedyWithoutBpeVocab:  true,
+		ProbeMemoryMB:          2816,
 	},
 	ModelParakeetUltra: {
 		EncoderFile:  "encoder.onnx",
@@ -149,15 +147,16 @@ var knownModels = map[ModelID]modelSpec{
 		SampleRate:   16000,
 		FeatureDim:   128,
 
-		ReferenceRuntimeMarkers:       parakeetUltraReferenceMarkers,
-		RefuseWithoutReferenceRuntime: true,
-		CUDA:                          true,
-		ProbeMemoryMB:                 4608,
+		RuntimeMarkers:         parakeetUltraRuntimeMarkers,
+		ParakeetBoundaryPolicy: true,
+		CUDA:                   true,
+		ProbeMemoryMB:          4608,
 	},
-	// The retired v3 bundles, as the last version that shipped them ran them.
-	// A runtime without the v3 marker falls back to the standard decode
-	// profile rather than refusing them. The int8 bundle was published
-	// without bpe.vocab, like Ultra int8, so it decodes greedily.
+	// The retired v3 bundles, on the boundary policy the last version that
+	// shipped them ran them with. Their encoders carry NVIDIA's tdt url, so
+	// any 2.0.1 runtime loads them: they need no runtime marker. The int8
+	// bundle was published without bpe.vocab, like Ultra int8, so it decodes
+	// greedily.
 	ModelParakeetV3Int8: {
 		EncoderFile: "encoder.int8.onnx",
 		DecoderFile: "decoder.int8.onnx",
@@ -167,10 +166,10 @@ var knownModels = map[ModelID]modelSpec{
 		SampleRate:  16000,
 		FeatureDim:  128,
 
-		ReferenceRuntimeMarkers: []string{parakeetReferenceRuntimeMarker},
-		GreedyWithoutBpeVocab:   true,
-		ProbeMemoryMB:           2816,
-		Retired:                 true,
+		ParakeetBoundaryPolicy: true,
+		GreedyWithoutBpeVocab:  true,
+		ProbeMemoryMB:          2816,
+		Retired:                true,
 	},
 	ModelParakeetV3: {
 		EncoderFile:  "encoder.onnx",
@@ -183,10 +182,10 @@ var knownModels = map[ModelID]modelSpec{
 		SampleRate:   16000,
 		FeatureDim:   128,
 
-		ReferenceRuntimeMarkers: []string{parakeetReferenceRuntimeMarker},
-		CUDA:                    true,
-		ProbeMemoryMB:           4608,
-		Retired:                 true,
+		ParakeetBoundaryPolicy: true,
+		CUDA:                   true,
+		ProbeMemoryMB:          4608,
+		Retired:                true,
 	},
 }
 
