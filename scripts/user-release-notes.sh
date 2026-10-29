@@ -11,6 +11,7 @@
 #   ./scripts/user-release-notes.sh --version 0.3.0        # one version's notes
 #   ./scripts/user-release-notes.sh --release-body 0.3.0   # GitHub release body
 #   ./scripts/user-release-notes.sh --changelog            # App Store CHANGELOG.md
+#   ./scripts/user-release-notes.sh --publish 0.3.0        # take its notes out of draft
 #
 # --sources prints every CHANGELOG.md section newer than the last version that
 # has notes, then the pending changelog.d/ fragments: the material to draft
@@ -19,6 +20,11 @@
 # developer section alone when there are no notes. --changelog renders a Keep a
 # Changelog file with each version's notes, or its developer section where it
 # has none; the App Store shows that file's section for each release.
+#
+# Notes are merged ahead of their release with `draft: true`, which keeps them
+# off the site (it deploys from main). They count as notes all the same, and
+# --publish, run by prepare-release.sh, drops the draft line in the release
+# commit and prints the entries it changed.
 
 set -euo pipefail
 
@@ -36,6 +42,7 @@ Usage:
   ./scripts/user-release-notes.sh --version X.Y.Z[-pre]
   ./scripts/user-release-notes.sh --release-body X.Y.Z[-pre]
   ./scripts/user-release-notes.sh --changelog
+  ./scripts/user-release-notes.sh --publish X.Y.Z[-pre]
 EOF
 }
 
@@ -65,16 +72,30 @@ body() {
   ' "$1"
 }
 
-# entries_for <version> — print the published entries for <version>, in file
-# (date) order. Drafts do not count: they are not on the site either.
+# entries_for <version> — print the entries for <version>, drafts included, in
+# file (date) order.
 entries_for() {
   local e
   for e in "$NOTES_DIR"/*.md; do
     [[ -e "$e" ]] || continue
     [[ "$(field "$e" version)" == "$1" ]] || continue
-    [[ "$(field "$e" draft)" == "true" ]] && continue
     printf '%s\n' "$e"
   done
+}
+
+# publish <version> — drop the `draft:` line from each of <version>'s entries
+# and print the ones that had it.
+publish() {
+  local e
+  while IFS= read -r e; do
+    [[ -n "$(field "$e" draft)" ]] || continue
+    awk '
+      /^---[[:space:]]*$/ { n++ }
+      n == 1 && /^draft:/ { next }
+      { print }
+    ' "$e" >"$e.tmp" && mv "$e.tmp" "$e"
+    printf '%s\n' "$e"
+  done < <(entries_for "$1")
 }
 
 # notes <version> — print the notes for <version>. One entry prints its body;
@@ -161,7 +182,7 @@ main() {
   local mode="" version=""
   case "${1:-}" in
     --sources|--changelog) mode="${1#--}" ;;
-    --version|--release-body)
+    --version|--release-body|--publish)
       mode="${1#--}"; version="${2:-}"
       [[ -n "$version" ]] || { echo "error: $1 needs a version" >&2; usage; return 1; }
       rv_validate "$version" || return 1
@@ -180,6 +201,7 @@ main() {
     sources)      sources ;;
     changelog)    render_changelog ;;
     release-body) release_body "$version" ;;
+    publish)      publish "$version" ;;
     version)
       notes "$version" || {
         echo "error: no user-facing release notes for $version in $NOTES_REL/ (see docs/release-notes.md)" >&2
