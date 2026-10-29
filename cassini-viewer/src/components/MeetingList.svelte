@@ -30,6 +30,15 @@
   // selection and which of them is open; this owns only its text filter, which
   // kinds it is showing, and how the rows are laid out.
 
+  // The Imported badge's tooltip (D-828): attribution, phrased like a sentence.
+  function importedTitle(imported: { by?: string; atUtc?: string }): string {
+    const by = imported.by?.trim() ?? "";
+    const day = (imported.atUtc ?? "").slice(0, 10);
+    if (by && day) return `Imported by ${by} on ${day}`;
+    if (by) return `Imported by ${by}`;
+    return day ? `Imported on ${day}` : "Imported into this archive";
+  }
+
   // Already narrowed to the selected room by the shell. The room filter is NOT
   // applied here, because the rail and the result-line chip both need to agree
   // with it and neither is inside this component.
@@ -614,6 +623,12 @@
                   <span class="row-meta">
                     <span>{formatMeetingDateWithDay(meeting.dateLabel)}</span>
                     <span class="badge badge-ghost badge-xs">{meeting.meetingPath ? "Transcription only" : "Audio included"}</span>
+                    {#if meeting.imported}
+                      <span
+                        class="badge badge-ghost badge-xs"
+                        title={importedTitle(meeting.imported)}
+                      >Imported</span>
+                    {/if}
                     {#if showRoom}
                       <span class="rule" aria-hidden="true"></span>
                       <span class="row-room">{rowRoom}</span>

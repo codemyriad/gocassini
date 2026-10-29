@@ -35,7 +35,18 @@ import {
   retryInsight as postInsightRetry,
 } from "./insights/client";
 import { insightFilesUrl } from "./insights/filesUrl";
+import {
+  cancelImport as postImportCancel,
+  removeImport as postImportRemove,
+  clearImportStaging as postClearImportStaging,
+  listImports as fetchImports,
+  retryImport as postImportRetry,
+  searchImportSharees as queryImportSharees,
+  stageImportUpload as davStageImportUpload,
+  startImports as postImports,
+} from "./imports/client";
 import { nextcloudRootPath } from "./operator/ncSetup";
+import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/dataProvider";
 
 // The in-Nextcloud shell's data provider (D-626).
 //
@@ -212,6 +223,37 @@ export class AppDataProvider extends StaticCatalogProvider {
   // proxied on Nextcloud's origin, so Files is beside it.
   insightFilesUrl(record: InsightRecord): string {
     return insightFilesUrl(window.location, record.documentPath, nextcloudRootPath(), record.documentFileId ?? "");
+  }
+
+  // Meeting import (D-828). Only this provider implements the group: staging
+  // writes into the caller's own Nextcloud Files and the jobs run on the
+  // operator, neither of which a standalone export has, so the Import tab is
+  // absent everywhere else rather than present and failing.
+  stageImportUpload(file: File, onProgress?: (sentBytes: number, totalBytes: number) => void, sharing?: ImportSharingRequest): Promise<string> {
+    return davStageImportUpload(file, onProgress, sharing);
+  }
+
+  startImports(files: ImportFileRequest[]): Promise<ImportJobRecord[]> {
+    return postImports(files);
+  }
+
+  listImports(): Promise<ImportJobRecord[]> {
+    return fetchImports();
+  }
+
+  cancelImport(id: string): Promise<void> {
+    return postImportCancel(id);
+  }
+
+  retryImport(id: string): Promise<void> {
+    return postImportRetry(id);
+  }
+
+  removeImport(id: string): Promise<void> { return postImportRemove(id); }
+  clearImportStaging(): Promise<void> { return postClearImportStaging(); }
+
+  searchImportSharees(query: string): Promise<ImportSharee[]> {
+    return queryImportSharees(query);
   }
 }
 
