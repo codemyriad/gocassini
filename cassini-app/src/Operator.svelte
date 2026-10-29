@@ -1,6 +1,18 @@
 <script module lang="ts">
   import type { Job, JobAttempt } from "./operator/types";
   import type { OperatorPanel } from "./surfaceRouting";
+  import {
+    describeProcessing,
+    formatFactor,
+    formatMultiplier,
+    formatSpan,
+    meetingLengthMs,
+    processesCapture,
+    runProcessing,
+    spanMs,
+    stageTimes,
+    stepSpeed,
+  } from "./operator/processingSpeed";
 
   // The operator surface's left nav (D-723). Configuration is not a surface of
   // its own: Console and Settings are two groups of ONE surface, so there is a
@@ -191,20 +203,8 @@
     startStr: string | null | undefined,
     endStr: string | null | undefined,
   ): string | null {
-    if (!startStr || !endStr) return null;
-    const start = Date.parse(startStr);
-    const end = Date.parse(endStr);
-    if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
-    const totalSeconds = Math.round((end - start) / 1000);
-    if (totalSeconds < 60) return `${totalSeconds}s`;
-    const totalMinutes = Math.floor(totalSeconds / 60);
-    const remSeconds = totalSeconds % 60;
-    if (totalMinutes < 60) {
-      return remSeconds > 0 ? `${totalMinutes}m ${remSeconds}s` : `${totalMinutes}m`;
-    }
-    const hours = Math.floor(totalMinutes / 60);
-    const remMinutes = totalMinutes % 60;
-    return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+    const ms = spanMs(startStr, endStr);
+    return ms === null ? null : formatSpan(ms);
   }
 
   export function isHttpUrl(value: string | null | undefined): boolean {
@@ -861,8 +861,8 @@
     }).format(date);
   }
 
-  // stageTimes below reads `${key}_queued_at` / `_started_at` / `_finished_at`,
-  // so a stage appears here only if the operator names its columns to match.
+  // stageTimes reads `${key}_queued_at` / `_started_at` / `_finished_at`, so a
+  // stage appears here only if the operator names its columns to match.
   const STAGES = [
     { key: "record", label: "Record" },
     { key: "build", label: "Build" },
@@ -871,15 +871,6 @@
   ] as const;
 
   type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked";
-
-  function stageTimes(job: Job | JobAttempt, key: string) {
-    const row = job as unknown as Record<string, string | null | undefined>;
-    return {
-      queued: row[`${key}_queued_at`] ?? null,
-      started: row[`${key}_started_at`] ?? null,
-      finished: row[`${key}_finished_at`] ?? null,
-    };
-  }
 
   function stageProgress(job: Job | JobAttempt, recordingDeleted = false): Array<{ label: string; status: StageStatus }> {
     const buildBlocked = isBuildBlocked(job);
@@ -1033,6 +1024,8 @@
   // A run that published without a transcript or a summary says so (D-854,
   // D-814), from the attempt it published.
   $: outcomeSource = selectedJob ? outcomeAttempt(selectedJob) : null;
+  $: meetingMs = selectedJob ? meetingLengthMs(selectedJob.job) : null;
+  $: runSpeed = selectedJob ? runProcessing(selectedJob) : null;
   $: outcomeNotices = outcomeSource
     ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)].filter(
         (notice): notice is OutcomeNotice => notice !== null,
@@ -1649,6 +1642,14 @@
                         <dd class="text-sm">{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</dd>
                       </div>
                     {/if}
+                    {#if runSpeed}
+                      <div class="col-span-2">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                        <dd class="text-sm" class:text-warning={runSpeed.factor !== null && runSpeed.factor < 1}>
+                          {describeProcessing(runSpeed)}
+                        </dd>
+                      </div>
+                    {/if}
                     {#if selectedJob.job.stop_requested_at}
                       <div>
                         <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop requested</dt>
@@ -1770,12 +1771,22 @@
                               {/each}
                             </div>
                             <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                              {#each stageProgress(attempt) as stage}
-                                <span
-                                  class="flex-1"
-                                  class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                                >
-                                  {stage.label}
+                              {#each stageProgress(attempt) as stage, index}
+                                {@const step = STAGES[index].key === "record"
+                                  ? null
+                                  : stepSpeed(attempt, STAGES[index].key, stage.status === "done" && processesCapture(attempt) ? meetingMs : null)}
+                                <span class="min-w-0 flex-1">
+                                  <span
+                                    class="block"
+                                    class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
+                                  >
+                                    {stage.label}
+                                  </span>
+                                  {#if step}
+                                    <span class="block whitespace-nowrap text-base-content/45" title={step.factor !== null ? formatFactor(step.factor) : undefined}>
+                                      {step.factor !== null ? `${formatSpan(step.ms)} · ${formatMultiplier(step.factor)}` : formatSpan(step.ms)}
+                                    </span>
+                                  {/if}
                                 </span>
                               {/each}
                             </div>
