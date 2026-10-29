@@ -436,7 +436,9 @@ func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings,
 			return "", settings, err
 		}
 		probe := modelJob{Model: selected.ID, Revision: selected.Revision, Device: device}
-		if err := rt.modelCommand(ctx, &probe, "probe", false); err != nil {
+		err := rt.modelCommand(ctx, &probe, "probe", false)
+		rt.noteModelCheck(ctx, selected.ID, selected.Revision, device, err)
+		if err != nil {
 			if transientResourceError(err) {
 				// The stand-in needs no less memory (TestStandInNeedsNoLessMemory).
 				return "", settings, err
@@ -537,6 +539,34 @@ func (rt *Runtime) standInCandidates(inventory []modelInfo, selected modelInfo, 
 
 func standInKey(m modelInfo, device string) string {
 	return m.ID + "/" + m.Revision + "/" + device
+}
+
+// noteModelCheck records the outcome of a selected model's own runtime check
+// (err nil when it passed), for modelCheckHasFailed. A check that has to wait
+// for memory, or that was cancelled, says nothing about the model.
+func (rt *Runtime) noteModelCheck(ctx context.Context, id, revision, device string, err error) {
+	key := standInKey(modelInfo{ID: id, Revision: revision}, device)
+	rt.standInMu.Lock()
+	defer rt.standInMu.Unlock()
+	switch {
+	case err == nil:
+		delete(rt.modelCheckFailed, key)
+	case transientResourceError(err) || ctx.Err() != nil:
+	default:
+		if rt.modelCheckFailed == nil {
+			rt.modelCheckFailed = map[string]bool{}
+		}
+		rt.modelCheckFailed[key] = true
+	}
+}
+
+// modelCheckHasFailed says whether m's last runtime check on device failed
+// since the start, so builds transcribe with a stand-in for it rather than
+// with it.
+func (rt *Runtime) modelCheckHasFailed(m modelInfo, device string) bool {
+	rt.standInMu.Lock()
+	defer rt.standInMu.Unlock()
+	return rt.modelCheckFailed[standInKey(m, device)]
 }
 
 // awaitModelInstall queues the install of a speech model a build waits for

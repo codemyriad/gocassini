@@ -180,6 +180,87 @@ func TestSettingsNamesTheStandIn(t *testing.T) {
 	}
 }
 
+// Installed Ultra files that have not been checked yet (after a restart, or
+// while the install job waits to check them) are checked by the next build,
+// which transcribes with Ultra when the check passes: Settings names v3 only
+// once Ultra's check failed, and stops when one passes. A check refused for
+// memory, by a build or by the install job, says nothing about Ultra.
+func TestSettingsNamesTheStandInForAnInstalledModelOnlyAfterItsCheckFailed(t *testing.T) {
+	rt := standInRuntime(t, true, false, true, true)
+	root := rt.cfg.ModelCacheRoot
+	standIn := func() string {
+		t.Helper()
+		rec := modelRequest(rt, http.MethodGet, "/settings/models?device=cpu", "")
+		var body struct {
+			Models []modelInfo `json:"models"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("GET models = %d %s", rec.Code, rec.Body.String())
+		}
+		for _, m := range body.Models {
+			if m.ID == modelParakeetUltraInt8 {
+				return m.StandIn
+			}
+		}
+		t.Fatal("Ultra int8 not listed")
+		return ""
+	}
+	touch := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := standIn(); got != "" {
+		t.Fatalf("unchecked Ultra names stand-in %q", got)
+	}
+	// Its check passes: the build uses Ultra, as Settings said.
+	_, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || admitted.ActiveModel != modelParakeetUltraInt8 || admitted.StandInFor != "" {
+		t.Fatalf("admission: %+v %v", admitted, err)
+	}
+
+	// Refused for memory, by a build and by the install job: still not named.
+	touch("short-probe-" + modelParakeetUltraInt8)
+	if _, _, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); !transientResourceError(err) {
+		t.Fatalf("admission short of memory: %v", err)
+	}
+	job, err := rt.enqueueModel(rt.ctx, modelInfo{ID: modelParakeetUltraInt8, Revision: ultraInt8Rev}, deviceCPU)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.runModelJob(job)
+	if j := onlyModelJob(t, rt); j.State != "failed" {
+		t.Fatalf("install job %+v", j)
+	}
+	if got := standIn(); got != "" {
+		t.Fatalf("a check refused for memory names stand-in %q", got)
+	}
+	if err := os.Remove(filepath.Join(root, "short-probe-"+modelParakeetUltraInt8)); err != nil {
+		t.Fatal(err)
+	}
+
+	// It fails: v3 transcribes, and Settings says so.
+	touch("fail-probe-" + modelParakeetUltraInt8)
+	_, admitted, err = rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false)
+	if err != nil || admitted.ActiveModel != v3Int8 || admitted.StandInFor != modelParakeetUltraInt8 {
+		t.Fatalf("admission after a failed check: %+v %v", admitted, err)
+	}
+	if got := standIn(); got != v3Int8 {
+		t.Fatalf("failed Ultra names stand-in %q", got)
+	}
+	// It passes again: Ultra transcribes, and v3 is no longer named.
+	if err := os.Remove(filepath.Join(root, "fail-probe-"+modelParakeetUltraInt8)); err != nil {
+		t.Fatal(err)
+	}
+	if _, admitted, err := rt.admitTranscription(rt.ctx, ultraInt8Settings(), resourceLimitsFromEnv(), false); err != nil || admitted.ActiveModel != modelParakeetUltraInt8 {
+		t.Fatalf("admission after a passing check: %+v %v", admitted, err)
+	}
+	if got := standIn(); got != "" {
+		t.Fatalf("passed Ultra names stand-in %q", got)
+	}
+}
+
 // The startup migration moves a v3 pin to Ultra and queues the download
 // whether or not the v3 files are still there.
 func TestRetiredPinMigratesWhileV3IsStillInstalled(t *testing.T) {

@@ -680,8 +680,9 @@
                  go without a transcript, unless the model it replaced is still
                  installed (it transcribes them meanwhile) or its download is
                  running (they wait for it). That model also transcribes for
-                 installed files that have not passed their check: the
-                 operator names it (stand_in) only then. -->
+                 installed files whose runtime check failed: the operator
+                 names it (stand_in) on an installed model only then, not
+                 while the check is still to run (builds run it first). -->
             <p class="in-use-text" role="status">
               {#if inUseModel && inUseState === "missing"}
                 <TriangleAlert size={14} class="in-use-warn-icon" aria-hidden="true" />
@@ -690,7 +691,7 @@
                 {#if inUseDownload}
                   <span>Downloading <strong>{inUseModel.name}</strong>{inUsePercent}; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
                 {:else if inUseModel.installed}
-                  <span><strong>{inUseModel.name}</strong> is installed but hasn't passed its runtime check; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
+                  <span><strong>{inUseModel.name}</strong> is installed but failed its runtime check; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
                 {:else}
                   <span><strong>{inUseModel.name}</strong> isn't installed; the previous model transcribes recordings on {runsOnLine} meanwhile.</span>
                 {/if}
