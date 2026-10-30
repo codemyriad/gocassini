@@ -143,8 +143,8 @@ fi
 
 if [ -n "$QUERY" ]; then
   log "5. search: references, never text"
-  args="$(jq -cn --arg q "$QUERY" '{query: $q}')"
-  found="$(call "${BEARER_A[@]}" -- search "$args")"
+  search_args="$(jq -cn --arg q "$QUERY" '{query: $q}')"
+  found="$(call "${BEARER_A[@]}" -- search "$search_args")"
   jq -e '.isError != true' <<<"$found" >/dev/null || fail "search failed: $found"
   jq -e '[.structuredContent.hits[] | has("snippet") or has("text")] | any | not' <<<"$found" >/dev/null \
     || fail "a hit carries transcript text"
