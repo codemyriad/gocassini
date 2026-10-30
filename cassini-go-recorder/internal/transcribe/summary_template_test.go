@@ -35,8 +35,8 @@ func writeSummaryTemplates(t *testing.T, files map[string]string) {
 
 func TestResolveSummaryWorkflow(t *testing.T) {
 	writeSummaryTemplates(t, map[string]string{
-		"resumen.md":  "---\nname: Resumen\nquestion: Resume.\nversion: 2\n---\nResume en español.\n",
-		"pregunta.md": "---\nname: Pregunta\nquestion: \"\"\nversion: 1\n---\nResponde: {{QUESTION}}\n",
+		"resumen.md":  "---\nname: Resumen\nversion: 2\n---\nResume en español.\n",
+		"pregunta.md": "---\nname: Pregunta\nversion: 1\n---\nResponde: {{QUESTION}}\n",
 		"roto.md":     "roto\n",
 	})
 	cases := []struct {
@@ -48,6 +48,7 @@ func TestResolveSummaryWorkflow(t *testing.T) {
 		{"roto", workflows.SummariseID, "cannot run"},
 		{"missing", workflows.SummariseID, "no template has this id"},
 		{"pregunta", workflows.SummariseID, "takes a question"},
+		{workflows.AskID, workflows.SummariseID, "takes a question"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.env, func(t *testing.T) {
@@ -86,7 +87,7 @@ func TestSummaryFrontMatterRoundTrips(t *testing.T) {
 // The summary the pipeline writes names the template that wrote it.
 func TestBuildMeetingSummaryRecordsItsTemplate(t *testing.T) {
 	writeSummaryTemplates(t, map[string]string{
-		"resumen.md": "---\nname: Resumen\nquestion: Resume.\nversion: 2\n---\nResume en español.\n",
+		"resumen.md": "---\nname: Resumen\nversion: 2\n---\nResume en español.\n",
 	})
 	t.Setenv(SummaryTemplateEnv, "resumen")
 	srv := newChatStub(t, "# Resumen\n\nHola.")

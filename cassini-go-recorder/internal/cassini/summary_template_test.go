@@ -35,7 +35,7 @@ func summaryBody(t *testing.T, markdown []byte) string {
 func TestMeetingsSummarizeRunsTheConfiguredCustomTemplate(t *testing.T) {
 	requireFFMediaTools(t)
 	templates := t.TempDir()
-	custom := "---\nname: Resumen\nquestion: Resume la reunión.\ndescription: \"\"\nversion: 3\n---\n\nResume la reunión en español.\n"
+	custom := "---\nname: Resumen\ndescription: \"\"\nversion: 3\n---\n\nResume la reunión en español.\n"
 	if err := os.WriteFile(filepath.Join(templates, "resumen.md"), []byte(custom), 0o644); err != nil {
 		t.Fatal(err)
 	}

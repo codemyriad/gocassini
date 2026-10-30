@@ -21,12 +21,10 @@ const (
 
 // workflowView is the validated CLI response served by the settings endpoint.
 type workflowView struct {
-	ID      string `json:"id"`
-	Version string `json:"version"`
-	SHA256  string `json:"sha256"`
-	Name    string `json:"name"`
-	// Question is empty for freeform workflows, where the caller supplies it.
-	Question    string `json:"question"`
+	ID          string `json:"id"`
+	Version     string `json:"version"`
+	SHA256      string `json:"sha256"`
+	Name        string `json:"name"`
 	Description string `json:"description"`
 	Origin      string `json:"origin"`
 	// Instruction contains the rendered system prompt whose bytes SHA256 identifies.
@@ -131,10 +129,6 @@ func validateWorkflowListing(entries []workflowView) error {
 			strings.TrimSpace(entry.Instruction) == "" {
 			return fmt.Errorf("workflow %q was printed without its version, name or instruction", entry.ID)
 		}
-		// Freeform workflows must provide a slot for the caller's question.
-		if strings.TrimSpace(entry.Question) == "" && !strings.Contains(entry.Instruction, insightQuestionPlaceholder) {
-			return fmt.Errorf("workflow %q was printed with no question of its own and no %s to put one in", entry.ID, insightQuestionPlaceholder)
-		}
 	}
 	return nil
 }
@@ -146,7 +140,6 @@ func validateWorkflowListing(entries []workflowView) error {
 type workflowChoice struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
-	Question      string `json:"question"`
 	Description   string `json:"description"`
 	TakesQuestion bool   `json:"takesQuestion"`
 	Origin        string `json:"origin"`
@@ -178,7 +171,6 @@ func (rt *Runtime) insightWorkflowsHandler(w http.ResponseWriter, r *http.Reques
 		choices = append(choices, workflowChoice{
 			ID:            entry.ID,
 			Name:          entry.Name,
-			Question:      entry.Question,
 			Description:   entry.Description,
 			TakesQuestion: strings.Contains(entry.Instruction, insightQuestionPlaceholder),
 			Origin:        entry.Origin,

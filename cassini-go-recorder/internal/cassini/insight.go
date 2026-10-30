@@ -187,9 +187,10 @@ template already spliced in, byte for byte as the model receives it.
 Naming one on `+"`cassini insight run --workflow <id>`"+` runs it.
 
 Custom templates are read from the directory `+workflows.TemplatesDirEnv+`
-names, one <id>.md file each (front matter: name, question, description, version; the body
-is the instruction). They are listed with origin "Custom". A custom file that
-cannot run is still listed, with its "error", and naming it is refused, so a
+names, one <id>.md file each (front matter: name, description, version; the body
+is the instruction). They are listed with origin "Custom". A template whose
+instruction carries {{QUESTION}} takes a question, built in or custom, and
+then needs --question on insight run. A custom file that cannot run is still listed, with its "error", and naming it is refused, so a
 template someone added never disappears without a reason.
 
 `+"\n")
@@ -229,7 +230,7 @@ template someone added never disappears without a reason.
 	for _, entry := range entries {
 		fmt.Fprintf(stdout, "\nworkflow=%s version=%s sha256=%s origin=%q\n", entry.ID, entry.Version, entry.SHA256, entry.Origin)
 		fmt.Fprintf(stdout, "name=%s\n", entry.Name)
-		fmt.Fprintf(stdout, "asks=%s\n", entry.Question)
+		fmt.Fprintf(stdout, "takes_question=%t\n", strings.Contains(entry.Instruction, insight.QuestionPlaceholder))
 		fmt.Fprintf(stdout, "about=%s\n", entry.Description)
 		if entry.Error != "" {
 			fmt.Fprintf(stdout, "broken=%s\n", entry.Error)

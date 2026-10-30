@@ -116,24 +116,11 @@ func TestCatalogShowsExactlyWhatTheRegistryWouldSend(t *testing.T) {
 		if entry.Origin != OriginBuiltIn {
 			t.Errorf("workflow %q: origin = %q, want %q", entry.ID, entry.Origin, OriginBuiltIn)
 		}
-		// The name is what a person picks by and says nothing about what the
-		// model is asked to do; the question is what the row discloses instead.
-		// A row missing either is a row that cannot be chosen honestly.
-		//
-		// The one exception is a workflow that TAKES a question: its question is
-		// the caller's, so there is none to disclose, and an invented one would
-		// be a row promising to ask something it does not. The panel reads the
-		// empty question as "write it yourself" and shows the box — which is
-		// only honest if the bytes really do have somewhere to put it, so that
-		// is asserted here rather than assumed.
+		// The name is what a person picks by; the description is what tells
+		// them what it does and what comes back. A row missing either cannot be
+		// chosen honestly.
 		if strings.TrimSpace(entry.Name) == "" || strings.TrimSpace(entry.Description) == "" {
 			t.Errorf("workflow %q: name=%q description=%q — the panel needs both", entry.ID, entry.Name, entry.Description)
-		}
-		if strings.TrimSpace(entry.Question) == "" && !workflow.TakesQuestion() {
-			t.Errorf("workflow %q asks no question of its own and has no %s to put one in, so nothing could ever be asked of it", entry.ID, insight.QuestionPlaceholder)
-		}
-		if strings.TrimSpace(entry.Question) != "" && workflow.TakesQuestion() {
-			t.Errorf("workflow %q both declares a question (%q) and takes one, so the panel cannot tell which it is", entry.ID, entry.Question)
 		}
 	}
 }

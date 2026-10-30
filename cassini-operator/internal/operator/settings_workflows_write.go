@@ -16,7 +16,7 @@ import (
 
 // Custom insight templates, written from the panel (D-819).
 //
-//	PUT    operator/settings/workflows/<id>   {name, question, description, instruction}
+//	PUT    operator/settings/workflows/<id>   {name, description, instruction}
 //	DELETE operator/settings/workflows/<id>
 //
 // A template is a file, <id>.md, in the templates root on the app's volume.
@@ -37,7 +37,6 @@ const (
 
 type workflowWriteRequest struct {
 	Name        string `json:"name"`
-	Question    string `json:"question"`
 	Description string `json:"description"`
 	Instruction string `json:"instruction"`
 }
@@ -206,11 +205,10 @@ func (rt *Runtime) deleteWorkflow(w http.ResponseWriter, r *http.Request, id str
 
 func (q *workflowWriteRequest) validate() error {
 	q.Name = strings.TrimSpace(q.Name)
-	q.Question = strings.TrimSpace(q.Question)
 	q.Description = strings.TrimSpace(q.Description)
 	q.Instruction = strings.TrimSpace(strings.ReplaceAll(q.Instruction, "\r\n", "\n"))
 	for _, field := range []struct{ label, value string }{
-		{"name", q.Name}, {"question", q.Question}, {"description", q.Description},
+		{"name", q.Name}, {"description", q.Description},
 	} {
 		if utf8.RuneCountInString(field.value) > maxTemplateFieldRunes {
 			return fmt.Errorf("the %s is longer than %d characters", field.label, maxTemplateFieldRunes)
@@ -239,7 +237,6 @@ func (q workflowWriteRequest) file(version int) string {
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "name: %s\n", strconv.Quote(q.Name))
-	fmt.Fprintf(&b, "question: %s\n", strconv.Quote(q.Question))
 	fmt.Fprintf(&b, "description: %s\n", strconv.Quote(q.Description))
 	fmt.Fprintf(&b, "version: %d\n", version)
 	b.WriteString("---\n\n")

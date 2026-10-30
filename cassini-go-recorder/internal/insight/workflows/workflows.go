@@ -122,13 +122,11 @@ type spec struct {
 
 	// Name is what the panel and the pipeline's step select show.
 	Name string
-	// Question is what this workflow asks of a set of meetings, in the words a
-	// person would use. It is the affordance: the name says nothing about what
-	// the model is asked to do.
-	Question string
-	// Description says what document comes back. It is deliberately about the
-	// shape of the output and not a paraphrase of the prompt — a paraphrase
-	// drifts from the bytes it summarises, and the panel shows the bytes.
+	// Description is one sentence, shown to the person choosing the template,
+	// saying what it does and what comes back. Built-ins and custom templates
+	// have the same three visible parts: name, description, prompt. It stays
+	// about the job and the shape of the output rather than paraphrasing the
+	// prompt, which drifts from the bytes; the panel shows the bytes.
 	Description string
 }
 
@@ -141,8 +139,7 @@ var shipped = []spec{
 		TemplateFile: "summarise-template.v0.md",
 		SkillDir:     "cassini-meeting-summary",
 		Name:         "Meeting summary",
-		Question:     "Summarise what happened, what was decided, and what follows.",
-		Description:  "Overview, key points, decisions, actions, open questions and next steps.",
+		Description:  "Summarises what happened, what was decided and what follows: overview, key points, decisions, actions, open questions and next steps.",
 	},
 	{
 		ID:           TodosID,
@@ -151,8 +148,7 @@ var shipped = []spec{
 		TemplateFile: "todos-template.v0.md",
 		SkillDir:     "cassini-meeting-todos",
 		Name:         "Commitments and owners",
-		Question:     "List the commitments and who owns them.",
-		Description:  "What each person committed to and by when, plus anything unassigned.",
+		Description:  "Lists what each person committed to and by when, plus anything unassigned.",
 	},
 	{
 		ID:           AskID,
@@ -161,12 +157,9 @@ var shipped = []spec{
 		TemplateFile: "ask-template.v0.md",
 		SkillDir:     "cassini-meeting-ask",
 		Name:         "Ask your own question",
-		// Empty on purpose, and the one entry for which that is right: this
-		// workflow has no question of its own, because the question is the
-		// caller's. The panel reads an empty Question as "write it yourself"
-		// and shows the box; every other entry shows the question it asks.
-		Question:    "",
-		Description: "A short answer to your question, with who said what and any gaps.",
+		// Whether the app shows a question box comes from the {{QUESTION}} slot
+		// in this entry's bytes (Workflow.TakesQuestion), not from this table.
+		Description: "Answers a question you type, in three sentences, with who said what and what the meetings do not cover.",
 	},
 }
 
@@ -183,7 +176,6 @@ type Entry struct {
 	Version     string `json:"version"`
 	SHA256      string `json:"sha256"`
 	Name        string `json:"name"`
-	Question    string `json:"question"`
 	Description string `json:"description"`
 	Origin      string `json:"origin"`
 	Instruction string `json:"instruction"`
@@ -241,7 +233,6 @@ func LoadDir(dir string) (Set, error) {
 			Version:     workflow.Version,
 			SHA256:      workflow.SHA256,
 			Name:        item.Name,
-			Question:    item.Question,
 			Description: item.Description,
 			Origin:      OriginBuiltIn,
 			Instruction: workflow.SystemPrompt(),
@@ -256,7 +247,6 @@ func LoadDir(dir string) (Set, error) {
 		entry := Entry{
 			ID:          file.template.ID,
 			Name:        file.template.Name,
-			Question:    file.template.Question,
 			Description: file.template.Description,
 			Origin:      OriginCustom,
 			Instruction: file.template.Instruction,

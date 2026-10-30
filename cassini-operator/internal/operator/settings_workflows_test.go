@@ -20,7 +20,6 @@ const oneWorkflowJSON = `[
     "version": "v0",
     "sha256": "eba6bd6674d35522dddbd774d3fc6a1fbcdab025aa30a5993d49216d0c13f59f",
     "name": "Meeting summary",
-    "question": "Summarise what happened, what was decided, and what follows.",
     "description": "One document per meeting in a fixed shape.",
     "origin": "Built in",
     "instruction": "You are a meeting-summary editor.\n"
@@ -56,7 +55,7 @@ func TestSettingsWorkflowsServesTheRecordersRegistry(t *testing.T) {
 	if entry.Instruction != "You are a meeting-summary editor.\n" {
 		t.Errorf("instruction = %q, want the bytes the CLI printed", entry.Instruction)
 	}
-	if entry.Question == "" || entry.Name == "" || entry.Origin == "" {
+	if entry.Description == "" || entry.Name == "" || entry.Origin == "" {
 		t.Errorf("entry = %+v, want everything the panel renders", entry)
 	}
 }
@@ -176,17 +175,15 @@ func TestSettingsWorkflowsIsRoutedAheadOfTheLLMSettingsPrefix(t *testing.T) {
 	}
 }
 
-// A freeform workflow declares no question of its own — the question is the
-// caller's — so the field the panel usually renders is empty on purpose. What
-// makes that legible rather than a half-printed row is the placeholder in the
-// instruction, which is the same byte the create handler decides on.
-func TestWorkflowListingAcceptsAFreeformWorkflowWithNoQuestionOfItsOwn(t *testing.T) {
+// A workflow that takes the caller's question says so only through the
+// {{QUESTION}} slot in its instruction, the same byte the create handler
+// decides on.
+func TestWorkflowListingAcceptsAWorkflowThatTakesAQuestion(t *testing.T) {
 	entries := []workflowView{{
 		ID:          "ask",
 		Version:     "v0",
 		SHA256:      "a0ff18109e752c2539dc99f3577349c7f81f251521d87c92beaf05be6366d1e3",
 		Name:        "Ask your own question",
-		Question:    "",
 		Description: "Answers a question you type.",
 		Origin:      "Built in",
 		Instruction: "You are a meeting analyst.\n\n" + insightQuestionPlaceholder + "\n",
@@ -196,26 +193,20 @@ func TestWorkflowListingAcceptsAFreeformWorkflowWithNoQuestionOfItsOwn(t *testin
 	}
 }
 
-// The other half of the same rule: no question and nowhere to put one is a
-// workflow nothing could ever be asked of, and a row the panel cannot render
-// honestly.
-func TestWorkflowListingRefusesAQuestionlessWorkflowWithNoSlotForOne(t *testing.T) {
+// A custom template takes no question and may have no description (D-819):
+// it runs on the transcripts alone, and the listing must carry it.
+func TestWorkflowListingAcceptsACustomTemplateWithNoDescription(t *testing.T) {
 	entries := []workflowView{{
-		ID:          "mute",
-		Version:     "v0",
+		ID:          "resumen",
+		Version:     "v1",
 		SHA256:      "deadbeef",
-		Name:        "Says nothing",
-		Question:    "",
-		Description: "…",
-		Origin:      "Built in",
-		Instruction: "You are a meeting analyst.",
+		Name:        "Resumen",
+		Description: "",
+		Origin:      "Custom",
+		Instruction: "Resume la reunión en español.",
 	}}
-	err := validateWorkflowListing(entries)
-	if err == nil {
-		t.Fatal("a workflow with no question and no placeholder was accepted")
-	}
-	if !strings.Contains(err.Error(), "mute") {
-		t.Fatalf("the refusal does not name the workflow: %v", err)
+	if err := validateWorkflowListing(entries); err != nil {
+		t.Fatalf("a custom template with no description was refused: %v", err)
 	}
 }
 
@@ -228,7 +219,7 @@ func TestSettingsWorkflowsListsCustomTemplatesFromTheTemplatesRoot(t *testing.T)
 	seen := filepath.Join(t.TempDir(), "env")
 	rt.cfg.TemplatesRoot = filepath.Join(t.TempDir(), "templates")
 	listing := `[` + strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(oneWorkflowJSON), "["), "]") +
-		`,{"id":"roto","version":"","sha256":"","name":"roto","question":"","description":"","origin":"Custom","instruction":"","error":"the front matter needs a version"}]`
+		`,{"id":"roto","version":"","sha256":"","name":"roto","description":"","origin":"Custom","instruction":"","error":"the front matter needs a version"}]`
 	rt.cfg.CassiniBin = writeFakeCassini(t, "printf '%s' \"$CASSINI_TEMPLATES_DIR\" > "+seen+"\nprintf '%s' '"+listing+"'\n")
 
 	rec := httptest.NewRecorder()

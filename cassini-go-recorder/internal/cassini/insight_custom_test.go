@@ -15,7 +15,6 @@ import (
 
 const customResumen = `---
 name: Resumen
-question: Resume la reunión.
 description: Un resumen en español.
 version: 2
 ---
@@ -35,6 +34,11 @@ func TestInsightRunsACustomTemplateFromTheTemplatesDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(templates, "roto.md"), []byte("---\nname: Roto\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The question field is gone from the format; a file still carrying one is
+	// refused rather than read as something it no longer means.
+	if err := os.WriteFile(filepath.Join(templates, "preguntas.md"), []byte("---\nname: Preguntas\nquestion: ¿Qué se decidió?\nversion: 1\n---\nResponde.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(workflows.TemplatesDirEnv, templates)
@@ -61,20 +65,25 @@ func TestInsightRunsACustomTemplateFromTheTemplatesDirectory(t *testing.T) {
 	bundle := writeContextBundle(t, filepath.Join(dir, "a.json"), insightMeeting("mtg_a", "Lunes", "", ""))
 	summaryLLMEnv(t, "http://model.invalid/v1")
 
-	stderr.Reset()
-	code := Run(context.Background(), []string{"insight", "run", "--context", bundle, "--workflow", "roto"}, &bytes.Buffer{}, &stderr)
-	if code != 2 {
-		t.Fatalf("broken template exit = %d, want 2\nstderr: %s", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), byID["roto"].Error) {
-		t.Errorf("the refusal does not give the listed reason: %s", stderr.String())
+	for _, id := range []string{"roto", "preguntas"} {
+		if id != "roto" && !strings.Contains(byID[id].Error, "question field is no longer part") {
+			t.Errorf("%s listed as %+v, want it broken because it takes a question", id, byID[id])
+		}
+		stderr.Reset()
+		code := Run(context.Background(), []string{"insight", "run", "--context", bundle, "--workflow", id}, &bytes.Buffer{}, &stderr)
+		if code != 2 {
+			t.Fatalf("broken template %s exit = %d, want 2\nstderr: %s", id, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), byID[id].Error) {
+			t.Errorf("the refusal of %s does not give the listed reason: %s", id, stderr.String())
+		}
 	}
 
 	provider := &stubInsightProvider{reply: "# Resumen\n\nNada.\n"}
 	useInsightProvider(t, provider)
 	recordPath := filepath.Join(dir, "insight.json")
 	stderr.Reset()
-	code = Run(context.Background(), []string{"insight", "run", "--context", bundle, "--workflow", "resumen", "--out", filepath.Join(dir, "R.md"), "--record", recordPath}, &bytes.Buffer{}, &stderr)
+	code := Run(context.Background(), []string{"insight", "run", "--context", bundle, "--workflow", "resumen", "--out", filepath.Join(dir, "R.md"), "--record", recordPath}, &bytes.Buffer{}, &stderr)
 	if code != 0 {
 		t.Fatalf("custom run exit = %d\nstderr: %s", code, stderr.String())
 	}

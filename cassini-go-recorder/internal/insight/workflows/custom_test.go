@@ -11,7 +11,6 @@ import (
 
 const goodTemplate = `---
 name: "Resumen de la reunión"
-question: "Resume lo que pasó y lo que se decidió."
 description: Resumen, decisiones y próximos pasos.
 version: 3
 ---
@@ -21,9 +20,10 @@ Eres un asistente que resume reuniones. Escribe todo en español.
 ## Resumen
 `
 
+// askTemplate takes the caller's question the way the built-in ask does: the
+// {{QUESTION}} slot in its bytes is the whole of it.
 const askTemplate = `---
 name: 'Pregunta libre'
-question: ""
 description: Responde a tu pregunta.
 version: 1
 ---
@@ -81,7 +81,7 @@ func TestLoadDirReadsCustomTemplatesBesideTheBuiltIns(t *testing.T) {
 		t.Errorf("instruction = %q, want %q", resumen.SystemPrompt(), wantInstruction)
 	}
 	if resumen.TakesQuestion() {
-		t.Error("a template with a question of its own was read as taking the caller's")
+		t.Error("a template with no {{QUESTION}} was read as taking the caller's question")
 	}
 
 	pregunta, ok := set.Registry.Lookup("pregunta")
@@ -101,7 +101,7 @@ func TestLoadDirReadsCustomTemplatesBesideTheBuiltIns(t *testing.T) {
 		switch {
 		case entry.Origin == OriginCustom && entry.ID == "resumen":
 			if entry.Error != "" || entry.SHA256 != resumen.SHA256 || entry.Name != "Resumen de la reunión" ||
-				entry.Question != "Resume lo que pasó y lo que se decidió." || entry.Description != "Resumen, decisiones y próximos pasos." {
+				entry.Description != "Resumen, decisiones y próximos pasos." {
 				t.Errorf("resumen entry = %+v", entry)
 			}
 			if entry.Instruction != resumen.SystemPrompt() {
@@ -199,21 +199,21 @@ func TestParseCustomTemplateRefusesWhatWillNotRun(t *testing.T) {
 		{"bad id", "has space", goodTemplate, "not a usable id"},
 		{"no front matter", "x", "Just an instruction\n", "must start with"},
 		{"unclosed front matter", "x", "---\nname: X\nversion: 1\nbody", "no closing"},
-		{"no name", "x", front("version: 1", "question: Q") + "Body", "needs a name"},
-		{"no version", "x", front("name: X", "question: Q") + "Body", "needs a version"},
-		{"bad version", "x", front("name: X", "version: two", "question: Q") + "Body", "whole number"},
-		{"zero version", "x", front("name: X", "version: 0", "question: Q") + "Body", "whole number"},
-		{"unknown field", "x", front("name: X", "version: 1", "question: Q", "langauge: es") + "Body", "unknown field"},
-		{"duplicate field", "x", front("name: X", "name: Y", "version: 1", "question: Q") + "Body", "twice"},
-		{"multi-line value", "x", front("name: |", "version: 1", "question: Q") + "Body", "multi-line"},
-		{"unclosed quote", "x", front(`name: "X`, "version: 1", "question: Q") + "Body", "does not close"},
+		{"no name", "x", front("version: 1") + "Body", "needs a name"},
+		{"no version", "x", front("name: X") + "Body", "needs a version"},
+		{"bad version", "x", front("name: X", "version: two") + "Body", "whole number"},
+		{"zero version", "x", front("name: X", "version: 0") + "Body", "whole number"},
+		{"unknown field", "x", front("name: X", "version: 1", "langauge: es") + "Body", "unknown field"},
+		{"duplicate field", "x", front("name: X", "name: Y", "version: 1") + "Body", "twice"},
+		{"multi-line value", "x", front("name: |", "version: 1") + "Body", "multi-line"},
+		{"unclosed quote", "x", front(`name: "X`, "version: 1") + "Body", "does not close"},
 		{"not key value", "x", front("name X", "version: 1") + "Body", "not 'key: value'"},
-		{"empty instruction", "x", front("name: X", "version: 1", "question: Q") + "\n\n", "empty"},
-		{"template slot", "x", front("name: X", "version: 1", "question: Q") + "Body {{TEMPLATE}}", "final form"},
-		{"no question and no slot", "x", front("name: X", "version: 1") + "Body", "{{QUESTION}}"},
-		{"question and slot", "x", front("name: X", "version: 1", "question: Q") + "Body {{QUESTION}}", "must be empty"},
+		{"empty instruction", "x", front("name: X", "version: 1") + "\n\n", "empty"},
+		{"template slot", "x", front("name: X", "version: 1") + "Body {{TEMPLATE}}", "has no place for a template splice"},
+		{"question field", "x", front("name: X", "version: 1", "question: Q") + "Body", "no longer part of a template"},
+		{"empty question field", "x", front("name: X", "version: 1", `question: ""`) + "Body {{QUESTION}}", "no longer part of a template"},
 		{"not utf-8", "x", "---\nname: \xff\nversion: 1\n---\nBody", "UTF-8"},
-		{"too large", "x", front("name: X", "version: 1", "question: Q") + strings.Repeat("a", maxCustomTemplateBytes), "at most"},
+		{"too large", "x", front("name: X", "version: 1") + strings.Repeat("a", maxCustomTemplateBytes), "at most"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,12 +229,12 @@ func TestParseCustomTemplateRefusesWhatWillNotRun(t *testing.T) {
 }
 
 func TestParseCustomTemplateReadsTheScalarForms(t *testing.T) {
-	file := "---\n# a comment\nname: 'It''s ours'\nquestion: plain words # trailing comment\ndescription: \"Tab\\there, «quoted»\"\nversion: 12\n---\nBody\n"
+	file := "---\n# a comment\nname: 'It''s ours'\ndescription: \"Tab\\there, «quoted»\"\nversion: 12 # trailing comment\n---\nBody\n"
 	tpl, err := ParseCustomTemplate("ours", []byte(file))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if tpl.Name != "It's ours" || tpl.Question != "plain words" || tpl.Description != "Tab\there, «quoted»" || tpl.Version != 12 || tpl.Instruction != "Body" {
+	if tpl.Name != "It's ours" || tpl.Description != "Tab\there, «quoted»" || tpl.Version != 12 || tpl.Instruction != "Body" {
 		t.Errorf("parsed %+v", tpl)
 	}
 }
@@ -243,12 +243,18 @@ func TestParseCustomTemplateReadsTheScalarForms(t *testing.T) {
 // settings_workflows_write.go, pinned there on the rendered bytes); it must
 // read back to the same values, Go-quoted escapes included.
 func TestParseCustomTemplateReadsWhatTheOperatorWrites(t *testing.T) {
-	file := "---\nname: \"Say \\\"hi\\\" — ¡ya!\"\nquestion: \"\"\ndescription: \"a\\\\b\"\nversion: 4\n---\n\nAnswer {{QUESTION}}\n"
+	file := "---\nname: \"Say \\\"hi\\\" — ¡ya!\"\ndescription: \"a\\\\b\"\nversion: 4\n---\n\nAnswer {{QUESTION}}\n"
 	tpl, err := ParseCustomTemplate("hola", []byte(file))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if tpl.Name != `Say "hi" — ¡ya!` || tpl.Question != "" || tpl.Description != `a\b` || tpl.Version != 4 || tpl.Instruction != "Answer {{QUESTION}}" {
+	if tpl.Name != `Say "hi" — ¡ya!` || tpl.Description != `a\b` || tpl.Version != 4 || tpl.Instruction != "Answer {{QUESTION}}" {
 		t.Errorf("parsed %+v", tpl)
+	}
+
+	// The description is optional: the operator writes an empty one as "".
+	empty, err := ParseCustomTemplate("hola", []byte("---\nname: \"X\"\ndescription: \"\"\nversion: 1\n---\n\nBody\n"))
+	if err != nil || empty.Description != "" {
+		t.Errorf("empty description: %+v, %v", empty, err)
 	}
 }

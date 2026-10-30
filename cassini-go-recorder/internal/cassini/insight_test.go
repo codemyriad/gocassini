@@ -575,8 +575,9 @@ func TestInsightWorkflowsListsTheRegistry(t *testing.T) {
 			t.Errorf("the listing does not carry %q:\n%s", want, listing)
 		}
 	}
-	if !strings.Contains(listing, "asks=") || !strings.Contains(listing, "name=") {
-		t.Errorf("the listing does not say what each workflow is called or asks:\n%s", listing)
+	if !strings.Contains(listing, "name=") || !strings.Contains(listing, "about=") ||
+		!strings.Contains(listing, "takes_question=true") || !strings.Contains(listing, "takes_question=false") {
+		t.Errorf("the listing does not say what each workflow is called, what it does, and whether it takes a question:\n%s", listing)
 	}
 }
 
@@ -595,7 +596,6 @@ func TestInsightWorkflowsJSONCarriesTheInstructionItSends(t *testing.T) {
 		Version     string `json:"version"`
 		SHA256      string `json:"sha256"`
 		Name        string `json:"name"`
-		Question    string `json:"question"`
 		Description string `json:"description"`
 		Origin      string `json:"origin"`
 		Instruction string `json:"instruction"`
@@ -625,13 +625,6 @@ func TestInsightWorkflowsJSONCarriesTheInstructionItSends(t *testing.T) {
 		}
 		if entry.Name == "" || entry.Description == "" || entry.Origin == "" {
 			t.Errorf("workflow %q is listed without everything the panel renders: %+v", entry.ID, entry)
-		}
-		// A workflow that TAKES a question declares none of its own — the
-		// question is the caller's, and an invented one would promise to ask
-		// something it does not. Every other workflow must declare one: it is
-		// the only thing on the row that says what the model is asked to do.
-		if entry.Question == "" && !workflow.TakesQuestion() {
-			t.Errorf("workflow %q asks nothing of its own and takes no question, so it can never be asked anything: %+v", entry.ID, entry)
 		}
 	}
 }

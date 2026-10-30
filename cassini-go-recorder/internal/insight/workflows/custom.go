@@ -24,7 +24,6 @@ import (
 //
 //	---
 //	name: "Resumen de la reunión"
-//	question: "Resume lo que pasó y lo que se decidió."
 //	description: "Resumen, decisiones y próximos pasos."
 //	version: 3
 //	---
@@ -33,9 +32,15 @@ import (
 // The id is the file stem. The body is the whole instruction in its final form:
 // there is no {{TEMPLATE}} splice for a custom file, because the person editing
 // it is editing the bytes the model reads, and a second half to splice in would
-// be a second place for the output shape to live. {{QUESTION}} is allowed, and
-// an empty question means the template takes the caller's, as the built-in
-// `ask` does.
+// be a second place for the output shape to live.
+//
+// A custom template takes the caller's question exactly as the built-in `ask`
+// does: when its instruction carries {{QUESTION}}, and only then. Whether it
+// takes one is read off the bytes (Workflow.TakesQuestion), never declared, so
+// there is no `question` field, and a file carrying one is refused rather than
+// read as something it no longer means. Other inputs a person fills in when
+// they run a template (more placeholders, named ones) are a feature of their
+// own and do not exist yet.
 //
 // A custom template is hashed by insight.NewWorkflow like a built-in, so every
 // document it writes records id, version and SHA-256 exactly as one written by a
@@ -81,7 +86,6 @@ func ValidCustomID(id string) bool {
 type CustomTemplate struct {
 	ID          string
 	Name        string
-	Question    string
 	Description string
 	Version     int
 	Instruction string
@@ -108,7 +112,7 @@ func ParseCustomTemplate(id string, raw []byte) (CustomTemplate, error) {
 	text = strings.TrimPrefix(text, "\ufeff")
 
 	if !strings.HasPrefix(text, "---\n") {
-		return CustomTemplate{}, errors.New("the file must start with a '---' line opening its front matter (name, question, description, version)")
+		return CustomTemplate{}, errors.New("the file must start with a '---' line opening its front matter (name, description, version)")
 	}
 	rest := text[len("---\n"):]
 	end := strings.Index(rest, "\n---\n")
@@ -146,7 +150,7 @@ func ParseCustomTemplate(id string, raw []byte) (CustomTemplate, error) {
 		case "name":
 			tpl.Name = parsed
 		case "question":
-			tpl.Question = parsed
+			return CustomTemplate{}, errors.New("the question field is no longer part of a template; remove it, and put {{QUESTION}} in the instruction if the template should ask for one")
 		case "description":
 			tpl.Description = parsed
 		case "version":
@@ -156,7 +160,7 @@ func ParseCustomTemplate(id string, raw []byte) (CustomTemplate, error) {
 			}
 			tpl.Version = version
 		default:
-			return CustomTemplate{}, fmt.Errorf("front matter has an unknown field %q; the fields are name, question, description and version", key)
+			return CustomTemplate{}, fmt.Errorf("front matter has an unknown field %q; the fields are name, description and version", key)
 		}
 	}
 
@@ -169,14 +173,7 @@ func ParseCustomTemplate(id string, raw []byte) (CustomTemplate, error) {
 	case tpl.Instruction == "":
 		return CustomTemplate{}, errors.New("the instruction (everything after the front matter) is empty")
 	case strings.Contains(tpl.Instruction, insight.TemplatePlaceholder):
-		return CustomTemplate{}, fmt.Errorf("the instruction carries %s; a custom template is written in its final form, with the output shape inside the instruction", insight.TemplatePlaceholder)
-	}
-	takesQuestion := strings.Contains(tpl.Instruction, insight.QuestionPlaceholder)
-	switch {
-	case strings.TrimSpace(tpl.Question) == "" && !takesQuestion:
-		return CustomTemplate{}, fmt.Errorf("the question is empty, which means the template takes the caller's question, but the instruction has no %s to put it in", insight.QuestionPlaceholder)
-	case strings.TrimSpace(tpl.Question) != "" && takesQuestion:
-		return CustomTemplate{}, fmt.Errorf("the instruction takes the caller's question (%s), so the question field must be empty", insight.QuestionPlaceholder)
+		return CustomTemplate{}, fmt.Errorf("the instruction carries %s, and a custom template has no place for a template splice; write the output shape into the instruction", insight.TemplatePlaceholder)
 	}
 	return tpl, nil
 }

@@ -17,15 +17,15 @@ import (
 // carrying BROKEN is listed with an error, the way the recorder lists a file
 // it cannot run; the version is read off the file's own front matter.
 const fakeTemplateRecorder = `dir="$CASSINI_TEMPLATES_DIR"
-printf '[{"id":"summarise","version":"v0","sha256":"aaaa","name":"Meeting summary","question":"Summarise.","description":"d","origin":"Built in","instruction":"Summarise."}'
+printf '[{"id":"summarise","version":"v0","sha256":"aaaa","name":"Meeting summary","description":"d","origin":"Built in","instruction":"Summarise."}'
 for f in "$dir"/*.md; do
   [ -e "$f" ] || continue
   id=$(basename "$f" .md)
   v=$(sed -n 's/^version: //p' "$f")
   if grep -q BROKEN "$f"; then
-    printf ',{"id":"%s","version":"","sha256":"","name":"%s","question":"","description":"","origin":"Custom","instruction":"","error":"the instruction is BROKEN"}' "$id" "$id"
+    printf ',{"id":"%s","version":"","sha256":"","name":"%s","description":"","origin":"Custom","instruction":"","error":"the instruction is BROKEN"}' "$id" "$id"
   else
-    printf ',{"id":"%s","version":"v%s","sha256":"bbbb","name":"%s","question":"Q","description":"","origin":"Custom","instruction":"I"}' "$id" "$v" "$id"
+    printf ',{"id":"%s","version":"v%s","sha256":"bbbb","name":"%s","description":"","origin":"Custom","instruction":"I"}' "$id" "$v" "$id"
   fi
 done
 printf ']'
@@ -50,7 +50,7 @@ func doTemplateRequest(rt *Runtime, method, id, body string) *httptest.ResponseR
 	return rec
 }
 
-const spanishTemplate = `{"name":"Resumen","question":"Resume la reunión.","description":"En español.","instruction":"Resume la reunión en español.\r\n\r\n## Resumen\n"}`
+const spanishTemplate = `{"name":"Resumen","description":"En español.","instruction":"Resume la reunión en español.\r\n\r\n## Resumen\n"}`
 
 func TestPutWorkflowWritesTheTemplateFileAndBumpsItsVersion(t *testing.T) {
 	rt, dir := templateWriteRuntime(t)
@@ -70,7 +70,7 @@ func TestPutWorkflowWritesTheTemplateFileAndBumpsItsVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "---\nname: \"Resumen\"\nquestion: \"Resume la reunión.\"\ndescription: \"En español.\"\nversion: 1\n---\n\nResume la reunión en español.\n\n## Resumen\n"
+	want := "---\nname: \"Resumen\"\ndescription: \"En español.\"\nversion: 1\n---\n\nResume la reunión en español.\n\n## Resumen\n"
 	if string(raw) != want {
 		t.Errorf("file =\n%s\nwant\n%s", raw, want)
 	}
@@ -92,7 +92,7 @@ func TestPutWorkflowRefusesAndRevertsWhatTheRecorderWillNotRun(t *testing.T) {
 	}
 	before, _ := os.ReadFile(filepath.Join(dir, "resumen.md"))
 
-	broken := `{"name":"Resumen","question":"Q","instruction":"BROKEN"}`
+	broken := `{"name":"Resumen","instruction":"BROKEN"}`
 	rec := doTemplateRequest(rt, http.MethodPut, "resumen", broken)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "not saved: the instruction is BROKEN") {
 		t.Fatalf("broken save = %d %s, want 400 with the recorder's reason", rec.Code, rec.Body.String())
@@ -119,9 +119,11 @@ func TestPutWorkflowRefusesBadRequests(t *testing.T) {
 	}{
 		{"a built-in", "summarise", spanishTemplate, "built-in template and cannot be changed", 400},
 		{"an id of the wrong shape", ".hidden", spanishTemplate, "not a template id", 400},
-		{"no name", "x", `{"instruction":"I","question":"Q"}`, "needs a name", 400},
-		{"no instruction", "x", `{"name":"X","question":"Q"}`, "needs an instruction", 400},
-		{"a two-line name", "x", `{"name":"X\nY","question":"Q","instruction":"I"}`, "one line", 400},
+		{"no name", "x", `{"instruction":"I"}`, "needs a name", 400},
+		{"no instruction", "x", `{"name":"X"}`, "needs an instruction", 400},
+		{"a two-line name", "x", `{"name":"X\nY","instruction":"I"}`, "one line", 400},
+		{"a two-line description", "x", `{"name":"X","description":"a\nb","instruction":"I"}`, "one line", 400},
+		{"a question", "x", `{"name":"X","question":"Q","instruction":"I"}`, "could not be read", 400},
 		{"an unknown field", "x", `{"name":"X","instruction":"I","version":9}`, "could not be read", 400},
 	}
 	for _, tc := range cases {
@@ -179,9 +181,10 @@ func TestTheRecorderReadsBackWhatThePanelWrites(t *testing.T) {
 	// The file format is the recorder's; the operator writes it with Go quoting
 	// so the recorder's parser reads every value back exactly. Pinned here on
 	// the rendered bytes, and in the recorder on the parse.
-	request := workflowWriteRequest{Name: `Say "hi" — ¡ya!`, Question: "", Description: `a\b`, Instruction: "Answer {{QUESTION}}"}
+	request := workflowWriteRequest{Name: `Say "hi" — ¡ya!`, Description: `a\b`, Instruction: "Answer {{QUESTION}}"}
 	file := request.file(4)
-	if !strings.Contains(file, `name: "Say \"hi\" — ¡ya!"`) || !strings.Contains(file, `description: "a\\b"`) || !strings.Contains(file, "version: 4\n") {
+	want := "---\nname: \"Say \\\"hi\\\" — ¡ya!\"\ndescription: \"a\\\\b\"\nversion: 4\n---\n\nAnswer {{QUESTION}}\n"
+	if file != want {
 		t.Errorf("file = %s", file)
 	}
 }
@@ -292,7 +295,9 @@ func TestInsightWorkflowsListsNamesOnlyForEveryone(t *testing.T) {
 func TestInsightWorkflowsSaysWhichTakeAQuestion(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.cfg.CassiniBin = insightRegistryCassini(t)
+	custom := `,{"id":"resumen","version":"v1","sha256":"cccc","name":"Resumen","description":"En español.","origin":"Custom","instruction":"Resume la reunión."}]`
+	listing := strings.TrimSuffix(insightRegistryJSON, "]") + custom
+	rt.cfg.CassiniBin = writeFakeCassini(t, `printf '%s' '`+listing+`'`)
 	rec := httptest.NewRecorder()
 	rt.insightWorkflowsHandler(rec, httptest.NewRequest(http.MethodGet, "/insights/workflows", nil))
 	var choices []workflowChoice
@@ -303,8 +308,8 @@ func TestInsightWorkflowsSaysWhichTakeAQuestion(t *testing.T) {
 	for _, choice := range choices {
 		takes[choice.ID] = choice.TakesQuestion
 	}
-	if takes["summarise"] || !takes["ask"] || len(takes) != 2 {
-		t.Errorf("takesQuestion = %v, want ask only (and no broken roto)", takes)
+	if takes["summarise"] || !takes["ask"] || takes["resumen"] || len(takes) != 3 {
+		t.Errorf("takesQuestion = %v, want ask only (a custom template takes none, and no broken roto)", takes)
 	}
 }
 

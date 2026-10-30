@@ -180,11 +180,11 @@ func (f *fakeInsightStore) FinishAttempt(_ context.Context, id string, outcome I
 // workflows: one that asks its own question and one that needs the caller's, so
 // both halves of the question rule can be exercised.
 const insightRegistryJSON = `[` +
-	`{"id":"summarise","version":"v0","sha256":"aaaa","name":"Meeting summary","question":"Summarise what happened.",` +
+	`{"id":"summarise","version":"v0","sha256":"aaaa","name":"Meeting summary",` +
 	`"description":"One document per meeting.","origin":"Built in","instruction":"Summarise these meetings."},` +
-	`{"id":"ask","version":"v0","sha256":"bbbb","name":"Ask your own","question":"Whatever you want to know.",` +
+	`{"id":"ask","version":"v0","sha256":"bbbb","name":"Ask your own",` +
 	`"description":"An answer to your question.","origin":"Built in","instruction":"Answer this: {{QUESTION}}"},` +
-	`{"id":"roto","version":"","sha256":"","name":"roto","question":"","description":"","origin":"Custom","instruction":"",` +
+	`{"id":"roto","version":"","sha256":"","name":"roto","description":"","origin":"Custom","instruction":"",` +
 	`"error":"the front matter needs a version"}` +
 	`]`
 
