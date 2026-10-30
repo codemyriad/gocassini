@@ -46,17 +46,21 @@ does not delete retained source media. Reruns keep the original publication form
 
 ## Enable transcription before selecting Nothing
 
-Transcription is optional and starts off. Downloading a model does not enable it.
-Keeping no recording media requires enabled transcription with a ready model.
+Transcription is optional and starts off. Keeping no recording media requires
+enabled transcription with a ready model.
 
-1. Select **Go to transcription settings** in the setup notice. The button scrolls
-   to the transcription options and moves keyboard focus there.
-2. Choose a quality level. If the model is **Not installed**, select **Download
-   model**. If it is **Installed — runtime check needed**, select **Check model**.
-3. Once it is **Ready**, select **Enable transcription** or **Use this model**.
+1. Select **Set up transcription** in the setup notice. The link scrolls to the
+   **Transcript** step and moves keyboard focus there.
+2. The step is one list: **Off**, then a row per quality tier showing that tier's
+   model, its size and whether it is installed. A tier whose model is not ready
+   is greyed. Select **Download** on the tier you want, or **Check** if the model
+   is installed but not yet checked on this build.
+3. When a download you started finishes and the model is ready, that tier is
+   picked and transcription turns on. A tier that is already ready can be picked
+   directly.
 4. Select **Save** to apply the model and recording choices together.
 
-If downloads are disabled, follow the model panel's offline pack/import instructions.
+If downloads are disabled, follow the step's offline pack/import instructions.
 With transcription off, audio publication can still work without a model, but the
 **Nothing** option cannot be saved.
 
