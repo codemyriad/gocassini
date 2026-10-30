@@ -87,7 +87,7 @@ func (s *annotationService) routeTopicReview(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *annotationService) serveMeetingSuggestions(w http.ResponseWriter, r *http.Request, caller, meetingID string) {
-	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+	if !s.rt.topicSuggestionsOn(r.Context()) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
@@ -228,7 +228,7 @@ func (s *annotationService) decideSuggestion(w http.ResponseWriter, r *http.Requ
 		http.NotFound(w, r)
 		return
 	}
-	if !s.topicsOn(w) {
+	if !s.topicsOn(w, r) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), annotateRequestTimeout)
@@ -681,7 +681,7 @@ type topicCoverage struct {
 }
 
 func (s *annotationService) serveTopicCoverage(w http.ResponseWriter, r *http.Request, caller string) {
-	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+	if !s.rt.topicSuggestionsOn(r.Context()) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
@@ -852,7 +852,7 @@ type topicQueue struct {
 }
 
 func (s *annotationService) serveReviewQueue(w http.ResponseWriter, r *http.Request, caller string) {
-	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+	if !s.rt.topicSuggestionsOn(r.Context()) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
@@ -1048,7 +1048,7 @@ func (s *annotationService) decideSuggestionBatch(w http.ResponseWriter, r *http
 		}
 		seen[id] = true
 	}
-	if !s.topicsOn(w) {
+	if !s.topicsOn(w, r) {
 		return
 	}
 	scope, ok := s.topicCaller(w, r, caller)

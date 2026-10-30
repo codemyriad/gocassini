@@ -261,7 +261,16 @@ func TestEmbeddingModelInstallsOnTheCPUAndNeverTranscribes(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Settings is offered the model only once the preview is unlocked.
 	rec := modelRequest(rt, "GET", "/settings/models?device=cpu", "")
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), embedder.ID) || !strings.Contains(rec.Body.String(), speech.ID) {
+		t.Fatalf("the locked inventory offers the model: %d %s", rec.Code, rec.Body.String())
+	}
+	preview := topicsPreviewStore(t, rt)
+	if err := preview.setTopicsPreviewUnlocked(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	rec = modelRequest(rt, "GET", "/settings/models?device=cpu", "")
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"kind":"embedding"`) || !strings.Contains(rec.Body.String(), `"runtime_supported":true`) {
 		t.Fatalf("inventory lost the kind: %d %s", rec.Code, rec.Body.String())
 	}
@@ -276,6 +285,17 @@ func TestEmbeddingModelInstallsOnTheCPUAndNeverTranscribes(t *testing.T) {
 	rt.startModelWorker()
 	if j := awaitModelState(t, rt, "ready"); j.Model != embedder.ID || j.Device != "cpu" {
 		t.Fatalf("job = %+v", j)
+	}
+	// Locked again, the installed model and its job are kept but not listed.
+	if err := preview.setTopicsPreviewUnlocked(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	rec = modelRequest(rt, "GET", "/settings/models?device=cpu", "")
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), embedder.ID) {
+		t.Fatalf("the locked inventory lists the model or its job: %d %s", rec.Code, rec.Body.String())
+	}
+	if jobs, err := rt.modelJobs(context.Background()); err != nil || len(jobs) != 1 || jobs[0].State != "ready" {
+		t.Fatalf("locking dropped the install: %+v %v", jobs, err)
 	}
 
 	update := fmt.Sprintf(`{"quality":"fast","transcription_enabled":true,"active_model":%q,"active_revision":%q,"device_override":"cpu"}`, embedder.ID, embedder.Revision)

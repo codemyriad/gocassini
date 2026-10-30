@@ -198,11 +198,6 @@ Summaries and questions use whichever language model you connect, so their ratin
         <display-name>Drop crosstalk words (optional)</display-name>
         <description>Set to 1 to delete words the acoustic evidence contradicts instead of annotating them. Intended for room systems where one microphone audibly picks up every participant. The manifest records how many words were removed.</description>
       </variable>
-      <variable>
-        <name>CASSINI_TOPICS_THREADS</name>
-        <display-name>Topic suggestion threads (optional)</display-name>
-        <description>How many CPU threads the optional topic suggestions model may use. Leave empty for the default: 4, or fewer on a smaller host. Values are clamped to 1-16. It changes only how fast transcripts are read, never the suggestions.</description>
-      </variable>
     </environment-variables>
 
     <routes>

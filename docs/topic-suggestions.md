@@ -23,6 +23,38 @@ design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.
 > - it has run only on amd64 servers, on the CPU. arm64 and the CUDA image are
 >   not tested.
 
+## Unannounced preview
+
+Topic suggestions ship in every release but are locked, and not announced:
+until someone unlocks them on a server, Settings shows no card and no model
+for them, the meeting page, **Needs review** and Manage tags show nothing, and
+nothing runs. They are being tried on the maintainer's own server first, and
+nothing in the release notes, the docs index, the privacy page, the app's
+deploy options or `cassini-operator --help` mentions them.
+
+To unlock them, from a shell on the Docker host:
+
+```bash
+docker exec nc_app_gocassini cassini-operator topics-preview on
+```
+
+Then, in **Settings**, download the **Topic suggestions** model and switch
+suggestions on, as in [Switching it on](#switching-it-on). The running
+operator notices the change at its next request; no restart is needed.
+
+To lock them again:
+
+```bash
+docker exec nc_app_gocassini cassini-operator topics-preview off
+```
+
+Locked, they behave as if switched off: nothing is read, queued or suggested,
+and Settings hides them. Everything they stored is kept, and so is the
+Settings switch, so `topics-preview on` brings them back as they were.
+`cassini-operator topics-preview status` says whether they are locked and
+whether the Settings switch is on. `backfill-topics` refuses while they are
+locked.
+
 ## Words used on this page
 
 - **Topic**: a tag with a written definition, described by the people who tag
@@ -156,6 +188,8 @@ that remain; one left with fewer than three meetings is dropped.
 
 ## Switching it on
 
+Unlock them first: see [Unannounced preview](#unannounced-preview).
+
 1. In **Settings**, download the **Topic suggestions** model (289 MB, 319 MB on
    disk, Apache 2.0). Cassini checks it on this server's CPU after the
    download. Offline hosts can use `cassini models pack` and `cassini models
@@ -256,3 +290,107 @@ after new recordings, and never compares vectors from two models.
 
 Retention deletes a retired meeting's vectors and every topic row derived from
 it, in both databases.
+
+## Configuration
+
+| Variable | Meaning |
+|---|---|
+| `CASSINI_TOPICS_THREADS` | CPU threads the topic suggestions model uses (default `min(4, CPUs)`, clamped to 1–16); changes only the speed, never a vector |
+
+It is not declared in the app's deploy options while topic suggestions are an
+unannounced preview, so AppAPI does not pass it to the container; it applies
+where the operator's environment is set directly (a development or compose
+stack). The `threads` setting does the same from the API.
+
+## API
+
+These are part of the [operator API](./reference/api.md); job paths there are
+root-mounted, and in the installed ExApp the settings routes take the
+`/operator` prefix.
+
+### Settings
+
+```http
+GET  /settings/topics
+PUT  /settings/topics            {"enabled": true, "threads": 0}
+POST /settings/topics/backfill   {"since": "2026-06-01"}
+POST /settings/topics/retry      {"meetings": ["<name>.opus"]}
+```
+
+ADMIN. While the preview is locked, `GET` answers 404 and every other call
+409. Unlocked, `GET` returns the switch and content-free work status:
+`{enabled, threads, available, ready, reason?, modelRevision, scorerVersion,
+enabledAt, backfillSince, counts, unavailable, oldestWaitingSeconds, blocked,
+vectorsBytes, worker}`. `counts` are meetings by work state (`queued`,
+`running`, `done`, `unavailable`, `blocked`), `unavailable` the meetings that
+could not be checked by reason. It never carries suggestion or verdict counts.
+
+`PUT` answers 409 when it would switch suggestions on before the topic
+suggestions model is installed and its check passed. `threads` is 0 for the
+default (4, or fewer on a smaller host) or 1 to 16. `backfill` queues every
+archived meeting not checked yet, optionally only those recorded on or after
+`since`, and answers `{queued, estimateSeconds}`; it needs suggestions on.
+`retry` queues blocked meetings again, the named ones or all.
+
+### Topic library
+
+```http
+GET  annotations/topics
+POST annotations/topics/library                         {requestId, label, definition, color?, icon?, fromTagId?, separate?}
+POST annotations/topics/library/<tagId>                 {requestId, expectRevision, label?, definition?, color?, icon?, status?}
+GET  annotations/topics/library/<tagId>/history
+POST annotations/topics/library/<tagId>/history/<rev>   {requestId, action: "redact"}
+GET  annotations/topics/library/<tagId>/rooms
+```
+
+USER, beside the tag routes. While the preview is locked they answer as
+when suggestions are switched off. They are answered over the caller's visible meetings:
+404 when they can read none, 502 when that cannot be worked out. `GET` answers
+`{enabled:false}` while topic suggestions are off, and every `POST` 409
+`disabled`. Responses carry no user ids. Refusals carry an `error` code:
+`label-taken` and `topic-retired` (both with the `tagId` that holds the label),
+`revision-conflict`, `rate-limited` (429), `library-full`, `current-revision`,
+`not-allowed` (403). A `requestId` reused with the same body replays the first
+answer.
+
+### Topic review
+
+```http
+GET  annotations/topics/meetings/<meetingId>
+POST annotations/topics/meetings/<meetingId>/<tagId>   {requestId, decision: "confirm" | "reject" | "undo" | "reopen"}
+GET  annotations/topics/coverage[?room=<roomId>]
+GET  annotations/topics/review[?tag=&room=&cursor=&limit=]
+POST annotations/topics/review/batch                    {requestId, tagId, meetingIds[≤100], decision: "confirm" | "reject"}
+GET  annotations/topics/proposals[?room=<roomId>]
+POST annotations/topics/proposals/<id>                  {requestId, action: "approve" | "link" | "dismiss" | "restore", label?, definition?, color?, tagId?, confirmTerms?}
+```
+
+USER. The meeting must be one the caller can read now (404 otherwise). `GET`
+answers `{enabled, state, reason?, language, validatedLanguage, confirmable,
+blockedReason?, suggestions:[{tagId, label, definition, color, icon, rule,
+supportWords, evidence:[{startMs, endMs, wordCount, counted}]}],
+decided:[{tagId, label, verdict, source, by, at}]}`; no score is served. A
+confirm writes a whole-meeting mark credited to the caller and the verdict in
+one transaction, and answers `{verdict, annotations}` with the meeting's new
+annotations; a retry with the same `requestId` replays the first answer.
+Refusals: `marks-unresolved`, `not-pending`, `already-decided`, `confirmed`
+(reopen of a confirm: remove the tag instead), `topic-retired`. Coverage
+counts the caller's visible meetings: `{visible, checked, waiting, notChecked,
+unavailable:{reason:n}, blocked, checkedSince, unvalidatedLanguage,
+unknownLanguage}`.
+
+The review queue pages pending suggestions over the caller's visible meetings
+(at most 50 a page): `{groups:[{tagId, label, color, icon, total,
+items:[{meetingId, title, date, room, rule, supportWords, quote?}]}], next,
+total, byMeeting, coverage}`. A quote comes from the search index, for a
+meeting the caller can read. A batch decides each named meeting as a single
+decision would and answers `{results:[{meetingId, status, error?}]}`, where
+status is `confirmed`, `rejected`, `not-found` or `error`.
+
+Proposals are listed only when every meeting they draw on is in the caller's
+visible set: `{proposals:[{id, roomId, room, state, draftName, hints,
+flags:{edges, routine}, nearest?, meetings, days, evidence:[{meetingId, title,
+date, startMs, endMs, quote}]}]}`. `approve` needs a `label` and `definition`
+and answers 409 `terms-from-meetings` with the shared `terms` until
+`confirmTerms` is set; it creates the topic with origin `proposal`. `link`
+needs an active topic's `tagId`.

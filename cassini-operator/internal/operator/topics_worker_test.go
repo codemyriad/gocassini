@@ -133,8 +133,17 @@ func (f fakeTopicsCLI) setReady(ready bool) {
 	f.write("models.json", fmt.Sprintf(`[{"id":%q,"kind":"embedding","installed":true,"ready":%t,"runtime_supported":true,"device":"cpu"}]`, defaultEmbeddingModel, ready))
 }
 
-// newTopicsTestService is a runtime with topic suggestions on, the fake CLI
-// and a model that is ready.
+// unlockTopicsPreview unlocks the preview, as `topics-preview on` does: the
+// Settings switch alone runs nothing.
+func unlockTopicsPreview(t *testing.T, s *topicsService) {
+	t.Helper()
+	if err := s.store.setTopicsPreviewUnlocked(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// newTopicsTestService is a runtime with topic suggestions unlocked and on,
+// the fake CLI and a model that is ready.
 func newTopicsTestService(t *testing.T) (*topicsService, fakeTopicsCLI) {
 	t.Helper()
 	rt, cleanup := newTestRuntime(t)
@@ -159,6 +168,7 @@ func newTopicsTestService(t *testing.T) (*topicsService, fakeTopicsCLI) {
 	}
 	s.memory = func(context.Context) error { return nil }
 	rt.topics = s
+	unlockTopicsPreview(t, s)
 	if err := os.MkdirAll(rt.cfg.WorkRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}

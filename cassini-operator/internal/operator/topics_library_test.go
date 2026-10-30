@@ -33,6 +33,7 @@ func topicLibraryService(t *testing.T, visible ...string) (*annotationService, h
 	}
 	t.Cleanup(func() { topics.vectors.Close() })
 	s.rt.topics = topics
+	unlockTopicsPreview(t, topics)
 	return s, h, topics
 }
 

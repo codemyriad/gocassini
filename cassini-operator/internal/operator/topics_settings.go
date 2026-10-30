@@ -16,6 +16,9 @@ import (
 
 const maxTopicThreads = 16
 
+// topicsLockedMessage refuses a change while the preview is locked.
+const topicsLockedMessage = "Topic suggestions are locked on this server. Run cassini-operator topics-preview on inside the Cassini container first."
+
 // topicsStatus is GET operator/settings/topics.
 type topicsStatus struct {
 	Enabled bool `json:"enabled"`
@@ -60,6 +63,16 @@ type topicBlockedRow struct {
 
 func (rt *Runtime) topicsSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/settings/topics"), "/")
+	// Locked, Settings must find no card to show: reads are 404 and changes
+	// are refused.
+	if !rt.topicsUnlocked(r.Context()) {
+		if r.Method == http.MethodGet {
+			http.NotFound(w, r)
+		} else {
+			writeJSONError(w, http.StatusConflict, topicsLockedMessage)
+		}
+		return
+	}
 	switch {
 	case path == "" && r.Method == http.MethodGet:
 		writeJSON(w, http.StatusOK, rt.topicsStatus(r.Context()))
@@ -236,7 +249,7 @@ func (rt *Runtime) postTopicBackfill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := rt.topics
-	if s == nil || !rt.currentSettings().TopicSuggestions.Enabled {
+	if s == nil || !rt.topicSuggestionsOn(r.Context()) {
 		writeJSONError(w, http.StatusConflict, "Switch topic suggestions on first.")
 		return
 	}
@@ -280,10 +293,10 @@ func (rt *Runtime) postTopicRetry(w http.ResponseWriter, r *http.Request) {
 }
 
 // topicsStatusBlock is the short topics block of operator/status: the same
-// content-free counts, without asking the CLI anything.
+// content-free counts, without asking the CLI anything. Locked, there is none.
 func (rt *Runtime) topicsStatusBlock(ctx context.Context, enabled bool) *statusTopics {
 	s := rt.topics
-	if s == nil {
+	if s == nil || !rt.topicsUnlocked(ctx) {
 		return nil
 	}
 	block := &statusTopics{Enabled: enabled, Counts: map[string]int{}}

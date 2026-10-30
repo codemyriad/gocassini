@@ -23,12 +23,15 @@ function status(over: Partial<TopicSettingsStatus> = {}): TopicSettingsStatus {
 }
 
 let current = status();
+// The operator's topic suggestions are locked (`topics-preview off`).
+let locked = false;
 let requests: { method: string; path: string; body: unknown }[] = [];
 let app: ReturnType<typeof mount> | undefined;
 let host: HTMLDivElement;
 
 beforeEach(() => {
   current = status();
+  locked = false;
   requests = [];
   host = document.createElement("div");
   document.body.append(host);
@@ -37,6 +40,7 @@ beforeEach(() => {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     requests.push({ method, path, body });
+    if (locked && path.startsWith("/settings/topics")) return new Response("404 page not found\n", { status: 404 });
     if (path === "/settings/topics" && method === "PUT") {
       if (!current.ready) return Response.json({ error: "Install the topic suggestions model first." }, { status: 409 });
       current = { ...current, enabled: body.enabled };
@@ -60,8 +64,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function mountCard(ready: boolean) {
-  app = mount(TopicSuggestionsSettings, { target: host, props: { client: new OperatorClient("/operator"), inventory: inventory(ready), refreshMs: 0 } });
+function mountCard(ready: boolean, inv: SpeechModelInventory = inventory(ready)) {
+  app = mount(TopicSuggestionsSettings, { target: host, props: { client: new OperatorClient("/operator"), inventory: inv, refreshMs: 0 } });
 }
 
 describe("topic suggestions in Settings", () => {
@@ -110,5 +114,31 @@ describe("topic suggestions in Settings", () => {
     current = status({ ready: false, enabled: true, reason: "model-fault" });
     mountCard(false);
     await expect.element(page.getByText("Paused: the model's check failed. Check it again above.")).toBeVisible();
+  });
+});
+
+describe("topic suggestions while the preview is locked", () => {
+  it("shows no card and asks nothing when the operator lists no model", async () => {
+    locked = true;
+    mountCard(false, { models: [], jobs: [], downloads_allowed: true, device: "cpu" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(host.textContent?.trim()).toBe("");
+    expect(requests).toEqual([]);
+  });
+
+  it("shows no card when the operator answers 404, and the card once unlocked", async () => {
+    locked = true;
+    mountCard(true);
+    await expect.poll(() => requests.some((r) => r.path === "/settings/topics")).toBe(true);
+    await expect.element(page.getByRole("heading", { name: /Topic suggestions/ })).not.toBeInTheDocument();
+    expect(page.getByText(TOPICS_PREVIEW_NOTE).query()).toBeNull();
+    await unmount(app!);
+    app = undefined;
+
+    locked = false;
+    current = status({ ready: true });
+    mountCard(true);
+    await expect.element(page.getByRole("heading", { name: /Topic suggestions/ })).toBeVisible();
+    await expect.element(page.getByRole("checkbox", { name: "Suggest topics after each meeting" })).toBeEnabled();
   });
 });

@@ -299,6 +299,7 @@ func TestAShareRemovedMeanwhileServesAndWritesNothing(t *testing.T) {
 	topics := newTopicsService(s.rt, s.exapp, nil)
 	t.Cleanup(func() { topics.vectors.Close() })
 	s.rt.topics = topics
+	unlockTopicsPreview(t, topics)
 	seedSuggestion(t, topics, "tag_release", "Release planning", "MEETING1.opus")
 	nc.frontMu.Lock()
 	delete(nc.visible, "MEETING1.opus")
