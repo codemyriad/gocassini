@@ -118,6 +118,17 @@ func TestMeetingsSummarizeWritesASummaryIntoABundle(t *testing.T) {
 		t.Errorf("packed summary = %q by %q", meeting.SummaryMarkdown, meeting.SummaryModel())
 	}
 	sealed := decodePortableManifestFromOpus(t, opusPath)
+	// The template that wrote it (D-819): written into the bundle manifest by
+	// summarize, carried into the meeting file by pack.
+	shipped := shippedSummariseRef(t)
+	if block, _ := manifest["summary"].(map[string]any); block["templateId"] != shipped.ID ||
+		block["templateVersion"] != shipped.Version || block["templateSha256"] != shipped.SHA256 {
+		t.Errorf("bundle manifest summary = %v, want %+v", manifest["summary"], shipped)
+	}
+	if sealed.Summary["templateId"] != shipped.ID || sealed.Summary["templateVersion"] != shipped.Version ||
+		sealed.Summary["templateSha256"] != shipped.SHA256 {
+		t.Errorf("packed summary block = %v, want %+v", sealed.Summary, shipped)
+	}
 	if sealed.Processing == nil || sealed.Processing.MeetingSummary == nil ||
 		*sealed.Processing.MeetingSummary != (portable.SummaryStatus{Status: "completed", Model: "test-summary-model"}) {
 		t.Errorf("packed processing = %+v", sealed.Processing)

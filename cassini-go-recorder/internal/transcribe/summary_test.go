@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"gocassini/internal/insight"
 	"gocassini/internal/portable"
 )
 
@@ -15,9 +16,9 @@ import (
 // summary.md, and neither may be read as a failure.
 func TestWriteSummaryArtifactSaysWhyItSkipped(t *testing.T) {
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
+	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, insight.WorkflowRef, error) {
 		t.Fatal("buildMeetingSummaryFn should not be called when the step is skipped")
-		return "", nil
+		return "", insight.WorkflowRef{}, nil
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
@@ -36,7 +37,7 @@ func TestWriteSummaryArtifactSaysWhyItSkipped(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
-			status, err := writeSummaryArtifact(tmp, sampleStreams(), tc.segments, BuildConfig{SummaryLLM: tc.llm}, &bytes.Buffer{})
+			status, _, err := writeSummaryArtifact(tmp, sampleStreams(), tc.segments, BuildConfig{SummaryLLM: tc.llm}, &bytes.Buffer{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,14 +56,14 @@ func TestWriteSummaryArtifactSkipsWhenLLMNotConfigured(t *testing.T) {
 	cfg := BuildConfig{} // SummaryLLM zero value, IsConfigured() == false
 
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
+	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, insight.WorkflowRef, error) {
 		t.Fatal("buildMeetingSummaryFn should not be called when SummaryLLM is unconfigured")
-		return "", nil
+		return "", insight.WorkflowRef{}, nil
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	status, err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout)
+	status, _, err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout)
 	if err != nil {
 		t.Fatalf("expected no error when summary disabled, got %v", err)
 	}
@@ -88,13 +89,13 @@ func TestWriteSummaryArtifactWarnsAndSkipsOnError(t *testing.T) {
 	}
 
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
-		return "", errors.New("boom")
+	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, insight.WorkflowRef, error) {
+		return "", insight.WorkflowRef{}, errors.New("boom")
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	status, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout)
+	status, _, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout)
 	if err != nil {
 		t.Fatalf("expected summary failure to be swallowed, got %v", err)
 	}
@@ -121,14 +122,17 @@ func TestWriteSummaryArtifactWritesSummaryMd(t *testing.T) {
 
 	const expected = "# Meeting Summary\n\n## Overview\n\nDemo overview.\n"
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
-		return expected, nil
+	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, insight.WorkflowRef, error) {
+		return expected, insight.WorkflowRef{ID: "summarise", Version: "v0", SHA256: "abc"}, nil
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
-	status, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{})
+	status, template, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
+	}
+	if template.ID != "summarise" || template.SHA256 != "abc" {
+		t.Errorf("template = %+v, want the one the summary step reported", template)
 	}
 	if want := (portable.SummaryStatus{Status: "completed", Model: "test-model"}); status != want {
 		t.Fatalf("status = %+v, want %+v", status, want)
@@ -143,7 +147,7 @@ func TestWriteSummaryArtifactWritesSummaryMd(t *testing.T) {
 }
 
 func TestBuildMeetingSummaryRejectsUnconfiguredLLM(t *testing.T) {
-	_, err := BuildMeetingSummary(LLMConfig{}, sampleStreams(), sampleSegments())
+	_, _, err := BuildMeetingSummary(LLMConfig{}, sampleStreams(), sampleSegments())
 	if err == nil || !strings.Contains(err.Error(), "LLM not configured") {
 		t.Fatalf("expected LLM-not-configured error, got %v", err)
 	}
@@ -151,7 +155,7 @@ func TestBuildMeetingSummaryRejectsUnconfiguredLLM(t *testing.T) {
 
 func TestBuildMeetingSummaryRejectsEmptyTranscript(t *testing.T) {
 	cfg := LLMConfig{APIKey: "test", BaseURL: "https://example.test/api/v1", Model: "m"}
-	_, err := BuildMeetingSummary(cfg, sampleStreams(), nil)
+	_, _, err := BuildMeetingSummary(cfg, sampleStreams(), nil)
 	if err == nil || !strings.Contains(err.Error(), "no transcript segments") {
 		t.Fatalf("expected empty-transcript error, got %v", err)
 	}

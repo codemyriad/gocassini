@@ -168,6 +168,10 @@ type artifactManifest struct {
 	AudioEncode *AudioEncode    `json:"audioEncode,omitempty"`
 	WordCount   int             `json:"wordCount"`
 	Provenance  *provenanceInfo `json:"provenance,omitempty"`
+	// Summary names the template that wrote summary.md (D-819). Pack carries
+	// it into the portable file's summary block. Absent with no summary, and on
+	// bundles built before the summary step recorded its template.
+	Summary *SummaryTemplateRecord `json:"summary,omitempty"`
 }
 
 type artifactSource struct {
@@ -325,6 +329,8 @@ type ManifestInput struct {
 
 	SummaryModel string
 	HasSummary   bool
+	// SummaryTemplate is the template that wrote the summary (D-819).
+	SummaryTemplate *SummaryTemplateRecord
 
 	Additional        []AdditionalTranscript
 	Attribution       *AttributionProvenance
@@ -422,6 +428,9 @@ func WriteManifest(path string, in ManifestInput) error {
 		AudioEncode:      in.AudioEncode,
 		WordCount:        wordCount,
 		Provenance:       prov,
+	}
+	if in.HasSummary && files.Summary != "" {
+		doc.Summary = in.SummaryTemplate
 	}
 	return writeJSON(path, doc)
 }

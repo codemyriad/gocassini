@@ -178,7 +178,7 @@ an insight still records exactly which template bytes wrote it.
 To summarise every new meeting with your own template, choose it as the
 template in **Operator › Publish pipeline › Summary**. Templates that take the
 reader's own question are not offered there, because a summary has nobody to ask.
-Each summary records the id, version and hash of the template that wrote it.
+The meeting file records the id, version and hash of the template that wrote its summary, beside the summary rather than inside it.
 
 Custom templates are files on the app's persistent volume
 (`operator/templates/<id>.md`), so they survive app updates. A file dropped

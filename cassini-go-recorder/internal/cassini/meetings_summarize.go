@@ -263,7 +263,7 @@ func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cf
 	if len(segments) == 0 {
 		return fmt.Errorf("meeting has no transcript text to summarize")
 	}
-	body, err := transcribe.BuildMeetingSummary(cfg, streams, segments)
+	body, template, err := transcribe.BuildMeetingSummary(cfg, streams, segments)
 	if err != nil {
 		return fmt.Errorf("generate summary: %w", err)
 	}
@@ -284,7 +284,7 @@ func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cf
 	if err != nil {
 		return err
 	}
-	applySummaryToPortableDocument(document, body, cfg.Model)
+	applySummaryToPortableDocument(document, body, cfg.Model, transcribe.SummaryTemplateRecordOf(template))
 
 	return commitPortableManifestRewrite(ctx, inputPath, resolvedOut, document, tags,
 		func(_, written portable.Manifest, _ map[string]string) error {
@@ -350,10 +350,10 @@ func summaryInputFromMeeting(meeting inspectpkg.ExtractedMeeting) ([]transcribe.
 // The document is edited as generic JSON, not through portable.Manifest, for
 // the same reason retag edits it that way: re-marshalling the struct would
 // silently drop every key this build has never heard of.
-func applySummaryToPortableDocument(document map[string]any, body string, model string) {
+func applySummaryToPortableDocument(document map[string]any, body string, model string, template *transcribe.SummaryTemplateRecord) {
 	trimmedModel := strings.TrimSpace(model)
 
-	meta := summaryTemplateMetadata([]byte(body))
+	meta := summaryTemplateMetadata(template)
 	if trimmedModel != "" {
 		meta["model"] = trimmedModel
 	}

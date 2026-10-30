@@ -15,7 +15,6 @@ import (
 	inspectpkg "gocassini/internal/inspect"
 	"gocassini/internal/meetingcontext"
 	"gocassini/internal/portable"
-	"gocassini/internal/transcribe"
 )
 
 // The cassini.meetings.context.v1 contract lives in internal/meetingcontext so
@@ -554,17 +553,10 @@ func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting, 
 			Present:  true,
 			Format:   meeting.SummaryFormat(),
 			Model:    meeting.SummaryModel(),
-			Markdown: summaryText(meeting.SummaryMarkdown),
+			Markdown: string(meeting.SummaryMarkdown),
 		}
 	}
 	return meetingcontext.Build(input)
-}
-
-// summaryText is a summary as a reader (or a model) reads it: without the
-// front matter that records which template wrote it (D-819).
-func summaryText(markdown []byte) string {
-	_, body, _ := transcribe.SummaryWorkflowOf(string(markdown))
-	return body
 }
 
 func writeMeetingContext(out io.Writer, bundle meetingcontext.Bundle, asJSON bool, opts meetingcontext.RenderOpts) error {

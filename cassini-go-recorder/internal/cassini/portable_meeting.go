@@ -82,6 +82,8 @@ type portableMeetingArtifact struct {
 	} `json:"files"`
 	SpeakerCount int `json:"speakerCount"`
 	WordCount    int `json:"wordCount"`
+	// Summary names the template that wrote summary.md (D-819).
+	Summary *transcribe.SummaryTemplateRecord `json:"summary,omitempty"`
 }
 
 // portableMeetingTranscriptInputFile describes one transcript file in a
@@ -562,7 +564,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 		Provenance: source.Artifact.Provenance,
 	})
 	if len(source.SummaryMarkdown) > 0 {
-		manifest.Summary = buildPortableSummaryMetadata(source.Artifact.Provenance, source.SummaryMarkdown)
+		manifest.Summary = buildPortableSummaryMetadata(source.Artifact.Provenance, source.Artifact.Summary)
 		manifest.Attachments = append(manifest.Attachments, map[string]any{
 			"name":          "summary.md",
 			"mime":          "text/markdown",
@@ -572,8 +574,8 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	return manifest, nil
 }
 
-func buildPortableSummaryMetadata(prov *portable.Provenance, summaryMarkdown []byte) map[string]any {
-	meta := summaryTemplateMetadata(summaryMarkdown)
+func buildPortableSummaryMetadata(prov *portable.Provenance, template *transcribe.SummaryTemplateRecord) map[string]any {
+	meta := summaryTemplateMetadata(template)
 	if prov != nil && prov.MeetingSummary != nil {
 		if model := strings.TrimSpace(prov.MeetingSummary.Model); model != "" {
 			meta["model"] = model
@@ -582,21 +584,22 @@ func buildPortableSummaryMetadata(prov *portable.Provenance, summaryMarkdown []b
 	return meta
 }
 
-// summaryTemplateMetadata is the manifest's summary block as far as the
+// summaryTemplateMetadata is the portable file's summary block as far as the
 // template goes (D-819). A summary written since the summary step recorded its
-// template carries it in its own front matter, and the manifest says exactly
-// that; an older one says the shipped version, which is approximate for a
-// meeting summarised before a template change.
-func summaryTemplateMetadata(summaryMarkdown []byte) map[string]any {
+// template names it in the bundle manifest (or hands it straight here, for a
+// backfill), and the block says exactly that; a bundle built before then says
+// the shipped version, which is approximate for a meeting summarised before a
+// template change.
+func summaryTemplateMetadata(template *transcribe.SummaryTemplateRecord) map[string]any {
 	meta := map[string]any{
 		"format":          "markdown",
 		"templateVersion": transcribe.SummaryWorkflowVersion,
 	}
-	if ref, _, ok := transcribe.SummaryWorkflowOf(string(summaryMarkdown)); ok {
-		meta["templateId"] = ref.ID
-		meta["templateVersion"] = ref.Version
-		if ref.SHA256 != "" {
-			meta["templateSha256"] = ref.SHA256
+	if template != nil && template.TemplateID != "" {
+		meta["templateId"] = template.TemplateID
+		meta["templateVersion"] = template.TemplateVersion
+		if template.TemplateSHA256 != "" {
+			meta["templateSha256"] = template.TemplateSHA256
 		}
 	}
 	return meta

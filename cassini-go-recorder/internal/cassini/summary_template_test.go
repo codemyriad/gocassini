@@ -12,26 +12,41 @@ import (
 	"sync"
 	"testing"
 
+	"gocassini/internal/insight"
 	"gocassini/internal/insight/workflows"
 	inspectpkg "gocassini/internal/inspect"
 	"gocassini/internal/transcribe"
 )
 
-// summaryBody checks that a written summary records the template that wrote
-// it (D-819) and returns its text.
+// summaryBody checks that a written summary is the document alone — the
+// template that wrote it lives in the manifest, never in summary.md (D-819).
 func summaryBody(t *testing.T, markdown []byte) string {
 	t.Helper()
-	ref, body, ok := transcribe.SummaryWorkflowOf(string(markdown))
-	if !ok || ref.ID == "" || ref.Version == "" || ref.SHA256 == "" {
-		t.Errorf("summary records no template: %q", markdown)
+	if strings.HasPrefix(string(markdown), "---") {
+		t.Errorf("summary carries front matter: %q", markdown)
 	}
-	return body
+	return string(markdown)
 }
 
-// D-819 V3 end to end through `meetings summarize`: the configured custom
-// template is the prompt sent, its id, version and hash are in the summary's
-// front matter and in the sealed manifest's summary block, and the context a
-// later insight reads carries the text without the block.
+// shippedSummariseRef is the built-in summary template, which a run with no
+// template configured records.
+func shippedSummariseRef(t *testing.T) insight.WorkflowRef {
+	t.Helper()
+	set, err := workflows.LoadDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, ok := set.Registry.Lookup(workflows.SummariseID)
+	if !ok {
+		t.Fatal("no built-in summarise")
+	}
+	return workflow.Ref()
+}
+
+// D-819 V3 end to end through `meetings summarize` on a meeting file: the
+// configured custom template is the prompt sent, summary.md is the model's
+// text alone, and the sealed manifest's summary block names the template's
+// id, version and hash.
 func TestMeetingsSummarizeRunsTheConfiguredCustomTemplate(t *testing.T) {
 	requireFFMediaTools(t)
 	templates := t.TempDir()
@@ -88,29 +103,25 @@ func TestMeetingsSummarizeRunsTheConfiguredCustomTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref, body, ok := transcribe.SummaryWorkflowOf(string(meeting.SummaryMarkdown))
-	if !ok || ref != resumen.Ref() {
-		t.Errorf("front matter = %+v (ok=%v), want %+v", ref, ok, resumen.Ref())
-	}
-	if body != returned+"\n" {
-		t.Errorf("body = %q", body)
+	if string(meeting.SummaryMarkdown) != returned+"\n" {
+		t.Errorf("summary.md = %q, want the model's text alone", meeting.SummaryMarkdown)
 	}
 	summary := decodePortableManifestFromOpus(t, path).Summary
 	if summary["templateId"] != "resumen" || summary["templateVersion"] != "v3" || summary["templateSha256"] != resumen.SHA256 {
 		t.Errorf("manifest summary = %v, want the custom template's id, version and hash", summary)
 	}
-
-	bundled := buildMeetingContext("mtg", meeting, meetingsCatalogEntry{})
-	if strings.Contains(bundled.Summary.Markdown, "workflow:") || bundled.Summary.Markdown != returned+"\n" {
-		t.Errorf("context summary = %q, want the text without front matter", bundled.Summary.Markdown)
-	}
 }
 
-// A summary sealed before the template was recorded keeps the shipped version
-// in the manifest: approximate, and the only thing there is to say.
-func TestSummaryTemplateMetadataFallsBackForAnOlderSummary(t *testing.T) {
-	meta := summaryTemplateMetadata([]byte("# Meeting Summary\n"))
-	if meta["templateVersion"] != transcribe.SummaryWorkflowVersion || meta["templateId"] != nil {
+// A bundle built before the summary step recorded its template packs with the
+// shipped version and no id or hash: approximate, and the only thing there is
+// to say.
+func TestSummaryTemplateMetadataFallsBackForAnOlderBundle(t *testing.T) {
+	meta := summaryTemplateMetadata(nil)
+	if meta["templateVersion"] != transcribe.SummaryWorkflowVersion || meta["templateId"] != nil || meta["templateSha256"] != nil {
+		t.Errorf("meta = %v", meta)
+	}
+	meta = summaryTemplateMetadata(&transcribe.SummaryTemplateRecord{TemplateID: "resumen", TemplateVersion: "v3", TemplateSHA256: "abc"})
+	if meta["templateId"] != "resumen" || meta["templateVersion"] != "v3" || meta["templateSha256"] != "abc" {
 		t.Errorf("meta = %v", meta)
 	}
 }

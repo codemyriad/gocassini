@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"gocassini/internal/insight"
 	"gocassini/internal/insight/workflows"
 )
 
@@ -68,36 +69,33 @@ func TestResolveSummaryWorkflow(t *testing.T) {
 	}
 }
 
-func TestSummaryFrontMatterRoundTrips(t *testing.T) {
-	t.Setenv(SummaryTemplateEnv, "")
-	t.Setenv(workflows.TemplatesDirEnv, "")
-	workflow := ResolveSummaryWorkflow()
-	markdown := summaryFrontMatter(workflow.Ref()) + "# Meeting Summary\n"
-	ref, body, ok := SummaryWorkflowOf(markdown)
-	if !ok || ref != workflow.Ref() || body != "# Meeting Summary\n" {
-		t.Errorf("read back %+v %q ok=%v", ref, body, ok)
+func TestSummaryTemplateRecordOf(t *testing.T) {
+	if SummaryTemplateRecordOf(insight.WorkflowRef{}) != nil {
+		t.Error("an empty ref became a record")
 	}
-	for _, plain := range []string{"# Meeting Summary\n", "---\ntitle: x\n---\nbody", "---\nworkflow:\n  id: \"x\"\nunclosed"} {
-		if _, body, ok := SummaryWorkflowOf(plain); ok || body != plain {
-			t.Errorf("%q read as front matter", plain)
-		}
+	got := SummaryTemplateRecordOf(insight.WorkflowRef{ID: "resumen", Version: "v2", SHA256: "abc"})
+	if got == nil || *got != (SummaryTemplateRecord{TemplateID: "resumen", TemplateVersion: "v2", TemplateSHA256: "abc"}) {
+		t.Errorf("record = %+v", got)
 	}
 }
 
-// The summary the pipeline writes names the template that wrote it.
-func TestBuildMeetingSummaryRecordsItsTemplate(t *testing.T) {
+// The summary is the document and nothing else; the template that wrote it is
+// returned for the manifest (D-819).
+func TestBuildMeetingSummaryReturnsItsTemplateAndWritesOnlyTheText(t *testing.T) {
 	writeSummaryTemplates(t, map[string]string{
 		"resumen.md": "---\nname: Resumen\nversion: 2\n---\nResume en español.\n",
 	})
 	t.Setenv(SummaryTemplateEnv, "resumen")
 	srv := newChatStub(t, "# Resumen\n\nHola.")
-	body, err := BuildMeetingSummary(LLMConfig{BaseURL: srv, Model: "m"}, sampleStreams(), sampleSegments())
+	body, ref, err := BuildMeetingSummary(LLMConfig{BaseURL: srv, Model: "m"}, sampleStreams(), sampleSegments())
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref, text, ok := SummaryWorkflowOf(body)
-	if !ok || ref.ID != "resumen" || ref.Version != "v2" || text != "# Resumen\n\nHola.\n" {
-		t.Errorf("summary = %q", body)
+	if body != "# Resumen\n\nHola.\n" {
+		t.Errorf("summary = %q, want the model's text alone", body)
+	}
+	if ref.ID != "resumen" || ref.Version != "v2" || ref.SHA256 == "" {
+		t.Errorf("template = %+v", ref)
 	}
 }
 

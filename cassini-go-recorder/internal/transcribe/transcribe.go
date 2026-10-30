@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"gocassini/internal/insight"
 	"gocassini/internal/modelstore"
 	"gocassini/internal/portable"
 	"io"
@@ -331,7 +332,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		fmt.Fprintf(stdout, "  excluding %d low-confidence words from the summary input\n", removed)
 		summaryInput = filtered
 	}
-	summaryStatus, err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout)
+	summaryStatus, summaryTemplate, err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout)
 	if err != nil {
 		return err
 	}
@@ -357,6 +358,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		Hints:             hintsProv,
 		SummaryModel:      cfg.SummaryLLM.Model,
 		HasSummary:        summaryStatus.Status == portable.SummaryCompleted,
+		SummaryTemplate:   SummaryTemplateRecordOf(summaryTemplate),
 		Additional:        additionalTranscripts,
 		Attribution:       attrProv,
 		WordTimings:       wordEnds.provenance(),
@@ -945,28 +947,28 @@ func defaultDevice() string {
 // writeSummaryArtifact runs the summary step and says what it did, so the
 // manifest can tell a summary that was switched off from one that failed: both
 // leave no summary.md behind. A failed model call is still not a build error.
-func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) (portable.SummaryStatus, error) {
+func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) (portable.SummaryStatus, insight.WorkflowRef, error) {
 	switch {
 	case cfg.SummaryLLM.Disabled:
-		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonDisabled}, nil
+		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonDisabled}, insight.WorkflowRef{}, nil
 	case !cfg.SummaryLLM.IsConfigured():
-		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonNotConfigured}, nil
+		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonNotConfigured}, insight.WorkflowRef{}, nil
 	case len(segments) == 0:
-		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonNoTranscript}, nil
+		return portable.SummaryStatus{Status: portable.SummarySkipped, Reason: portable.SummaryReasonNoTranscript}, insight.WorkflowRef{}, nil
 	}
 
 	fmt.Fprintln(stdout, "  generating meeting summary...")
-	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
+	body, template, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
 	if err != nil {
 		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)
-		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}, nil
+		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}, insight.WorkflowRef{}, nil
 	}
 
 	summaryPath := filepath.Join(outputDir, "summary.md")
 	if err := os.WriteFile(summaryPath, []byte(body), 0o644); err != nil {
-		return portable.SummaryStatus{}, fmt.Errorf("write summary: %w", err)
+		return portable.SummaryStatus{}, insight.WorkflowRef{}, fmt.Errorf("write summary: %w", err)
 	}
-	return portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}, nil
+	return portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}, template, nil
 }
 
 // defaultCacheDir returns the default cache directory for models.

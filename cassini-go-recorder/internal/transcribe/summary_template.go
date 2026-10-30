@@ -1,11 +1,9 @@
 package transcribe
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
 	"gocassini/internal/insight"
@@ -20,19 +18,19 @@ import (
 // SummaryTemplateEnv, which the operator sets from the summary step's
 // template setting; unset means the built-in summarise.
 //
-// The template that wrote a summary is recorded at the top of summary.md as
-// front matter, the way an insight document records its workflow, so every
-// path that writes a summary — the build, a backfill, a speaker-edit rewrite —
-// carries it without each one being told, and every path that packs one reads
-// it back (SummaryWorkflowOf) rather than assuming the shipped version.
+// The template that wrote a summary is recorded in the manifest, never in
+// summary.md, which stays the document and nothing else: BuildMeetingSummary
+// returns it, the build writes it into the bundle manifest's "summary" block,
+// and pack, `meetings summarize` and backfill carry it into the portable
+// file's summary block (templateId, templateVersion, templateSha256).
 
 // SummaryTemplateEnv names the workflow the summary step runs.
 const SummaryTemplateEnv = "CASSINI_SUMMARY_TEMPLATE"
 
 // summaryWarnings is where a summary template that cannot run says so. The
-// summary still runs, on the built-in template, and its front matter names
+// summary still runs, on the built-in template, and the manifest names
 // that one: a meeting without a summary is worse than one in the shipped
-// shape, and the record stays true either way.
+// shape, and the manifest records the one that actually ran.
 var summaryWarnings io.Writer = os.Stderr
 
 // ResolveSummaryWorkflow returns the workflow the summary step runs now.
@@ -67,52 +65,19 @@ func ResolveSummaryWorkflow() insight.Workflow {
 	return builtIn
 }
 
-// summaryFrontMatter is the block written above a summary's text.
-func summaryFrontMatter(ref insight.WorkflowRef) string {
-	return "---\nworkflow:\n" +
-		"  id: " + summaryYAMLString(ref.ID) + "\n" +
-		"  version: " + summaryYAMLString(ref.Version) + "\n" +
-		"  sha256: " + summaryYAMLString(ref.SHA256) + "\n" +
-		"---\n\n"
+// SummaryTemplateRecord is the template that wrote a meeting's summary, as a
+// manifest records it: the bundle manifest's "summary" block, and the same
+// keys in a portable file's summary block (D-819).
+type SummaryTemplateRecord struct {
+	TemplateID      string `json:"templateId"`
+	TemplateVersion string `json:"templateVersion"`
+	TemplateSHA256  string `json:"templateSha256"`
 }
 
-func summaryYAMLString(s string) string {
-	encoded, _ := json.Marshal(s)
-	return string(encoded)
-}
-
-// SummaryWorkflowOf reads the template a summary.md records, and returns the
-// summary's text without the block. ok is false for a summary written before
-// the block existed, which is returned unchanged.
-func SummaryWorkflowOf(markdown string) (ref insight.WorkflowRef, body string, ok bool) {
-	text := strings.TrimPrefix(markdown, "\ufeff")
-	if !strings.HasPrefix(text, "---\nworkflow:\n") {
-		return insight.WorkflowRef{}, markdown, false
-	}
-	end := strings.Index(text, "\n---\n")
-	if end < 0 {
-		return insight.WorkflowRef{}, markdown, false
-	}
-	for _, line := range strings.Split(text[len("---\n"):end], "\n") {
-		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
-		if !found {
-			continue
-		}
-		unquoted, err := strconv.Unquote(strings.TrimSpace(value))
-		if err != nil {
-			continue
-		}
-		switch key {
-		case "id":
-			ref.ID = unquoted
-		case "version":
-			ref.Version = unquoted
-		case "sha256":
-			ref.SHA256 = unquoted
-		}
-	}
+// SummaryTemplateRecordOf is the record for a workflow ref, or nil for none.
+func SummaryTemplateRecordOf(ref insight.WorkflowRef) *SummaryTemplateRecord {
 	if ref.ID == "" {
-		return insight.WorkflowRef{}, markdown, false
+		return nil
 	}
-	return ref, strings.TrimLeft(text[end+len("\n---\n"):], "\n"), true
+	return &SummaryTemplateRecord{TemplateID: ref.ID, TemplateVersion: ref.Version, TemplateSHA256: ref.SHA256}
 }

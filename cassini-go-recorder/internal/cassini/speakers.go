@@ -1039,7 +1039,7 @@ var summarizeSpeakersFn = func(t transcribe.TranscriptSpeakers) (body, model str
 	if !cfg.IsConfigured() {
 		return "", "", errSummaryModelUnavailable
 	}
-	body, err = t.Summarize(cfg)
+	body, _, err = t.Summarize(cfg)
 	return body, cfg.Model, err
 }
 

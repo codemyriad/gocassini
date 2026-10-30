@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"gocassini/internal/insight"
 	"gocassini/internal/insight/workflows"
 )
 
@@ -49,16 +50,18 @@ const (
 func SummaryPromptV0() string   { return summaryV0Prompt }
 func SummaryTemplateV0() string { return summaryV0Template }
 
-// BuildMeetingSummary calls the LLM to produce a meeting summary that follows
-// the V0 markdown template. Speaker labels from streams are used so the model
-// can attribute action items by name. Returns the raw markdown body to be
-// written to summary.md next to other meeting artifacts.
-func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segment) (string, error) {
+// BuildMeetingSummary calls the LLM to produce a meeting summary with the
+// summary step's template (ResolveSummaryWorkflow). Speaker labels from
+// streams are used so the model can attribute action items by name. Returns
+// the raw markdown body to be written to summary.md next to other meeting
+// artifacts, and the template that wrote it, which the caller records in the
+// manifest (D-819).
+func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segment) (string, insight.WorkflowRef, error) {
 	if !cfg.IsConfigured() {
-		return "", fmt.Errorf("LLM not configured")
+		return "", insight.WorkflowRef{}, fmt.Errorf("LLM not configured")
 	}
 	if len(segments) == 0 {
-		return "", fmt.Errorf("no transcript segments to summarize")
+		return "", insight.WorkflowRef{}, fmt.Errorf("no transcript segments to summarize")
 	}
 
 	workflow := ResolveSummaryWorkflow()
@@ -67,14 +70,14 @@ func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segmen
 
 	body, err := ChatCompletion(context.Background(), cfg, systemPrompt, userPrompt)
 	if err != nil {
-		return "", err
+		return "", insight.WorkflowRef{}, err
 	}
 
 	body = stripMarkdownFences(strings.TrimSpace(body))
 	if body == "" {
-		return "", fmt.Errorf("LLM returned an empty summary")
+		return "", insight.WorkflowRef{}, fmt.Errorf("LLM returned an empty summary")
 	}
-	return summaryFrontMatter(workflow.Ref()) + body + "\n", nil
+	return body + "\n", workflow.Ref(), nil
 }
 
 // EstimateSummaryInputTokens says roughly how many input tokens the summary

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"gocassini/internal/insight"
 )
 
 // TranscriptSpeakers is the roster and segments of a transcript.words.v1.json
@@ -110,8 +112,8 @@ func (t TranscriptSpeakers) LogicalSpeakerCount() int {
 
 // Summarize asks the summary LLM for a new meeting summary of this transcript,
 // labelled from its roster, with low-confidence words left out exactly as the
-// build leaves them out.
-func (t TranscriptSpeakers) Summarize(cfg LLMConfig) (string, error) {
+// build leaves them out. It also returns the template that wrote it.
+func (t TranscriptSpeakers) Summarize(cfg LLMConfig) (string, insight.WorkflowRef, error) {
 	streams, segments := t.summaryInput()
 	return buildMeetingSummaryFn(cfg, streams, segments)
 }

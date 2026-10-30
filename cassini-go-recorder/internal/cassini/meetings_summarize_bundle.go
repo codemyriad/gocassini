@@ -112,7 +112,7 @@ func summarizeMeetingBundle(root string, cfg transcribe.LLMConfig, force, estima
 		return report, nil
 	}
 
-	body, err := transcript.Summarize(cfg)
+	body, template, err := transcript.Summarize(cfg)
 	if err != nil {
 		report.Status = summarizeFailed
 		return report, fmt.Errorf("generate summary: %w", err)
@@ -121,7 +121,7 @@ func summarizeMeetingBundle(root string, cfg transcribe.LLMConfig, force, estima
 		report.Status = summarizeFailed
 		return report, fmt.Errorf("write summary: %w", err)
 	}
-	if err := recordBundleSummary(manifestPath, manifest, files, processing, report.Model); err != nil {
+	if err := recordBundleSummary(manifestPath, manifest, files, processing, report.Model, transcribe.SummaryTemplateRecordOf(template)); err != nil {
 		report.Status = summarizeFailed
 		return report, err
 	}
@@ -145,7 +145,7 @@ func bundleTranscriptionCompleted(processing *orderedJSONObject) bool {
 
 // recordBundleSummary names summary.md in the manifest, written last so the
 // manifest never lists a summary that is not on disk.
-func recordBundleSummary(manifestPath string, manifest, files, processing *orderedJSONObject, model string) error {
+func recordBundleSummary(manifestPath string, manifest, files, processing *orderedJSONObject, model string, template *transcribe.SummaryTemplateRecord) error {
 	if files == nil {
 		files = &orderedJSONObject{}
 	}
@@ -166,6 +166,13 @@ func recordBundleSummary(manifestPath string, manifest, files, processing *order
 		step["model"] = model
 	}
 	provenance.set("meetingSummary", mustJSON(step))
+	// The template that wrote it, which pack carries into the portable file's
+	// summary block (D-819). Cleared rather than left naming an older one.
+	if template != nil {
+		manifest.set("summary", mustJSON(template))
+	} else {
+		manifest.delete("summary")
+	}
 	if err := manifest.setObject("provenance", provenance); err != nil {
 		return err
 	}

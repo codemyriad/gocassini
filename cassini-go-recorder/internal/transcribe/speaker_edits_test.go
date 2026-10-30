@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gocassini/internal/insight"
 )
 
 func editsBase() ([]Segment, []RosterEntry, map[string]SpeakerTurnSet) {
@@ -202,14 +204,14 @@ func TestTranscriptSpeakersSummarizeNamesTheEditedSpeakersAndDropsUncertainWords
 	var prompt string
 	var gotCfg LLMConfig
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(c LLMConfig, streams []AudioStream, segs []Segment) (string, error) {
+	buildMeetingSummaryFn = func(c LLMConfig, streams []AudioStream, segs []Segment) (string, insight.WorkflowRef, error) {
 		gotCfg = c
 		prompt = formatTranscriptForSummary(streams, segs)
-		return "## Summary\n", nil
+		return "## Summary\n", insight.WorkflowRef{}, nil
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
-	body, err := transcript.Summarize(cfg)
+	body, _, err := transcript.Summarize(cfg)
 	if err != nil || body != "## Summary\n" {
 		t.Fatalf("Summarize = %q, %v", body, err)
 	}
