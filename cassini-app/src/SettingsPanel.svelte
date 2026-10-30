@@ -56,6 +56,9 @@
   } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
+  // A step to land on rather than the panel's top: another panel's link to the
+  // summary step (a template refused deletion because it runs there).
+  export let focus: "" | "summary" = "";
 
   const dispatch = createEventDispatcher<{ openProviders: void; openTemplates: void; openStorage: void }>();
 
@@ -207,6 +210,10 @@
       loading = false;
     }
     await Promise.all([loadLLM(), loadWorkflows()]);
+    if (focus === "summary") {
+      await tick();
+      focusSection(summarySettings);
+    }
   }
 
   async function loadLLM() {

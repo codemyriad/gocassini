@@ -1,3 +1,9 @@
+<script module lang="ts">
+  // Each card's template picker needs an id its label can name, since the
+  // label shares its line with a link and so cannot wrap the select.
+  let pickerCount = 0;
+</script>
+
 <script lang="ts">
   // Create an insight: ask these meetings a question (D-700, D-720, D-749).
   //
@@ -50,7 +56,7 @@
   // so no run is created unnamed. Renaming later happens in the insight's own
   // sheet.
   import { createEventDispatcher } from "svelte";
-  import { ChevronDown } from "@lucide/svelte";
+  import { ChevronDown, Pencil } from "@lucide/svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
   import { defaultInsightName, INSIGHT_NAME_MAX } from "cassini-viewer/insightName";
 
@@ -190,6 +196,8 @@
   $: if (!nameTouched) {
     name = suggestedName;
   }
+
+  const templatePickerId = `gc-template-${++pickerCount}`;
 
   // "Edit templates": the panel that writes them, reached the way the setup
   // card reaches its panels — a real link whose ordinary click becomes an
@@ -355,21 +363,26 @@
       <!-- One box: the template you pick and what it will ask are the same
            decision, so they are not two controls with a gap between them. -->
       <div class="tpl-box">
-        <label class="tpl-field tpl-field-row">
-          <span>Insight template</span>
+        <!-- The picker and what it does are read together, so nothing sits
+             between them: "Edit templates" rides on the label's line instead,
+             small, where an administrator looks for it and nobody else
+             trips over it. -->
+        <div class="tpl-field">
+          <div class="tpl-field-head">
+            <label for={templatePickerId}>Insight template</label>
+            {#if isAdmin}
+              <a class="tpl-edit-link" href={templatesUrl()} on:click={openTemplates}><Pencil size={11} aria-hidden="true" />Edit templates</a>
+            {/if}
+          </div>
           <span class="gc-select">
-            <select class="gc-input" bind:value={chosenWorkflow}>
+            <select id={templatePickerId} class="gc-input" bind:value={chosenWorkflow}>
               {#each workflows as workflow (workflow.id)}
                 <option value={workflow.id}>{workflow.name}</option>
               {/each}
             </select>
             <ChevronDown size={14} class="gc-select-chevron" aria-hidden="true" />
           </span>
-        </label>
-        {#if isAdmin}
-          <a class="link link-primary text-xs tpl-edit-link" href={templatesUrl()} on:click={openTemplates}>Edit templates</a>
-        {/if}
-
+        </div>
         {#if chosenWorkflowEntry?.description}
           <!-- What the template does and what comes back, in one sentence:
                the name alone says nothing about what the model is asked. -->
@@ -531,11 +544,31 @@
     display: grid;
     gap: 5px;
   }
+  /* The template picker's label line, with the administrator's way to the
+     templates panel at its far end. */
+  .tpl-field-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .tpl-edit-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+    text-decoration: none;
+  }
+  .tpl-edit-link:hover,
+  .tpl-edit-link:focus-visible {
+    color: var(--color-base-content);
+    text-decoration: underline;
+  }
   /* The label and the control are one line while there is room for both: a
      picker under its own name reads as a form where this is one choice. */
-  .tpl-edit-link {
-    justify-self: end;
-  }
   .tpl-field-row {
     display: flex;
     flex-wrap: wrap;
@@ -604,7 +637,11 @@
     line-height: 1.5;
   }
 
-  /* Inset under the picker: it says what the chosen template does. */
+  /* Inset under the picker: it says what the chosen template does, close
+     enough to read as part of the choice. */
+  .tpl-field + .tpl-description {
+    margin-top: -6px;
+  }
   .tpl-description {
     padding: 8px 12px 8px 11px;
     background-color: var(--color-base-200);

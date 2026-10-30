@@ -46,8 +46,13 @@ describe("GenerateCard", () => {
     expect(generateCardSource).not.toContain("listInsightWorkflows");
   });
 
-  it("links an administrator to the templates panel from the picker", () => {
-    expect(generateCardSource).toMatch(/\{#if isAdmin\}\s*<a [^>]*>Edit templates<\/a>/);
+  it("links an administrator to the templates panel from the picker's label line", () => {
+    // On the label's line, not between the picker and the description: the
+    // two are read together and nothing else sits between them.
+    expect(generateCardSource).toMatch(
+      /<div class="tpl-field-head">\s*<label for=\{templatePickerId\}>Insight template<\/label>\s*\{#if isAdmin\}\s*<a [^>]*>.*Edit templates<\/a>/,
+    );
+    expect(generateCardSource).toMatch(/<\/select>[\s\S]*?<\/div>\s*\{#if chosenWorkflowEntry\?\.description\}/);
     expect(generateCardSource).toContain('dispatch("open", { panel: "templates", href: templatesUrl() });');
   });
 

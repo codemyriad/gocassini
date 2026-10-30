@@ -145,6 +145,20 @@ describe("InsightTemplatesPanel", () => {
     expect(insightTemplatesPanelSource).not.toContain("bind:value={editor.id}");
   });
 
+  it("asks before deleting in a modal dialog, and offers no Delete once the operator refuses", () => {
+    expect(insightTemplatesPanelSource).toContain('<dialog\n  class="modal"');
+    expect(insightTemplatesPanelSource).not.toContain("Yes, delete it");
+    expect(insightTemplatesPanelSource).toContain("error instanceof OperatorHttpError && error.status === 409");
+    // The refused state is its own branch, with Close and no Delete.
+    const refused = insightTemplatesPanelSource.slice(
+      insightTemplatesPanelSource.indexOf("{#if deletion.refusal}"),
+      insightTemplatesPanelSource.indexOf("{:else}", insightTemplatesPanelSource.indexOf("{#if deletion.refusal}")),
+    );
+    expect(refused).toContain(">Close</button>");
+    expect(refused).toContain("Open the Publish pipeline");
+    expect(refused).not.toContain("remove()");
+  });
+
   it("shows the operator's refusal of a save, which carries the recorder's reason", () => {
     expect(insightTemplatesPanelSource).toContain("saveError = error instanceof Error ? error.message : String(error);");
     expect(insightTemplatesPanelSource).toContain('<div class="err-box" role="alert">{saveError}</div>');
@@ -185,9 +199,9 @@ describe("the prompt check", () => {
   });
 
   it("has three fields, Name, Description and Prompt, and no question checkbox", () => {
-    expect(insightTemplatesPanelSource).toContain('<span class="op-field-label">Name</span>');
-    expect(insightTemplatesPanelSource).toContain('<span class="op-field-label">Description</span>');
-    expect(insightTemplatesPanelSource).toContain('<span class="op-field-label">Prompt</span>');
+    expect(insightTemplatesPanelSource).toContain('<label class="op-field-label" for="tpl-name">Name</label>');
+    expect(insightTemplatesPanelSource).toContain('<label class="op-field-label" for="tpl-description">Description</label>');
+    expect(insightTemplatesPanelSource).toContain('<label class="op-field-label" for="tpl-prompt">Prompt</label>');
     expect(insightTemplatesPanelSource.match(/class="op-field-label"/g)).toHaveLength(3);
     expect(insightTemplatesPanelSource).not.toContain('type="checkbox"');
     expect(insightTemplatesPanelSource).not.toContain("What it asks");

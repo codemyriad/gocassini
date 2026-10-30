@@ -330,3 +330,22 @@ it("opens the hardware facts under Change and sends Add one to the providers", a
   await expect.element(hints.getByRole("textbox", { name: /One term per line/ })).toBeVisible();
   await expect.element(hints.getByRole("textbox", { name: /One name per line/ })).toBeVisible();
 });
+
+it("lands on the summary step when another panel's link asks for it", async () => {
+  // The templates panel's refused delete links here: the step that runs the
+  // template is where another one is chosen.
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") {
+      return Response.json({ quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "prepared", active_revision: "r1" });
+    }
+    if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
+    if (path === "/operator/settings/llm") return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
+    if (path === "/operator/settings/workflows") return Response.json([]);
+    return Response.json({});
+  }));
+  host = document.createElement("div");
+  document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator"), focus: "summary" } });
+  await expect.poll(() => document.activeElement?.getAttribute("aria-labelledby")).toBe("summary-heading");
+});

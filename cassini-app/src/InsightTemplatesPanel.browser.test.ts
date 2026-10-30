@@ -1,8 +1,7 @@
 import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { page } from "vitest/browser";
-import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
-import { OperatorClient } from "./operator/client";
+import { page, userEvent } from "vitest/browser";
+import Settings from "./Settings.svelte";
 import "./app.css";
 
 type Row = Record<string, string>;
@@ -17,12 +16,14 @@ const custom = (id: string, name: string, description: string, instruction: stri
 
 const BUILT_INS = [
   builtIn("summarise", "Meeting summary", "Summarises what happened.", "You are a meeting-summary editor."),
-  builtIn("ask", "Ask your own question", "Answers a question you type.", "Answer {{QUESTION}} from the transcripts."),
+  builtIn("ask", "Ask your own question", "Answers a question of your own about the meetings you picked, with who said what and what they leave unanswered.", "Answer {{QUESTION}} from the transcripts."),
 ];
 
 let rows: Row[] = [];
 let puts: Array<{ id: string; body: Record<string, string> }> = [];
 let deleteRefusal = "";
+let summaryTemplate = "";
+let deleted: string[] = [];
 let app: ReturnType<typeof mount> | undefined;
 let host: HTMLDivElement;
 
@@ -30,11 +31,15 @@ beforeEach(() => {
   rows = [...BUILT_INS];
   puts = [];
   deleteRefusal = "";
+  summaryTemplate = "";
+  deleted = [];
   host = document.createElement("div");
   document.body.append(host);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
-    if (path === "/operator/settings/llm") return Response.json({ providers: [] });
+    if (path === "/operator/settings/llm") {
+      return Response.json({ providers: [], summary: { template: summaryTemplate }, insight: { template: "" } });
+    }
     if (path === "/operator/settings/workflows") return Response.json(rows);
     const id = decodeURIComponent(path.replace("/operator/settings/workflows/", ""));
     if (init?.method === "PUT") {
@@ -46,6 +51,7 @@ beforeEach(() => {
     }
     if (init?.method === "DELETE") {
       if (deleteRefusal) return Response.json({ error: deleteRefusal }, { status: 409 });
+      deleted.push(id);
       rows = rows.filter((row) => row.id !== id);
       return Response.json({ id, deleted: true });
     }
@@ -58,35 +64,81 @@ afterEach(async () => {
   app = undefined;
   host.remove();
   vi.unstubAllGlobals();
+  delete (window as Window & { __CASSINI_CONFIG__?: unknown }).__CASSINI_CONFIG__;
 });
 
+let panelsAsked: string[] = [];
+
+// Mounted through the settings host, as the operator surface does, so the
+// panel wears the shared settings styles its layout is measured in and its
+// links travel the same way the nav does.
 function mountPanel() {
-  app = mount(InsightTemplatesPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  panelsAsked = [];
+  Object.assign(window, { __CASSINI_CONFIG__: { operatorBasePath: "/operator" } });
+  app = mount(Settings, {
+    target: host,
+    props: { panel: "templates" },
+    events: { panel: (event: CustomEvent<string>) => panelsAsked.push(event.detail) },
+  });
 }
 
-const builtInToggle = () => page.getByRole("button", { name: /Built in/ });
+const builtInHeading = () => page.getByRole("heading", { name: /Built in/ });
+const deleteDialog = () => page.getByRole("dialog", { name: "Delete template" });
+const RESUMEN = () => custom("resumen", "Resumen", "Un resumen en español.", "Resume.");
 
 describe("insight templates panel in the browser", () => {
-  it("lists built-ins open when there is nothing of your own, with no edit controls on them", async () => {
+  it("lists built-ins under a plain heading, with no edit controls on them", async () => {
     mountPanel();
     await expect.element(page.getByRole("heading", { name: "Your templates" })).toBeVisible();
     await expect.element(page.getByText("None yet.", { exact: false })).toBeVisible();
-    await expect.element(builtInToggle()).toHaveAttribute("aria-expanded", "true");
-    await expect.element(page.getByText("Shipped with this version and recorded by hash in every document they produce. Duplicate one to change it.")).toBeVisible();
+    await expect.element(builtInHeading()).toHaveTextContent("Built in 2");
+    await expect.element(page.getByText("Shipped with Cassini. Duplicate one to change it.", { exact: true })).toBeVisible();
+    expect(page.getByText("recorded by hash", { exact: false }).all()).toHaveLength(0);
     await expect.element(page.getByRole("heading", { name: "Meeting summary" })).toBeVisible();
+    expect(page.getByRole("button", { name: /Built in/ }).all()).toHaveLength(0);
     expect(page.getByRole("button", { name: "Duplicate" }).all()).toHaveLength(2);
     expect(page.getByRole("button", { name: "Edit", exact: true }).all()).toHaveLength(0);
     expect(page.getByRole("button", { name: "Delete" }).all()).toHaveLength(0);
   });
 
-  it("collapses built-ins when a custom template exists, and lists it first", async () => {
-    rows = [...BUILT_INS, custom("resumen", "Resumen", "Un resumen en español.", "Resume.")];
+  it("keeps built-ins open when a custom template exists, and lists it first", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
     mountPanel();
     await expect.element(page.getByRole("heading", { name: "Resumen" })).toBeVisible();
-    await expect.element(builtInToggle()).toHaveAttribute("aria-expanded", "false");
-    expect(page.getByRole("heading", { name: "Meeting summary" }).all()).toHaveLength(0);
-    await builtInToggle().click();
     await expect.element(page.getByRole("heading", { name: "Meeting summary" })).toBeVisible();
+    const resumen = page.getByRole("heading", { name: "Resumen" }).element();
+    expect(resumen.compareDocumentPosition(builtInHeading().element()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("puts each row's name, description and actions on one compact line, the prompt under it", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
+    mountPanel();
+    const name = page.getByRole("heading", { name: "Meeting summary" });
+    await expect.element(name).toBeVisible();
+    const card = name.element().closest("article") as HTMLElement;
+    const description = card.querySelector(".tpl-row-desc") as HTMLElement;
+    const duplicate = [...card.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Duplicate")!;
+    const toggle = card.querySelector("summary") as HTMLElement;
+    const top = (el: Element) => el.getBoundingClientRect().top;
+    const mid = (el: Element) => el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2;
+    // A short description sits beside the name, the actions on the same line.
+    expect(Math.abs(mid(description) - mid(name.element()))).toBeLessThan(6);
+    expect(Math.abs(mid(duplicate) - mid(name.element()))).toBeLessThan(6);
+    expect(top(toggle)).toBeGreaterThan(top(name.element()));
+    expect(toggle.textContent).toContain("Prompt");
+    // Compact: a closed built-in row is two short lines (it was about 103px
+    // with the name, description and prompt each on a line of its own).
+    expect(card.getBoundingClientRect().height).toBeLessThan(70);
+
+    const resumenCard = page.getByRole("heading", { name: "Resumen" }).element().closest("article") as HTMLElement;
+    const labels = [...resumenCard.querySelectorAll(".tpl-row-actions button")].map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["Edit", "Duplicate", "Delete"]);
+    expect(resumenCard.querySelector(".tpl-row-actions")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Edit · Duplicate · Delete",
+    );
+    // The question marker rides on the prompt line.
+    const askCard = page.getByRole("heading", { name: "Ask your own question" }).element().closest("article") as HTMLElement;
+    expect(askCard.querySelector("summary")?.textContent?.trim()).toMatch(/^Prompt\s*· asks for a question$/);
   });
 
   it("duplicates a built-in into a new template under Your templates, deriving the id from the name", async () => {
@@ -96,8 +148,7 @@ describe("insight templates panel in the browser", () => {
     await expect.element(form).toBeVisible();
     // Opened above the built-in list, not as an expansion of the source row.
     const formEl = form.element();
-    const builtInHeading = builtInToggle().element();
-    expect(formEl.compareDocumentPosition(builtInHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(formEl.compareDocumentPosition(builtInHeading().element()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await expect.element(page.getByLabelText("Name")).toHaveValue("Meeting summary (copy)");
     await expect.element(page.getByLabelText("Description")).toHaveValue("Summarises what happened.");
     // No id to type, and no file line until it exists.
@@ -114,15 +165,25 @@ describe("insight templates panel in the browser", () => {
     await expect.element(page.getByRole("heading", { name: "Meeting summary (copy)" })).toBeVisible();
   });
 
-  it("shows Name, Description and Prompt with their hints, and no question checkbox", async () => {
+  it("shows Name, Description and Prompt with their hints above the fields, and no question checkbox", async () => {
     mountPanel();
     await page.getByRole("button", { name: "New template" }).click();
-    await expect.element(page.getByText("What people pick it by.")).toBeVisible();
-    await expect.element(page.getByText("Shown to the person choosing it, so they know what it does.")).toBeVisible();
-    await expect.element(page.getByText("The instruction the model receives, together with the transcripts.")).toBeVisible();
+    expect(page.getByText("What people pick it by.").all()).toHaveLength(0);
+    const descriptionHint = page.getByText("Shown to the person choosing it, so they know what it does.");
+    const promptHint = page.getByText("The instruction the model receives, together with the transcripts.", { exact: false });
+    await expect.element(descriptionHint).toBeVisible();
+    await expect.element(promptHint).toBeVisible();
     await expect
       .element(page.getByText("where a question should go, and people will be asked for one when they pick this template.", { exact: false }))
       .toBeVisible();
+    const above = (hint: Element, field: Element) =>
+      hint.getBoundingClientRect().bottom <= field.getBoundingClientRect().top &&
+      Boolean(hint.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(above(descriptionHint.element(), page.getByLabelText("Description").element())).toBe(true);
+    expect(above(promptHint.element(), page.getByLabelText("Prompt").element())).toBe(true);
+    // The two prompt lines are one hint, both above the textarea.
+    expect(promptHint.element().textContent).toContain("{{QUESTION}}");
+    await expect.element(page.getByLabelText("Prompt")).toHaveAccessibleDescription(/together with the transcripts/);
     expect(page.getByRole("checkbox").all()).toHaveLength(0);
     const labels = [...document.querySelectorAll("form .op-field-label")].map((el) => el.textContent?.trim());
     expect(labels).toEqual(["Name", "Description", "Prompt"]);
@@ -161,9 +222,8 @@ describe("insight templates panel in the browser", () => {
     expect(puts).toHaveLength(0);
   });
 
-  it("edits a custom template under its own id and shows the operator's reason for refusing a delete", async () => {
-    rows = [...BUILT_INS, custom("resumen", "Resumen", "Un resumen en español.", "Resume.")];
-    deleteRefusal = "resumen is the configured summary template";
+  it("edits a custom template under its own id", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
     mountPanel();
     await page.getByRole("button", { name: "Edit", exact: true }).click();
     await expect.element(page.getByText("resumen.md")).toBeVisible();
@@ -171,9 +231,78 @@ describe("insight templates panel in the browser", () => {
     await page.getByRole("button", { name: "Save" }).click();
     await expect.poll(() => puts.length).toBe(1);
     expect(puts[0].id).toBe("resumen");
+  });
+
+  it("asks in a dialog before deleting, focused on Cancel, and deletes on Delete", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
+    mountPanel();
+    await page.getByRole("button", { name: "Delete" }).click();
+    const dialog = deleteDialog();
+    await expect.element(dialog).toBeVisible();
+    expect((dialog.element() as HTMLDialogElement).open).toBe(true);
+    await expect
+      .element(dialog)
+      .toHaveTextContent("Delete Resumen? Insights already written with it keep their text and still name its id, version and hash.");
+    await expect.element(dialog.getByRole("button", { name: "Cancel" })).toHaveFocus();
+
+    await dialog.getByRole("button", { name: "Delete" }).click();
+    await expect.poll(() => deleted).toEqual(["resumen"]);
+    await expect.element(dialog).not.toBeInTheDocument();
+    await expect.element(page.getByRole("heading", { name: "Resumen" })).not.toBeInTheDocument();
+  });
+
+  it("cancels the dialog with Cancel, Escape and the backdrop, deleting nothing", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
+    mountPanel();
+    const dialogEl = () => document.querySelector("dialog") as HTMLDialogElement;
 
     await page.getByRole("button", { name: "Delete" }).click();
-    await page.getByRole("button", { name: "Yes, delete it" }).click();
-    await expect.element(page.getByText("resumen is the configured summary template")).toBeVisible();
+    await deleteDialog().getByRole("button", { name: "Cancel" }).click();
+    await expect.poll(() => dialogEl().open).toBe(false);
+
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect.poll(() => dialogEl().open).toBe(true);
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => dialogEl().open).toBe(false);
+
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect.poll(() => dialogEl().open).toBe(true);
+    // The dialog fills the viewport; its box is in the middle, so a corner is backdrop.
+    await page.elementLocator(dialogEl()).click({ position: { x: 4, y: 4 } });
+    await expect.poll(() => dialogEl().open).toBe(false);
+    expect(deleted).toEqual([]);
+  });
+
+  it("turns a refused delete of the summary template into the reason, Close and the way to the summary step", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
+    deleteRefusal = '"resumen" is the template for meeting summaries; choose another one there before deleting it';
+    summaryTemplate = "resumen";
+    mountPanel();
+    await page.getByRole("button", { name: "Delete" }).click();
+    const dialog = deleteDialog();
+    await dialog.getByRole("button", { name: "Delete" }).click();
+
+    await expect.element(dialog).toHaveTextContent(deleteRefusal);
+    await expect.element(dialog.getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(dialog.getByRole("button", { name: "Delete" }).all()).toHaveLength(0);
+    expect(dialog.getByRole("button", { name: "Cancel" }).all()).toHaveLength(0);
+    expect(dialog.getByRole("alert").all()).toHaveLength(0);
+
+    await dialog.getByRole("button", { name: "Open the Publish pipeline" }).click();
+    expect(panelsAsked).toEqual(["pipeline"]);
+    await expect.poll(() => (document.querySelector("dialog") as HTMLDialogElement).open).toBe(false);
+    expect(deleted).toEqual([]);
+  });
+
+  it("offers only Close when the refusal is for the insight step", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
+    deleteRefusal = '"resumen" is the template for insights; choose another one there before deleting it';
+    mountPanel();
+    await page.getByRole("button", { name: "Delete" }).click();
+    await deleteDialog().getByRole("button", { name: "Delete" }).click();
+    await expect.element(deleteDialog()).toHaveTextContent(deleteRefusal);
+    expect(deleteDialog().getByRole("button", { name: "Open the Publish pipeline" }).all()).toHaveLength(0);
+    await deleteDialog().getByRole("button", { name: "Close" }).click();
+    await expect.poll(() => (document.querySelector("dialog") as HTMLDialogElement).open).toBe(false);
   });
 });

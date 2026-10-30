@@ -69,13 +69,14 @@
   // with its template spliced in, byte for byte — and the hash beside it names
   // those bytes, which an insight document records too.
   import { createEventDispatcher, onMount, tick } from "svelte";
-  import { ChevronRight, FileText, Plus, RefreshCw } from "@lucide/svelte";
-  import { OperatorClient } from "./operator/client";
+  import { FileText, Plus, RefreshCw } from "@lucide/svelte";
+  import { OperatorClient, OperatorHttpError } from "./operator/client";
   import { workflowTakesQuestion } from "./insights/client";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import type { InsightTemplateDraft, InsightWorkflow } from "./operator/types";
 
-  const dispatch = createEventDispatcher<{ openProviders: void }>();
+  // openPipeline: the step a refused delete names, opened where it is set.
+  const dispatch = createEventDispatcher<{ openProviders: void; openPipeline: "summary" }>();
 
   // Handed in by Settings.svelte, exactly as the two sibling panels are: it
   // already builds the client and already renders the config error, so a second
@@ -99,11 +100,6 @@
   // deployment of having no endpoint.
   let hasProvider: boolean | null = null;
 
-  // Collapsed when there is something of your own to look at first; decided
-  // once, on the first listing, so a save never folds it under the reader.
-  let builtInOpen = true;
-  let builtInDecided = false;
-
   // The one template being edited. `id` is null for a template with no file
   // yet: its id is derived from the name when it is first saved, and fixed
   // after that, because documents and settings name it by the id.
@@ -118,8 +114,17 @@
   let editorEl: HTMLFormElement | null = null;
   let saving = false;
   let saveError = "";
-  let pendingDelete = "";
-  let deleteError = "";
+
+  // The one template being deleted, asked about in a modal dialog. `refusal`
+  // is the operator's reason when it will not delete it (409: a step is
+  // configured to run it); the dialog then offers no Delete at all, only the
+  // reason and, for the summary step, the way to it. `error` is any other
+  // failure, which leaves Delete there to try again.
+  type Deletion = { workflow: InsightWorkflow; error: string; refusal: string; summaryStep: boolean };
+  let deletion: Deletion | null = null;
+  let deleteDialog: HTMLDialogElement | null = null;
+  let deleteCancel: HTMLButtonElement | null = null;
+  let deleteClose: HTMLButtonElement | null = null;
 
   const PROMPT_EXAMPLE = [
     "You read meeting transcripts and list the risks people raised.",
@@ -142,10 +147,6 @@
     loadError = "";
     try {
       workflows = await client.listInsightWorkflows();
-      if (!builtInDecided) {
-        builtInOpen = !workflows.some(isCustom);
-        builtInDecided = true;
-      }
     } catch (error) {
       loadError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -202,7 +203,6 @@
   async function openEditor(next: Editor) {
     editor = next;
     saveError = "";
-    pendingDelete = "";
     await tick();
     editorEl?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
     editorEl?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
@@ -241,29 +241,80 @@
     }
   }
 
-  async function remove(workflow: InsightWorkflow) {
-    if (!client) {
+  async function askDelete(workflow: InsightWorkflow) {
+    deletion = { workflow, error: "", refusal: "", summaryStep: false };
+    await tick();
+    // showModal is absent only where there is no real browser (jsdom).
+    if (deleteDialog && !deleteDialog.open) {
+      deleteDialog.showModal?.();
+    }
+    // Cancel, not Delete: a stray Enter keeps the template.
+    deleteCancel?.focus();
+  }
+
+  function closeDelete() {
+    if (deleteDialog?.open) {
+      deleteDialog.close();
+    }
+    deletion = null;
+  }
+
+  // Escape: closed like Cancel, except while the delete is on its way.
+  function cancelDelete(event: Event) {
+    if (saving) {
+      event.preventDefault();
+    }
+  }
+
+  // A click on the dialog itself, not on its box, is a click on the backdrop.
+  function backdropClick(event: MouseEvent) {
+    if (event.target === deleteDialog && !saving) {
+      closeDelete();
+    }
+  }
+
+  async function remove() {
+    if (!client || !deletion) {
       return;
     }
+    const { workflow } = deletion;
     saving = true;
-    deleteError = "";
+    deletion = { ...deletion, error: "" };
     try {
       await client.deleteInsightTemplate(workflow.id);
-      pendingDelete = "";
+      closeDelete();
       if (editor?.id === workflow.id) {
         editor = null;
       }
       await load();
     } catch (error) {
-      deleteError = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof OperatorHttpError && error.status === 409) {
+        // The operator says which step holds it in words; whether it is the
+        // summary step is read from the setting itself, so the way there is
+        // offered only when it is true.
+        deletion = { workflow, error: "", refusal: message, summaryStep: await isSummaryTemplate(workflow.id) };
+        await tick();
+        deleteClose?.focus();
+      } else {
+        deletion = { workflow, error: message, refusal: "", summaryStep: false };
+      }
     } finally {
       saving = false;
     }
   }
 
-  function askDelete(workflow: InsightWorkflow) {
-    pendingDelete = rowKey(workflow);
-    deleteError = "";
+  async function isSummaryTemplate(id: string): Promise<boolean> {
+    try {
+      return (await client!.getLLMSettings()).summary.template.trim() === id;
+    } catch {
+      return false;
+    }
+  }
+
+  function openPipeline() {
+    closeDelete();
+    dispatch("openPipeline", "summary");
   }
 </script>
 
@@ -302,34 +353,46 @@
           New template{#if editor.from}<span class="tpl-hint"> · a copy of {editor.from}</span>{/if}
         </p>
       {/if}
-      <label class="op-field">
-        <span class="op-field-label">Name</span>
-        <input class="op-input" type="text" bind:value={editor.draft.name} maxlength="500" autocomplete="off" />
-        <span class="tpl-hint">What people pick it by.</span>
-      </label>
-      <label class="op-field">
-        <span class="op-field-label">Description</span>
-        <input class="op-input" type="text" bind:value={editor.draft.description} maxlength="500" autocomplete="off" />
-        <span class="tpl-hint">Shown to the person choosing it, so they know what it does.</span>
-      </label>
-      <label class="op-field">
-        <span class="op-field-label">Prompt</span>
+      <!-- Hints sit between a label and its field, read before typing, and
+           describe the field rather than name it. One editor is open at a
+           time, so the ids are fixed. -->
+      <div class="op-field">
+        <label class="op-field-label" for="tpl-name">Name</label>
+        <input id="tpl-name" class="op-input" type="text" bind:value={editor.draft.name} maxlength="500" autocomplete="off" />
+      </div>
+      <div class="op-field">
+        <label class="op-field-label" for="tpl-description">Description</label>
+        <span id="tpl-description-hint" class="tpl-hint">Shown to the person choosing it, so they know what it does.</span>
+        <input
+          id="tpl-description"
+          class="op-input"
+          type="text"
+          bind:value={editor.draft.description}
+          maxlength="500"
+          autocomplete="off"
+          aria-describedby="tpl-description-hint"
+        />
+      </div>
+      <div class="op-field">
+        <label class="op-field-label" for="tpl-prompt">Prompt</label>
+        <span id="tpl-prompt-hint" class="tpl-hint">
+          The instruction the model receives, together with the transcripts.<br />
+          Put <code>{QUESTION_PLACEHOLDER}</code> where a question should go, and people will be asked for one when they
+          pick this template.
+        </span>
         <textarea
+          id="tpl-prompt"
           class="op-input tpl-textarea"
           bind:value={editor.draft.prompt}
           rows="16"
           spellcheck="false"
           placeholder={PROMPT_EXAMPLE}
+          aria-describedby="tpl-prompt-hint"
         ></textarea>
-        <span class="tpl-hint">The instruction the model receives, together with the transcripts.</span>
-        <span class="tpl-hint">
-          Put <code>{QUESTION_PLACEHOLDER}</code> where a question should go, and people will be asked for one when they
-          pick this template.
-        </span>
         {#if editorProblem}
           <span class="tpl-hint tpl-hint-bad" role="alert">{editorProblem}</span>
         {/if}
-      </label>
+      </div>
       {#if editor.id !== null}
         <!-- Not editable: the file name is what `cassini insight run
              --workflow` and every recorded insight name it by. -->
@@ -352,7 +415,8 @@
               class="link-btn danger tpl-push"
               type="button"
               disabled={saving}
-              on:click={() => askDelete(editing)}
+              aria-haspopup="dialog"
+              on:click={() => void askDelete(editing)}
             >
               Delete
             </button>
@@ -364,36 +428,42 @@
 {/snippet}
 
 {#snippet templateRow(workflow: InsightWorkflow, custom: boolean)}
+  <!-- One compact card: name and description on a line with the actions,
+       the prompt one small line under it. -->
   <article class="op-tint tpl-card" class:off={hasProvider === false || workflow.error !== ""}>
-    <div class="set-row-main">
-      <h3 class="set-row-name">{workflow.name || workflow.id}</h3>
-      {#if workflow.description}
-        <p class="set-row-sub">{workflow.description}</p>
-      {/if}
-    </div>
+    <div class="tpl-row-head">
+      <div class="tpl-row-text">
+        <h3 class="tpl-row-name">{workflow.name || workflow.id}</h3>
+        {#if workflow.description}
+          <p class="tpl-row-desc">{workflow.description}</p>
+        {/if}
+      </div>
 
-    <div class="tpl-row-actions">
-      {#if custom}
-        <button class="link-btn" type="button" disabled={saving} on:click={() => void openEditor(editExisting(workflow))}>
-          Edit
-        </button>
-      {/if}
-      {#if !workflow.error}
-        <button class="link-btn" type="button" disabled={saving} on:click={() => void openEditor(duplicate(workflow))}>
-          Duplicate
-        </button>
-      {/if}
-      {#if custom}
-        <button
-          class="link-btn danger"
-          type="button"
-          disabled={saving}
-          aria-expanded={pendingDelete === rowKey(workflow)}
-          on:click={() => askDelete(workflow)}
-        >
-          Delete
-        </button>
-      {/if}
+      <div class="tpl-row-actions">
+        {#if custom}
+          <button class="link-btn" type="button" disabled={saving} on:click={() => void openEditor(editExisting(workflow))}>
+            Edit
+          </button>
+        {/if}
+        {#if !workflow.error}
+          {#if custom}<span class="tpl-sep" aria-hidden="true">·</span>{/if}
+          <button class="link-btn" type="button" disabled={saving} on:click={() => void openEditor(duplicate(workflow))}>
+            Duplicate
+          </button>
+        {/if}
+        {#if custom}
+          <span class="tpl-sep" aria-hidden="true">·</span>
+          <button
+            class="link-btn danger"
+            type="button"
+            disabled={saving}
+            aria-haspopup="dialog"
+            on:click={() => void askDelete(workflow)}
+          >
+            Delete
+          </button>
+        {/if}
+      </div>
     </div>
 
     {#if workflow.error}
@@ -421,29 +491,6 @@
           </p>
         </div>
       </details>
-    {/if}
-
-    {#if pendingDelete === rowKey(workflow)}
-      <!-- Inline, like the provider list's: the app runs inside a shadow
-           root, where a top-layer <dialog> does not reliably follow its
-           styling or focus. -->
-      <div class="tpl-confirm" role="alertdialog" aria-label="Confirm deleting this template">
-        <p>
-          Delete <strong>{workflow.name || workflow.id}</strong>? Insights already written with it keep their text
-          and still name its id, version and hash.
-        </p>
-        {#if deleteError}
-          <div class="err-box" role="alert">{deleteError}</div>
-        {/if}
-        <div class="tpl-actions">
-          <button class="btn btn-sm btn-error" type="button" disabled={saving} on:click={() => void remove(workflow)}>
-            Yes, delete it
-          </button>
-          <button class="link-btn op-cancel" type="button" disabled={saving} on:click={() => (pendingDelete = "")}>
-            Cancel
-          </button>
-        </div>
-      </div>
     {/if}
 
     {#if custom && editor && editor.key === rowKey(workflow)}
@@ -493,59 +540,123 @@
     {/if}
     <!-- Keyed by origin as well as id: a custom file named after a built-in is
          listed, broken, and the two must not collide. -->
-    {#each customs as workflow (`${workflow.origin}:${workflow.id}`)}
-      {@render templateRow(workflow, true)}
-    {/each}
+    {#if customs.length > 0}
+      <div class="tpl-list">
+        {#each customs as workflow (`${workflow.origin}:${workflow.id}`)}
+          {@render templateRow(workflow, true)}
+        {/each}
+      </div>
+    {/if}
   </section>
 
   {#if builtIns.length > 0}
     <section class="tpl-section" aria-labelledby="tpl-builtin-heading">
       <div class="tpl-section-head">
-        <h2 class="tpl-section-title">
-          <button
-            id="tpl-builtin-heading"
-            class="tpl-fold"
-            type="button"
-            aria-expanded={builtInOpen}
-            aria-controls="tpl-builtin-list"
-            on:click={() => (builtInOpen = !builtInOpen)}
-          >
-            <span class="tpl-fold-chev" class:open={builtInOpen} aria-hidden="true"><ChevronRight size={14} /></span>
-            Built in
-            <span class="tpl-count">{builtIns.length}</span>
-          </button>
+        <h2 id="tpl-builtin-heading" class="tpl-section-title">
+          Built in <span class="tpl-count">{builtIns.length}</span>
         </h2>
       </div>
-      <p class="tpl-note">
-        Shipped with this version and recorded by hash in every document they produce. Duplicate one to change it.
-      </p>
-      {#if builtInOpen}
-        <div id="tpl-builtin-list" class="tpl-list">
-          {#each builtIns as workflow (`${workflow.origin}:${workflow.id}`)}
-            {@render templateRow(workflow, false)}
-          {/each}
-        </div>
-      {/if}
+      <p class="tpl-note">Shipped with Cassini. Duplicate one to change it.</p>
+      <div class="tpl-list">
+        {#each builtIns as workflow (`${workflow.origin}:${workflow.id}`)}
+          {@render templateRow(workflow, false)}
+        {/each}
+      </div>
     </section>
   {/if}
 {/if}
 
+<!-- A modal dialog for the one irreversible thing on this panel. It stays a
+     descendant of the panel in the DOM, so the panel's styles and theme still
+     reach it from the top layer. Escape and the backdrop cancel it. -->
+<dialog
+  class="modal"
+  bind:this={deleteDialog}
+  aria-labelledby="tpl-delete-title"
+  on:close={() => (deletion = null)}
+  on:cancel={cancelDelete}
+  on:click={backdropClick}
+>
+  {#if deletion}
+    {@const name = deletion.workflow.name || deletion.workflow.id}
+    <div class="modal-box tpl-dialog">
+      <h2 id="tpl-delete-title" class="tpl-dialog-title">Delete template</h2>
+      {#if deletion.refusal}
+        <!-- Refused: a step runs this template. No Delete to press again,
+             only the reason and the way to that step. -->
+        <p class="tpl-dialog-body">{deletion.refusal}</p>
+        <div class="tpl-dialog-actions">
+          {#if deletion.summaryStep}
+            <button class="link tpl-dialog-link" type="button" on:click={openPipeline}>Open the Publish pipeline</button>
+          {/if}
+          <button class="op-btn" type="button" bind:this={deleteClose} on:click={closeDelete}>Close</button>
+        </div>
+      {:else}
+        <p class="tpl-dialog-body">
+          Delete <strong>{name}</strong>? Insights already written with it keep their text and still name its id,
+          version and hash.
+        </p>
+        {#if deletion.error}
+          <div class="err-box" role="alert">{deletion.error}</div>
+        {/if}
+        <div class="tpl-dialog-actions">
+          <button class="link-btn op-cancel" type="button" disabled={saving} bind:this={deleteCancel} on:click={closeDelete}>
+            Cancel
+          </button>
+          <button class="btn btn-sm btn-error" type="button" disabled={saving} on:click={() => void remove()}>
+            {saving ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+</dialog>
+
 <style>
   .tpl-list {
     display: grid;
-    gap: 12px;
+    gap: 6px;
   }
   .tpl-card {
     display: flex;
+    flex-direction: column;
+    padding: 7px 12px;
+  }
+  /* Name, description and actions on one line; the description drops under
+     the name only when the two do not fit side by side. */
+  .tpl-row-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .tpl-row-text {
+    display: flex;
+    flex: 1 1 auto;
     flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 0 14px;
-    padding: 14px 16px;
+    align-items: baseline;
+    gap: 0 8px;
+    min-width: 0;
+  }
+  .tpl-row-name {
+    margin: 0;
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+  .tpl-row-desc {
+    min-width: 0;
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
   .tpl-prompt {
-    flex-basis: 100%;
     min-width: 0;
-    margin-top: 8px;
+    margin-top: 1px;
+  }
+  .tpl-prompt :global(.tpl-toggle) {
+    margin: 0;
+    font-size: 12px;
   }
   .tpl-body {
     margin-top: 9px;
@@ -584,21 +695,49 @@
   .tpl-row-actions {
     display: flex;
     flex: none;
-    gap: 12px;
+    align-items: baseline;
+    gap: 6px;
     margin-left: auto;
   }
-  .tpl-editor,
-  .tpl-confirm {
+  .tpl-row-actions .link-btn {
+    padding: 0;
+  }
+  .tpl-sep {
+    font-size: 12px;
+    color: color-mix(in oklch, var(--color-base-content) 35%, transparent);
+  }
+  .tpl-editor {
     display: grid;
-    flex-basis: 100%;
     gap: 12px;
-    margin-top: 12px;
+    margin-top: 8px;
     padding-top: 12px;
     border-top: 1px solid var(--color-base-300);
   }
-  .tpl-confirm p {
+  .tpl-dialog {
+    display: grid;
+    gap: 12px;
+    max-width: 28rem;
+  }
+  .tpl-dialog-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .tpl-dialog-body {
     margin: 0;
     font-size: 13px;
+    line-height: 1.5;
+  }
+  .tpl-dialog-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+  .tpl-dialog-link {
+    margin-right: auto;
+    font-size: 12.5px;
   }
   .tpl-textarea {
     min-height: 16rem;
@@ -621,8 +760,7 @@
     gap: 12px;
   }
   .tpl-error {
-    flex-basis: 100%;
-    margin: 8px 0 0;
+    margin: 2px 0 0;
     font-size: 12.5px;
     color: var(--color-error);
   }
@@ -653,24 +791,6 @@
     align-items: center;
     gap: 4px;
     font-weight: 550;
-  }
-  .tpl-fold {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0;
-    cursor: pointer;
-    background: none;
-    border: 0;
-    font: inherit;
-    color: inherit;
-  }
-  .tpl-fold-chev {
-    display: inline-flex;
-    transition: transform 120ms ease;
-  }
-  .tpl-fold-chev.open {
-    transform: rotate(90deg);
   }
   .tpl-count {
     font-size: 12px;
