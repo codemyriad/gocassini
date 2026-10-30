@@ -115,16 +115,19 @@
   let saving = false;
   let saveError = "";
 
-  // The one template being deleted, asked about in a modal dialog. `refusal`
-  // is the operator's reason when it will not delete it (409: a step is
-  // configured to run it); the dialog then offers no Delete at all, only the
-  // reason and, for the summary step, the way to it. `error` is any other
-  // failure, which leaves Delete there to try again.
-  type Deletion = { workflow: InsightWorkflow; error: string; refusal: string; summaryStep: boolean };
+  // The one template being deleted, asked about in a modal dialog. `inUse`
+  // names the step configured to run it: the operator refuses to delete such
+  // a template, so the dialog says so before anyone presses Delete and offers
+  // the way to replace it instead. `error` is any other failure, which leaves
+  // Delete there to try again.
+  type Step = "summary" | "insight";
+  type Deletion = { workflow: InsightWorkflow; error: string; inUse: Step | "" };
   let deletion: Deletion | null = null;
   let deleteDialog: HTMLDialogElement | null = null;
   let deleteCancel: HTMLButtonElement | null = null;
-  let deleteClose: HTMLButtonElement | null = null;
+
+  // The templates the summary and insight steps are set to run, as last read.
+  let stepTemplates: Record<Step, string> = { summary: "", insight: "" };
 
   const PROMPT_EXAMPLE = [
     "You read meeting transcripts and list the risks people raised.",
@@ -160,7 +163,9 @@
       return;
     }
     try {
-      hasProvider = (await client.getLLMSettings()).providers.length > 0;
+      const settings = await client.getLLMSettings();
+      hasProvider = settings.providers.length > 0;
+      stepTemplates = { summary: settings.summary.template.trim(), insight: settings.insight.template.trim() };
     } catch {
       // Swallowed: the templates are the page, and an unreadable AI setting
       // costs the locked notice and nothing else.
@@ -242,7 +247,7 @@
   }
 
   async function askDelete(workflow: InsightWorkflow) {
-    deletion = { workflow, error: "", refusal: "", summaryStep: false };
+    deletion = { workflow, error: "", inUse: await stepUsing(workflow.id) };
     await tick();
     // showModal is absent only where there is no real browser (jsdom).
     if (deleteDialog && !deleteDialog.open) {
@@ -252,6 +257,18 @@
     deleteCancel?.focus();
   }
 
+  // Which step runs this template, read fresh from the AI settings, or from
+  // the last reading when they cannot be read now.
+  async function stepUsing(id: string): Promise<Step | ""> {
+    try {
+      const settings = await client!.getLLMSettings();
+      stepTemplates = { summary: settings.summary.template.trim(), insight: settings.insight.template.trim() };
+    } catch {
+      // Keep the last reading; the operator still refuses, and says why.
+    }
+    return stepTemplates.summary === id ? "summary" : stepTemplates.insight === id ? "insight" : "";
+  }
+
   function closeDelete() {
     if (deleteDialog?.open) {
       deleteDialog.close();
@@ -259,7 +276,7 @@
     deletion = null;
   }
 
-  // Escape: closed like Cancel (or Close, once refused), except while the
+  // Escape: closed like Cancel, except while the
   // delete is on its way. Handled here rather than left to the browser: inside
   // the shadow root on Nextcloud's page, a modal dialog's own Escape handling
   // never fires, so the dialog would stay open. Not skipped for an event
@@ -297,7 +314,7 @@
     }
     const { workflow } = deletion;
     saving = true;
-    deletion = { ...deletion, error: "" };
+    deletion = { ...deletion, error: "", inUse: "" };
     try {
       await client.deleteInsightTemplate(workflow.id);
       closeDelete();
@@ -308,25 +325,18 @@
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof OperatorHttpError && error.status === 409) {
-        // The operator says which step holds it in words; whether it is the
-        // summary step is read from the setting itself, so the way there is
-        // offered only when it is true.
-        deletion = { workflow, error: "", refusal: message, summaryStep: await isSummaryTemplate(workflow.id) };
+        // A step was set to it after the dialog opened: the same in-use
+        // state, with the step read from the settings, or from the
+        // operator's reason when they cannot be read.
+        const step = (await stepUsing(workflow.id)) || (/summar/i.test(message) ? "summary" : "insight");
+        deletion = { workflow, error: "", inUse: step };
         await tick();
-        deleteClose?.focus();
+        deleteCancel?.focus();
       } else {
-        deletion = { workflow, error: message, refusal: "", summaryStep: false };
+        deletion = { workflow, error: message, inUse: "" };
       }
     } finally {
       saving = false;
-    }
-  }
-
-  async function isSummaryTemplate(id: string): Promise<boolean> {
-    try {
-      return (await client!.getLLMSettings()).summary.template.trim() === id;
-    } catch {
-      return false;
     }
   }
 
@@ -602,21 +612,32 @@
   {#if deletion}
     {@const name = deletion.workflow.name || deletion.workflow.id}
     <div class="modal-box tpl-dialog">
-      <h2 id="tpl-delete-title" class="tpl-dialog-title">Delete template</h2>
-      {#if deletion.refusal}
-        <!-- Refused: a step runs this template. No Delete to press again,
-             only the reason and the way to that step. -->
-        <p class="tpl-dialog-body">{deletion.refusal}</p>
-        <div class="tpl-dialog-actions">
-          {#if deletion.summaryStep}
-            <button class="link tpl-dialog-link" type="button" on:click={openPipeline}>Open the Publish pipeline</button>
+      <h2 id="tpl-delete-title" class="tpl-dialog-title">Delete <strong>{name}</strong>?</h2>
+      {#if deletion.inUse}
+        <!-- A step runs this template, so the operator would refuse: no
+             Delete to press, only the way to replace it. The insight
+             default is not set anywhere in the app, so that case has no
+             place to send anyone and closes with OK. -->
+        <p class="tpl-dialog-body">
+          {#if deletion.inUse === "summary"}
+            This template is being used for generating summaries after calls are transcribed. Replace it with another
+            template before deleting it.
+          {:else}
+            This template is being used as the default for new insights. Replace it with another template before
+            deleting it.
           {/if}
-          <button class="op-btn" type="button" bind:this={deleteClose} on:click={closeDelete}>Close</button>
+        </p>
+        <div class="tpl-dialog-actions">
+          <button class="link-btn op-cancel" type="button" bind:this={deleteCancel} on:click={closeDelete}>Cancel</button>
+          {#if deletion.inUse === "summary"}
+            <button class="op-btn" type="button" on:click={openPipeline}>Open the Publish pipeline</button>
+          {:else}
+            <button class="op-btn" type="button" on:click={closeDelete}>OK</button>
+          {/if}
         </div>
       {:else}
         <p class="tpl-dialog-body">
-          Delete <strong>{name}</strong>? Insights already written with it keep their text and still name its id,
-          version and hash.
+          Insights that have already been produced from it will keep a reference to its name, id, version and hash.
         </p>
         {#if deletion.error}
           <div class="err-box" role="alert">{deletion.error}</div>
@@ -757,9 +778,8 @@
     justify-content: flex-end;
     gap: 12px;
   }
-  .tpl-dialog-link {
-    margin-right: auto;
-    font-size: 12.5px;
+  .tpl-dialog-title strong {
+    font-weight: 700;
   }
   .tpl-textarea {
     min-height: 16rem;

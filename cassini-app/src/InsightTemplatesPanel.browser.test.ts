@@ -23,6 +23,7 @@ let rows: Row[] = [];
 let puts: Array<{ id: string; body: Record<string, string> }> = [];
 let deleteRefusal = "";
 let summaryTemplate = "";
+let insightTemplate = "";
 let deleted: string[] = [];
 let app: ReturnType<typeof mount> | undefined;
 let host: HTMLDivElement;
@@ -32,13 +33,14 @@ beforeEach(() => {
   puts = [];
   deleteRefusal = "";
   summaryTemplate = "";
+  insightTemplate = "";
   deleted = [];
   host = document.createElement("div");
   document.body.append(host);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
     if (path === "/operator/settings/llm") {
-      return Response.json({ providers: [], summary: { template: summaryTemplate }, insight: { template: "" } });
+      return Response.json({ providers: [], summary: { template: summaryTemplate }, insight: { template: insightTemplate } });
     }
     if (path === "/operator/settings/workflows") return Response.json(rows);
     const id = decodeURIComponent(path.replace("/operator/settings/workflows/", ""));
@@ -91,7 +93,11 @@ function pressEscapeOnFocused() {
 }
 
 const builtInHeading = () => page.getByRole("heading", { name: /Built in/ });
-const deleteDialog = () => page.getByRole("dialog", { name: "Delete template" });
+const deleteDialog = () => page.getByRole("dialog", { name: "Delete Resumen?" });
+const SUMMARY_IN_USE =
+  "This template is being used for generating summaries after calls are transcribed. Replace it with another template before deleting it.";
+const INSIGHT_IN_USE =
+  "This template is being used as the default for new insights. Replace it with another template before deleting it.";
 const RESUMEN = () => custom("resumen", "Resumen", "Un resumen en español.", "Resume.");
 
 describe("insight templates panel in the browser", () => {
@@ -250,7 +256,10 @@ describe("insight templates panel in the browser", () => {
     expect((dialog.element() as HTMLDialogElement).open).toBe(true);
     await expect
       .element(dialog)
-      .toHaveTextContent("Delete Resumen? Insights already written with it keep their text and still name its id, version and hash.");
+      .toHaveTextContent(
+        "Delete Resumen? Insights that have already been produced from it will keep a reference to its name, id, version and hash.",
+      );
+    expect(dialog.getByRole("heading", { name: "Delete Resumen?" }).element().querySelector("strong")?.textContent).toBe("Resumen");
     await expect.element(dialog.getByRole("button", { name: "Cancel" })).toHaveFocus();
 
     await dialog.getByRole("button", { name: "Delete" }).click();
@@ -290,20 +299,18 @@ describe("insight templates panel in the browser", () => {
     expect(deleted).toEqual([]);
   });
 
-  it("turns a refused delete of the summary template into the reason, Close and the way to the summary step", async () => {
+  it("opens straight into the in-use state for the summary template, without asking the operator", async () => {
     rows = [...BUILT_INS, RESUMEN()];
-    deleteRefusal = '"resumen" is the template for meeting summaries; choose another one there before deleting it';
     summaryTemplate = "resumen";
     mountPanel();
     await page.getByRole("button", { name: "Delete" }).click();
     const dialog = deleteDialog();
-    await dialog.getByRole("button", { name: "Delete" }).click();
-
-    await expect.element(dialog).toHaveTextContent(deleteRefusal);
-    await expect.element(dialog.getByRole("button", { name: "Close" })).toHaveFocus();
+    await expect.element(dialog).toHaveTextContent(`Delete Resumen? ${SUMMARY_IN_USE}`);
+    await expect.element(dialog.getByRole("button", { name: "Cancel" })).toHaveFocus();
     expect(dialog.getByRole("button", { name: "Delete" }).all()).toHaveLength(0);
-    expect(dialog.getByRole("button", { name: "Cancel" }).all()).toHaveLength(0);
-    expect(dialog.getByRole("alert").all()).toHaveLength(0);
+    expect(dialog.getByRole("button", { name: "Close" }).all()).toHaveLength(0);
+    const actions = [...dialog.element().querySelectorAll(".tpl-dialog-actions button")].map((b) => b.textContent?.trim());
+    expect(actions).toEqual(["Cancel", "Open the Publish pipeline"]);
 
     await dialog.getByRole("button", { name: "Open the Publish pipeline" }).click();
     expect(panelsAsked).toEqual(["pipeline"]);
@@ -311,27 +318,50 @@ describe("insight templates panel in the browser", () => {
     expect(deleted).toEqual([]);
   });
 
-  it("offers only Close when the refusal is for the insight step", async () => {
+  it("says when the template is the insight default, with OK as there is nowhere in the app to change it", async () => {
     rows = [...BUILT_INS, RESUMEN()];
-    deleteRefusal = '"resumen" is the template for insights; choose another one there before deleting it';
+    insightTemplate = "resumen";
     mountPanel();
     await page.getByRole("button", { name: "Delete" }).click();
-    await deleteDialog().getByRole("button", { name: "Delete" }).click();
-    await expect.element(deleteDialog()).toHaveTextContent(deleteRefusal);
-    expect(deleteDialog().getByRole("button", { name: "Open the Publish pipeline" }).all()).toHaveLength(0);
-    await deleteDialog().getByRole("button", { name: "Close" }).click();
+    const dialog = deleteDialog();
+    await expect.element(dialog).toHaveTextContent(`Delete Resumen? ${INSIGHT_IN_USE}`);
+    const actions = [...dialog.element().querySelectorAll(".tpl-dialog-actions button")].map((b) => b.textContent?.trim());
+    expect(actions).toEqual(["Cancel", "OK"]);
+    await dialog.getByRole("button", { name: "OK" }).click();
     await expect.poll(() => (document.querySelector("dialog") as HTMLDialogElement).open).toBe(false);
+    expect(panelsAsked).toEqual([]);
   });
 
-  it("closes the refused state on Escape, without the browser's own cancel", async () => {
+  it("lands in the same in-use state when the operator refuses a delete the settings did not predict", async () => {
     rows = [...BUILT_INS, RESUMEN()];
-    deleteRefusal = '"resumen" is the template for insights; choose another one there before deleting it';
+    mountPanel();
+    await page.getByRole("button", { name: "Delete" }).click();
+    const dialog = deleteDialog();
+    await expect.element(dialog.getByRole("button", { name: "Delete" })).toBeVisible();
+    // Someone set it as the summary template after the dialog opened.
+    summaryTemplate = "resumen";
+    deleteRefusal = '"resumen" is the template for meeting summaries; choose another one there before deleting it';
+    await dialog.getByRole("button", { name: "Delete" }).click();
+    await expect.element(dialog).toHaveTextContent(`Delete Resumen? ${SUMMARY_IN_USE}`);
+    expect(dialog.getByRole("alert").all()).toHaveLength(0);
+    expect(dialog.getByRole("button", { name: "Delete" }).all()).toHaveLength(0);
+    await expect.element(dialog.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(deleted).toEqual([]);
+  });
+
+  it("cancels the in-use state on Escape and the backdrop, without the browser's own cancel", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
+    insightTemplate = "resumen";
     mountPanel();
     const dialogEl = () => document.querySelector("dialog") as HTMLDialogElement;
     await page.getByRole("button", { name: "Delete" }).click();
-    await deleteDialog().getByRole("button", { name: "Delete" }).click();
-    await expect.element(deleteDialog().getByRole("button", { name: "Close" })).toHaveFocus();
+    await expect.element(deleteDialog().getByRole("button", { name: "Cancel" })).toHaveFocus();
     pressEscapeOnFocused();
+    await expect.poll(() => dialogEl().open).toBe(false);
+
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect.poll(() => dialogEl().open).toBe(true);
+    await page.elementLocator(dialogEl()).click({ position: { x: 4, y: 4 } });
     await expect.poll(() => dialogEl().open).toBe(false);
     expect(deleted).toEqual([]);
   });

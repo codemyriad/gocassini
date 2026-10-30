@@ -145,18 +145,17 @@ describe("InsightTemplatesPanel", () => {
     expect(insightTemplatesPanelSource).not.toContain("bind:value={editor.id}");
   });
 
-  it("asks before deleting in a modal dialog, and offers no Delete once the operator refuses", () => {
+  it("asks before deleting in a modal dialog, and offers no Delete for a template a step runs", () => {
     expect(insightTemplatesPanelSource).toContain('<dialog\n  class="modal"');
-    expect(insightTemplatesPanelSource).not.toContain("Yes, delete it");
+    expect(insightTemplatesPanelSource).toContain("Delete <strong>{name}</strong>?");
     expect(insightTemplatesPanelSource).toContain("error instanceof OperatorHttpError && error.status === 409");
-    // The refused state is its own branch, with Close and no Delete.
-    const refused = insightTemplatesPanelSource.slice(
-      insightTemplatesPanelSource.indexOf("{#if deletion.refusal}"),
-      insightTemplatesPanelSource.indexOf("{:else}", insightTemplatesPanelSource.indexOf("{#if deletion.refusal}")),
+    // The in-use state is its own branch, with no Delete in it.
+    const inUse = insightTemplatesPanelSource.slice(
+      insightTemplatesPanelSource.indexOf("{#if deletion.inUse}"),
+      insightTemplatesPanelSource.indexOf("Insights that have already been produced from it"),
     );
-    expect(refused).toContain(">Close</button>");
-    expect(refused).toContain("Open the Publish pipeline");
-    expect(refused).not.toContain("remove()");
+    expect(inUse).toContain("Open the Publish pipeline");
+    expect(inUse).not.toContain("remove()");
   });
 
   it("shows the operator's refusal of a save, which carries the recorder's reason", () => {
