@@ -12,6 +12,7 @@
   import { colorFor } from "../../viewer/tagPalette";
   import { meetingNote, newRequestId, type MeetingSuggestions, type TopicDecision, type TopicSuggestion } from "../../viewer/topics";
   import TagChip from "../tags/TagChip.svelte";
+  import PreviewBadge from "../ui/PreviewBadge.svelte";
   import SuggestionPopover from "./SuggestionPopover.svelte";
 
   export let entry: MeetingCatalogEntry;
@@ -135,6 +136,7 @@
   <div class="flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Suggested topics">
     {#if suggestions.length}
       <span class="text-base-content/60">Suggested</span>
+      <PreviewBadge size="xs" />
       {#each suggestions as suggestion (suggestion.tagId)}
         <button type="button" class="suggested-chip" aria-haspopup="dialog" aria-expanded={open?.suggestion.tagId === suggestion.tagId}
           aria-label={`Suggested topic ${suggestion.label}`}
@@ -142,6 +144,9 @@
           <TagChip suggested label={suggestion.label} color={colorFor({ tagId: suggestion.tagId, color: suggestion.color ?? "" })} icon={suggestion.icon ?? ""} />
         </button>
       {/each}
+    {:else if note || decided.length}
+      <!-- Only beside something; a checked meeting with nothing to show stays empty. -->
+      <PreviewBadge size="xs" />
     {/if}
     {#if note}<span class="text-base-content/60" role="note">{note}</span>{/if}
     {#if decided.length}

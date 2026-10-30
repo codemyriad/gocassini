@@ -7,7 +7,8 @@
 
   import { AnnotationError } from "../../viewer/annotations";
   import type { DataProvider } from "../../viewer/dataProvider";
-  import { DEFINITION_LIMIT, TOPIC_NOTICE, newRequestId, sharedTerms, type Topic, type TopicProposal } from "../../viewer/topics";
+  import { DEFINITION_LIMIT, TOPICS_PREVIEW_NOTE, TOPIC_NOTICE, newRequestId, sharedTerms, type Topic, type TopicProposal } from "../../viewer/topics";
+  import PreviewBadge from "../ui/PreviewBadge.svelte";
 
   export let provider: Pick<DataProvider, "loadTopicProposals" | "decideTopicProposal" | "saveTopic">;
   // Active topics, to link a proposal to.
@@ -119,6 +120,10 @@
 </script>
 
 <div class="grid gap-2 px-2.5 py-2 text-sm">
+  <div class="flex items-start gap-2">
+    <PreviewBadge />
+    <p class="text-xs text-base-content/70">{TOPICS_PREVIEW_NOTE}</p>
+  </div>
   <p class="text-xs text-base-content/70">
     Themes that keep coming up in a room's meetings and no topic covers yet. You only see one when you can read every meeting it comes from.
   </p>

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
 import TagManager from "../tags/TagManager.svelte";
 import { AnnotationError, type TagJob, type VocabularyTag } from "../../viewer/annotations";
-import type { Topic, TopicLibrary, TopicSave } from "../../viewer/topics";
+import { TOPICS_PREVIEW_NOTE, type Topic, type TopicLibrary, type TopicSave } from "../../viewer/topics";
 import "../../app.css";
 
 const tag = (tagId: string, label: string): VocabularyTag => ({ tagId, namespace: "ns", label, meetings: 3, marks: 3, color: "", icon: "" });
@@ -64,6 +64,16 @@ describe("the Topics tab", () => {
     await vi.waitFor(() => expect(p.loadTopicLibrary).toHaveBeenCalled());
     await expect.element(page.getByRole("heading", { name: /Manage tags/ })).toBeVisible();
     expect(page.getByRole("tab", { name: "Topics" }).query()).toBeNull();
+  });
+
+  it("marks the Topics tab as a preview, and not the Tags tab", async () => {
+    open();
+    await expect.element(page.getByRole("tab", { name: "Tags" })).toBeVisible();
+    expect(page.getByText("Preview", { exact: true }).query()).toBeNull();
+    expect(page.getByText(TOPICS_PREVIEW_NOTE).query()).toBeNull();
+    await page.getByRole("tab", { name: "Topics" }).click();
+    await expect.element(page.getByText("Preview", { exact: true })).toBeVisible();
+    await expect.element(page.getByText(TOPICS_PREVIEW_NOTE)).toBeVisible();
   });
 
   it("lists topics with their usage and creates one", async () => {

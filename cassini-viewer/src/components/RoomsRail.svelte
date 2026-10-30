@@ -9,6 +9,7 @@
   import type { TagMatch } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
   import TagChip from "./tags/TagChip.svelte";
+  import PreviewBadge from "./ui/PreviewBadge.svelte";
 
   // The rooms nav (D-654), and under it the two kinds the list holds.
   //
@@ -224,6 +225,7 @@
   {#if reviewCount !== null}
     <button type="button" class="room-button needs-review" on:click={() => dispatch("needsReview")}>
       <span class="room-name">Needs review</span>
+      <PreviewBadge size="xs" />
       <span class="room-count">{reviewCount}</span>
     </button>
   {/if}

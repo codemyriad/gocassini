@@ -5,7 +5,7 @@
   import { createEventDispatcher } from "svelte";
 
   import { formatClockTime } from "../../core/transcript";
-  import { COVERAGE_LIMITS, SUGGESTION_NOTE, UNRESOLVED_NOTE, UNVALIDATED_NOTE, whyLine, type TopicSuggestion } from "../../viewer/topics";
+  import { COVERAGE_LIMITS, SUGGESTION_NOTE, TOPICS_PREVIEW_NOTE, UNRESOLVED_NOTE, UNVALIDATED_NOTE, whyLine, type TopicSuggestion } from "../../viewer/topics";
   import { popover } from "../tags/popover";
 
   export let suggestion: TopicSuggestion;
@@ -40,6 +40,7 @@
   </ul>
   <p class="text-base-content/60">{SUGGESTION_NOTE}</p>
   <p class="text-base-content/50">{COVERAGE_LIMITS}</p>
+  <p class="text-base-content/60">{TOPICS_PREVIEW_NOTE}</p>
   {#if !validatedLanguage}<p class="text-warning-content/80" role="note">{UNVALIDATED_NOTE}</p>{/if}
   {#if !confirmable}<p class="text-error" role="note">{UNRESOLVED_NOTE}</p>{/if}
   <div class="flex justify-end gap-2">

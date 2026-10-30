@@ -2,7 +2,7 @@ import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import NeedsReview from "./NeedsReview.svelte";
-import type { TopicQueue } from "../../viewer/topics";
+import { TOPICS_PREVIEW_NOTE, type TopicQueue } from "../../viewer/topics";
 import { reactiveProps } from "./reactiveProps.svelte";
 import "../../app.css";
 
@@ -55,6 +55,8 @@ function show() {
 describe("Needs review", () => {
   it("groups suggestions by topic with the coverage line and quotes", async () => {
     show();
+    await expect.element(page.getByRole("heading", { name: "Needs review" })).toHaveTextContent(/Preview/);
+    await expect.element(page.getByText(TOPICS_PREVIEW_NOTE)).toBeVisible();
     await expect.element(page.getByTestId("coverage-line")).toHaveTextContent(
       "Checked 3 of the 5 meetings you can see · 1 waiting · 1 could not be checked (no transcript) · 3 in languages not yet validated.");
     await expect.element(page.getByRole("region", { name: "Suggested: Release planning" })).toBeVisible();

@@ -6,6 +6,7 @@
   // step polls. The default slot says what the model is for.
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModel, SpeechModelInventory } from "./operator/types";
+  import PreviewBadge from "cassini-viewer/ui/PreviewBadge.svelte";
   import ModelStatusRow from "./ModelStatusRow.svelte";
   import { jobRunning, jobStepText, mebibytes, modelJob } from "./speechModels";
   export let client: OperatorClient | null = null;
@@ -13,6 +14,8 @@
   export let model: SpeechModel | undefined;
   export let title: string;
   export let headingId: string;
+  // Marks the card's feature as a preview beside its title.
+  export let preview = false;
   let busy = false;
   let error = "";
   $: job = modelJob(inventory, model, "cpu");
@@ -39,7 +42,7 @@
 {#if model}
   <section class="op-tint optional-card" aria-labelledby={headingId}>
     <div>
-      <h2 id={headingId} class="set-row-name op-card-title">{title} <span class="optional">(optional)</span></h2>
+      <h2 id={headingId} class="set-row-name op-card-title">{title} <span class="optional">(optional)</span> {#if preview}<PreviewBadge />{/if}</h2>
       <p class="set-row-sub"><slot /></p>
     </div>
     <ModelStatusRow name={model.name} size={mebibytes(model.download_bytes)} {state} quiet>

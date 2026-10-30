@@ -61,6 +61,8 @@ describe("voice separation in the speech models", () => {
   it("offers the download with its size, and nothing that selects it for transcription", () => {
     const html = card({ model: diarizer, downloadsAllowed: true });
     expect(html).toContain("Voice separation");
+    // Only topic suggestions is a preview.
+    expect(html).not.toContain("Preview");
     expect(html).toContain("61.9 MiB");
     expect(html).toContain(">Download<");
     expect(html).toContain("Not installed");

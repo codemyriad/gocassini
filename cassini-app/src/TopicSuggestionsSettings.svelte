@@ -8,6 +8,7 @@
   import type { SpeechModelInventory, TopicSettingsStatus } from "./operator/types";
   import OptionalModelCard from "./OptionalModelCard.svelte";
   import { topicSuggestionsModel } from "./speechModels";
+  import { TOPICS_PREVIEW_NOTE } from "cassini-viewer/topics";
   export let client: OperatorClient | null = null;
   export let inventory: SpeechModelInventory | null = null;
   // How often the counts refresh while the card is open.
@@ -80,12 +81,13 @@
   $: switchDisabled = busy || !status?.available || (!status.enabled && !status.ready);
 </script>
 
-<OptionalModelCard {client} {inventory} {model} title="Topic suggestions" headingId="topic-suggestions-heading">
+<OptionalModelCard {client} {inventory} {model} title="Topic suggestions" headingId="topic-suggestions-heading" preview>
   For Cassini to suggest topics for meetings from their transcripts, download this model. It reads transcripts on this server's CPU; no text leaves the server. Downloading it does not switch suggestions on.
   <div slot="after" class="topics-after">
     {#if status && !status.available}
       <p class="set-row-sub">Topic suggestions need Cassini running as a Nextcloud app.</p>
     {:else if status}
+      <p class="set-row-sub">{TOPICS_PREVIEW_NOTE}</p>
       <label class="topics-switch">
         <input type="checkbox" class="toggle toggle-sm" checked={status.enabled} disabled={switchDisabled}
           on:change={(e) => toggle(e.currentTarget.checked)} />
