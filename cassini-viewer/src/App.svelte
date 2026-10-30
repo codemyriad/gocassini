@@ -652,20 +652,24 @@
     isMeetingSearchAvailable() &&
     searchRouteServed;
 
-  function handleSearchQuery(query: string) {
-    searchQuery = query;
+  function resetSearch() {
     clearTimeout(searchDebounce);
-    // Abort whatever is in flight: its answer is about the previous question.
     searchAbort?.abort();
     searchAbort = undefined;
+    // Invalidate immediately, including the debounce window. A provider may
+    // still resolve a request after its signal has been aborted.
+    searchRun += 1;
+    searchMessage = "";
+    transcriptHits = new Map();
+    transcriptOnlyMeetings = [];
+    searchCoverage = null;
+  }
 
+  function handleSearchQuery(query: string) {
+    searchQuery = query;
+    resetSearch();
     if (query.trim() === "" || !dataProvider.searchMeetings) {
-      searchRun += 1;
       searchState = "idle";
-      searchMessage = "";
-      transcriptHits = new Map();
-      transcriptOnlyMeetings = [];
-      searchCoverage = null;
       return;
     }
     searchState = "searching";
@@ -677,7 +681,10 @@
     if (!search) {
       return;
     }
-    const run = ++searchRun;
+    // Room/tag changes also start a new search, without going through typing.
+    resetSearch();
+    searchState = "searching";
+    const run = searchRun;
     const controller = new AbortController();
     searchAbort = controller;
 
@@ -717,9 +724,6 @@
       return;
     }
     if (outcome.status !== "ok") {
-      // Keep whatever moments are on screen: they were true for this query a
-      // moment ago, and blanking them would look like "nothing matched" —
-      // which is the one thing this state must not be confused with.
       searchState = outcome.status;
       searchMessage = outcome.message;
       return;
