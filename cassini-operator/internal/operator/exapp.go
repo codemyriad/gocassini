@@ -670,6 +670,7 @@ func spaHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 func isPublishedArchivePath(relPath string) bool {
 	return relPath == "catalog.json" ||
 		relPath == meetingsListPath ||
+		relPath == meetingsRoomsPath ||
 		relPath == searchURLPath ||
 		strings.HasPrefix(relPath, "meetings/")
 }

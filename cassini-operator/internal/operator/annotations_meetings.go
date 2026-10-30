@@ -78,25 +78,37 @@ func annotateUnavailable(cause error) *annotateFailure {
 }
 
 func (s *annotationService) readMeeting(w http.ResponseWriter, r *http.Request, caller, meetingID string) {
-	ctx, cancel := context.WithTimeout(r.Context(), annotateRequestTimeout)
-	defer cancel()
-
-	relPath, opusName, _, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
-	if !ok {
-		return
-	}
-	result, err := s.readDocument(ctx, caller, meetingID, opusName, relPath)
+	response, err := s.meetingAnnotations(r.Context(), caller, meetingID)
 	if err != nil {
 		s.answerFailure(w, r, "read meeting="+meetingID, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, annotationsReadResponse{
+	writeJSON(w, http.StatusOK, response)
+}
+
+// meetingAnnotations is one meeting's tags and marks, read as the caller. A
+// meeting outside the caller's readable set is the same 404 as one that does
+// not exist. Failures are an *annotateFailure or a *readFailure; answerFailure
+// answers either, and the cause stays in the log.
+func (s *annotationService) meetingAnnotations(ctx context.Context, caller, meetingID string) (annotationsReadResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, annotateRequestTimeout)
+	defer cancel()
+
+	relPath, opusName, _, err := s.findVisibleRecording(ctx, caller, meetingID)
+	if err != nil {
+		return annotationsReadResponse{}, err
+	}
+	result, err := s.readDocument(ctx, caller, meetingID, opusName, relPath)
+	if err != nil {
+		return annotationsReadResponse{}, err
+	}
+	return annotationsReadResponse{
 		MeetingID:  meetingID,
 		StateToken: result.StateToken, Sync: result.Sync,
 		Revision:    result.Revision,
 		Annotations: result.Annotations,
 		Resolved:    result.Resolved,
-	})
+	}, nil
 }
 
 // showMeeting reads the recording as the caller and reports what it carries.
@@ -166,23 +178,33 @@ func (s *annotationService) commitAndRecord(ctx context.Context, meetingID, opus
 }
 
 func (s *annotationService) visibleRecording(ctx context.Context, w http.ResponseWriter, r *http.Request, caller, meetingID string) (string, string, []string, bool) {
-	entries, ok := s.exapp.resolveVisibleMeetings(ctx, w, s.client, caller, s.logger, "annotations meetings")
-	if !ok {
+	relPath, opusName, visible, err := s.findVisibleRecording(ctx, caller, meetingID)
+	if err != nil {
+		s.answerFailure(w, r, "meeting="+meetingID, err)
 		return "", "", nil, false
+	}
+	return relPath, opusName, visible, true
+}
+
+// findVisibleRecording resolves meetingID through the caller's visible
+// meetings to the recording's path for them, its `.opus` name and the whole
+// visible set.
+func (s *annotationService) findVisibleRecording(ctx context.Context, caller, meetingID string) (string, string, []string, error) {
+	entries, err := s.exapp.visibleMeetings(ctx, s.client, caller, s.logger, "annotations meetings")
+	if err != nil {
+		return "", "", nil, err
 	}
 	for _, entry := range entries {
 		if entry.id == meetingID && isMeetingFile(entry.opusName) {
 			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
 			if err != nil {
-				s.answerFailure(w, r, "meeting="+meetingID, annotateUnavailable(err))
-				return "", "", nil, false
+				return "", "", nil, annotateUnavailable(err)
 			}
-			return rel, entry.opusName, visibleOpusNames(entries), true
+			return rel, entry.opusName, visibleOpusNames(entries), nil
 		}
 	}
-	s.answerFailure(w, r, "meeting="+meetingID, annotateNotFound(
-		fmt.Errorf("caller=%s asked for meeting=%s, which is not in their readable set (served as 404)", caller, meetingID)))
-	return "", "", nil, false
+	return "", "", nil, annotateNotFound(
+		fmt.Errorf("caller=%s asked for meeting=%s, which is not in their readable set (served as 404)", caller, meetingID))
 }
 
 // recordCommitted brings the projection up to date with a committed write. A
@@ -198,6 +220,13 @@ func (s *annotationService) index() annotationIndex {
 // answerFailure logs a failure's cause and answers with its status; a 404 is
 // answered exactly as any other missing path.
 func (s *annotationService) answerFailure(w http.ResponseWriter, r *http.Request, what string, err error) {
+	// The shared read path answers in its own terms; its cause was logged
+	// where it happened.
+	var read *readFailure
+	if errors.As(err, &read) {
+		writeReadFailure(w, r, read)
+		return
+	}
 	var failure *annotateFailure
 	if !errors.As(err, &failure) {
 		failure = annotateUnavailable(err)

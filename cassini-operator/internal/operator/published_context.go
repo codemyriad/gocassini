@@ -84,6 +84,16 @@ type meetingsContextRequest struct {
 	ids        []string
 	asJSON     bool
 	timestamps bool
+	// window narrows every meeting to a stretch of it (D-813). Nil means the
+	// whole meeting.
+	window *contextWindow
+}
+
+// contextWindow is a stretch of a meeting in milliseconds from its start,
+// passed to the CLI as --from/--to. toMS nil means to the end.
+type contextWindow struct {
+	fromMS int64
+	toMS   *int64
 }
 
 // meetingsContextHandler returns the handler for published/meetings-context, or
@@ -140,17 +150,61 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), meetingsContextTimeout)
+	document, err := c.meetingsContextDocument(r.Context(), client, caller, request, logger)
+	if err != nil {
+		var failure *readFailure
+		switch {
+		case errors.As(err, &failure) && failure.status == http.StatusNotFound:
+			http.NotFound(w, r)
+		case errors.As(err, &failure):
+			http.Error(w, failure.public, failure.status)
+		default:
+			http.Error(w, "meeting context unavailable", http.StatusInternalServerError)
+		}
+		return
+	}
+	defer document.Close()
+
+	w.Header().Set("Content-Type", request.contentType())
+	w.Header().Set("Content-Length", strconv.FormatInt(document.size, 10))
+	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	if _, err := io.Copy(w, document); err != nil && logger != nil {
+		logger.Printf("meetings context: write body for caller=%s: %v", caller, err)
+	}
+}
+
+// contextDocument is a rendered bundle, open for reading. Close also removes
+// the staging directory it was rendered in.
+type contextDocument struct {
+	*os.File
+	size    int64
+	staging string
+}
+
+func (d *contextDocument) Close() error {
+	err := d.File.Close()
+	_ = os.RemoveAll(d.staging)
+	return err
+}
+
+// meetingsContextDocument renders one cassini.meetings.context.v1 document for
+// the meetings request names, read as caller. An id the caller may not read
+// fails the whole bundle with a 404 — the same answer as an absent id. Every
+// failure is a *readFailure.
+func (c ExAppConfig) meetingsContextDocument(ctx context.Context, client *http.Client, caller string, request meetingsContextRequest, logger *log.Logger) (*contextDocument, error) {
+	ctx, cancel := context.WithTimeout(ctx, meetingsContextTimeout)
 	defer cancel()
 
 	readable, catalog, ok := c.readableMeetingsForCaller(ctx, client, caller, logger)
 	if !ok {
-		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
-		return
+		return nil, readFail(http.StatusBadGateway, "Nextcloud Files unavailable")
 	}
 	if len(readable) == 0 {
-		http.NotFound(w, r)
-		return
+		return nil, readFail(http.StatusNotFound, "")
 	}
 
 	staging, err := os.MkdirTemp("", "cassini-meetings-context-*")
@@ -158,21 +212,24 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 		if logger != nil {
 			logger.Printf("meetings context: create staging directory: %v", err)
 		}
-		http.Error(w, "meeting context unavailable", http.StatusInternalServerError)
-		return
+		return nil, readFail(http.StatusInternalServerError, "meeting context unavailable")
 	}
-	// Every path, including a cancelled request: the directory holds whole
-	// recordings, and one leaked per abandoned request is an archive on the
-	// ExApp volume outside the access model.
-	defer os.RemoveAll(staging)
+	// Removed on every path but success, where the document's Close removes
+	// it: the directory holds whole recordings, and one leaked per abandoned
+	// request is an archive on the ExApp volume outside the access model.
+	keep := false
+	defer func() {
+		if !keep {
+			os.RemoveAll(staging)
+		}
+	}()
 
 	catalogPath := filepath.Join(staging, "catalog.json")
 	if err := os.WriteFile(catalogPath, catalog, 0o600); err != nil {
 		if logger != nil {
 			logger.Printf("meetings context: stage catalog: %v", err)
 		}
-		http.Error(w, "meeting context unavailable", http.StatusInternalServerError)
-		return
+		return nil, readFail(http.StatusInternalServerError, "meeting context unavailable")
 	}
 
 	budget := int64(maxContextStagedBytes)
@@ -185,8 +242,7 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 			if logger != nil {
 				logger.Printf("meetings context: caller=%s asked for id=%s, which is not in their readable set (served as 404)", caller, id)
 			}
-			http.NotFound(w, r)
-			return
+			return nil, readFail(http.StatusNotFound, "")
 		}
 		destPath := filepath.Join(staging, id+meetingExtension(source))
 		status, err := c.stageMeetingForContext(ctx, client, caller, source, destPath, &budget)
@@ -198,35 +254,22 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 			if logger != nil {
 				logger.Printf("meetings context: caller=%s denied id=%s at fetch -> %d (served as 404)", caller, id, status)
 			}
-			http.NotFound(w, r)
-			return
+			return nil, readFail(http.StatusNotFound, "")
 		default:
 			if logger != nil {
 				logger.Printf("meetings context: stage id=%s for caller=%s: %v", id, caller, err)
 			}
-			http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
-			return
+			return nil, readFail(http.StatusBadGateway, "Nextcloud Files unavailable")
 		}
 		staged = append(staged, destPath)
 	}
 
 	document, size, err := c.renderMeetingsContext(ctx, staging, catalogPath, staged, request, logger)
 	if err != nil {
-		http.Error(w, "meeting context unavailable", http.StatusBadGateway)
-		return
+		return nil, readFail(http.StatusBadGateway, "meeting context unavailable")
 	}
-	defer document.Close()
-
-	w.Header().Set("Content-Type", request.contentType())
-	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
-	w.WriteHeader(http.StatusOK)
-	if r.Method == http.MethodHead {
-		return
-	}
-	if _, err := io.Copy(w, document); err != nil && logger != nil {
-		logger.Printf("meetings context: write body for caller=%s: %v", caller, err)
-	}
+	keep = true
+	return &contextDocument{File: document, size: size, staging: staging}, nil
 }
 
 func (q meetingsContextRequest) contentType() string {
@@ -261,35 +304,17 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 		raw = strings.Split(joined, ",")
 	}
 
-	seen := make(map[string]bool, len(raw))
-	for _, raw := range raw {
-		id := strings.TrimSpace(raw)
-		if id == "" {
-			return request, errors.New("an id parameter is empty")
-		}
-		if len(id) > maxContextIDLength {
-			return request, fmt.Errorf("an id is longer than %d characters", maxContextIDLength)
-		}
-		if !isPlainMeetingID(id) {
-			// The id becomes a file name in the staging directory, so a path
-			// separator or a dot segment is refused here rather than sanitised
-			// somewhere further in.
-			return request, errors.New("an id contains characters a meeting id cannot contain")
-		}
-		if seen[id] {
-			// The same meeting twice is context spent twice on one meeting while
-			// reading as coverage of two; the CLI refuses it for the same reason.
-			return request, fmt.Errorf("id %q was given more than once", id)
-		}
-		seen[id] = true
-		request.ids = append(request.ids, id)
+	ids, err := validateContextIDs(raw)
+	if err != nil {
+		return request, err
 	}
-	if len(request.ids) == 0 {
-		return request, errors.New("at least one meeting id is required")
+	request.ids = ids
+
+	window, err := parseContextWindow(query.Get("fromMs"), query.Get("toMs"))
+	if err != nil {
+		return request, err
 	}
-	if len(request.ids) > maxContextMeetings {
-		return request, fmt.Errorf("a context bundle holds at most %d meetings, got %d", maxContextMeetings, len(request.ids))
-	}
+	request.window = window
 
 	switch strings.TrimSpace(query.Get("format")) {
 	case "", "markdown":
@@ -306,6 +331,80 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 		request.timestamps = value
 	}
 	return request, nil
+}
+
+// validateContextIDs checks the ids of one bundle: each a plain meeting id,
+// none twice, between one and maxContextMeetings of them.
+func validateContextIDs(raw []string) ([]string, error) {
+	ids := make([]string, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, raw := range raw {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			return nil, errors.New("an id parameter is empty")
+		}
+		if len(id) > maxContextIDLength {
+			return nil, fmt.Errorf("an id is longer than %d characters", maxContextIDLength)
+		}
+		if !isPlainMeetingID(id) {
+			// The id becomes a file name in the staging directory, so a path
+			// separator or a dot segment is refused here rather than sanitised
+			// somewhere further in.
+			return nil, errors.New("an id contains characters a meeting id cannot contain")
+		}
+		if seen[id] {
+			// The same meeting twice is context spent twice on one meeting while
+			// reading as coverage of two; the CLI refuses it for the same reason.
+			return nil, fmt.Errorf("id %q was given more than once", id)
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("at least one meeting id is required")
+	}
+	if len(ids) > maxContextMeetings {
+		return nil, fmt.Errorf("a context bundle holds at most %d meetings, got %d", maxContextMeetings, len(ids))
+	}
+	return ids, nil
+}
+
+// parseContextWindow reads fromMs and toMs, milliseconds from the start of the
+// recording. Neither means the whole meeting; one alone is open at the other
+// end. A window that can hold nothing is refused.
+func parseContextWindow(rawFrom, rawTo string) (*contextWindow, error) {
+	rawFrom, rawTo = strings.TrimSpace(rawFrom), strings.TrimSpace(rawTo)
+	if rawFrom == "" && rawTo == "" {
+		return nil, nil
+	}
+	var from int64
+	var to *int64
+	if rawFrom != "" {
+		value, err := strconv.ParseInt(rawFrom, 10, 64)
+		if err != nil || value < 0 {
+			return nil, errors.New("fromMs must be a whole number of milliseconds, 0 or more")
+		}
+		from = value
+	}
+	if rawTo != "" {
+		value, err := strconv.ParseInt(rawTo, 10, 64)
+		if err != nil || value < 0 {
+			return nil, errors.New("toMs must be a whole number of milliseconds, 0 or more")
+		}
+		to = &value
+	}
+	return newContextWindow(from, to)
+}
+
+// newContextWindow validates a window however it arrived.
+func newContextWindow(from int64, to *int64) (*contextWindow, error) {
+	if from < 0 {
+		return nil, errors.New("fromMs cannot be before the start of the meeting")
+	}
+	if to != nil && *to <= from {
+		return nil, errors.New("toMs must be after fromMs; a window that ends before it starts holds nothing")
+	}
+	return &contextWindow{fromMS: from, toMS: to}, nil
 }
 
 // isPlainMeetingID reports whether id is safe to use as a file name: one path
@@ -452,6 +551,12 @@ func (c ExAppConfig) renderMeetingsContext(ctx context.Context, staging, catalog
 	}
 	if request.timestamps {
 		args = append(args, "--timestamps")
+	}
+	if request.window != nil {
+		args = append(args, "--from", strconv.FormatInt(request.window.fromMS, 10))
+		if request.window.toMS != nil {
+			args = append(args, "--to", strconv.FormatInt(*request.window.toMS, 10))
+		}
 	}
 	args = append(args, staged...)
 

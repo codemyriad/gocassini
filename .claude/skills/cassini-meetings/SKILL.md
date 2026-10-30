@@ -13,6 +13,17 @@ Access is **Nextcloud's decision, not Cassini's**: every request is made as a
 Nextcloud user, and the account sees exactly the recordings Nextcloud says it may
 read. You cannot widen that from here, and you should not try.
 
+## If a `cassini` MCP server is connected, use it
+
+When the tools `rooms`, `list`, `search`, `context`, `tags` and `annotations`
+are available from a server named `cassini`, use them instead of the commands
+below: they are the same reads, return the same documents as `--json`, and need
+no CLI or environment. The workflow and the rules in this skill still apply —
+`search` gives references, `context` gives the words; cite the minute; a
+meeting you cannot read is the same answer as one that does not exist. The
+tools only read: marking (`meetings annotate`), renaming and downloading the
+file stay CLI-only. A tool error is a failure to report, never an empty answer.
+
 ## Setup check
 
 The commands need three environment variables. Check them first:
@@ -208,6 +219,18 @@ Adds `[MM:SS]` (or `[H:MM:SS]` past an hour) beside each passage's speaker. Off
 by default. Use it whenever the user will want to check you against the
 recording — a contested decision, a quote, anything you are asked to cite. It is
 cheaper than reading `--json` segments to find a timing.
+
+### Reading just a stretch
+
+```bash
+./bin/cassini meetings context <meeting-id> --from 12:00 --to 15:00 --timestamps
+```
+
+Only the passages overlapping that stretch (milliseconds, `MM:SS` or
+`H:MM:SS`). Use it after `meetings search`: start a minute before the hit's
+`startMs` and read a few minutes, rather than the whole meeting. The document
+says it is a window; say so too if you answer from one, and widen it before
+concluding something was *not* said.
 
 ### Meeting files you already have
 

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	inspectpkg "gocassini/internal/inspect"
@@ -36,6 +37,8 @@ func runMeetingsContext(ctx context.Context, args []string, stdout, stderr io.Wr
 	timestamps := fs.Bool("timestamps", false, "cite each passage's start time in the markdown as MM:SS, or H:MM:SS past an hour (the JSON always carries the raw timings)")
 	local := fs.Bool("local", false, "read portable .opus files named on the command line instead of fetching meeting ids from Nextcloud")
 	catalogPath := fs.String("catalog", "", "with --local, the catalog.json to read each meeting's room from (matched on the meeting id)")
+	fromAt := fs.String("from", "", "only the passages from this point in the meeting: milliseconds (754000), or MM:SS / H:MM:SS as --timestamps prints them")
+	toAt := fs.String("to", "", "only the passages up to this point in the meeting, in the same forms as --from")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini meetings context <meeting-id>
@@ -64,6 +67,12 @@ file carries and no room name.
 The transcript is derived from the recording's word timings — a published
 meeting carries no separately cleaned-up transcript — so it is labelled
 derived-from-words and must not be presented as edited text.
+
+--from and --to narrow every meeting to the passages overlapping that stretch,
+so reading around a moment `+"`cassini meetings search`"+` found does not cost the
+whole transcript. A passage straddling an edge is kept whole. The meeting's
+details and summary still describe the whole meeting, and the document says
+which stretch it holds.
 
 Requires ffprobe on PATH to read each meeting file's metadata.
 
@@ -94,6 +103,12 @@ Requires ffprobe on PATH to read each meeting file's metadata.
 	// Trim once and use the trimmed values everywhere: gating the file open on a
 	// trimmed path but the "wrote it" line on the raw one made `--out " "` print
 	// the payload to stdout AND claim a file had been written.
+	window, hasWindow, err := parseMeetingContextWindow(*fromAt, *toAt)
+	if err != nil {
+		fmt.Fprintf(stderr, "context configuration error: %v\n", err)
+		return 2
+	}
+
 	outFile := strings.TrimSpace(*outPath)
 	keepOpusPath := strings.TrimSpace(*keepOpus)
 	catalogFile := strings.TrimSpace(*catalogPath)
@@ -107,6 +122,10 @@ Requires ffprobe on PATH to read each meeting file's metadata.
 	}
 	if code != 0 {
 		return code
+	}
+
+	if hasWindow {
+		bundle = bundle.WithWindow(window)
 	}
 
 	out, closeOut, err := openMeetingsOutput(outFile, stdout)
@@ -569,4 +588,58 @@ func writeMeetingContext(out io.Writer, bundle meetingcontext.Bundle, asJSON boo
 	}
 	_, err = io.WriteString(out, rendered)
 	return err
+}
+
+// parseMeetingContextWindow reads --from and --to. Neither set means the whole
+// meeting; one alone is a window open at the other end.
+func parseMeetingContextWindow(from, to string) (meetingcontext.Window, bool, error) {
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if from == "" && to == "" {
+		return meetingcontext.Window{}, false, nil
+	}
+	var window meetingcontext.Window
+	if from != "" {
+		at, err := parseMeetingPosition(from)
+		if err != nil {
+			return meetingcontext.Window{}, false, fmt.Errorf("--from: %w", err)
+		}
+		window.FromMS = at
+	}
+	if to != "" {
+		at, err := parseMeetingPosition(to)
+		if err != nil {
+			return meetingcontext.Window{}, false, fmt.Errorf("--to: %w", err)
+		}
+		window.ToMS = &at
+	}
+	if err := window.Validate(); err != nil {
+		return meetingcontext.Window{}, false, err
+	}
+	return window, true, nil
+}
+
+// parseMeetingPosition reads a point in a meeting: plain milliseconds, which
+// is what search and the JSON carry, or MM:SS / H:MM:SS, which is what the
+// markdown prints — so a position can be pasted from either.
+func parseMeetingPosition(value string) (int64, error) {
+	if ms, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if ms < 0 {
+			return 0, fmt.Errorf("%q is before the start of the meeting", value)
+		}
+		return ms, nil
+	}
+	parts := strings.Split(value, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, fmt.Errorf("%q is not a point in a meeting; give milliseconds (754000) or MM:SS / H:MM:SS (12:34, 1:02:03)", oneLineField(value))
+	}
+	var total int64
+	for i, part := range parts {
+		n, err := strconv.ParseInt(part, 10, 64)
+		// Every field after the first is a clock field and stays below 60.
+		if err != nil || n < 0 || (i > 0 && (n > 59 || len(part) != 2)) {
+			return 0, fmt.Errorf("%q is not a point in a meeting; give milliseconds (754000) or MM:SS / H:MM:SS (12:34, 1:02:03)", oneLineField(value))
+		}
+		total = total*60 + n
+	}
+	return total * 1000, nil
 }

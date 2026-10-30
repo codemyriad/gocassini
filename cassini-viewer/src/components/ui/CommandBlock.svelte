@@ -3,6 +3,8 @@
   import { Check, Copy } from "@lucide/svelte";
 
   export let command: string;
+  // What the copy button says it copies, for a block that is not a command.
+  export let copyLabel = "Copy command";
 
   let copied = false;
   let copyFailed = false;
@@ -54,11 +56,11 @@
   <button
     type="button"
     class="btn btn-ghost btn-xs btn-square absolute top-1.5 right-1.5"
-    aria-label={copied ? "Copied" : "Copy command"}
-    title={copied ? "Copied" : "Copy command"}
+    aria-label={copied ? "Copied" : copyLabel}
+    title={copied ? "Copied" : copyLabel}
     on:click={copy}
   >
     {#if copied}<Check size={14} aria-hidden="true" />{:else}<Copy size={14} aria-hidden="true" />{/if}
   </button>
 </div>
-{#if copyFailed}<p class="mt-1 text-xs text-base-content/65" role="status">Copying is blocked here. The command is selected: press ⌘C or Ctrl+C.</p>{/if}
+{#if copyFailed}<p class="mt-1 text-xs text-base-content/65" role="status">Copying is blocked here. It is selected: press ⌘C or Ctrl+C.</p>{/if}

@@ -69,6 +69,7 @@
   } from "./viewer/listTags";
   import { createMeetingMarksSessions } from "./components/marking/sessions";
   import ImportPanel from "./components/import/ImportPanel.svelte";
+  import ConnectAgentPanel from "./components/ConnectAgentPanel.svelte";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
@@ -1300,14 +1301,22 @@
   // Which half of Browse the right-hand pane shows. The Import tab is a
   // persistent workbench, not an overlay: Escape and the layer bookkeeping are
   // untouched by it.
-  let browseTab: "meetings" | "import" = "meetings";
+  let browseTab: "meetings" | "import" | "agent" = "meetings";
   // True while imports are staging or running server-side — the dot on the tab
   // label, reported by the panel (which stays mounted so the dot is honest
   // before the tab is first opened).
   let importActivity = false;
-  $: if (!importsOffered) {
+  $: if (!importsOffered && browseTab === "import") {
     browseTab = "meetings";
   }
+  // "Connect an agent" (D-813) exists only where a provider knows the MCP
+  // endpoint: the in-Nextcloud build. Same rule as Import — no tab at all
+  // rather than instructions that cannot work.
+  $: agentConnection = typeof dataProvider.agentConnection === "function" ? dataProvider.agentConnection() : null;
+  $: if (!agentConnection && browseTab === "agent") {
+    browseTab = "meetings";
+  }
+  $: browseTabsOffered = importsOffered || agentConnection !== null;
   // Which kinds the browse list is showing. Owned here rather than in the list
   // because the control that changes it is in the rail: two components reading
   // one filter cannot each keep their own copy of it.
@@ -1524,8 +1533,8 @@
     />
   </div>
 {:else}
-  <div class="browse-shell" class:with-tabs={importsOffered}>
-    {#if importsOffered}
+  <div class="browse-shell" class:with-tabs={browseTabsOffered}>
+    {#if browseTabsOffered}
       <!-- Second-level tabs, visually subordinate to the shell's Browse/Operator
            nav above. A segmented control rather than another nav bar. -->
       <div class="browse-tabs" inert={topLayer > 0} role="tablist" aria-label="Browse sections">
@@ -1537,20 +1546,32 @@
           aria-selected={browseTab === "meetings"}
           on:click={() => (browseTab = "meetings")}
         >Meetings</button>
-        <button
-          type="button"
-          role="tab"
-          class="browse-tab"
-          class:active={browseTab === "import"}
-          aria-selected={browseTab === "import"}
-          on:click={() => (browseTab = "import")}
-        >
-          Import
-          {#if importActivity}<span class="tab-dot" role="status" aria-label="Imports are running"></span>{/if}
-        </button>
+        {#if importsOffered}
+          <button
+            type="button"
+            role="tab"
+            class="browse-tab"
+            class:active={browseTab === "import"}
+            aria-selected={browseTab === "import"}
+            on:click={() => (browseTab = "import")}
+          >
+            Import
+            {#if importActivity}<span class="tab-dot" role="status" aria-label="Imports are running"></span>{/if}
+          </button>
+        {/if}
+        {#if agentConnection}
+          <button
+            type="button"
+            role="tab"
+            class="browse-tab"
+            class:active={browseTab === "agent"}
+            aria-selected={browseTab === "agent"}
+            on:click={() => (browseTab = "agent")}
+          >Connect an agent</button>
+        {/if}
       </div>
     {/if}
-    <div class="contents" class:tab-hidden={browseTab === "import"} inert={topLayer > 0 && topLayer !== 3}>
+    <div class="contents" class:tab-hidden={browseTab !== "meetings"} inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
       editable={!!dataProvider.loadRoomName && !!dataProvider.saveRoomName}
@@ -1580,7 +1601,7 @@
     />
     </div>
 
-    <div class="contents" class:tab-hidden={browseTab === "import"} inert={topLayer > 0}>
+    <div class="contents" class:tab-hidden={browseTab !== "meetings"} inert={topLayer > 0}>
     <MeetingList
       meetings={roomMeetings}
       types={browseTypes}
@@ -1645,6 +1666,10 @@
     />
     </div>
 
+    {#if agentConnection}
+      <ConnectAgentPanel connection={agentConnection} active={browseTab === "agent"} />
+    {/if}
+
     {#if importsOffered}
       <ImportPanel
         {dataProvider}
@@ -1655,7 +1680,7 @@
     {/if}
 
     {#if selectionBarUp}
-      <div class="selection-dock" class:tab-hidden={browseTab === "import"} bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
+      <div class="selection-dock" class:tab-hidden={browseTab !== "meetings"} bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
         <SelectionBar
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
