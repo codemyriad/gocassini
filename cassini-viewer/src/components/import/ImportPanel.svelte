@@ -1,18 +1,21 @@
 <script lang="ts">
-  // The Import tab (D-828): a persistent workbench, not a dialog.
+  // The Import sheet (D-828): a side sheet over the meeting list, opened from
+  // the Import button beside search. It stays mounted while closed, so uploads,
+  // the jobs poll and the button's status keep going.
   //
-  // Drop zone at the top; dropped files parse LOCALLY (viewer/imports.ts) and
-  // stack below with per-meeting sharing; "Import" stages each file into the
-  // caller's own Files and hands the operator only the staged paths. The jobs
-  // list below shows the durable server-side imports — it survives navigation
-  // and reload, and "Clear completed" is a display action only (the rows are
-  // retention provenance and never leave the operator's database).
+  // Dropped files parse LOCALLY (viewer/imports.ts) and list below the drop
+  // zone with per-meeting sharing; "Import" stages each file into the caller's
+  // own Files and hands the operator only the staged paths. "Recent imports"
+  // shows the durable server-side jobs — they survive navigation and reload,
+  // and "Clear finished" is a display action only (the rows are retention
+  // provenance and never leave the operator's database).
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
-  import { CloudUpload, FileAudio, FileJson, RotateCcw, X } from "@lucide/svelte";
+  import { Check, ChevronDown, ChevronUp, CircleAlert, CloudUpload, FileAudio, FileText, Lock, Users, X } from "@lucide/svelte";
 
   import type { DataProvider } from "../../viewer/dataProvider";
   import {
     describeImportSharing,
+    formatImportDate,
     formatImportDuration,
     importJobTerminal,
     parseImportPreview,
@@ -21,13 +24,22 @@
     type ImportSharee,
   } from "../../viewer/imports";
   import ShareePicker from "./ShareePicker.svelte";
+  import type { ImportStatus } from "./importStatus";
 
   export let dataProvider: DataProvider;
-  // Whether this tab is the visible one. The panel stays mounted either way so
-  // the jobs poll keeps the tab dot honest before the tab is first opened.
-  export let active = false;
+  // Whether the sheet is showing. Opening it refreshes the jobs and counts
+  // every failure on screen as seen, which is what clears the button's alert.
+  export let open = false;
+  // Meeting ids the catalog lists, so a finished row offers Open only when the
+  // meeting is actually there to open.
+  export let openableIds: ReadonlySet<string> = new Set();
 
-  const dispatch = createEventDispatcher<{ activity: boolean; imported: void }>();
+  const dispatch = createEventDispatcher<{
+    status: ImportStatus;
+    imported: void;
+    close: void;
+    openMeeting: string;
+  }>();
 
   type PendingStatus = "parsing" | "ready" | "invalid" | "staging" | "failed";
   interface PendingItem {
@@ -36,7 +48,6 @@
     status: PendingStatus;
     reason?: string;
     preview?: ImportPreview;
-    share: boolean;
     audience: ImportSharee[];
     sentBytes: number;
   }
@@ -48,29 +59,33 @@
   let jobsLoaded = false;
   let submitting = false;
   let dragOver = false;
-  let bulkShare: "none" | "people" = "none";
+  // The one row whose sharing list is unfolded.
+  let expandedKey = "";
   let fileInput: HTMLInputElement;
   let keySequence = 0;
 
-  // "Clear completed" hides done/canceled rows in THIS browser only. A plain
-  // per-viewer convenience: absent or blocked storage simply shows them again.
+  // "Clear finished" hides done/canceled rows in THIS browser only, and the
+  // failures already seen stop alerting. Plain per-viewer conveniences: absent
+  // or blocked storage simply shows them again.
   const CLEARED_KEY = "cassini.imports.cleared.v1";
-  let cleared: Set<string> = readCleared();
+  const SEEN_KEY = "cassini.imports.seenFailures.v1";
+  let cleared: Set<string> = readSet(CLEARED_KEY);
+  let seenFailures: Set<string> = readSet(SEEN_KEY);
 
-  function readCleared(): Set<string> {
+  function readSet(key: string): Set<string> {
     try {
-      const raw = localStorage.getItem(CLEARED_KEY);
+      const raw = localStorage.getItem(key);
       return new Set(raw ? (JSON.parse(raw) as string[]) : []);
     } catch {
       return new Set();
     }
   }
 
-  function persistCleared() {
+  function persistSet(key: string, values: Set<string>) {
     try {
-      localStorage.setItem(CLEARED_KEY, JSON.stringify([...cleared]));
+      localStorage.setItem(key, JSON.stringify([...values]));
     } catch {
-      // A private window or blocked storage: clearing lasts for this page only.
+      // A private window or blocked storage: this lasts for this page only.
     }
   }
 
@@ -78,18 +93,30 @@
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let previousStates = new Map<string, string>();
+  // How many imports finished since the last "N imported" went quiet.
+  let justImported = 0;
+  let justImportedTimer: ReturnType<typeof setTimeout> | null = null;
+  const JUST_IMPORTED_MS = 6000;
 
   async function refreshJobs() {
     if (!dataProvider.listImports) return;
     try {
       const listed = await dataProvider.listImports();
+      let landed = 0;
       for (const job of listed) {
         const before = previousStates.get(job.id);
-        if (before && before !== "done" && job.state === "done") {
-          // A meeting just landed: the Meetings tab should not wait a minute
-          // for its poll to notice.
-          dispatch("imported");
-        }
+        if (before && before !== "done" && job.state === "done") landed++;
+      }
+      if (landed > 0) {
+        // A meeting just landed: the list should not wait a minute for its
+        // poll to notice, and the button says so for a few seconds.
+        dispatch("imported");
+        justImported += landed;
+        if (justImportedTimer !== null) clearTimeout(justImportedTimer);
+        justImportedTimer = setTimeout(() => {
+          justImported = 0;
+          justImportedTimer = null;
+        }, JUST_IMPORTED_MS);
       }
       previousStates = new Map(listed.map((job) => [job.id, job.state]));
       jobs = listed;
@@ -101,9 +128,6 @@
     }
     syncPolling();
   }
-
-  $: activeJobs = jobs.filter((job) => !importJobTerminal(job.state));
-  $: dispatch("activity", activeJobs.length > 0 || submitting || pending.some((item) => item.status === "staging"));
 
   function syncPolling() {
     // refreshJobs calls this before Svelte recomputes activeJobs. Read the
@@ -117,15 +141,54 @@
     }
   }
 
-  $: if (active) {
-    // Re-entering the tab refreshes once; the interval only runs while work is live.
+  $: if (open) {
+    // Opening refreshes once; the interval only runs while work is live.
     void refreshJobs();
   }
 
   onMount(() => void refreshJobs());
   onDestroy(() => {
     if (pollTimer !== null) clearInterval(pollTimer);
+    if (justImportedTimer !== null) clearTimeout(justImportedTimer);
   });
+
+  // --- what the Import button says ------------------------------------------
+
+  // A failure is keyed by its last update, so the same attempt failing again
+  // after a Retry alerts again.
+  const failureKey = (job: ImportJobRecord) => `${job.id}@${job.updatedAt}`;
+  const isFailure = (job: ImportJobRecord) => job.state === "failed" || job.state === "upload_failed";
+
+  $: if (open) markFailuresSeen(jobs);
+
+  function markFailuresSeen(list: ImportJobRecord[]) {
+    let changed = false;
+    for (const job of list) {
+      if (isFailure(job) && !seenFailures.has(failureKey(job))) {
+        seenFailures.add(failureKey(job));
+        changed = true;
+      }
+    }
+    if (changed) {
+      seenFailures = seenFailures;
+      persistSet(SEEN_KEY, seenFailures);
+    }
+  }
+
+  $: activeJobs = jobs.filter((job) => !importJobTerminal(job.state));
+  $: stagingCount = pending.filter((item) => item.status === "staging").length;
+  $: unseenFailureCount = jobs.filter((job) => isFailure(job) && !seenFailures.has(failureKey(job))).length;
+  $: runningCount = activeJobs.length + stagingCount;
+  $: status = (
+    unseenFailureCount > 0
+      ? { kind: "failed", count: unseenFailureCount }
+      : runningCount > 0 || submitting
+        ? { kind: "running", count: Math.max(runningCount, 1) }
+        : justImported > 0
+          ? { kind: "done", count: justImported }
+          : { kind: "idle", count: 0 }
+  ) satisfies ImportStatus;
+  $: dispatch("status", status);
 
   // --- drop & parse --------------------------------------------------------
 
@@ -136,7 +199,6 @@
         key: `pf_${++keySequence}`,
         file,
         status: "parsing",
-        share: bulkShare === "people",
         audience: [],
         sentBytes: 0,
       };
@@ -163,6 +225,7 @@
 
   function removePending(key: string) {
     pending = pending.filter((item) => item.key !== key);
+    if (expandedKey === key) expandedKey = "";
   }
 
   function handleDrop(event: DragEvent) {
@@ -173,10 +236,8 @@
 
   // --- sharing selection ----------------------------------------------------
 
-  function setShare(key: string, share: boolean) {
-    patch(key, { share });
-  }
-
+  // A meeting is shared exactly when someone besides the importer is on it:
+  // removing the last person makes it private again.
   function addSharee(key: string, sharee: ImportSharee) {
     const item = pending.find((candidate) => candidate.key === key);
     if (!item || item.audience.some((have) => have.type === sharee.type && have.id === sharee.id)) return;
@@ -189,37 +250,43 @@
     patch(key, { audience: item.audience.filter((have) => !(have.type === sharee.type && have.id === sharee.id)) });
   }
 
-  // The bulk control seeds every row; rows stay individually editable after.
-  function applyBulkShare(mode: "none" | "people") {
-    bulkShare = mode;
-    pending = pending.map((item) => ({ ...item, share: mode === "people" }));
-  }
-
-  function addBulkSharee(sharee: ImportSharee) {
+  // Adds one person to every meeting still waiting to be imported.
+  function addShareeToAll(sharee: ImportSharee) {
     pending = pending.map((item) =>
-      item.share && !item.audience.some((have) => have.type === sharee.type && have.id === sharee.id)
+      item.status === "ready" && !item.audience.some((have) => have.type === sharee.type && have.id === sharee.id)
         ? { ...item, audience: [...item.audience, sharee] }
         : item,
     );
   }
 
+  const SHAREE_GROUPS: Array<{ type: ImportSharee["type"]; heading: string }> = [
+    { type: "user", heading: "People" },
+    { type: "group", heading: "Groups" },
+    { type: "circle", heading: "Teams" },
+  ];
+
   // --- submit ---------------------------------------------------------------
 
   $: readyCount = pending.filter((item) => item.status === "ready").length;
+  $: skippedCount = pending.filter((item) => item.status === "invalid").length;
 
   async function submit() {
     if (submitting || readyCount === 0) return;
     if (!dataProvider.stageImportUpload || !dataProvider.startImports) return;
     submitting = true;
+    expandedKey = "";
     syncPolling();
     submitError = "";
     try {
       for (const item of pending.filter((candidate) => candidate.status === "ready")) {
         patch(item.key, { status: "staging", sentBytes: 0 });
         try {
-          // Sharing travels with the registration and is final from then on;
-          // the submit below names the staged path only.
-          const sharing = { share: item.share, audience: item.audience.map(({ type, id, label }) => ({ type, id, label })) };
+          // Sharing travels with the registration, so a retry of this attempt
+          // reuses it; the submit below names the staged path only.
+          const sharing = {
+            share: item.audience.length > 0,
+            audience: item.audience.map(({ type, id, label }) => ({ type, id, label })),
+          };
           const stagedPath = await dataProvider.stageImportUpload(item.file, (sent) => {
             patch(item.key, { sentBytes: sent });
           }, sharing);
@@ -245,17 +312,20 @@
     }
   }
 
-  // --- the jobs list --------------------------------------------------------
+  // --- recent imports -------------------------------------------------------
 
   $: shownJobs = jobs.filter((job) => !((job.state === "done" || job.state === "canceled") && cleared.has(job.id)));
   $: clearableCount = jobs.filter((job) => (job.state === "done" || job.state === "canceled") && !cleared.has(job.id)).length;
+  // Before anything is dropped or imported, the sheet explains itself and the
+  // drop zone is large; after, both step back for the lists.
+  $: compact = pending.length > 0 || shownJobs.length > 0;
 
-  function clearCompleted() {
+  function clearFinished() {
     for (const job of jobs) {
       if (job.state === "done" || job.state === "canceled") cleared.add(job.id);
     }
     cleared = cleared;
-    persistCleared();
+    persistSet(CLEARED_KEY, cleared);
   }
 
   async function cancelJob(job: ImportJobRecord) {
@@ -275,7 +345,7 @@
       await dataProvider.retryImport(job.id);
       submitError = "";
       cleared.delete(job.id);
-      persistCleared();
+      persistSet(CLEARED_KEY, cleared);
     } catch (error) {
       submitError = error instanceof Error ? error.message : String(error);
     }
@@ -288,29 +358,34 @@
     catch (error) { submitError = error instanceof Error ? error.message : String(error); }
   }
 
-  async function clearStaging() {
-    if (!dataProvider.clearImportStaging) return;
-    if (!window.confirm("Delete inactive temporary uploads? Failed attempts stay listed, without Retry, until you remove them. Imported meetings and active work are kept.")) return;
-    try { await dataProvider.clearImportStaging(); submitError = ""; await refreshJobs(); }
-    catch (error) { submitError = error instanceof Error ? error.message : String(error); }
-  }
-
   const CLI_RECOVERY_HELP = "This import uses a local CLI file. Run import-meeting again with the source file, or upload it as a new import.";
 
-  const JOB_LABELS: Record<string, string> = {
-    uploading: "uploading",
-    upload_failed: "upload incomplete",
-    staged: "uploaded — ready to import",
-    queued: "queued",
-    fetching: "fetching upload",
-    validating: "validating",
-    delivering: "delivering",
-    sharing: "sharing",
-    indexing: "indexing",
-    done: "imported",
-    failed: "failed",
-    canceled: "canceled",
+  // What a running row says. The operator's stages after the upload are one
+  // step to the person importing: their meeting is being added.
+  const RUNNING_LABELS: Partial<Record<ImportJobRecord["state"], string>> = {
+    uploading: "Uploading…",
+    queued: "Adding…",
+    fetching: "Adding…",
+    validating: "Adding…",
+    delivering: "Adding…",
+    sharing: "Adding…",
+    indexing: "Adding…",
   };
+
+  function settledLine(job: ImportJobRecord): string {
+    switch (job.state) {
+      case "upload_failed":
+        return job.error || "Upload didn't finish";
+      case "failed":
+        return job.error || "Import failed";
+      case "staged":
+        return "Uploaded, not started";
+      case "canceled":
+        return "Canceled";
+      default:
+        return "Imported";
+    }
+  }
 
   function stagingPercent(item: PendingItem): number {
     if (item.file.size <= 0) return 0;
@@ -318,10 +393,14 @@
   }
 
   function previewLine(preview: ImportPreview): string {
-    const parts = [preview.dateLabel, formatImportDuration(preview.durationMs)];
+    const parts = [
+      preview.hasAudio ? "" : "Transcript only",
+      formatImportDate(preview.dateLabel),
+      formatImportDuration(preview.durationMs),
+    ];
     if (preview.speakerCount > 0) parts.push(`${preview.speakerCount} speaker${preview.speakerCount === 1 ? "" : "s"}`);
     if (preview.tagCount > 0) parts.push(`${preview.tagCount} tag${preview.tagCount === 1 ? "" : "s"}`);
-    if (preview.hasSummary) parts.push("summary ✓");
+    if (preview.hasSummary) parts.push("summary");
     return parts.filter(Boolean).join(" · ");
   }
 
@@ -330,298 +409,442 @@
     dataProvider.searchImportSharees ? dataProvider.searchImportSharees(query) : Promise.resolve([]);
 </script>
 
-<div class="import-pane" class:import-pane-hidden={!active}>
-  <div class="import-column">
-    <header class="pt-4 pb-1">
-      <h2 class="text-[17px] font-semibold">Import meetings</h2>
-      <p class="text-sm text-base-content/65">
-        Drop portable meeting files to add them to this archive. A file carries its own transcript,
-        speakers and tags — including speaker names and who marked what on the instance it came from.
-      </p>
-    </header>
+<div class="import-panel">
+  <header class="import-head">
+    <h2 class="text-[17px] font-semibold">Import meetings</h2>
+    <button type="button" class="btn btn-ghost btn-square btn-sm" aria-label="Close import" on:click={() => dispatch("close")}>
+      <X size={18} aria-hidden="true" />
+    </button>
+  </header>
 
-    <div
-      class="import-drop"
-      class:drag-over={dragOver}
-      role="button"
-      tabindex="0"
-      aria-label="Drop portable meeting files here, or press Enter to choose files"
-      on:click={() => fileInput.click()}
-      on:keydown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          fileInput.click();
-        }
+  {#if !compact}
+    <p class="import-intro">
+      Add meetings downloaded from Cassini, here or on another Nextcloud: the recording (.opus), or just its
+      transcript (.json).
+    </p>
+  {/if}
+
+  <div
+    class="import-drop"
+    class:import-drop-compact={compact}
+    class:drag-over={dragOver}
+    role="region"
+    aria-label="Drop files to import"
+    on:dragover|preventDefault={() => (dragOver = true)}
+    on:dragleave={() => (dragOver = false)}
+    on:drop={handleDrop}
+  >
+    <CloudUpload size={compact ? 20 : 32} aria-hidden="true" />
+    <span class="import-drop-label">{compact ? "Drop more files" : "Drop files here"}</span>
+    <button type="button" class="btn btn-sm" on:click={() => fileInput.click()}>Choose files</button>
+    <input
+      bind:this={fileInput}
+      id="import-file-input"
+      type="file"
+      multiple
+      accept=".opus,.json,audio/ogg,application/json"
+      class="hidden"
+      on:change={(event) => {
+        acceptFiles(event.currentTarget.files);
+        event.currentTarget.value = "";
       }}
-      on:dragover|preventDefault={() => (dragOver = true)}
-      on:dragleave={() => (dragOver = false)}
-      on:drop={handleDrop}
-    >
-      <CloudUpload size={28} aria-hidden="true" />
-      <span class="font-semibold">Drop portable meeting files here</span>
-      <span class="text-sm opacity-75">.opus or transcription-only .json — or click to choose</span>
-      <input
-        bind:this={fileInput}
-        id="import-file-input"
-        type="file"
-        multiple
-        accept=".opus,.json,audio/ogg,application/json"
-        class="hidden"
-        on:change={(event) => {
-          acceptFiles(event.currentTarget.files);
-          event.currentTarget.value = "";
-        }}
-      />
-    </div>
+    />
+  </div>
 
-    {#if pending.length > 1 && readyCount > 0}
-      <div class="import-bulk" role="group" aria-label="Apply sharing to every meeting">
-        <span class="text-sm font-medium">Apply to all:</span>
-        <div class="join">
-          <button
-            type="button"
-            class="btn btn-sm join-item"
-            class:btn-active={bulkShare === "none"}
-            on:click={() => applyBulkShare("none")}>Don't share</button
-          >
-          <button
-            type="button"
-            class="btn btn-sm join-item"
-            class:btn-active={bulkShare === "people"}
-            on:click={() => applyBulkShare("people")}>Share with people</button
-          >
+  {#if !compact}
+    <p class="import-note">
+      Speaker names, tags and the summary come with the file. You choose who can see each meeting before it is added.
+    </p>
+  {/if}
+
+  <div class="import-body">
+    {#if pending.length > 0}
+      {#if readyCount > 1 && canSearchSharees}
+        <div class="import-bulk">
+          <span>Share all with</span>
+          <ShareePicker search={searchSharees} wide on:pick={(event) => addShareeToAll(event.detail)} placeholder="A person, group or team" />
         </div>
-        {#if bulkShare === "people" && canSearchSharees}
-          <ShareePicker search={searchSharees} on:pick={(event) => addBulkSharee(event.detail)} placeholder="Add someone to every meeting…" />
-        {/if}
-      </div>
-    {/if}
+      {/if}
 
-    {#each pending as item (item.key)}
-      <div class="import-item" class:import-item-error={item.status === "invalid" || item.status === "failed"}>
-        <div class="flex items-baseline justify-between gap-2 flex-wrap">
-          <span class="flex items-center gap-1.5 font-semibold min-w-0">
-            {#if item.preview?.format === "json"}
-              <FileJson size={15} aria-hidden="true" />
-            {:else}
-              <FileAudio size={15} aria-hidden="true" />
-            {/if}
-            <span class="truncate">{item.preview?.title ?? item.file.name}</span>
-          </span>
-          <span class="flex items-center gap-1.5">
-            {#if item.status === "parsing"}
-              <span class="badge badge-sm badge-ghost">reading…</span>
-            {:else if item.status === "ready"}
-              {#if item.preview && !item.preview.hasAudio}
-                <span class="badge badge-sm badge-info badge-soft">transcription only</span>
+      <ul class="import-list" aria-label="Files to import">
+        {#each pending as item (item.key)}
+          {@const bad = item.status === "invalid" || item.status === "failed"}
+          {@const expanded = expandedKey === item.key && item.status === "ready"}
+          <li class="import-item" class:import-item-error={bad}>
+            <div class="import-row">
+              {#if bad}
+                <CircleAlert size={16} class="text-error flex-none" aria-hidden="true" />
+              {:else if item.preview?.format === "json"}
+                <FileText size={16} class="opacity-60 flex-none" aria-hidden="true" />
+              {:else}
+                <FileAudio size={16} class="opacity-60 flex-none" aria-hidden="true" />
               {/if}
-              <span class="badge badge-sm badge-success badge-soft">valid</span>
-            {:else if item.status === "staging"}
-              <span class="badge badge-sm badge-info badge-soft">uploading {stagingPercent(item)}%</span>
-            {:else if item.status === "invalid"}
-              <span class="badge badge-sm badge-error badge-soft">skipped</span>
-            {:else if item.status === "failed"}
-              <span class="badge badge-sm badge-error badge-soft">upload failed</span>
-            {/if}
-            {#if item.status !== "staging"}
-              <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={`Remove ${item.file.name}`} on:click={() => removePending(item.key)}>
-                <X size={14} aria-hidden="true" />
-              </button>
-            {/if}
-          </span>
-        </div>
-
-        {#if item.status === "invalid" || item.status === "failed"}
-          <p class="text-sm text-error mt-0.5">{item.reason}</p>
-        {:else if item.preview}
-          <p class="text-sm text-base-content/65 mt-0.5">{previewLine(item.preview)}</p>
-        {/if}
-
-        {#if item.status === "staging"}
-          <progress class="progress progress-primary w-full mt-1" value={stagingPercent(item)} max="100"></progress>
-        {/if}
-
-        {#if item.status === "ready"}
-          <div class="mt-2 flex flex-wrap items-center gap-2">
-            <div class="join">
-              <button
-                type="button"
-                class="btn btn-sm join-item"
-                class:btn-active={!item.share}
-                on:click={() => setShare(item.key, false)}>Don't share</button
-              >
-              <button
-                type="button"
-                class="btn btn-sm join-item"
-                class:btn-active={item.share}
-                on:click={() => setShare(item.key, true)}>Share with people</button
-              >
-            </div>
-            {#if !item.share}
-              <span class="text-xs text-base-content/60">Visible only to you.</span>
-            {/if}
-          </div>
-          {#if item.share}
-            <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-              <span class="badge badge-sm badge-outline" title="You import this meeting, so you always have it">you</span>
-              {#each item.audience as sharee (sharee.type + sharee.id)}
-                <span class="badge badge-sm badge-outline gap-1">
-                  {sharee.label}
-                  <button type="button" class="cursor-pointer" aria-label={`Remove ${sharee.label}`} on:click={() => removeSharee(item.key, sharee)}>
-                    <X size={11} aria-hidden="true" />
-                  </button>
-                </span>
-              {/each}
-              {#if canSearchSharees}
-                <ShareePicker search={searchSharees} on:pick={(event) => addSharee(item.key, event.detail)} />
-              {/if}
-            </div>
-            <p class="text-xs text-base-content/60 mt-1">
-              People you share with can open the meeting and pass it along.
-            </p>
-          {/if}
-          <p class="text-xs text-base-content/60 mt-1">
-            Sharing is set when you press Import. To change it afterwards, remove the attempt and drop the file again.
-          </p>
-        {/if}
-      </div>
-    {/each}
-
-    {#if readyCount > 0}
-      <div class="flex justify-end py-2">
-        <button type="button" class="btn btn-primary btn-sm" disabled={submitting} on:click={() => void submit()}>
-          {submitting ? "Importing…" : `Import ${readyCount} meeting${readyCount === 1 ? "" : "s"}`}
-        </button>
-      </div>
-    {/if}
-
-    <section class="pt-4" aria-label="Import jobs">
-      <div class="flex items-center justify-between gap-2">
-        <h3 class="text-[15px] font-semibold">Imports</h3>
-        {#if dataProvider.clearImportStaging}
-          <button type="button" class="btn btn-ghost btn-xs" disabled={submitting} on:click={clearStaging}>Clear staged files</button>
-        {/if}
-        {#if clearableCount > 0}
-          <button type="button" class="btn btn-ghost btn-xs" on:click={clearCompleted}>Clear completed</button>
-        {/if}
-      </div>
-      {#if submitError}
-        <p role="alert" class="alert alert-warning alert-soft my-1.5 py-2 text-sm">{submitError}</p>
-      {/if}
-      <p class="text-xs text-base-content/60">Inactive temporary files are cleared daily at 03:03 UTC. An attempt whose file was cleared stays listed, without Retry, until you remove it.</p>
-      {#if jobsError}
-        <p role="alert" class="alert alert-warning alert-soft my-1.5 py-2 text-sm">{jobsError}</p>
-      {/if}
-      {#if jobsLoaded && shownJobs.length === 0}
-        <p class="text-sm text-base-content/60 py-2">Nothing imported from this account yet.</p>
-      {/if}
-      {#each shownJobs as job (job.id)}
-        {@const fromCLI = job.origin === "cli" || job.stagedPath.startsWith("local:")}
-        <div class="import-item" class:import-item-error={job.state === "failed"}>
-          <div class="flex items-baseline justify-between gap-2 flex-wrap">
-            <span class="font-semibold truncate">{job.sourceName}</span>
-            <span class="flex items-center gap-1.5">
-              <span
-                class="badge badge-sm badge-soft"
-                class:badge-success={job.state === "done"}
-                class:badge-error={job.state === "failed"}
-                class:badge-info={!importJobTerminal(job.state)}
-              >{JOB_LABELS[job.state] ?? job.state}</span>
-              {#if !fromCLI && !importJobTerminal(job.state) && job.state !== "uploading"}
-                <button type="button" class="btn btn-ghost btn-xs" on:click={() => void cancelJob(job)}>Cancel</button>
-              {:else if !fromCLI && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed"}
-                <button type="button" class="btn btn-ghost btn-xs gap-1" on:click={() => void retryJob(job)}>
-                  <RotateCcw size={13} aria-hidden="true" /> Retry
+              <div class="import-text">
+                <span class="import-title">{item.preview?.title ?? item.file.name}</span>
+                {#if item.status === "invalid"}
+                  <!-- The parser's sentence is precise but technical; it stays
+                       on hover for whoever needs it. -->
+                  <span class="import-meta import-meta-error" title={item.reason}>Not a meeting file from Cassini, so it was skipped.</span>
+                {:else if bad}
+                  <span class="import-meta import-meta-error">{item.reason}</span>
+                {:else if item.status === "parsing"}
+                  <span class="import-meta">Reading…</span>
+                {:else if item.status === "staging"}
+                  <span class="import-meta">Uploading {stagingPercent(item)}%</span>
+                  <progress class="progress progress-primary import-bar" value={stagingPercent(item)} max="100"></progress>
+                {:else if item.preview}
+                  <span class="import-meta">{previewLine(item.preview)}</span>
+                {/if}
+              </div>
+              {#if item.status === "ready"}
+                <button
+                  type="button"
+                  class="import-pill"
+                  class:import-pill-on={item.audience.length > 0}
+                  aria-expanded={expanded}
+                  on:click={() => (expandedKey = expanded ? "" : item.key)}
+                >
+                  {#if item.audience.length > 0}
+                    <Users size={12} aria-hidden="true" /> Shared
+                  {:else}
+                    <Lock size={12} aria-hidden="true" /> Only me
+                  {/if}
+                  {#if expanded}<ChevronUp size={12} aria-hidden="true" />{:else}<ChevronDown size={12} aria-hidden="true" />{/if}
                 </button>
               {/if}
-              {#if dataProvider.removeImport && (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagedPath.startsWith(".CassiniImports/")}
-                <button type="button" class="btn btn-ghost btn-xs" title="Delete the temporary upload and remove this attempt. To import with different sharing, drop the file again." on:click={() => void removeJob(job)}>Remove</button>
+              {#if item.status !== "staging"}
+                <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={`Remove ${item.file.name}`} on:click={() => removePending(item.key)}>
+                  <X size={14} aria-hidden="true" />
+                </button>
               {/if}
-            </span>
-          </div>
-          {#if fromCLI && job.state !== "done" && job.error !== CLI_RECOVERY_HELP}
-            <p class="text-sm text-base-content/65 mt-0.5">{CLI_RECOVERY_HELP}</p>
-          {/if}
-          {#if (job.state === "failed" || job.state === "upload_failed") && job.error}
-            <p class="text-sm text-error mt-0.5">{job.error}</p>
-          {/if}
-          {#if importJobTerminal(job.state)}
-            <!-- Every settled row says how it is (or would be) shared, and who
-                 that means on hover — a retry imports with exactly this. -->
-            {@const sharing = describeImportSharing(job)}
-            <p class="text-sm text-base-content/65 mt-0.5">
-              <span class="import-sharing" title={sharing.title}>{sharing.line}</span>
-              {job.format === "json" ? " · transcription only" : ""}
-            </p>
-          {:else}
-            <progress class="progress progress-primary w-full mt-1"></progress>
+            </div>
+
+            {#if expanded}
+              <div class="import-share">
+                {#if canSearchSharees}
+                  <ShareePicker search={searchSharees} wide on:pick={(event) => addSharee(item.key, event.detail)} placeholder="Add a person, group or team" />
+                {/if}
+                {#each SHAREE_GROUPS as group (group.type)}
+                  {@const members = item.audience.filter((sharee) => sharee.type === group.type)}
+                  {#if group.type === "user" || members.length > 0}
+                    <div class="import-share-heading">{group.heading}</div>
+                    {#if group.type === "user"}
+                      <div class="import-share-row"><span>You</span><span class="opacity-60 text-xs">importer</span></div>
+                    {/if}
+                    {#each members as sharee (sharee.type + sharee.id)}
+                      <div class="import-share-row">
+                        <span class="truncate">{sharee.label}</span>
+                        <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={`Remove ${sharee.label}`} on:click={() => removeSharee(item.key, sharee)}>
+                          <X size={12} aria-hidden="true" />
+                        </button>
+                      </div>
+                    {/each}
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if submitError}
+      <p role="alert" class="alert alert-warning alert-soft py-2 text-sm">{submitError}</p>
+    {/if}
+    {#if jobsError}
+      <p role="alert" class="alert alert-warning alert-soft py-2 text-sm">{jobsError}</p>
+    {/if}
+
+    {#if jobsLoaded && shownJobs.length > 0}
+      <section aria-label="Recent imports" class="import-recent">
+        <div class="import-recent-head">
+          <h3>Recent imports</h3>
+          {#if clearableCount > 0}
+            <button type="button" class="import-link import-link-quiet" on:click={clearFinished}>Clear finished</button>
           {/if}
         </div>
-      {/each}
-    </section>
+        <ul class="import-list">
+          {#each shownJobs as job (job.id)}
+            {@const fromCLI = job.origin === "cli" || job.stagedPath.startsWith("local:")}
+            {@const running = !importJobTerminal(job.state)}
+            {@const canRetry = !fromCLI && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed"}
+            {@const canRemove = !!dataProvider.removeImport && (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagedPath.startsWith(".CassiniImports/")}
+            {@const canOpen = job.state === "done" && !!job.contentId && openableIds.has(job.contentId)}
+            <li class="import-item" class:import-item-error={isFailure(job)}>
+              <div class="import-row">
+                {#if isFailure(job)}
+                  <CircleAlert size={15} class="text-error flex-none" aria-hidden="true" />
+                {:else if job.state === "done"}
+                  <Check size={15} class="text-success flex-none" aria-hidden="true" />
+                {/if}
+                <div class="import-text">
+                  <span class="import-title">{job.sourceName}</span>
+                  {#if running}
+                    <span class="import-meta">{RUNNING_LABELS[job.state] ?? "Adding…"}</span>
+                    <progress class="progress progress-primary import-bar"></progress>
+                  {:else if fromCLI && job.state !== "done"}
+                    <span class="import-meta import-meta-wrap">{job.error && job.error !== CLI_RECOVERY_HELP ? `${job.error}. ` : ""}{CLI_RECOVERY_HELP}</span>
+                  {:else if isFailure(job)}
+                    <span class="import-meta import-meta-error">{settledLine(job)}</span>
+                  {:else}
+                    <!-- A settled row says how it is (or would be) shared, and
+                         who that means on hover — a retry imports with exactly this. -->
+                    {@const sharing = describeImportSharing(job)}
+                    <span class="import-meta">
+                      {settledLine(job)}{job.format === "json" ? " · transcript only" : ""} ·
+                      <span class="import-sharing" title={sharing.title}>{sharing.line}</span>
+                    </span>
+                  {/if}
+                </div>
+                <span class="import-actions">
+                  {#if running && !fromCLI && job.state !== "uploading"}
+                    <button type="button" class="btn btn-ghost btn-square btn-xs" aria-label={`Cancel ${job.sourceName}`} on:click={() => void cancelJob(job)}>
+                      <X size={14} aria-hidden="true" />
+                    </button>
+                  {/if}
+                  {#if canRetry}
+                    <button type="button" class="import-link" on:click={() => void retryJob(job)}>Retry</button>
+                  {/if}
+                  {#if canRemove}
+                    <button type="button" class="import-link import-link-quiet" title="Delete the temporary upload and remove this attempt." on:click={() => void removeJob(job)}>Remove</button>
+                  {/if}
+                  {#if canOpen}
+                    <button type="button" class="import-link" on:click={() => dispatch("openMeeting", job.contentId ?? "")}>Open</button>
+                  {/if}
+                </span>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
   </div>
+
+  {#if readyCount > 0}
+    <footer class="import-foot">
+      <span>{readyCount} ready{skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}</span>
+      <button type="button" class="btn btn-primary" disabled={submitting} on:click={() => void submit()}>
+        {submitting ? "Importing…" : `Import ${readyCount} meeting${readyCount === 1 ? "" : "s"}`}
+      </button>
+    </footer>
+  {/if}
 </div>
 
 <style>
-  .import-pane {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  .import-pane-hidden {
-    display: none;
-  }
-  .import-column {
-    max-width: 680px;
-    margin: 0 auto;
-    padding: 0 16px 48px;
+  .import-panel {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    height: 100%;
+    min-height: 0;
+  }
+  .import-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 12px 4px 20px;
+  }
+  .import-intro {
+    padding: 0 20px 16px;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 68%, transparent);
+  }
+  .import-note {
+    padding: 14px 20px 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
   }
   .import-drop {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
-    padding: 28px 16px;
-    border: 2px dashed var(--color-primary);
+    gap: 12px;
+    margin: 0 20px;
+    padding: 32px 16px;
+    border: 2px dashed color-mix(in oklch, var(--color-primary) 55%, transparent);
     border-radius: var(--radius-box, 12px);
     color: var(--color-primary);
-    background: color-mix(in oklab, var(--color-primary) 6%, transparent);
-    cursor: pointer;
+    background: color-mix(in oklch, var(--color-primary) 6%, transparent);
     text-align: center;
   }
-  .import-drop.drag-over,
-  .import-drop:focus-visible {
-    background: color-mix(in oklab, var(--color-primary) 14%, transparent);
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
+  .import-drop-compact {
+    flex-direction: row;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 8px 8px 8px 14px;
+    text-align: left;
+  }
+  .import-drop-label {
+    font-weight: 600;
+    color: var(--color-base-content);
+  }
+  .import-drop-compact .import-drop-label {
+    flex: 1;
+    font-weight: 500;
+    font-size: 0.8125rem;
+  }
+  .import-drop.drag-over {
+    border-color: var(--color-primary);
+    background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+  }
+  .import-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 16px 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
   .import-bulk {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 68%, transparent);
+  }
+  .import-bulk :global(.sharee-picker) {
+    flex: 1;
+  }
+  .import-list {
     border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-box, 12px);
+    border-radius: calc(var(--radius-box, 12px) - 2px);
     background: var(--color-base-200);
   }
-  .import-item {
-    border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-box, 12px);
-    background: var(--color-base-100);
-    padding: 10px 12px;
+  .import-item + .import-item {
+    border-top: 1px solid var(--color-base-300);
   }
-  .import-item-error {
-    border-color: var(--color-error);
+  .import-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 8px 9px 12px;
+  }
+  .import-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .import-title {
+    font-weight: 600;
+    font-size: 0.84375rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .import-meta {
+    font-size: 0.75rem;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .import-meta-error,
+  .import-meta-wrap {
+    white-space: normal;
+  }
+  .import-meta-error {
+    color: var(--color-error);
+  }
+  .import-bar {
+    height: 3px;
+    margin-top: 5px;
+  }
+  .import-pill {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 26px;
+    padding: 0 6px 0 8px;
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    background: var(--color-base-100);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .import-pill-on {
+    border-color: color-mix(in oklch, var(--color-primary) 50%, transparent);
+    background: color-mix(in oklch, var(--color-primary) 10%, var(--color-base-100));
+  }
+  .import-share {
+    margin: 0 8px 10px 38px;
+    padding: 8px;
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    background: var(--color-base-100);
+  }
+  .import-share-heading {
+    padding: 8px 4px 2px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .import-share-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 26px;
+    padding: 0 0 0 4px;
+    font-size: 0.8125rem;
+  }
+  .import-recent {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .import-recent-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2px;
+  }
+  .import-recent-head h3 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .import-actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-right: 4px;
+  }
+  .import-link {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-primary);
+    cursor: pointer;
+  }
+  .import-link-quiet {
+    font-weight: 500;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
   .import-sharing {
     text-decoration: underline dotted;
     text-underline-offset: 3px;
     cursor: help;
+  }
+  .import-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--color-base-300);
+    font-size: 0.75rem;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .import-foot span {
+    flex: 1;
   }
 </style>
