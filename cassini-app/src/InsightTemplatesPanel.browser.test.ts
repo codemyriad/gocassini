@@ -82,6 +82,14 @@ function mountPanel() {
   });
 }
 
+// An untrusted keydown: it reaches the panel's listeners exactly as a key
+// press does, but the browser takes no default action on it, so a dialog it
+// closes was closed by the panel and not by the browser's own Escape.
+function pressEscapeOnFocused() {
+  const target = document.activeElement ?? document.body;
+  target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true, cancelable: true }));
+}
+
 const builtInHeading = () => page.getByRole("heading", { name: /Built in/ });
 const deleteDialog = () => page.getByRole("dialog", { name: "Delete template" });
 const RESUMEN = () => custom("resumen", "Resumen", "Un resumen en español.", "Resume.");
@@ -260,9 +268,18 @@ describe("insight templates panel in the browser", () => {
     await deleteDialog().getByRole("button", { name: "Cancel" }).click();
     await expect.poll(() => dialogEl().open).toBe(false);
 
+    // The browser's own Escape (a trusted key press, closing via "cancel").
     await page.getByRole("button", { name: "Delete" }).click();
     await expect.poll(() => dialogEl().open).toBe(true);
     await userEvent.keyboard("{Escape}");
+    await expect.poll(() => dialogEl().open).toBe(false);
+
+    // A keydown on the focused Cancel that the browser does not act on, as
+    // inside the shadow root on Nextcloud's page: the panel has to close it.
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect.poll(() => dialogEl().open).toBe(true);
+    await expect.element(deleteDialog().getByRole("button", { name: "Cancel" })).toHaveFocus();
+    pressEscapeOnFocused();
     await expect.poll(() => dialogEl().open).toBe(false);
 
     await page.getByRole("button", { name: "Delete" }).click();
@@ -304,5 +321,18 @@ describe("insight templates panel in the browser", () => {
     expect(deleteDialog().getByRole("button", { name: "Open the Publish pipeline" }).all()).toHaveLength(0);
     await deleteDialog().getByRole("button", { name: "Close" }).click();
     await expect.poll(() => (document.querySelector("dialog") as HTMLDialogElement).open).toBe(false);
+  });
+
+  it("closes the refused state on Escape, without the browser's own cancel", async () => {
+    rows = [...BUILT_INS, RESUMEN()];
+    deleteRefusal = '"resumen" is the template for insights; choose another one there before deleting it';
+    mountPanel();
+    const dialogEl = () => document.querySelector("dialog") as HTMLDialogElement;
+    await page.getByRole("button", { name: "Delete" }).click();
+    await deleteDialog().getByRole("button", { name: "Delete" }).click();
+    await expect.element(deleteDialog().getByRole("button", { name: "Close" })).toHaveFocus();
+    pressEscapeOnFocused();
+    await expect.poll(() => dialogEl().open).toBe(false);
+    expect(deleted).toEqual([]);
   });
 });

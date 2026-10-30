@@ -259,10 +259,28 @@
     deletion = null;
   }
 
-  // Escape: closed like Cancel, except while the delete is on its way.
+  // Escape: closed like Cancel (or Close, once refused), except while the
+  // delete is on its way. Handled here rather than left to the browser: inside
+  // the shadow root on Nextcloud's page, a modal dialog's own Escape handling
+  // never fires, so the dialog would stay open. Not skipped for an event
+  // something else has already prevented, which may be why the browser's
+  // handling does not run there; closing clears `deletion`, so the window's
+  // fallback after the dialog's own handler does nothing twice.
+  function escapeDelete(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !deletion) {
+      return;
+    }
+    event.preventDefault();
+    if (!saving) {
+      closeDelete();
+    }
+  }
+
+  // Where the browser's own Escape does work, it is the same path.
   function cancelDelete(event: Event) {
-    if (saving) {
-      event.preventDefault();
+    event.preventDefault();
+    if (!saving) {
+      closeDelete();
     }
   }
 
@@ -569,12 +587,16 @@
 <!-- A modal dialog for the one irreversible thing on this panel. It stays a
      descendant of the panel in the DOM, so the panel's styles and theme still
      reach it from the top layer. Escape and the backdrop cancel it. -->
+<!-- The fallback for an Escape that does not start inside the dialog. -->
+<svelte:window on:keydown={(event) => deletion && escapeDelete(event)} />
+
 <dialog
   class="modal"
   bind:this={deleteDialog}
   aria-labelledby="tpl-delete-title"
   on:close={() => (deletion = null)}
   on:cancel={cancelDelete}
+  on:keydown={escapeDelete}
   on:click={backdropClick}
 >
   {#if deletion}
