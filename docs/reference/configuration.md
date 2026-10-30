@@ -37,7 +37,6 @@ Optional capability pass-through:
 | `CASSINI_STT_STAND_IN_FOR` | set by the operator for one build, with `CASSINI_STT_STAND_IN_REASON` and `CASSINI_STT_STAND_IN_DETAIL`, when the retired Parakeet v3 named in `CASSINI_STT_MODEL` transcribes in place of the Ultra model replacing it; honoured only for that pair, and recorded in `processing.transcription.standIn`. Not configuration |
 | `CASSINI_ATTRIBUTION_DISABLED` | skip the cross-track speaker-attribution measurement |
 | `CASSINI_ATTRIBUTION_DROP` | delete words the attribution evidence contradicts instead of annotating them |
-| `CASSINI_TOPICS_THREADS` | CPU threads the topic suggestions model uses (default `min(4, CPUs)`, clamped to 1–16); changes only the speed, never a vector |
 
 A base URL enables an LLM call; an API key is optional, so a keyless self-hosted
 OpenAI-compatible endpoint works. For a recorder run directly, the shared

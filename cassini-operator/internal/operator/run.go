@@ -331,9 +331,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return runBackfillTopics(ctx, args[1:], stdout, stderr)
 		case topicsExportCommand:
 			return runTopicsExport(ctx, args[1:], stdout, stderr)
+		case topicsPreviewCommand:
+			return runTopicsPreview(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s, %s, %s, %s, %s)\n",
-			args[0], importMeetingCommand, backfillSearchCommand, backfillAnnotationsCommand, backfillTopicsCommand, topicsExportCommand, topicsEvalCommand)
+		// The topic commands work but are not listed here or in --help while
+		// topic suggestions are an unannounced preview (README "Rollout").
+		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s, %s)\n",
+			args[0], importMeetingCommand, backfillSearchCommand, backfillAnnotationsCommand)
 		return 2
 	}
 
@@ -650,8 +654,6 @@ Usage:
 Commands:
   `+backfillSearchCommand+`      index meetings published before the search index existed
   `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
-  `+backfillTopicsCommand+`     queue past meetings for topic suggestions
-  `+topicsExportCommand+`       write topic verdicts with their scores, no text
   `+importMeetingCommand+`       ingest portable meeting files into this archive
                        (validate, deliver, index, adopt retention, share;
                        see --help on the command itself)

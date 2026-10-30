@@ -442,7 +442,7 @@ Definition and control vectors are not in this file. They are in `topic_text_vec
 |---|---|
 | Process | One `cassini topics embed` subprocess per meeting, started with `Setpgid` and killed as a group on timeout or preemption (the pattern at `speaker_refine.go`, `models.go:466`). Timeout 10 min, armed only when the CLI reports `{"locked":true}`. |
 | Lock | The CLI takes `transcribe.LockModelRuntime` (`model_admission.go:19`) only after the key check, and holds it for the embed. Builds, probes and diarization serialise with it. A build waits at most one meeting (10 to 40 s). An embed may wait much longer for a build; that wait uses no attempt (see "Failures"). |
-| Threads | `min(4, governor CPU budget)` (`operator/resource.go:15-34`). `CASSINI_TOPICS_THREADS` overrides it; it is declared in `info.xml`. |
+| Threads | `min(4, governor CPU budget)` (`operator/resource.go:15-34`). `CASSINI_TOPICS_THREADS` overrides it; it is not declared in `info.xml` during the unannounced preview (see "Rollout"). |
 | Memory | Probe floor 1536 MiB (measured peak RSS 0.58 GB with batches of at most 1024 padded tokens; 1.78 GB at 4096). Embed runs wait for `floor + headroom` through `waitForMemory`. |
 | Preemption | A recording start cancels a running embed through the generalised cancel set. The row returns to `queued` with no attempt used. |
 | Token cap | 512 tokens including the prefix; split, never truncate. |
@@ -684,9 +684,19 @@ Under Settings → *After each meeting* (`SettingsPanel.svelte:623+`), a **Topic
 
 - `settings.json` gains `topic_suggestions: {enabled: false, threads: 0}`, saved through ADMIN `PUT operator/settings/topics`.
 - Enabling answers 409 unless an embedding model is installed and Ready. Ready does not depend on the boot or the image (see "Model catalogue"), so a reboot or an upgrade does not switch the feature off. Uninstalling the model, or a runtime check that stops passing, behaves as off with `reason: "model-unavailable"`. A failing startup probe pauses the worker with `reason: "model-fault"`.
-- The existing `CASSINI_<STEP>_DISABLED` variables only seed a step's default (`llm_settings.go:216`). This step's default is already off, so it adds no such variable. It adds only `CASSINI_TOPICS_THREADS`, declared in `info.xml`.
+- The existing `CASSINI_<STEP>_DISABLED` variables only seed a step's default (`llm_settings.go:216`). This step's default is already off, so it adds no such variable. It adds only `CASSINI_TOPICS_THREADS`, left out of `info.xml` during the unannounced preview (see "Rollout").
 - The worker reads settings at each claim. No recording job is involved, so there is no admission snapshot. Switching off stops new claims; a running embed finishes.
 - `topic_meta.enabled_at` records when the feature was first switched on. Coverage uses it for "meetings before … not checked yet".
+
+### Rollout
+
+*Decided by the maintainer: a soft release.* The code ships, but the feature stays locked and unannounced until it has been used for a while on the maintainer's own install.
+
+- **The lock.** `topic_meta.preview_unlocked` (`"1"` unlocked), unset on every install. `cassini-operator topics-preview on|off|status` sets and reads it from a shell in the container, beside the serving operator. One gate, `Runtime.topicSuggestionsOn` (`topics_preview.go`), is unlocked AND the Settings switch; every route, the worker loop, the publish hook, the startup model check and backfill ask it. It reads the row on each call, so a flip needs no restart.
+- **Locked** behaves as switched off, and Settings hides the feature: USER topic routes answer as when off; `GET operator/settings/topics` is 404 (the app shows no card), other calls 409; `operator/status` has no `topics` block; `GET operator/settings/models` lists no embedding model or job; `backfill-topics` refuses. Locking keeps every row and the Settings switch. Schema 9 still migrates unconditionally, since the release already moves the schema for D-862; the tables stay empty.
+- **Not an AppAPI variable.** An undeclared deploy variable is dropped, a declared one shows in every admin's deploy options, and both are fixed at creation (`docs/exapp-install.md`, "Updating deploy options after install"; `docs/exapp-update-constraints.md`).
+- **Not announced.** The changelog fragments wait in `release-notes-draft.md`; only a neutral schema 9 note ships. `docs/topic-suggestions.md` is not linked from the docs index and the API reference, `CASSINI_TOPICS_THREADS` is not declared in `info.xml`, `docs/privacy.md` has no topic rows (accurate while locked: nothing is read or stored), and `cassini-operator --help` and its unknown-command error do not list the topic commands, which still run. The removed privacy rows and help lines are kept in `release-notes-draft.md`.
+- **Announcing** means restoring those fragments, the link, the variable, the API sections, the privacy rows and the help lines, and either unlocking by default or dropping the lock.
 
 ## Privacy
 

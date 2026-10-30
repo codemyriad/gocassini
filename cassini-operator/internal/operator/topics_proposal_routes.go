@@ -67,7 +67,7 @@ func visibleProposalsIn(ctx context.Context, q topicQuerier, visible []string, r
 var proposalBeforeDecide func()
 
 func (s *annotationService) serveProposals(w http.ResponseWriter, r *http.Request, caller string) {
-	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+	if !s.rt.topicSuggestionsOn(r.Context()) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
@@ -272,7 +272,7 @@ func (s *annotationService) decideProposal(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	if !s.topicsOn(w) {
+	if !s.topicsOn(w, r) {
 		return
 	}
 	scope, ok := s.topicCaller(w, r, caller)

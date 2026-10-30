@@ -2,8 +2,11 @@
   // Topic suggestions in Settings (docs/proposals/automatic-tagging): the
   // optional model, the switch that runs it after each meeting, checking past
   // meetings, and what is waiting or blocked. Counts are work counts only;
-  // what was suggested is never shown here.
+  // what was suggested is never shown here. Until the preview is unlocked on
+  // the server (`cassini-operator topics-preview on`) the operator lists no
+  // model and answers 404 here, and there is no card at all.
   import { onDestroy } from "svelte";
+  import { OperatorHttpError } from "./operator/client";
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModelInventory, TopicSettingsStatus } from "./operator/types";
   import OptionalModelCard from "./OptionalModelCard.svelte";
@@ -15,6 +18,8 @@
   export let refreshMs = 10_000;
 
   let status: TopicSettingsStatus | null = null;
+  // The operator keeps topic suggestions locked: no card.
+  let hidden = false;
   let busy = false;
   let error = "";
   let since = "";
@@ -30,8 +35,14 @@
     if (!client) return;
     try {
       status = await client.getTopicSettings();
+      hidden = false;
       if (!timer && refreshMs > 0) timer = setInterval(() => void load(), refreshMs);
     } catch (e) {
+      if (e instanceof OperatorHttpError && e.status === 404) {
+        hidden = true;
+        status = null;
+        return;
+      }
       error = e instanceof Error ? e.message : String(e);
     }
   }
@@ -81,6 +92,7 @@
   $: switchDisabled = busy || !status?.available || (!status.enabled && !status.ready);
 </script>
 
+{#if !hidden}
 <OptionalModelCard {client} {inventory} {model} title="Topic suggestions" headingId="topic-suggestions-heading" preview>
   For Cassini to suggest topics for meetings from their transcripts, download this model. It reads transcripts on this server's CPU; no text leaves the server. Downloading it does not switch suggestions on.
   <div slot="after" class="topics-after">
@@ -121,6 +133,7 @@
     {#if error}<p class="op-error">{error}</p>{/if}
   </div>
 </OptionalModelCard>
+{/if}
 
 <style>
   .topics-after { display: grid; gap: 8px; }

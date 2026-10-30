@@ -149,6 +149,9 @@ func (s *topicsService) wakeUp() {
 
 func (s *topicsService) settings() topicSettings { return s.rt.currentSettings().TopicSuggestions }
 
+// on is the runtime's gate, asked again at each step of the loop.
+func (s *topicsService) on(ctx context.Context) bool { return s.rt.topicSuggestionsOn(ctx) }
+
 // startWorker runs the worker and the reconciler until the runtime stops.
 func (s *topicsService) startWorker() {
 	s.start.Do(func() {
@@ -168,7 +171,7 @@ func (s *topicsService) loop() {
 	defer ticker.Stop()
 	var lastReconcile time.Time
 	for {
-		if s.settings().Enabled && time.Since(lastReconcile) >= topicsReconcileEvery {
+		if s.on(s.rt.ctx) && time.Since(lastReconcile) >= topicsReconcileEvery {
 			if err := s.reconcile(s.rt.ctx); err != nil && s.rt.ctx.Err() == nil {
 				s.logf("reconcile: %v", err)
 			} else {
@@ -179,7 +182,7 @@ func (s *topicsService) loop() {
 		}
 		// Nothing to embed: recluster rooms, while no one is recording. A
 		// recording that starts cancels the pass, as it cancels an embed.
-		if s.settings().Enabled && s.rt.ctx.Err() == nil && s.recordingIdle() {
+		if s.on(s.rt.ctx) && s.rt.ctx.Err() == nil && s.recordingIdle() {
 			if workCtx, done, err := s.rt.beginBackgroundBuild(); err == nil {
 				if err := s.proposalPass(workCtx); err != nil && workCtx.Err() == nil {
 					s.logf("proposals: %v", err)
@@ -203,8 +206,12 @@ func (s *topicsService) recordingIdle() bool {
 	return s.rt.processingPolicy() == policyConcurrent || s.rt.recordingIdleLocked()
 }
 
-// paused says why the worker cannot run now, "" when it can.
+// paused says why the worker cannot run now, "" when it can. Locked reads
+// as switched off.
 func (s *topicsService) paused(ctx context.Context) string {
+	if !s.rt.topicsUnlocked(ctx) {
+		return "disabled"
+	}
 	return s.pausedWithSettings(ctx, s.settings())
 }
 
@@ -268,7 +275,7 @@ func (s *topicsService) runOnce(ctx context.Context) bool {
 		return false
 	}
 	// Switching off stops new claims, even one that waited for a recording.
-	if !s.settings().Enabled {
+	if !s.on(ctx) {
 		return false
 	}
 	if err := s.fitGates(workCtx, versions); err != nil && workCtx.Err() == nil {

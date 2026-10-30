@@ -279,7 +279,7 @@ func (rt *Runtime) extractSiteFailureDetail(sitePath string, fallback error) str
 // they are on. The digest and attempt name the delivered build, so the worker
 // reads its transcript even if promotion fails below.
 func (rt *Runtime) queuePublishedTopics(task publishTask, attemptSiteDir string) {
-	if rt.topics == nil || !rt.currentSettings().TopicSuggestions.Enabled {
+	if rt.topics == nil || !rt.topicSuggestionsOn(context.Background()) {
 		return
 	}
 	name, err := deliveredOpusName(attemptSiteDir, task.JobID)

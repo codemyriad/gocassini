@@ -23,7 +23,6 @@ configure an LLM endpoint, and all send text, never audio.
 | Meeting summary                | LLM endpoint — **only if one is configured**              | **Only if the endpoint is external** |
 | Summary rewritten after a speaker edit (separating, merging or naming voices) | LLM endpoint — **only if one is configured**, and only when somebody saves an edit | **Only if the endpoint is external** |
 | Insight (a workflow run over selected meetings) | LLM endpoint — **only if one is configured**, and only when somebody asks | **Only if the endpoint is external** |
-| Topic suggestions (optional, off until an admin switches them on) | Local (EmbeddingGemma 2 on the CPU) | No |
 | Publishing the archive         | Nextcloud Files, on your servers                          | No                               |
 
 **Without an LLM endpoint: nothing leaves your infrastructure.** The local
@@ -119,32 +118,6 @@ artifacts:
   audience at publish time. Guests, email invitees and federated participants are not recorded: they have no local
   account to grant, so there is nothing to keep. It lives on the job row, which
   outlives the recording itself — job history is kept after artifacts are pruned.
-- **Topic suggestion vectors** — only while topic suggestions are switched on:
-  for each checked meeting, its transcript cut into passages, stored as passage
-  start and end times, word counts and one embedding vector each (768 numbers)
-  in `topics.sqlite3` beside the operator database. No transcript text, titles,
-  rooms or user ids. The file is disposable: deleting it only means every
-  meeting is read again. The work queue (which meetings were checked, when, and
-  why one could not be) lives in the annotations database. See
-  [Topic suggestions](./topic-suggestions.md).
-- **Topic review decisions** — who confirmed or rejected which topic on which
-  meeting, and when. Shown to the people who can read that meeting; deleted
-  with the meeting. A confirm is also an ordinary tag in the recording,
-  credited to that person. A topic with enough decisions gets its own
-  suggestion bar fitted to them (numbers only, in the annotations database).
-  `cassini-operator topics-export` writes the decisions and their scores, by
-  meeting file name, with no transcript text, topic names or user ids, for
-  someone with shell access on the server.
-- **Topic proposals** — for recurring themes no topic covers: the time ranges
-  of the passages they draw on, their average vector, a draft name and a few
-  words from those meetings' transcripts. Shown only to people who can read
-  every meeting a proposal draws on; hidden at once and rebuilt when one of
-  those meetings is deleted.
-- **Topic library** — the names and definitions people write for topics, and
-  every revision of them with who saved it. Everyone who can read at least one
-  meeting sees the names and definitions; who wrote them is shown to
-  administrators only. A past revision can be removed from the history by its
-  author or an administrator.
 - **Operator database** — job and attempt history, the room audience above,
   insight-run records including any typed question, and speaker edits (the
   names people typed, who saved them, a snapshot per saved revision, and the
@@ -359,8 +332,6 @@ could not use.
 - **Insight documents are ordinary Nextcloud files** in the account that asked
   for them. Deleting one deletes the answer; the run row on the app volume
   remains — with the question text on it — until the volume is deleted.
-- **Retiring a meeting removes its topic rows and vectors** from both topic
-  stores, and expires the answers of requests that named it.
 - **Published recordings persist in Nextcloud Files** independently of Cassini.
   Removing or disabling the Cassini app does not delete them; they are managed as
   ordinary Nextcloud files.

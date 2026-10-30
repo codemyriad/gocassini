@@ -143,7 +143,8 @@ func (s *annotationService) routeTopics(w http.ResponseWriter, r *http.Request, 
 	if rest == "" {
 		parts = nil
 	}
-	if t == nil {
+	// Locked, every route answers as it does where topics cannot run.
+	if t == nil || !s.rt.topicsUnlocked(r.Context()) {
 		if r.Method == http.MethodGet {
 			writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		} else {
@@ -196,8 +197,8 @@ func (s *annotationService) topicCaller(w http.ResponseWriter, r *http.Request, 
 }
 
 // topicsOn refuses a write while topic suggestions are off.
-func (s *annotationService) topicsOn(w http.ResponseWriter) bool {
-	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+func (s *annotationService) topicsOn(w http.ResponseWriter, r *http.Request) bool {
+	if !s.rt.topicSuggestionsOn(r.Context()) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "disabled"})
 		return false
 	}
@@ -205,7 +206,7 @@ func (s *annotationService) topicsOn(w http.ResponseWriter) bool {
 }
 
 func (s *annotationService) serveTopicLibrary(w http.ResponseWriter, r *http.Request, caller string) {
-	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+	if !s.rt.topicSuggestionsOn(r.Context()) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
@@ -443,7 +444,7 @@ func (s *annotationService) createTopic(w http.ResponseWriter, r *http.Request, 
 		writeJSONError(w, http.StatusBadRequest, refusal)
 		return
 	}
-	if !s.topicsOn(w) {
+	if !s.topicsOn(w, r) {
 		return
 	}
 	scope, ok := s.topicCaller(w, r, caller)
@@ -604,7 +605,7 @@ func (s *annotationService) editTopic(w http.ResponseWriter, r *http.Request, ca
 		writeJSONError(w, http.StatusBadRequest, "expectRevision is required")
 		return
 	}
-	if !s.topicsOn(w) {
+	if !s.topicsOn(w, r) {
 		return
 	}
 	scope, ok := s.topicCaller(w, r, caller)
@@ -869,7 +870,7 @@ func (s *topicsStore) topicEvents(ctx context.Context, tagID string) ([]topicEve
 }
 
 func (s *annotationService) serveTopicHistory(w http.ResponseWriter, r *http.Request, caller, tagID string) {
-	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+	if !s.rt.topicSuggestionsOn(r.Context()) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
@@ -944,7 +945,7 @@ func (s *annotationService) redactTopicRevision(w http.ResponseWriter, r *http.R
 		writeJSONError(w, http.StatusBadRequest, "send {requestId, action: \"redact\"} to a revision number")
 		return
 	}
-	if !s.topicsOn(w) {
+	if !s.topicsOn(w, r) {
 		return
 	}
 	if _, ok := s.topicCaller(w, r, caller); !ok {
@@ -1035,7 +1036,7 @@ func (s *annotationService) redactTopicRevision(w http.ResponseWriter, r *http.R
 // for the editor's warning before a tag from one private room is described
 // for everyone.
 func (s *annotationService) serveTopicRooms(w http.ResponseWriter, r *http.Request, caller, tagID string) {
-	if !s.rt.currentSettings().TopicSuggestions.Enabled {
+	if !s.rt.topicSuggestionsOn(r.Context()) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
@@ -1073,13 +1074,13 @@ func (s *annotationService) serveTopicRooms(w http.ResponseWriter, r *http.Reque
 }
 
 // libraryOn: the library shapes tagging only while topic suggestions are on.
-func (s *annotationService) libraryOn() bool {
-	return s.rt.topics != nil && s.rt.currentSettings().TopicSuggestions.Enabled
+func (s *annotationService) libraryOn(ctx context.Context) bool {
+	return s.rt.topics != nil && s.rt.topicSuggestionsOn(ctx)
 }
 
 // libraryActive says whether id is an active library topic.
 func (s *annotationService) libraryActive(ctx context.Context, id string) (bool, error) {
-	if !s.libraryOn() {
+	if !s.libraryOn(ctx) {
 		return false, nil
 	}
 	row, exists, err := topicByID(ctx, s.rt.topics.store.db, id)
@@ -1088,7 +1089,7 @@ func (s *annotationService) libraryActive(ctx context.Context, id string) (bool,
 
 // libraryTagByLabel is the active library topic with this label.
 func (s *annotationService) libraryTagByLabel(ctx context.Context, label string) (string, bool, error) {
-	if !s.libraryOn() {
+	if !s.libraryOn(ctx) {
 		return "", false, nil
 	}
 	row, found, err := s.rt.topics.store.activeTopicByLabel(ctx, label)
@@ -1098,7 +1099,7 @@ func (s *annotationService) libraryTagByLabel(ctx context.Context, label string)
 // libraryTagAppearance gives a library topic its library label, colour and
 // icon when a file gets it for the first time.
 func (s *annotationService) libraryTagAppearance(ctx context.Context, batch *ann.Batch) error {
-	if !s.libraryOn() {
+	if !s.libraryOn(ctx) {
 		return nil
 	}
 	rows, err := s.rt.topics.store.library(ctx)

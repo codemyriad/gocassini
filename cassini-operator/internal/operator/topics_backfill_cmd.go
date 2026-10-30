@@ -77,6 +77,10 @@ Flags:
 		return 3
 	}
 	defer annotations.Close()
+	if !annotations.topicsPreviewUnlocked(ctx) {
+		fmt.Fprintf(stderr, "topic suggestions are locked on this server; run cassini-operator %s on first\nnothing was queued\n", topicsPreviewCommand)
+		return 3
+	}
 	store := newTopicsStore(annotations)
 	store.lifecycle = jobs
 	targets, err := exapp.archiveBackfillTargets(ctx)

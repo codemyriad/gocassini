@@ -243,6 +243,9 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 500, err.Error())
 			return
 		}
+		if !rt.topicsUnlocked(r.Context()) {
+			models, jobs = withoutTopicsModels(models, jobs)
+		}
 		writeJSON(w, 200, map[string]any{"models": models, "jobs": jobs, "downloads_allowed": !rt.cfg.DisallowModelDownload, "device": device})
 		return
 	}
@@ -404,7 +407,7 @@ func (rt *Runtime) startModelWorker() {
 		lastCheck := time.Now()
 		// The embedding model's readiness survives restarts, so it is
 		// checked again in the background; a failure pauses suggestions.
-		if rt.currentSettings().TopicSuggestions.Enabled {
+		if rt.topicSuggestionsOn(rt.ctx) {
 			if models, e := rt.modelInventory(rt.ctx, deviceCPU); e == nil {
 				for _, m := range models {
 					if m.Kind == modelKindEmbedding && m.Installed {
