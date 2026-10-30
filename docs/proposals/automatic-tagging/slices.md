@@ -298,7 +298,7 @@ S6 and S7 are independent of each other.
 
 - About 300 labelled pairs over ≥ 2 rooms and ≥ 1 non-English room, two labellers, precision and estimated recall per detected language in `evaluation.md` (aggregates only).
 - Per-topic thresholds change `scorer_key` and rescore without embedding.
-- The decision on dropping the "Preview" label (README open question 15) is recorded.
+- The decision on the "Preview" label (README open question 15) is recorded: the feature ships as Preview.
 
 **Tests**
 

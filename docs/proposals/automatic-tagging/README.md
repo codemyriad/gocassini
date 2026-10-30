@@ -19,6 +19,7 @@ Cassini reads each published transcript with a small local embedding model. It c
 - **Who.** Anyone who can tag can edit the library and review suggestions. "Can tag" means "can read at least one meeting". Admins install the model, switch the feature on and start the check of past meetings.
 - **New topics.** A per-room inbox proposes recurring themes that no topic covers yet. A person sees a proposal only when they can read every meeting it draws on.
 - **Honesty.** Every list says how many of the meetings you can read were checked, how many were not, and why.
+- **Preview.** It ships marked Preview: quality was measured with model labellers, English is the only validated language, and only amd64 CPU is tested (open question 15).
 - **Order.** Runtime first, then an offline evaluation gate on int8 vectors, then the worker, the library, the review UI and the inbox. Each slice ships switched off. The slice that adds the schema (S3) is a one-way database step: an older image cannot open the upgraded annotations database.
 
 ## Terms
@@ -753,5 +754,5 @@ The plan as written:
 12. **Platforms.** The CUDA image's ONNX Runtime version and arm64 are unchecked. v1 is amd64 CPU only.
 13. **Lock starvation.** Can a long build hold `.inference.lock` long enough to starve the queue? Not measured. Lock wait uses no attempts and no timeout budget, and it is exposed in status.
 14. **Vector size.** float32 (about 280 MiB per 1,000 meetings) or float16? The thresholds are sensitive, so float16 needs its own parity check.
-15. **Preview label.** Should the feature ship labelled "Preview" (as diarization shipped as "Proof of concept") until Gate 2 passes? *Not decided; for the maintainer. Gate 2 was measured on labels from two model labellers, not people (evaluation.md): English is validated, other languages still say they are not. A spot check by people would settle what the measurement is worth.*
+15. **Preview label.** Should the feature ship labelled "Preview" (as diarization shipped as "Proof of concept") until Gate 2 passes? *Decided by the maintainer: it ships as Preview. Gate 2 was measured on labels from two model labellers, not people (evaluation.md); English is the only validated language; arm64 and the CUDA image are untested (question 12). Settings, the meeting page, Needs review and Manage tags → Topics and New topics carry a "Preview" badge or the one preview line (`TOPICS_PREVIEW_NOTE`). A spot check by people would settle what the measurement is worth, and is what dropping the label waits on.*
 16. **Retired topics.** Should retired library entries ever be purged as a whole? (Single past revisions can already be redacted.)

@@ -4,7 +4,7 @@ import { page } from "vitest/browser";
 import SuggestedTopics from "./SuggestedTopics.svelte";
 import { AnnotationError } from "../../viewer/annotations";
 import { StaticCatalogProvider } from "../../viewer/dataProvider";
-import type { MeetingSuggestions, TopicDecision } from "../../viewer/topics";
+import { TOPICS_PREVIEW_NOTE, type MeetingSuggestions, type TopicDecision } from "../../viewer/topics";
 import { reactiveProps } from "./reactiveProps.svelte";
 import "../../app.css";
 
@@ -70,8 +70,10 @@ function show() {
 describe("suggested topics on the meeting page", () => {
   it("shows the suggestion, its evidence and the notes, and seeks", async () => {
     const { seek, events } = show();
+    await expect.element(page.getByRole("group", { name: "Suggested topics" }).getByText("Preview", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Suggested topic Release planning" }).click();
     const dialog = page.getByRole("dialog", { name: "Suggested topic: Release planning" });
+    await expect.element(dialog.getByText(TOPICS_PREVIEW_NOTE)).toBeVisible();
     await expect.element(dialog.getByText("Shipping a new version", { exact: false })).toBeVisible();
     await expect.element(dialog.getByText("Discussed for about 1 minute across 2 passages", { exact: false })).not.toBeInTheDocument();
     await expect.element(dialog.getByText(/Discussed for about/)).toBeVisible();
@@ -81,6 +83,21 @@ describe("suggested topics on the meeting page", () => {
     expect(events.evidence.at(-1)).toEqual([{ startMs: 32000, endMs: 48000 }, { startMs: 49000, endMs: 67000 }]);
     await dialog.getByRole("button", { name: "Play from 0:32" }).click();
     expect(seek).toHaveBeenCalledWith(32000);
+  });
+
+  it("stays marked Preview when nothing is pending", async () => {
+    view = suggestionsView({ suggestions: [], decided: [{ tagId: "tag_release", label: "Release planning", verdict: "rejected", source: "review", at: "" }] });
+    show();
+    const group = page.getByRole("group", { name: "Suggested topics" });
+    await expect.element(group.getByText("Decided for this meeting (1)")).toBeVisible();
+    await expect.element(group.getByText("Preview", { exact: true })).toBeVisible();
+  });
+
+  it("shows no lone Preview badge on a checked meeting with nothing to show", async () => {
+    view = suggestionsView({ suggestions: [] });
+    show();
+    await expect.element(page.getByRole("group", { name: "Suggested topics" })).toBeInTheDocument();
+    await expect.element(page.getByText("Preview", { exact: true })).not.toBeInTheDocument();
   });
 
   it("confirms, hands the annotations on, and undoes from the toast", async () => {

@@ -7,8 +7,9 @@
   import { AnnotationError, type VocabularyTag } from "../../viewer/annotations";
   import type { DataProvider } from "../../viewer/dataProvider";
   import { colorFor } from "../../viewer/tagPalette";
-  import { usageLine, type Topic, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "../../viewer/topics";
+  import { TOPICS_PREVIEW_NOTE, usageLine, type Topic, type TopicLibrary, type TopicRevision, type TopicSave, type TopicTagRooms } from "../../viewer/topics";
   import TagChip from "../tags/TagChip.svelte";
+  import PreviewBadge from "../ui/PreviewBadge.svelte";
   import TopicEditor from "./TopicEditor.svelte";
 
   type TopicProvider = Pick<DataProvider, "saveTopic" | "loadTopicHistory" | "redactTopicRevision" | "loadTopicTagRooms">;
@@ -130,6 +131,10 @@
 </script>
 
 <div class="grid gap-2 px-2.5 py-2">
+  <div class="flex items-start gap-2">
+    <PreviewBadge />
+    <p class="text-xs text-base-content/70">{TOPICS_PREVIEW_NOTE}</p>
+  </div>
   <p class="text-xs text-base-content/70">
     Cassini suggests these topics for meetings by comparing transcripts with each definition. Someone confirms every suggestion before it becomes a tag.
   </p>

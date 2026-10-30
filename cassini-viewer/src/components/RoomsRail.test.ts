@@ -132,6 +132,8 @@ describe("RoomsRail needs review", () => {
     expect(render(RoomsRail as never, { props: {} } as never).body).not.toContain("Needs review");
     const rail = render(RoomsRail as never, { props: { reviewCount: 4 } } as never).body;
     expect(rail).toContain("Needs review");
-    expect(rail).toMatch(/Needs review<\/span>\s*<span class="room-count[^"]*">4</);
+    // Marked as a preview, between the name and the count; no room is.
+    expect(rail).toMatch(/Needs review<\/span>\s*<span class="preview-badge[^"]*">Preview<\/span>(<!---->)?\s*<span class="room-count[^"]*">4</);
+    expect(rail.match(/>Preview</g)).toHaveLength(1);
   });
 });

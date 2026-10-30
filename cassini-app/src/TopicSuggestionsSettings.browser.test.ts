@@ -5,6 +5,7 @@ import TopicSuggestionsSettings from "./TopicSuggestionsSettings.svelte";
 import { OperatorClient } from "./operator/client";
 import type { SpeechModel, SpeechModelInventory, TopicSettingsStatus } from "./operator/types";
 import { TOPIC_SUGGESTIONS_MODEL_ID } from "./speechModels";
+import { TOPICS_PREVIEW_NOTE } from "cassini-viewer/topics";
 import "./app.css";
 
 const embedder = (ready: boolean): SpeechModel => ({
@@ -64,6 +65,12 @@ function mountCard(ready: boolean) {
 }
 
 describe("topic suggestions in Settings", () => {
+  it("is marked as a preview, with the note before the switch", async () => {
+    mountCard(false);
+    await expect.element(page.getByRole("heading", { name: /Topic suggestions/ })).toHaveTextContent("Topic suggestions (optional) Preview");
+    await expect.element(page.getByText(TOPICS_PREVIEW_NOTE)).toBeVisible();
+  });
+
   it("keeps the switch off until the model is ready", async () => {
     mountCard(false);
     const toggle = page.getByRole("checkbox", { name: "Suggest topics after each meeting" });

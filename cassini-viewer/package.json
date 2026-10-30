@@ -12,6 +12,7 @@
     "./annotations": "./src/viewer/annotations.ts",
     "./tagPalette": "./src/viewer/tagPalette.ts",
     "./tags/*": "./src/components/tags/*",
+    "./ui/PreviewBadge.svelte": "./src/components/ui/PreviewBadge.svelte",
     "./insights": "./src/viewer/insights.ts",
     "./topics": "./src/viewer/topics.ts",
     "./insightName": "./src/viewer/insightName.ts",

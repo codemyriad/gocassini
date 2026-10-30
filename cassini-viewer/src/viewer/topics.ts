@@ -67,6 +67,9 @@ export interface TopicTagRooms {
 
 export const DEFINITION_LIMIT = 1000;
 
+// The one line that says the feature is a preview, wherever it is marked.
+export const TOPICS_PREVIEW_NOTE = "Topic suggestions are a preview. They can be wrong or miss topics, and have been tested on English meetings only.";
+
 export const TOPIC_NOTICE = "Everyone who can tag will see this name and definition. Do not paste text from a meeting.";
 
 // newRequestId names one write, so a retry replays its first answer.

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
 import TopicInbox from "./TopicInbox.svelte";
 import { AnnotationError } from "../../viewer/annotations";
-import type { Topic, TopicProposal } from "../../viewer/topics";
+import { TOPICS_PREVIEW_NOTE, type Topic, type TopicProposal } from "../../viewer/topics";
 import "../../app.css";
 
 let app: ReturnType<typeof mount> | undefined;
@@ -53,6 +53,8 @@ function show(events: Record<string, (e: CustomEvent) => void> = {}) {
 describe("New topics", () => {
   it("shows drafts with their words and quotes, flagged ones collapsed", async () => {
     show();
+    await expect.element(page.getByText("Preview", { exact: true })).toBeVisible();
+    await expect.element(page.getByText(TOPICS_PREVIEW_NOTE)).toBeVisible();
     await expect.element(page.getByText("parking / garage").first()).toBeVisible();
     await expect.element(page.getByText("Words from meetings in Facilities: parking, garage, permits").first()).toBeVisible();
     await expect.element(page.getByText("the garage permits are late again").first()).toBeVisible();

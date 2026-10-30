@@ -7,9 +7,10 @@
 
   import type { DataProvider } from "../../viewer/dataProvider";
   import { colorFor } from "../../viewer/tagPalette";
-  import { COVERAGE_LIMITS, MAX_BATCH, coverageLine, newRequestId, type TopicQueue, type TopicQueueGroup } from "../../viewer/topics";
+  import { COVERAGE_LIMITS, MAX_BATCH, TOPICS_PREVIEW_NOTE, coverageLine, newRequestId, type TopicQueue, type TopicQueueGroup } from "../../viewer/topics";
   import TagChip from "../tags/TagChip.svelte";
   import CloseButton from "../ui/CloseButton.svelte";
+  import PreviewBadge from "../ui/PreviewBadge.svelte";
   import { focusLayer } from "../ui/focusLayer";
 
   export let open = false;
@@ -138,11 +139,12 @@
     class="absolute inset-y-0 right-0 z-42 flex w-[min(640px,100%)] flex-col border-base-300 bg-base-100 shadow-2xl min-[721px]:border-l max-[720px]:top-auto max-[720px]:h-[92%] max-[720px]:w-full max-[720px]:rounded-t-box max-[720px]:border-t">
     <header class="flex items-center gap-2.5 border-b border-base-300 px-5 pb-3 pt-4">
       <h2 id="needs-review-title" class="flex flex-1 items-center gap-2.5 text-[17px] font-semibold">
-        Needs review{#if roomLabel}<span class="text-base-content/60"> · {roomLabel}</span>{/if} {#if queue}<span class="badge badge-outline badge-sm font-medium">{queue.total}</span>{/if}
+        Needs review{#if roomLabel}<span class="text-base-content/60"> · {roomLabel}</span>{/if} {#if queue}<span class="badge badge-outline badge-sm font-medium">{queue.total}</span>{/if} <PreviewBadge />
       </h2>
       <CloseButton label="Close" on:click={() => dispatch("close")} />
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 pt-2">
+      <p class="mb-1 text-xs text-base-content/70">{TOPICS_PREVIEW_NOTE}</p>
       {#if queue}
         <p class="text-xs text-base-content/70" data-testid="coverage-line">{coverageLine(queue.coverage)}</p>
         <p class="mt-0.5 text-xs text-base-content/50">{COVERAGE_LIMITS}</p>

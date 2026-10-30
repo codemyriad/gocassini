@@ -5,13 +5,23 @@ was about. A person confirms or rejects every suggestion; only a confirm writes
 a tag into the recording. This page is for the administrator who runs it. The
 design is in [proposals/automatic-tagging](./proposals/automatic-tagging/README.md).
 
-> **Status.** Topics are suggested on the meeting page and in a review queue,
-> and recurring themes no topic covers are proposed as new topics. On English
-> meetings, measured against labelled meetings, about 3 suggestions in 4 are
-> right and about 3 in 5 of the topics a meeting is about are found
-> ([evaluation](./proposals/automatic-tagging/evaluation.md), Gate 2). The
-> labels came from two model labellers, not people. Suggestions on meetings in
-> other languages say that their language is not validated.
+> **Status: preview.** Topics are suggested on the meeting page and in a
+> review queue, and recurring themes no topic covers are proposed as new
+> topics. Each of these, and the Settings card, is marked **Preview** and
+> carries the line "Topic suggestions are a preview. They can be wrong or miss
+> topics, and have been tested on English meetings only." (on the meeting page,
+> in each suggestion's details). On English meetings, measured against
+> labelled meetings, about 3 suggestions in 4 are right and about 3 in 5 of
+> the topics a meeting is about are found
+> ([evaluation](./proposals/automatic-tagging/evaluation.md), Gate 2). It
+> stays a preview because:
+>
+> - the labels came from two model labellers, not people, so nobody has yet
+>   checked what those numbers are worth;
+> - English is the only validated language. Suggestions on meetings in other
+>   languages say that their language is not validated;
+> - it has run only on amd64 servers, on the CPU. arm64 and the CUDA image are
+>   not tested.
 
 ## Words used on this page
 
@@ -31,13 +41,13 @@ select several (up to 100) and **Confirm selected**: each meeting is decided
 exactly as it would be on its own page. From the keyboard, the arrows move
 between meetings, Space selects, C confirms and R says "not this meeting".
 
-The queue opens with one line of coverage, for example "Checked 112 of the
-130 meetings you can see · 12 waiting · 6 could not be checked (no
-transcript) · 9 in languages not yet validated", and its limits: a missing
-suggestion does not mean the topic was absent. List rows carry a dashed
-"2 suggested" badge. Tag filters and search never match a suggestion. Like
-search, the queue lists the meetings your current shares let you read; opening
-or deciding one checks your access to that recording again.
+The queue opens with the preview line, then one line of coverage, for
+example "Checked 112 of the 130 meetings you can see · 12 waiting · 6 could
+not be checked (no transcript) · 9 in languages not yet validated", and its
+limits: a missing suggestion does not mean the topic was absent. List rows
+carry a dashed "2 suggested" badge. Tag filters and search never match a
+suggestion. Like search, the queue lists the meetings your current shares let
+you read; opening or deciding one checks your access to that recording again.
 
 ## Describing topics
 
@@ -91,8 +101,8 @@ Cassini suggests for it, with a dashed outline. Opening one shows:
   time; a click plays from there. While it is open, those passages are
   underlined with dots in the transcript;
 - "Suggested from the transcript. Not saved to the recording until someone
-  confirms it.", and, until the meeting's language has been validated,
-  "Suggestions have not been checked for this meeting's language."
+  confirms it.", the preview line, and, until the meeting's language has been
+  validated, "Suggestions have not been checked for this meeting's language."
 
 **Confirm** writes the topic into the recording as an ordinary tag on the
 whole meeting, credited to you, exactly as if you had added it yourself. Where
@@ -151,7 +161,8 @@ that remain; one left with fewer than three meetings is dropped.
    download. Offline hosts can use `cassini models pack` and `cassini models
    import`.
 2. Turn on **Suggest topics after each meeting**. The switch stays disabled
-   until the model's check passes.
+   until the model's check passes. The preview line above it says what to
+   expect.
 3. Optionally, **Check past meetings**, with a start date if you want only the
    recent ones. Switching suggestions on does not do this by itself, because it
    costs about 10 s of CPU per meeting on a host shared with Nextcloud and Talk.
