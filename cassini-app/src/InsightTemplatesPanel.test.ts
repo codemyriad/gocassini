@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import insightTemplatesPanelSource from "./InsightTemplatesPanel.svelte?raw";
-import { asksProblem, placeholderProblem, shortHash, templateIdFromName } from "./InsightTemplatesPanel.svelte";
+import { promptProblem, shortHash, templateIdFromName } from "./InsightTemplatesPanel.svelte";
 import { OperatorClient, runnableWorkflows } from "./operator/client";
 
 afterEach(() => {
@@ -29,7 +29,6 @@ describe("insight template registry", () => {
         version: "v0",
         sha256: "eba6bd6674d35522dddbd774d3fc6a1fbcdab025aa30a5993d49216d0c13f59f",
         name: "Meeting summary",
-        question: "Summarise what happened, what was decided, and what follows.",
         description: "One document per meeting in a fixed shape.",
         origin: "Built in",
         instruction: "You are a meeting-summary editor.",
@@ -175,20 +174,24 @@ describe("template id from a name", () => {
   });
 });
 
-describe("the question checkbox", () => {
-  it("requires {{QUESTION}} in the prompt when ticked, and its absence when not", () => {
-    expect(placeholderProblem(true, "Answer {{QUESTION}} from the transcripts.")).toBe("");
-    expect(placeholderProblem(false, "List the risks.")).toBe("");
-    expect(placeholderProblem(true, "List the risks.")).toContain("Put {{QUESTION}} in the prompt");
-    expect(placeholderProblem(false, "Answer {{QUESTION}}.")).toContain("Tick the box");
+describe("the prompt check", () => {
+  it("allows {{QUESTION}}, which is how a template asks for a question", () => {
+    expect(promptProblem("Answer {{QUESTION}} from the transcripts.")).toBe("");
+    expect(promptProblem("List the risks.")).toBe("");
   });
 
-  it("asks for a one-line 'What it asks' only when the template has no question box", () => {
-    // The recorder's rule: an empty question is the one that takes the
-    // person's, so an unticked template has to say what it asks.
-    expect(asksProblem(false, "")).not.toBe("");
-    expect(asksProblem(false, "List the risks.")).toBe("");
-    expect(asksProblem(true, "")).toBe("");
+  it("refuses {{TEMPLATE}}, which a custom template has no place for", () => {
+    expect(promptProblem("List the risks.\n\n{{TEMPLATE}}")).toContain("no place for {{TEMPLATE}}");
+  });
+
+  it("has three fields, Name, Description and Prompt, and no question checkbox", () => {
+    expect(insightTemplatesPanelSource).toContain('<span class="op-field-label">Name</span>');
+    expect(insightTemplatesPanelSource).toContain('<span class="op-field-label">Description</span>');
+    expect(insightTemplatesPanelSource).toContain('<span class="op-field-label">Prompt</span>');
+    expect(insightTemplatesPanelSource.match(/class="op-field-label"/g)).toHaveLength(3);
+    expect(insightTemplatesPanelSource).not.toContain('type="checkbox"');
+    expect(insightTemplatesPanelSource).not.toContain("What it asks");
+    expect(insightTemplatesPanelSource).not.toContain("What comes back");
   });
 });
 
@@ -210,7 +213,6 @@ describe("insight template writes", () => {
 
     const saved = await client.saveInsightTemplate("resumen", {
       name: "Resumen",
-      question: "Q",
       description: "",
       instruction: "I",
     });
@@ -219,7 +221,7 @@ describe("insight template writes", () => {
     expect(saved.version).toBe("v1");
     expect(calls[0][0]).toBe("https://operator.test/settings/workflows/resumen");
     expect(calls[0][1]?.method).toBe("PUT");
-    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ name: "Resumen", question: "Q", description: "", instruction: "I" });
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ name: "Resumen", description: "", instruction: "I" });
     expect(calls[1][0]).toBe("https://operator.test/settings/workflows/resumen");
     expect(calls[1][1]?.method).toBe("DELETE");
   });
@@ -229,7 +231,6 @@ describe("insight template writes", () => {
     await expect(
       new OperatorClient("https://operator.test").saveInsightTemplate("x", {
         name: "",
-        question: "",
         description: "",
         instruction: "I",
       }),

@@ -67,12 +67,13 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("workflows[0].id");
   });
 
-  it("shows what the chosen template will ask, and nothing about it twice", () => {
-    // The name says nothing about what the model is asked to do, so the
-    // question is the affordance. The registry's description restated it in
-    // other words, which is a second sentence about one thing.
-    expect(generateCardSource).toContain("chosenWorkflowEntry.question");
-    expect(generateCardSource).not.toContain("chosenWorkflowEntry.description");
+  it("shows what the chosen template does, in its one description", () => {
+    // The name says nothing about what the model is asked to do; the
+    // description does, for a built-in and a custom template alike. There is
+    // no separate "what it asks" line any more.
+    expect(generateCardSource).toContain("{#if chosenWorkflowEntry?.description}");
+    expect(generateCardSource).toContain("{chosenWorkflowEntry.description}");
+    expect(generateCardSource).not.toContain("chosenWorkflowEntry.question");
   });
 
   it("folds the provider and model away, under what they are set to", () => {

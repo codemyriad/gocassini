@@ -369,8 +369,8 @@ describe("the template list everybody reads (D-819)", () => {
       async () =>
         new Response(
           JSON.stringify([
-            { id: "summarise", name: "Meeting summary", question: "Summarise.", description: "d", takesQuestion: false, origin: "Built in" },
-            { id: "pregunta", name: "Pregunta", question: "", description: "", takesQuestion: true, origin: "Custom" },
+            { id: "summarise", name: "Meeting summary", description: "d", takesQuestion: false, origin: "Built in" },
+            { id: "pregunta", name: "Pregunta", description: "", takesQuestion: true, origin: "Custom" },
             { id: "", name: "no id" },
           ]),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -382,7 +382,7 @@ describe("the template list everybody reads (D-819)", () => {
       expect.objectContaining({ method: "GET", cache: "no-store" }),
     );
     expect(choices.map((c) => c.id)).toEqual(["summarise", "pregunta"]);
-    expect(choices[1]).toEqual({ id: "pregunta", name: "Pregunta", question: "", description: "", takesQuestion: true, origin: "Custom" });
+    expect(choices[1]).toEqual({ id: "pregunta", name: "Pregunta", description: "", takesQuestion: true, origin: "Custom" });
   });
 
   it("raises a failed listing with what the operator said", async () => {

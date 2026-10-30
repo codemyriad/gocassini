@@ -7,17 +7,17 @@ import "./app.css";
 
 type Row = Record<string, string>;
 
-const builtIn = (id: string, name: string, question: string, instruction: string): Row => ({
-  id, name, question, instruction,
-  version: "v0", sha256: `${id}-sha`, description: `${name} description`, origin: "Built in",
+const builtIn = (id: string, name: string, description: string, instruction: string): Row => ({
+  id, name, description, instruction,
+  version: "v0", sha256: `${id}-sha`, origin: "Built in",
 });
-const custom = (id: string, name: string, question: string, instruction: string): Row => ({
-  ...builtIn(id, name, question, instruction), version: "v1", origin: "Custom",
+const custom = (id: string, name: string, description: string, instruction: string): Row => ({
+  ...builtIn(id, name, description, instruction), version: "v1", origin: "Custom",
 });
 
 const BUILT_INS = [
-  builtIn("summarise", "Meeting summary", "Summarise what happened.", "You are a meeting-summary editor."),
-  builtIn("ask", "Ask your own question", "", "Answer {{QUESTION}} from the transcripts."),
+  builtIn("summarise", "Meeting summary", "Summarises what happened.", "You are a meeting-summary editor."),
+  builtIn("ask", "Ask your own question", "Answers a question you type.", "Answer {{QUESTION}} from the transcripts."),
 ];
 
 let rows: Row[] = [];
@@ -40,7 +40,7 @@ beforeEach(() => {
     if (init?.method === "PUT") {
       const body = JSON.parse(String(init.body)) as Record<string, string>;
       puts.push({ id, body });
-      const saved = custom(id, body.name, body.question, body.instruction);
+      const saved = custom(id, body.name, body.description, body.instruction);
       rows = [...rows.filter((row) => row.id !== id), saved];
       return Response.json(saved);
     }
@@ -80,7 +80,7 @@ describe("insight templates panel in the browser", () => {
   });
 
   it("collapses built-ins when a custom template exists, and lists it first", async () => {
-    rows = [...BUILT_INS, custom("resumen", "Resumen", "Resume la reunión.", "Resume.")];
+    rows = [...BUILT_INS, custom("resumen", "Resumen", "Un resumen en español.", "Resume.")];
     mountPanel();
     await expect.element(page.getByRole("heading", { name: "Resumen" })).toBeVisible();
     await expect.element(builtInToggle()).toHaveAttribute("aria-expanded", "false");
@@ -99,7 +99,7 @@ describe("insight templates panel in the browser", () => {
     const builtInHeading = builtInToggle().element();
     expect(formEl.compareDocumentPosition(builtInHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await expect.element(page.getByLabelText("Name")).toHaveValue("Meeting summary (copy)");
-    await expect.element(page.getByLabelText("What it asks")).toHaveValue("Summarise what happened.");
+    await expect.element(page.getByLabelText("Description")).toHaveValue("Summarises what happened.");
     // No id to type, and no file line until it exists.
     expect(page.getByText("File:", { exact: false }).all()).toHaveLength(0);
 
@@ -108,46 +108,61 @@ describe("insight templates panel in the browser", () => {
     expect(puts[0].id).toBe("meeting-summary-copy");
     expect(puts[0].body).toEqual({
       name: "Meeting summary (copy)",
-      question: "Summarise what happened.",
-      description: "Meeting summary description",
+      description: "Summarises what happened.",
       instruction: "You are a meeting-summary editor.",
     });
     await expect.element(page.getByRole("heading", { name: "Meeting summary (copy)" })).toBeVisible();
   });
 
-  it("checks the question box against {{QUESTION}} before saving, and writes an empty question when ticked", async () => {
+  it("shows Name, Description and Prompt with their hints, and no question checkbox", async () => {
+    mountPanel();
+    await page.getByRole("button", { name: "New template" }).click();
+    await expect.element(page.getByText("What people pick it by.")).toBeVisible();
+    await expect.element(page.getByText("Shown to the person choosing it, so they know what it does.")).toBeVisible();
+    await expect.element(page.getByText("The instruction the model receives, together with the transcripts.")).toBeVisible();
+    await expect
+      .element(page.getByText("where a question should go, and people will be asked for one when they pick this template.", { exact: false }))
+      .toBeVisible();
+    expect(page.getByRole("checkbox").all()).toHaveLength(0);
+    const labels = [...document.querySelectorAll("form .op-field-label")].map((el) => el.textContent?.trim());
+    expect(labels).toEqual(["Name", "Description", "Prompt"]);
+  });
+
+  it("saves a template with {{QUESTION}} in its prompt and an empty description", async () => {
     mountPanel();
     await page.getByRole("button", { name: "New template" }).click();
     await expect.element(page.getByLabelText("Prompt")).toHaveAttribute("placeholder", expect.stringContaining("Markdown"));
     await page.getByLabelText("Name").fill("Summarise");
     await page.getByLabelText("Prompt").fill("Answer {{QUESTION}} briefly.");
-    await expect.element(page.getByText("The prompt has {{QUESTION}} in it.", { exact: false })).toBeVisible();
-
-    await page.getByLabelText("What it asks").fill("Something");
-    await page.getByRole("checkbox", { name: "Asks the person for a question" }).click();
-    await expect.element(page.getByLabelText("What it asks")).toBeDisabled();
-    await expect.element(page.getByLabelText("What it asks")).toHaveValue("");
-    expect(page.getByText("The prompt has {{QUESTION}} in it.", { exact: false }).all()).toHaveLength(0);
-
     await page.getByRole("button", { name: "Save" }).click();
     await expect.poll(() => puts.length).toBe(1);
     // "summarise" is a built-in, so the derived id is numbered.
     expect(puts[0].id).toBe("summarise-2");
-    expect(puts[0].body.question).toBe("");
+    expect(puts[0].body).toEqual({ name: "Summarise", description: "", instruction: "Answer {{QUESTION}} briefly." });
   });
 
-  it("refuses an unticked template with nothing in What it asks, without calling the operator", async () => {
+  it("duplicates the built-in that takes a question, placeholder and all", async () => {
+    mountPanel();
+    expect(page.getByText("cannot be duplicated", { exact: false }).all()).toHaveLength(0);
+    await page.getByRole("button", { name: "Duplicate" }).nth(1).click();
+    await expect.element(page.getByLabelText("Prompt")).toHaveValue("Answer {{QUESTION}} from the transcripts.");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => puts.length).toBe(1);
+    expect(puts[0].body.instruction).toContain("{{QUESTION}}");
+  });
+
+  it("refuses {{TEMPLATE}} in the prompt without calling the operator", async () => {
     mountPanel();
     await page.getByRole("button", { name: "New template" }).click();
     await page.getByLabelText("Name").fill("Risks");
-    await page.getByLabelText("Prompt").fill("List the risks.");
+    await page.getByLabelText("Prompt").fill("List the risks.\n\n{{TEMPLATE}}");
+    await expect.element(page.getByText("A custom template has no place for {{TEMPLATE}}.", { exact: false })).toBeVisible();
     await page.getByRole("button", { name: "Save" }).click();
-    await expect.element(page.getByText("Say in one sentence what it asks", { exact: false })).toBeVisible();
     expect(puts).toHaveLength(0);
   });
 
   it("edits a custom template under its own id and shows the operator's reason for refusing a delete", async () => {
-    rows = [...BUILT_INS, custom("resumen", "Resumen", "Resume la reunión.", "Resume.")];
+    rows = [...BUILT_INS, custom("resumen", "Resumen", "Un resumen en español.", "Resume.")];
     deleteRefusal = "resumen is the configured summary template";
     mountPanel();
     await page.getByRole("button", { name: "Edit", exact: true }).click();

@@ -297,7 +297,6 @@ export interface StorageStatus {
 // operator's to bump, so it is not part of the request.
 export interface InsightTemplateDraft {
   name: string;
-  question: string;
   description: string;
   instruction: string;
 }
@@ -311,10 +310,10 @@ export interface InsightWorkflow {
   // document a month old can be traced to the prompt that made it.
   sha256: string;
   name: string;
-  // What this workflow asks of a set of meetings, in a person's words. The
-  // name says nothing about what the model is asked to do, so this is what a
-  // row discloses under it.
-  question: string;
+  // One sentence for the person choosing it: what it does and what comes
+  // back. Built-ins and custom templates have the same three visible parts,
+  // name, description and prompt; whether one asks for a question is read off
+  // the instruction's {{QUESTION}} slot, never declared.
   description: string;
   // Where the bytes came from — "Built in" for everything shipped in the
   // image, "Custom" for a template file on the app's volume (D-819). Derived

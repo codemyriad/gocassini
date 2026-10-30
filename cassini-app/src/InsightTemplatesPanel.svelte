@@ -40,23 +40,15 @@
     return candidate;
   }
 
-  // The recorder's rule, said before Save rather than after: a template that
-  // asks for a question has {{QUESTION}} in its prompt, and one that does not
-  // has none (and then says what it asks instead).
-  export function placeholderProblem(asksQuestion: boolean, prompt: string): string {
-    const has = prompt.includes(QUESTION_PLACEHOLDER);
-    if (asksQuestion && !has) {
-      return `Put ${QUESTION_PLACEHOLDER} in the prompt where the person's question should go, or untick the box.`;
-    }
-    if (!asksQuestion && has) {
-      return `The prompt has ${QUESTION_PLACEHOLDER} in it. Tick the box, or take ${QUESTION_PLACEHOLDER} out of the prompt.`;
-    }
-    return "";
-  }
+  export const TEMPLATE_PLACEHOLDER = "{{TEMPLATE}}";
 
-  export function asksProblem(asksQuestion: boolean, asks: string): string {
-    return !asksQuestion && asks.trim() === ""
-      ? "Say in one sentence what it asks, or tick the box above if people bring their own question."
+  // The recorder's rule, said before Save rather than after: a custom template
+  // is written in its final form, so it has no {{TEMPLATE}} splice. A prompt
+  // with {{QUESTION}} in it is fine: that is how a template asks for a
+  // question, built in or custom.
+  export function promptProblem(prompt: string): string {
+    return prompt.includes(TEMPLATE_PLACEHOLDER)
+      ? `A custom template has no place for ${TEMPLATE_PLACEHOLDER}. Write the shape of the document into the prompt instead.`
       : "";
   }
 </script>
@@ -79,6 +71,7 @@
   import { createEventDispatcher, onMount, tick } from "svelte";
   import { ChevronRight, FileText, Plus, RefreshCw } from "@lucide/svelte";
   import { OperatorClient } from "./operator/client";
+  import { workflowTakesQuestion } from "./insights/client";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import type { InsightTemplateDraft, InsightWorkflow } from "./operator/types";
 
@@ -116,16 +109,13 @@
   // after that, because documents and settings name it by the id.
   type Draft = {
     name: string;
+    description: string;
     prompt: string;
-    asksQuestion: boolean;
-    asks: string;
-    returns: string;
   };
   type Editor = { key: string; id: string | null; from: string; draft: Draft };
   const NEW_KEY = "new";
   let editor: Editor | null = null;
   let editorEl: HTMLFormElement | null = null;
-  let attempted = false;
   let saving = false;
   let saveError = "";
   let pendingDelete = "";
@@ -189,14 +179,7 @@
   $: builtIns = workflows.filter((workflow) => !isCustom(workflow));
 
   function draftOf(workflow: InsightWorkflow, name: string): Draft {
-    const asksQuestion = workflow.instruction.includes(QUESTION_PLACEHOLDER);
-    return {
-      name,
-      prompt: workflow.instruction,
-      asksQuestion,
-      asks: asksQuestion ? "" : workflow.question,
-      returns: workflow.description,
-    };
+    return { name, description: workflow.description, prompt: workflow.instruction };
   }
 
   function newTemplate(): Editor {
@@ -204,7 +187,7 @@
       key: NEW_KEY,
       id: null,
       from: "",
-      draft: { name: "", prompt: "", asksQuestion: false, asks: "", returns: "" },
+      draft: { name: "", description: "", prompt: "" },
     };
   }
 
@@ -218,7 +201,6 @@
 
   async function openEditor(next: Editor) {
     editor = next;
-    attempted = false;
     saveError = "";
     pendingDelete = "";
     await tick();
@@ -226,43 +208,18 @@
     editorEl?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
   }
 
-  function setAsksQuestion(checked: boolean) {
-    if (!editor) {
-      return;
-    }
-    editor.draft.asksQuestion = checked;
-    if (checked) {
-      editor.draft.asks = "";
-    }
-  }
-
-  $: promptProblem =
-    editor && editor.draft.prompt.trim() !== ""
-      ? placeholderProblem(editor.draft.asksQuestion, editor.draft.prompt)
-      : "";
-  $: asksFieldProblem = editor && attempted ? asksProblem(editor.draft.asksQuestion, editor.draft.asks) : "";
+  $: editorProblem = editor ? promptProblem(editor.draft.prompt) : "";
   $: editorFilled = editor !== null && editor.draft.name.trim() !== "" && editor.draft.prompt.trim() !== "";
 
   function toRequest(draft: Draft): InsightTemplateDraft {
-    // The file format keeps its own convention — an empty question is the one
-    // that takes the person's — and the checkbox writes it.
-    return {
-      name: draft.name,
-      question: draft.asksQuestion ? "" : draft.asks,
-      description: draft.returns,
-      instruction: draft.prompt,
-    };
+    return { name: draft.name, description: draft.description, instruction: draft.prompt };
   }
 
   async function save() {
     if (!client || !editor || !editorFilled) {
       return;
     }
-    attempted = true;
-    if (
-      placeholderProblem(editor.draft.asksQuestion, editor.draft.prompt) ||
-      asksProblem(editor.draft.asksQuestion, editor.draft.asks)
-    ) {
+    if (promptProblem(editor.draft.prompt)) {
       return;
     }
     const id =
@@ -351,6 +308,11 @@
         <span class="tpl-hint">What people pick it by.</span>
       </label>
       <label class="op-field">
+        <span class="op-field-label">Description</span>
+        <input class="op-input" type="text" bind:value={editor.draft.description} maxlength="500" autocomplete="off" />
+        <span class="tpl-hint">Shown to the person choosing it, so they know what it does.</span>
+      </label>
+      <label class="op-field">
         <span class="op-field-label">Prompt</span>
         <textarea
           class="op-input tpl-textarea"
@@ -359,47 +321,14 @@
           spellcheck="false"
           placeholder={PROMPT_EXAMPLE}
         ></textarea>
+        <span class="tpl-hint">The instruction the model receives, together with the transcripts.</span>
         <span class="tpl-hint">
-          The instruction the model receives, together with the transcripts. Put <code>{"{{QUESTION}}"}</code> where
-          the person's own question should go, if you tick the box below.
+          Put <code>{QUESTION_PLACEHOLDER}</code> where a question should go, and people will be asked for one when they
+          pick this template.
         </span>
-      </label>
-      <div class="op-field">
-        <label class="tpl-check">
-          <input
-            type="checkbox"
-            checked={editor.draft.asksQuestion}
-            on:change={(event) => setAsksQuestion(event.currentTarget.checked)}
-          />
-          <span class="op-field-label">Asks the person for a question</span>
-        </label>
-        <span class="tpl-hint">Shows a question box when someone picks this template.</span>
-        {#if promptProblem}
-          <span class="tpl-hint tpl-hint-bad" role="alert">{promptProblem}</span>
+        {#if editorProblem}
+          <span class="tpl-hint tpl-hint-bad" role="alert">{editorProblem}</span>
         {/if}
-      </div>
-      <label class="op-field">
-        <span class="op-field-label">What it asks</span>
-        <input
-          class="op-input"
-          type="text"
-          bind:value={editor.draft.asks}
-          maxlength="500"
-          disabled={editor.draft.asksQuestion}
-        />
-        <span class="tpl-hint">
-          One sentence shown to the person choosing it, e.g. 'List the commitments and who owns them.'
-        </span>
-        {#if asksFieldProblem}
-          <span class="tpl-hint tpl-hint-bad" role="alert">{asksFieldProblem}</span>
-        {/if}
-      </label>
-      <label class="op-field">
-        <span class="op-field-label">What comes back</span>
-        <input class="op-input" type="text" bind:value={editor.draft.returns} maxlength="500" />
-        <span class="tpl-hint">
-          The document shape, e.g. 'What each person committed to, plus anything unassigned.'
-        </span>
       </label>
       {#if editor.id !== null}
         <!-- Not editable: the file name is what `cassini insight run
@@ -475,13 +404,13 @@
         <code>{workflow.id}.md</code> cannot run: {workflow.error}
       </p>
     {:else}
-      <!-- The question is the affordance: it says what the template asks,
-           and opening it says how it asks for it. A template with no
-           question of its own (the asker's) opens on a plain label. -->
+      <!-- Name, description and prompt: the same three parts for a built-in
+           and a custom template. Whether it asks for a question is read off
+           the prompt's {{QUESTION}} slot, the same bytes the operator reads. -->
       <details class="tpl-prompt">
         <summary class="tpl-toggle">
           <span class="tpl-chev" aria-hidden="true"></span>
-          {#if workflow.question}“{workflow.question}”{:else}Asks the person for a question{/if}
+          Prompt{#if workflowTakesQuestion(workflow)}<span class="tpl-hint"> · asks for a question</span>{/if}
         </summary>
         <div class="tpl-body">
           <pre class="tpl-instruction">{workflow.instruction}</pre>
@@ -763,12 +692,6 @@
     margin: 0;
     font-size: 13.5px;
     font-weight: 600;
-  }
-  .tpl-check {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
   }
   .tpl-file {
     margin: 0;

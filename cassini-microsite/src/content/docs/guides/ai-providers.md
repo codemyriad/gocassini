@@ -106,15 +106,14 @@ An insight asks one question of several meetings and keeps the answer.
    the app says how many to unpick if you go over.
 2. **Open Prepare context**, and pick the Generate card.
 3. **Choose a template**, and the provider and model that will answer. Choosing a
-   template shows the question it puts to the meetings and the shape of the
-   document that comes back. One shipped template, **Ask your own question**,
-   takes a question you type: the answer in at most three sentences, the
-   evidence with who said what, and what these meetings do not answer.
+   template shows its description: what it does and what comes back. A template
+   whose prompt has a place for a question, such as the shipped **Ask your own
+   question**, also shows a question box for you to type into.
 
    Picking the template and the provider is offered to everyone, not only
    administrators: what to ask and which of the configured endpoints sees your
    transcripts are the asker's decisions. The template list carries each
-   template's name and what it asks, not its instruction, and the provider list
+   template's name and description, not its instruction, and the provider list
    carries each endpoint's name and nothing more. Administrators also get an
    **Edit templates** link to change them.
 4. **Press Generate.** The run appears at the top of the Browse list as
@@ -155,12 +154,14 @@ one, and **Duplicate** on any template, built-in or your own, starts a copy of
 it there (for example, to write the summary in Spanish). Each template has:
 
 - **Name**: what people pick it by.
+- **Description**: one line shown to the person choosing it, so they know what
+  it does. It can be left empty.
 - **Prompt**: the instruction the model receives, together with the transcripts.
-- **Asks the person for a question**: tick it for a template that shows a
-  question box, and put `{{QUESTION}}` in the prompt where the question goes.
-- **What it asks**: one sentence shown to the person choosing it (only when the
-  box is not ticked).
-- **What comes back**: the shape of the document it writes.
+
+Built-in templates have the same three parts. A template takes a question when
+its prompt contains `{{QUESTION}}`: put it where the question should go, and
+people are asked for one when they pick the template. That is the only input a
+template can ask for so far.
 
 The file name is made from the name when the template is first saved and stays
 the same after that; the editor shows it as **File**. It is what

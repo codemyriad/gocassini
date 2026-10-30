@@ -24,7 +24,7 @@
   //
   // The TEMPLATE picker is for everybody too (D-819). It reads
   // `operator/insights/workflows`, a USER route carrying each template's name,
-  // question and whether it takes one — never the instruction, which stays on
+  // description and whether it takes a question — never the instruction, which stays on
   // the ADMIN settings route. Only an administrator is offered "Edit templates".
   //
   // The PROVIDER picker is for everybody. Choosing which of the configured
@@ -370,10 +370,15 @@
           <a class="link link-primary text-xs tpl-edit-link" href={templatesUrl()} on:click={openTemplates}>Edit templates</a>
         {/if}
 
+        {#if chosenWorkflowEntry?.description}
+          <!-- What the template does and what comes back, in one sentence:
+               the name alone says nothing about what the model is asked. -->
+          <p class="tpl-description">{chosenWorkflowEntry.description}</p>
+        {/if}
         {#if questionAccepted}
-          <!-- The template whose question is yours. Offered only by one with
-               somewhere to put it, so a box that appears is a box the operator
-               will accept. -->
+          <!-- A template whose prompt has a {{QUESTION}} slot takes yours.
+               Offered only by one with somewhere to put it, so a box that
+               appears is a box the operator will accept. -->
           <label class="tpl-field">
             <span>Question</span>
             <textarea
@@ -383,15 +388,6 @@
               bind:value={question}
             ></textarea>
           </label>
-        {:else if chosenWorkflowEntry}
-          <!-- What this template asks, and what comes back. The question is the
-               affordance — the name says nothing about what the model is asked
-               to do — so it carries the weight, and the shape of the document
-               reads under it. -->
-          <!-- Quoted and inset: it is what the template will actually ask,
-               not a note about it. The registry's own description said the
-               same thing a second time, so it is gone. -->
-          <p class="tpl-question">{chosenWorkflowEntry.question}</p>
         {/if}
 
         {@render nameField()}
@@ -608,9 +604,8 @@
     line-height: 1.5;
   }
 
-  /* The question carries the weight: it is what the template will actually
-     ask, so it is set as the quotation it is. */
-  .tpl-question {
+  /* Inset under the picker: it says what the chosen template does. */
+  .tpl-description {
     padding: 8px 12px 8px 11px;
     background-color: var(--color-base-200);
     border-left: 2px solid color-mix(in oklch, var(--color-base-content) 30%, transparent);

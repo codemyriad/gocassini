@@ -615,7 +615,6 @@ function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {
       version: asString(item.version),
       sha256: asString(item.sha256),
       name: asString(item.name),
-      question: asString(item.question),
       description: asString(item.description),
       origin: asString(item.origin),
       instruction: asString(item.instruction),

@@ -142,12 +142,11 @@ export async function listAIProviderModels(
 
 // InsightTemplateChoice is one template as somebody choosing between them sees
 // it: `GET operator/insights/workflows`, USER-readable (D-819). A name, what it
-// asks, whether it asks for a question, and never the instruction it sends:
+// does, whether it asks for a question, and never the instruction it sends:
 // those bytes stay on the ADMIN settings route.
 export interface InsightTemplateChoice {
   id: string;
   name: string;
-  question: string;
   description: string;
   takesQuestion: boolean;
   origin: string;
@@ -185,7 +184,6 @@ export async function listInsightTemplates(
       choices.push({
         id: entry.id,
         name: typeof entry.name === "string" && entry.name !== "" ? entry.name : entry.id,
-        question: typeof entry.question === "string" ? entry.question : "",
         description: typeof entry.description === "string" ? entry.description : "",
         takesQuestion: entry.takesQuestion === true,
         origin: typeof entry.origin === "string" ? entry.origin : "",
@@ -274,9 +272,9 @@ const QUESTION_PLACEHOLDER = "{{QUESTION}}";
 // asks this before it offers the box (D-700).
 //
 // One shipped workflow carries the placeholder — `ask`, "Ask your own question",
-// registered in internal/insight/workflows/workflows.go — so the box appears for
-// it and for nothing else. A workflow added later that takes a question shows
-// the box on its own rather than waiting for this file to be edited.
+// registered in internal/insight/workflows/workflows.go — and so does any
+// custom template whose prompt has it (D-819), so the box appears for exactly
+// those, without this file being edited.
 //
 // The names-only list everybody reads (D-819) carries no instruction, so it
 // carries the operator's answer to the same question, read off the same bytes.

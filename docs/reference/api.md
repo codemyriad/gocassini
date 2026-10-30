@@ -415,10 +415,11 @@ A failure is never an empty `200`.
 The templates a run can name. Built-in ones are compiled into the recorder;
 custom ones are `<id>.md` files in the templates directory on the app's volume
 (`operator/templates` under `APP_PERSISTENT_STORAGE`, or `--templates-root` /
-`CASSINI_TEMPLATES_DIR`). Each file is front matter (`name`, `question`,
-`description`, `version`) and the instruction as the body; an empty `question`
-means the template takes the caller's, which the instruction then carries as
-`{{QUESTION}}`.
+`CASSINI_TEMPLATES_DIR`). Each file is front matter (`name`, `description`,
+`version`) and the instruction as the body. A template takes the caller's
+question when its instruction carries `{{QUESTION}}`, built in or custom, and
+only then; there is no other input yet. A custom file with a `question` key, or
+with `{{TEMPLATE}}` in its body, is listed as broken.
 
 ```http
 GET /operator/insights/workflows                 (USER)
@@ -428,16 +429,16 @@ DELETE /operator/settings/workflows/<id>         (ADMIN)
 ```
 
 - `GET /operator/insights/workflows` is what anybody generating an insight
-  picks from: `id`, `name`, `question`, `description`, `takesQuestion` and
-  `origin` for each template that can run, and never the instruction. It is
+  picks from: `id`, `name`, `description`, `takesQuestion` and `origin` for each template that can run, and never the instruction. It is
   sent `Cache-Control: no-store`
 
 - `GET` mirrors `cassini insight workflows --json`: `id`, `version`, `sha256`,
-  `name`, `question`, `description`, `origin` (`Built in` or `Custom`) and the
+  `name`, `description`, `origin` (`Built in` or `Custom`) and the
   `instruction` the model receives. A custom file that cannot run is listed
   with an `error` and no `sha256`, and a run that names it is a `400` carrying
   that reason
-- `PUT` takes `{"name", "question", "description", "instruction"}`, writes the
+- `PUT` takes `{"name", "description", "instruction"}` (`description` may be
+  empty), writes the
   file with the previous version plus one, and asks the recorder to list it
   again. A file the recorder will not run is put back as it was and the save is
   a `400` with the recorder's reason; otherwise the answer is the saved entry.
