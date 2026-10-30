@@ -166,9 +166,10 @@ template can ask for so far.
 The file name is made from the name when the template is first saved and stays
 the same after that; the editor shows it as **File**. It is what
 `cassini insight run --workflow <id>` and each insight's record call the
-template. **Edit** and **Delete** work on your own templates only. The
-**Built in** list, folded away once you have templates of your own, stays as
-shipped.
+template. **Edit** and **Delete** work on your own templates only, and
+**Built in** templates stay as shipped. Delete asks first; a template that the
+summary or insight step is set to run is not deleted, and the dialog says which
+step to change first.
 
 A save is checked before it is kept: a template that would not run is refused
 with the reason, and the file is left as it was. Every save is a new version, so

@@ -159,7 +159,7 @@ var shipped = []spec{
 		Name:         "Ask your own question",
 		// Whether the app shows a question box comes from the {{QUESTION}} slot
 		// in this entry's bytes (Workflow.TakesQuestion), not from this table.
-		Description: "Answers a question you type, in three sentences, with who said what and what the meetings do not cover.",
+		Description: "Answers a question of your own about the meetings you picked, with who said what and what they leave unanswered.",
 	},
 }
 
