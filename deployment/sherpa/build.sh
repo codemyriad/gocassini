@@ -23,15 +23,19 @@ esac
 if [[ $backend == cuda && ( $(uname -s) != Linux || $(uname -m) != x86_64 ) ]]; then
   echo 'Cassini CUDA packages support x86_64 only.' >&2; exit 1
 fi
-for tool in cmake curl tar sha256sum; do
+tools=(cmake curl tar sha256sum)
+if [[ $backend == cuda ]]; then tools+=(nm readelf); fi
+for tool in "${tools[@]}"; do
   command -v "$tool" >/dev/null || { echo "Missing build prerequisite: $tool" >&2; exit 1; }
 done
-# codemyriad/sherpa-onnx tag v2.0.1-cassini-1: upstream v2.0.1 + #4032 Sortformer
-# + NeMo TDT joiner-size detection + Cassini markers. The source's cmake pins
-# ONNX Runtime 1.28.2 (CUDA: onnxruntime-linux-x64-gpu_cuda12-1.28.2-patched.zip).
+# codemyriad/sherpa-onnx tag v2.0.1-cassini-2: upstream master 935e5ded (v2.0.1
+# + 16 commits) + #4032 Sortformer + NeMo TDT joiner-size detection + Cassini
+# markers + a cudaGetDeviceProperties cache compiled into Linux x86_64 CUDA
+# builds only. The source's cmake pins ONNX Runtime 1.28.2 (CUDA:
+# onnxruntime-linux-x64-gpu_cuda12-1.28.2-patched.zip).
 version=2.0.1
-source_commit=c810dfcf409b2a72a13e9f0ac961ff55473e350d
-source_sha=2812247867348e6f22094fa5dd96097b41bdd33ca0be95d94bafcb0f68c4c12c
+source_commit=deede1786479e265a3116bea2b71aac47113d9fc
+source_sha=44727282e5b206f71a783b2d7d113c973203f81bc65685f56d8c2d446b1b3c62
 # What GetVersion() reports; the recorder and operator read capabilities from it.
 runtime_version=${version}+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2
 fingerprint=$("$here/build.sh" --fingerprint)
@@ -84,7 +88,16 @@ ort=$(find "$build_dir/_deps" -path "*/lib/libonnxruntime.$extension" -print -qu
 if [[ $preinstalled == ON ]]; then ort=$SHERPA_ONNXRUNTIME_LIB_DIR/libonnxruntime.$extension; fi
 if [[ -z $ort ]]; then echo 'Pinned ONNX Runtime library missing from build dependencies' >&2; exit 1; fi
 cp -L "$(dirname "$ort")"/libonnxruntime*."$extension"* "$output/"
-if [[ $backend == cuda ]]; then test -f "$output/libonnxruntime_providers_cuda.so"; fi
+if [[ $backend == cuda ]]; then
+  test -f "$output/libonnxruntime_providers_cuda.so"
+  # The fork's cudaGetDeviceProperties cache (CASSINI.md, patch 4) copies CUDA
+  # 12 structs and its exports also catch other CUDA majors' calls, so it must
+  # sit next to a CUDA 12 provider only.
+  nm -D --defined-only "$output/libsherpa-onnx-c-api.so" | grep -w cudaGetDeviceProperties_v2 >/dev/null \
+    || { echo 'CUDA C API library lacks the cudaGetDeviceProperties cache' >&2; exit 1; }
+  LC_ALL=C readelf -d "$output/libonnxruntime_providers_cuda.so" | grep -F '[libcudart.so.12]' >/dev/null \
+    || { echo 'ONNX Runtime CUDA provider does not import libcudart.so.12; the cache is CUDA 12 only' >&2; exit 1; }
+fi
 printf '%s\n' "$fingerprint" > "$output/cassini-native-inputs.sha256"
 printf 'sherpa=%s\nfrontend=nemo-log-guard\ntdt_joiner=parakeet-tdt-joiner-v1\ndiarization=nemotron-diarization-v2\nonnxruntime=1.28.2\nbackend=%s\nsource_commit=%s\nsource_sha256=%s\n' \
   "$runtime_version" "$backend" "$source_commit" "$source_sha" > "$output/cassini-native-buildinfo.txt"
