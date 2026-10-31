@@ -35,6 +35,7 @@
     type SummaryStatus,
   } from "../viewer/meetingSummary";
   import MeetingTags from "./marking/MeetingTags.svelte";
+  import SuggestedTopics from "./topics/SuggestedTopics.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
   import { createMarksSession, type ApplyAnnotations, type LoadAnnotations, type MarksSession } from "./marking/session";
   import {
@@ -1482,6 +1483,18 @@
   // entries, while missing one a row still renders would drop its words (D-734).
   $: wordPartsByBlock = new Map(displaySegments.map((block) => [block.id, transcriptWordParts(block)]));
   $: timedWords = wordsByTime([...wordPartsByBlock.values()].flat());
+  // The open topic suggestion's evidence, drawn in the transcript.
+  let topicEvidence: { startMs: number; endMs: number }[] = [];
+  // A quote for a suggestion's evidence, from the transcript already loaded.
+  $: quoteRange = (startMs: number, endMs: number): string => {
+    let text = "";
+    for (const part of [...wordPartsByBlock.values()].flat()) {
+      if (part.startMs === undefined || part.startMs < startMs || part.startMs >= endMs) continue;
+      text += (text ? part.prefix || " " : "") + part.text;
+      if (text.length > 220) return text.slice(0, 220).trimEnd() + "…";
+    }
+    return text.trim();
+  };
   $: findStopList = findStops(transcriptIndex, transcriptRows, wordPartsByBlock, transcriptQuery);
   $: activeFollowRowKey = followRowKeyForBlocks(transcriptRows, activeSegments);
   $: continuationKeys = continuationRowKeys(transcriptRows);
@@ -1733,6 +1746,10 @@
           />
         </span>
         <MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />
+        {#if !bundled && dataProvider.loadMeetingSuggestions && dataProvider.decideSuggestion}
+          <SuggestedTopics entry={meeting} provider={dataProvider} quote={quoteRange} seek={seekTo} marksRevision={$marks.annotations?.revision ?? null}
+            on:evidence={(event) => (topicEvidence = event.detail)} on:annotations={(event) => marks.accept(event.detail)} />
+        {/if}
       </div>
     {/if}
     {#if transcriptIndex && transcriptionOnly}
@@ -1882,6 +1899,7 @@
         {selectionRequest}
         selectionHref={ownsHash ? selectionHref : null}
         vocabulary={tagVocabulary}
+        evidence={topicEvidence}
         words={timedWords}
         rows={transcriptRows}
         stops={findStopList}

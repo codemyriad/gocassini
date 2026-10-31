@@ -115,7 +115,9 @@ type Runtime struct {
 	store    *Store
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
-	searchStore     *searchStore
+	searchStore *searchStore
+	// topics runs topic suggestions; nil where they cannot run.
+	topics          *topicsService
 	searchRepair    searchRepairState
 	archiveCoverage archiveCoverageState
 	// meetingMetadata is a disposable description index. Visibility always
@@ -149,9 +151,12 @@ type Runtime struct {
 	// VRAM headroom probe are not safely reservable between concurrent workers.
 	// Serializing here makes the resource check and ensuing launch atomic with
 	// respect to every other build in this operator process.
-	buildExecutionMu              sync.Mutex
-	priorityMu                    sync.Mutex
-	priorityBuildCancel           context.CancelCauseFunc
+	buildExecutionMu sync.Mutex
+	priorityMu       sync.Mutex
+	// priorityCancels holds the cancel of every running build and topic
+	// embed, so a recording that starts can stop them all.
+	priorityCancels               map[uint64]context.CancelCauseFunc
+	priorityNext                  uint64
 	lastRecordFinished            time.Time
 	autoSampleAt                  time.Time
 	autoCanStart, autoCanContinue bool
@@ -246,7 +251,7 @@ type Runtime struct {
 	settingsPath string
 	// settingsWriteMu serializes every read-modify-write of the STT policy
 	// (PUT /settings, the GET refresh from disk, the retired-model
-	// migration), so a writer never saves a copy older than another
+	// migration, PUT /settings/topics), so a writer never saves a copy older than another
 	// writer's. settingsMu only guards the in-memory copy.
 	settingsWriteMu sync.Mutex
 	// LLM policy (D-696): persisted beside the STT policy, guarded the same way
@@ -320,7 +325,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return runBackfillSearch(ctx, args[1:], stdout, stderr)
 		case backfillAnnotationsCommand:
 			return runBackfillAnnotations(ctx, args[1:], stdout, stderr)
+		case topicsEvalCommand:
+			return runTopicsEval(ctx, args[1:], stdout, stderr)
+		case backfillTopicsCommand:
+			return runBackfillTopics(ctx, args[1:], stdout, stderr)
+		case topicsExportCommand:
+			return runTopicsExport(ctx, args[1:], stdout, stderr)
+		case topicsPreviewCommand:
+			return runTopicsPreview(ctx, args[1:], stdout, stderr)
 		}
+		// The topic commands work but are not listed here or in --help while
+		// topic suggestions are an unannounced preview (README "Rollout").
 		fmt.Fprintf(stderr, "unknown command %q (known commands: import-meeting-metadata, %s, %s, %s)\n",
 			args[0], importMeetingCommand, backfillSearchCommand, backfillAnnotationsCommand)
 		return 2
@@ -981,6 +996,11 @@ func (rt *Runtime) Shutdown() {
 			rt.logger.Printf("meeting metadata index close failed: %v", err)
 		}
 	}
+	if rt.topics != nil {
+		if err := rt.topics.vectors.Close(); err != nil {
+			rt.logger.Printf("topic vectors close failed: %v", err)
+		}
+	}
 	if store := rt.annotationReads(); store != nil {
 		if err := store.Close(); err != nil {
 			rt.logger.Printf("annotations index close failed: %v", err)
@@ -1017,6 +1037,10 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// is what the recorder ships, and an exact pattern wins over the prefix
 		// (D-718).
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
+		// Before the /settings/ prefix, which would hand them to the LLM
+		// settings handler (docs/proposals/automatic-tagging).
+		{"/settings/topics", http.HandlerFunc(rt.topicsSettingsHandler)},
+		{"/settings/topics/", http.HandlerFunc(rt.topicsSettingsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},
@@ -1068,6 +1092,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 		root.HandleFunc("/rooms/", exappCfg.roomNameHandler)
 	}
 	annotations := newAnnotationService(rt, exappCfg, logger)
+	// Before retirement recovery, which forgets a retired meeting's vectors.
+	if rt.annotationReads() != nil && rt.topics == nil && rt.ctx != nil {
+		rt.topics = newTopicsService(rt, exappCfg, logger)
+		if rt.topics != nil {
+			rt.topics.startWorker()
+		}
+	}
 	rt.remoteRetentionMu.Lock()
 	rt.remoteRetention = annotations
 	rt.remoteRetentionMu.Unlock()

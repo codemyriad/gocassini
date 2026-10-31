@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -35,6 +36,8 @@ type annotationService struct {
 	// and summaryRewrite says who may replace one (D-814).
 	summaryWrites  *speakerEditLimiter
 	summaryRewrite *summaryRewritePermissions
+	// isAdminFn replaces the Nextcloud admin probe in tests.
+	isAdminFn func(ctx context.Context, caller string) bool
 }
 
 // newAnnotationService returns nil where no mark can be served, as
@@ -110,6 +113,12 @@ func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.deleteMeeting(w, r, caller, meetingID)
+	case resource == "topics":
+		caller, ok := s.caller(w, r)
+		if !ok {
+			return
+		}
+		s.routeTopics(w, r, caller, id)
 	case resource == "meetings" && strings.HasSuffix(id, "/speakers") && !strings.Contains(strings.TrimSuffix(id, "/speakers"), "/"):
 		// Who spoke, as people corrected it (docs/speaker-separation.md).
 		meetingID := strings.TrimSuffix(id, "/speakers")

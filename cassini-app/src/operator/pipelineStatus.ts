@@ -66,12 +66,12 @@ export function speechModelFor(quality: string, device: string): string {
 
 const FINISHED_JOB_STATES = ["ready", "failed", "cancelled"];
 
-// A transcription model being downloaded. Voice separation's download is not
-// one: nothing in the pipeline waits for it.
+// A transcription model being downloaded. The voice separation and topic
+// suggestions downloads are not: nothing in the pipeline waits for them.
 // With a model id, only that model's download counts.
 export function runningDownload(inventory: SpeechModelInventory | null, model?: string): { percent: number | null } | null {
-  const separation = new Set(inventory?.models.filter((m) => m.kind === "diarization").map((m) => m.id));
-  const job: SpeechModelJob | undefined = inventory?.jobs.find((j) => !separation.has(j.model) && (model === undefined || j.model === model) && !FINISHED_JOB_STATES.includes(j.state));
+  const optional = new Set(inventory?.models.filter((m) => m.kind === "diarization" || m.kind === "embedding").map((m) => m.id));
+  const job: SpeechModelJob | undefined = inventory?.jobs.find((j) => !optional.has(j.model) && (model === undefined || j.model === model) && !FINISHED_JOB_STATES.includes(j.state));
   if (!job) return null;
   const { completed_bytes: done, total_bytes: total } = job.progress;
   return { percent: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null };

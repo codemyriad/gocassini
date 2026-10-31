@@ -72,6 +72,15 @@ type statusResponse struct {
 	// recordings per-participant readable is actually there (D-554). It is the
 	// last recorded outcome of provisioning, not a live probe.
 	RecordingsAccess statusRecordingsAccess `json:"recordings_access"`
+	// Topics is topic suggestions' work state, content-free; absent where
+	// they cannot run.
+	Topics *statusTopics `json:"topics,omitempty"`
+}
+
+type statusTopics struct {
+	Enabled bool           `json:"enabled"`
+	Paused  string         `json:"paused,omitempty"`
+	Counts  map[string]int `json:"counts"`
 }
 
 // statusRecordingsAccess answers "can this deployment actually restrict a
@@ -289,6 +298,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	effective := rt.effectiveFor(settings)
 	usable, detail := rt.effectiveComputeStatus(settings, effective.Device)
 	resp := statusResponse{
+		Topics:      rt.topicsStatusBlock(r.Context(), settings.TopicSuggestions.Enabled),
 		Scheduling:  rt.schedulingStatus(),
 		Version:     strings.TrimSpace(os.Getenv(envAppVersion)),
 		VCSRevision: buildVCSRevision(),

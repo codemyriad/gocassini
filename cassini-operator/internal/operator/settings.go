@@ -44,11 +44,14 @@ type STTSettings struct {
 	// recogniser so it gets the name RIGHT next time (D-726), while these find
 	// the recordings where it already got it wrong. An operator needs both, and
 	// only ever learns the variants by reading a transcript.
-	SearchAliases       [][]string `json:"search_aliases,omitempty"`
-	Source              string     `json:"source"` // "auto" | "user"
-	HardwareFingerprint string     `json:"hardware_fingerprint"`
-	DetectedGPU         bool       `json:"detected_gpu"`
-	Cores               int        `json:"cores"`
+	SearchAliases [][]string `json:"search_aliases,omitempty"`
+	// TopicSuggestions is saved through ADMIN /settings/topics only, so a
+	// PUT /settings never changes it (docs/proposals/automatic-tagging).
+	TopicSuggestions    topicSettings `json:"topic_suggestions"`
+	Source              string        `json:"source"` // "auto" | "user"
+	HardwareFingerprint string        `json:"hardware_fingerprint"`
+	DetectedGPU         bool          `json:"detected_gpu"`
+	Cores               int           `json:"cores"`
 
 	// StandInFor, StandInReason and StandInDetail are set by build admission
 	// alone, for one build: ActiveModel is then a retired model standing in
@@ -360,6 +363,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			s.SourceRetention = previous.SourceRetention
 			s.SearchAliases = previous.SearchAliases
 			s.RetainVideo = previous.RetainVideo
+			s.TopicSuggestions = previous.TopicSuggestions
 			// Vocabulary is independent of the hardware-derived quality tier.
 			// Preserve it when re-fingerprinting an auto policy.
 			s.TranscriptionTerms = terms

@@ -27,11 +27,12 @@ type modelInfo struct {
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
 	Device         string `json:"device"`
-	// Kind is speech or diarization (the CLI never lists the VAD). Settings
-	// shows a diarizer as an optional download, never as a transcription
-	// model.
+	// Kind is speech, diarization or embedding (the CLI never lists the
+	// VAD). Settings shows a diarizer and an embedding model as optional
+	// downloads, never as a transcription model.
 	Kind string `json:"kind"`
-	// RuntimeSupported is set for diarizers: whether the runtime can run one.
+	// RuntimeSupported is set for diarizers and embedding models: whether the
+	// runtime can run one.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
 	// Replaces lists retired model ids this model supersedes (Parakeet Ultra
 	// replaces Parakeet v3). Settings pinned to one of them move to the model
@@ -148,6 +149,23 @@ func (rt *Runtime) modelInventory(ctx context.Context, device string) ([]modelIn
 // findModel returns a model that can be selected, installed or checked for
 // a setting. A retired model is never one of them: only admitStandIn looks at
 // those rows.
+// recheckEmbeddingModel queues the installed topics model for its runtime
+// check again.
+func (rt *Runtime) recheckEmbeddingModel() {
+	models, err := rt.modelInventory(rt.ctx, deviceCPU)
+	if err != nil {
+		return
+	}
+	for _, m := range models {
+		if m.Kind == modelKindEmbedding && m.Installed {
+			j, e := rt.enqueueModel(rt.ctx, m, deviceCPU)
+			if e == nil && j.State == "ready" {
+				_, _ = rt.store.db.ExecContext(rt.ctx, `UPDATE model_install_jobs SET state='queued' WHERE id=? AND state='ready'`, j.ID)
+			}
+		}
+	}
+}
+
 func findModel(models []modelInfo, id, revision string) (modelInfo, error) {
 	for _, m := range models {
 		if m.ReplacedBy != "" {
@@ -242,6 +260,9 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 500, err.Error())
 			return
 		}
+		if !rt.topicsUnlocked(r.Context()) {
+			models, jobs = withoutTopicsModels(models, jobs)
+		}
 		writeJSON(w, 200, map[string]any{"models": models, "jobs": jobs, "downloads_allowed": !rt.cfg.DisallowModelDownload, "device": device})
 		return
 	}
@@ -265,12 +286,20 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		m, err := findModel(models, in.Model, in.Revision)
+		if err == nil && m.Kind == modelKindEmbedding && !rt.topicsUnlocked(r.Context()) {
+			// The locked preview offers no topics model (topics_preview.go).
+			err = fmt.Errorf("unsupported model/revision %s/%s", in.Model, in.Revision)
+		}
 		if err != nil {
 			writeJSONError(w, 400, err.Error())
 			return
 		}
 		if m.Kind == modelKindDiarization && in.Device != "cpu" {
 			writeJSONError(w, 400, "Speaker separation runs on the CPU; install it with device cpu")
+			return
+		}
+		if m.Kind == modelKindEmbedding && in.Device != "cpu" {
+			writeJSONError(w, 400, "Topic suggestions run on the CPU; install the model with device cpu")
 			return
 		}
 		if in.Device == "cuda" && !modelSupportsCUDA(in.Model) {
@@ -308,7 +337,9 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		if job == nil {
+		// The locked preview hides the topics model's jobs; one can still be
+		// cancelled, so locking mid-download can stop it.
+		if job == nil || job.Model == defaultEmbeddingModel && !rt.topicsUnlocked(r.Context()) && !(len(parts) == 2 && parts[1] == "cancel") {
 			http.NotFound(w, r)
 			return
 		}
@@ -397,6 +428,10 @@ func (rt *Runtime) startModelWorker() {
 			rt.logger.Printf("stt_settings: %v", checkErr)
 		}
 		lastCheck := time.Now()
+		// The embedding model's readiness survives restarts, so it is
+		// checked again in the background, once no other job waits: it never
+		// delays the transcription model. A failure pauses suggestions.
+		recheckEmbedding := rt.topicSuggestionsOn(rt.ctx)
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
@@ -412,11 +447,19 @@ func (rt *Runtime) startModelWorker() {
 			}
 			jobs, err := rt.modelJobs(rt.ctx)
 			if err == nil {
+				ran := false
 				for _, j := range jobs {
-					if j.State == "queued" {
+					// The locked preview runs no topics model job, even one
+					// queued before it was locked.
+					if j.State == "queued" && (j.Model != defaultEmbeddingModel || rt.topicsUnlocked(rt.ctx)) {
 						rt.runModelJob(j)
+						ran = true
 						break
 					}
+				}
+				if !ran && recheckEmbedding && checkErr == nil {
+					recheckEmbedding = false
+					rt.recheckEmbeddingModel()
 				}
 			}
 			select {
@@ -559,7 +602,7 @@ func (rt *Runtime) modelCommand(ctx context.Context, job *modelJob, action strin
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) && exitErr.ExitCode() == modelExitTempFail {
 			// The recorder refused for lack of RAM or VRAM. Waiting can fix that.
-			return &resourceUnavailableError{resource: "memory for the speech model check", detail: detail}
+			return &resourceUnavailableError{resource: "memory for the model check", detail: detail}
 		}
 		return fmt.Errorf("%s: %w: %s", action, waitErr, detail)
 	}

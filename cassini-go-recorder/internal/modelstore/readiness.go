@@ -29,6 +29,15 @@ func (s *Store) Ready(m Model, device, fingerprint string) bool {
 	var r Readiness
 	return json.Unmarshal(data, &r) == nil && r.Device == device && r.Fingerprint == fingerprint && r.Revision == m.Revision
 }
+
+// ClearReady removes the readiness receipt of m on device, if there is one.
+func (s *Store) ClearReady(m Model, device string) error {
+	if err := os.Remove(s.probePath(m, device)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) MarkReady(m Model, device, fingerprint string) error {
 	if err := s.Complete(m); err != nil {
 		return err

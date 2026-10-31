@@ -19,6 +19,15 @@ export function voiceSeparationModel(inventory: SpeechModelInventory | null): Sp
   return inventory?.models.find((m) => m.kind === "diarization" && m.id === VOICE_SEPARATION_MODEL_ID);
 }
 
+// The embedding model topic suggestions read transcripts with
+// (docs/proposals/automatic-tagging). Like voice separation it is an optional
+// download that always runs on the CPU.
+export const TOPIC_SUGGESTIONS_MODEL_ID = "embeddinggemma-2-text-int8";
+
+export function topicSuggestionsModel(inventory: SpeechModelInventory | null): SpeechModel | undefined {
+  return inventory?.models.find((m) => m.kind === "embedding" && m.id === TOPIC_SUGGESTIONS_MODEL_ID);
+}
+
 export function modelJob(inventory: SpeechModelInventory | null, model: SpeechModel | undefined, device: string): SpeechModelJob | undefined {
   if (!model) return undefined;
   return inventory?.jobs.find((j) => j.model === model.id && j.device === device && j.revision === model.revision);

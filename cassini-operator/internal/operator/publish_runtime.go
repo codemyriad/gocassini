@@ -155,6 +155,9 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	if err := rt.indexPublishedMeeting(context.Background(), task, attemptArtifactSitePath); err != nil {
 		rt.logger.Printf("search index update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 	}
+	// Queue topic suggestions while the site still names the join key. Not
+	// fatal either: the reconciler finds a meeting the hook missed.
+	rt.queuePublishedTopics(task, attemptArtifactSitePath)
 
 	// The attempt site is staging, not an archive. Once the sink has accepted
 	// the meeting it is a duplicate of what now lives at the destination, and
@@ -178,6 +181,9 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	if err := rt.promotePublishedPair(task.JobID, task.AttemptNumber); err != nil {
 		rt.logger.Printf("published archive promotion pending id=%s: %v", task.JobID, err)
 		return
+	}
+	if rt.topics != nil {
+		rt.topics.wakeUp()
 	}
 	rt.pruneArtifactsForJob(task.JobID)
 }
@@ -267,4 +273,20 @@ func (rt *Runtime) extractSiteFailureDetail(sitePath string, fallback error) str
 		return "publish failed"
 	}
 	return fallback.Error()
+}
+
+// queuePublishedTopics queues a delivered meeting for topic suggestions when
+// they are on. The digest and attempt name the delivered build, so the worker
+// reads its transcript even if promotion fails below.
+func (rt *Runtime) queuePublishedTopics(task publishTask, attemptSiteDir string) {
+	if rt.topics == nil || !rt.topicSuggestionsOn(context.Background()) {
+		return
+	}
+	name, err := deliveredOpusName(attemptSiteDir, task.JobID)
+	if err == nil {
+		err = rt.topics.store.enqueuePublished(context.Background(), name, task.JobID, task.OpusSHA256, task.AttemptNumber)
+	}
+	if err != nil {
+		rt.logger.Printf("topic suggestions queue failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+	}
 }
