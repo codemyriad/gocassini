@@ -409,7 +409,7 @@ git -C "$PR" reset -q --hard HEAD~1
 git -C "$PR" switch -q -c release/0.2 v0.2.0
 printf '### Fixed\n- Fixed a crash.\n' >"$PR/changelog.d/60.fix.md"
 git -C "$PR" add -A; git -C "$PR" commit -qm fix
-if prep --bump patch >/dev/null 2>&1; then ok "prepare-release cuts 0.2.1 on release/0.2 after 0.3.0-alpha.1"; else bad "prepare-release should cut 0.2.1 on release/0.2"; fi
+if prep --bump patch --no-user-notes >/dev/null 2>&1; then ok "prepare-release cuts 0.2.1 on release/0.2 after 0.3.0-alpha.1"; else bad "prepare-release should cut 0.2.1 on release/0.2"; fi
 eq "patch goes straight to stable" "0.2.1" "$(rv_read_version "$PR/appinfo/info.xml")"
 if git -C "$PR" rev-parse -q --verify refs/tags/v0.2.1 >/dev/null; then ok "tag v0.2.1 created"; else bad "tag v0.2.1 should be created"; fi
 out="$(prep --version 0.2.0-rc.1 --allow-empty-changelog 2>&1 || true)"
@@ -489,7 +489,7 @@ git -C "$SY" init -q -b main
 git -C "$SY" config user.email t@t
 git -C "$SY" config user.name t
 mkdir -p "$SY/scripts" "$SY/appinfo" "$SY/changelog.d"
-cp "$SCRIPT_DIR"/{lib-release-version.sh,fold-changelog.sh,extract-release-notes.sh,prepare-release.sh,sync-release-to-main.sh} "$SY/scripts/"
+cp "$SCRIPT_DIR"/{lib-release-version.sh,fold-changelog.sh,extract-release-notes.sh,prepare-release.sh,sync-release-to-main.sh,user-release-notes.sh} "$SY/scripts/"
 printf '<?xml version="1.0"?>\n<info><version>0.2.0</version><external-app><docker-install><image-tag>0.2.0</image-tag></docker-install></external-app></info>\n' > "$SY/appinfo/info.xml"
 printf '# Changelog\n\n## [Unreleased]\n\n## [0.2.0] - 2026-10-13\n\n### Added\n- Initial.\n' > "$SY/CHANGELOG.md"
 printf '# Fragments\n' > "$SY/changelog.d/README.md"
@@ -500,13 +500,24 @@ sy_prep() { ( cd "$SY" && ./scripts/prepare-release.sh "$@" ) >/dev/null 2>&1; }
 sync_cl() { ( cd "$SY" && ./scripts/sync-release-to-main.sh "$@" ) 2>&1; }
 
 # main: a feature ships in 0.3.0-alpha.1, then a fix lands and is cherry-picked
-# onto release/0.2 next to a fix written on the branch only; 0.2.1 is cut there.
+# onto release/0.2 next to a fix written on the branch only, with 0.2.1's notes
+# drafted on main and backported; 0.2.1 is cut there.
 commit_frag 70.feature.md "A feature."
 sy_prep --bump minor
 commit_frag 60.fix.md "A fix from main."
 fix="$(git -C "$SY" rev-parse HEAD)"
+SYN="cassini-microsite/src/content/changelog"
+mkdir -p "$SY/$SYN"
+printf -- '---\ntitle: Old notes\ndate: 2026-10-13\nversion: 0.2.0\n---\n\nNotes for 0.2.0.\n' >"$SY/$SYN/2026-10-13-v0-2-0.md"
+printf -- '---\ntitle: Draft\ndate: 2026-11-01\nversion: 0.2.1\ndraft: true\n---\n\nNotes for 0.2.1.\n' >"$SY/$SYN/2026-11-01-v0-2-1.md"
+git -C "$SY" add -A; git -C "$SY" commit -qm "notes for 0.2.1"
+notes_commit="$(git -C "$SY" rev-parse HEAD)"
 git -C "$SY" switch -q -c release/0.2 v0.2.0
 git -C "$SY" cherry-pick -x "$fix" >/dev/null
+git -C "$SY" cherry-pick -x "$notes_commit" >/dev/null
+# Edited on the branch before the release: main gets the tagged text.
+sed -i 's/^Notes for 0.2.1.$/Notes for 0.2.1, as released./' "$SY/$SYN/2026-11-01-v0-2-1.md"
+git -C "$SY" commit -qam "edit the notes"
 commit_frag 65.branch-only.md "A fix only on the branch."
 hint="$( cd "$SY" && ./scripts/prepare-release.sh --bump patch 2>&1 )"
 if grep -qF "sync-release-to-main.sh --version 0.2.1" <<<"$hint"; then ok "a cut on a release branch prints the sync step"; else bad "prepare-release should print the sync step (got: $hint)"; fi
@@ -527,6 +538,13 @@ eq "sync commits once" "chore(release): bring 0.2.1 back to main" "$(git -C "$SY
 eq "main already above 0.2.1 keeps its version" "0.3.0-alpha.1" "$(rv_read_version "$SY/appinfo/info.xml")"
 if git -C "$SY" diff --quiet HEAD; then ok "worktree clean after sync"; else bad "worktree should be clean after sync"; fi
 eq "CHANGELOG.md keeps its mode" "$(stat -c %a "$SY/appinfo/info.xml")" "$(stat -c %a "$cl")"
+synced="$SY/$SYN/2026-11-01-v0-2-1.md"
+if ! grep -q '^draft:' "$synced" && grep -qx 'Notes for 0.2.1, as released.' "$synced"; then
+  ok "sync puts the release notes on main as tagged, out of draft"
+else
+  bad "sync should replace main's draft notes with the tagged entry"
+fi
+eq "sync leaves other versions' notes alone" "Notes for 0.2.0." "$(tail -1 "$SY/$SYN/2026-10-13-v0-2-0.md")"
 
 out="$(sync_cl --version 0.2.1 || true)"
 if grep -qF "main already has everything from 0.2.1" <<<"$out"; then ok "sync refuses a release already on main"; else bad "sync should refuse a second run (got: $out)"; fi
