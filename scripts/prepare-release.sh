@@ -196,7 +196,8 @@ main() {
     "$SCRIPT_DIR/user-release-notes.sh" --version "$target" >/dev/null \
       || die "$target is stable and has no user-facing release notes. Draft them from
   ./scripts/user-release-notes.sh --sources
-following docs/release-notes.md, merge them as a draft, and run this again (or pass --no-user-notes)"
+following docs/release-notes.md, merge them to main as a draft, backport them to $want,
+and run this again (or pass --no-user-notes)"
   fi
 
   # --- Mutate: version, changelog, release notes --------------------------

@@ -95,7 +95,8 @@ Preparing release: 0.2.0 -> 0.2.1
 Cut v0.2.1 and push it? [y/N] y
 ```
 
-A stable version needs its [release notes](release-notes.md) merged first.
+A stable version needs its [release notes](release-notes.md) first: merged to
+main as a draft and backported to `release/X.Y`.
 
 Then approve the `release` deployment in **Actions** (one click) — that signs the
 package, creates the GitHub release, and publishes to the App Store.
@@ -111,9 +112,11 @@ git switch -c chore/sync-0.2.1-changelog origin/main
 git push -u origin chore/sync-0.2.1-changelog   # then open a PR to main
 ```
 
-It adds the tagged `## [0.2.1]` section to `CHANGELOG.md` in version order and
-deletes the fragments that release consumed. `prepare-release.sh` prints these
-commands after a cut on a release branch.
+It adds the tagged `## [0.2.1]` section to `CHANGELOG.md` in version order,
+deletes the fragments that release consumed, and replaces main's draft of the
+release notes with the published entry. The site deploys from main, so the
+notes appear on gocassini.com when this PR merges. `prepare-release.sh` prints
+these commands after a cut on a release branch.
 
 **Non-interactive** (scripting) — pass the choice; drop `--push` to stay local:
 
@@ -187,7 +190,8 @@ first, with every change folded underneath. The App Store package's
 `CHANGELOG.md` carries them in place of the developer sections.
 
 **Before a stable release**, draft them from
-`./scripts/user-release-notes.sh --sources` and merge them.
+`./scripts/user-release-notes.sh --sources` on the release branch, merge them
+to main as a draft, and backport them.
 `prepare-release.sh` refuses a stable version without them; `--no-user-notes`
 overrides that. They are optional for prereleases.
 

@@ -27,11 +27,16 @@ hundred lines and keeps the dozen that matter to someone running Cassini.
 
 ## Procedure
 
-Do this before cutting the release, on a branch, like any change.
+Do this before cutting the release, on a branch, like any change. Every
+stable version is cut on its release branch, `release/X.Y`
+([Branches](release.md#branches)), so the notes travel like a fix: merged to
+main, backported to the release branch, published there, and brought back.
 
 1. **Gather.** `./scripts/user-release-notes.sh --sources` prints every
    developer section since the last version with notes, then the pending
-   fragments. That is the material, and the only material.
+   fragments. That is the material, and the only material. Run it on
+   `release/X.Y` once that branch exists: on main it would also list features
+   that ship in the next minor.
 2. **Draft.** By hand, or ask Claude Code to "draft the release notes for
    0.3.0". The `release-notes` skill follows this page.
 3. **Write** `cassini-microsite/src/content/changelog/<date>-v<version>.md`,
@@ -41,10 +46,17 @@ Do this before cutting the release, on a branch, like any change.
    don't appear before the release does.
 4. **Review** against [the checklist](#checklist). Have someone who did not
    write the code read it.
-5. **Merge** it, then cut the release (`./scripts/prepare-release.sh`). The
-   release commit removes `draft: true`, so the notes go on the site with the
-   release. `build/release/gocassini-<version>-notes.md` is the GitHub release
-   body. Read it before you push.
+5. **Merge** it to main. If `release/X.Y` already exists, label the PR
+   `backport release/X.Y` so the notes reach the branch the release is cut
+   from.
+6. **Cut** the release on `release/X.Y` (`./scripts/prepare-release.sh`). The
+   release commit removes `draft: true` there.
+   `build/release/gocassini-<version>-notes.md` is the GitHub release body.
+   Read it before you push.
+7. **Bring it back.** `./scripts/sync-release-changelog.sh` puts the notes on
+   main as tagged, out of draft, with the release's `CHANGELOG.md` section. The
+   site deploys from main, so the notes appear on gocassini.com when that PR
+   merges.
 
 `./scripts/user-release-notes.sh --version <v>` prints a version's notes,
 `--release-body <v>` the GitHub release body, and `--changelog` the

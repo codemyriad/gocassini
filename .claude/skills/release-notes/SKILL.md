@@ -7,7 +7,7 @@ description: Draft or review Cassini's user-facing release notes — the curated
 
 The method is [`docs/release-notes.md`](../../../docs/release-notes.md). Read it in full first; this skill only says how to apply it.
 
-1. **Material.** Run `./scripts/user-release-notes.sh --sources` and work only from its output. If the release includes work that is not merged yet, ask which branches to include and read their `changelog.d/` fragments with `git show <branch>:changelog.d/<file>`.
+1. **Material.** Run `./scripts/user-release-notes.sh --sources` on `release/X.Y` if that branch exists (on main otherwise), and work only from its output. If the release includes work that is not merged yet, ask which branches to include and read their `changelog.d/` fragments with `git show <branch>:changelog.d/<file>`.
 2. **Sort.** Make a working list (not in the file) that assigns every entry to one pile: Highlight, Improvement, Fix, Action, or Leave out. Group the entries by the area a user recognises. Drop fixes for bugs introduced since the last release with notes: check each one against the developer sections that earlier notes covered.
 3. **Check facts you are unsure of.** Use the code, `docs/`, or the PR (`gh pr view`). Settings must be named as they read on screen. If a number is not in the material or a linked report, don't use it.
 4. **Write** `cassini-microsite/src/content/changelog/<date>-v<version-with-dashes>.md` from the template in the doc, with `version:` exactly equal to the release version and `draft: true` (the release commit publishes it). Then `./scripts/user-release-notes.sh --version <v>` must print it.

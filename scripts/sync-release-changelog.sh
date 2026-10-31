@@ -11,7 +11,11 @@
 #   - inserts the release's `## [<version>]` section, as tagged, into
 #     CHANGELOG.md in version order;
 #   - deletes the fragments the release commit consumed (a cherry-pick keeps
-#     the fragment's filename, so the names match on main).
+#     the fragment's filename, so the names match on main);
+#   - replaces main's release notes for the version (docs/release-notes.md),
+#     usually its draft, with the entries as tagged. The release commit took
+#     them out of draft, and the site deploys from main, so this is what puts
+#     them on gocassini.com.
 #
 #   git switch -c chore/sync-0.2.1-changelog origin/main
 #   ./scripts/sync-release-changelog.sh --version 0.2.1
@@ -34,6 +38,20 @@ EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
+
+# notes_version — print the `version:` of the release notes entry on stdin,
+# without surrounding quotes (as user-release-notes.sh reads it).
+notes_version() {
+  awk '
+    /^---[[:space:]]*$/ { if (++n == 2) exit; next }
+    n == 1 && index($0, "version:") == 1 {
+      v = substr($0, 9)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+      if (v ~ /^".*"$/ || v ~ /^\047.*\047$/) v = substr(v, 2, length(v) - 2)
+      print v; exit
+    }
+  '
+}
 
 main() {
   local version=""
@@ -125,8 +143,27 @@ main() {
     fi
   done < <(git -C "$root" diff --name-only --diff-filter=D "$tag^" "$tag" -- changelog.d/)
 
+  # Release notes: the tagged entries for this version replace main's.
+  local notes_rel="cassini-microsite/src/content/changelog" entry notes=0
+  while IFS= read -r entry; do
+    [[ "$entry" == *.md ]] || continue
+    if [[ "$(notes_version <"$root/$entry")" == "$version" ]]; then
+      git -C "$root" rm -q -- "$entry"
+    fi
+  done < <(git -C "$root" ls-files -- "$notes_rel/")
+  while IFS= read -r entry; do
+    [[ "$entry" == *.md ]] || continue
+    if [[ "$(git -C "$root" show "$tag:$entry" | notes_version)" == "$version" ]]; then
+      git -C "$root" checkout -q "$tag" -- "$entry"
+      notes=$((notes + 1))
+    fi
+  done < <(git -C "$root" ls-tree -r --name-only "$tag" -- "$notes_rel/")
+  if [[ "$notes" -eq 0 && "$version" != *-* ]]; then
+    echo "note: $tag has no release notes for $version (docs/release-notes.md)"
+  fi
+
   git -C "$root" commit -q -m "chore(release): bring the $version changelog to main"
-  echo "Added the $version section to CHANGELOG.md and removed $removed released fragment(s)."
+  echo "Added the $version section to CHANGELOG.md, removed $removed released fragment(s) and brought $notes release notes entr$([[ $notes -eq 1 ]] && echo y || echo ies)."
   cat <<EOF
 
 Nothing has been pushed. Review the commit, then open a PR to main:
