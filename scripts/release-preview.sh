@@ -57,6 +57,11 @@ else
       printf '  %-14s → %-16s %s\n' "promote stable" "$(rv_promote stable "$current")" "(finish the release)"
       ;;
   esac
+  if "$SCRIPT_DIR/user-release-notes.sh" --version "$base" >/dev/null 2>&1; then
+    echo "  (user-facing notes for $base are written)"
+  else
+    echo "  (going stable needs user-facing notes for $base first: docs/release-notes.md)"
+  fi
   echo "  or jump to any explicit target with --version (skip stages), e.g."
   echo "     --version ${base}        # straight to stable, no more prereleases"
   echo "     --version ${base}-rc.1   # skip ahead to a candidate"

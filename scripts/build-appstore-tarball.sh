@@ -97,7 +97,13 @@ main() {
     for f in "${APPSTORE_FILES[@]}"; do
       [[ -f "$root/$f" ]] || die "missing packaged file: $f"
       mkdir -p "$tree/$(dirname "$f")"
-      cp "$root/$f" "$tree/$f"
+      if [[ "$f" == CHANGELOG.md ]]; then
+        # The store shows this file's section for each release, so it gets the
+        # user-facing notes where a release has them (docs/release-notes.md).
+        "$SCRIPT_DIR/user-release-notes.sh" --changelog >"$tree/$f"
+      else
+        cp "$root/$f" "$tree/$f"
+      fi
     done
     echo "Staged ${#APPSTORE_FILES[@]} files into ${tree#"$root"/}/"
 

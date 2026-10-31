@@ -235,7 +235,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          ./scripts/extract-release-notes.sh --version "$VERSION" > notes.md
+          # User-facing notes first, every change folded under them
+          # (docs/release-notes.md); the developer section alone when a
+          # prerelease has no notes.
+          ./scripts/user-release-notes.sh --release-body "$VERSION" > notes.md
           # Published (not draft) when we will push to the store, so the store
           # can fetch the asset from the public release URL; draft otherwise.
           if [[ "$PUBLISH" == "true" ]]; then draft="false"; else draft="true"; fi
