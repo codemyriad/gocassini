@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
@@ -93,6 +94,17 @@ func TestBatchConfirmDecidesEachVisibleMeetingAndReplays(t *testing.T) {
 	topics.store.db.QueryRow(`SELECT COUNT(*) FROM topic_receipt_target WHERE request_id='b1'`).Scan(&targets)
 	if targets != 1 {
 		t.Fatalf("receipt targets %d", targets)
+	}
+	// Retiring the meeting scrubs its entry; a replay says why it is gone.
+	ctx := context.Background()
+	if err := topics.store.inTx(ctx, func(tx *sql.Tx) error {
+		return forgetTopicMeeting(ctx, tx, "MEETING1.opus", meetingRetireReasonExpired)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again = reviewCall(h, http.MethodPost, "review/batch", "alice", body)
+	if again.Code != http.StatusOK || json.Unmarshal(again.Body.Bytes(), &out) != nil || len(out.Results) != 2 || out.Results[0].Status != "expired" || strings.Contains(again.Body.String(), "Release") {
+		t.Fatalf("replay after retirement: %d %s", again.Code, again.Body)
 	}
 	ids := make([]string, topicBatchMax+1)
 	for i := range ids {

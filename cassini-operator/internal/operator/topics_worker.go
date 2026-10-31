@@ -81,6 +81,9 @@ type topicsService struct {
 
 	statsMu sync.Mutex
 	stats   topicsWorkerStats
+	// tooLong are the definitions the CLI found over the token cap, by
+	// tooLongKey: not sent again until edited or the model changes.
+	tooLong map[string]bool
 
 	// Seams for tests.
 	archive   func(ctx context.Context, opusName, dir string) (path, digest string, err error)
@@ -268,6 +271,10 @@ func (s *topicsService) runOnce(ctx context.Context) bool {
 		return false
 	}
 	defer done()
+	// The preview may have been locked or switched off while this waited.
+	if !s.on(ctx) {
+		return false
+	}
 	if err := s.ensureTextVectors(workCtx, versions); err != nil {
 		if !errors.Is(err, errTopicsLockWait) && workCtx.Err() == nil {
 			s.recordError(fmt.Errorf("embed definitions: %w", err))
@@ -812,8 +819,20 @@ func (s *topicsService) invalidateVersions() {
 // vector for the current versions.
 func (s *topicsService) ensureTextVectors(ctx context.Context, v topicVersions) error {
 	missing, err := s.store.missingTextVectors(ctx, v)
-	if err != nil || len(missing) == 0 {
+	if err != nil {
 		return err
+	}
+	s.statsMu.Lock()
+	kept := missing[:0]
+	for _, t := range missing {
+		if !s.tooLong[tooLongKey(t, v)] {
+			kept = append(kept, t)
+		}
+	}
+	missing = kept
+	s.statsMu.Unlock()
+	if len(missing) == 0 {
+		return nil
 	}
 	// Embedding definitions loads the model like a meeting does.
 	if err := s.memory(ctx); err != nil {
@@ -842,11 +861,21 @@ func (s *topicsService) ensureTextVectors(ctx context.Context, v topicVersions) 
 		return err
 	}
 	out := filepath.Join(tmp, "vectors.jsonl")
-	args := []string{"topics", "embed-texts", "--in", in, "--out", out, "--cache-root", s.rt.cfg.ModelCacheRoot}
+	// A definition over the token cap is left out, not the whole batch: one
+	// long definition must not stop every meeting.
+	args := []string{"topics", "embed-texts", "--in", in, "--out", out, "--cache-root", s.rt.cfg.ModelCacheRoot, "--skip-too-long"}
 	if n := s.settings().Threads; n > 0 {
 		args = append(args, "--threads", strconv.Itoa(n))
 	}
-	if err := s.runCLI(ctx, args, func(map[string]json.RawMessage) {}); err != nil {
+	var tooLong []topicText
+	if err := s.runCLI(ctx, args, func(line map[string]json.RawMessage) {
+		var id string
+		if json.Unmarshal(line["tooLong"], &id) == nil {
+			if t, ok := byID[id]; ok {
+				tooLong = append(tooLong, t)
+			}
+		}
+	}); err != nil {
 		return err
 	}
 	vectors, revision, recipe, err := readTopicTextVectors(out)
@@ -868,7 +897,43 @@ func (s *topicsService) ensureTextVectors(ctx context.Context, v topicVersions) 
 		}
 	}
 	s.logf("embedded %d definitions and controls", len(vectors))
+	if len(tooLong) > 0 {
+		s.skipTooLong(ctx, tooLong, v)
+	}
 	return nil
+}
+
+func tooLongKey(t topicText, v topicVersions) string {
+	return t.Kind + "\x00" + t.SHA + "\x00" + v.ModelRevision + "\x00" + v.RecipeVersion
+}
+
+// skipTooLong remembers definitions over the token cap and says which topics
+// they belong to: those topics are not suggested until their definition is
+// shortened.
+func (s *topicsService) skipTooLong(ctx context.Context, texts []topicText, v topicVersions) {
+	var labels []string
+	s.statsMu.Lock()
+	if s.tooLong == nil {
+		s.tooLong = map[string]bool{}
+	}
+	for _, t := range texts {
+		s.tooLong[tooLongKey(t, v)] = true
+	}
+	s.statsMu.Unlock()
+	for _, t := range texts {
+		rows, err := s.store.db.QueryContext(ctx, `SELECT label FROM topic_library WHERE definition_sha=? AND status='active' ORDER BY label`, t.SHA)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var label string
+			if rows.Scan(&label) == nil {
+				labels = append(labels, label)
+			}
+		}
+		rows.Close()
+	}
+	s.recordError(fmt.Errorf("a definition is too long for the model, so these topics are not suggested until it is shortened: %s", strings.Join(labels, ", ")))
 }
 
 // topicPassagesHeader is the first line of a `cassini topics embed` output.

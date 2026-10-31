@@ -174,6 +174,7 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 	threads := fs.Int("threads", 0, "CPU threads (default $"+topics.ThreadsEnv+", else min(4, CPUs))")
 	modelDir := fs.String("model-dir", "", "directory with the decompressed model files (development)")
 	root := fs.String("cache-root", defaultCassiniCacheRoot(), "persistent operator model cache root")
+	skipTooLong := fs.Bool("skip-too-long", false, "leave out texts over the token cap, naming each on stdout, instead of refusing them all")
 	fs.Usage = func() {
 		printTopicsUsage(fs.Output())
 		fs.PrintDefaults()
@@ -205,13 +206,31 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 	if err != nil {
 		return fail(topicsExitUnavailable, "%v", err)
 	}
+	// With --skip-too-long, one text over the cap (a long definition in a
+	// script that tokenizes densely) leaves the others to be embedded.
+	enc := json.NewEncoder(stdout)
+	kept := make([]topicsTextInput, 0, len(inputs))
 	for _, input := range inputs {
 		if n := len(tok.Encode(topics.DefinitionPrefix, input.Text)); n > topics.MaxTokens {
-			return fail(topicsExitUsage, "%v: text %q has %d tokens; the limit is %d", topics.ErrTooLong, input.ID, n, topics.MaxTokens)
+			if !*skipTooLong {
+				return fail(topicsExitUsage, "%v: text %q has %d tokens; the limit is %d", topics.ErrTooLong, input.ID, n, topics.MaxTokens)
+			}
+			_ = enc.Encode(map[string]any{"tooLong": input.ID, "tokens": n})
+			continue
 		}
+		kept = append(kept, input)
 	}
+	inputs = kept
 	if err := checkWritableDir(filepath.Dir(*out)); err != nil {
 		return fail(topicsExitUsage, "--out: %v", err)
+	}
+	if len(inputs) == 0 {
+		// Nothing left to embed: no lock, no model.
+		if err := writeTopicsVectors(*out, revision, nil, nil); err != nil {
+			return fail(topicsExitRuntime, "write %s: %v", *out, err)
+		}
+		_ = enc.Encode(map[string]int{"count": 0})
+		return 0
 	}
 	n := topicsThreads(*threads, stderr, "cassini topics embed-texts")
 	// Embedding is inference: it waits for a build, a model check or a
@@ -221,7 +240,6 @@ func runTopicsEmbedTexts(ctx context.Context, args []string, stdout, stderr io.W
 		return fail(topicsExitRuntime, "model runtime lock: %v", err)
 	}
 	defer unlock()
-	enc := json.NewEncoder(stdout)
 	_ = enc.Encode(map[string]bool{"locked": true})
 	embedder, err := openTopicsEmbedderFn(files, topics.Options{Threads: n, Batch: true})
 	if err != nil {

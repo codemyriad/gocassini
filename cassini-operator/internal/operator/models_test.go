@@ -267,6 +267,11 @@ func TestEmbeddingModelInstallsOnTheCPUAndNeverTranscribes(t *testing.T) {
 		t.Fatalf("the locked inventory offers the model: %d %s", rec.Code, rec.Body.String())
 	}
 	preview := topicsPreviewStore(t, rt)
+	// Nor can it be installed through the API.
+	rec = modelRequest(rt, "POST", "/settings/models/install", fmt.Sprintf(`{"model":%q,"device":"cpu"}`, embedder.ID))
+	if jobs, _ := rt.modelJobs(context.Background()); rec.Code != 400 || len(jobs) != 0 {
+		t.Fatalf("locked install: %d %s, jobs %+v", rec.Code, rec.Body.String(), jobs)
+	}
 	if err := preview.setTopicsPreviewUnlocked(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
@@ -294,8 +299,19 @@ func TestEmbeddingModelInstallsOnTheCPUAndNeverTranscribes(t *testing.T) {
 	if rec.Code != 200 || strings.Contains(rec.Body.String(), embedder.ID) {
 		t.Fatalf("the locked inventory lists the model or its job: %d %s", rec.Code, rec.Body.String())
 	}
-	if jobs, err := rt.modelJobs(context.Background()); err != nil || len(jobs) != 1 || jobs[0].State != "ready" {
+	jobs, err := rt.modelJobs(context.Background())
+	if err != nil || len(jobs) != 1 || jobs[0].State != "ready" {
 		t.Fatalf("locking dropped the install: %+v %v", jobs, err)
+	}
+	// Its job cannot be read or retried; it can still be cancelled.
+	if rec = modelRequest(rt, "GET", "/settings/models/jobs/"+jobs[0].ID, ""); rec.Code != 404 {
+		t.Fatalf("locked job read: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = modelRequest(rt, "POST", "/settings/models/jobs/"+jobs[0].ID+"/retry", ""); rec.Code != 404 {
+		t.Fatalf("locked job retry: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = modelRequest(rt, "POST", "/settings/models/jobs/"+jobs[0].ID+"/cancel", ""); rec.Code != 200 {
+		t.Fatalf("locked job cancel: %d %s", rec.Code, rec.Body.String())
 	}
 
 	update := fmt.Sprintf(`{"quality":"fast","transcription_enabled":true,"active_model":%q,"active_revision":%q,"device_override":"cpu"}`, embedder.ID, embedder.Revision)

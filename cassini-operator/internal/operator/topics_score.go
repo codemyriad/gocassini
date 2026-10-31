@@ -149,6 +149,16 @@ type topicDecision struct {
 
 func (d topicDecision) qualifies() bool { return d.Reason != "" }
 
+// counts says whether a span counts toward the decision's rule: a
+// substantial span, or for a short strong decision a strong one. The
+// suggestion's supporting words and its counted evidence are those spans.
+func (d topicDecision) counts(span topicSpan) bool {
+	if d.Reason == topicReasonStrong {
+		return span.WordCount >= topicScorerV1.StrongSpanWords && span.MinScore >= topicScorerV1.StrongMinScore && span.MinMargin >= topicScorerV1.StrongMinMargin
+	}
+	return span.WordCount >= topicScorerV1.SubstantialSpanWords
+}
+
 // scoreTopic decides one topic for one meeting. controls are the control
 // definitions' vectors; at least one is required.
 func scoreTopic(passages []topicPassage, topic []float32, controls [][]float32, p topicScorerParams) topicDecision {

@@ -660,6 +660,9 @@ func (t *topicsService) clusterRoom(ctx context.Context, room string, meetings m
 		g.name, g.hints, g.ok = t.nameGroup(ctx, groups[p.group].Members)
 		named[p.group] = g
 	}
+	if proposalBeforeWrite != nil {
+		proposalBeforeWrite()
+	}
 	now := t.store.unix()
 	return t.store.inTx(ctx, func(tx *sql.Tx) error {
 		kept := map[int]bool{}
@@ -682,7 +685,8 @@ func (t *topicsService) clusterRoom(ctx context.Context, room string, meetings m
 					continue
 				}
 				id, state, insert = stored[p.stored].ID, current, false
-				if p.open {
+				// A decision made while the group was being named stands.
+				if p.open && !decided(current) {
 					state = proposalOpen
 				}
 			}
@@ -710,6 +714,10 @@ func (t *topicsService) clusterRoom(ctx context.Context, room string, meetings m
 		return err
 	})
 }
+
+// proposalBeforeWrite runs between naming a room's groups and writing them;
+// tests use it to decide a proposal in that gap.
+var proposalBeforeWrite func()
 
 type namedGroup struct {
 	group   proposalGroup

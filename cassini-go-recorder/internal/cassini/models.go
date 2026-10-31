@@ -81,7 +81,9 @@ var (
 func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "Usage: cassini models list|install|probe|pack|import [model] [options]")
-		fmt.Fprintln(stderr, "Models are speech models (installed with their VAD), the speaker separation model "+transcribe.DefaultDiarizationModelID+" and the topic suggestions model "+DefaultEmbeddingModelID+".")
+		// Topic suggestions are an unannounced preview: their model is not
+		// named here (docs/proposals/automatic-tagging/release-notes-draft.md).
+		fmt.Fprintln(stderr, "Models are speech models (installed with their VAD) and the speaker separation model "+transcribe.DefaultDiarizationModelID+".")
 		return 2
 	}
 	command := args[0]

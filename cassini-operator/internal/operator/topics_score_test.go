@@ -259,3 +259,19 @@ func TestTheTunedRuleCountsEveryWord(t *testing.T) {
 		t.Fatalf("one 40-word span at 0.75: %+v", d)
 	}
 }
+
+// A short strong decision's supporting words and lowest margin come from its
+// strong spans only, the ones its evidence counts.
+func TestAShortStrongSummaryCountsOnlyItsStrongSpans(t *testing.T) {
+	d := topicDecision{Reason: topicReasonStrong, Spans: []topicSpan{
+		{WordCount: 45, PeakScore: 0.80, MinScore: 0.77, MinMargin: 0.12},
+		{WordCount: 30, PeakScore: 0.70, MinScore: 0.69, MinMargin: 0.05},
+	}}
+	words, peak, minMargin := topicDecisionSummary(d)
+	if words != 45 || peak != 0.80 || minMargin != 0.12 {
+		t.Fatalf("words %d peak %v min margin %v", words, peak, minMargin)
+	}
+	if !d.counts(d.Spans[0]) || d.counts(d.Spans[1]) {
+		t.Fatal("the evidence counts other spans than the summary")
+	}
+}

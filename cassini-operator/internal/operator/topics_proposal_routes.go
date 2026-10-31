@@ -56,10 +56,31 @@ func (t *topicsService) visibleProposals(ctx context.Context, visible []string, 
 
 func visibleProposalsIn(ctx context.Context, q topicQuerier, visible []string, roomID, id string) ([]storedProposal, error) {
 	set, _ := json.Marshal(uniqueNames(visible))
-	return loadProposals(ctx, q, `state IN ('open','dismissed') AND draft_name IS NOT NULL
+	found, err := loadProposals(ctx, q, `state IN ('open','dismissed') AND draft_name IS NOT NULL
  AND (?1='' OR room_id=?1) AND (?2='' OR id=?2)
  AND EXISTS(SELECT 1 FROM topic_proposal_member m WHERE m.proposal_id=topic_proposal.id)
  AND NOT EXISTS(SELECT 1 FROM topic_proposal_member m WHERE m.proposal_id=topic_proposal.id AND m.opus_name NOT IN (SELECT value FROM json_each(?3)))`, roomID, id, string(set))
+	if err != nil {
+		return nil, err
+	}
+	// The members are read after the proposals, outside one transaction: a
+	// recluster in between can add a meeting the caller cannot read. Check
+	// again the members that will be quoted.
+	readable := make(map[string]bool, len(visible))
+	for _, name := range visible {
+		readable[name] = true
+	}
+	out := found[:0]
+	for _, p := range found {
+		ok := len(p.Members) > 0
+		for _, m := range p.Members {
+			ok = ok && readable[m.Opus]
+		}
+		if ok {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // proposalBeforeDecide runs between a decision's checks and its

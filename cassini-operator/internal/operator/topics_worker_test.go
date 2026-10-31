@@ -28,13 +28,14 @@ case "$1 $2" in
 "topics versions") printf '{"modelRevision":"%s","chunkerVersion":"natural-1","recipeVersion":"r1","detectorVersion":"d1"}\n' "$(cat "$D/revision")"; exit 0;;
 esac
 cmd="$2"; shift 2
-input=""; out=""; known=""; in=""
+input=""; out=""; known=""; in=""; skip=""
 while [ $# -gt 0 ]; do
   case "$1" in
   --input) input="$2"; shift 2;;
   --out) out="$2"; shift 2;;
   --known-key) known="$2"; shift 2;;
   --in) in="$2"; shift 2;;
+  --skip-too-long) skip=1; shift;;
   *) shift;;
   esac
 done
@@ -67,8 +68,16 @@ if [ "$cmd" = embed ]; then
   exit 0
 fi
 if [ "$cmd" = embed-texts ]; then
-  echo '{"locked":true}'
+  # A text holding the marker in too-long is over the token cap.
+  if [ -f "$D/too-long" ]; then
+    marker=$(cat "$D/too-long")
+    if [ -z "$skip" ] && grep -qF "$marker" "$in"; then echo "too-long: over the cap" >&2; exit 2; fi
+    grep -F "$marker" "$in" | sed 's/.*"id":"\([^"]*\)".*/{"tooLong":"\1","tokens":600}/'
+    grep -vF "$marker" "$in" > "$in.kept"
+    in="$in.kept"
+  fi
   n=$(grep -c . "$in")
+  [ "$n" -gt 0 ] && echo '{"locked":true}'
   printf '{"format":"cassini.topic-text-vectors.v1","modelRevision":"%s","recipeVersion":"r1","chunkerVersion":"natural-1","dimensions":4,"count":%d}\n' "$rev" "$n" > "$out"
   sed 's/.*"id":"\([^"]*\)".*/{"id":"\1","tokenCount":5,"vector":[0,0,0,1]}/' "$in" >> "$out"
   echo "{\"count\":$n}"
@@ -901,4 +910,52 @@ func TestADraftReadFromItsBundleIsRescoredAfterTheBundleIsGone(t *testing.T) {
 	if r := topicRow(t, s, name); r.State != topicStateDone {
 		t.Fatalf("rescored from its stored vectors: %+v", r)
 	}
+}
+
+// One definition over the token cap leaves the others embedded and meetings
+// processed; it is named once and not sent again until it changes.
+func TestATooLongDefinitionDoesNotStopTheWorker(t *testing.T) {
+	s, cli := newTopicsTestService(t)
+	ctx := context.Background()
+	for _, topic := range []struct{ id, label, definition string }{
+		{"tag_ok", "Budget", "Money and the yearly budget."},
+		{"tag_long", "Essays", "TOOLONG definition."},
+	} {
+		if _, err := s.store.db.Exec(`INSERT INTO topic_library(tag_id,label,label_folded,definition,definition_sha,status,origin,revision,created_by,created_at,updated_by,updated_at) VALUES(?,?,?,?,?,'active','manual',1,'a',1,'a',1)`,
+			topic.id, topic.label, strings.ToLower(topic.label), topic.definition, topicDefinitionSHA(topic.definition)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cli.write("too-long", "TOOLONG")
+	name := publishTopicTestMeeting(t, s, "job-a", "transcript A", 1)
+	if !s.runOnce(ctx) {
+		t.Fatal("the worker stopped on a long definition")
+	}
+	if got := topicRow(t, s, name); got.State != topicStateDone {
+		t.Fatalf("meeting %+v", got)
+	}
+	inputs, ok, err := s.store.scoringInputs(ctx, s.versions)
+	if err != nil || !ok || len(inputs.Topics) != 1 || inputs.Topics[0].TagID != "tag_ok" {
+		t.Fatalf("scoring topics %+v ok=%v err=%v", inputs.Topics, ok, err)
+	}
+	s.statsMu.Lock()
+	lastError := s.stats.LastError
+	s.statsMu.Unlock()
+	if !strings.Contains(lastError, "Essays") || strings.Contains(lastError, "Budget") {
+		t.Fatalf("last error %q", lastError)
+	}
+	before := cli.count("calls")
+	publishTopicTestMeeting(t, s, "job-b", "transcript B", 1)
+	s.runOnce(ctx)
+	for _, call := range strings.Fields(readFakeFile(t, cli, "calls"))[before:] {
+		if call == "embed-texts" {
+			t.Fatal("the long definition was sent again")
+		}
+	}
+}
+
+func readFakeFile(t *testing.T, cli fakeTopicsCLI, name string) string {
+	t.Helper()
+	raw, _ := os.ReadFile(filepath.Join(cli.dir, name))
+	return string(raw)
 }

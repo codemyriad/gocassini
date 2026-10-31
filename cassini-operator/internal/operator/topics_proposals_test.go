@@ -530,3 +530,53 @@ func TestApproveRechecksTheDraftAndTheAdoptedTagInItsTransaction(t *testing.T) {
 		t.Fatal("the refused approve leaves the proposal open")
 	}
 }
+
+// Naming a room's groups takes a while. A person who dismisses a proposal
+// meanwhile keeps that decision: the pass does not reopen it.
+func TestAPassKeepsADecisionMadeWhileItNamedTheGroups(t *testing.T) {
+	s, v, id := proposalFixture(t, 3, "garage parking permits")
+	ctx := context.Background()
+	t.Cleanup(func() { proposalBeforeWrite = nil })
+	proposalBeforeWrite = func() {
+		s.store.db.Exec(`UPDATE topic_proposal SET state='dismissed' WHERE id=?`, id)
+	}
+	inputs, _, _ := s.store.scoringInputs(ctx, v)
+	meetings, _ := s.roomMeetings(ctx, v)
+	if err := s.clusterRoom(ctx, "room-a", meetings["room-a"], inputs); err != nil {
+		t.Fatal(err)
+	}
+	if got := proposalState(s, id); got != proposalDismissed {
+		t.Fatalf("state %s: the pass reopened a dismissal", got)
+	}
+}
+
+// memberRacingQuerier adds a member to a proposal right before its members
+// are read, as a recluster committing between the two reads would.
+type memberRacingQuerier struct {
+	topicQuerier
+	db    *sql.DB
+	added bool
+}
+
+func (q *memberRacingQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if !q.added && strings.Contains(query, "FROM topic_proposal_member WHERE proposal_id=?") {
+		q.added = true
+		if _, err := q.db.ExecContext(ctx, `INSERT INTO topic_proposal_member(proposal_id,opus_name,start_ms,end_ms,sim) VALUES(?,'SECRET.opus',0,500,1)`, args[0]); err != nil {
+			return nil, err
+		}
+	}
+	return q.topicQuerier.QueryContext(ctx, query, args...)
+}
+
+func TestAProposalGainingAnUnreadableMemberMidReadIsNotServed(t *testing.T) {
+	_, _, topics := topicLibraryService(t, "MEETING1.opus")
+	db := topics.store.db
+	db.Exec(`INSERT INTO topic_proposal(id,room_id,state,centroid,model_revision,recipe_version,chunker_version,draft_name,hints_json,flags_json,meeting_count,day_count,passage_count,created_at,updated_at)
+ VALUES('tp1','r1','open',x'00','m','r1','natural-1','a / b','[]','{}',3,3,3,1,1)`)
+	db.Exec(`INSERT INTO topic_proposal_member VALUES('tp1','MEETING1.opus',0,500,1)`)
+	q := &memberRacingQuerier{topicQuerier: db, db: db}
+	found, err := visibleProposalsIn(context.Background(), q, []string{"MEETING1.opus"}, "", "")
+	if err != nil || !q.added || len(found) != 0 {
+		t.Fatalf("found %+v (raced %v): %v", found, q.added, err)
+	}
+}

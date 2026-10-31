@@ -316,3 +316,57 @@ func TestAShareRemovedMeanwhileServesAndWritesNothing(t *testing.T) {
 		t.Fatal("a verdict was written")
 	}
 }
+
+// A topic needs no colour: one made without (or approved from a proposal,
+// which takes none) is confirmed like any other and makes a plain tag.
+func TestConfirmingATopicWithoutAColourMakesAPlainTag(t *testing.T) {
+	s, h, topics := topicLibraryService(t, "MEETING1.opus")
+	seedSuggestion(t, topics, "tag_release", "Release planning", "MEETING1.opus")
+	topics.store.db.Exec(`UPDATE topic_library SET color=NULL WHERE tag_id='tag_release'`)
+	rec := reviewCall(h, http.MethodPost, "meetings/MEETING1/tag_release", "alice", `{"requestId":"c1","decision":"confirm"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: %d %s", rec.Code, rec.Body)
+	}
+	doc, err := s.rt.annotationReads().document(context.Background(), "MEETING1.opus")
+	if err != nil || !strings.Contains(string(doc.Annotations), `"tag_release"`) {
+		t.Fatalf("document %s %v", doc.Annotations, err)
+	}
+}
+
+// Someone tags the meeting by hand with a topic it was suggested: the
+// suggestion turns into a direct confirmation, as at scoring, and leaves the
+// review queue.
+func TestTaggingByHandSettlesThePendingSuggestion(t *testing.T) {
+	s, h, topics := topicLibraryService(t, "MEETING1.opus")
+	ctx := context.Background()
+	seedSuggestion(t, topics, "tag_release", "Release planning", "MEETING1.opus")
+	tag, _ := json.Marshal(map[string]any{"ops": []any{map[string]any{"op": "mark", "tag": map[string]any{"label": "release planning"}, "target": map[string]any{"kind": "meeting"}}}})
+	if _, err := s.commitDocument(ctx, "MEETING1", "MEETING1.opus", annTestRecording, []string{"MEETING1.opus"}, "bob", mustWriteRequest(t, tag)); err != nil {
+		t.Fatal(err)
+	}
+	view := meetingSuggestions(t, h, "alice")
+	if len(view.Suggestions) != 0 {
+		t.Fatalf("still pending after tagging by hand: %+v", view.Suggestions)
+	}
+	var verdict, source string
+	topics.store.db.QueryRow(`SELECT verdict,source FROM topic_verdict WHERE opus_name='MEETING1.opus' AND tag_id='tag_release'`).Scan(&verdict, &source)
+	if verdict != "confirmed" || source != "direct" {
+		t.Fatalf("verdict %q source %q", verdict, source)
+	}
+}
+
+// Rejecting changes no file, so it does not wait for the meeting's
+// annotations to be imported (the review queue lists meetings nobody opened).
+func TestRejectingNeedsNoImportedAnnotations(t *testing.T) {
+	s, h, topics := topicLibraryService(t, "MEETING1.opus")
+	seedSuggestion(t, topics, "tag_release", "Release planning", "MEETING1.opus")
+	db := s.rt.annotationReads().db
+	for _, table := range []string{"annotation_head", "meeting_annotations"} {
+		if _, err := db.Exec(`DELETE FROM ` + table + ` WHERE opus_name='MEETING1.opus'`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec := reviewCall(h, http.MethodPost, "meetings/MEETING1/tag_release", "alice", `{"requestId":"r1","decision":"reject"}`); rec.Code != http.StatusOK {
+		t.Fatalf("reject: %d %s", rec.Code, rec.Body)
+	}
+}

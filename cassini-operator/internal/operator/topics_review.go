@@ -319,17 +319,20 @@ func (s *annotationService) confirmSuggestion(ctx context.Context, caller, meeti
 		}
 	}
 	op, _ := json.Marshal(map[string]any{"op": "mark", "tag": map[string]string{"id": markID, "label": markLabel}, "target": map[string]string{"kind": "meeting"}})
-	style := annotateTagStyle{Label: markLabel}
+	// A style needs a palette colour. A topic without one (made without, or
+	// approved from a proposal) makes a plain tag, as any new tag is.
+	var styles []annotateTagStyle
 	if topic.Color != nil {
-		style.Color = *topic.Color
-	}
-	if topic.Icon != nil {
-		style.Icon = *topic.Icon
+		style := annotateTagStyle{Label: markLabel, Color: *topic.Color}
+		if topic.Icon != nil {
+			style.Icon = *topic.Icon
+		}
+		styles = append(styles, style)
 	}
 	var verdict topicDecidedView
 	request := annotateWriteRequest{
 		Accepted: true, ActorKind: "person", RequestID: requestID, OperationID: operationID,
-		Ops: []json.RawMessage{op}, TagStyles: []annotateTagStyle{style}, Namespace: namespace,
+		Ops: []json.RawMessage{op}, TagStyles: styles, Namespace: namespace,
 		InTx: func(ctx context.Context, tx *sql.Tx, written annotateResult) error {
 			var state string
 			if err := tx.QueryRowContext(ctx, `SELECT state FROM topic_suggestion WHERE opus_name=? AND tag_id=?`, opusName, tagID).Scan(&state); err != nil || state != "pending" {
@@ -502,8 +505,12 @@ func (s *annotationService) undoSuggestion(ctx context.Context, caller, meetingI
 			if n, _ := res.RowsAffected(); n == 0 {
 				return refuseTopic(http.StatusConflict, "not-decided")
 			}
-			_, err = tx.ExecContext(ctx, `UPDATE topic_suggestion SET state='pending',updated_at=? WHERE opus_name=? AND tag_id=? AND state='decided'`, t.store.unix(), opusName, tagID)
-			return err
+			if _, err = tx.ExecContext(ctx, `UPDATE topic_suggestion SET state='pending',updated_at=? WHERE opus_name=? AND tag_id=? AND state='decided'`, t.store.unix(), opusName, tagID); err != nil {
+				return err
+			}
+			// Another mark or an alias may still carry the topic: then it
+			// stays confirmed, directly, rather than pending.
+			return settleCarriedSuggestions(ctx, tx, opusName, t.store.unix())
 		},
 	}
 	result, err := s.commitDocument(ctx, meetingID, opusName, relPath, visible, caller, request)
@@ -517,8 +524,12 @@ func (s *annotationService) undoSuggestion(ctx context.Context, caller, meetingI
 // a topic_receipt naming the meeting (retirement expires it).
 func (s *annotationService) recordVerdictChange(ctx context.Context, caller, meetingID, opusName, relPath, tagID string, in topicDecisionRequest) (any, error) {
 	t := s.rt.topics
-	// Re-check the share as the caller, right now.
-	if _, err := s.readDocument(ctx, caller, meetingID, opusName, relPath); err != nil {
+	// Re-check the share as the caller, right now. No file changes, so the
+	// annotations need not be imported yet.
+	if err := s.exapp.meetingNotRetired(ctx, opusName); err != nil {
+		return nil, annotateNotFound(err)
+	}
+	if _, err := s.authorizeRecording(ctx, caller, opusName); err != nil {
 		return nil, err
 	}
 	hash := topicRequestHash(in.Decision, opusName, tagID)
@@ -1095,21 +1106,34 @@ func (s *annotationService) decideSuggestionBatch(w http.ResponseWriter, r *http
 	}
 	if replay != nil {
 		var stored struct {
-			Pending bool               `json:"pending"`
-			Results []topicBatchResult `json:"results"`
+			Pending bool `json:"pending"`
+			Results []struct {
+				topicBatchResult
+				// A meeting retired since is scrubbed to its id and why.
+				Expired bool `json:"expired"`
+				Deleted bool `json:"deleted"`
+			} `json:"results"`
 		}
 		_ = json.Unmarshal(replay, &stored)
 		if stored.Pending {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "in-progress"})
 			return
 		}
-		// What the caller can no longer read is not reported back.
-		for i := range stored.Results {
-			if _, visible := byID[stored.Results[i].MeetingID]; !visible {
-				stored.Results[i] = topicBatchResult{MeetingID: stored.Results[i].MeetingID, Status: "not-found"}
+		results := make([]topicBatchResult, len(stored.Results))
+		for i, r := range stored.Results {
+			results[i] = r.topicBatchResult
+			_, visible := byID[r.MeetingID]
+			switch {
+			case r.Expired:
+				results[i] = topicBatchResult{MeetingID: r.MeetingID, Status: "expired"}
+			case r.Deleted:
+				results[i] = topicBatchResult{MeetingID: r.MeetingID, Status: "deleted"}
+			case !visible:
+				// What the caller can no longer read is not reported back.
+				results[i] = topicBatchResult{MeetingID: r.MeetingID, Status: "not-found"}
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"results": stored.Results, "replayed": true})
+		writeJSON(w, http.StatusOK, map[string]any{"results": results, "replayed": true})
 		return
 	}
 
@@ -1140,11 +1164,13 @@ func (s *annotationService) decideSuggestionBatch(w http.ResponseWriter, r *http
 			transient = true
 		}
 	}
-	err = t.store.inTx(context.WithoutCancel(ctx), func(tx *sql.Tx) error {
+	// The receipt is settled even if the caller went away meanwhile.
+	base := context.WithoutCancel(ctx)
+	err = t.store.inTx(base, func(tx *sql.Tx) error {
 		if transient {
 			// Not cached: a retry with this id runs the failed meetings
 			// again, and replays the decided ones by their derived ids.
-			_, err := tx.ExecContext(ctx, `DELETE FROM topic_receipt WHERE caller=? AND request_id=?`, caller, in.RequestID)
+			_, err := tx.ExecContext(base, `DELETE FROM topic_receipt WHERE caller=? AND request_id=?`, caller, in.RequestID)
 			return err
 		}
 		stored := make([]topicBatchResult, len(results))
@@ -1156,16 +1182,16 @@ func (s *annotationService) decideSuggestionBatch(w http.ResponseWriter, r *http
 			}
 			// A meeting retired meanwhile was already scrubbed: its entry
 			// is stored expired, with no target left to find.
-			if errors.Is(t.store.notRetired(ctx, entry.opusName), errMeetingRetired) {
+			if errors.Is(t.store.notRetired(base, entry.opusName), errMeetingRetired) {
 				stored[i] = topicBatchResult{MeetingID: r.MeetingID, Status: "expired"}
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO topic_receipt_target(caller,request_id,opus_name) VALUES(?,?,?)`, caller, in.RequestID, entry.opusName); err != nil {
+			if _, err := tx.ExecContext(base, `INSERT OR IGNORE INTO topic_receipt_target(caller,request_id,opus_name) VALUES(?,?,?)`, caller, in.RequestID, entry.opusName); err != nil {
 				return err
 			}
 		}
 		raw, _ := json.Marshal(map[string]any{"results": stored})
-		_, err := tx.ExecContext(ctx, `UPDATE topic_receipt SET response=? WHERE caller=? AND request_id=?`, raw, caller, in.RequestID)
+		_, err := tx.ExecContext(base, `UPDATE topic_receipt SET response=? WHERE caller=? AND request_id=?`, raw, caller, in.RequestID)
 		return err
 	})
 	if err != nil {

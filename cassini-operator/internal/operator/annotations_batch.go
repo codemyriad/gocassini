@@ -222,11 +222,18 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 	results := make([]annotateResult, len(request.MeetingIDs))
 	response.Results = make([]annotationsWriteResponse, 0, len(results))
 	response.Tags = []tagVocabularyEntry{}
+	// Read before the transaction: the store has one connection.
+	settle := s.libraryOn(ctx)
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
 		tags := map[string]bool{}
 		for i, id := range request.MeetingIDs {
 			if err := mutateAnnotationDocument(ctx, tx, names[id], paths[id], caller, namespace, request.annotateWriteRequest, batch, &results[i]); err != nil {
 				return err
+			}
+			if settle {
+				if err := settleCarriedSuggestions(ctx, tx, names[id], s.rt.topics.store.unix()); err != nil {
+					return err
+				}
 			}
 			result := results[i]
 			response.Results = append(response.Results, annotationWriteResponse(id, result))

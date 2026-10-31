@@ -312,10 +312,7 @@ func (s *topicsStore) applyScores(ctx context.Context, tx *sql.Tx, name, payload
 			return err
 		}
 		for i, span := range d.Spans {
-			counted := span.WordCount >= topicScorerV1.SubstantialSpanWords
-			if d.Reason == topicReasonStrong {
-				counted = span.WordCount >= topicScorerV1.StrongSpanWords && span.MinScore >= topicScorerV1.StrongMinScore && span.MinMargin >= topicScorerV1.StrongMinMargin
-			}
+			counted := d.counts(span)
 			if _, err := tx.ExecContext(ctx, `INSERT INTO topic_evidence(opus_name,tag_id,ordinal,start_ms,end_ms,word_count,counted) VALUES(?,?,?,?,?,?,?)`,
 				name, t.TagID, i, span.StartMS, span.EndMS, span.WordCount, counted); err != nil {
 				return err
@@ -330,7 +327,7 @@ func (s *topicsStore) applyScores(ctx context.Context, tx *sql.Tx, name, payload
 func topicDecisionSummary(d topicDecision) (words int, peak, minMargin float64) {
 	first := true
 	for _, span := range d.Spans {
-		if d.Reason == topicReasonWords && span.WordCount < topicScorerV1.SubstantialSpanWords {
+		if !d.counts(span) {
 			continue
 		}
 		words += span.WordCount
@@ -368,6 +365,52 @@ func (c topicCarried) has(ctx context.Context, tx *sql.Tx, t topicForScoring) bo
 		}
 	}
 	return false
+}
+
+// settleCarriedSuggestions applies scoring's first rule to a meeting whose
+// tags just changed: a pending suggestion of a topic the meeting now carries
+// (someone tagged it by hand) becomes a direct confirmation, as if the scorer
+// had found the tag there.
+func settleCarriedSuggestions(ctx context.Context, tx *sql.Tx, name string, now int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT s.tag_id,l.label_folded,s.definition_sha,s.scorer_key FROM topic_suggestion s
+ JOIN topic_library l ON l.tag_id=s.tag_id WHERE s.opus_name=? AND s.state='pending'`, name)
+	if err != nil {
+		return err
+	}
+	type pending struct{ tagID, label, definition, scorer string }
+	var open []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.tagID, &p.label, &p.definition, &p.scorer); err != nil {
+			rows.Close()
+			return err
+		}
+		open = append(open, p)
+	}
+	if err := rows.Close(); err != nil || len(open) == 0 {
+		return err
+	}
+	carried, err := carriedTopicTags(ctx, tx, name)
+	if err != nil {
+		return err
+	}
+	var payload sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT payload_sha256 FROM topic_meeting WHERE opus_name=?`, name).Scan(&payload); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	for _, p := range open {
+		if !carried.has(ctx, tx, topicForScoring{TagID: p.tagID, LabelFolded: p.label}) {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO topic_verdict(opus_name,tag_id,verdict,source,at,payload_sha256,definition_sha,scorer_key) VALUES(?,?,'confirmed','direct',?,?,?,?)`,
+			name, p.tagID, now, payload, p.definition, p.scorer); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE topic_suggestion SET state='withdrawn',updated_at=? WHERE opus_name=? AND tag_id=? AND state='pending'`, now, name, p.tagID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // carriedTopicTags reads the tags with at least one mark in the meeting's

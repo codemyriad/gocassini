@@ -390,3 +390,38 @@ func TestTopicsVersionsNamesTheInstalledModelWithoutLoadingIt(t *testing.T) {
 		t.Fatalf("installed: %s %v", stdout.String(), err)
 	}
 }
+
+// With --skip-too-long, a text over the cap is named on stdout and left out;
+// the others are embedded. When none is left, nothing is locked or loaded.
+func TestTopicsEmbedTextsSkipsTextsOverTheCap(t *testing.T) {
+	root := t.TempDir()
+	fakeInstallShipped(t, root, DefaultEmbeddingModelID)
+	stubTopicsEmbedder(t, &fakeEmbedder{})
+	stubTopicsTokenizer(t)
+	long := fmt.Sprintf(`{"id":"b","text":%q}`, strings.Repeat("x", topics.MaxTokens+1))
+	out := filepath.Join(t.TempDir(), "vectors.jsonl")
+	code, stdout, stderr := runEmbedTexts(root, "--in", writeTopicsInput(t, `{"id":"a","text":"one"}`, long), "--out", out, "--skip-too-long")
+	if code != 0 || !strings.Contains(stdout, `{"tokens":`) || !strings.Contains(stdout, `"tooLong":"b"`) || !strings.Contains(stdout, `{"count":1}`) {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	if got := readTopicsVectors(t, out); got.header.Count != 1 || len(got.lines) != 1 || got.lines[0].ID != "a" {
+		t.Fatalf("vectors %+v", got)
+	}
+
+	openTopicsEmbedderFn = func(modelstore.EmbeddingFiles, topics.Options) (textEmbedder, error) {
+		t.Fatal("loaded the model with nothing to embed")
+		return nil, nil
+	}
+	unlock, err := transcribe.LockModelRuntime(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	code, stdout, stderr = runEmbedTexts(root, "--in", writeTopicsInput(t, long), "--out", out, "--skip-too-long")
+	if code != 0 || strings.Contains(stdout, "locked") || !strings.Contains(stdout, `{"count":0}`) {
+		t.Fatalf("all over the cap: code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	if got := readTopicsVectors(t, out); got.header.Count != 0 || len(got.lines) != 0 {
+		t.Fatalf("vectors %+v", got)
+	}
+}

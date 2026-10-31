@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // topicsPreviewStore gives rt an annotations store of its own and returns its
@@ -344,5 +345,35 @@ func TestTopicCommandsUnlistedButDispatched(t *testing.T) {
 		if code := Run(context.Background(), []string{command, "--help"}, &stdout, &stderr); code != 0 || strings.Contains(stderr.String(), "unknown command") {
 			t.Fatalf("%s --help: %d %q", command, code, stderr.String())
 		}
+	}
+}
+
+// A pass waiting for a recording to end checks the lock again once admitted:
+// locking meanwhile means no definition is embedded and nothing is claimed.
+func TestTopicsLockedWhileWaitingForARecordingDoesNothing(t *testing.T) {
+	s, cli := newTopicsTestService(t)
+	ctx := context.Background()
+	name := publishTopicTestMeeting(t, s, "job-a", "transcript A", 1)
+	s.rt.cfg.RecordingPriority = true
+	if !s.rt.reserveRecordSlot() {
+		t.Fatal("no record slot")
+	}
+	ran := make(chan bool, 1)
+	go func() { ran <- s.runOnce(ctx) }()
+	select {
+	case <-ran:
+		t.Fatal("the pass did not wait for the recording")
+	case <-time.After(300 * time.Millisecond):
+	}
+	lockTopicsPreview(t, s)
+	s.rt.releaseRecordSlot()
+	if <-ran {
+		t.Fatal("the pass ran after the preview was locked")
+	}
+	if calls := cli.calls(); len(calls) != 0 {
+		t.Fatalf("the CLI ran after the preview was locked: %v", calls)
+	}
+	if got := topicRow(t, s, name); got.State != topicStateQueued {
+		t.Fatalf("the meeting was claimed: %+v", got)
 	}
 }

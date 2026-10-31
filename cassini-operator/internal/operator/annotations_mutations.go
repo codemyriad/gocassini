@@ -113,6 +113,8 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusN
 			return annotateResult{}, err
 		}
 	}
+	// Read before the transaction: the store has one connection.
+	settle := request.InTx == nil && s.libraryOn(ctx)
 	var result annotateResult
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
 		name := opusName
@@ -138,6 +140,11 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, opusN
 		}
 		if request.InTx != nil {
 			if err := request.InTx(ctx, tx, result); err != nil {
+				return err
+			}
+		}
+		if settle {
+			if err := settleCarriedSuggestions(ctx, tx, name, s.rt.topics.store.unix()); err != nil {
 				return err
 			}
 		}

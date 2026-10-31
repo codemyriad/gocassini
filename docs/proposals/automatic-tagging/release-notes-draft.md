@@ -15,7 +15,8 @@ fragment's line here, or that file, when restoring. The
 out for the same reason; restore them together, with the docs index link to
 `docs/topic-suggestions.md` and its API sections, moved there from
 `docs/reference/api.md`, the topic rows of `docs/privacy.md` and the topic
-commands in `cassini-operator --help` (both under "Not in the release" below).
+commands in `cassini-operator --help` and `cassini --help` (all under "Not in
+the release" below).
 
 ## Not in the release
 
@@ -87,6 +88,23 @@ invert or delete that test:
   `+backfillTopicsCommand+`      queue past meetings for topic suggestions
   `+topicsExportCommand+`        write topic verdicts with their scores, no text
   `+topicsPreviewCommand+`       unlock or lock the topic suggestions preview
+```
+
+### `cassini --help` and `cassini models`
+
+`cassini topics embed-texts` works but is not listed in `cassini --help`
+(`cassini-go-recorder/internal/cassini/cli.go`), and bare `cassini models` does
+not name the topics model (`models.go`). `cassini models list` does list it:
+the operator reads its inventory from there. Restore the example and command
+lines and the usage sentence:
+
+```text
+  cassini topics embed-texts --in ./texts.jsonl --out ./vectors.jsonl
+  topics   Embed text for topic suggestions
+```
+
+```go
+fmt.Fprintln(stderr, "Models are speech models (installed with their VAD), the speaker separation model "+transcribe.DefaultDiarizationModelID+" and the topic suggestions model "+DefaultEmbeddingModelID+".")
 ```
 
 ## Changelog fragments

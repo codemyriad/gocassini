@@ -149,6 +149,23 @@ func (rt *Runtime) modelInventory(ctx context.Context, device string) ([]modelIn
 // findModel returns a model that can be selected, installed or checked for
 // a setting. A retired model is never one of them: only admitStandIn looks at
 // those rows.
+// recheckEmbeddingModel queues the installed topics model for its runtime
+// check again.
+func (rt *Runtime) recheckEmbeddingModel() {
+	models, err := rt.modelInventory(rt.ctx, deviceCPU)
+	if err != nil {
+		return
+	}
+	for _, m := range models {
+		if m.Kind == modelKindEmbedding && m.Installed {
+			j, e := rt.enqueueModel(rt.ctx, m, deviceCPU)
+			if e == nil && j.State == "ready" {
+				_, _ = rt.store.db.ExecContext(rt.ctx, `UPDATE model_install_jobs SET state='queued' WHERE id=? AND state='ready'`, j.ID)
+			}
+		}
+	}
+}
+
 func findModel(models []modelInfo, id, revision string) (modelInfo, error) {
 	for _, m := range models {
 		if m.ReplacedBy != "" {
@@ -269,6 +286,10 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		m, err := findModel(models, in.Model, in.Revision)
+		if err == nil && m.Kind == modelKindEmbedding && !rt.topicsUnlocked(r.Context()) {
+			// The locked preview offers no topics model (topics_preview.go).
+			err = fmt.Errorf("unsupported model/revision %s/%s", in.Model, in.Revision)
+		}
 		if err != nil {
 			writeJSONError(w, 400, err.Error())
 			return
@@ -316,7 +337,9 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		if job == nil {
+		// The locked preview hides the topics model's jobs; one can still be
+		// cancelled, so locking mid-download can stop it.
+		if job == nil || job.Model == defaultEmbeddingModel && !rt.topicsUnlocked(r.Context()) && !(len(parts) == 2 && parts[1] == "cancel") {
 			http.NotFound(w, r)
 			return
 		}
@@ -406,19 +429,9 @@ func (rt *Runtime) startModelWorker() {
 		}
 		lastCheck := time.Now()
 		// The embedding model's readiness survives restarts, so it is
-		// checked again in the background; a failure pauses suggestions.
-		if rt.topicSuggestionsOn(rt.ctx) {
-			if models, e := rt.modelInventory(rt.ctx, deviceCPU); e == nil {
-				for _, m := range models {
-					if m.Kind == modelKindEmbedding && m.Installed {
-						j, e := rt.enqueueModel(rt.ctx, m, deviceCPU)
-						if e == nil && j.State == "ready" {
-							_, _ = rt.store.db.ExecContext(rt.ctx, `UPDATE model_install_jobs SET state='queued' WHERE id=? AND state='ready'`, j.ID)
-						}
-					}
-				}
-			}
-		}
+		// checked again in the background, once no other job waits: it never
+		// delays the transcription model. A failure pauses suggestions.
+		recheckEmbedding := rt.topicSuggestionsOn(rt.ctx)
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
@@ -434,11 +447,19 @@ func (rt *Runtime) startModelWorker() {
 			}
 			jobs, err := rt.modelJobs(rt.ctx)
 			if err == nil {
+				ran := false
 				for _, j := range jobs {
-					if j.State == "queued" {
+					// The locked preview runs no topics model job, even one
+					// queued before it was locked.
+					if j.State == "queued" && (j.Model != defaultEmbeddingModel || rt.topicsUnlocked(rt.ctx)) {
 						rt.runModelJob(j)
+						ran = true
 						break
 					}
+				}
+				if !ran && recheckEmbedding && checkErr == nil {
+					recheckEmbedding = false
+					rt.recheckEmbeddingModel()
 				}
 			}
 			select {
