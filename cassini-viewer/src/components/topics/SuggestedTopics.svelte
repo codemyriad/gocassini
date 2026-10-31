@@ -7,7 +7,7 @@
   import { createEventDispatcher, onDestroy } from "svelte";
   import { ChevronDown } from "@lucide/svelte";
 
-  import { AnnotationError, type MeetingAnnotations } from "../../viewer/annotations";
+  import { AnnotationError, type AnnotationResult } from "../../viewer/annotations";
   import type { DataProvider, MeetingCatalogEntry } from "../../viewer/dataProvider";
   import { colorFor } from "../../viewer/tagPalette";
   import { meetingNote, newRequestId, type MeetingSuggestions, type TopicDecision, type TopicSuggestion } from "../../viewer/topics";
@@ -25,7 +25,7 @@
   // sorted out, a tag removed), what can be confirmed or reopened changes.
   export let marksRevision: number | null = null;
 
-  const dispatch = createEventDispatcher<{ evidence: { startMs: number; endMs: number }[]; annotations: MeetingAnnotations }>();
+  const dispatch = createEventDispatcher<{ evidence: { startMs: number; endMs: number }[]; annotations: AnnotationResult }>();
 
   let view: MeetingSuggestions | null = null;
   let loadedFor = "";
@@ -87,7 +87,7 @@
       // The answer belongs to the meeting it was asked for.
       if (meeting.id !== entry.id) return;
       ok = true;
-      if (result.annotations) dispatch("annotations", result.annotations as unknown as MeetingAnnotations);
+      if (result.annotations) dispatch("annotations", result.annotations as unknown as AnnotationResult);
       open = null;
       if (decision === "confirm") showToast(`Tagged “${label}”.`, tagId, label);
       else if (decision === "reject") showToast(`“${label}” won't be suggested for this meeting.`, tagId, label);

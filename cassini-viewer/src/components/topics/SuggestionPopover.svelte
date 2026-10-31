@@ -29,7 +29,7 @@
   <p class="text-base-content/80">{suggestion.definition}</p>
   <p class="font-medium">{whyLine(suggestion)}</p>
   <ul class="grid gap-1.5">
-    {#each passages as passage (passage.startMs)}
+    {#each passages as passage, i (`${i}:${passage.startMs}`)}
       {@const text = quote(passage.startMs, passage.endMs)}
       <li class="grid gap-0.5">
         <button type="button" class="link justify-self-start tabular-nums" aria-label={`Play from ${formatClockTime(passage.startMs)}`}

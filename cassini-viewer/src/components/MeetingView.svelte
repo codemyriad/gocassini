@@ -1748,7 +1748,7 @@
         <MeetingTags session={marks} vocabulary={tagVocabulary} preview={previewTags} />
         {#if !bundled && dataProvider.loadMeetingSuggestions && dataProvider.decideSuggestion}
           <SuggestedTopics entry={meeting} provider={dataProvider} quote={quoteRange} seek={seekTo} marksRevision={$marks.annotations?.revision ?? null}
-            on:evidence={(event) => (topicEvidence = event.detail)} on:annotations={(event) => marks.receive(event.detail)} />
+            on:evidence={(event) => (topicEvidence = event.detail)} on:annotations={(event) => marks.accept(event.detail)} />
         {/if}
       </div>
     {/if}
