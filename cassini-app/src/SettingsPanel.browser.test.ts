@@ -330,3 +330,30 @@ it("opens the hardware facts under Change and sends Add one to the providers", a
   await expect.element(spellings.getByRole("textbox", { name: /One name per line/ })).toBeVisible();
   await expect.element(page.getByRole("textbox", { name: /One term per line/ })).not.toBeInTheDocument();
 });
+
+it("says the installed model transcribes until its runtime check has failed, then the previous model", async () => {
+  // Ultra's files are installed but not checked: the operator names no
+  // stand-in (the next build checks Ultra and transcribes with it), then names
+  // v3 once Ultra's check failed.
+  let standIn: string | undefined;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") {
+      return Response.json({ quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "parakeet-ultra-0.6b-int8", active_revision: "r1" });
+    }
+    if (path === "/operator/settings/models") {
+      return Response.json({ models: [{ id: "parakeet-ultra-0.6b-int8", name: "Parakeet Ultra", description: "", revision: "r1", download_bytes: 1, installed_bytes: 1, installed: true, ready: false, device: "cpu", kind: "speech", stand_in: standIn }], jobs: [], downloads_allowed: true, device: "cpu" });
+    }
+    if (path === "/operator/settings/llm") return Response.json({ providers: [], summary: { enabled: false }, insights: { enabled: false } });
+    return Response.json({});
+  }));
+  host = document.createElement("div"); document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  const line = () => host.querySelector(".in-use-text")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+  await expect.poll(line).toContain("Transcribing with Parakeet Ultra on");
+  await unmount(app); app = undefined;
+
+  standIn = "parakeet-tdt-0.6b-v3-int8";
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  await expect.poll(line).toContain("Parakeet Ultra is installed but failed its runtime check; the previous model transcribes recordings on");
+});
