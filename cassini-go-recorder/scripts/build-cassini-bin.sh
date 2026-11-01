@@ -110,7 +110,7 @@ for native_file in "$cache/lib/"*; do
 done
 workspace=$cache/go-$fingerprint.work
 cat > "$workspace.tmp.$$" <<WORK
-go 1.24.0
+go 1.25.0
 use "$rec"
 replace $binding => "$shim"
 WORK

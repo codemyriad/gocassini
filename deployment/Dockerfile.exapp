@@ -38,7 +38,7 @@ COPY deployment/ffmpeg /tmp/cassini-ffmpeg-build
 RUN FFMPEG_BUILD_JOBS="${FFMPEG_BUILD_JOBS}" \
     /tmp/cassini-ffmpeg-build/build.sh "${FFMPEG_VERSION}" /out/ffmpeg
 
-FROM golang:1.24-bookworm AS go-builder
+FROM golang:1.25-bookworm AS go-builder
 ARG TARGETARCH
 WORKDIR /src
 
