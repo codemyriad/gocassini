@@ -19,7 +19,7 @@ describe("attempt models", () => {
 });
 
 describe("attempt logs", () => {
-  it("lists the logs an attempt wrote, in pipeline order, and which are gone", () => {
+  it("lists every step's log, in pipeline order, and which cannot be opened", () => {
     const logs = attemptLogs(attempt({
       publish_log_path: "/runs/a.logs/publish.log",
       record_log_path: "/runs/a.logs/record.log",
@@ -28,9 +28,10 @@ describe("attempt logs", () => {
       files_present: { record_log: false, build_log: true },
     }));
     expect(logs).toEqual([
-      { stage: "record", label: "Record", present: false },
-      { stage: "build", label: "Build", present: true },
-      { stage: "publish", label: "Publish", present: true },
+      { stage: "record", label: "Record", written: true, present: false },
+      { stage: "build", label: "Build", written: true, present: true },
+      { stage: "seal", label: "Seal", written: false, present: false },
+      { stage: "publish", label: "Publish", written: true, present: true },
     ]);
   });
 });

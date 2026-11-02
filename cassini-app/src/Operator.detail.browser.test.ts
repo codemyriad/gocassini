@@ -150,3 +150,45 @@ it("says why a summary can't be written when only the meeting's copy is gone", a
   await openRun();
   await expect.element(page.getByText(filesGoneNote, { exact: true })).toBeVisible();
 });
+
+it("keeps every field in its place when a run has little to show", async () => {
+  const bare = {
+    ...job, state: "running", stage: "build", stop_reason: null, completed_at: null, request_json: "{}",
+    build_finished_at: null, seal_started_at: null, seal_finished_at: null, publish_started_at: null, publish_finished_at: null,
+    artifact_meeting_path: null, artifact_opus_path: null,
+  };
+  const building = {
+    ...attempt, ...bare, transcription_model: "", transcription_device: "", summary_model: "",
+    build_log_path: null, files_present: {},
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (path === "/operator/jobs") return Response.json([bare]);
+    if (path === "/operator/jobs/01KSTANDUPRUN") {
+      return Response.json({ job: bare, attempts: [building], availability: { source: "present", output: "missing", published_attempt: null } });
+    }
+    return Response.json({});
+  }));
+  await openRun();
+
+  const pane = document.querySelector(".op-detail-pane")!;
+  const labels = (root: Element) => [...root.querySelectorAll(":scope > div > dt")].map((dt) => dt.textContent?.trim());
+  const [run] = pane.querySelectorAll("section dl");
+  expect(labels(run)).toEqual([
+    "Recorded", "Processing", "Completed", "Speech model", "Summary model", "Capture", "Stopped because", "Conversation", "Recording",
+  ]);
+  for (const missing of ["Processing", "Completed", "Speech model", "Summary model", "Stopped because", "Conversation"]) {
+    const cell = [...run.querySelectorAll("dt")].find((dt) => dt.textContent?.trim() === missing)!.nextElementSibling!;
+    expect(cell.textContent?.trim(), missing).toBe("Not available");
+  }
+
+  await userEvent.click(page.getByText("Attempt 1", { exact: true }));
+  const attemptFields = pane.querySelector("details[open] > div > dl")!;
+  expect(labels(attemptFields)).toEqual(["Queued", "Processing", "Completed", "Speech model", "Summary model", "Stopped because"]);
+  // All four logs are offered; the ones not written cannot be opened.
+  for (const name of ["Record log", "Build log", "Seal log", "Publish log"]) {
+    await expect.element(page.getByRole("button", { name, exact: true })).toBeVisible();
+  }
+  await expect.element(page.getByRole("button", { name: "Build log", exact: true })).toBeDisabled();
+  await page.screenshot({ element: pane, path: `${SHOTS}/04-sparse.png` });
+});

@@ -32,15 +32,22 @@ export type LogStage = (typeof LOG_STAGES)[number]["key"];
 export interface AttemptLog {
   stage: LogStage;
   label: string;
-  /** False when the log was written and has since been removed. */
+  /** False for a step that has not run, or ran before logs were kept. */
+  written: boolean;
+  /** False when there is no log to open: never written, or since removed. */
   present: boolean;
 }
 
-// The logs an attempt wrote, in pipeline order.
+// Every step's log, in pipeline order, so the run detail always offers the
+// same four and says which cannot be opened.
 export function attemptLogs(attempt: JobAttempt): AttemptLog[] {
-  return LOG_STAGES.filter((stage) => !!attempt[stage.field]).map((stage) => ({
-    stage: stage.key,
-    label: stage.label,
-    present: attempt.files_present?.[`${stage.key}_log`] !== false,
-  }));
+  return LOG_STAGES.map((stage) => {
+    const written = !!attempt[stage.field];
+    return {
+      stage: stage.key,
+      label: stage.label,
+      written,
+      present: written && attempt.files_present?.[`${stage.key}_log`] !== false,
+    };
+  });
 }
