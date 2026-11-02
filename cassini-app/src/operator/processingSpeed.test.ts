@@ -6,6 +6,7 @@ import {
   meetingLengthMs,
   processingSpeed,
   runProcessing,
+  stepTime,
 } from "./processingSpeed";
 import type { Job, JobAttempt, JobDetailResponse } from "./types";
 
@@ -43,6 +44,15 @@ describe("processingSpeed", () => {
     const result = processingSpeed(attempt(1, "initial"), null);
     expect(result?.factor).toBeNull();
     expect(describeProcessing(result!)).toBe("12m");
+  });
+});
+
+describe("stepTime", () => {
+  it("times each finished step on its own", () => {
+    const row = attempt(1, "initial", { ...processed, publish_finished_at: null });
+    expect(stepTime(row, "build")).toBe(10 * 60_000);
+    expect(stepTime(row, "seal")).toBe(60_000);
+    expect(stepTime(row, "publish")).toBeNull();
   });
 });
 

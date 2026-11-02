@@ -7,6 +7,7 @@
     runProcessing,
     spanMs,
     stageTimes,
+    stepTime,
   } from "./operator/processingSpeed";
 
   // The operator surface's left nav (D-723). Configuration is not a surface of
@@ -1765,12 +1766,18 @@
                               {/each}
                             </div>
                             <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                              {#each stageProgress(attempt) as stage}
-                                <span
-                                  class="min-w-0 flex-1"
-                                  class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                                >
-                                  {stage.label}
+                              {#each stageProgress(attempt) as stage, index}
+                                {@const ms = stepTime(attempt, STAGES[index].key)}
+                                <span class="min-w-0 flex-1">
+                                  <span
+                                    class="block"
+                                    class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
+                                  >
+                                    {stage.label}
+                                  </span>
+                                  {#if ms !== null}
+                                    <span class="block whitespace-nowrap text-base-content/45">{formatSpan(ms)}</span>
+                                  {/if}
                                 </span>
                               {/each}
                             </div>

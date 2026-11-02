@@ -84,10 +84,12 @@ it("says how long the meeting took to process, past a summary written later", as
   await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/01-run.png` });
 
-
-  // The figure is the run's; an attempt's steps carry no times of their own.
+  // Each step says how long it took; only the run gets a multiplier.
   await userEvent.click(page.getByText("Attempt 1", { exact: true }));
+  await expect.element(page.getByText("10m", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("58m", { exact: true }).first()).toBeVisible();
   expect(document.body.textContent).not.toContain("5.8×");
+  await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-steps.png` });
 });
 
 it("keeps the published figure past a rerun that failed", async () => {
@@ -97,6 +99,9 @@ it("keeps the published figure past a rerun that failed", async () => {
   ]);
   await open("Retro");
   await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
+  // A failed step still says how long it ran.
+  await userEvent.click(page.getByText("Attempt 2", { exact: true }).last());
+  await expect.element(page.getByText("3s", { exact: true })).toBeVisible();
 });
 
 it("says nothing about processing before the meeting is published", async () => {

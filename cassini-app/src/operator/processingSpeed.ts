@@ -74,6 +74,14 @@ export function stageTimes(row: StageTimes, key: string) {
   };
 }
 
+// How long one step took, once it has finished. A failed step is stamped
+// finished too, so its time is how long it ran before failing. Only the run
+// gets a multiplier: a step's own is nothing an administrator acts on.
+export function stepTime(row: StageTimes, key: string): number | null {
+  const t = stageTimes(row, key);
+  return spanMs(t.started, t.finished);
+}
+
 // From the build starting to the meeting being published. Time spent queued
 // or waiting for resources before the build is not processing.
 export function processingSpeed(row: StageTimes, meetingMs: number | null): Speed | null {
