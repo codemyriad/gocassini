@@ -286,7 +286,7 @@
   import type { Job, JobAttempt, JobDetailResponse, SummaryPlan } from "./operator/types";
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
-  import { outcomeAttempt, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
+  import { outcomeAttempt, shareNotice, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
   import {
     summaryActionLabel,
     summaryConfirmTitle,
@@ -787,10 +787,19 @@
       void selectJob(event.job_id, { allowJobsRefresh: false });
       return;
     }
+    // The detail on screen is still the previous run's while this one loads:
+    // merging into it would show that run's sharing and Files link under this
+    // one's name. The load brings this run's own detail.
+    if (selectedJob.job.id !== event.job_id) {
+      return;
+    }
+    // Fields only the detail carries are kept until the event says otherwise.
     selectedJob = {
+      ...selectedJob,
       job: event.job,
       availability: event.availability ?? selectedJob.availability,
       attempts: upsertAttempt(selectedJob.attempts, event.attempt),
+      sharing: event.sharing ?? selectedJob.sharing,
     };
     updatePolling();
   }
@@ -1033,11 +1042,14 @@
   // A run that published without a transcript or a summary says so (D-854,
   // D-814), from the attempt it published.
   $: outcomeSource = selectedJob ? outcomeAttempt(selectedJob) : null;
-  $: outcomeNotices = outcomeSource
-    ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)].filter(
-        (notice): notice is OutcomeNotice => notice !== null,
-      )
-    : [];
+  // Who it could not be shared with (D-885): the meeting's, not an attempt's,
+  // because a rerun keeps the file and its shares.
+  $: outcomeNotices = [
+    shareNotice(selectedJob?.sharing, rerunApplies && !rerunBlockedReason),
+    ...(outcomeSource
+      ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)]
+      : []),
+  ].filter((notice): notice is OutcomeNotice => notice !== null);
   $: {
     // One plan per finished run and state: a new attempt or an update reloads
     // it, and leaves any open confirmation, which priced the old one.
@@ -1317,6 +1329,9 @@
                         {#if job.meeting_deleted}
                           <span class="badge badge-outline badge-warning badge-sm mt-1" title="The published meeting was deleted by a user. Its local artifacts are reclaimed and this job can no longer be rerun.">Meeting deleted</span>
                         {/if}
+                        {#if job.unshared_count}
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={`Nextcloud refused to share this meeting with ${job.unshared_count === 1 ? "1 recipient" : `${job.unshared_count} recipients`}. Open the run to see who.`}>Not shared with everyone</span>
+                        {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
                             {job.error}
@@ -1469,6 +1484,14 @@
                       <div class="grid min-w-0 gap-1">
                         <p class="font-medium">{notice.title}</p>
                         {#if notice.detail}<p class="font-mono text-xs break-words text-base-content/75">{notice.detail}</p>{/if}
+                        {#if notice.items}
+                          <details class="text-xs">
+                            <summary class="cursor-pointer text-base-content/75">{notice.items.summary}</summary>
+                            <ul class="mt-1 grid gap-0.5 border-l-2 border-base-300 pl-2">
+                              {#each notice.items.entries as entry}<li class="break-words text-base-content/75">{entry}</li>{/each}
+                            </ul>
+                          </details>
+                        {/if}
                         {#if notice.hint}<p class="text-xs text-base-content/70">{notice.hint}</p>{/if}
                       </div>
                     </div>

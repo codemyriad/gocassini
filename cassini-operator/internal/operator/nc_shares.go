@@ -244,18 +244,60 @@ func shareCoversPrincipal(shares []ncShare, principal sharePrincipal) bool {
 	return false
 }
 
+// starterShareRefusedError is Nextcloud refusing to share a recording with
+// the person who started it. A meeting its own starter cannot open is not
+// published (D-885); everyone else is best effort.
+type starterShareRefusedError struct {
+	Starter string
+	Err     error
+}
+
+// starterRefusedMarker is in every starter refusal's message, so a job's error
+// says whether that refusal is still why it failed.
+const starterRefusedMarker = "could not be shared with its starter"
+
+func (e *starterShareRefusedError) Error() string {
+	return fmt.Sprintf("the recording %s, %s: %v", starterRefusedMarker, e.Starter, e.Err)
+}
+
+func (e *starterShareRefusedError) Unwrap() error { return e.Err }
+
+// shareMode says which refusals a reconciliation cannot do without.
+type shareMode int
+
+const (
+	// sharePublish: the recording's starter must receive it; anyone else
+	// Nextcloud refuses, a group or a Team included, is skipped and reported.
+	sharePublish shareMode = iota
+	// shareImport: the importer must receive it, and so must any group or
+	// Team chosen, as before D-885 — the Import tab cannot show what was
+	// skipped yet, so a refused group would vanish silently.
+	shareImport
+	// shareReapply: the meeting is published already, so no refusal can
+	// unpublish it; every refusal is reported.
+	shareReapply
+)
+
 // reconcileRecordingShares adds only missing audience members. Existing shares
 // are left exactly as an administrator or recipient changed them. This is used
-// for a first publish or an interrupted first publish; completed republishes
-// must skip it, since removing a recipient is an intentional audience edit.
-func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool) error {
+// for a first publish or an interrupted first publish, and for an
+// administrator's explicit re-share; completed republishes must skip it, since
+// removing a recipient is an intentional audience edit.
+//
+// Nextcloud refusing a recipient — a sharing policy, a user or group that no
+// longer exists — skips that recipient and reports it, unless the mode needs
+// that recipient: a refused starter is a *starterShareRefusedError. Anything
+// else (the server unreachable, a share that did not land) fails, as it says
+// nothing about who may receive the recording.
+func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool, mode shareMode) ([]skippedShare, error) {
 	if len(audience) == 0 || audience[0].Type != "user" || audience[0].ID == "" || audience[0].ID == ncRecordingsOwner {
-		return fmt.Errorf("recording has no local starter to share with")
+		return nil, fmt.Errorf("recording has no local starter to share with")
 	}
 	existing, err := c.ownerSharesForPath(ctx, client, relPath)
 	if err != nil {
-		return fmt.Errorf("list recording shares: %w", err)
+		return nil, fmt.Errorf("list recording shares: %w", err)
 	}
+	skipped := []skippedShare{}
 	seen := map[string]bool{}
 	required := []sharePrincipal{}
 	permissions := ncShareRead
@@ -269,7 +311,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			continue
 		}
 		if _, ok := shareTypeForPrincipal(principal.Type); !ok {
-			return fmt.Errorf("unsupported recording recipient type %q", principal.Type)
+			return nil, fmt.Errorf("unsupported recording recipient type %q", principal.Type)
 		}
 		key := principal.Type + "\x00" + principal.ID
 		if seen[key] {
@@ -297,7 +339,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			// Re-list before retrying so we never intentionally duplicate it.
 			refreshed, listErr := c.ownerSharesForPath(ctx, client, relPath)
 			if listErr != nil {
-				return fmt.Errorf("share %s %s: %w (and re-list failed: %v)", principal.Type, principal.ID, createErr, listErr)
+				return nil, fmt.Errorf("share %s %s: %w (and re-list failed: %v)", principal.Type, principal.ID, createErr, listErr)
 			}
 			existing = refreshed
 			if shareCoversPrincipal(existing, principal) {
@@ -310,19 +352,28 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			if attempt < 2 {
 				select {
 				case <-ctx.Done():
-					return ctx.Err()
+					return nil, ctx.Err()
 				case <-time.After(time.Duration(attempt+1) * time.Second):
 				}
 			}
 		}
 		if createErr != nil {
-			// A missing individual can be reported and skipped. A failed
-			// group or Team share would omit a whole audience, so fail the job.
-			if index > 0 && principal.Type == "user" && recipientShareRefusal(createErr) {
-				ncAccessSubstrate.warnShare(fmt.Sprintf("recording %s: share skipped for %s %s: %v", path.Base(relPath), principal.Type, principal.ID, createErr))
-				continue
+			if !recipientShareRefusal(createErr) {
+				return nil, fmt.Errorf("share %s %s: %w", principal.Type, principal.ID, createErr)
 			}
-			return fmt.Errorf("share %s %s: %w", principal.Type, principal.ID, createErr)
+			skip := skippedShare{Type: principal.Type, ID: principal.ID, Reason: shareRefusalReason(createErr)}
+			if index == 0 && mode != shareReapply {
+				return []skippedShare{skip}, &starterShareRefusedError{Starter: principal.ID, Err: createErr}
+			}
+			if mode == shareImport && principal.Type != "user" {
+				return nil, fmt.Errorf("share %s %s: %w", principal.Type, principal.ID, createErr)
+			}
+			// Anyone else is skipped and named, a group or a Team included:
+			// the meeting still reaches everyone Nextcloud does allow, and the
+			// run says who it does not (D-885).
+			ncAccessSubstrate.warnShare(fmt.Sprintf("recording %s: share skipped for %s %s: %v", path.Base(relPath), principal.Type, principal.ID, createErr))
+			skipped = append(skipped, skip)
+			continue
 		}
 		required = append(required, principal)
 	}
@@ -330,12 +381,12 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 	// that every expected share actually landed.
 	verified, err := c.ownerSharesForPath(ctx, client, relPath)
 	if err != nil {
-		return fmt.Errorf("verify recording shares: %w", err)
+		return nil, fmt.Errorf("verify recording shares: %w", err)
 	}
 	for _, principal := range required {
 		if !shareCoversPrincipal(verified, principal) {
-			return fmt.Errorf("recording share for %s %s is missing after publication", principal.Type, principal.ID)
+			return nil, fmt.Errorf("recording share for %s %s is missing after publication", principal.Type, principal.ID)
 		}
 	}
-	return nil
+	return skipped, nil
 }

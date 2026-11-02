@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { outcomeAttempt, summaryNotice, transcriptionNotice } from "./stepOutcomes";
+import { outcomeAttempt, shareNotice, summaryNotice, transcriptionNotice } from "./stepOutcomes";
 import type { JobAttempt, JobDetailResponse } from "./types";
 
 const attempt = (n: number, outcomes: Partial<JobAttempt> = {}): JobAttempt =>
@@ -69,5 +69,45 @@ describe("summaryNotice", () => {
       title: "No summary: summaries are turned off",
     });
     expect(summaryNotice(attempt(1, { summary_status: "skipped", summary_reason: "not_configured" }))?.hint).toBe("Add one in Settings.");
+  });
+});
+
+describe("shareNotice", () => {
+  it("says nothing where everyone was given the meeting, or nothing was recorded", () => {
+    expect(shareNotice(undefined)).toBeNull();
+    expect(shareNotice({ status: "complete" })).toBeNull();
+    expect(shareNotice({ status: "partial", skipped: [] })).toBeNull();
+  });
+
+  it("names who a published meeting could not be shared with, behind a disclosure", () => {
+    const notice = shareNotice({
+      status: "partial",
+      skipped: [
+        { type: "user", id: "bob", reason: "Sharing is only allowed with group members" },
+        { type: "group", id: "marketing", reason: "Sharing is only allowed with group members" },
+        { type: "circle", id: "design" },
+      ],
+    });
+    expect(notice?.tone).toBe("warning");
+    expect(notice?.title).toBe("Published, but not shared with everyone: Nextcloud refused 3 recipients");
+    expect(notice?.items).toEqual({
+      summary: "Not shared with 3 recipients",
+      entries: [
+        "bob: Sharing is only allowed with group members",
+        "marketing (group): Sharing is only allowed with group members",
+        "design (Team)",
+      ],
+    });
+    expect(notice?.hint).toContain("Doctor → Recording sharing");
+  });
+
+  it("says a run was not published because its starter was refused", () => {
+    const notice = shareNotice({ status: "starter_refused", skipped: [{ type: "user", id: "mallory", reason: "Sharing is only allowed with group members" }] });
+    expect(notice?.tone).toBe("error");
+    expect(notice?.title).toContain("person who started the recording");
+    expect(notice?.detail).toBe("mallory: Sharing is only allowed with group members");
+    expect(notice?.hint).toContain("Rerun");
+    // A run that cannot be rerun is not promised one.
+    expect(shareNotice({ status: "starter_refused", skipped: [] }, false)?.hint).toContain("cannot be rerun");
   });
 });

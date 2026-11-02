@@ -81,14 +81,17 @@ and annotation goes through Nextcloud as the person asking.
 ## When a share cannot be made
 
 - If Cassini cannot share a recording with the person who started it, the
-  recording is not published.
-- A failed group or Team share also stops publication, because it could leave
-  many people out.
-- One person's share being refused is a warning, and everybody else keeps
-  access.
+  recording is not published, and the run says so.
+- Anyone else Nextcloud refuses — a person, a group or a Team — is left out,
+  and everybody else keeps access. The run says "Published, but not shared with
+  everyone" and lists who was left out and why; the run list flags it. Once the
+  cause is fixed, an administrator can re-share the meeting with its room.
+- A refusal almost always comes from one of Nextcloud's sharing settings, which
+  apply to Cassini's account like to anyone else. **Doctor › Recording sharing**
+  checks them before anyone records and names the setting to change.
 
-The warning and the state of the setup are under **Operator › Settings › Publish
-pipeline › Who can see recordings**, and on `/operator/status` as `recordings_access`.
+The state of the setup is under **Operator › Settings › Publish pipeline › Who
+can see recordings**, and on `/operator/status` as `recordings_access`.
 
 ## Recordings from before direct shares
 

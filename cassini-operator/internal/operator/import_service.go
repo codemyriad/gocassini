@@ -524,8 +524,8 @@ func (s *importService) runImportJob(job ImportJob) {
 		s.logf("import %s: persist outcome: %v", job.ID, err)
 		return
 	}
-	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d searchable=%t",
-		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, result.SearchIndexed)
+	s.logf("import succeeded id=%s source=%q delivered=%s file_id=%d shared_with=%d not_shared_with=%d searchable=%t",
+		job.ID, job.SourceName, result.DeliveredName, result.FileID, result.SharedWith, len(result.NotSharedWith), result.SearchIndexed)
 	// The staged copy is spent. Best effort: a leftover costs the caller some
 	// quota and is theirs to see; it never fails a landed import.
 	if err := s.exapp.davDeleteUserFile(context.Background(), s.client, job.CreatedBy, job.StagedPath); err != nil {

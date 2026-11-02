@@ -19,6 +19,9 @@ type StateChangeEvent struct {
 	At            string                `json:"at"`
 	Job           Job                   `json:"job"`
 	Attempt       *JobAttempt           `json:"attempt,omitempty"`
+	// Sharing travels with the event like Availability, so a run that just
+	// published shows who it could not be shared with without a reload.
+	Sharing *jobShareOutcome `json:"sharing,omitempty"`
 }
 
 type stateChangePublisher func(StateChangeEvent)
@@ -106,6 +109,11 @@ func (rt *Runtime) publishStateChangeEvent(event StateChangeEvent) {
 		availability := rt.artifactAvailability(event.Job)
 		event.Availability = &availability
 		event.Job.MediaCleanup = availability.MediaCleanup
+	}
+	if rt.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		event.Sharing = rt.jobSharing(ctx, &event.Job)
+		cancel()
 	}
 	rt.events.Publish(event)
 }

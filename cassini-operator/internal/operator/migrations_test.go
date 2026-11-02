@@ -361,6 +361,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"attempt_summary_mode":     true,
 		"import_jobs":              true,
 		"import_staging":           true,
+		"job_share_outcomes":       true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {
@@ -459,5 +460,47 @@ func TestMigrateDownImportStagingPreservesHistory(t *testing.T) {
 	upload, ok, err := store.ImportJob(ctx, "upload")
 	if err != nil || !ok || upload.State != importStateFailed || upload.ExpectedBytes != 0 || upload.StagingState != "" {
 		t.Fatal(upload, err)
+	}
+}
+
+// A rollback past 0023 forgets who published meetings could not be shared
+// with: the runs stop saying so, and nothing else changes — the shares
+// themselves live in Nextcloud. The re-upgrade brings the table back empty,
+// and the next publish or re-share fills it again.
+func TestMigrateDownDropsJobShareOutcomesAndKeepsTheJob(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "job_share_outcomes")
+	if at < 0 {
+		t.Fatal("no job_share_outcomes migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "SHARED1", nowUTCString())
+	if err := store.RecordJobShareOutcome(ctx, "SHARED1", shareOutcomePartial, []skippedShare{{Type: "user", ID: "bob"}}); err != nil {
+		t.Fatalf("RecordJobShareOutcome() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT job_id FROM job_share_outcomes`); err == nil {
+		t.Fatal("job_share_outcomes survived the down migration")
+	}
+	if _, err := store.GetJob(ctx, "SHARED1"); err != nil {
+		t.Fatalf("the job did not survive the down migration: %v", err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	if outcome, err := store.JobShareOutcome(ctx, "SHARED1"); err != nil || outcome != nil {
+		t.Fatalf("JobShareOutcome() after re-upgrade = %+v, %v; want an empty, working table", outcome, err)
 	}
 }

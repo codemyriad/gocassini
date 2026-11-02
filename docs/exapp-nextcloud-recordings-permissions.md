@@ -24,10 +24,20 @@ accepts a change.
 
 The `cassini` account can read all recordings because it owns them. Cassini
 requires its Files root to be a private directory before publishing. If a share
-cannot be made for the meeting starter, publication fails. An individual
-recipient share refusal is reported as a warning and other recipients remain
-accessible. A failed group or Team share stops publication because it can omit
-many people. Outages and malformed share responses also stop publication.
+cannot be made for the meeting starter, publication fails. Any other recipient
+Nextcloud refuses — an individual, a group or a Team, typically because of an
+instance sharing policy — is skipped (D-885): the meeting is published for
+everyone else, the run says "Published, but not shared with everyone" with the
+list of who was refused and why, and the run list flags it. An administrator
+can re-share once the policy is fixed. Outages and malformed share responses
+still stop publication.
+
+Nextcloud's sharing settings apply to the `cassini` account like to anyone:
+"Allow apps to use the Share API", "Exclude some groups from sharing" /
+"Limit sharing to some groups", "Restrict users to only share with users in
+their groups" (with its ignored groups) and "Allow sharing with groups". The
+**Recording sharing** check in Doctor reads them, and `cassini`'s groups, and
+names the setting and the remedy when they stop Cassini sharing recordings.
 
 The installed app creates no remote `catalog.json` and needs neither Team
 folders nor the Everyone Group app. The local static exporter still uses
@@ -39,7 +49,8 @@ A portable meeting file brought in through the viewer's Import tab or with
 `cassini-operator import-meeting` (D-828) follows the same model. The importer
 chooses the audience at import time: nobody (the importer alone), or selected
 users, groups, and Teams — the importer always receives a share, as the
-recording starter does. Created shares carry reshare permission where the
+recording starter does. A refused importer, group or Team fails the import; a
+refused individual is skipped. Created shares carry reshare permission where the
 instance allows it, the same permission a public room's recording grants, so
 recipients can pass the meeting along. There is no "everyone" option, and no
 public link is ever created. Afterwards the shares are ordinary Nextcloud file

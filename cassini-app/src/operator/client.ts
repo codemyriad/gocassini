@@ -39,6 +39,7 @@ export interface OperatorStateChangeEvent {
   at: string;
   job: Job;
   attempt?: JobAttempt;
+  sharing?: JobDetailResponse["sharing"];
 }
 
 interface OperatorStreamHandlers {

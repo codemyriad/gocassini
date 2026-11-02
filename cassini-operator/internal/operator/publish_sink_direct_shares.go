@@ -125,13 +125,36 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 		s.rt.logger.Printf("register room default job=%s: %v (reconciliation will retry)", d.JobID, err)
 	}
 
-	if !priorSuccess || !before.Exists {
+	prior, err := s.rt.store.JobShareOutcome(ctx, d.JobID)
+	if err != nil {
+		return "", err
+	}
+	// A refused starter stopped the last reconciliation before anyone was
+	// shared with, so finishing it cannot undo a deliberate audience edit —
+	// even where an earlier publish (to another sink) makes this a republish.
+	starterWasRefused := prior != nil && prior.Status == shareOutcomeStarterRefused
+	if !priorSuccess || !before.Exists || starterWasRefused {
 		audience, public, err := s.audienceForJob(ctx, d.JobID)
 		if err != nil {
 			return "", err
 		}
-		if err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, public); err != nil {
+		// Whatever the last reconciliation found, this one replaces it; one
+		// that fails for another reason must not leave the old one standing.
+		if err := s.rt.store.ClearJobShareOutcome(ctx, d.JobID); err != nil {
 			return "", err
+		}
+		skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, public, sharePublish)
+		var starterRefused *starterShareRefusedError
+		switch {
+		case errors.As(err, &starterRefused):
+			s.recordShareOutcome(ctx, d.JobID, shareOutcomeStarterRefused, skipped)
+			return "", err
+		case err != nil:
+			return "", err
+		case len(skipped) > 0:
+			s.recordShareOutcome(ctx, d.JobID, shareOutcomePartial, skipped)
+		default:
+			s.recordShareOutcome(ctx, d.JobID, shareOutcomeComplete, nil)
 		}
 	}
 	carriedMap := map[string]annotateResult{}
@@ -140,6 +163,14 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 	}
 	s.indexDeliveredMarks(ctx, []upload{item}, carriedMap)
 	return root, nil
+}
+
+// recordShareOutcome is best-effort: the shares are made either way, and a
+// failed write costs the run its explanation, never the meeting.
+func (s *directSharesPublishSink) recordShareOutcome(ctx context.Context, jobID, status string, skipped []skippedShare) {
+	if err := s.rt.store.RecordJobShareOutcome(ctx, jobID, status, skipped); err != nil {
+		s.rt.logger.Printf("ERROR: record share outcome job=%s: %v", jobID, err)
+	}
 }
 
 func overlayMeetingEntry(entry json.RawMessage, roomName string) (json.RawMessage, error) {

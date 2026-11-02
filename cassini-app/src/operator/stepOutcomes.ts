@@ -2,7 +2,7 @@
 // (D-854, D-814). A meeting can publish without a transcript or a summary, and
 // the run used to read "Published" either way. Pure so the wording can be
 // tested without mounting the Operator.
-import type { JobAttempt, JobDetailResponse } from "./types";
+import type { JobAttempt, JobDetailResponse, JobShareOutcome, SkippedShare } from "./types";
 
 export type OutcomeTone = "error" | "warning" | "info";
 
@@ -14,6 +14,9 @@ export interface OutcomeNotice {
   detail?: string;
   /** What can be done about it, when something can. */
   hint?: string;
+  /** Who it concerns, behind a disclosure: the list can be long, and the
+   *  title already says how many. */
+  items?: { summary: string; entries: string[] };
 }
 
 // The attempt whose outcomes the run detail shows: the published one, or, for
@@ -77,4 +80,42 @@ export function summaryNotice(attempt: JobAttempt): OutcomeNotice | null {
     return { tone: "warning", title: "No summary: no language model is set up for summaries", hint: "Add one in Settings." };
   }
   return { tone: "warning", title: `No summary (${reason || status})` };
+}
+
+const principalKinds: Record<string, string> = { group: "group", circle: "Team" };
+
+function describeSkipped(skipped: SkippedShare): string {
+  const kind = principalKinds[skipped.type];
+  const who = kind ? `${skipped.id} (${kind})` : skipped.id;
+  return skipped.reason ? `${who}: ${skipped.reason}` : who;
+}
+
+function recipients(count: number): string {
+  return count === 1 ? "1 recipient" : `${count} recipients`;
+}
+
+// Who a meeting could not be shared with (D-885). The person who started the
+// recording must receive it or it is not published; anyone else Nextcloud
+// refused is listed, because otherwise the meeting simply does not appear for
+// them and nobody can tell why.
+export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAvailable = true): OutcomeNotice | null {
+  if (!sharing) return null;
+  const skipped = sharing.skipped ?? [];
+  if (sharing.status === "starter_refused") {
+    return {
+      tone: "error",
+      title: "Not published: Nextcloud refused to share it with the person who started the recording",
+      detail: skipped.length > 0 ? describeSkipped(skipped[0]) : undefined,
+      hint: rerunAvailable
+        ? "Doctor → Recording sharing names the setting and how to change it. Rerun then publishes it and shares it with the whole room."
+        : "Doctor → Recording sharing names the setting and how to change it, so that later recordings publish. This run cannot be rerun.",
+    };
+  }
+  if (sharing.status !== "partial" || skipped.length === 0) return null;
+  return {
+    tone: "warning",
+    title: `Published, but not shared with everyone: Nextcloud refused ${recipients(skipped.length)}`,
+    items: { summary: `Not shared with ${recipients(skipped.length)}`, entries: skipped.map(describeSkipped) },
+    hint: "Doctor → Recording sharing names the setting and how to change it. A rerun does not share an already published meeting again.",
+  };
 }

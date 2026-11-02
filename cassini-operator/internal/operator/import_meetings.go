@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -68,7 +69,10 @@ type meetingImportResult struct {
 	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
 	ImportedAtUTC   string `json:"importedAtUtc"`
 	SharedWith      int    `json:"sharedWith"`
-	SearchIndexed   bool   `json:"searchIndexed"`
+	// NotSharedWith are individual recipients Nextcloud refused (D-885); a
+	// refused importer, group or Team fails the import instead.
+	NotSharedWith []skippedShare `json:"notSharedWith,omitempty"`
+	SearchIndexed bool           `json:"searchIndexed"`
 }
 
 // importPhase lets the long-running engine report coarse progress; the HTTP
@@ -255,10 +259,18 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	// recording gets: recipients may pass the meeting along (D-828 decision D1),
 	// and reconcileRecordingShares already falls back to read-only where
 	// instance policy refuses the reshare bit.
-	if err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, true); err != nil {
+	skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, true, shareImport)
+	var refused *starterShareRefusedError
+	if errors.As(err, &refused) {
+		return result, fmt.Errorf("the meeting could not be shared with you, the importer (%s): %w", refused.Starter, refused.Err)
+	}
+	if err != nil {
 		return result, err
 	}
-	result.SharedWith = len(audience)
+	result.SharedWith = len(audience) - len(skipped)
+	if len(skipped) > 0 {
+		result.NotSharedWith = skipped
+	}
 
 	// --- index ------------------------------------------------------------
 	report(importStateIndexing, "indexing")
