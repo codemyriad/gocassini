@@ -238,12 +238,9 @@
   }
 
   // A summarize attempt's build stage writes the summary into the published
-  // meeting and transcribes nothing, so it is not called a build; nor is a
-  // speaker-edit attempt's, which replays the renames and, when the save asked
-  // for it, writes the summary again for the new names (D-816).
-  export function stageLabel(key: string, kind: string, summaryMode?: string): string {
+  // meeting and transcribes nothing, so it is not called a build.
+  export function stageLabel(key: string, kind: string): string {
     if (key === "build" && kind === "summarize") return "Summary";
-    if (key === "build" && kind === "refine") return summaryMode === "rewrite" ? "Speakers & summary" : "Speakers";
     return STATUS_STAGE_LABELS[key] ?? key;
   }
 
@@ -257,7 +254,6 @@
     if (job.state === "queued") return "Queued";
     if (job.state === "running") {
       if (job.stage === "build" && attemptKind(job) === "summarize") return "Writing summary";
-      if (job.stage === "build" && attemptKind(job) === "refine") return "Applying speaker edits";
       const stage = STATUS_STAGE_LABELS[job.stage];
       return stage ? `${stage}ing` : "Running";
     }
@@ -893,7 +889,7 @@
     const statuses = stepStatuses(row);
     return STAGES.map((stage) => ({
       key: stage.key,
-      label: stageLabel(stage.key, attemptKind(row), "summary_mode" in row ? row.summary_mode : undefined),
+      label: stageLabel(stage.key, attemptKind(row)),
       status: statuses[stage.key],
       ms: stepTime(row, stage.key),
     }));
