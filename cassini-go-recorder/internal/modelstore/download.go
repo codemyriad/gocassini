@@ -25,6 +25,10 @@ type checkpoint struct {
 // Acquire installs bytes only. Readiness is a separate target-runtime probe;
 // pack uses this operation without loading a recognizer or requiring a GPU.
 func (s *Store) Acquire(ctx context.Context, m Model) error {
+	// A retired model only stands in with the files an install already has.
+	if _, err := s.Catalogue.RetiredModel(m.ID, ""); err == nil {
+		return fmt.Errorf("%s is retired; it is never downloaded", m.ID)
+	}
 	return s.locked(ctx, func() error {
 		var total, done, reused int64
 		for _, c := range s.Components(m) {

@@ -631,8 +631,8 @@ func TestEffectiveOffDoesNotRequireOrDownloadModels(t *testing.T) {
 func TestEffectivePinsActiveModelAcrossQualityDefaults(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	effective := rt.effectiveFor(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, ActiveRevision: "pinned", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
-	if effective.Model != modelParakeetV3Fp32 || effective.ModelDownloadMB != 0 {
+	effective := rt.effectiveFor(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, ActiveRevision: "pinned", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
+	if effective.Model != modelParakeetUltraFp32 || effective.ModelDownloadMB != 0 {
 		t.Fatalf("active model changed: %#v", effective)
 	}
 }
@@ -801,10 +801,10 @@ func TestPutSettingsRejectsUnboundedAliases(t *testing.T) {
 func TestPutSettingsChecksTheModelOnlyWhenTheSelectionChanges(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`)
+	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"parakeet-ultra-0.6b-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`)
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	rt.setSettings(STTSettings{
-		TranscriptionEnabled: true, ActiveModel: modelParakeetV3Int8, ActiveRevision: "r1",
+		TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, ActiveRevision: "r1",
 		Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser,
 	})
 	put := func(body string) int {
@@ -818,7 +818,7 @@ func TestPutSettingsChecksTheModelOnlyWhenTheSelectionChanges(t *testing.T) {
 	if code := put(`{"quality":"best","transcription_enabled":true}`); code != http.StatusConflict {
 		t.Fatalf("switching quality to an unprepared model = %d, want 409", code)
 	}
-	rt.setSettings(STTSettings{ActiveModel: modelParakeetV3Int8, ActiveRevision: "r1", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
+	rt.setSettings(STTSettings{ActiveModel: modelParakeetUltraInt8, ActiveRevision: "r1", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
 	if code := put(`{"quality":"balanced","transcription_enabled":true}`); code != http.StatusConflict {
 		t.Fatalf("enabling an unchecked model = %d, want 409", code)
 	}

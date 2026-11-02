@@ -5,10 +5,9 @@ import (
 	"log"
 	"sort"
 	"strings"
-	"sync"
 	"unicode"
 
-	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
+	sherpa "github.com/k2-fsa/sherpa-onnx-go/v2/sherpa_onnx"
 )
 
 // Word is a single transcribed word with millisecond timestamps.
@@ -61,17 +60,18 @@ func (w Word) extentCapMS() int64 {
 
 // Recognizer wraps a sherpa-onnx offline recognizer with Silero VAD segmentation.
 type Recognizer struct {
-	r                 *sherpa.OfflineRecognizer
-	vad               *sherpa.VoiceActivityDetector
-	sampleRate        int
-	boundaryPolicy    *vadDecodePolicy
-	referenceFrontend bool
+	r              *sherpa.OfflineRecognizer
+	vad            *sherpa.VoiceActivityDetector
+	sampleRate     int
+	boundaryPolicy *vadDecodePolicy
+	nativeFrontend string
 }
 
-// HasReferenceFrontend reports whether the recognizer was configured with the
-// native Cassini Parakeet v3 reference frontend optimization.
-func (r *Recognizer) HasReferenceFrontend() bool {
-	return r.referenceFrontend
+// NativeFrontend names the native feature frontend this recognizer's model
+// runs on when it uses the Parakeet boundary policy (NativeFrontendNeMoLogGuard),
+// or "" when it runs on the default policy.
+func (r *Recognizer) NativeFrontend() string {
+	return r.nativeFrontend
 }
 
 // vadWindowSamples is the configured SileroVad.WindowSize. sherpa-onnx can
@@ -187,23 +187,29 @@ func defaultVADDecodePolicy() vadDecodePolicy {
 	}
 }
 
-// Parakeet v3's reference frontend normalizes over the entire input. Synthetic
+// The NeMo frontend normalizes each feature over the entire input. Synthetic
 // silence changes every frame; retaining the detected utterance and the source
 // context avoids both that perturbation and arbitrary mid-utterance resets.
 // 30ms is Silero's reference speech-boundary margin, not an ASR score optimum.
-func usesParakeetV3ReferencePolicy(id ModelID) bool {
-	return id == ModelParakeet06BV3 || id == ModelParakeet06BV3Int8
+// The policy was tuned on Cassini's Parakeet reference frontend and measured
+// again on upstream's NeMo log-guard frontend (2.0.1, #3999) as the Cassini
+// 2.0.1 runtime ships it: MAI WER 9.18 vs 9.24 on Ultra int8 (CPU) and 7.31 vs
+// 7.92 on Ultra fp32 (CUDA), neither significant, so it stays (see
+// deployment/sherpa/README.md). The model spec, not the id, decides
+// (ParakeetBoundaryPolicy).
+func usesParakeetBoundaryPolicy(id ModelID) bool {
+	return knownModels[id].ParakeetBoundaryPolicy
 }
 
-// UsesParakeetV3ReferencePolicy reports whether the given model uses the Parakeet v3
-// reference frontend policy.
-func UsesParakeetV3ReferencePolicy(id ModelID) bool {
-	return usesParakeetV3ReferencePolicy(id)
+// UsesParakeetBoundaryPolicy reports whether the given model decodes whole VAD
+// spans with recorded context and no synthetic padding.
+func UsesParakeetBoundaryPolicy(id ModelID) bool {
+	return usesParakeetBoundaryPolicy(id)
 }
 
 func vadDecodePolicyForModel(id ModelID) vadDecodePolicy {
 	policy := defaultVADDecodePolicy()
-	if usesParakeetV3ReferencePolicy(id) {
+	if usesParakeetBoundaryPolicy(id) {
 		policy.preserveVADSpan = true
 		policy.contextMS = 30
 		policy.tailPaddingMS = 0
@@ -238,9 +244,10 @@ func newVADModelConfig(modelPath string, sampleRate int) sherpa.VadModelConfig {
 	return cfg
 }
 
-// Decoding methods sherpa-onnx accepts for an offline recognizer. Hotwords are
-// read only under modified beam search; greedy search is the faster default
-// every unbiased pass keeps using.
+// Decoding methods sherpa-onnx accepts for an offline recognizer. Greedy search
+// is the default on every tier and device (D-867). Hotwords are read only
+// under modified beam search, which a build uses only when biasing is turned
+// back on with CASSINI_STT_HINTS_DISABLED=0 (see hintsEnabled).
 const (
 	decodingGreedySearch       = "greedy_search"
 	decodingModifiedBeamSearch = "modified_beam_search"
@@ -253,54 +260,33 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	return newRecognizerWithProfile(paths, vadModelPath, provider, numThreads, decoder, true)
 }
 
-const parakeetReferenceRuntimeMarker = "+cassini-parakeet-v3-reference-v1"
-
-var unpatchedWarnOnce sync.Once
-
 // RuntimeVersion returns the dynamic library version string reported by sherpa-onnx.
 func RuntimeVersion() string {
 	return sherpa.GetVersion()
 }
 
-// HasReferenceRuntime reports whether the active sherpa runtime includes the
-// Cassini Parakeet v3 reference frontend patch.
-func HasReferenceRuntime() bool {
-	return strings.Contains(sherpa.GetVersion(), parakeetReferenceRuntimeMarker)
-}
-
-// checkReferenceRuntime returns whether the given runtime version satisfies the
-// Cassini reference frontend requirement for Parakeet v3 models, along with an
-// explanatory warning message if it falls back to the standard decode policy.
-func checkReferenceRuntime(id ModelID, version string) (isReference bool, warnMsg string) {
-	if !usesParakeetV3ReferencePolicy(id) {
-		return false, ""
+// effectiveVADPolicy is the boundary policy a model decodes with on a runtime
+// CheckNativeRuntime accepted, and the native frontend to record for it. The
+// legacy profile (referenceProfile false) exists only for recorded-audio
+// comparisons and always uses the default policy.
+func effectiveVADPolicy(id ModelID, version string, referenceProfile bool) (vadDecodePolicy, string) {
+	if !referenceProfile || !usesParakeetBoundaryPolicy(id) {
+		return defaultVADDecodePolicy(), ""
 	}
-	if strings.Contains(version, parakeetReferenceRuntimeMarker) {
-		return true, ""
+	frontend := NativeFrontend(version)
+	if frontend == "" {
+		return defaultVADDecodePolicy(), ""
 	}
-	return false, fmt.Sprintf("Parakeet v3 running on upstream sherpa runtime (version %q); reference frontend optimization (%s) is inactive; falling back to standard decode profile", version, parakeetReferenceRuntimeMarker)
-}
-
-func effectiveVADPolicy(id ModelID, version string, referenceProfile bool) (vadDecodePolicy, bool, string) {
-	policy := defaultVADDecodePolicy()
-	if !referenceProfile || !usesParakeetV3ReferencePolicy(id) {
-		return policy, false, ""
-	}
-	isRef, warn := checkReferenceRuntime(id, version)
-	if isRef {
-		return vadDecodePolicyForModel(id), true, ""
-	}
-	return policy, false, warn
+	return vadDecodePolicyForModel(id), frontend
 }
 
 // The legacy profile is private and exists only for recorded-audio comparisons.
 func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, referenceProfile bool) (*Recognizer, error) {
-	policy, isRef, warn := effectiveVADPolicy(paths.ModelID, sherpa.GetVersion(), referenceProfile)
-	if warn != "" {
-		unpatchedWarnOnce.Do(func() {
-			log.Printf("[transcribe] warning: %s", warn)
-		})
+	version := sherpa.GetVersion()
+	if err := CheckNativeRuntime(paths.ModelID, version); err != nil {
+		return nil, err
 	}
+	policy, frontend := effectiveVADPolicy(paths.ModelID, version, referenceProfile)
 	if numThreads < 1 {
 		numThreads = 4
 	}
@@ -345,11 +331,11 @@ func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, n
 	}
 
 	return &Recognizer{
-		r:                 r,
-		vad:               vad,
-		sampleRate:        paths.SampleRate,
-		boundaryPolicy:    &policy,
-		referenceFrontend: isRef,
+		r:              r,
+		vad:            vad,
+		sampleRate:     paths.SampleRate,
+		boundaryPolicy: &policy,
+		nativeFrontend: frontend,
 	}, nil
 }
 
@@ -441,8 +427,11 @@ func (r *Recognizer) transcribeWithVADPolicy(samples []float32, sampleRate int, 
 			segCount++
 			totalSpeechSamples += len(seg.Samples)
 
-			// seg.Start is the sample index of the segment start within the full recording.
-			decodeStart, decodeEnd := seg.Start, seg.Start+len(seg.Samples)
+			// segStart is the sample index of the segment start within the full
+			// recording. sherpa-onnx-go v2 reports it as int64; any recording
+			// this process holds in memory indexes within int.
+			segStart := int(seg.Start)
+			decodeStart, decodeEnd := segStart, segStart+len(seg.Samples)
 			decodeSamples := seg.Samples
 			if policy.contextMS > 0 {
 				bounds := vadContextBounds(decodeStart, decodeEnd, len(samples), sampleRate, policy.contextMS)
@@ -460,7 +449,7 @@ func (r *Recognizer) transcribeWithVADPolicy(samples []float32, sampleRate int, 
 			// the same decoder/hints and add no synthetic silence. Successful
 			// hypotheses are untouched; the normal energy gate still applies.
 			if len(words) == 0 && policy.preserveVADSpan && policy.disableSyntheticPadding {
-				retry := vadContextBounds(seg.Start, seg.Start+len(seg.Samples), len(samples), sampleRate, vadMinSilenceDurationMS)
+				retry := vadContextBounds(segStart, segStart+len(seg.Samples), len(samples), sampleRate, vadMinSilenceDurationMS)
 				if retry.start < decodeStart || retry.end > decodeEnd {
 					retryOffsetMS := int64(retry.start) * 1000 / int64(sampleRate)
 					recovered, retryErr := r.transcribeSegmentWithPolicy(samples[retry.start:retry.end], sampleRate, retryOffsetMS, true, policy)
@@ -469,7 +458,7 @@ func (r *Recognizer) transcribeWithVADPolicy(samples []float32, sampleRate int, 
 					}
 					// Context can contain a neighbouring turn. Only retain words
 					// overlapping the original speech span, not context-only words.
-					words = wordsOverlappingSpeech(recovered, int64(seg.Start)*1000/int64(sampleRate), int64(min(len(samples), seg.Start+len(seg.Samples)))*1000/int64(sampleRate))
+					words = wordsOverlappingSpeech(recovered, int64(segStart)*1000/int64(sampleRate), int64(min(len(samples), segStart+len(seg.Samples)))*1000/int64(sampleRate))
 					decodeStart, decodeEnd = retry.start, retry.end
 					segOffsetMS = retryOffsetMS
 				}
@@ -760,16 +749,16 @@ func (r *Recognizer) transcribeSegmentWithPolicy(samples []float32, sampleRate i
 		}
 		chunk := samples[start:end]
 
-		// The v3 reference frontend needs two 10ms frames to compute sample
-		// variance. Shorter input yields no features; passing that empty tensor
+		// The NeMo per-feature normalization needs two 10ms frames to compute
+		// sample variance. Shorter input yields no features; passing that empty tensor
 		// to ONNX aborts in native code instead of returning a Go error.
 		if policy.disableSyntheticPadding && sampleRate > 0 &&
 			int64(len(chunk))*1000 < int64(sampleRate)*20 {
 			continue
 		}
 
-		// Preserve legacy padding for other models. The v3 reference policy
-		// overrides both VAD and non-VAD padding: appended zeros change its
+		// Preserve legacy padding for other models. The Parakeet boundary
+		// policy overrides both VAD and non-VAD padding: appended zeros change its
 		// utterance-wide feature normalization and can suppress real speech.
 		decoderTailPaddingSamples := decoderTailPadSamples(len(chunk), sampleRate, vadSegment)
 		decoderHeadPaddingSamples := 0
@@ -1348,6 +1337,7 @@ func (r *Recognizer) Close() {
 // word-level timings. Handles both BPE (▁ word-start marker) and
 // character-level CTC (space as delimiter).
 func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
+	tokens, timestamps, durations = withoutUnknownTokens(tokens, timestamps, durations)
 	if len(tokens) == 0 {
 		return nil
 	}
@@ -1452,6 +1442,50 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 	}
 	flush()
 	return splitMultiWordTokens(words)
+}
+
+// unknownToken is the SentencePiece placeholder a Parakeet decoder emits for a
+// sound it cannot spell. It is not speech: Parakeet Ultra writes it as literal
+// text on greedy paths (19 hypotheses in the 2026-10 evaluation, against 2 for
+// v3), and left in, it glues onto a neighbouring word ("hello<unk>") or stands
+// as a word of its own in the transcript, the captions and the summary input.
+const unknownToken = "<unk>"
+
+// withoutUnknownTokens removes every <unk> from a decoder result, keeping the
+// three parallel slices aligned so each surviving token keeps its own
+// timestamp and duration. A token that is <unk> plus a word-start marker
+// ("▁<unk>") keeps the marker: the boundary it carries is still real, and only
+// the placeholder text goes. A token with nothing left is dropped with its
+// timing, so it can neither start a word nor extend one.
+func withoutUnknownTokens(tokens []string, timestamps, durations []float32) ([]string, []float32, []float32) {
+	found := false
+	for _, tok := range tokens {
+		if strings.Contains(tok, unknownToken) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return tokens, timestamps, durations
+	}
+	outTokens := make([]string, 0, len(tokens))
+	var outTimestamps, outDurations []float32
+	for i, tok := range tokens {
+		if strings.Contains(tok, unknownToken) {
+			tok = strings.ReplaceAll(tok, unknownToken, "")
+			if tok == "" {
+				continue
+			}
+		}
+		outTokens = append(outTokens, tok)
+		if i < len(timestamps) {
+			outTimestamps = append(outTimestamps, timestamps[i])
+		}
+		if i < len(durations) {
+			outDurations = append(outDurations, durations[i])
+		}
+	}
+	return outTokens, outTimestamps, outDurations
 }
 
 // tokenIsNonAcousticPunctuation reports whether a decoder token is nothing but

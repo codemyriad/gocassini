@@ -52,25 +52,29 @@ func resourceLimitsFromEnv() resourceLimits {
 	cpus := probeOnlineCPUs()
 	return resourceLimits{
 		cpuReserve: envIntDefault("CASSINI_BUILD_CPU_RESERVE", defaultCPUReserve(cpus)),
-		// Full-run measurements peaked at ~5.2GiB cgroup RAM and 4.63GiB
-		// VRAM. Keep conservative launch floors above those working sets so
-		// the build can load without consuming the host's last reserve.
+		// Full-run measurements peaked at ~5.2GiB cgroup RAM. Keep a
+		// conservative launch floor above that working set so the build can
+		// load without consuming the host's last reserve.
 		minFreeMemMB: envIntDefault("CASSINI_BUILD_MIN_FREE_MEM_MB", 6144),
 		// A CPU build's working set is dominated by the model it loads, which
 		// differs by an order of magnitude across the quality tiers, so its
 		// floor is derived per model (minFreeMemForBuild) rather than fixed:
 		// the model's measured peak plus this margin for the rest of the host.
 		cpuMemHeadroomMB: envIntDefault("CASSINI_BUILD_CPU_MEM_HEADROOM_MB", 1024),
-		gpuMinFreeMB:     envIntDefault("CASSINI_GPU_MIN_FREE_MB", 5500),
-		memWaitMax:       time.Duration(envIntDefault("CASSINI_BUILD_MEM_WAIT_SECS", 300)) * time.Second,
-		memPoll:          3 * time.Second,
+		// Greedy decoding of Parakeet Ultra fp32 on CUDA peaked at 6,904MiB of
+		// video memory over 19 real builds (2026-10-28, RTX 5060), above the
+		// ~5.7GiB of the beam search it replaced. 7GiB clears that peak and
+		// still admits a build on an idle 8GiB card (7,627MiB free).
+		gpuMinFreeMB: envIntDefault("CASSINI_GPU_MIN_FREE_MB", 7168),
+		memWaitMax:   time.Duration(envIntDefault("CASSINI_BUILD_MEM_WAIT_SECS", 300)) * time.Second,
+		memPoll:      3 * time.Second,
 	}
 }
 
 // minFreeMemForBuild is the memory that must be free before a build of this
 // model starts on this device. CUDA keeps the measured full-run figure. A CPU build holds the recognizer in
 // host RAM instead of VRAM, so its floor is that model's measured peak plus a
-// margin: 1.5GiB for the 110M CTC model, 2.75GiB for 0.6B int8, 4.5GiB for
+// margin: 1.5GiB for the 110M CTC model, 3GiB for 0.6B int8, 4.5GiB for
 // 0.6B fp32. A 4-core/8GiB host therefore runs the fast and balanced tiers and
 // declines "best" with an actionable message instead of OOMing Talk.
 func (l resourceLimits) minFreeMemForBuild(device, model string) int {
@@ -118,6 +122,13 @@ type resourceUnavailableError struct {
 	// the portable image does not contain CUDA libraries). The worker moves the
 	// job to build/blocked immediately instead of scheduling retries forever.
 	permanent bool
+	// awaitsModel means the build waits for its speech model: being
+	// installed, replacing a retired one, or missing from a
+	// delete-after-processing job's selection, with no retired model on disk
+	// to stand in for it (admitStandIn). A job whose source media is deleted
+	// after processing keeps waiting past the retry ceiling rather than fail
+	// and lose the recording without a transcript.
+	awaitsModel bool
 }
 
 func (e *resourceUnavailableError) Error() string {
@@ -125,10 +136,15 @@ func (e *resourceUnavailableError) Error() string {
 }
 
 // admitModelForDevice returns the selected model when transcription is on and
-// that model is installed and has passed its runtime check on device. With
-// transcription off it returns "" and no error. When transcription is on but
-// cannot run, the error says why, and readiness reports it; builds then keep
-// the audio with the smaller audio-processing budget.
+// that model is installed and has passed its runtime check on device. While
+// it is not installed, an installed retired model it replaces stands in for
+// it in builds, so that model is returned instead: it is the one a build
+// loads. While it is installed but not yet checked, a build checks it and
+// runs it if it passes, so it is returned as long as a stand-in would run if
+// it fails; that stand-in needs no more memory. With transcription off it
+// returns "" and no error. When transcription is on but cannot run, the error
+// says why, and readiness reports it; builds then keep the audio with the
+// smaller audio-processing budget.
 func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (string, error) {
 	if !settings.TranscriptionEnabled {
 		return "", nil
@@ -148,9 +164,21 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 	}
 	m, err := findModel(inventory, settings.ActiveModel, settings.ActiveRevision)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("speech model %s is not one this version can run; select a quality in Settings: %w", settings.ActiveModel, err)
+	}
+	if !m.Installed || !m.Ready {
+		if candidates := rt.standInCandidates(inventory, m, device, ""); len(candidates) > 0 {
+			if m.Installed {
+				return m.ID, nil
+			}
+			return candidates[0].ID, nil
+		}
 	}
 	if !m.Installed {
+		if job, ok := rt.runningModelJob(ctx, m.ID, m.Revision, device); ok {
+			// No retired model on disk can stand in (it would be returned above).
+			return "", fmt.Errorf("speech model %s is being installed (%s); recordings wait for it", m.ID, modelJobProgressText(job))
+		}
 		return "", fmt.Errorf("speech model %s is not installed; install it in Settings", m.ID)
 	}
 	if !m.Ready {

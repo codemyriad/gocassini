@@ -382,6 +382,35 @@ func assertAttributionKeysDeclaredBySchema(t *testing.T, attribution map[string]
 // object; "" leaves that key out of the bundle entirely, which is the shape of
 // every artifact built before the producer started recording it.
 func writeProvenancedMeetingBundleFixture(meetingDir, attributionJSON, wordTimingsJSON string) error {
+	extraEntries := ""
+	if attributionJSON != "" {
+		extraEntries += `,
+    "attribution": ` + attributionJSON
+	}
+	if wordTimingsJSON != "" {
+		extraEntries += `,
+    "wordTimings": ` + wordTimingsJSON
+	}
+	manifest := `{
+  "version": "cassini.meeting-artifact.v1",
+  "generatedAt": "2026-03-11T10:00:00Z",
+  "source": {"basename": "source.mkv", "durationMs": 250},
+  "files": {"audio": "meeting.webm", "transcript": "transcript.words.v1.json"},
+  "provenance": {
+    "speechToText": {"backend": "sherpa-onnx-go", "model": "parakeet-tdt-0.6b-v3-int8", "device": "cpu"}` + extraEntries + `
+  },
+  "speakerCount": 1,
+  "wordCount": 2
+}
+`
+	return writeMeetingBundleFixtureWithManifest(meetingDir, manifest)
+}
+
+// writeMeetingBundleFixtureWithManifest writes the audio and one-segment
+// transcript of writeProvenancedMeetingBundleFixture under the caller's
+// artifact manifest.json, then finalizes the bundle. Each extraTranscripts
+// path gets a copy of the transcript, for a manifest that lists several.
+func writeMeetingBundleFixtureWithManifest(meetingDir, manifest string, extraTranscripts ...string) error {
 	if err := os.MkdirAll(meetingDir, 0o755); err != nil {
 		return err
 	}
@@ -415,30 +444,11 @@ func writeProvenancedMeetingBundleFixture(meetingDir, attributionJSON, wordTimin
   ]
 }
 `
-	if err := os.WriteFile(filepath.Join(meetingDir, "transcript.words.v1.json"), []byte(transcript), 0o644); err != nil {
-		return err
+	for _, name := range append([]string{"transcript.words.v1.json"}, extraTranscripts...) {
+		if err := os.WriteFile(filepath.Join(meetingDir, name), []byte(transcript), 0o644); err != nil {
+			return err
+		}
 	}
-	extraEntries := ""
-	if attributionJSON != "" {
-		extraEntries += `,
-    "attribution": ` + attributionJSON
-	}
-	if wordTimingsJSON != "" {
-		extraEntries += `,
-    "wordTimings": ` + wordTimingsJSON
-	}
-	manifest := `{
-  "version": "cassini.meeting-artifact.v1",
-  "generatedAt": "2026-03-11T10:00:00Z",
-  "source": {"basename": "source.mkv", "durationMs": 250},
-  "files": {"audio": "meeting.webm", "transcript": "transcript.words.v1.json"},
-  "provenance": {
-    "speechToText": {"backend": "sherpa-onnx-go", "model": "parakeet-tdt-0.6b-v3-int8", "device": "cpu"}` + extraEntries + `
-  },
-  "speakerCount": 1,
-  "wordCount": 2
-}
-`
 	if err := os.WriteFile(filepath.Join(meetingDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
 		return err
 	}

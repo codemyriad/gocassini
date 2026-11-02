@@ -1,6 +1,6 @@
-cf13741631f0d3ae2f1bae07d9368af48aa314916eada9f96be68f09589f5eab  models/parakeet-tdt-0.6b-v3/decoder.onnx
-7f30e635992b69c55df74fcd69d6af8dde0b0c07756a77c1b1f19c9354fb8283  models/parakeet-tdt-0.6b-v3/encoder.onnx
-3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8  models/parakeet-tdt-0.6b-v3/encoder.weights
-24c96f15bc55f8a72039e0d4683983ae66d17d47432c26e147f4f8d945d63192  models/parakeet-tdt-0.6b-v3/joiner.onnx
-d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d  models/parakeet-tdt-0.6b-v3/tokens.txt
+f0b644799b0a26286aecf82d4922ea344e8a6b782aedc846c2c8be29a2236403  models/parakeet-ultra-0.6b/decoder.onnx
+198042e45120cb9e03aac09bc5e47efb0024092866c0128973a13078a5f61ce2  models/parakeet-ultra-0.6b/encoder.onnx
+1209bc92c87a2f596767ae080aec04702d94a2a41eaba4cee5a89f69a9c22c12  models/parakeet-ultra-0.6b/encoder.weights
+d15f8689b13d520a138ecfe440e6cb999cfd096c2a1a6fd27054c1dd61bcc302  models/parakeet-ultra-0.6b/joiner.onnx
+d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d  models/parakeet-ultra-0.6b/tokens.txt
 9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6  vad/silero_vad.onnx

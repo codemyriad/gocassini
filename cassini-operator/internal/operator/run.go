@@ -98,8 +98,20 @@ type Runtime struct {
 	// see cachedModelInventory.
 	modelInventoryMu    sync.Mutex
 	modelInventoryCache map[string]modelInventoryEntry
-	recordingSetup      recordingSetup
-	ctx                 context.Context
+	// standInCheckFailed remembers the retired models (id/revision/device)
+	// whose runtime check failed when a build wanted one as a stand-in, so a
+	// deferred build does not check it again on every retry. A restart, which
+	// is what a runtime change takes, forgets it.
+	standInMu          sync.Mutex
+	standInCheckFailed map[string]bool
+	// modelCheckFailed remembers the selected (non-retired) models whose own
+	// runtime check failed, by the same key, until one passes. Settings names
+	// a stand-in for an installed model only then: one that is merely not
+	// checked yet is checked by the next build, which transcribes with it
+	// when the check passes.
+	modelCheckFailed map[string]bool
+	recordingSetup   recordingSetup
+	ctx              context.Context
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
@@ -213,14 +225,15 @@ type Runtime struct {
 	// speakers surface is about to read. Tests use it to promote and prune
 	// that bundle under the read.
 	speakerMeetingReading func(path string)
-	// referenceFrontendProbe reports whether the active sherpa runtime includes
-	// the Parakeet v3 reference frontend optimization. Tests stub it.
-	referenceFrontendProbe func() (known bool, isReference bool)
-	refFrontendMu          sync.Mutex
-	refFrontendBin         string
-	refFrontendKnown       bool
-	refFrontendIsRef       bool
-	refFrontendChecked     time.Time
+	// speechRuntimeProbe reports whether the active sherpa runtime can run
+	// the selected speech model. Tests stub it.
+	speechRuntimeProbe   func() (known bool, ok bool)
+	speechRuntimeMu      sync.Mutex
+	speechRuntimeBin     string
+	speechRuntimeModel   string
+	speechRuntimeKnown   bool
+	speechRuntimeOK      bool
+	speechRuntimeChecked time.Time
 	// computeReadiness coalesces and briefly caches the nvidia-smi-backed
 	// readiness probe so status polling cannot create a subprocess storm.
 	computeReadiness *computeStatusProbe
@@ -236,6 +249,11 @@ type Runtime struct {
 	settingsMu   sync.RWMutex
 	settings     STTSettings
 	settingsPath string
+	// settingsWriteMu serializes every read-modify-write of the STT policy
+	// (PUT /settings, the GET refresh from disk, the retired-model
+	// migration), so a writer never saves a copy older than another
+	// writer's. settingsMu only guards the in-memory copy.
+	settingsWriteMu sync.Mutex
 	// LLM policy (D-696): persisted beside the STT policy, guarded the same way
 	// for job-spawn reads against PUT /settings/llm writes.
 	llmMu           sync.RWMutex

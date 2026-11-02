@@ -252,13 +252,21 @@ type AttributionProvenance struct {
 }
 
 type provStep struct {
-	Backend           string `json:"backend"`
-	Model             string `json:"model,omitempty"`
-	Device            string `json:"device,omitempty"`
-	ReferenceFrontend *bool  `json:"referenceFrontend,omitempty"`
-	// Hints is set on a speech-to-text step whose decoder was biased towards a
-	// configured vocabulary. Absent means the pass ran unbiased, which is what
-	// every build before this feature did.
+	Backend string `json:"backend"`
+	Model   string `json:"model,omitempty"`
+	Device  string `json:"device,omitempty"`
+	// NativeFrontend names the native feature frontend a Parakeet
+	// boundary-policy model ran on ("nemo-log-guard"). Manifests written on
+	// the 1.13.7 runtimes carry referenceFrontend instead.
+	NativeFrontend string `json:"nativeFrontend,omitempty"`
+	// Encoder is the url and comment from the encoder's ONNX metadata: the
+	// export that actually loaded, which the model id alone does not prove.
+	Encoder *EncoderProvenance `json:"encoder,omitempty"`
+	// Hints is set on a speech-to-text step that had a vocabulary to apply
+	// (configured terms or participant names), and says whether it was
+	// applied and which search ran. By default it is not: the record says
+	// greedy_search and why. Absent means there was nothing to apply; the pass
+	// ran unbiased, with greedy search unless biasing was turned back on.
 	Hints *HintsProvenance `json:"hints,omitempty"`
 }
 
@@ -282,8 +290,9 @@ type HintsProvenance struct {
 	// OwnNameExcluded means each participant track omitted its speaker's own
 	// label while retaining the other participant names.
 	OwnNameExcluded bool `json:"ownNameExcluded,omitempty"`
-	// DecodingMethod is the search the decoder actually ran. Hotwords require
-	// modified_beam_search; an unbiased pass stays on greedy_search.
+	// DecodingMethod is the search the decoder actually ran: greedy_search by
+	// default, modified_beam_search only when biasing was turned back on
+	// (hotwords require it).
 	DecodingMethod string `json:"decodingMethod,omitempty"`
 	// Applied is false when a vocabulary was configured but could not be
 	// applied. Reason then says why, in words an operator can act on.
@@ -323,8 +332,8 @@ type ManifestInput struct {
 	STTBackend string
 	STTModelID ModelID
 	STTDevice  string
-	// Hints records the decoder biasing applied to this build, or nil when the
-	// build ran without a vocabulary.
+	// Hints records the decoder biasing asked for and applied in this build
+	// (not applied by default), or nil when the build had no vocabulary.
 	Hints *HintsProvenance
 
 	SummaryModel string
@@ -332,10 +341,12 @@ type ManifestInput struct {
 	// SummaryTemplate is the template that wrote the summary (D-819).
 	SummaryTemplate *SummaryTemplateRecord
 
-	Additional        []AdditionalTranscript
-	Attribution       *AttributionProvenance
-	WordTimings       *WordTimingProvenance
-	ReferenceFrontend *bool
+	Additional     []AdditionalTranscript
+	Attribution    *AttributionProvenance
+	WordTimings    *WordTimingProvenance
+	NativeFrontend string
+	// Encoder is the primary model's encoder metadata, or nil.
+	Encoder *EncoderProvenance
 }
 
 func WriteManifest(path string, in ManifestInput) error {
@@ -353,7 +364,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		primaryID := sanitizeTranscriptID(string(in.STTModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 			ID: primaryID, Path: "transcript.words.v1.json", Default: true,
-			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, ReferenceFrontend: in.ReferenceFrontend, Hints: in.Hints},
+			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, NativeFrontend: in.NativeFrontend, Encoder: in.Encoder, Hints: in.Hints},
 		})
 		for _, extra := range in.Additional {
 			extraBackend := extra.Backend
@@ -364,7 +375,7 @@ func WriteManifest(path string, in ManifestInput) error {
 			}
 			files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 				ID: extra.ID, Path: extra.Path,
-				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: in.STTDevice},
+				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: in.STTDevice, NativeFrontend: extra.NativeFrontend},
 			})
 		}
 	}
@@ -374,11 +385,12 @@ func WriteManifest(path string, in ManifestInput) error {
 
 	prov := &provenanceInfo{
 		SpeechToText: &provStep{
-			Backend:           in.STTBackend,
-			Model:             string(in.STTModelID),
-			Device:            in.STTDevice,
-			ReferenceFrontend: in.ReferenceFrontend,
-			Hints:             in.Hints,
+			Backend:        in.STTBackend,
+			Model:          string(in.STTModelID),
+			Device:         in.STTDevice,
+			NativeFrontend: in.NativeFrontend,
+			Encoder:        in.Encoder,
+			Hints:          in.Hints,
 		},
 		Attribution: in.Attribution,
 		// nil here writes no wordTimings key at all, which is what a consumer

@@ -243,7 +243,7 @@ func TestDiarizerInstallsOnTheCPUAndNeverTranscribes(t *testing.T) {
 
 	// Its runtime check waits for the memory a diarizer needs, not a speech model's.
 	limits := resourceLimitsFromEnv()
-	if got, int8 := limits.minFreeMemForBuild("cpu", diarizer.ID), limits.minFreeMemForBuild("cpu", modelParakeetV3Int8); got >= int8 {
-		t.Fatalf("diarizer probe floor = %d MB, not below a v3 int8 build's %d MB", got, int8)
+	if got, int8 := limits.minFreeMemForBuild("cpu", diarizer.ID), limits.minFreeMemForBuild("cpu", modelParakeetUltraInt8); got >= int8 {
+		t.Fatalf("diarizer probe floor = %d MB, not below an Ultra int8 build's %d MB", got, int8)
 	}
 }

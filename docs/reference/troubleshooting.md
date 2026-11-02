@@ -196,18 +196,24 @@ can go missing from the automatic build pipeline.
 
 ### Meaning
 
-The vocabulary biases the decoder; it does not rewrite finished text. A term is
-only written where the audio already supports it, and some models cannot be
-biased at all.
+Decoder hints are off by default: every build decodes with greedy search and
+does not bias towards the vocabulary, because the beam search hints need
+dropped passages of speech. A misspelled name is expected; search spellings
+(search aliases) still find it. When hints are turned back on, the vocabulary
+biases the decoder; it does not rewrite finished text. A term is only written
+where the audio already supports it, and some models cannot be biased at all.
 
 ### What to check
 
 - `provenance.speechToText.hints` in the build manifest. `applied: false` names
-  the reason, most often a model bundle with no `bpe.vocab` or the `fast`
-  quality tier, which uses a CTC model that cannot be biased
-- whether `CASSINI_STT_HINTS_DISABLED` is set
+  the reason: by default that hints are off; with hints on, most often a model
+  bundle with no `bpe.vocab` or the `fast` quality tier, which uses a CTC model
+  that cannot be biased
+- `CASSINI_STT_HINTS_DISABLED`: only an explicit false value (`0`) turns hints
+  on, at the cost of beam search dropping speech
 - whether the speaker genuinely said the term. Biasing raises a spelling's
   score, it does not insert words
+- for search, whether a search spelling covers the variant the transcript has
 
 See:
 

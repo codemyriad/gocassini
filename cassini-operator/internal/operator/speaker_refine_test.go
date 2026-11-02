@@ -540,7 +540,7 @@ func newProductionBuildRuntime(t *testing.T, bin string) *Runtime {
 		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		return sitePath, writeReadySiteBundleFixture(sitePath, currentRoot(rt.cfg.WorkRoot))
 	}
-	rt.referenceFrontendProbe = func() (bool, bool) { return true, true }
+	rt.speechRuntimeProbe = func() (bool, bool) { return true, true }
 	t.Cleanup(func() { cleanupTestRuntime(t, rt, store) })
 	return rt
 }
