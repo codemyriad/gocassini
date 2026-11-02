@@ -1,6 +1,14 @@
 <script module lang="ts">
   import type { Job, JobAttempt } from "./operator/types";
   import type { OperatorPanel } from "./surfaceRouting";
+  import {
+    describeProcessing,
+    formatSpan,
+    runProcessing,
+    spanMs,
+    stepTime,
+  } from "./operator/processingSpeed";
+  import { runStages, stepStatuses, type StageStatus, type StageView } from "./operator/runStages";
 
   // The operator surface's left nav (D-723). Configuration is not a surface of
   // its own: Console and Settings are two groups of ONE surface, so there is a
@@ -191,20 +199,8 @@
     startStr: string | null | undefined,
     endStr: string | null | undefined,
   ): string | null {
-    if (!startStr || !endStr) return null;
-    const start = Date.parse(startStr);
-    const end = Date.parse(endStr);
-    if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
-    const totalSeconds = Math.round((end - start) / 1000);
-    if (totalSeconds < 60) return `${totalSeconds}s`;
-    const totalMinutes = Math.floor(totalSeconds / 60);
-    const remSeconds = totalSeconds % 60;
-    if (totalMinutes < 60) {
-      return remSeconds > 0 ? `${totalMinutes}m ${remSeconds}s` : `${totalMinutes}m`;
-    }
-    const hours = Math.floor(totalMinutes / 60);
-    const remMinutes = totalMinutes % 60;
-    return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+    const ms = spanMs(startStr, endStr);
+    return ms === null ? null : formatSpan(ms);
   }
 
   export function isHttpUrl(value: string | null | undefined): boolean {
@@ -861,8 +857,8 @@
     }).format(date);
   }
 
-  // stageTimes below reads `${key}_queued_at` / `_started_at` / `_finished_at`,
-  // so a stage appears here only if the operator names its columns to match.
+  // stageTimes reads `${key}_queued_at` / `_started_at` / `_finished_at`, so a
+  // stage appears here only if the operator names its columns to match.
   const STAGES = [
     { key: "record", label: "Record" },
     { key: "build", label: "Build" },
@@ -870,45 +866,24 @@
     { key: "publish", label: "Publish" },
   ] as const;
 
-  type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked";
-
-  function stageTimes(job: Job | JobAttempt, key: string) {
-    const row = job as unknown as Record<string, string | null | undefined>;
-    return {
-      queued: row[`${key}_queued_at`] ?? null,
-      started: row[`${key}_started_at`] ?? null,
-      finished: row[`${key}_finished_at`] ?? null,
-    };
+  // One attempt's bar: its own four steps, each with how long it took.
+  function stageProgress(row: Job | JobAttempt): StageView[] {
+    const statuses = stepStatuses(row);
+    return STAGES.map((stage) => ({
+      key: stage.key,
+      label: stageLabel(stage.key, attemptKind(row)),
+      status: statuses[stage.key],
+      ms: stepTime(row, stage.key),
+    }));
   }
 
-  function stageProgress(job: Job | JobAttempt, recordingDeleted = false): Array<{ label: string; status: StageStatus }> {
-    const buildBlocked = isBuildBlocked(job);
-    const halted = buildBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
-    let lastTouched = -1;
-    const times = STAGES.map((stage, index) => {
-      const t = stageTimes(job, stage.key);
-      if (t.queued || t.started || t.finished) {
-        lastTouched = index;
-      }
-      return t;
-    });
-    return STAGES.map((stage, index) => {
-      if (stage.key === "record" && recordingDeleted) return { label: "Record (deleted)", status: "pending" };
-      const t = times[index];
-      let status: StageStatus = "pending";
-      if (t.finished) {
-        status = "done";
-      } else if (t.started) {
-        status = "active";
-      } else if (t.queued) {
-        status = "queued";
-      }
-      if (halted && index === lastTouched) {
-        status = buildBlocked ? "blocked" : "failed";
-      }
-      return { label: stageLabel(stage.key, attemptKind(job)), status };
-    });
-  }
+  // Said under a step that has not finished, so a coloured bar is not the
+  // only sign of what is happening.
+  const UNFINISHED_NOTES: Partial<Record<StageStatus, string>> = {
+    active: "In progress",
+    queued: "Queued",
+    blocked: "Blocked",
+  };
 
   function stageBarClass(status: StageStatus): string {
     switch (status) {
@@ -922,6 +897,8 @@
         return "bg-warning";
       case "queued":
         return "bg-primary/55";
+      case "skipped":
+        return "bg-base-content/35";
       default:
         return "bg-base-content/12";
     }
@@ -1033,6 +1010,7 @@
   // A run that published without a transcript or a summary says so (D-854,
   // D-814), from the attempt it published.
   $: outcomeSource = selectedJob ? outcomeAttempt(selectedJob) : null;
+  $: runSpeed = selectedJob ? runProcessing(selectedJob) : null;
   $: outcomeNotices = outcomeSource
     ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)].filter(
         (notice): notice is OutcomeNotice => notice !== null,
@@ -1062,6 +1040,37 @@
     info: "text-base-content/60",
   };
 </script>
+
+<!-- A stage bar: each step's progress and how long it took once finished
+     (D-817), or a note when it has no time of its own. No multiplier: only
+     the run's overall figure gets one. -->
+{#snippet stageBar(stages: StageView[])}
+  <div>
+    <div class="flex gap-1">
+      {#each stages as stage (stage.key)}
+        <span class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}" aria-hidden="true"></span>
+      {/each}
+    </div>
+    <div class="mt-1 flex gap-1 text-xs text-base-content/60">
+      {#each stages as stage (stage.key)}
+        {@const title = [stage.hint, stage.attempt ? `From attempt ${stage.attempt}` : null].filter(Boolean).join(". ")}
+        <span class="min-w-0 flex-1" title={title || undefined}>
+          <span
+            class="block"
+            class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
+          >
+            {stage.label}
+          </span>
+          {#if stage.ms !== null}
+            <span class="block whitespace-nowrap text-base-content/45">{formatSpan(stage.ms)}</span>
+          {:else if stage.note ?? UNFINISHED_NOTES[stage.status]}
+            <span class="block whitespace-nowrap text-base-content/45">{stage.note ?? UNFINISHED_NOTES[stage.status]}</span>
+          {/if}
+        </span>
+      {/each}
+    </div>
+  </div>
+{/snippet}
 
 <svelte:head>
   <title>Cassini Control Panel</title>
@@ -1426,26 +1435,7 @@
                     </p>
                   </div>
 
-                  <div>
-                    <div class="flex gap-1">
-                      {#each stageProgress(selectedJob.job, recordingDeleted) as stage}
-                        <span
-                          class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}"
-                          aria-hidden="true"
-                        ></span>
-                      {/each}
-                    </div>
-                    <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                      {#each stageProgress(selectedJob.job, recordingDeleted) as stage}
-                        <span
-                          class="flex-1"
-                          class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                        >
-                          {stage.label}
-                        </span>
-                      {/each}
-                    </div>
-                  </div>
+                  {@render stageBar(runStages(selectedJob, recordingDeleted))}
                   {#if selectedJob.availability?.media_cleanup}
                     {@const cleanup = selectedJob.availability.media_cleanup}
                     <div class="op-tint p-3 grid gap-2" role="status">
@@ -1649,6 +1639,14 @@
                         <dd class="text-sm">{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</dd>
                       </div>
                     {/if}
+                    {#if runSpeed}
+                      <div class="col-span-2">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                        <dd class="text-sm" class:text-warning={runSpeed.factor !== null && runSpeed.factor < 1}>
+                          {describeProcessing(runSpeed)}
+                        </dd>
+                      </div>
+                    {/if}
                     {#if selectedJob.job.stop_requested_at}
                       <div>
                         <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop requested</dt>
@@ -1762,24 +1760,7 @@
                             </div>
                           {/if}
 
-                          <div>
-                            <div class="flex gap-1">
-                              {#each stageProgress(attempt) as stage}
-                                <span class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}" aria-hidden="true"
-                                ></span>
-                              {/each}
-                            </div>
-                            <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                              {#each stageProgress(attempt) as stage}
-                                <span
-                                  class="flex-1"
-                                  class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                                >
-                                  {stage.label}
-                                </span>
-                              {/each}
-                            </div>
-                          </div>
+                          {@render stageBar(stageProgress(attempt))}
 
                           <dl class="grid gap-x-6 gap-y-3 grid-cols-2 sm:grid-cols-3">
                             <div>
