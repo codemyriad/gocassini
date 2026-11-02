@@ -106,10 +106,11 @@ export function runStages(detail: JobDetailResponse, recordingDeleted = false): 
     seal: published ? fromAttempt("seal", "Seal", published, "seal") : { key: "seal", label: "Seal", status: "pending", ms: null },
     publish: published ? fromAttempt("publish", "Publish", published, "publish") : { key: "publish", label: "Publish", status: "pending", ms: null },
   };
-  if (laterSummary?.trigger_kind === "summarize") {
+  if (laterSummary) {
+    // A speaker rename replays in seconds; the rest of that build is the
+    // summary being written again, so its time stands for the summary's.
     stages.summary = fromAttempt("summary", "Summary", laterSummary, "build");
-  } else if (laterSummary) {
-    stages.summary = { key: "summary", label: "Summary", status: "done", ms: null, note: "With speaker edits", attempt: laterSummary.attempt_number };
+    if (laterSummary.trigger_kind === "refine") stages.summary.hint = "Rewritten after speakers were renamed";
   } else if (capture?.summary_status) {
     // Written in the same build as the transcript, which is timed as one step.
     stages.summary = {

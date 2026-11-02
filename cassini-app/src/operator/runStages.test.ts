@@ -39,12 +39,13 @@ describe("runStages", () => {
     });
   });
 
-  it("says a summary was skipped, and credits one rewritten with speaker edits", () => {
+  it("says a summary was skipped, and times one rewritten after a speaker rename", () => {
     const skipped = { ...initial, summary_status: "skipped" };
     expect(view(run(skipped)).summary).toEqual(["skipped", "Skipped", 1]);
     expect(run({ ...skipped, summary_reason: "disabled" })[2].hint).toBe("Summaries are turned off");
     const refine = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed" });
-    expect(view(run(skipped, refine))).toMatchObject({ build: ["done", 10, 1], summary: ["done", "With speaker edits", 2] });
+    expect(view(run(skipped, refine))).toMatchObject({ build: ["done", 10, 1], summary: ["done", 0.2, 2] });
+    expect(run(skipped, refine)[2].hint).toBe("Rewritten after speakers were renamed");
   });
 
   it("shows a rerun in progress over the build and keeps the live publish", () => {
