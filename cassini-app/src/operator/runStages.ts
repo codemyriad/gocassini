@@ -63,6 +63,7 @@ const SUMMARY_NOTES: Record<string, string> = {
 const SUMMARY_STATUSES: Record<string, StageStatus> = {
   completed: "done",
   skipped: "skipped",
+  failed: "failed",
 };
 
 const SUMMARY_REASONS: Record<string, string> = {
@@ -93,9 +94,10 @@ export function runStages(detail: JobDetailResponse, recordingDeleted = false): 
   const laterSummary = newest(
     succeeded.filter(
       (a) => a.attempt_number > (capture?.attempt_number ?? 0)
-        // A speaker-edit save that kept the summary still carries it, so its
-        // own request decides, not the summary it published.
-        && (a.trigger_kind === "summarize" || (a.trigger_kind === "refine" && a.summary_mode === "rewrite")),
+        // A speaker-edit save that kept the summary still carries it, and one
+        // asked to rewrite it may have failed to, keeping it too: only the
+        // times of a rewrite that happened (D-899) say it wrote one.
+        && (a.trigger_kind === "summarize" || (a.trigger_kind === "refine" && a.summary_mode === "rewrite" && summaryTime(a) !== null)),
     ),
   );
 
@@ -146,7 +148,8 @@ export function runStages(detail: JobDetailResponse, recordingDeleted = false): 
         key,
         label: stages[key].label,
         status: statuses[step],
-        ms: stepTime(current, step),
+        // The run's Build leaves the summary out, here as when published.
+        ms: key === "build" ? buildTimeWithoutSummary(current) : stepTime(current, step),
         attempt: current.attempt_number,
       };
     }

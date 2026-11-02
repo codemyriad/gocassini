@@ -19,7 +19,7 @@ export interface Speed {
   ms: number;
   /** Meeting length over processing time; null when either is zero. */
   factor: number | null;
-  /** The summary's time, left out of ms because it waits on the summary model. */
+  /** Time spent waiting on the summary model, left out of ms. */
   summaryMs?: number;
 }
 
@@ -86,29 +86,36 @@ export function stepTime(row: StageTimes, key: string): number | null {
   return spanMs(t.started, t.finished);
 }
 
-// How long the attempt spent writing its summary, inside its build (D-899).
+// How long the attempt spent waiting on the summary model inside its build
+// (D-899), whether or not the summary came back.
 export function summaryTime(row: StageTimes): number | null {
   if (!("summary_started_at" in row)) return null;
   return spanMs(row.summary_started_at, row.summary_finished_at);
 }
 
-// The build's time without the summary it wrote, which waits on the summary
-// model rather than on this server.
-export function buildTimeWithoutSummary(row: StageTimes): number | null {
-  const ms = stepTime(row, "build");
+// A span of an attempt that processed the capture, without the summary wait
+// inside it: that waits on the summary model, not on this server. Attempts
+// that only write a summary or replay speaker edits keep it, as it is all
+// they do.
+function withoutSummary(row: StageTimes, ms: number | null): { ms: number | null; summaryMs?: number } {
+  if (ms === null || !("trigger_kind" in row) || !processesCapture(row)) return { ms };
   const summaryMs = summaryTime(row);
-  return ms !== null && summaryMs !== null && summaryMs < ms ? ms - summaryMs : ms;
+  return summaryMs !== null && summaryMs < ms ? { ms: ms - summaryMs, summaryMs } : { ms };
+}
+
+// The build's time, without the summary for an attempt that processed the capture.
+export function buildTimeWithoutSummary(row: StageTimes): number | null {
+  return withoutSummary(row, stepTime(row, "build")).ms;
 }
 
 // From the build starting to the meeting being published. Time spent queued
-// or waiting for resources before the build is not processing. Against the
-// meeting, the summary is left out: a slow summary model would otherwise read
-// as hardware that cannot keep up.
+// or waiting for resources before the build is not processing, and neither is
+// the summary wait: a slow summary model would read as hardware that cannot
+// keep up.
 export function processingSpeed(row: StageTimes, meetingMs: number | null): Speed | null {
-  const ms = spanMs(stageTimes(row, "build").started, stageTimes(row, "publish").finished);
-  const summaryMs = meetingMs === null ? null : summaryTime(row);
-  if (ms === null || summaryMs === null || summaryMs >= ms) return speed(ms, meetingMs);
-  return { ...speed(ms - summaryMs, meetingMs)!, summaryMs };
+  const { ms, summaryMs } = withoutSummary(row, spanMs(stageTimes(row, "build").started, stageTimes(row, "publish").finished));
+  const result = speed(ms, meetingMs);
+  return result && summaryMs !== undefined ? { ...result, summaryMs } : result;
 }
 
 // The run's figure: the newest attempt that processed the capture and
@@ -133,5 +140,5 @@ export function describeProcessing(result: Speed): string {
 // Said on hover when the summary was left out of the figure.
 export function processingHint(result: Speed): string | undefined {
   if (result.summaryMs === undefined) return undefined;
-  return `Not counting the summary, which took ${formatSpan(result.summaryMs)}`;
+  return `Not counting ${formatSpan(result.summaryMs)} waiting on the summary model`;
 }

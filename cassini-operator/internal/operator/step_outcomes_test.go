@@ -220,16 +220,16 @@ func TestRecordAttemptStepOutcomesKeepsTheSummaryThisAttemptWrote(t *testing.T) 
 		t.Fatalf("build's summary times = %s..%s, want the bundle's", start, finish)
 	}
 
-	// A rerun whose replay rewrote the summary: the rewrite's, which the
-	// replay recorded before the outcomes are copied.
-	if err := rt.store.SetAttemptSummaryTimes(ctx, jobID, 1, "2026-11-02T10:05:00.000Z", "2026-11-02T10:05:09.000Z"); err != nil {
+	// A rerun whose replay rewrote the summary: from the build's call to the
+	// rewrite's end, both of which it paid for.
+	if err := rt.store.SetAttemptSummaryTimes(ctx, jobID, 1, "2026-11-02T10:00:25.000Z", "2026-11-02T10:00:40.000Z"); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, built); err != nil {
 		t.Fatal(err)
 	}
-	if start, finish := times(1); start != "2026-11-02T10:05:00.000Z" || finish != "2026-11-02T10:05:09.000Z" {
-		t.Fatalf("summary times after a rewrite = %s..%s, want the rewrite's", start, finish)
+	if start, finish := times(1); start != built.SummaryStartedAt || finish != "2026-11-02T10:00:40.000Z" {
+		t.Fatalf("summary times after a rewrite = %s..%s, want the build's call to the rewrite's end", start, finish)
 	}
 
 	// A refine that kept the summary: none, though its bundle names some.
@@ -241,6 +241,24 @@ func TestRecordAttemptStepOutcomesKeepsTheSummaryThisAttemptWrote(t *testing.T) 
 	}
 	if start, finish := times(1); start != "" || finish != "" {
 		t.Fatalf("a refine took the bundle's summary times %s..%s, which an earlier attempt wrote", start, finish)
+	}
+}
+
+func TestAttemptSummaryTimes(t *testing.T) {
+	const b0, b1, r0, r1 = "b0", "b1", "r0", "r1"
+	for _, tc := range []struct {
+		name, kind, bs, bf, rs, rf, wantS, wantF string
+	}{
+		{"build", "initial", b0, b1, "", "", b0, b1},
+		{"build that wrote none", "initial", "", "", "", "", "", ""},
+		{"rerun that rewrote it", triggerKindRerun, b0, b1, r0, r1, b0, r1},
+		{"rerun whose build wrote none", triggerKindRerun, "", "", r0, r1, r0, r1},
+		{"refine that rewrote it", triggerKindRefine, b0, b1, r0, r1, r0, r1},
+		{"refine that kept it", triggerKindRefine, b0, b1, "", "", "", ""},
+	} {
+		if s, f := attemptSummaryTimes(tc.kind, tc.bs, tc.bf, tc.rs, tc.rf); s != tc.wantS || f != tc.wantF {
+			t.Errorf("%s: times = %q..%q, want %q..%q", tc.name, s, f, tc.wantS, tc.wantF)
+		}
 	}
 }
 

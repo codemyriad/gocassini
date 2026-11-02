@@ -264,7 +264,11 @@ func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetin
 		StartedAt  string `json:"summaryStartedAt"`
 		FinishedAt string `json:"summaryFinishedAt"`
 	}
-	if err := json.Unmarshal(report, &times); err != nil || times.StartedAt == "" || times.FinishedAt == "" {
+	if err := json.Unmarshal(report, &times); err != nil {
+		rt.logger.Printf("summary times unreadable id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+		return nil
+	}
+	if times.StartedAt == "" || times.FinishedAt == "" {
 		return nil
 	}
 	if err := rt.store.SetAttemptSummaryTimes(context.Background(), task.JobID, task.AttemptNumber, times.StartedAt, times.FinishedAt); err != nil {

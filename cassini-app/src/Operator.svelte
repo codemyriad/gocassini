@@ -11,6 +11,7 @@
     runProcessing,
     spanMs,
     stepTime,
+    summaryTime,
   } from "./operator/processingSpeed";
   import { runStages, stepStatuses, type StageStatus, type StageView } from "./operator/runStages";
 
@@ -887,13 +888,19 @@
   ] as const;
 
   // One attempt's bar: its own four steps, each with how long it took.
+  // An attempt's own bar has no Summary step, so its Build keeps the summary
+  // and says so (D-899); the run's bar times them apart.
   function stageProgress(row: Job | JobAttempt): StageView[] {
     const statuses = stepStatuses(row);
+    const summaryMs = summaryTime(row);
     return STAGES.map((stage) => ({
       key: stage.key,
       label: stageLabel(stage.key, attemptKind(row)),
       status: statuses[stage.key],
       ms: stepTime(row, stage.key),
+      hint: stage.key === "build" && summaryMs !== null && attemptKind(row) !== "summarize"
+        ? `Includes ${formatSpan(summaryMs)} waiting on the summary model`
+        : undefined,
     }));
   }
 
