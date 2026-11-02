@@ -179,11 +179,15 @@ To summarise every new meeting with your own template, choose it as the
 template in **Operator › Publish pipeline › Summary**. Templates that take the
 reader's own question are not offered there, because a summary has nobody to ask.
 The meeting file records the id, version and hash of the template that wrote its summary, beside the summary rather than inside it.
+If the chosen template cannot run when a meeting is published, the built-in
+summary template writes the summary instead, the run says so with a warning,
+and its build log gives the reason.
 
 Custom templates are files on the app's persistent volume
 (`operator/templates/<id>.md`), so they survive app updates. A file dropped
 there by hand appears in the panel as **Custom**; one that cannot run is listed
-with the reason instead of disappearing.
+with the reason instead of disappearing, and **Edit** opens it with its text so
+it can be fixed and saved.
 
 ## Related
 

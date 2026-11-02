@@ -312,8 +312,9 @@ Behavior:
   without being asked, and withheld from one that needs it the prompt would go
   out with its placeholder still in it. Either mistake is a `400`. The shipped
   `ask` workflow ("Ask your own question") takes one and requires it; every
-  other shipped workflow asks its own. A custom template takes one when its
-  `question` is empty (see [Insight templates](#insight-templates))
+  other shipped workflow asks its own. A custom template takes one exactly
+  when its instruction contains `{{QUESTION}}` (see
+  [Insight templates](#insight-templates))
 - `provider` is optional — the id of one of the configured AI endpoints
   (`GET /operator/ai/providers` lists them). Absent, the deployment's
   configured insight endpoint answers; an unknown id is a `400`
@@ -416,10 +417,13 @@ The templates a run can name. Built-in ones are compiled into the recorder;
 custom ones are `<id>.md` files in the templates directory on the app's volume
 (`operator/templates` under `APP_PERSISTENT_STORAGE`, or `--templates-root` /
 `CASSINI_TEMPLATES_DIR`). Each file is front matter (`name`, `description`,
-`version`) and the instruction as the body. A template takes the caller's
+`version`) between two `---` lines, and the instruction as the body. The front
+matter is not YAML: each value sits on one line, plain or quoted (`"..."` with
+Go/JSON escapes, or `'...'` with `''` for a quote), and a `#` in a value is
+part of it, never a comment (only a line that starts with `#` is skipped). A template takes the caller's
 question when its instruction carries `{{QUESTION}}`, built in or custom, and
-only then; there is no other input yet. A custom file with a `question` key, or
-with `{{TEMPLATE}}` in its body, is listed as broken.
+only then; there is no other input yet. A custom file with any `question` key,
+or with `{{TEMPLATE}}` in its body, is listed as broken.
 
 ```http
 GET /operator/insights/workflows                 (USER)
@@ -429,17 +433,24 @@ DELETE /operator/settings/workflows/<id>         (ADMIN)
 ```
 
 - `GET /operator/insights/workflows` is what anybody generating an insight
-  picks from: `id`, `name`, `description`, `takesQuestion` and `origin` for each template that can run, and never the instruction. It is
-  sent `Cache-Control: no-store`
+  picks from: `{"default": "<id>", "templates": [...]}`, with `id`, `name`,
+  `description`, `takesQuestion` and `origin` for each template that can run,
+  and never the instruction. `default` is the configured insight template when
+  it can run, else `summarise`; the Generate card opens on it. It is sent
+  `Cache-Control: no-store`
 
 - `GET` mirrors `cassini insight workflows --json`: `id`, `version`, `sha256`,
   `name`, `description`, `origin` (`Built in` or `Custom`) and the
   `instruction` the model receives. A custom file that cannot run is listed
   with an `error` and no `sha256`, and a run that names it is a `400` carrying
-  that reason
+  that reason. It still carries what could be read from the file — its body
+  as `instruction` (the whole file when no front matter closes), and the
+  `name` and `version` when those lines parse — so it can be opened and fixed
 - `PUT` takes `{"name", "description", "instruction"}` (`description` may be
   empty), writes the
-  file with the previous version plus one, and asks the recorder to list it
+  file with the previous version plus one (the higher of the listed version
+  and the `version` line in the file, which a broken file may still have),
+  and asks the recorder to list it
   again. A file the recorder will not run is put back as it was and the save is
   a `400` with the recorder's reason; otherwise the answer is the saved entry.
   A built-in id is a `400`: start a custom template from it instead
