@@ -85,7 +85,7 @@ func TestSupportUserBundleContainsOnlySelfDiagnostics(t *testing.T) {
 	rt := supportTestRuntime(t)
 	insertJob(t, rt.store.db, "inaccessible-private-meeting", nowUTCString())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Query().Get("shared_with_me") != "true" {
+		if r.Method != http.MethodGet || (r.URL.Query().Get("shared_with_me") != "true" && r.URL.Path != "/ocs/v2.php/apps/files_sharing/api/v1/shares/pending") {
 			t.Errorf("not a read-only self probe: %s %s", r.Method, r.URL)
 		}
 		auth, _ := base64.StdEncoding.DecodeString(r.Header.Get("AUTHORIZATION-APP-API"))
@@ -107,6 +107,60 @@ func TestSupportUserBundleContainsOnlySelfDiagnostics(t *testing.T) {
 		if bytes.Contains(raw, []byte("inaccessible-private-meeting")) || bytes.Contains(raw, []byte("test-secret")) || bytes.Contains(raw, []byte("alice")) {
 			t.Fatalf("private data in %s", name)
 		}
+	}
+}
+
+func TestSupportVisibilityIdentifiesPendingAcceptanceWithoutExportingShares(t *testing.T) {
+	rt := supportTestRuntime(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth, _ := base64.StdEncoding.DecodeString(r.Header.Get("AUTHORIZATION-APP-API"))
+		if r.Method != http.MethodGet || string(auth) != "alice:test-secret" {
+			t.Errorf("not a read-only caller probe: %s %s", r.Method, auth)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/pending") {
+			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":[{"id":"1","uid_file_owner":"cassini","permissions":0,"item_type":"file","path":"/SECRET.opus","share_with":"alice"},{"uid_file_owner":"someone-else","permissions":1,"item_type":"file"},{"uid_file_owner":"cassini","permissions":1,"item_type":"folder"} ]}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":[]}}`)
+	}))
+	defer server.Close()
+	c := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppSecret: "test-secret"}
+	entries := supportTestDownload(t, rt, c, false)
+	v := entries["visibility.json"]
+	for _, want := range []string{`"received_recording_shares": 0`, `"pending_recording_shares": 1`, `"pending_check_ok": true`} {
+		if !bytes.Contains(v, []byte(want)) {
+			t.Errorf("missing %s: %s", want, v)
+		}
+	}
+	for _, private := range []string{"SECRET", "alice", "someone-else", "test-secret"} {
+		if bytes.Contains(v, []byte(private)) {
+			t.Errorf("private share detail %s escaped: %s", private, v)
+		}
+	}
+}
+
+func TestSupportPendingProbeFailurePreservesReceivedResult(t *testing.T) {
+	rt := supportTestRuntime(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/pending") {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":403,"status":"failure","message":"SECRET"},"data":[]}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":[{"uid_file_owner":"cassini","permissions":1,"item_type":"file"}]}}`)
+	}))
+	defer server.Close()
+	entries := supportTestDownload(t, rt, ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppSecret: "test-secret"}, false)
+	v := entries["visibility.json"]
+	for _, want := range []string{`"ok": true`, `"received_recording_shares": 1`, `"pending_check_ok": false`, `"pending_http_status": 403`, `"pending_ocs_status": 403`} {
+		if !bytes.Contains(v, []byte(want)) {
+			t.Errorf("missing %s: %s", want, v)
+		}
+	}
+	if bytes.Contains(v, []byte("SECRET")) {
+		t.Fatal("raw pending refusal escaped scrubbing")
 	}
 }
 

@@ -328,7 +328,7 @@ Media, transcript/summary documents, speaker-edit files, raw databases and setti
 files are not collected. Their contents or credentials may still occur in original logs.
 
 A user bundle contains browser context, setup verdict and the caller's fresh
-received-share result. It contains no installation logs or inaccessible meetings.
+received-share and pending-share results. It contains no installation logs or inaccessible meetings.
 If recordings are missing, ask an administrator to download a bundle as well.
 An administrator bundle adds bounded recent job history, stage logs,
 cached health findings, configuration metadata and persistent diagnostic events.
@@ -376,15 +376,18 @@ func (rt *Runtime) collectSupport(ctx context.Context, c ExAppConfig, caller str
 		// only as the caller and makes no mutations or provisioning calls.
 		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		shares, probeErr := c.supportReceivedShares(probeCtx, caller)
+		pending, pendingErr := c.supportPendingShares(probeCtx, caller)
 		cancel()
 		reason, httpStatus, ocsStatus := supportError(probeErr)
-		count := 0
-		for _, s := range shares {
-			if s.UIDFileOwner == ncRecordingsOwner && s.Permissions&ncShareRead != 0 && (s.ItemType == "" || s.ItemType == "file") {
-				count++
-			}
+		pendingReason, pendingHTTP, pendingOCS := supportError(pendingErr)
+		visibility := map[string]any{
+			"checked_at": time.Now().UTC().Format(time.RFC3339Nano), "ok": probeErr == nil,
+			"received_recording_shares": supportRecordingShareCount(shares, true), "reason": reason,
+			"http_status": httpStatus, "ocs_status": ocsStatus,
+			"pending_check_ok": pendingErr == nil, "pending_recording_shares": supportRecordingShareCount(pending, false),
+			"pending_reason": pendingReason, "pending_http_status": pendingHTTP, "pending_ocs_status": pendingOCS,
+			"duration_ms": time.Since(started).Milliseconds(),
 		}
-		visibility := map[string]any{"checked_at": time.Now().UTC().Format(time.RFC3339Nano), "ok": probeErr == nil, "received_recording_shares": count, "reason": reason, "http_status": httpStatus, "ocs_status": ocsStatus, "duration_ms": time.Since(started).Milliseconds()}
 		if !b.scrubbed() {
 			// The error belongs to the caller's probe. A transport URL is server
 			// configuration rather than the caller's data: never export its
@@ -395,6 +398,11 @@ func (rt *Runtime) collectSupport(ctx context.Context, c ExAppConfig, caller str
 				selfErr = transportErr.Err
 			}
 			visibility["error"] = supportOriginalError(selfErr)
+			selfPendingErr := pendingErr
+			if !admin && errors.As(selfPendingErr, &transportErr) {
+				selfPendingErr = transportErr.Err
+			}
+			visibility["pending_error"] = supportOriginalError(selfPendingErr)
 			visibility["caller"] = caller
 		}
 		b.add("visibility.json", visibility)
@@ -444,6 +452,31 @@ func (rt *Runtime) collectSupport(ctx context.Context, c ExAppConfig, caller str
 func (c ExAppConfig) supportReceivedShares(ctx context.Context, caller string) ([]ncShare, error) {
 	client := &http.Client{Timeout: 3 * time.Second, Transport: supportTransport{}}
 	return c.receivedShares(ctx, client, caller)
+}
+
+func (c ExAppConfig) supportPendingShares(ctx context.Context, caller string) ([]ncShare, error) {
+	client := &http.Client{Timeout: 3 * time.Second, Transport: supportTransport{}}
+	data, err := c.shareRequest(ctx, client, caller, http.MethodGet, c.shareAPIURL()+"/pending", nil)
+	if err != nil {
+		return nil, err
+	}
+	var shares []ncShare
+	if err := json.Unmarshal(data, &shares); err != nil {
+		return nil, fmt.Errorf("decode pending shares: %w", err)
+	}
+	return shares, nil
+}
+
+func supportRecordingShareCount(shares []ncShare, requireRead bool) int {
+	count := 0
+	for _, s := range shares {
+		// Pending shares legitimately have permissions=0 until acceptance.
+		// Counting them diagnoses a missing mount; it never grants access.
+		if s.UIDFileOwner == ncRecordingsOwner && (!requireRead || s.Permissions&ncShareRead != 0) && (s.ItemType == "" || s.ItemType == "file") {
+			count++
+		}
+	}
+	return count
 }
 
 type supportTransport struct{}
