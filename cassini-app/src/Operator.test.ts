@@ -96,9 +96,12 @@ describe("Operator summary attempt stages", () => {
     expect(stageLabel("build", "summarize")).toBe("Summary");
     expect(stageLabel("build", "rerun")).toBe("Build");
     expect(stageLabel("seal", "summarize")).toBe("Seal");
+    expect(stageLabel("build", "refine", "rewrite")).toBe("Speakers & summary");
+    expect(stageLabel("build", "refine")).toBe("Speakers");
     const running = { stage: "build", state: "running", build_retry_not_before: null };
     expect(jobStatusLabel({ ...running, current_trigger_kind: "summarize" })).toBe("Writing summary");
     expect(jobStatusLabel({ ...running, trigger_kind: "summarize" })).toBe("Writing summary");
+    expect(jobStatusLabel({ ...running, trigger_kind: "refine" })).toBe("Applying speaker edits");
     expect(jobStatusLabel({ ...running, current_trigger_kind: "rerun" })).toBe("Building");
   });
 });
