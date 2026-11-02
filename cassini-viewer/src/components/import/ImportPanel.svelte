@@ -314,15 +314,18 @@
 
   // --- recent imports -------------------------------------------------------
 
-  $: shownJobs = jobs.filter((job) => !((job.state === "done" || job.state === "canceled") && cleared.has(job.id)));
-  $: clearableCount = jobs.filter((job) => (job.state === "done" || job.state === "canceled") && !cleared.has(job.id)).length;
+  // "Finished" is everything settled that needs nothing more from you: done,
+  // canceled, and failures nothing can be done about.
+  const finished = (job: ImportJobRecord) => job.state === "done" || job.state === "canceled" || dismissable(job);
+  $: shownJobs = jobs.filter((job) => !(finished(job) && cleared.has(job.id)));
+  $: clearableCount = jobs.filter((job) => finished(job) && !cleared.has(job.id)).length;
   // Before anything is dropped or imported, the sheet explains itself and the
   // drop zone is large; after, both step back for the lists.
   $: compact = pending.length > 0 || shownJobs.length > 0;
 
   function clearFinished() {
     for (const job of jobs) {
-      if (job.state === "done" || job.state === "canceled") cleared.add(job.id);
+      if (finished(job)) cleared.add(job.id);
     }
     cleared = cleared;
     persistSet(CLEARED_KEY, cleared);
@@ -358,7 +361,31 @@
     catch (error) { submitError = error instanceof Error ? error.message : String(error); }
   }
 
-  const CLI_RECOVERY_HELP = "This import uses a local CLI file. Run import-meeting again with the source file, or upload it as a new import.";
+  const isCLI = (job: ImportJobRecord) => job.origin === "cli" || job.stagedPath.startsWith("local:");
+  const canRetry = (job: ImportJobRecord) =>
+    !isCLI(job) && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed";
+  const canRemove = (job: ImportJobRecord) =>
+    !!dataProvider.removeImport &&
+    (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") &&
+    job.stagedPath.startsWith(".CassiniImports/");
+  // A settled row with nothing to do on it (a server-side import, or one whose
+  // upload was swept) can only be dismissed, which hides it in this browser.
+  const dismissable = (job: ImportJobRecord) =>
+    importJobTerminal(job.state) && job.state !== "done" && !canRetry(job) && !canRemove(job);
+
+  // Rows whose Details are open.
+  let detailsOpen = new Set<string>();
+  function toggleDetails(id: string) {
+    if (detailsOpen.has(id)) detailsOpen.delete(id);
+    else detailsOpen.add(id);
+    detailsOpen = detailsOpen;
+  }
+
+  function dismiss(job: ImportJobRecord) {
+    cleared.add(job.id);
+    cleared = cleared;
+    persistSet(CLEARED_KEY, cleared);
+  }
 
   // What a running row says. The operator's stages after the upload are one
   // step to the person importing: their meeting is being added.
@@ -372,12 +399,14 @@
     indexing: "Adding…",
   };
 
+  // One plain line per settled row. The operator's own error text is for
+  // diagnosis, so it sits behind Details rather than in the row.
   function settledLine(job: ImportJobRecord): string {
     switch (job.state) {
       case "upload_failed":
-        return job.error || "Upload didn't finish";
+        return "Upload didn't finish";
       case "failed":
-        return job.error || "Import failed";
+        return isCLI(job) ? "Import on the server didn't finish" : "Couldn't import this file";
       case "staged":
         return "Uploaded, not started";
       case "canceled":
@@ -442,7 +471,7 @@
       id="import-file-input"
       type="file"
       multiple
-      accept=".opus,.json,audio/ogg,application/json"
+      accept=".opus,.ogg,.oga,.ogx,.json,audio/ogg,application/ogg,application/json"
       class="hidden"
       on:change={(event) => {
         acceptFiles(event.currentTarget.files);
@@ -565,10 +594,8 @@
         </div>
         <ul class="import-list">
           {#each shownJobs as job (job.id)}
-            {@const fromCLI = job.origin === "cli" || job.stagedPath.startsWith("local:")}
+            {@const fromCLI = isCLI(job)}
             {@const running = !importJobTerminal(job.state)}
-            {@const canRetry = !fromCLI && (job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagingState !== "removed"}
-            {@const canRemove = !!dataProvider.removeImport && (job.state === "upload_failed" || job.state === "failed" || job.state === "canceled" || job.state === "staged") && job.stagedPath.startsWith(".CassiniImports/")}
             {@const canOpen = job.state === "done" && !!job.contentId && openableIds.has(job.contentId)}
             <li class="import-item" class:import-item-error={isFailure(job)}>
               <div class="import-row">
@@ -582,10 +609,14 @@
                   {#if running}
                     <span class="import-meta">{RUNNING_LABELS[job.state] ?? "Adding…"}</span>
                     <progress class="progress progress-primary import-bar"></progress>
-                  {:else if fromCLI && job.state !== "done"}
-                    <span class="import-meta import-meta-wrap">{job.error && job.error !== CLI_RECOVERY_HELP ? `${job.error}. ` : ""}{CLI_RECOVERY_HELP}</span>
                   {:else if isFailure(job)}
-                    <span class="import-meta import-meta-error">{settledLine(job)}</span>
+                    <span class="import-meta">
+                      <span class="text-error">{settledLine(job)}</span>
+                      {#if job.error}
+                        ·
+                        <button type="button" class="import-link import-link-quiet" aria-expanded={detailsOpen.has(job.id)} on:click={() => toggleDetails(job.id)}>Details</button>
+                      {/if}
+                    </span>
                   {:else}
                     <!-- A settled row says how it is (or would be) shared, and
                          who that means on hover — a retry imports with exactly this. -->
@@ -602,17 +633,23 @@
                       <X size={14} aria-hidden="true" />
                     </button>
                   {/if}
-                  {#if canRetry}
+                  {#if canRetry(job)}
                     <button type="button" class="import-link" on:click={() => void retryJob(job)}>Retry</button>
                   {/if}
-                  {#if canRemove}
+                  {#if canRemove(job)}
                     <button type="button" class="import-link import-link-quiet" title="Delete the temporary upload and remove this attempt." on:click={() => void removeJob(job)}>Remove</button>
                   {/if}
                   {#if canOpen}
                     <button type="button" class="import-link" on:click={() => dispatch("openMeeting", job.contentId ?? "")}>Open</button>
                   {/if}
+                  {#if dismissable(job)}
+                    <button type="button" class="import-link import-link-quiet" title="Hide this row. It stays in the server's import history." on:click={() => dismiss(job)}>Dismiss</button>
+                  {/if}
                 </span>
               </div>
+              {#if detailsOpen.has(job.id) && job.error}
+                <p class="import-details">{job.error}</p>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -742,8 +779,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .import-meta-error,
-  .import-meta-wrap {
+  .import-meta-error {
     white-space: normal;
   }
   .import-meta-error {
@@ -829,6 +865,17 @@
   .import-link-quiet {
     font-weight: 500;
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .import-details {
+    margin: 0 12px 10px 37px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--color-base-100);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.6875rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
   .import-sharing {
     text-decoration: underline dotted;

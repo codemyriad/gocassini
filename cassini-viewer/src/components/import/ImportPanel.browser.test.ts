@@ -94,10 +94,29 @@ it.each(["failed", "canceled"] as const)("explains recovery for %s CLI imports w
  open(provider);
  await expect.element(page.getByText("cli.json", { exact: true })).toBeVisible();
  const cliRow = Array.from(host.querySelectorAll(".import-item")).find((row) => row.textContent?.includes("cli.json"))!;
- expect(cliRow.textContent).toContain("Run import-meeting again with the source file");
+ // A plain line in the row; the operator's text only behind Details.
+ expect(cliRow.textContent).not.toContain("CLI import failed");
+ expect(cliRow.textContent).toContain(state === "failed" ? "Import on the server didn't finish" : "Canceled");
+ expect(cliRow.textContent).toContain("Dismiss");
  expect(cliRow.textContent).not.toContain("Retry");
  expect(cliRow.querySelector('[aria-label^="Cancel"]')).toBeNull();
  await expect.element(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+ // Clear finished takes the row nothing can be done about, and keeps the one Retry can fix.
+ await page.getByRole("button", { name: "Clear finished" }).click();
+ await expect.element(page.getByText("cli.json", { exact: true })).not.toBeInTheDocument();
+ await expect.element(page.getByText("browser.json", { exact: true })).toBeVisible();
+});
+
+it("keeps the operator's error behind Details", async () => {
+ const provider: DataProvider = Object.assign(new StaticCatalogProvider(), {
+  listImports: async () => [{ ...job("broken", "failed"), error: "mkdir /seed/.import-x: read-only file system" }],
+  retryImport: vi.fn(async () => {}),
+ });
+ open(provider);
+ await expect.element(page.getByText("Couldn't import this file", { exact: true })).toBeVisible();
+ await expect.element(page.getByText(/read-only file system/)).not.toBeInTheDocument();
+ await page.getByRole("button", { name: "Details" }).click();
+ await expect.element(page.getByText(/read-only file system/)).toBeVisible();
 });
 
 it("imports a 51-file selection without hitting the server batch limit", async () => {

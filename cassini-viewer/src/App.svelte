@@ -587,6 +587,17 @@
     }
   }
 
+  // A press anywhere outside the Import sheet (and its button, which toggles it)
+  // closes the sheet. The path, not the target: inside a shadow root the
+  // target is retargeted to the host element.
+  function handleShellPointerDown(event: PointerEvent) {
+    if (!importOpen) return;
+    const inside = event.composedPath().some(
+      (node) => node instanceof Element && (node.classList.contains("import-sheet") || node.classList.contains("import-button")),
+    );
+    if (!inside) importOpen = false;
+  }
+
   function handlePopState() {
     const { meeting: urlMeetingId } = currentViewerHash();
     if (urlMeetingId === selectedMeetingId) {
@@ -1509,7 +1520,7 @@
   />
 </svelte:head>
 
-<svelte:window on:keydown={handleShellKeydown} />
+<svelte:window on:keydown={handleShellKeydown} on:pointerdown={handleShellPointerDown} />
 
 <!-- .cassini-root carries the daisyUI theme (data-theme) and the theme-switching
      transition-suppression for the whole app. It lives here (in-tree), not on
