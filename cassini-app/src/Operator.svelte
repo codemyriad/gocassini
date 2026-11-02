@@ -292,7 +292,15 @@
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
   import { outcomeAttempt, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
-  import { attemptLogs, speechModelLabel, summaryModelLabel, type AttemptLog } from "./operator/attemptModels";
+  import {
+    attemptLogs,
+    attemptReason,
+    attemptSpeech,
+    attemptSummary,
+    speechModelLabel,
+    type AttemptLog,
+    type FieldValue,
+  } from "./operator/attemptModels";
   import {
     summaryActionLabel,
     summaryConfirmTitle,
@@ -1150,6 +1158,18 @@
   <span class="text-base-content/45">Not available</span>
 {/snippet}
 
+<!-- A known value, or a muted account of why there is none (reused,
+     skipped, kept); "Not available" only when nothing is known. -->
+{#snippet fieldValue(value: FieldValue | null)}
+  {#if value?.muted}
+    <span class="text-base-content/60">{value.text}</span>
+  {:else if value}
+    {value.text}
+  {:else}
+    {@render notAvailable()}
+  {/if}
+{/snippet}
+
 <div
   class="op-shell grid min-h-full grid-cols-1 bg-base-200 text-base-content min-[721px]:grid-cols-[268px_minmax(0,1fr)]"
   bind:this={shellElement}
@@ -1674,7 +1694,7 @@
                     <div class="min-w-0">
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Summary model</dt>
                       <dd class="text-sm break-words">
-                        {#if outcomeSource && summaryModelLabel(outcomeSource)}{summaryModelLabel(outcomeSource)}{:else}{@render notAvailable()}{/if}
+                        {@render fieldValue(outcomeSource ? attemptSummary(outcomeSource) : null)}
                       </dd>
                     </div>
                     <div>
@@ -1848,15 +1868,13 @@
 
                           <dl class="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
                             <div>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Why</dt>
+                              <dd class="text-sm">{attemptReason(attempt, formatStopReason)}</dd>
+                            </div>
+                            <div>
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Queued</dt>
                               <dd class="text-sm">
                                 {#if attempt.record_queued_at ?? attempt.build_queued_at}{formatTimestamp(attempt.record_queued_at ?? attempt.build_queued_at)}{:else}{@render notAvailable()}{/if}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
-                              <dd class="text-sm">
-                                {#if attemptSpeed}{formatSpan(attemptSpeed.ms)}{:else}{@render notAvailable()}{/if}
                               </dd>
                             </div>
                             <div>
@@ -1865,23 +1883,21 @@
                                 {#if attempt.completed_at}{formatTimestamp(attempt.completed_at)}{:else}{@render notAvailable()}{/if}
                               </dd>
                             </div>
+                            <div>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                              <dd class="text-sm">
+                                {#if attemptSpeed}{formatSpan(attemptSpeed.ms)}{:else}{@render notAvailable()}{/if}
+                              </dd>
+                            </div>
                             <div class="min-w-0">
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Speech model</dt>
-                              <dd class="text-sm break-words" title={attempt.transcription_revision ? `Revision ${attempt.transcription_revision}` : undefined}>
-                                {#if speechModelLabel(attempt)}{speechModelLabel(attempt)}{:else}{@render notAvailable()}{/if}
+                              <dd class="text-sm break-words" title={attempt.transcription_revision && speechModelLabel(attempt) ? `Revision ${attempt.transcription_revision}` : undefined}>
+                                {@render fieldValue(attemptSpeech(attempt, selectedJob.attempts))}
                               </dd>
                             </div>
                             <div class="min-w-0">
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Summary model</dt>
-                              <dd class="text-sm break-words">
-                                {#if summaryModelLabel(attempt)}{summaryModelLabel(attempt)}{:else}{@render notAvailable()}{/if}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stopped because</dt>
-                              <dd class="text-sm">
-                                {#if attempt.stop_reason}{formatStopReason(attempt.stop_reason)}{:else}{@render notAvailable()}{/if}
-                              </dd>
+                              <dd class="text-sm break-words">{@render fieldValue(attemptSummary(attempt))}</dd>
                             </div>
                           </dl>
 
@@ -1897,7 +1913,9 @@
                                     ? `Show the ${log.label.toLowerCase()} log`
                                     : log.written
                                       ? "No longer on disk: retention or a cleanup removed it"
-                                      : "This step has not written a log"}
+                                      : log.stage === "record" && attempt.trigger_kind !== "initial"
+                                        ? "Not part of this attempt: only the first one records"
+                                        : "This step has not written a log"}
                                   aria-expanded={isOpen}
                                   on:click={() => selectedJob && toggleLog(selectedJob.job.id, attempt.attempt_number, log)}
                                 >

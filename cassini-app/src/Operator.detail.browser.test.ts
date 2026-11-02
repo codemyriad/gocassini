@@ -158,7 +158,7 @@ it("keeps every field in its place when a run has little to show", async () => {
     artifact_meeting_path: null, artifact_opus_path: null,
   };
   const building = {
-    ...attempt, ...bare, transcription_model: "", transcription_device: "", summary_model: "",
+    ...attempt, ...bare, transcription_status: undefined, summary_status: undefined, transcription_model: "", transcription_device: "", summary_model: "",
     build_log_path: null, files_present: {},
   };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -184,11 +184,42 @@ it("keeps every field in its place when a run has little to show", async () => {
 
   await userEvent.click(page.getByText("Attempt 1", { exact: true }));
   const attemptFields = pane.querySelector("details[open] > div > dl")!;
-  expect(labels(attemptFields)).toEqual(["Queued", "Processing", "Completed", "Speech model", "Summary model", "Stopped because"]);
+  expect(labels(attemptFields)).toEqual(["Why", "Queued", "Completed", "Processing", "Speech model", "Summary model"]);
   // All four logs are offered; the ones not written cannot be opened.
   for (const name of ["Record log", "Build log", "Seal log", "Publish log"]) {
     await expect.element(page.getByRole("button", { name, exact: true })).toBeVisible();
   }
   await expect.element(page.getByRole("button", { name: "Build log", exact: true })).toBeDisabled();
   await page.screenshot({ element: pane, path: `${SHOTS}/04-sparse.png` });
+});
+
+it("tells a summary-only attempt apart by what it did", async () => {
+  const summarize = {
+    ...attempt, attempt_number: 2, trigger_kind: "summarize", stop_reason: null,
+    record_queued_at: null, record_started_at: null, record_finished_at: null, record_log_path: null,
+    build_queued_at: at(88), build_started_at: at(88), build_finished_at: at(89),
+    seal_started_at: at(89), seal_finished_at: at(89.5), publish_started_at: at(89.5), publish_finished_at: at(90),
+    // Copied from the meeting it reused, not a model it ran.
+    transcription_model: "parakeet-tdt-0.6b-v3", transcription_device: "cuda", summary_model: "gpt-4.1-mini",
+  };
+  const skipped = { ...attempt, summary_status: "skipped", summary_reason: "disabled", summary_model: "" };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (path === "/operator/jobs") return Response.json([job]);
+    if (path === "/operator/jobs/01KSTANDUPRUN") {
+      return Response.json({ job, attempts: [summarize, skipped], availability: { source: "present", output: "present", published_attempt: 2 } });
+    }
+    return Response.json({});
+  }));
+  await openRun();
+  await userEvent.click(page.getByText("Attempt 2", { exact: true }));
+  await expect.element(page.getByText("Summary requested", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Reused from attempt 1", { exact: true })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Record log", exact: true }).first())
+    .toHaveAttribute("title", "Not part of this attempt: only the first one records");
+
+  await userEvent.click(page.getByText("Attempt 1", { exact: true }));
+  await expect.element(page.getByText("Recording ended · Room empty", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Skipped: summaries are turned off", { exact: true })).toBeVisible();
+  await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/05-kinds.png` });
 });

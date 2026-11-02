@@ -110,6 +110,8 @@ export interface JobAttempt {
   transcription_revision?: string;
   transcription_device?: string;
   summary_model?: string;
+  /** A speaker-edit attempt's summary choice: "rewrite", or absent to keep it. */
+  summary_mode?: string;
 }
 
 // What writing (or rewriting) a meeting's summary would do and cost, as
