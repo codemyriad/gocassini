@@ -663,7 +663,7 @@
                       {/each}
                       {#if rowTags.length > 3}
                         <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}
-                          >+{rowTags.length - 3}</span
+                          ><span>+{rowTags.length - 3}</span></span
                         >
                       {/if}
                     </span>
@@ -1287,13 +1287,25 @@
   }
   .row-tags {
     display: inline-flex;
+    align-items: center;
     gap: 4px;
     min-width: 0;
     overflow: hidden;
   }
+  /* Sized and trimmed like a chip's label (TagChip), so the count sits on the
+     same line as the chips beside it. */
   .row-tags-more {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    font-size: 11.5px;
     font-weight: 600;
+    line-height: 1;
+  }
+  .row-tags-more span {
+    text-box: trim-both ex alphabetic;
+    translate: 0 0.5px;
   }
   /* Above the open action's hit area, like the checkbox. Hidden, not removed, so it stays in the tab order. */
   .row-tag {
