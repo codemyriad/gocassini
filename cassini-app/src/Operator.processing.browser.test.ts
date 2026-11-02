@@ -82,11 +82,14 @@ it("says how long the meeting took to process, past a summary written later", as
   ]);
   await open("Standup");
   await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
+  // The run's own stage bar times its steps too.
+  const bar = document.querySelector(".op-detail-pane section")!.textContent ?? "";
+  expect(bar).toMatch(/Record\s*58m\s*Build\s*10m\s*Seal\s*1m\s*Publish\s*1m/);
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/01-run.png` });
 
   // Each step says how long it took; only the run gets a multiplier.
   await userEvent.click(page.getByText("Attempt 1", { exact: true }));
-  await expect.element(page.getByText("10m", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("10m", { exact: true }).last()).toBeVisible();
   await expect.element(page.getByText("58m", { exact: true }).first()).toBeVisible();
   expect(document.body.textContent).not.toContain("5.8×");
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-steps.png` });

@@ -1051,6 +1051,27 @@
   };
 </script>
 
+<!-- A stage bar's labels, each with how long its step took once finished
+     (D-817). No multiplier: only the run's overall figure gets one. -->
+{#snippet stageLabels(row: Job | JobAttempt, stages: ReturnType<typeof stageProgress>)}
+  <div class="mt-1 flex gap-1 text-xs text-base-content/60">
+    {#each stages as stage, index}
+      {@const ms = stepTime(row, STAGES[index].key)}
+      <span class="min-w-0 flex-1">
+        <span
+          class="block"
+          class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
+        >
+          {stage.label}
+        </span>
+        {#if ms !== null}
+          <span class="block whitespace-nowrap text-base-content/45">{formatSpan(ms)}</span>
+        {/if}
+      </span>
+    {/each}
+  </div>
+{/snippet}
+
 <svelte:head>
   <title>Cassini Control Panel</title>
   <meta
@@ -1423,16 +1444,7 @@
                         ></span>
                       {/each}
                     </div>
-                    <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                      {#each stageProgress(selectedJob.job, recordingDeleted) as stage}
-                        <span
-                          class="flex-1"
-                          class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                        >
-                          {stage.label}
-                        </span>
-                      {/each}
-                    </div>
+                    {@render stageLabels(selectedJob.job, stageProgress(selectedJob.job, recordingDeleted))}
                   </div>
                   {#if selectedJob.availability?.media_cleanup}
                     {@const cleanup = selectedJob.availability.media_cleanup}
@@ -1765,22 +1777,7 @@
                                 ></span>
                               {/each}
                             </div>
-                            <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                              {#each stageProgress(attempt) as stage, index}
-                                {@const ms = stepTime(attempt, STAGES[index].key)}
-                                <span class="min-w-0 flex-1">
-                                  <span
-                                    class="block"
-                                    class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                                  >
-                                    {stage.label}
-                                  </span>
-                                  {#if ms !== null}
-                                    <span class="block whitespace-nowrap text-base-content/45">{formatSpan(ms)}</span>
-                                  {/if}
-                                </span>
-                              {/each}
-                            </div>
+                            {@render stageLabels(attempt, stageProgress(attempt))}
                           </div>
 
                           <dl class="grid gap-x-6 gap-y-3 grid-cols-2 sm:grid-cols-3">
