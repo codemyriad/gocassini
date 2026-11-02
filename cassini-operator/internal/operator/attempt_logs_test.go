@@ -113,3 +113,12 @@ func TestAttemptLogRefusals(t *testing.T) {
 		t.Fatalf("POST = %d, want 405", rec.Code)
 	}
 }
+
+// A log still being written grows after its size was read; the view stops
+// at that size, so it never goes past the cap untold.
+func TestReadLogTailStopsAtTheSizeItWasGiven(t *testing.T) {
+	body, truncated, err := readLogTail(strings.NewReader("first line\nwritten since\n"), int64(len("first line\n")), 1024)
+	if err != nil || truncated || string(body) != "first line\n" {
+		t.Fatalf("readLogTail() = %q, %v, %v; want the first line only", body, truncated, err)
+	}
+}

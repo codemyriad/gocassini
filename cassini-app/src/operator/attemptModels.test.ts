@@ -66,6 +66,8 @@ describe("what an attempt did, by its kind", () => {
       .toEqual({ text: "Skipped: summaries are turned off", muted: true });
     expect(attemptSummary(attempt({ trigger_kind: "initial", summary_status: "failed", summary_reason: "llm_failed" }))?.text).toBe("Failed: the model returned an error");
     expect(attemptSummary(attempt({ trigger_kind: "refine" }))).toEqual({ text: "Kept as it was", muted: true });
+    // Its bundle still names the build's model, which this save never ran.
+    expect(attemptSummary(attempt({ trigger_kind: "refine", summary_model: "gpt-4.1-mini" }))).toEqual({ text: "Kept as it was", muted: true });
     expect(attemptSummary(attempt({ trigger_kind: "initial" }))).toBeNull();
   });
 });

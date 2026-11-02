@@ -124,7 +124,8 @@ func (rt *Runtime) handleAttemptLog(w http.ResponseWriter, r *http.Request, id s
 // whether anything before them was left out.
 func readLogTail(file io.ReadSeeker, size int64, max int64) ([]byte, bool, error) {
 	if size <= max {
-		body, err := io.ReadAll(file)
+		// Up to the size it had: a running step's log keeps growing.
+		body, err := io.ReadAll(io.LimitReader(file, size))
 		return body, false, err
 	}
 	if _, err := file.Seek(size-max, io.SeekStart); err != nil {

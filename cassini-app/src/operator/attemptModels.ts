@@ -72,9 +72,10 @@ const SKIPPED_SUMMARY: Record<string, string> = {
 // The summary model, or what the summary step did instead: skipped and why,
 // failed, or kept by a speaker-edit save that did not ask to rewrite it.
 export function attemptSummary(attempt: JobAttempt): FieldValue | null {
+  // First: a kept summary still names the model of the build that wrote it.
+  if (attempt.trigger_kind === "refine" && attempt.summary_mode !== "rewrite") return { text: "Kept as it was", muted: true };
   const model = summaryModelLabel(attempt);
   if (model) return { text: model };
-  if (attempt.trigger_kind === "refine" && attempt.summary_mode !== "rewrite") return { text: "Kept as it was", muted: true };
   switch (attempt.summary_status) {
     case "skipped":
       return { text: SKIPPED_SUMMARY[attempt.summary_reason ?? ""] ?? "Skipped", muted: true };

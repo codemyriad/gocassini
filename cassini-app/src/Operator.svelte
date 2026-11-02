@@ -1785,7 +1785,7 @@
                     {#each selectedJob.attempts as attempt (attempt.attempt_number)}
                       <!-- Only a transcription is timed against the meeting: a summary
                            written in a minute is not the server running at 58×. -->
-                      {@const attemptSpeed = processingSpeed(attempt, processesCapture(attempt) ? meetingMs : null)}
+                      {@const attemptSpeed = attempt.state === "succeeded" ? processingSpeed(attempt, processesCapture(attempt) ? meetingMs : null) : null}
                       <details class="group overflow-hidden rounded-box border border-base-300">
                         <summary
                           class="flex cursor-pointer list-none items-center gap-2 bg-base-200/50 px-3 py-2 transition group-open:bg-base-200 hover:bg-base-200"
