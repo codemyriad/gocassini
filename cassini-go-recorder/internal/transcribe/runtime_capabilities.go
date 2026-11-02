@@ -7,8 +7,9 @@ import (
 )
 
 // The native runtime is sherpa-onnx 2.0.1 from codemyriad/sherpa-onnx tag
-// v2.0.1-cassini-1, shipped through the sherpa-onnx-go-{linux,macos,windows}/v2
-// v2.0.1-cassini.1 forks. Its version string is
+// v2.0.1-cassini-2 (upstream master past 2.0.1; -1 was the 2.0.1 release),
+// shipped through the sherpa-onnx-go-{linux,macos,windows}/v2
+// v2.0.1-cassini.3 forks (.1/.2 carried -1). Both report the version string
 //
 //	2.0.1+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2
 //

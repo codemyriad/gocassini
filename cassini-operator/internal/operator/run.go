@@ -99,8 +99,14 @@ type Runtime struct {
 	// is what a runtime change takes, forgets it.
 	standInMu          sync.Mutex
 	standInCheckFailed map[string]bool
-	recordingSetup     recordingSetup
-	ctx                context.Context
+	// modelCheckFailed remembers the selected (non-retired) models whose own
+	// runtime check failed, by the same key, until one passes. Settings names
+	// a stand-in for an installed model only then: one that is merely not
+	// checked yet is checked by the next build, which transcribes with it
+	// when the check passes.
+	modelCheckFailed map[string]bool
+	recordingSetup   recordingSetup
+	ctx              context.Context
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.

@@ -41,9 +41,9 @@ type modelInfo struct {
 	// model that replaced it, which a build may let it stand in for until that
 	// one is ready (see admitStandIn). Such a row is never selectable.
 	ReplacedBy string `json:"replaced_by,omitempty"`
-	// StandIn is set only in Settings' listing, on a model that is not ready:
-	// the installed retired model builds transcribe with meanwhile, unless
-	// its own runtime check fails.
+	// StandIn is set only in Settings' listing, on a model that is not
+	// installed or whose runtime check failed: the installed retired model
+	// builds transcribe with meanwhile, unless its own runtime check fails.
 	StandIn string `json:"stand_in,omitempty"`
 }
 type modelProgress struct {
@@ -220,13 +220,17 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Settings offers what can be installed and selected; a retired model
-		// only ever stands in, named on the model it stands in for.
+		// only ever stands in, named on the model it stands in for. It is
+		// named on an installed model only once that model's runtime check
+		// failed: one not checked yet (after a restart, or while its install
+		// job waits to check it) is checked by the next build, which
+		// transcribes with it when the check passes.
 		models := []modelInfo{}
 		for _, m := range inventory {
 			if m.ReplacedBy != "" {
 				continue
 			}
-			if !m.Ready {
+			if !m.Ready && (!m.Installed || rt.modelCheckHasFailed(m, device)) {
 				if candidates := rt.standInCandidates(inventory, m, device, ""); len(candidates) > 0 {
 					m.StandIn = candidates[0].ID
 				}
@@ -468,7 +472,9 @@ func (rt *Runtime) runModelJob(job modelJob) {
 		if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(job.Device, job.Model), rt.logger.Printf); err != nil {
 			return err
 		}
-		return rt.modelCommand(ctx, &job, "probe", false)
+		err := rt.modelCommand(ctx, &job, "probe", false)
+		rt.noteModelCheck(ctx, job.Model, job.Revision, job.Device, err)
+		return err
 	}
 	err = run()
 	if ctx.Err() != nil {

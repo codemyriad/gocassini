@@ -126,8 +126,14 @@ describe("helpers", () => {
     // publishing without a transcript either.
     const missing = pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: false, activeModelDownload: null, activeModelStandIn: true });
     expect(missing.transcribe).toEqual({ state: "On · Balanced · CPU", tone: "amber", reason: "model not installed · previous model transcribes meanwhile" });
-    // Once the saved model is installed it runs, whatever is left on disk.
-    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: true, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
+    // Installed but its runtime check failed: the operator names v3 only
+    // then, and builds transcribe with it while the check fails.
+    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: true, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "amber", reason: "model check failed · previous model transcribes meanwhile" });
+    // Installed and checked or still to be checked (the operator names no
+    // stand-in): it runs, as the next build checks it first.
+    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: true, activeModelStandIn: false }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
+    // While the inventory is unknown the strip claims nothing.
+    expect(pipelineStatus({ ...team, activeModel: "parakeet-ultra-0.6b-int8", activeModelInstalled: null, activeModelStandIn: true }).transcribe).toEqual({ state: "On · Balanced · CPU", tone: "on" });
   });
 });
 
@@ -141,7 +147,12 @@ describe("inUseModelState", () => {
     // A fresh install: recordings wait for the download.
     expect(inUseModelState({ installed: false }, { percent: null })).toBe("downloading");
     expect(inUseModelState({ installed: false }, null)).toBe("missing");
-    // Installed runs (checked first if need be), whatever is left on disk.
-    expect(inUseModelState({ installed: true, stand_in: "parakeet-tdt-0.6b-v3-int8" }, null)).toBe("installed");
+    // Installed but its runtime check failed: the operator names v3 only
+    // then, and builds use it while Ultra's check fails, so the card must not
+    // say Ultra transcribes.
+    expect(inUseModelState({ installed: true, stand_in: "parakeet-tdt-0.6b-v3-int8" }, null)).toBe("stand-in");
+    // Installed with nothing standing in runs, checked first if need be: the
+    // operator names no stand-in while the check is still to run.
+    expect(inUseModelState({ installed: true }, null)).toBe("installed");
   });
 });

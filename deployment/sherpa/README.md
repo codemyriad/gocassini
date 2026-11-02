@@ -7,27 +7,33 @@ v2.0.1, with its platform modules replaced by Cassini's prebuilt libraries:
 [codemyriad/sherpa-onnx-go-macos](https://github.com/codemyriad/sherpa-onnx-go-macos)
 (arm64, x86_64) and
 [codemyriad/sherpa-onnx-go-windows](https://github.com/codemyriad/sherpa-onnx-go-windows)
-(x64, 386, arm64), at `v2.0.1-cassini.1` (Linux) and `v2.0.1-cassini.2`
-(macOS, Windows; module paths `.../v2`) from the same native source. The macOS
-and Windows `.2` tags ship only the C API library and ONNX Runtime: `.1` also
-kept upstream's stock C++ wrapper library, built against the C diarization
-config without #4032's `sortformer` member, so it disagreed with the C API on
-that struct's layout. Go never links the C++ wrapper; the Linux fork rebuilds
-it from the same source. The recorder itself does not build for Windows yet (the
+(x64, 386, arm64), all at `v2.0.1-cassini.3` (module paths `.../v2`), built
+from the same native source. Linux skips `.2` so the three tags match. The
+macOS and Windows modules ship only the C API library and ONNX Runtime (since
+their `.2`: `.1` also kept upstream's stock C++ wrapper library, built against
+the C diarization config without #4032's `sortformer` member, so it disagreed
+with the C API on that struct's layout). Go never links the C++ wrapper; the
+Linux fork rebuilds it from the same source. The recorder itself does not build for Windows yet (the
 model store uses Unix file locking and `statfs`); the Windows module is pinned
 so it is ready when it does. Each fork's GitHub workflow builds the library on
 a runner and, before release, checks the version string, transcribes a quiet
 sample with Parakeet v3 and the production Parakeet Ultra bundle, and runs
-Nemotron diarization through Sortformer. The macOS arm64 library was
-cross-built on an Intel runner; its runtime probe on Apple silicon is still
-pending (see the fork's CASSINI.md). Standard `go build`, `go run` and
+Nemotron diarization through Sortformer. The macOS arm64 library is cross-built on an Intel runner. For
+`v2.0.1-cassini.3` it has also passed the full probe on Apple silicon (see the
+fork's CASSINI.md). Standard `go build`, `go run` and
 `go test` work without compiling sherpa-onnx. Linux arm32 uses the stock 2.0.1
 library: it has upstream's quiet-audio fix, but cannot load Parakeet Ultra or
 diarize, so there only the fast tier's 110M model transcribes.
 
 The native source is the
-[`v2.0.1-cassini-1` tag](https://github.com/codemyriad/sherpa-onnx/tree/v2.0.1-cassini-1)
-of codemyriad/sherpa-onnx (commit `c810dfcf`), three commits on upstream v2.0.1:
+[`v2.0.1-cassini-2` tag](https://github.com/codemyriad/sherpa-onnx/tree/v2.0.1-cassini-2)
+of codemyriad/sherpa-onnx (commit `deede178`). It is four patches on upstream
+master `935e5ded`, which is v2.0.1 plus 16 commits. Upstream has made no
+release since, so the version keeps saying 2.0.1. Those commits include #4084
+(a NeMo TDT `modified_beam_search` fix), #4123 (`--length-reward` parsing) and
+#4130 (clang-tidy fixes); greedy decoding, Cassini's default, gives the same
+transcripts as on `v2.0.1-cassini-1` (`c810dfcf`, upstream v2.0.1 itself). The
+patches:
 
 1. **Nemotron-3-Diarization (Sortformer)**, the net diff of upstream PR
    k2-fsa/sherpa-onnx#4032 (still open upstream). The model goes in
@@ -42,6 +48,23 @@ of codemyriad/sherpa-onnx (commit `c810dfcf`), three commits on upstream v2.0.1:
    whose output is larger than the vocabulary is TDT. Not yet proposed upstream.
 3. **Markers.** `GetVersion()` reports
    `2.0.1+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2`.
+4. **A `cudaGetDeviceProperties` cache, Linux x86_64 CUDA builds only.** ONNX
+   Runtime 1.28.2 bundles cuDNN-frontend 1.24, which asks the CUDA runtime for
+   the device properties (about 1 ms of kernel time) each time ORT's CUDA Conv
+   builds a graph. That happens for each of the Parakeet encoder's 77 Conv
+   nodes on every new VAD segment length, which made GPU builds 22-42% slower
+   than on 1.13.7. `libsherpa-onnx-c-api.so` defines
+   `cudaGetDeviceProperties(_v2)` itself. Programs link it before the ORT CUDA
+   provider loads `libcudart.so.12`, so the provider's calls land there, and
+   after the first real answer per device they get a copy. Output is
+   unchanged; `CASSINI_CUDA_PROPS_CACHE=0` turns it off. It copies CUDA 12
+   structs, so `build.sh` refuses a CUDA build whose ORT provider does not
+   import `libcudart.so.12` or whose C API lacks the two symbols. Drop it when
+   the pinned ORT bundles cuDNN-frontend 1.32 or later (it reads the SM
+   version with `cudaDeviceGetAttribute`), or when ORT sets the SM version on
+   its Conv graphs. CPU, macOS and Windows libraries do not contain it, and no
+   marker names it: check a CUDA library with
+   `nm -D --defined-only libsherpa-onnx-c-api.so | grep cudaGetDeviceProperties`.
 
 The feature frontend is upstream's: since v2.0.1 (k2-fsa/sherpa-onnx#3999) NeMo
 models skip the log floor and use an additive `FLT_EPSILON/2` guard, which is

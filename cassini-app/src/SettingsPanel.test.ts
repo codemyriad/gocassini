@@ -34,6 +34,9 @@ describe("SettingsPanel device policy", () => {
     expect(settingsPanelSource).toContain('class:in-use-warn={inUseState === "missing"}');
     expect(settingsPanelSource).toContain('{#if inUseModel && inUseState === "missing"}');
     expect(settingsPanelSource).toContain("the previous model transcribes recordings on {runsOnLine} meanwhile.");
+    // Installed files that failed their check: v3 transcribes, not because
+    // Ultra is downloading or missing.
+    expect(settingsPanelSource).toContain("is installed but failed its runtime check; the previous model");
     expect(settingsPanelSource).toContain("; recordings wait for it.");
   });
 });

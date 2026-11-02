@@ -6,7 +6,7 @@ import (
 )
 
 // cassiniRuntimeVersion is the native version of sherpa-onnx-go-*/v2
-// v2.0.1-cassini.1 (codemyriad/sherpa-onnx tag v2.0.1-cassini-1).
+// v2.0.1-cassini.1 to .3 (codemyriad/sherpa-onnx tags v2.0.1-cassini-1 and -2).
 const cassiniRuntimeVersion = "2.0.1+cassini.parakeet-tdt-joiner-v1.nemotron-diarization-v2"
 
 // Older and partial runtimes this binary may still meet.

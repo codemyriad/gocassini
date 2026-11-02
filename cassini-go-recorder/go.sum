@@ -1,9 +1,9 @@
-github.com/codemyriad/sherpa-onnx-go-linux/v2 v2.0.1-cassini.1 h1:2n3pYLEmnp2Wm4v85dwB2eyXS4RNOB6zMSei9Ac0lLg=
-github.com/codemyriad/sherpa-onnx-go-linux/v2 v2.0.1-cassini.1/go.mod h1:zfoI5ANNAiKCZFyWC9NfZATijClmbT1UqZ+ycvcMKCY=
-github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.2 h1:CAldFVNkkMFzMkvsXdUAYIwY70NFxdefYpESEXedSUs=
-github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.2/go.mod h1:RnFSuUrQNs+AlqEV7WiO0UIBZ1L4Ka2X5QxW8A0wCbY=
-github.com/codemyriad/sherpa-onnx-go-windows/v2 v2.0.1-cassini.2 h1:rM/L693vQ7bEcCtXC6J/mpSY/f2DQDjuPehhYi9z68Y=
-github.com/codemyriad/sherpa-onnx-go-windows/v2 v2.0.1-cassini.2/go.mod h1:4T8q8/N4uaTxf7acMYaJrafG69HJRdlDRDstAODHz2Q=
+github.com/codemyriad/sherpa-onnx-go-linux/v2 v2.0.1-cassini.3 h1:Yl4NFAl7scIdlWPT5LurJSsMNmolJFdsf2x0AsGGLEw=
+github.com/codemyriad/sherpa-onnx-go-linux/v2 v2.0.1-cassini.3/go.mod h1:zfoI5ANNAiKCZFyWC9NfZATijClmbT1UqZ+ycvcMKCY=
+github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.3 h1:QncbWfDVliopEgyuGx5hbjhfAVN0ZunKA2e0hqXJSn0=
+github.com/codemyriad/sherpa-onnx-go-macos/v2 v2.0.1-cassini.3/go.mod h1:RnFSuUrQNs+AlqEV7WiO0UIBZ1L4Ka2X5QxW8A0wCbY=
+github.com/codemyriad/sherpa-onnx-go-windows/v2 v2.0.1-cassini.3 h1:Td7T0a4me6IQxTQ7iIDsYleEOGPNKrNURsPDwABGjoE=
+github.com/codemyriad/sherpa-onnx-go-windows/v2 v2.0.1-cassini.3/go.mod h1:4T8q8/N4uaTxf7acMYaJrafG69HJRdlDRDstAODHz2Q=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
