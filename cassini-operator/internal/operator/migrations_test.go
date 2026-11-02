@@ -389,6 +389,51 @@ func TestMigrateDownRemovesTheAttemptModelsAndKeepsTheAttempt(t *testing.T) {
 	}
 }
 
+func TestMigrateDownRemovesTheAttemptSummaryTimesAndKeepsTheAttempt(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "attempt_summary_times")
+	if at < 0 {
+		t.Fatal("no attempt_summary_times migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "job-times", nowUTCString())
+	if err := store.MarkBuildQueued(ctx, "job-times", "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	outcomes := stepOutcomes{SummaryStatus: "completed", SummaryModel: "gpt-4.1-mini", SummaryStartedAt: "2026-11-02T10:00:00.000Z", SummaryFinishedAt: "2026-11-02T10:00:20.000Z"}
+	if err := store.RecordAttemptStepOutcomes(ctx, "job-times", 1, outcomes); err != nil {
+		t.Fatalf("RecordAttemptStepOutcomes() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT summary_started_at FROM job_attempts`); err == nil {
+		t.Fatal("job_attempts.summary_started_at survived the down migration")
+	}
+	var model string
+	if err := store.db.QueryRow(`SELECT summary_model FROM job_attempts WHERE job_id = ?`, "job-times").Scan(&model); err != nil || model != "gpt-4.1-mini" {
+		t.Fatalf("attempt after the down migration = %q, %v; want its model kept", model, err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	// Back up, the attempt is there and has no summary times until rebuilt.
+	attempt, err := store.GetJobAttempt(ctx, "job-times", 1)
+	if err != nil || attempt.SummaryStartedAt != "" || attempt.SummaryModel != "gpt-4.1-mini" {
+		t.Fatalf("GetJobAttempt() after re-upgrade = %+v, %v; want the attempt back without times", attempt, err)
+	}
+}
+
 // TestNewestMigrationHasARollbackTest is the tripwire: a rollback to the last
 // release is only known to work for a migration that has a down-and-up test in
 // this file. Adding a migration means adding its test and naming it here, or
@@ -407,6 +452,7 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"import_jobs":              true,
 		"import_staging":           true,
 		"attempt_models":           true,
+		"attempt_summary_times":    true,
 	}
 	newest := migrations[len(migrations)-1].Name
 	if !covered[newest] {

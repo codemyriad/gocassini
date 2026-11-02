@@ -61,6 +61,18 @@ func TestReadBundleStepOutcomes(t *testing.T) {
 			},
 		},
 		{
+			// When the summary's model call ran (D-899).
+			name: "summary times",
+			manifest: map[string]any{"processing": map[string]any{
+				"transcription":  map[string]any{"status": "completed"},
+				"meetingSummary": map[string]any{"status": "completed", "model": "gpt-4.1-mini", "startedAt": "2026-11-02T10:00:00.000Z", "finishedAt": "2026-11-02T10:00:20.500Z"},
+			}},
+			want: stepOutcomes{
+				TranscriptionStatus: "completed", SummaryStatus: "completed", SummaryModel: "gpt-4.1-mini",
+				SummaryStartedAt: "2026-11-02T10:00:00.000Z", SummaryFinishedAt: "2026-11-02T10:00:20.500Z",
+			},
+		},
+		{
 			// No model ran, so no device is claimed for one.
 			name: "transcription skipped",
 			manifest: map[string]any{
@@ -175,6 +187,60 @@ func TestRunBuildJobRecordsStepOutcomes(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"transcription_status":"failed"`) || !strings.Contains(string(raw), `"summary_reason":"no_transcript"`) {
 		t.Fatalf("job detail JSON lacks the outcomes: %s", raw)
+	}
+}
+
+// The summary's times are the ones this attempt wrote (D-899): a build's from
+// its bundle, a speaker-edit rewrite's from its report, and never, for a
+// refine, the bundle's, which an earlier attempt wrote.
+func TestRecordAttemptStepOutcomesKeepsTheSummaryThisAttemptWrote(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	const jobID = "job-summary-times"
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(ctx, jobID, "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	built := stepOutcomes{SummaryStatus: "completed", SummaryStartedAt: "2026-11-02T10:00:00.000Z", SummaryFinishedAt: "2026-11-02T10:00:20.000Z"}
+	times := func(n int) (string, string) {
+		t.Helper()
+		a, err := rt.store.GetJobAttempt(ctx, jobID, n)
+		if err != nil {
+			t.Fatalf("GetJobAttempt(%d) error = %v", n, err)
+		}
+		return a.SummaryStartedAt, a.SummaryFinishedAt
+	}
+
+	// A build: the bundle's.
+	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, built); err != nil {
+		t.Fatal(err)
+	}
+	if start, finish := times(1); start != built.SummaryStartedAt || finish != built.SummaryFinishedAt {
+		t.Fatalf("build's summary times = %s..%s, want the bundle's", start, finish)
+	}
+
+	// A rerun whose replay rewrote the summary: the rewrite's, which the
+	// replay recorded before the outcomes are copied.
+	if err := rt.store.SetAttemptSummaryTimes(ctx, jobID, 1, "2026-11-02T10:05:00.000Z", "2026-11-02T10:05:09.000Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, built); err != nil {
+		t.Fatal(err)
+	}
+	if start, finish := times(1); start != "2026-11-02T10:05:00.000Z" || finish != "2026-11-02T10:05:09.000Z" {
+		t.Fatalf("summary times after a rewrite = %s..%s, want the rewrite's", start, finish)
+	}
+
+	// A refine that kept the summary: none, though its bundle names some.
+	if _, err := rt.store.db.Exec(`UPDATE job_attempts SET trigger_kind = ?, summary_started_at = '', summary_finished_at = '' WHERE job_id = ?`, triggerKindRefine, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, built); err != nil {
+		t.Fatal(err)
+	}
+	if start, finish := times(1); start != "" || finish != "" {
+		t.Fatalf("a refine took the bundle's summary times %s..%s, which an earlier attempt wrote", start, finish)
 	}
 }
 
