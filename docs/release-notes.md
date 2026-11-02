@@ -122,24 +122,20 @@ mechanism only when it helps them choose, configure or trust the change.
 >
 > **To:** **More accurate transcripts.** Cassini now transcribes with
 > Parakeet Ultra instead of Parakeet v3: more accurately, and faster on a GPU.
-> ([How we measured](https://github.com/codemyriad/gocassini/pull/390))
 >
 > And under *Before you upgrade*: Cassini downloads the new model on its own
 > and keeps using the old one until it has it. A GPU now needs 7 GiB of free
 > video memory, up from 5.5 GiB. Participant names no longer steer
 > transcription.
 
-Most readers want the outcome in one sentence; the few who want the numbers
-follow the link. Keep the sentence true for every reader it covers. Here it
-says "faster on a GPU" because a CPU is not faster, and "more accurately"
-holds on both because a GPU no longer drops passages, even though the model
-alone was not significantly more accurate there. **Claim only what the
-evidence shows, and put the evidence behind a link.**
+Most readers want the outcome in one sentence. A plain claim is fine as long
+as no reader would find it wrong: "faster on a GPU", because a CPU is not
+faster, but not a list of benchmarks. The detail stays in the developer
+changelog.
 
-Give a number when you measured one and it means something to the reader.
-"About 30% smaller audio files" is useful. "WER 8.10 → 7.25 on the MAI silver
-set" belongs in the developer changelog or a linked report. Link that report
-from the notes.
+A number is optional. Use one when it means something to the reader ("about
+30% smaller audio files"), not a benchmark score ("WER 8.10 → 7.25 on the MAI
+silver set"). Don't link PRs or reports from the notes.
 
 ### 4. Tell administrators what to do
 
@@ -212,8 +208,7 @@ where it lives, what happens. Leave out "we're excited", "powerful",
 - [ ] Every setting is named as it reads on screen in that release, with where
       to find it. Check the code at the release tag, not the fragment: the
       wording on screen often changed later.
-- [ ] Every number was measured, and the developer changelog or a linked
-      report says how.
+- [ ] No claim a reader would find wrong on their setup, and no links to PRs.
 - [ ] Short enough to read in a few minutes: about 300 words for a patch
       release, up to 800 for a minor release that ends a long run of
       prereleases.
