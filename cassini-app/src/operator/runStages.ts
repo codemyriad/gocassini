@@ -43,14 +43,15 @@ export function stepStatuses(row: Job | JobAttempt): Record<AttemptStep, StageSt
   return statuses;
 }
 
-// Where each kind of attempt's steps land on the run's bar. A summary-only
-// attempt's build writes the summary; a speaker-edit replay's build is
-// neither, and never stands for the build that transcribed the meeting.
+// Where an unfinished or failed attempt's steps land on the run's bar. A
+// summary-only attempt's build writes the summary. A speaker-edit replay's
+// build shows over Build while it runs or once it failed, so the run says so;
+// once it succeeds it never stands for the build that transcribed the meeting.
 const RUN_STEP_FOR: Record<string, Partial<Record<AttemptStep, string>>> = {
   initial: { record: "record", build: "build", seal: "seal", publish: "publish" },
   rerun: { build: "build", seal: "seal", publish: "publish" },
   summarize: { build: "summary", seal: "seal", publish: "publish" },
-  refine: { seal: "seal", publish: "publish" },
+  refine: { build: "build", seal: "seal", publish: "publish" },
 };
 
 const SUMMARY_NOTES: Record<string, string> = {

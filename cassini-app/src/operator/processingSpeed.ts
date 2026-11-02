@@ -45,6 +45,8 @@ export function formatSpan(ms: number): string {
 export function formatMultiplier(factor: number): string {
   // Rounded before choosing the precision, or 9.97 would read "10.0×".
   const tenths = Math.round(factor * 10) / 10;
+  // Far behind real time, one significant digit, so it never reads "0.0×".
+  if (tenths === 0) return `${Number(factor.toPrecision(1))}×`;
   return `${tenths < 10 ? tenths.toFixed(1) : Math.round(factor).toLocaleString()}×`;
 }
 

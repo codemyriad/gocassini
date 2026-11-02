@@ -60,6 +60,9 @@ describe("runStages", () => {
   it("marks where a later attempt failed, with how long it ran", () => {
     const summarize = attempt(2, "summarize", { state: "failed", stage: "build", build_queued_at: at(100), build_started_at: at(100), build_finished_at: at(101) });
     expect(view(run(initial, summarize))).toMatchObject({ build: ["done", 10, 1], summary: ["failed", 1, 2], seal: ["done", 1, 1] });
+    // A speaker-edit replay that failed shows where: its build.
+    const refine = attempt(2, "refine", { state: "failed", stage: "build", build_queued_at: at(100), build_started_at: at(100), build_finished_at: at(100.5) });
+    expect(view(run(initial, refine))).toMatchObject({ build: ["failed", 0.5, 2], seal: ["done", 1, 1] });
   });
 
   it("follows a first recording through its steps", () => {

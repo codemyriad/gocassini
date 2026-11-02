@@ -87,4 +87,8 @@ describe("formatFactor", () => {
     expect(formatMultiplier(9.94)).toBe("9.9×");
     expect(formatMultiplier(9.97)).toBe("10×");
   });
+
+  it("never reads 0.0× for processing far behind real time", () => {
+    expect(formatMultiplier(1 / 30)).toBe("0.03×");
+  });
 });
