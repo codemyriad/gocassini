@@ -99,6 +99,9 @@ describe("shareNotice", () => {
       ],
     });
     expect(notice?.hint).toContain("Doctor → Recording sharing");
+    expect(notice?.action).toEqual({ kind: "reshare", label: "Re-share with room audience" });
+    // Not while the meeting is being processed again.
+    expect(shareNotice({ status: "partial", skipped: [{ type: "user", id: "bob" }] }, true, false)?.action).toBeUndefined();
   });
 
   it("says a run was not published because its starter was refused", () => {

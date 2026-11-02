@@ -1226,10 +1226,15 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "load share outcomes")
 			return
 		}
+		retired, err := rt.store.retiredMeetingJobs(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load meeting lifecycle")
+			return
+		}
 		for i := range jobs {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
 			jobs[i].MeetingDeleted = deleted[jobs[i].ID]
-			if !jobs[i].MeetingDeleted {
+			if !retired[jobs[i].ID] {
 				jobs[i].UnsharedCount = unshared[jobs[i].ID]
 			}
 			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i], jobs[i].MeetingDeleted)
@@ -2140,6 +2145,14 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rt.handleRerunJob(w, r, id)
+		return
+	}
+	if action == "reshare" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleReshareJob(w, r, id)
 		return
 	}
 	if action == "summary" {

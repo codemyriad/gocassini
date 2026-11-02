@@ -103,3 +103,103 @@ it("says nothing for a run shared with everyone", async () => {
   expect(document.body.textContent).not.toContain("not shared with everyone");
   expect(document.body.textContent).not.toContain("Not shared with everyone");
 });
+
+function serveReshare(recording: ReturnType<typeof job>, answer: "fixed" | "fails") {
+  let reshared = false;
+  const posts: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (init?.method === "POST") {
+      posts.push(path);
+      if (answer === "fails") return Response.json({ error: "Cassini could not share the meeting again: Nextcloud recording shares are not ready" }, { status: 502 });
+      reshared = true;
+      return Response.json({ sharing: { status: "complete", skipped: [] } });
+    }
+    const current = reshared ? { ...recording, unshared_count: 0 } : recording;
+    if (path === "/operator/jobs") return Response.json([current]);
+    if (path === `/operator/jobs/${recording.id}`) {
+      return Response.json({
+        job: current,
+        attempts: [{ job_id: recording.id, attempt_number: 1, trigger_kind: "initial", request_json: "{}", stage: "done", state: "succeeded", created_at: stamp, updated_at: stamp, build_deferral_count: 0 }],
+        availability: { source: "present", output: "present", published_attempt: 1 },
+        sharing: reshared ? { status: "complete", skipped: [] } : { status: "partial", skipped: [{ type: "user", id: "bob", reason: "Sharing is only allowed with group members" }] },
+      });
+    }
+    return Response.json({});
+  }));
+  return posts;
+}
+
+it("re-shares a partly shared meeting once the policy is fixed", async () => {
+  const posts = serveReshare(job("Standup", "succeeded", { unshared_count: 1 }), "fixed");
+  await open("Standup");
+  await expect.element(page.getByText("Published, but not shared with everyone: Nextcloud refused 1 recipient", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Re-share with room audience" }));
+  await expect.poll(() => posts).toEqual(["/operator/jobs/Standup/reshare"]);
+  await expect.poll(() => document.body.textContent?.includes("not shared with everyone")).toBe(false);
+  expect(document.querySelector(".run-card")!.textContent).not.toContain("Not shared with everyone");
+});
+
+it("says beside the button why a re-share failed", async () => {
+  serveReshare(job("Standup", "succeeded", { unshared_count: 1 }), "fails");
+  await open("Standup");
+  await userEvent.click(page.getByRole("button", { name: "Re-share with room audience" }));
+  await expect.element(page.getByRole("alert").filter({ hasText: "could not share the meeting again" })).toBeVisible();
+  // The warning stays: nothing changed.
+  await expect.element(page.getByText("Published, but not shared with everyone: Nextcloud refused 1 recipient", { exact: true })).toBeVisible();
+});
+
+it("acknowledges a re-share that Nextcloud still partly refused", async () => {
+  const recording = job("Standup", "succeeded", { unshared_count: 1 });
+  const partial = { status: "partial", skipped: [{ type: "user", id: "bob", reason: "Sharing is only allowed with group members" }] };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (init?.method === "POST") return Response.json({ sharing: partial });
+    if (path === "/operator/jobs") return Response.json([recording]);
+    if (path === "/operator/jobs/Standup") {
+      return Response.json({
+        job: recording,
+        attempts: [{ job_id: "Standup", attempt_number: 1, trigger_kind: "initial", request_json: "{}", stage: "done", state: "succeeded", created_at: stamp, updated_at: stamp, build_deferral_count: 0 }],
+        availability: { source: "present", output: "present", published_attempt: 1 },
+        sharing: partial,
+      });
+    }
+    return Response.json({});
+  }));
+  await open("Standup");
+  await userEvent.click(page.getByRole("button", { name: "Re-share with room audience" }));
+  await expect.element(page.getByText("Shared again. Nextcloud still refused 1 recipient: check Doctor → Recording sharing.", { exact: true })).toBeVisible();
+});
+
+it("keeps a pending re-share's answer with the run it was made for", async () => {
+  const alpha = job("Alpha", "succeeded", { unshared_count: 1 });
+  const beta = job("Beta", "succeeded", { unshared_count: 1, created_at: "2026-11-01T09:00:00Z" });
+  const partial = { status: "partial", skipped: [{ type: "user", id: "bob", reason: "Sharing is only allowed with group members" }] };
+  let answer: (response: Response) => void = () => {};
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (init?.method === "POST") return new Promise<Response>(resolve => { answer = resolve; });
+    if (path === "/operator/jobs") return Response.json([alpha, beta]);
+    const id = path.split("/").pop()!;
+    const recording = id === "Alpha" ? alpha : beta;
+    return Response.json({
+      job: recording,
+      attempts: [{ job_id: id, attempt_number: 1, trigger_kind: "initial", request_json: "{}", stage: "done", state: "succeeded", created_at: stamp, updated_at: stamp, build_deferral_count: 0 }],
+      availability: { source: "present", output: "present", published_attempt: 1 },
+      sharing: partial,
+    });
+  }));
+  app = mount(Operator, { target: host });
+  await expect.element(page.getByText("Alpha", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByText("Alpha", { exact: true }).element().closest(".run-card")!);
+  await userEvent.click(page.getByRole("button", { name: "Re-share with room audience" }));
+  // Open Beta while Alpha's re-share is still pending.
+  await userEvent.click(page.getByText("Beta", { exact: true }).element().closest(".run-card")!);
+  await expect.element(page.getByRole("heading", { name: "Beta" })).toBeVisible();
+  // Alpha's request is still pending: Beta shows no spinner of its own.
+  expect(document.querySelector(".op-detail-pane .loading")).toBeNull();
+  answer(Response.json({ error: "Cassini could not share the meeting again." }, { status: 502 }));
+  await new Promise(resolve => setTimeout(resolve, 200));
+  expect(document.querySelector(".op-detail-pane")?.textContent).not.toContain("could not share the meeting again");
+  expect(document.querySelector(".op-detail-pane .loading")).toBeNull();
+});

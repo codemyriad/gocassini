@@ -114,6 +114,31 @@ func (s *Store) JobShareOutcome(ctx context.Context, jobID string) (*jobShareOut
 	return &out, nil
 }
 
+// retiredMeetingJobs lists the jobs whose meeting is retiring or retired, for
+// any reason — expired or deleted.
+func (s *Store) retiredMeetingJobs(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM meeting_lifecycle WHERE state IN ('retiring','retired')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	retired := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		retired[meetingStem(name)] = true
+	}
+	return retired, rows.Err()
+}
+
+func (s *Store) meetingRetired(ctx context.Context, jobID string) bool {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM meeting_lifecycle WHERE name IN (?,?) AND state IN ('retiring','retired')`, jobID+".opus", jobID+".json").Scan(&n)
+	return err == nil && n > 0
+}
+
 // partiallySharedJobs counts, per published job, the audience members it was
 // not shared with — for the run list's flag.
 func (s *Store) partiallySharedJobs(ctx context.Context) (map[string]int, error) {
@@ -140,9 +165,9 @@ func (s *Store) partiallySharedJobs(ctx context.Context) (map[string]int, error)
 //
 // A refused starter explains a failure only while it is still the failure: a
 // later attempt that failed for another reason, or succeeded, is its own
-// story. A deleted meeting has nobody left to share with.
+// story. A meeting that was deleted or expired has nobody left to share with.
 func (rt *Runtime) jobSharing(ctx context.Context, job *Job) *jobShareOutcome {
-	if job.MeetingDeleted {
+	if job.MeetingDeleted || rt.store.meetingRetired(ctx, job.ID) {
 		return nil
 	}
 	outcome, err := rt.store.JobShareOutcome(ctx, job.ID)

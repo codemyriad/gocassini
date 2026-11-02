@@ -164,6 +164,14 @@ export class OperatorClient {
     });
   }
 
+  /** Shares a published meeting with its room's audience again, adding only
+   * who is missing (D-885). Answers with the new share outcome. */
+  async reshareJob(jobId: string): Promise<{ sharing?: JobDetailResponse["sharing"] }> {
+    return this.#request<{ sharing?: JobDetailResponse["sharing"] }>(`/jobs/${encodeURIComponent(jobId)}/reshare`, {
+      method: "POST",
+    });
+  }
+
   async getSpeechModels(device: string): Promise<SpeechModelInventory> {
     return this.#request<SpeechModelInventory>(`/settings/models?device=${encodeURIComponent(device)}`);
   }

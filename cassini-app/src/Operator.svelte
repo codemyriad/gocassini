@@ -636,6 +636,29 @@
     }
   }
 
+  // Re-sharing a published meeting with its room's audience (D-885), once
+  // whatever refused some of it is fixed.
+  // Kept per run: the request outlives a click on another run, and its
+  // answer belongs to the run it was made for. Said beside the button, since
+  // the page's own action error sits in the new-recording form.
+  let reshareJobId = "";
+  let reshareError: { jobId: string; message: string } | null = null;
+  let reshareResult: { jobId: string; refused: number } | null = null;
+  async function handleReshare() {
+    if (!operatorClient || !selectedJob?.job || reshareJobId) return;
+    const jobId = selectedJob.job.id;
+    reshareJobId = jobId;
+    reshareError = null;
+    reshareResult = null;
+    try {
+      const answer = await operatorClient.reshareJob(jobId);
+      reshareResult = { jobId, refused: answer.sharing?.status === "partial" ? (answer.sharing.skipped ?? []).length : 0 };
+      await refreshJobs();
+      if (selectedJobId === jobId) await selectJob(jobId, { allowJobsRefresh: false });
+    } catch (error) { reshareError = { jobId, message: asMessage(error) }; }
+    finally { reshareJobId = ""; }
+  }
+
   let submittingCleanup = false;
   let cleanupQueuedJob = "";
   async function handleRetryCleanup() {
@@ -1045,7 +1068,11 @@
   // Who it could not be shared with (D-885): the meeting's, not an attempt's,
   // because a rerun keeps the file and its shares.
   $: outcomeNotices = [
-    shareNotice(selectedJob?.sharing, rerunApplies && !rerunBlockedReason),
+    shareNotice(
+      selectedJob?.sharing,
+      rerunApplies && !rerunBlockedReason,
+      !!selectedJob && (!isJobActive(selectedJob.job) || selectedJob.job.state === "interrupted"),
+    ),
     ...(outcomeSource
       ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)]
       : []),
@@ -1493,6 +1520,18 @@
                           </details>
                         {/if}
                         {#if notice.hint}<p class="text-xs text-base-content/70">{notice.hint}</p>{/if}
+                        {#if notice.action?.kind === "reshare"}
+                          <div class="mt-1">
+                            <button class="btn btn-sm btn-outline btn-outline-hover" type="button" disabled={reshareJobId !== ""} on:click={handleReshare}>
+                              {#if reshareJobId && reshareJobId === selectedJob.job.id}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>{/if}
+                              {notice.action.label}
+                            </button>
+                            {#if reshareError && reshareError.jobId === selectedJob.job.id}<p class="mt-1 text-xs text-error" role="alert">{reshareError.message}</p>{/if}
+                            {#if reshareResult && reshareResult.jobId === selectedJob.job.id && reshareResult.refused > 0}
+                              <p class="mt-1 text-xs text-base-content/75" role="status">Shared again. Nextcloud still refused {reshareResult.refused === 1 ? "1 recipient" : `${reshareResult.refused} recipients`}: check Doctor → Recording sharing.</p>
+                            {/if}
+                          </div>
+                        {/if}
                       </div>
                     </div>
                   {/each}

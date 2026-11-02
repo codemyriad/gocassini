@@ -17,6 +17,8 @@ export interface OutcomeNotice {
   /** Who it concerns, behind a disclosure: the list can be long, and the
    *  title already says how many. */
   items?: { summary: string; entries: string[] };
+  /** Something the panel can do about it, rendered as a button. */
+  action?: { kind: "reshare"; label: string };
 }
 
 // The attempt whose outcomes the run detail shows: the published one, or, for
@@ -98,7 +100,7 @@ function recipients(count: number): string {
 // recording must receive it or it is not published; anyone else Nextcloud
 // refused is listed, because otherwise the meeting simply does not appear for
 // them and nobody can tell why.
-export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAvailable = true): OutcomeNotice | null {
+export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAvailable = true, reshareAvailable = true): OutcomeNotice | null {
   if (!sharing) return null;
   const skipped = sharing.skipped ?? [];
   if (sharing.status === "starter_refused") {
@@ -116,6 +118,9 @@ export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAv
     tone: "warning",
     title: `Published, but not shared with everyone: Nextcloud refused ${recipients(skipped.length)}`,
     items: { summary: `Not shared with ${recipients(skipped.length)}`, entries: skipped.map(describeSkipped) },
-    hint: "Doctor → Recording sharing names the setting and how to change it. A rerun does not share an already published meeting again.",
+    hint: "Doctor → Recording sharing names the setting and how to change it. Once it is changed, re-share: a rerun does not share an already published meeting again. Re-sharing only adds who is missing, so it also brings back anyone removed by hand.",
+    // Offered only where the operator would do it: not while the meeting is
+    // being processed again.
+    action: reshareAvailable ? { kind: "reshare", label: "Re-share with room audience" } : undefined,
   };
 }
