@@ -121,20 +121,20 @@ mechanism only when it helps them choose, configure or trust the change.
 > whole passages of speech."
 >
 > **To:** **More accurate transcripts.** Cassini now transcribes with
-> Parakeet Ultra. On a GPU, 0.2.0 could leave whole passages out of a
-> transcript; 0.3.0 keeps them, and takes about 40% less time.
+> Parakeet Ultra instead of Parakeet v3: more accurately, and faster on a GPU.
+> ([How we measured](https://github.com/codemyriad/gocassini/pull/390))
 >
 > And under *Before you upgrade*: Cassini downloads the new model on its own
 > and keeps using the old one until it has it. A GPU now needs 7 GiB of free
 > video memory, up from 5.5 GiB. Participant names no longer steer
 > transcription.
 
-"More accurate" is what the reader gets, but check where the gain comes from
-before you explain it. Here the measurements showed that on a GPU the new
-model alone was not significantly more accurate: the gain was the speech no
-longer lost. **Explain the headline with what the evidence shows, not with
-what the change was meant to do.** Say so when something got slightly worse in
-exchange.
+Most readers want the outcome in one sentence; the few who want the numbers
+follow the link. Keep the sentence true for every reader it covers. Here it
+says "faster on a GPU" because a CPU is not faster, and "more accurately"
+holds on both because a GPU no longer drops passages, even though the model
+alone was not significantly more accurate there. **Claim only what the
+evidence shows, and put the evidence behind a link.**
 
 Give a number when you measured one and it means something to the reader.
 "About 30% smaller audio files" is useful. "WER 8.10 → 7.25 on the MAI silver
