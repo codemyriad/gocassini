@@ -73,13 +73,15 @@
           }
         },
         "meetingSummary": {
-          "description": "What the summary step did. Absent in files sealed before it was recorded, where a missing summary asserts nothing. completed: model names the model that wrote it. skipped: reason is disabled, not_configured or no_transcript. failed: reason is llm_failed.",
+          "description": "What the summary step did. Absent in files sealed before it was recorded, where a missing summary asserts nothing. completed: model names the model that wrote it. skipped: reason is disabled, not_configured or no_transcript. failed: reason is llm_failed. startedAt and finishedAt bracket the model call when one was made; absent when the step was skipped and in files written before they were recorded.",
           "type": "object",
           "required": ["status"],
           "properties": {
             "status": {"type": "string", "enum": ["completed", "skipped", "failed"]},
             "reason": {"type": "string"},
-            "model": {"type": "string"}
+            "model": {"type": "string"},
+            "startedAt": {"type": "string", "format": "date-time"},
+            "finishedAt": {"type": "string", "format": "date-time"}
           }
         }
       }
