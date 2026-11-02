@@ -6,6 +6,7 @@
     formatSpan,
     meetingLengthMs,
     processesCapture,
+    processingHint,
     processingSpeed,
     runProcessing,
     spanMs,
@@ -1676,7 +1677,7 @@
                     </div>
                     <div>
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
-                      <dd class="text-sm" class:text-warning={runSpeed !== null && runSpeed.factor !== null && runSpeed.factor < 1}>
+                      <dd class="text-sm" class:text-warning={runSpeed !== null && runSpeed.factor !== null && runSpeed.factor < 1} title={runSpeed ? processingHint(runSpeed) : undefined}>
                         {#if runSpeed}{describeProcessing(runSpeed)}{:else}{@render notAvailable()}{/if}
                       </dd>
                     </div>
@@ -1878,7 +1879,7 @@
                             </div>
                             <div>
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
-                              <dd class="text-sm" class:text-warning={attemptSpeed !== null && attemptSpeed.factor !== null && attemptSpeed.factor < 1}>
+                              <dd class="text-sm" class:text-warning={attemptSpeed !== null && attemptSpeed.factor !== null && attemptSpeed.factor < 1} title={attemptSpeed ? processingHint(attemptSpeed) : undefined}>
                                 {#if attemptSpeed}{describeProcessing(attemptSpeed)}{:else}{@render notAvailable()}{/if}
                               </dd>
                             </div>

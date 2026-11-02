@@ -3,7 +3,7 @@
 // the build that transcribed the meeting. An attempt still running, or the
 // one that failed last, shows over the steps it reached; the rest keep what
 // is live.
-import { processesCapture, spanMs, stageTimes, stepTime } from "./processingSpeed";
+import { buildTimeWithoutSummary, processesCapture, spanMs, stageTimes, stepTime, summaryTime } from "./processingSpeed";
 import type { Job, JobAttempt, JobDetailResponse } from "./types";
 
 // "skipped" is a step that was decided not to run, such as a summary with
@@ -104,25 +104,32 @@ export function runStages(detail: JobDetailResponse, recordingDeleted = false): 
     record: recordingDeleted
       ? { key: "record", label: "Record (deleted)", status: "pending", ms: null }
       : { key: "record", label: "Record", status: stepStatuses(job).record, ms: recordMs },
-    build: capture ? fromAttempt("build", "Build", capture, "build") : { key: "build", label: "Build", status: "pending", ms: null },
+    // Without the summary it wrote, which has a step of its own.
+    build: capture
+      ? { ...fromAttempt("build", "Build", capture, "build"), ms: buildTimeWithoutSummary(capture) }
+      : { key: "build", label: "Build", status: "pending", ms: null },
     summary: { key: "summary", label: "Summary", status: "pending", ms: null },
     seal: published ? fromAttempt("seal", "Seal", published, "seal") : { key: "seal", label: "Seal", status: "pending", ms: null },
     publish: published ? fromAttempt("publish", "Publish", published, "publish") : { key: "publish", label: "Publish", status: "pending", ms: null },
   };
   if (laterSummary) {
-    // A speaker rename replays in seconds; the rest of that build is the
-    // summary being written again, so its time stands for the summary's.
+    // Timed on its own since D-899. Before, the build that wrote it stands
+    // for it: a speaker rename replays in seconds, so the rest of that build
+    // is the summary being written again.
     stages.summary = fromAttempt("summary", "Summary", laterSummary, "build");
+    stages.summary.ms = summaryTime(laterSummary) ?? stages.summary.ms;
     if (laterSummary.trigger_kind === "refine") stages.summary.hint = "Rewritten after speakers were renamed";
   } else if (capture?.summary_status) {
-    // Written in the same build as the transcript, which is timed as one step.
+    // Written in the same build as the transcript: timed on its own since
+    // D-899, before which the build was timed as one step.
+    const ms = summaryTime(capture);
     stages.summary = {
       key: "summary",
       label: "Summary",
       status: SUMMARY_STATUSES[capture.summary_status] ?? "pending",
-      ms: null,
-      note: SUMMARY_NOTES[capture.summary_status],
-      hint: capture.summary_reason ? SUMMARY_REASONS[capture.summary_reason] : undefined,
+      ms,
+      note: ms !== null && capture.summary_status === "completed" ? undefined : SUMMARY_NOTES[capture.summary_status],
+      hint: capture.summary_reason ? SUMMARY_REASONS[capture.summary_reason] : ms !== null ? "Written during the build" : undefined,
       attempt: capture.attempt_number,
     };
   }

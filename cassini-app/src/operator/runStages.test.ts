@@ -30,6 +30,23 @@ describe("runStages", () => {
     });
   });
 
+  it("times a summary written in the build apart from the transcription (D-899)", () => {
+    const timed = { ...initial, summary_started_at: at(68), summary_finished_at: at(70) };
+    expect(view(run(timed))).toMatchObject({
+      build: ["done", 8, 1],
+      summary: ["done", 2, 1],
+    });
+    expect(run(timed)[2].hint).toBe("Written during the build");
+    // A failed summary keeps saying so, its time aside.
+    const failed = { ...timed, summary_status: "failed", summary_reason: "llm_failed" };
+    expect(run(failed)[2]).toMatchObject({ note: "Failed", ms: 2 * 60_000, hint: "The summary model failed; the build log says why" });
+  });
+
+  it("times a later summary by its own model call, when it has one", () => {
+    const refine = attempt(2, "refine", { ...steps(100, 0.5), summary_status: "completed", summary_mode: "rewrite", summary_started_at: at(100.1), summary_finished_at: at(100.4) });
+    expect(view(run(initial, refine)).summary).toEqual(["done", expect.closeTo(0.3), 2]);
+  });
+
   it("keeps the build that transcribed the meeting past a summary written later", () => {
     const summarize = attempt(2, "summarize", { ...steps(100, 0.5), summary_status: "completed" });
     expect(view(run(initial, summarize))).toMatchObject({

@@ -19,6 +19,8 @@ export interface Speed {
   ms: number;
   /** Meeting length over processing time; null when either is zero. */
   factor: number | null;
+  /** The summary's time, left out of ms because it waits on the summary model. */
+  summaryMs?: number;
 }
 
 export function spanMs(start: string | null | undefined, end: string | null | undefined): number | null {
@@ -84,10 +86,29 @@ export function stepTime(row: StageTimes, key: string): number | null {
   return spanMs(t.started, t.finished);
 }
 
+// How long the attempt spent writing its summary, inside its build (D-899).
+export function summaryTime(row: StageTimes): number | null {
+  if (!("summary_started_at" in row)) return null;
+  return spanMs(row.summary_started_at, row.summary_finished_at);
+}
+
+// The build's time without the summary it wrote, which waits on the summary
+// model rather than on this server.
+export function buildTimeWithoutSummary(row: StageTimes): number | null {
+  const ms = stepTime(row, "build");
+  const summaryMs = summaryTime(row);
+  return ms !== null && summaryMs !== null && summaryMs < ms ? ms - summaryMs : ms;
+}
+
 // From the build starting to the meeting being published. Time spent queued
-// or waiting for resources before the build is not processing.
+// or waiting for resources before the build is not processing. Against the
+// meeting, the summary is left out: a slow summary model would otherwise read
+// as hardware that cannot keep up.
 export function processingSpeed(row: StageTimes, meetingMs: number | null): Speed | null {
-  return speed(spanMs(stageTimes(row, "build").started, stageTimes(row, "publish").finished), meetingMs);
+  const ms = spanMs(stageTimes(row, "build").started, stageTimes(row, "publish").finished);
+  const summaryMs = meetingMs === null ? null : summaryTime(row);
+  if (ms === null || summaryMs === null || summaryMs >= ms) return speed(ms, meetingMs);
+  return { ...speed(ms - summaryMs, meetingMs)!, summaryMs };
 }
 
 // The run's figure: the newest attempt that processed the capture and
@@ -107,4 +128,10 @@ export function runProcessing(detail: JobDetailResponse): Speed | null {
 export function describeProcessing(result: Speed): string {
   if (result.factor === null) return formatSpan(result.ms);
   return `${formatSpan(result.ms)} · ${formatFactor(result.factor)}`;
+}
+
+// Said on hover when the summary was left out of the figure.
+export function processingHint(result: Speed): string | undefined {
+  if (result.summaryMs === undefined) return undefined;
+  return `Not counting the summary, which took ${formatSpan(result.summaryMs)}`;
 }
