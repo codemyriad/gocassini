@@ -85,7 +85,7 @@ async function openRun() {
 
 it("keeps the outcome in view and folds the bookkeeping away", async () => {
   await openRun();
-  await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("12m · 4.8× real time", { exact: true }).first()).toBeVisible();
   await expect.element(page.getByText("Audio only", { exact: true })).toBeVisible();
   await expect.element(page.getByText("Room empty", { exact: true }).first()).toBeVisible();
   await expect.element(page.getByText("parakeet-tdt-0.6b-v3 on GPU", { exact: true }).first()).toBeVisible();
@@ -184,7 +184,7 @@ it("keeps every field in its place when a run has little to show", async () => {
 
   await userEvent.click(page.getByText("Attempt 1", { exact: true }));
   const attemptFields = pane.querySelector("details[open] > div > dl")!;
-  expect(labels(attemptFields)).toEqual(["Why", "Queued", "Completed", "Processing", "Speech model", "Summary model"]);
+  expect(labels(attemptFields)).toEqual(["Queued", "Processing", "Completed", "Reason", "Speech model", "Summary model"]);
   // All four logs are offered; the ones not written cannot be opened.
   for (const name of ["Record log", "Build log", "Seal log", "Publish log"]) {
     await expect.element(page.getByRole("button", { name, exact: true })).toBeVisible();

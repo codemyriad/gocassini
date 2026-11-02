@@ -5,6 +5,7 @@
     describeProcessing,
     formatSpan,
     meetingLengthMs,
+    processesCapture,
     processingSpeed,
     runProcessing,
     spanMs,
@@ -1782,7 +1783,9 @@
                   </div>
                   <div class="grid gap-3">
                     {#each selectedJob.attempts as attempt (attempt.attempt_number)}
-                      {@const attemptSpeed = processingSpeed(attempt, meetingMs)}
+                      <!-- Only a transcription is timed against the meeting: a summary
+                           written in a minute is not the server running at 58×. -->
+                      {@const attemptSpeed = processingSpeed(attempt, processesCapture(attempt) ? meetingMs : null)}
                       <details class="group overflow-hidden rounded-box border border-base-300">
                         <summary
                           class="flex cursor-pointer list-none items-center gap-2 bg-base-200/50 px-3 py-2 transition group-open:bg-base-200 hover:bg-base-200"
@@ -1866,15 +1869,17 @@
 
                           {@render stageBar(stageProgress(attempt))}
 
-                          <dl class="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-                            <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Why</dt>
-                              <dd class="text-sm">{attemptReason(attempt, formatStopReason)}</dd>
-                            </div>
+                          <dl class="grid grid-cols-3 gap-x-6 gap-y-3">
                             <div>
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Queued</dt>
                               <dd class="text-sm">
                                 {#if attempt.record_queued_at ?? attempt.build_queued_at}{formatTimestamp(attempt.record_queued_at ?? attempt.build_queued_at)}{:else}{@render notAvailable()}{/if}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                              <dd class="text-sm" class:text-warning={attemptSpeed !== null && attemptSpeed.factor !== null && attemptSpeed.factor < 1}>
+                                {#if attemptSpeed}{describeProcessing(attemptSpeed)}{:else}{@render notAvailable()}{/if}
                               </dd>
                             </div>
                             <div>
@@ -1884,10 +1889,8 @@
                               </dd>
                             </div>
                             <div>
-                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
-                              <dd class="text-sm">
-                                {#if attemptSpeed}{formatSpan(attemptSpeed.ms)}{:else}{@render notAvailable()}{/if}
-                              </dd>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Reason</dt>
+                              <dd class="text-sm">{attemptReason(attempt, formatStopReason)}</dd>
                             </div>
                             <div class="min-w-0">
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Speech model</dt>
