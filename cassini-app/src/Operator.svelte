@@ -1519,7 +1519,9 @@
                           <FileText size={15} aria-hidden="true" />{summaryActionLabel(summaryPlan)}
                         </button>
                       </div>
-                    {:else if summaryUnavailableText(summaryPlan)}
+                    {:else if summaryUnavailableText(summaryPlan) && !(summaryPlan.reason === "no_local_copy" && rerunBlockedReason && rerunVisible)}
+                      <!-- With the meeting's files gone, the rerun warning below
+                           already says why; the summary note would repeat it (D-816). -->
                       <p class="text-xs text-base-content/60">{summaryUnavailableText(summaryPlan)}</p>
                     {/if}
                   {/if}

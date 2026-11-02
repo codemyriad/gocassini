@@ -104,3 +104,32 @@ it("keeps the outcome in view and folds the bookkeeping away", async () => {
   await expect.element(page.getByText(`${attempt.record_log_path} (no longer on disk)`, { exact: true })).toBeVisible();
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-unfolded.png` });
 });
+
+const filesGoneNote = "This server no longer keeps a copy of the meeting, so a summary can't be written for this run.";
+const filesGoneWarning = "Source recording is missing; this job can no longer be rerun.";
+
+function serveWithoutCopy(availability: Record<string, unknown>) {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (path === "/operator/jobs") return Response.json([job]);
+    if (path === "/operator/jobs/01KSTANDUPRUN") return Response.json({ job, attempts: [attempt], availability });
+    if (path === "/operator/jobs/01KSTANDUPRUN/summary") {
+      return Response.json({ available: false, reason: "no_local_copy", has_summary: false, calls: 0, words: 0, estimated_input_tokens: 0, external: false });
+    }
+    return Response.json({});
+  }));
+}
+
+it("says once that a run's files are gone", async () => {
+  serveWithoutCopy({ source: "missing", output: "missing", published_attempt: 1, rerun_blocked_reason: filesGoneWarning });
+  await openRun();
+  await expect.element(page.getByText(filesGoneWarning, { exact: true })).toBeVisible();
+  expect(document.body.textContent).not.toContain(filesGoneNote);
+});
+
+it("says why a summary can't be written when only the meeting's copy is gone", async () => {
+  // The recording is still there, so nothing else explains the missing action.
+  serveWithoutCopy({ source: "present", output: "missing", published_attempt: 1 });
+  await openRun();
+  await expect.element(page.getByText(filesGoneNote, { exact: true })).toBeVisible();
+});
