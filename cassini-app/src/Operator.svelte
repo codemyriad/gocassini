@@ -6,9 +6,9 @@
     formatSpan,
     runProcessing,
     spanMs,
-    stageTimes,
     stepTime,
   } from "./operator/processingSpeed";
+  import { runStages, stepStatuses, type StageStatus, type StageView } from "./operator/runStages";
 
   // The operator surface's left nav (D-723). Configuration is not a surface of
   // its own: Console and Settings are two groups of ONE surface, so there is a
@@ -866,35 +866,15 @@
     { key: "publish", label: "Publish" },
   ] as const;
 
-  type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked";
-
-  function stageProgress(job: Job | JobAttempt, recordingDeleted = false): Array<{ label: string; status: StageStatus }> {
-    const buildBlocked = isBuildBlocked(job);
-    const halted = buildBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
-    let lastTouched = -1;
-    const times = STAGES.map((stage, index) => {
-      const t = stageTimes(job, stage.key);
-      if (t.queued || t.started || t.finished) {
-        lastTouched = index;
-      }
-      return t;
-    });
-    return STAGES.map((stage, index) => {
-      if (stage.key === "record" && recordingDeleted) return { label: "Record (deleted)", status: "pending" };
-      const t = times[index];
-      let status: StageStatus = "pending";
-      if (t.finished) {
-        status = "done";
-      } else if (t.started) {
-        status = "active";
-      } else if (t.queued) {
-        status = "queued";
-      }
-      if (halted && index === lastTouched) {
-        status = buildBlocked ? "blocked" : "failed";
-      }
-      return { label: stageLabel(stage.key, attemptKind(job)), status };
-    });
+  // One attempt's bar: its own four steps, each with how long it took.
+  function stageProgress(row: Job | JobAttempt): StageView[] {
+    const statuses = stepStatuses(row);
+    return STAGES.map((stage) => ({
+      key: stage.key,
+      label: stageLabel(stage.key, attemptKind(row)),
+      status: statuses[stage.key],
+      ms: stepTime(row, stage.key),
+    }));
   }
 
   function stageBarClass(status: StageStatus): string {
@@ -1051,24 +1031,33 @@
   };
 </script>
 
-<!-- A stage bar's labels, each with how long its step took once finished
-     (D-817). No multiplier: only the run's overall figure gets one. -->
-{#snippet stageLabels(row: Job | JobAttempt, stages: ReturnType<typeof stageProgress>)}
-  <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-    {#each stages as stage, index}
-      {@const ms = stepTime(row, STAGES[index].key)}
-      <span class="min-w-0 flex-1">
-        <span
-          class="block"
-          class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-        >
-          {stage.label}
+<!-- A stage bar: each step's progress and how long it took once finished
+     (D-817), or a note when it has no time of its own. No multiplier: only
+     the run's overall figure gets one. -->
+{#snippet stageBar(stages: StageView[])}
+  <div>
+    <div class="flex gap-1">
+      {#each stages as stage (stage.key)}
+        <span class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}" aria-hidden="true"></span>
+      {/each}
+    </div>
+    <div class="mt-1 flex gap-1 text-xs text-base-content/60">
+      {#each stages as stage (stage.key)}
+        <span class="min-w-0 flex-1" title={stage.attempt ? `From attempt ${stage.attempt}` : undefined}>
+          <span
+            class="block"
+            class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
+          >
+            {stage.label}
+          </span>
+          {#if stage.ms !== null}
+            <span class="block whitespace-nowrap text-base-content/45">{formatSpan(stage.ms)}</span>
+          {:else if stage.note}
+            <span class="block whitespace-nowrap text-base-content/45">{stage.note}</span>
+          {/if}
         </span>
-        {#if ms !== null}
-          <span class="block whitespace-nowrap text-base-content/45">{formatSpan(ms)}</span>
-        {/if}
-      </span>
-    {/each}
+      {/each}
+    </div>
   </div>
 {/snippet}
 
@@ -1435,17 +1424,7 @@
                     </p>
                   </div>
 
-                  <div>
-                    <div class="flex gap-1">
-                      {#each stageProgress(selectedJob.job, recordingDeleted) as stage}
-                        <span
-                          class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}"
-                          aria-hidden="true"
-                        ></span>
-                      {/each}
-                    </div>
-                    {@render stageLabels(selectedJob.job, stageProgress(selectedJob.job, recordingDeleted))}
-                  </div>
+                  {@render stageBar(runStages(selectedJob, recordingDeleted))}
                   {#if selectedJob.availability?.media_cleanup}
                     {@const cleanup = selectedJob.availability.media_cleanup}
                     <div class="op-tint p-3 grid gap-2" role="status">
@@ -1770,15 +1749,7 @@
                             </div>
                           {/if}
 
-                          <div>
-                            <div class="flex gap-1">
-                              {#each stageProgress(attempt) as stage}
-                                <span class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}" aria-hidden="true"
-                                ></span>
-                              {/each}
-                            </div>
-                            {@render stageLabels(attempt, stageProgress(attempt))}
-                          </div>
+                          {@render stageBar(stageProgress(attempt))}
 
                           <dl class="grid gap-x-6 gap-y-3 grid-cols-2 sm:grid-cols-3">
                             <div>

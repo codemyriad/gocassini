@@ -1,0 +1,127 @@
+// The steps of a run as the meeting stands now (D-817): each one taken from
+// the attempt that produced it, so a summary written later does not replace
+// the build that transcribed the meeting. An attempt still running, or the
+// one that failed last, shows over the steps it reached; the rest keep what
+// is live.
+import { processesCapture, spanMs, stageTimes, stepTime } from "./processingSpeed";
+import type { Job, JobAttempt, JobDetailResponse } from "./types";
+
+export type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked";
+
+export const ATTEMPT_STEPS = ["record", "build", "seal", "publish"] as const;
+export type AttemptStep = (typeof ATTEMPT_STEPS)[number];
+
+export interface StageView {
+  key: string;
+  label: string;
+  status: StageStatus;
+  /** How long the step took, once it finished. */
+  ms: number | null;
+  /** Said in place of a time, when the step has none of its own. */
+  note?: string;
+  /** The attempt the step comes from. */
+  attempt?: number;
+}
+
+// One attempt's steps: done once finished, active once started, queued once
+// queued. A halted attempt's furthest step is where it failed or is blocked.
+export function stepStatuses(row: Job | JobAttempt): Record<AttemptStep, StageStatus> {
+  const blocked = row.stage === "build" && row.state === "blocked";
+  const halted = blocked || row.state === "failed" || row.state === "stopped" || row.state === "interrupted";
+  const statuses = {} as Record<AttemptStep, StageStatus>;
+  let furthest: AttemptStep | null = null;
+  for (const key of ATTEMPT_STEPS) {
+    const t = stageTimes(row, key);
+    statuses[key] = t.finished ? "done" : t.started ? "active" : t.queued ? "queued" : "pending";
+    if (t.queued || t.started || t.finished) furthest = key;
+  }
+  if (halted && furthest) statuses[furthest] = blocked ? "blocked" : "failed";
+  return statuses;
+}
+
+// Where each kind of attempt's steps land on the run's bar. A summary-only
+// attempt's build writes the summary; a speaker-edit replay's build is
+// neither, and never stands for the build that transcribed the meeting.
+const RUN_STEP_FOR: Record<string, Partial<Record<AttemptStep, string>>> = {
+  initial: { record: "record", build: "build", seal: "seal", publish: "publish" },
+  rerun: { build: "build", seal: "seal", publish: "publish" },
+  summarize: { build: "summary", seal: "seal", publish: "publish" },
+  refine: { seal: "seal", publish: "publish" },
+};
+
+const SUMMARY_NOTES: Record<string, string> = {
+  completed: "In Build",
+  skipped: "Skipped",
+  failed: "Failed",
+};
+
+function newest<T>(items: T[]): T | undefined {
+  return items[items.length - 1];
+}
+
+function fromAttempt(key: string, label: string, attempt: JobAttempt, step: AttemptStep): StageView {
+  return { key, label, status: "done", ms: stepTime(attempt, step), attempt: attempt.attempt_number };
+}
+
+export function runStages(detail: JobDetailResponse, recordingDeleted = false): StageView[] {
+  const { job } = detail;
+  const attempts = detail.attempts.length > 0
+    ? [...detail.attempts].sort((a, b) => a.attempt_number - b.attempt_number)
+    : [{ ...job, attempt_number: job.current_attempt_number, trigger_kind: job.current_trigger_kind ?? "initial" } as unknown as JobAttempt];
+  const succeeded = attempts.filter((a) => a.state === "succeeded");
+  // The build that transcribed the meeting, and the attempt that published it as it is now.
+  const capture = newest(succeeded.filter(processesCapture));
+  const published = newest(succeeded);
+  // A summary written after that build, alone or while replaying speaker edits.
+  const laterSummary = newest(
+    succeeded.filter(
+      (a) => a.attempt_number > (capture?.attempt_number ?? 0)
+        && (a.trigger_kind === "summarize" || (a.trigger_kind === "refine" && a.summary_status === "completed")),
+    ),
+  );
+
+  const recordMs = spanMs(job.record_started_at, job.record_finished_at);
+  const stages: Record<string, StageView> = {
+    record: recordingDeleted
+      ? { key: "record", label: "Record (deleted)", status: "pending", ms: null }
+      : { key: "record", label: "Record", status: stepStatuses(job).record, ms: recordMs },
+    build: capture ? fromAttempt("build", "Build", capture, "build") : { key: "build", label: "Build", status: "pending", ms: null },
+    summary: { key: "summary", label: "Summary", status: "pending", ms: null },
+    seal: published ? fromAttempt("seal", "Seal", published, "seal") : { key: "seal", label: "Seal", status: "pending", ms: null },
+    publish: published ? fromAttempt("publish", "Publish", published, "publish") : { key: "publish", label: "Publish", status: "pending", ms: null },
+  };
+  if (laterSummary?.trigger_kind === "summarize") {
+    stages.summary = fromAttempt("summary", "Summary", laterSummary, "build");
+  } else if (laterSummary) {
+    stages.summary = { key: "summary", label: "Summary", status: "done", ms: null, note: "With speaker edits", attempt: laterSummary.attempt_number };
+  } else if (capture?.summary_status) {
+    // Written in the same build as the transcript, which is timed as one step.
+    stages.summary = {
+      key: "summary",
+      label: "Summary",
+      status: capture.summary_status === "completed" ? "done" : "pending",
+      ms: null,
+      note: SUMMARY_NOTES[capture.summary_status],
+      attempt: capture.attempt_number,
+    };
+  }
+
+  // The newest attempt, if it has not succeeded, shows over the steps it reached.
+  const current = newest(attempts);
+  if (current && current.state !== "succeeded") {
+    const statuses = stepStatuses(current);
+    const mapping = RUN_STEP_FOR[current.trigger_kind] ?? {};
+    for (const step of ATTEMPT_STEPS) {
+      const key = mapping[step];
+      if (!key || statuses[step] === "pending" || (key === "record" && recordingDeleted)) continue;
+      stages[key] = {
+        key,
+        label: stages[key].label,
+        status: statuses[step],
+        ms: stepTime(current, step),
+        attempt: current.attempt_number,
+      };
+    }
+  }
+  return [stages.record, stages.build, stages.summary, stages.seal, stages.publish];
+}

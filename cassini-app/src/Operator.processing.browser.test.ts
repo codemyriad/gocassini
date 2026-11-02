@@ -82,9 +82,10 @@ it("says how long the meeting took to process, past a summary written later", as
   ]);
   await open("Standup");
   await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
-  // The run's own stage bar times its steps too.
+  // The run's bar keeps the build that transcribed the meeting, and takes the
+  // summary, seal and publish from the attempt that wrote them later.
   const bar = document.querySelector(".op-detail-pane section")!.textContent ?? "";
-  expect(bar).toMatch(/Record\s*58m\s*Build\s*10m\s*Seal\s*1m\s*Publish\s*1m/);
+  expect(bar).toMatch(/Record\s*58m\s*Build\s*10m\s*Summary\s*1m\s*Seal\s*30s\s*Publish\s*30s/);
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/01-run.png` });
 
   // Each step says how long it took; only the run gets a multiplier.
@@ -104,7 +105,7 @@ it("keeps the published figure past a rerun that failed", async () => {
   await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
   // A failed step still says how long it ran.
   await userEvent.click(page.getByText("Attempt 2", { exact: true }).last());
-  await expect.element(page.getByText("3s", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("3s", { exact: true }).last()).toBeVisible();
 });
 
 it("says nothing about processing before the meeting is published", async () => {
