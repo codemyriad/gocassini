@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"gocassini/internal/insight"
 	"gocassini/internal/portable"
 	"gocassini/internal/transcribe"
 )
@@ -1195,17 +1196,21 @@ func TestSpeakersApplyMakesTheOriginalsDurableBeforeReplacingThem(t *testing.T) 
 }
 
 // stubSummarize replaces the summary model for one test and counts its calls.
+// The summaries it writes name the template in stubSummaryTemplate.
 func stubSummarize(t *testing.T, fn func(transcribe.TranscriptSpeakers) (string, string, error)) *int {
 	t.Helper()
 	calls := 0
 	prev := summarizeSpeakersFn
-	summarizeSpeakersFn = func(tr transcribe.TranscriptSpeakers) (string, string, error) {
+	summarizeSpeakersFn = func(tr transcribe.TranscriptSpeakers) (string, string, insight.WorkflowRef, error) {
 		calls++
-		return fn(tr)
+		body, model, err := fn(tr)
+		return body, model, stubSummaryTemplate, err
 	}
 	t.Cleanup(func() { summarizeSpeakersFn = prev })
 	return &calls
 }
+
+var stubSummaryTemplate = insight.WorkflowRef{ID: "resumen", Version: "v2", SHA256: "abc123"}
 
 func writeSpeakersSummary(t *testing.T, bundle string, body []byte) {
 	t.Helper()
@@ -1355,6 +1360,68 @@ func TestSpeakersApplyKeepUndoLeavesTheSummary(t *testing.T) {
 	}
 	if fileExists(filepath.Join(bundle, speakersBaseSummary)) {
 		t.Error("the kept copy of the build's summary survived the rewrite undo")
+	}
+}
+
+// A rewritten summary names the template that wrote it in the manifest's
+// summary block, which pack carries into the meeting file; undoing the edits
+// with the build's summary puts the build's template back (D-819). A keep
+// undo leaves the rewrite, and so its template.
+func TestSpeakersApplyRecordsTheRewritingTemplate(t *testing.T) {
+	built := map[string]any{"templateId": "summarise", "templateVersion": "v0", "templateSha256": "built"}
+	rewrote := map[string]any{"templateId": stubSummaryTemplate.ID, "templateVersion": stubSummaryTemplate.Version, "templateSha256": stubSummaryTemplate.SHA256}
+	for _, tc := range []struct {
+		name  string
+		build map[string]any // the build's block, nil for a bundle built before it was recorded
+	}{{"recorded", built}, {"older bundle", nil}} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+			manifestPath := filepath.Join(bundle, "manifest.json")
+			manifest := readJSONMap(t, manifestPath)
+			if tc.build != nil {
+				manifest["summary"] = tc.build
+			}
+			raw, err := json.Marshal(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(manifestPath, raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			writeSpeakersSummary(t, bundle, []byte("## Action items\n- Meeting room: book the hall\n"))
+			stubSummarize(t, func(transcribe.TranscriptSpeakers) (string, string, error) {
+				return "## Action items\n- Mira: book the hall\n", "test-model", nil
+			})
+			turnsDir := writeSpeakersTurns(t, tmp, false)
+			summaryBlock := func() any { return readJSONMap(t, manifestPath)["summary"] }
+
+			speakersApplyOK(t, bundle, writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, speakersNamedMira)), turnsDir)
+			if got := summaryBlock(); !reflect.DeepEqual(got, rewrote) {
+				t.Errorf("summary block after rewrite = %v, want the rewriting template %v", got, rewrote)
+			}
+
+			empty := writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":2,"splits":[],"merges":[],"labels":[]}`)
+			if code, _, stderr := runSpeakersForTest("apply", bundle, "--edits", empty, "--turns-dir", turnsDir, "--json"); code != 0 {
+				t.Fatalf("keep undo: exit %d stderr=%q", code, stderr)
+			}
+			if got := summaryBlock(); !reflect.DeepEqual(got, rewrote) {
+				t.Errorf("summary block after keep undo = %v, want the rewrite's, still on summary.md", got)
+			}
+
+			speakersApplyOK(t, bundle, empty, turnsDir)
+			after := readJSONMap(t, manifestPath)
+			got, present := after["summary"]
+			if tc.build == nil && present {
+				t.Errorf("summary block after rewrite undo = %v, want none, as built", got)
+			}
+			if tc.build != nil && !reflect.DeepEqual(got, tc.build) {
+				t.Errorf("summary block after rewrite undo = %v, want the build's %v", got, tc.build)
+			}
+			if _, ok := after[speakersBuildSummaryKey]; ok {
+				t.Errorf("%s survived the undo", speakersBuildSummaryKey)
+			}
+		})
 	}
 }
 

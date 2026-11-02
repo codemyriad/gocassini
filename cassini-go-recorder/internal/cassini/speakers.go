@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 
+	"gocassini/internal/insight"
 	"gocassini/internal/portable"
 	"gocassini/internal/transcribe"
 )
@@ -59,6 +60,14 @@ const (
 	speakersDisplayTranscript  = "transcript.display.v1.json"
 	speakersReadableTranscript = "transcript.readable.v1.json"
 )
+
+// speakersBuildSummaryKey keeps the build's "summary" block (the
+// template that wrote the build's summary, or null for none) while a
+// rewritten summary.md is recorded in its place, so putting the build's
+// summary back puts its template back too. Only on the bundle's own
+// manifest; never packed. "summary" names a rewrite's template only in a
+// manifest that has this key.
+const speakersBuildSummaryKey = "x-buildSummary"
 
 // speakerFileIDRE is the shape of a participant id (speakerIDFromLabel), and
 // so of a turns file name. Anything else is refused before it reaches a path.
@@ -591,7 +600,7 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 				return speakersApplyReport{}, err
 			}
 		} else if rewriteSummary {
-			if err := restoreSpeakerSummary(root); err != nil {
+			if err := restoreSpeakerSummary(root, manifest, manifestPath); err != nil {
 				return speakersApplyReport{}, err
 			}
 		}
@@ -660,6 +669,9 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 				return speakersApplyReport{}, err
 			}
 			files.delete(key)
+		}
+		if summary.body != nil {
+			recordRewrittenSummaryBlock(manifest, summary.template)
 		}
 		if separated {
 			err = writeSeparatedVoicesManifest(manifest, files, stash, record, editsRecord, primaryName, report.SpeakerCount, len(segments))
@@ -1012,6 +1024,9 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 	if err := restoreBuildManifestMembers(manifest, files, stash); err != nil {
 		return err
 	}
+	if restoreSummary {
+		restoreBuildSummaryBlock(manifest)
+	}
 	if err := writeOrderedJSON(filepath.Join(root, "manifest.json"), manifest); err != nil {
 		return fmt.Errorf("write meeting artifact manifest: %w", err)
 	}
@@ -1033,14 +1048,15 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 }
 
 // summarizeSpeakersFn writes a new summary for an edited transcript and names
-// the model that wrote it; tests replace it so no LLM is called.
-var summarizeSpeakersFn = func(t transcribe.TranscriptSpeakers) (body, model string, err error) {
+// the model and the template that wrote it; tests replace it so no LLM is
+// called.
+var summarizeSpeakersFn = func(t transcribe.TranscriptSpeakers) (body, model string, template insight.WorkflowRef, err error) {
 	cfg := transcribe.DefaultBuildConfig().SummaryLLM
 	if !cfg.IsConfigured() {
-		return "", "", errSummaryModelUnavailable
+		return "", "", insight.WorkflowRef{}, errSummaryModelUnavailable
 	}
-	body, _, err = t.Summarize(cfg)
-	return body, cfg.Model, err
+	body, template, err = t.Summarize(cfg)
+	return body, cfg.Model, template, err
 }
 
 var errSummaryModelUnavailable = errors.New("no summary model configured")
@@ -1048,9 +1064,10 @@ var errSummaryModelUnavailable = errors.New("no summary model configured")
 // speakerSummaryPlan is what an apply does to summary.md, decided before the
 // bundle is touched.
 type speakerSummaryPlan struct {
-	status string // the report's summary value
-	body   []byte // the new summary.md, nil to leave it as it is
-	record *speakerSummaryRecord
+	status   string // the report's summary value
+	body     []byte // the new summary.md, nil to leave it as it is
+	template insight.WorkflowRef
+	record   *speakerSummaryRecord
 }
 
 // planSpeakerSummary rewrites the summary for the edited speakers, so its
@@ -1093,7 +1110,7 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 	if !rewrite {
 		return speakerSummaryPlan{status: "stale", record: previous}, nil
 	}
-	body, model, err := summarizeSpeakersFn(edited)
+	body, model, template, err := summarizeSpeakersFn(edited)
 	if err != nil {
 		// The transcript is still right; only the prose lags behind it.
 		// No record for these edits, so applying them again retries.
@@ -1101,9 +1118,10 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 		return speakerSummaryPlan{status: "stale", record: previous}, nil
 	}
 	return speakerSummaryPlan{
-		status: "regenerated",
-		body:   []byte(body),
-		record: &speakerSummaryRecord{Rewritten: true, Model: model, SHA256: sha256Hex([]byte(body)), EditsSHA256: editsSHA256, TranscriptSHA256: transcriptSHA256},
+		status:   "regenerated",
+		body:     []byte(body),
+		template: template,
+		record:   &speakerSummaryRecord{Rewritten: true, Model: model, SHA256: sha256Hex([]byte(body)), EditsSHA256: editsSHA256, TranscriptSHA256: transcriptSHA256},
 	}, nil
 }
 
@@ -1165,12 +1183,53 @@ func speakerSummaryRewritten(root string) (bool, error) {
 	return !bytes.Equal(current, original), nil
 }
 
-// restoreSpeakerSummary puts the build's own summary back and drops the copy.
-func restoreSpeakerSummary(root string) error {
+// restoreSpeakerSummary puts the build's own summary back, and its template
+// in the manifest, and drops the copy.
+func restoreSpeakerSummary(root string, manifest *orderedJSONObject, manifestPath string) error {
 	if err := putBackSpeakerSummary(root); err != nil {
 		return err
 	}
+	if _, ok := manifest.get(speakersBuildSummaryKey); ok {
+		restoreBuildSummaryBlock(manifest)
+		if err := writeOrderedJSON(manifestPath, manifest); err != nil {
+			return fmt.Errorf("write meeting artifact manifest: %w", err)
+		}
+	}
 	return removeIfExists(filepath.Join(root, speakersBaseSummary))
+}
+
+// recordRewrittenSummaryBlock names the template that rewrote summary.md in
+// the manifest's "summary" block, which pack carries into the portable file
+// (D-819). The build's block is kept aside the first time, so an undo can put
+// it back with the build's summary.
+func recordRewrittenSummaryBlock(manifest *orderedJSONObject, template insight.WorkflowRef) {
+	if _, kept := manifest.get(speakersBuildSummaryKey); !kept {
+		build, ok := manifest.get("summary")
+		if !ok {
+			build = json.RawMessage("null")
+		}
+		manifest.set(speakersBuildSummaryKey, build)
+	}
+	if record := transcribe.SummaryTemplateRecordOf(template); record != nil {
+		manifest.set("summary", mustJSON(record))
+	} else {
+		manifest.delete("summary")
+	}
+}
+
+// restoreBuildSummaryBlock puts the build's "summary" block back, when a
+// rewrite kept it aside.
+func restoreBuildSummaryBlock(manifest *orderedJSONObject) {
+	build, ok := manifest.get(speakersBuildSummaryKey)
+	if !ok {
+		return
+	}
+	if string(bytes.TrimSpace(build)) == "null" {
+		manifest.delete("summary")
+	} else {
+		manifest.set("summary", build)
+	}
+	manifest.delete(speakersBuildSummaryKey)
 }
 
 func regenerateSpeakerCaptions(root string, transcript transcribe.TranscriptSpeakers) error {

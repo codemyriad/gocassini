@@ -219,9 +219,9 @@ func TestBuildMeetingArtifactPipelineWiring(t *testing.T) {
 
 	var summaryInput []Segment
 	prevSummary := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(_ LLMConfig, _ []AudioStream, segs []Segment) (string, insight.WorkflowRef, error) {
+	buildMeetingSummaryFn = func(_ LLMConfig, _ insight.Workflow, _ []AudioStream, segs []Segment) (string, error) {
 		summaryInput = segs
-		return "# Summary\n", insight.WorkflowRef{}, nil
+		return "# Summary\n", nil
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prevSummary })
 

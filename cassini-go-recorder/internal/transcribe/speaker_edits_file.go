@@ -115,7 +115,12 @@ func (t TranscriptSpeakers) LogicalSpeakerCount() int {
 // build leaves them out. It also returns the template that wrote it.
 func (t TranscriptSpeakers) Summarize(cfg LLMConfig) (string, insight.WorkflowRef, error) {
 	streams, segments := t.summaryInput()
-	return buildMeetingSummaryFn(cfg, streams, segments)
+	workflow := ResolveSummaryWorkflow()
+	body, err := buildMeetingSummaryFn(cfg, workflow, streams, segments)
+	if err != nil {
+		return "", insight.WorkflowRef{}, err
+	}
+	return body, workflow.Ref(), nil
 }
 
 // SummaryEstimate says what Summarize would send, without sending it: the

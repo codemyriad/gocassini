@@ -57,36 +57,49 @@ func SummaryTemplateV0() string { return summaryV0Template }
 // artifacts, and the template that wrote it, which the caller records in the
 // manifest (D-819).
 func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segment) (string, insight.WorkflowRef, error) {
+	workflow := ResolveSummaryWorkflow()
+	body, err := buildMeetingSummaryFn(cfg, workflow, streams, segments)
+	if err != nil {
+		return "", insight.WorkflowRef{}, err
+	}
+	return body, workflow.Ref(), nil
+}
+
+// buildMeetingSummaryWith is BuildMeetingSummary with the template already
+// resolved, so the pipeline can say in its own log when that is the
+// built-in in place of the configured one.
+func buildMeetingSummaryWith(cfg LLMConfig, workflow insight.Workflow, streams []AudioStream, segments []Segment) (string, error) {
 	if !cfg.IsConfigured() {
-		return "", insight.WorkflowRef{}, fmt.Errorf("LLM not configured")
+		return "", fmt.Errorf("LLM not configured")
 	}
 	if len(segments) == 0 {
-		return "", insight.WorkflowRef{}, fmt.Errorf("no transcript segments to summarize")
+		return "", fmt.Errorf("no transcript segments to summarize")
 	}
 
-	workflow := ResolveSummaryWorkflow()
 	systemPrompt := workflow.SystemPrompt()
 	userPrompt := formatTranscriptForSummary(streams, segments)
 
 	body, err := ChatCompletion(context.Background(), cfg, systemPrompt, userPrompt)
 	if err != nil {
-		return "", insight.WorkflowRef{}, err
+		return "", err
 	}
 
 	body = stripMarkdownFences(strings.TrimSpace(body))
 	if body == "" {
-		return "", insight.WorkflowRef{}, fmt.Errorf("LLM returned an empty summary")
+		return "", fmt.Errorf("LLM returned an empty summary")
 	}
-	return body + "\n", workflow.Ref(), nil
+	return body + "\n", nil
 }
 
 // EstimateSummaryInputTokens says roughly how many input tokens the summary
-// step would send for this transcript: the system prompt plus the transcript
-// prose, at about four characters a token. It is for telling a person what a
+// step would send for this transcript: the system prompt of the template it
+// would run (the configured one, or the built-in it falls back to) plus the
+// transcript prose, at about four characters a token. It is for telling a person what a
 // summary will cost before anything is sent, not for billing: providers count
 // with their own tokenizers.
 func EstimateSummaryInputTokens(streams []AudioStream, segments []Segment) int {
-	chars := len(summarySystemPrompt(summaryV0Template)) + len(formatTranscriptForSummary(streams, segments))
+	workflow, _ := resolveSummaryWorkflow()
+	chars := len(workflow.SystemPrompt()) + len(formatTranscriptForSummary(streams, segments))
 	return (chars + 3) / 4
 }
 

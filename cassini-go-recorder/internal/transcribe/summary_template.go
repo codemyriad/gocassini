@@ -27,22 +27,39 @@ import (
 // SummaryTemplateEnv names the workflow the summary step runs.
 const SummaryTemplateEnv = "CASSINI_SUMMARY_TEMPLATE"
 
-// summaryWarnings is where a summary template that cannot run says so. The
-// summary still runs, on the built-in template, and the manifest names
-// that one: a meeting without a summary is worse than one in the shipped
-// shape, and the manifest records the one that actually ran.
+// summaryWarnings is where a summary template that cannot run says so, for
+// the callers outside the pipeline (`meetings summarize`, a speaker edit's
+// rewrite). The summary still runs, on the built-in template, and the
+// manifest names that one: a meeting without a summary is worse than one in
+// the shipped shape, and the manifest records the one that actually ran. The
+// pipeline's summary step says it in its own log instead, and records it as
+// the step's template_fallback reason.
 var summaryWarnings io.Writer = os.Stderr
 
-// ResolveSummaryWorkflow returns the workflow the summary step runs now.
+// ResolveSummaryWorkflow returns the workflow the summary step runs now,
+// warning on summaryWarnings when that is the built-in in place of the
+// configured template.
 func ResolveSummaryWorkflow() insight.Workflow {
+	workflow, fallback := resolveSummaryWorkflow()
+	if fallback != "" {
+		fmt.Fprintf(summaryWarnings, "  warn: %s\n", fallback)
+	}
+	return workflow
+}
+
+// resolveSummaryWorkflow returns the workflow the summary step runs now and,
+// when that is the built-in because the configured template cannot run, why
+// ("" otherwise).
+func resolveSummaryWorkflow() (insight.Workflow, string) {
 	id := strings.TrimSpace(os.Getenv(SummaryTemplateEnv))
 	if id == "" {
 		id = workflows.SummariseID
 	}
+	var fallback string
 	set, err := workflows.Load()
 	if err != nil {
 		// The templates directory could not be read; the built-ins can.
-		fmt.Fprintf(summaryWarnings, "  warn: summary template: %v — using the built-in %s\n", err, workflows.SummariseID)
+		fallback = fmt.Sprintf("summary template: %v — using the built-in %s", err, workflows.SummariseID)
 		set, err = workflows.LoadDir("")
 		if err != nil {
 			panic(fmt.Sprintf("the built-in workflows do not resolve: %v", err))
@@ -55,14 +72,14 @@ func ResolveSummaryWorkflow() insight.Workflow {
 		if reason == "" {
 			reason = "no template has this id"
 		}
-		fmt.Fprintf(summaryWarnings, "  warn: summary template %q cannot run: %s — using the built-in %s\n", id, reason, workflows.SummariseID)
+		fallback = fmt.Sprintf("summary template %q cannot run: %s — using the built-in %s", id, reason, workflows.SummariseID)
 	case workflow.TakesQuestion():
-		fmt.Fprintf(summaryWarnings, "  warn: summary template %q takes a question, and a summary has nobody to ask — using the built-in %s\n", id, workflows.SummariseID)
+		fallback = fmt.Sprintf("summary template %q takes a question, and a summary has nobody to ask — using the built-in %s", id, workflows.SummariseID)
 	default:
-		return workflow
+		return workflow, fallback
 	}
 	builtIn, _ := set.Registry.Lookup(workflows.SummariseID)
-	return builtIn
+	return builtIn, fallback
 }
 
 // SummaryTemplateRecord is the template that wrote a meeting's summary, as a

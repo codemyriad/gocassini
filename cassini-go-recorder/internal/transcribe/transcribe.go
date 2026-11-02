@@ -50,7 +50,7 @@ type BuildConfig struct {
 }
 
 var (
-	buildMeetingSummaryFn = BuildMeetingSummary
+	buildMeetingSummaryFn = buildMeetingSummaryWith
 	// ensureModelFn / ensureVADFn / buildSpeakerEnvelopesFn are seams so the
 	// pipeline can be exercised end-to-end with a registered fake backend and
 	// no multi-hundred-MB model download.
@@ -958,7 +958,14 @@ func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Se
 	}
 
 	fmt.Fprintln(stdout, "  generating meeting summary...")
-	body, template, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
+	// A configured template that cannot run is not a reason to go without a
+	// summary: the built-in writes it, this log says why, and the step's
+	// reason tells the Operator it happened.
+	workflow, fallback := resolveSummaryWorkflow()
+	if fallback != "" {
+		fmt.Fprintf(stdout, "  warn: %s\n", fallback)
+	}
+	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, workflow, streams, segments)
 	if err != nil {
 		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)
 		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}, insight.WorkflowRef{}, nil
@@ -968,7 +975,11 @@ func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Se
 	if err := os.WriteFile(summaryPath, []byte(body), 0o644); err != nil {
 		return portable.SummaryStatus{}, insight.WorkflowRef{}, fmt.Errorf("write summary: %w", err)
 	}
-	return portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}, template, nil
+	status := portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}
+	if fallback != "" {
+		status.Reason = portable.SummaryReasonTemplateFallback
+	}
+	return status, workflow.Ref(), nil
 }
 
 // defaultCacheDir returns the default cache directory for models.

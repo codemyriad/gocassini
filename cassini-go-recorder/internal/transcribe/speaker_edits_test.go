@@ -204,10 +204,10 @@ func TestTranscriptSpeakersSummarizeNamesTheEditedSpeakersAndDropsUncertainWords
 	var prompt string
 	var gotCfg LLMConfig
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(c LLMConfig, streams []AudioStream, segs []Segment) (string, insight.WorkflowRef, error) {
+	buildMeetingSummaryFn = func(c LLMConfig, _ insight.Workflow, streams []AudioStream, segs []Segment) (string, error) {
 		gotCfg = c
 		prompt = formatTranscriptForSummary(streams, segs)
-		return "## Summary\n", insight.WorkflowRef{}, nil
+		return "## Summary\n", nil
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
