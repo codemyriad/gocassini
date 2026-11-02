@@ -422,8 +422,10 @@ Docker engine running the app needs the NVIDIA driver and the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/);
 verify with
 `docker run --rm --gpus all nvidia/cuda:12.9.1-base-ubuntu22.04 nvidia-smi` on
-that engine before registering the app. The `-cuda` image runs CUDA 12.9, so the host driver must support it: 575 or
-newer (data-centre GPUs also on the 535, 550, 560, 565 or 570 branches).
+that engine before registering the app: it lists the GPU if the driver is new
+enough. The `-cuda` image runs CUDA 12.9. A GeForce card needs driver 575 or
+newer; data-centre, professional and virtual GPUs also work with the 535, 550,
+560, 565 and 570 drivers. With an older driver, the image won't start.
 
 There is no CPU fallback from a CUDA install: a plain image under a CUDA daemon
 is a permanent mismatch, so recording finishes and the build enters
