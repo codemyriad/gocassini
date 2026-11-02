@@ -94,12 +94,6 @@
     created: InsightRun;
   }>();
 
-  // The id the publish pipeline's summary step runs when nothing names one
-  // (internal/insight/workflows: SummariseID). Named here only to pick the
-  // picker's OPENING selection: the operator accepts any id the registry
-  // resolves, so a build that ever stopped shipping this one degrades to "the
-  // first template listed" rather than to an error.
-  const SHIPPED_DEFAULT_WORKFLOW = "summarise";
 
   let workflows: InsightTemplateChoice[] = [];
   // A registry that could not be read is not a registry with nothing in it.
@@ -202,11 +196,18 @@
   // "Edit templates": the panel that writes them, reached the way the setup
   // card reaches its panels — a real link whose ordinary click becomes an
   // in-page surface switch, rebuilt from the fragment at the moment it is
-  // followed, because the viewer rewrites the fragment as it navigates.
+  // followed, because the viewer rewrites the fragment as it navigates. The
+  // viewer moves by history.pushState, which fires no event to recompute the
+  // href on, so it is rebuilt as the pointer or the focus reaches the link:
+  // before any middle-click, "copy link address" or keyboard activation.
   function templatesUrl(): string {
     const url = new URL(window.location.href);
     url.hash = applyPanel(applySurface(window.location.hash, "operator"), "templates").replace(/^#/, "");
     return url.toString();
+  }
+
+  function refreshTemplatesHref(event: Event) {
+    (event.currentTarget as HTMLAnchorElement).href = templatesUrl();
   }
 
   function openTemplates(event: MouseEvent) {
@@ -221,15 +222,16 @@
     workflowsAsked = true;
     workflowsError = "";
     try {
-      workflows = await listInsightTemplates(operatorBasePath);
+      const listing = await listInsightTemplates(operatorBasePath);
+      workflows = listing.templates;
       // Opened on a real template rather than on a synthetic "this deployment's
       // default" row. That row named no template, disclosed no question, and
       // read as a setting rather than a choice — and the thing it stood for is
-      // in the list beside it.
+      // in the list beside it: the operator names it (the configured insight
+      // template, else the built-in summary), so a run started without
+      // touching the picker runs what the deployment is set to run.
       if (chosenWorkflow === "" && workflows.length > 0) {
-        chosenWorkflow =
-          workflows.find((workflow) => workflow.id === SHIPPED_DEFAULT_WORKFLOW)?.id ??
-          workflows[0].id;
+        chosenWorkflow = listing.defaultId || workflows[0].id;
       }
     } catch (error) {
       workflowsError = describe(error);
@@ -371,7 +373,7 @@
           <div class="tpl-field-head">
             <label for={templatePickerId}>Insight template</label>
             {#if isAdmin}
-              <a class="tpl-edit-link" href={templatesUrl()} on:click={openTemplates}><Pencil size={11} aria-hidden="true" />Edit templates</a>
+              <a class="tpl-edit-link" href={templatesUrl()} on:pointerenter={refreshTemplatesHref} on:focus={refreshTemplatesHref} on:click={openTemplates}><Pencil size={11} aria-hidden="true" />Edit templates</a>
             {/if}
           </div>
           <span class="gc-select">

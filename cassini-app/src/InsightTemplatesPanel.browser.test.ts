@@ -247,6 +247,22 @@ describe("insight templates panel in the browser", () => {
     expect(puts[0].id).toBe("resumen");
   });
 
+  it("opens a broken template with the text the recorder could still read, so Save can repair it", async () => {
+    rows = [
+      ...BUILT_INS,
+      { ...custom("weekly", "Weekly", "The weekly one", "Write the weekly summary."), sha256: "", error: "front matter has an unknown field \"question\"" },
+    ];
+    mountPanel();
+    await expect.element(page.getByText("cannot run: front matter has an unknown field", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await expect.element(page.getByLabelText("Name")).toHaveValue("Weekly");
+    await expect.element(page.getByLabelText("Description")).toHaveValue("The weekly one");
+    await expect.element(page.getByLabelText("Prompt")).toHaveValue("Write the weekly summary.");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => puts.length).toBe(1);
+    expect(puts[0]).toEqual({ id: "weekly", body: { name: "Weekly", description: "The weekly one", instruction: "Write the weekly summary." } });
+  });
+
   it("asks in a dialog before deleting, focused on Cancel, and deletes on Delete", async () => {
     rows = [...BUILT_INS, RESUMEN()];
     mountPanel();

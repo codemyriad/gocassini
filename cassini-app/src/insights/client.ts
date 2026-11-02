@@ -152,11 +152,20 @@ export interface InsightTemplateChoice {
   origin: string;
 }
 
+// InsightTemplateListing is the templates and the deployment's default: the
+// configured insight template when it can run, else the built-in summary. The
+// picker opens on the default, so a run started without touching it runs what
+// it ran before there was a picker.
+export interface InsightTemplateListing {
+  defaultId: string;
+  templates: InsightTemplateChoice[];
+}
+
 // listInsightTemplates is the Prepare picker's data, for everyone.
 export async function listInsightTemplates(
   operatorBasePath: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<InsightTemplateChoice[]> {
+): Promise<InsightTemplateListing> {
   const base = operatorBasePath.replace(/\/+$/, "");
   // no-store, as for the endpoint list: AppAPI caches a proxied GET for an
   // hour, and this list changes the moment an administrator saves a template.
@@ -175,11 +184,12 @@ export async function listInsightTemplates(
     );
   }
   const payload: unknown = await response.json();
-  if (!Array.isArray(payload)) {
-    return [];
+  const listed = isRecord(payload) ? payload.templates : null;
+  if (!isRecord(payload) || !Array.isArray(listed)) {
+    return { defaultId: "", templates: [] };
   }
   const choices: InsightTemplateChoice[] = [];
-  for (const entry of payload) {
+  for (const entry of listed) {
     if (isRecord(entry) && typeof entry.id === "string" && entry.id !== "") {
       choices.push({
         id: entry.id,
@@ -190,7 +200,8 @@ export async function listInsightTemplates(
       });
     }
   }
-  return choices;
+  const named = typeof payload.default === "string" ? payload.default : "";
+  return { defaultId: choices.some((choice) => choice.id === named) ? named : "", templates: choices };
 }
 
 function readChoices(payload: unknown): AIProviderChoice[] {
@@ -258,7 +269,7 @@ export function isTerminalStatus(status: InsightStatus): boolean {
 
 // QUESTION_PLACEHOLDER is the token a workflow carries where the caller's own
 // text is spliced in (insight.QuestionPlaceholder in the recorder).
-const QUESTION_PLACEHOLDER = "{{QUESTION}}";
+export const QUESTION_PLACEHOLDER = "{{QUESTION}}";
 
 // workflowTakesQuestion reports whether a workflow has somewhere to put a
 // freeform question.

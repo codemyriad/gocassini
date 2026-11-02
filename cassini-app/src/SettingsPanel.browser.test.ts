@@ -349,3 +349,45 @@ it("lands on the summary step when another panel's link asks for it", async () =
   app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator"), focus: "summary" } });
   await expect.poll(() => document.activeElement?.getAttribute("aria-labelledby")).toBe("summary-heading");
 });
+
+it("says why the configured summary template cannot run, in the registry's words (D-819)", async () => {
+  const provider = { id: "p1", name: "Local", base_url: "http://llm.test/v1", api_key_configured: false, timeout_sec: 0, max_tokens: 0, model: "m" };
+  const workflow = (id: string, name: string, extra: Record<string, string> = {}) => ({
+    id, name, version: "v1", sha256: `${id}-sha`, description: "", origin: "Custom", instruction: "Summarise.", ...extra,
+  });
+  let template = "roto";
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), location.href).pathname;
+    if (path === "/operator/settings") {
+      return Response.json({ quality: "balanced", meeting_format: "opus", transcription_enabled: true, active_model: "prepared", active_revision: "r1" });
+    }
+    if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
+    if (path === "/operator/settings/llm") {
+      return Response.json({
+        providers: [provider],
+        summary: { enabled: true, provider: "p1", model: "m", template },
+        insight: { enabled: false, provider: "", model: "", template: "" },
+        effective: { summary: null, insight: null },
+      });
+    }
+    if (path === "/operator/settings/workflows") {
+      return Response.json([
+        { ...workflow("summarise", "Meeting summary"), origin: "Built in" },
+        workflow("roto", "roto", { sha256: "", instruction: "", error: "the front matter needs a version" }),
+      ]);
+    }
+    return Response.json({});
+  }));
+  host = document.createElement("div");
+  document.body.append(host);
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  const picker = page.getByRole("combobox", { name: "Insight template" });
+  await expect.element(picker).toHaveValue("roto");
+  await expect.element(page.getByRole("option", { name: "roto cannot run: the front matter needs a version" })).toBeInTheDocument();
+  expect(host.textContent).not.toContain("not in this build");
+
+  await unmount(app);
+  template = "gone";
+  app = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
+  await expect.element(page.getByRole("option", { name: "gone — not in this build" })).toBeInTheDocument();
+});

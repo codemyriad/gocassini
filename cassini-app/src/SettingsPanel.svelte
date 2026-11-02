@@ -417,6 +417,20 @@
 
   $: summaryTemplates = summaryCandidates(workflows);
 
+  // What the picker says of a configured template it cannot offer. A template
+  // the registry lists but cannot run says why, in the registry's words; only
+  // one it does not list at all is from another build.
+  function unrunnableSummaryTemplateLabel(id: string, list: InsightWorkflow[]): string {
+    const broken = list.find((workflow) => workflow.id === id && workflow.error);
+    if (broken) {
+      return `${id} cannot run: ${broken.error}`;
+    }
+    if (list.some((workflow) => workflow.id === id && workflowTakesQuestion(workflow))) {
+      return `${id} cannot run: it asks for a question, and a summary has nobody to ask`;
+    }
+    return `${id} — not in this build`;
+  }
+
   function shippedSummaryTemplate(list: InsightWorkflow[]): string {
     const candidates = summaryCandidates(list);
     return (
@@ -859,7 +873,7 @@
                          never heard of it. -->
                     {#if summary.template !== "" && !summaryTemplates.some((w) => w.id === summary.template)}
                       <option value={summary.template}>
-                        {summary.template} — not in this build
+                        {unrunnableSummaryTemplateLabel(summary.template, workflows)}
                       </option>
                     {/if}
                   </select>

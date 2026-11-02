@@ -368,21 +368,41 @@ describe("the template list everybody reads (D-819)", () => {
     const fetchImpl = vi.fn(
       async () =>
         new Response(
-          JSON.stringify([
-            { id: "summarise", name: "Meeting summary", description: "d", takesQuestion: false, origin: "Built in" },
-            { id: "pregunta", name: "Pregunta", description: "", takesQuestion: true, origin: "Custom" },
-            { id: "", name: "no id" },
-          ]),
+          JSON.stringify({
+            default: "pregunta",
+            templates: [
+              { id: "summarise", name: "Meeting summary", description: "d", takesQuestion: false, origin: "Built in" },
+              { id: "pregunta", name: "Pregunta", description: "", takesQuestion: true, origin: "Custom" },
+              { id: "", name: "no id" },
+            ],
+          }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
     );
-    const choices = await listInsightTemplates("/apps/app_api/proxy/gocassini/operator/", fetchImpl as unknown as typeof fetch);
+    const { defaultId, templates: choices } = await listInsightTemplates(
+      "/apps/app_api/proxy/gocassini/operator/",
+      fetchImpl as unknown as typeof fetch,
+    );
     expect(fetchImpl).toHaveBeenCalledWith(
       "/apps/app_api/proxy/gocassini/operator/insights/workflows",
       expect.objectContaining({ method: "GET", cache: "no-store" }),
     );
     expect(choices.map((c) => c.id)).toEqual(["summarise", "pregunta"]);
     expect(choices[1]).toEqual({ id: "pregunta", name: "Pregunta", description: "", takesQuestion: true, origin: "Custom" });
+    expect(defaultId).toBe("pregunta");
+  });
+
+  it("names no default the list does not hold", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ default: "gone", templates: [{ id: "summarise", name: "Meeting summary", takesQuestion: false }] }),
+          { status: 200 },
+        ),
+    );
+    const listing = await listInsightTemplates("/op", fetchImpl as unknown as typeof fetch);
+    expect(listing.defaultId).toBe("");
+    expect(listing.templates.map((c) => c.id)).toEqual(["summarise"]);
   });
 
   it("raises a failed listing with what the operator said", async () => {

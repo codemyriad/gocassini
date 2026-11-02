@@ -39,7 +39,10 @@ describe("GenerateCard", () => {
   });
 
   it("offers every user the template picker, from the names-only list (D-819)", () => {
-    expect(generateCardSource).toContain("workflows = await listInsightTemplates(operatorBasePath);");
+    expect(generateCardSource).toContain("const listing = await listInsightTemplates(operatorBasePath);");
+    // Opens on the deployment's default, which the operator names (D-819).
+    expect(generateCardSource).toContain("chosenWorkflow = listing.defaultId || workflows[0].id;");
+    expect(generateCardSource).not.toContain("SHIPPED_DEFAULT_WORKFLOW");
     expect(generateCardSource).toContain('$: if (operatorBasePath !== "" && !workflowsAsked) {');
     expect(generateCardSource).toContain("{#if workflows.length > 0}");
     // The ADMIN registry, with its instruction bytes, is not read here.
@@ -54,6 +57,8 @@ describe("GenerateCard", () => {
     );
     expect(generateCardSource).toMatch(/<\/select>[\s\S]*?<\/div>\s*\{#if chosenWorkflowEntry\?\.description\}/);
     expect(generateCardSource).toContain('dispatch("open", { panel: "templates", href: templatesUrl() });');
+    // The href follows the fragment too, rebuilt before it can be followed.
+    expect(generateCardSource).toContain("on:pointerenter={refreshTemplatesHref} on:focus={refreshTemplatesHref}");
   });
 
   it("lists no runs, its own included", () => {
@@ -68,7 +73,7 @@ describe("GenerateCard", () => {
     // "This deployment's default" named no template and disclosed no question,
     // and the template it stood for was in the list beside it.
     expect(generateCardSource).not.toContain("This deployment's default");
-    expect(generateCardSource).toContain('const SHIPPED_DEFAULT_WORKFLOW = "summarise";');
+    expect(generateCardSource).toContain("listing.defaultId");
     expect(generateCardSource).toContain("workflows[0].id");
   });
 

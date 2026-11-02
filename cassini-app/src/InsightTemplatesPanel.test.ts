@@ -179,8 +179,18 @@ describe("template id from a name", () => {
   });
 
   it("still gives an id the operator accepts when the name has no letters it can keep", () => {
-    expect(templateIdFromName("会议纪要", [])).toBe("template");
-    expect(templateIdFromName("!!!", ["template"])).toBe("template-2");
+    const pattern = /^t-[0-9a-f]{8}$/;
+    const chinese = templateIdFromName("会议纪要", []);
+    const greek = templateIdFromName("Σύνοψη συνάντησης", []);
+    const otherGreek = templateIdFromName("Πρακτικά", []);
+    expect(chinese).toMatch(pattern);
+    expect(greek).toMatch(pattern);
+    expect(otherGreek).toMatch(pattern);
+    // Stable for a name, and two names are two ids, not "template-2".
+    expect(templateIdFromName("  会议纪要 ", [])).toBe(chinese);
+    expect(new Set([chinese, greek, otherGreek]).size).toBe(3);
+    expect(templateIdFromName("会议纪要", [chinese])).toBe(`${chinese}-2`);
+    expect(templateIdFromName("!!!", [])).toMatch(pattern);
     const long = templateIdFromName("x".repeat(80) + " tail", []);
     expect(long.length).toBeLessThanOrEqual(60);
     expect(long).toMatch(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/);

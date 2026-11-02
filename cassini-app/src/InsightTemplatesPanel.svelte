@@ -6,8 +6,6 @@
     return sha256.length > 12 ? `${sha256.slice(0, 12)}…` : sha256;
   }
 
-  export const QUESTION_PLACEHOLDER = "{{QUESTION}}";
-
   // Letters NFKD does not split into a base letter and an accent.
   const FOLDED: Record<string, string> = {
     ß: "ss", æ: "ae", œ: "oe", ø: "o", ł: "l", đ: "d", ð: "d", þ: "th", ı: "i",
@@ -18,8 +16,11 @@
   // file name and what `cassini insight run --workflow` and the provenance
   // record call it, so people never have to choose one. Lowercase ASCII
   // letters, digits and '-', accents folded away, and a number added when the
-  // result is already taken (by a custom template or a built-in). Fixed once
-  // saved: renaming a template does not move its file.
+  // result is already taken (by a custom template or a built-in). A name with
+  // nothing left after folding (Greek, Chinese, only punctuation) gets "t-"
+  // and a hash of the name, so two such names get two ids rather than
+  // "template" and "template-2". Fixed once saved: renaming a template does
+  // not move its file.
   export function templateIdFromName(name: string, taken: Iterable<string>): string {
     const folded = name
       .toLowerCase()
@@ -31,13 +32,23 @@
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "")
         .slice(0, MAX_DERIVED_ID)
-        .replace(/-+$/, "") || "template";
+        .replace(/-+$/, "") || `t-${fnv1a32Hex(name.trim())}`;
     const used = new Set(Array.from(taken, (id) => id.toLowerCase()));
     let candidate = base;
     for (let n = 2; used.has(candidate); n++) {
       candidate = `${base}-${n}`;
     }
     return candidate;
+  }
+
+  // FNV-1a, 32 bits, over the UTF-8 bytes, as 8 hex digits: a stable short
+  // id from a name, not a security property.
+  function fnv1a32Hex(text: string): string {
+    let hash = 0x811c9dc5;
+    for (const byte of new TextEncoder().encode(text)) {
+      hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, "0");
   }
 
   export const TEMPLATE_PLACEHOLDER = "{{TEMPLATE}}";
@@ -71,7 +82,7 @@
   import { createEventDispatcher, onMount, tick } from "svelte";
   import { FileText, Plus, RefreshCw } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
-  import { workflowTakesQuestion } from "./insights/client";
+  import { QUESTION_PLACEHOLDER, workflowTakesQuestion } from "./insights/client";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import type { InsightTemplateDraft, InsightWorkflow } from "./operator/types";
 
