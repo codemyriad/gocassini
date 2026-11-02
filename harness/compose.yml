@@ -179,11 +179,16 @@ services:
   # profile, so no existing stack starts it; ci-e2e-summary-template.sh does.
   # The host port is ephemeral unless FAKE_LLM_HOST_PORT is set: read it with
   # `docker compose port fake-llm 8000`.
+  #   FAKE_LLM_LOG_DIR  host directory for requests.jsonl (default
+  #                     ./runtime/fake-llm, created by Docker if missing)
+  #   FAKE_LLM_USER     uid:gid to run as; unset runs as the image's root, which
+  #                     can write any log dir. CI sets the runner's own uid:gid
+  #                     so the log it leaves stays removable.
   fake-llm:
     image: ${FAKE_LLM_IMAGE:-python:3.12.7-alpine3.20}
     profiles: ["fake-llm"]
     restart: "no"
-    user: "${FAKE_LLM_USER:-65534:65534}"
+    user: "${FAKE_LLM_USER:-}"
     command: ["python3", "-u", "/app/fake_llm.py", "--port", "8000", "--log", "/log/requests.jsonl"]
     ports:
       - "127.0.0.1:${FAKE_LLM_HOST_PORT:-}:8000"

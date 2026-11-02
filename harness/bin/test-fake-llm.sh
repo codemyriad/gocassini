@@ -6,7 +6,8 @@
 # lists one model; POST /v1/chat/completions answers an OpenAI-shaped
 # completion whose markdown carries the canned sentence and the SHA-256 of the
 # system message it was sent; every request lands in the JSON-lines log with
-# its parsed body, so a scenario can find the prompt it sent.
+# its parsed body, so a scenario can find the prompt it sent; a request log
+# that cannot be opened stops it at startup with a reason.
 #
 # Does NOT cover: the compose service around it (image, mounts, ephemeral host
 # port) or the recorder actually calling it — ci-e2e-summary-template.sh owns
@@ -100,5 +101,14 @@ PY
 # An unknown route is a 404, not a canned success.
 status="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/embeddings" -d '{}')"
 [[ "$status" == "404" ]] || fail "POST /v1/embeddings answered $status, want 404"
+
+# A request log it cannot open stops the fake at startup, with a reason,
+# rather than leaving it to drop connections later.
+if python3 "$FAKE" --host 127.0.0.1 --port 0 --log "$work/missing/requests.jsonl" \
+    2>"$work/bad-log.err"; then
+  fail "the fake started with an unwritable request log"
+fi
+grep -q 'cannot open the request log' "$work/bad-log.err" \
+  || fail "no reason given for the unwritable request log: $(cat "$work/bad-log.err")"
 
 printf '[test-fake-llm] OK\n'

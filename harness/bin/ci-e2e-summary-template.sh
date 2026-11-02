@@ -52,9 +52,10 @@ source "$SCRIPT_DIR/lib/e2e-local.sh"
 source "$SCRIPT_DIR/lib-exapp-manifest.sh"
 harness_e2e_local_stack_env full legacy none
 
-# Its own prefix, so its stale-run sweep and the roundtrip's never reap each
-# other's debris, and the fake's profile on every compose call so its logs and
-# teardown ride with the rest of the stack.
+# Its own prefix, so its containers, project and logs are told apart from the
+# roundtrip's (the shared stale-run sweep reaps both families: on one runner
+# any match is debris), and the fake's profile on every compose call so its
+# logs and teardown ride with the rest of the stack.
 TALK_RT_PREFIX="${TALK_RT_PREFIX:-cassini-summary-tpl-e2e}"
 TALK_RT_LOG_TAG="${TALK_RT_LOG_TAG:-summary-tpl-e2e}"
 TALK_RT_COMPOSE_PROFILES="fake-llm"
@@ -72,10 +73,6 @@ export FAKE_LLM_LOG_DIR FAKE_LLM_USER
 mkdir -p "$FAKE_LLM_LOG_DIR"
 FAKE_LLM_REQUESTS="$FAKE_LLM_LOG_DIR/requests.jsonl"
 OPERATOR_URL=""
-
-operator_request() {
-  curl --fail-with-body --silent --show-error --max-time 60 -u admin:admin "$@"
-}
 
 talk_rt_cleanup_hook() {
   compose logs fake-llm >"$LOG_DIR/fake-llm.log" 2>&1 || true
@@ -138,7 +135,8 @@ LISTED_SHA256="$(jq -er --arg id "$TEMPLATE_ID" \
   '.[] | select(.id == $id and .origin == "Custom" and ((.error // "") == "")) | .sha256' \
   "$LOG_DIR/workflows.json")" \
   || fail "the workflow listing has no runnable custom template '$TEMPLATE_ID'"
-LISTED_VERSION="$(jq -er --arg id "$TEMPLATE_ID" '.[] | select(.id == $id) | .version' "$LOG_DIR/workflows.json")"
+LISTED_VERSION="$(jq -er --arg id "$TEMPLATE_ID" '.[] | select(.id == $id) | .version' "$LOG_DIR/workflows.json")" \
+  || fail "the workflow listing has no version for '$TEMPLATE_ID'"
 jq -e --arg sha "$LISTED_SHA256" --arg marker "$MARKER" \
   '.sha256 == $sha and (.instruction | contains($marker))' "$LOG_DIR/template-put.json" >/dev/null \
   || fail "the saved template is not the one the listing reports (see $LOG_DIR/template-put.json)"
@@ -177,28 +175,27 @@ phase 8 "Published manifest's summary block names $TEMPLATE_ID"
 
 # The manifest travels in the .opus's CASSINI_PAYLOAD_* stream tags
 # (base64url + gzip JSON, checksummed by CASSINI_PAYLOAD_SHA256), decoded here
-# the way validate-seeds.py reads a published pack. ffprobe runs in the ExApp
-# container, which already needs it for `cassini inspect`.
+# with validate-seeds.py's own reader for a published pack. ffprobe runs in the
+# ExApp container, which already needs it for `cassini inspect`.
 PROBE_JSON="$LOG_DIR/published-probe.json"
 docker exec "$CONTAINER_NAME" ffprobe -v error -show_entries format_tags:stream_tags -of json \
   "$PUBLISHED_OPUS" >"$PROBE_JSON" 2>"$LOG_DIR/published-probe.err" \
   || { cat "$LOG_DIR/published-probe.err"; fail "ffprobe could not read $PUBLISHED_OPUS"; }
 MANIFEST_JSON="$LOG_DIR/published-manifest.json"
-python3 - "$PROBE_JSON" "$MANIFEST_JSON" <<'PY' || fail "could not decode the published manifest"
-import base64, gzip, hashlib, json, sys
+python3 - "$PROBE_JSON" "$MANIFEST_JSON" "$SCRIPT_DIR/validate-seeds.py" "$PUBLISHED_OPUS" <<'PY' || fail "could not decode the published manifest"
+import importlib.util, json, pathlib, sys
 
-probe = json.load(open(sys.argv[1]))
-tags = dict(probe.get("format", {}).get("tags", {}))
-for stream in probe.get("streams", []):
-    tags.update(stream.get("tags", {}))
-tags = {k.upper(): v for k, v in tags.items()}
-count = int(tags["CASSINI_PAYLOAD_CHUNK_COUNT"])
-encoded = "".join(tags[f"CASSINI_PAYLOAD_{n:03d}"] for n in range(count))
-raw = gzip.decompress(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
-if hashlib.sha256(raw).hexdigest() != tags.get("CASSINI_PAYLOAD_SHA256"):
-    sys.exit("portable payload checksum mismatch")
-with open(sys.argv[2], "w", encoding="utf-8") as out:
-    json.dump(json.loads(raw), out, indent=2, sort_keys=True)
+probe_path, manifest_path, seeds_path, opus_path = sys.argv[1:5]
+sys.dont_write_bytecode = True
+# The hyphenated file name rules out a plain import.
+spec = importlib.util.spec_from_file_location("validate_seeds", seeds_path)
+validate_seeds = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validate_seeds)
+
+tags = validate_seeds.probe_tags(json.load(open(probe_path)))
+manifest = validate_seeds.decode_payload(tags, pathlib.PurePosixPath(opus_path).name)
+with open(manifest_path, "w", encoding="utf-8") as out:
+    json.dump(manifest, out, indent=2, sort_keys=True)
 PY
 
 jq -e --arg id "$TEMPLATE_ID" --arg sha "$LISTED_SHA256" --arg version "$LISTED_VERSION" \

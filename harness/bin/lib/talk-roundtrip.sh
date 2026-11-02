@@ -23,8 +23,9 @@
 #   talk_rt_phase7_await_publish     the published .opus (PUBLISHED_OPUS)
 #
 # Knobs a scenario sets before sourcing, defaulting to the roundtrip's own:
-#   TALK_RT_PREFIX            container/project/log-dir/room name prefix, and
-#                             what the stale-run sweep matches
+#   TALK_RT_PREFIX            container/project/log-dir/room name prefix; the
+#                             stale-run sweep matches it and every prefix in
+#                             TALK_RT_SWEEP_PREFIXES
 #   TALK_RT_LOG_TAG           the [tag] every log line carries
 #   TALK_RT_COMPOSE_PROFILES  extra compose profiles (space separated) every
 #                             compose call carries, so logs and teardown
@@ -35,6 +36,10 @@
 TALK_RT_PREFIX="${TALK_RT_PREFIX:-cassini-talk-rec-e2e}"
 TALK_RT_LOG_TAG="${TALK_RT_LOG_TAG:-talk-rec-e2e}"
 TALK_RT_COMPOSE_PROFILES="${TALK_RT_COMPOSE_PROFILES:-}"
+# Every scenario family built on this lib. They run as separate jobs on the
+# same single-runner GPU host, so each run's sweep reaps all of them: on one
+# runner any match is debris, whichever scenario leaked it.
+TALK_RT_SWEEP_PREFIXES=(cassini-talk-rec-e2e cassini-summary-tpl-e2e)
 
 # ---- Configuration --------------------------------------------------------
 
@@ -168,7 +173,8 @@ talk_rt_begin() {
 # The leaked project outlives the run and — because the next run gets a
 # fresh PID — no later `compose down` ever reaps it; one such leak held
 # host port 28080 on the GPU runner for 11 days. Sweep every container
-# matching our naming prefix or compose-project label, plus the matching
+# matching any scenario family's naming prefix (TALK_RT_SWEEP_PREFIXES, plus
+# this run's TALK_RT_PREFIX) or compose-project label, plus the matching
 # compose networks/volumes, BEFORE bringing anything up.
 #
 # Safety: this cannot kill a concurrently-running sibling job. A GitHub
@@ -177,19 +183,23 @@ talk_rt_begin() {
 # process, and GPU work is additionally serialized via the george-gpu
 # concurrency group), and the sweep runs before this run creates anything
 # — so every match is by definition debris from a previous, dead run. If
-# you run two roundtrips concurrently on a workstation that assumption
+# you run two of these scenarios concurrently on a workstation that assumption
 # breaks: skip the sweep with CASSINI_E2E_SKIP_SWEEP=1.
 sweep_stale_runs() {
-  local stale
+  local stale prefix pattern
+  local -a prefixes=("${TALK_RT_SWEEP_PREFIXES[@]}" "$TALK_RT_PREFIX")
+  pattern="^($(IFS='|'; echo "${prefixes[*]}"))-"
   stale=$(
     {
       # By container name: compose services (<prefix>-<pid>-*)
       # and the fixed-name exapp container (<prefix>-app).
-      docker ps -aq --filter "name=${TALK_RT_PREFIX}-" 2>/dev/null
+      for prefix in "${prefixes[@]}"; do
+        docker ps -aq --filter "name=${prefix}-" 2>/dev/null
+      done
       # By compose project label: catches services with a fixed
       # container_name that doesn't carry the project prefix (appapi-harp).
       docker ps -a --format '{{.ID}}\t{{.Label "com.docker.compose.project"}}' 2>/dev/null \
-        | awk -F'\t' -v prefix="^${TALK_RT_PREFIX}-" '$2 ~ prefix {print $1}'
+        | awk -F'\t' -v prefix="$pattern" '$2 ~ prefix {print $1}'
     } | sort -u
   ) || true
   if [[ -n "$stale" ]]; then
@@ -197,10 +207,10 @@ sweep_stale_runs() {
     xargs -r docker rm -f <<<"$stale" >/dev/null 2>&1 || true
   fi
   docker network ls --format '{{.Name}}' 2>/dev/null \
-    | grep -E "^${TALK_RT_PREFIX}-" \
+    | grep -E "$pattern" \
     | xargs -r docker network rm >/dev/null 2>&1 || true
   docker volume ls -q 2>/dev/null \
-    | grep -E "^${TALK_RT_PREFIX}-" \
+    | grep -E "$pattern" \
     | xargs -r docker volume rm >/dev/null 2>&1 || true
 }
 

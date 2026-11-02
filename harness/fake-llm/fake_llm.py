@@ -15,9 +15,15 @@ it sends, so the echoed digest equals the template's listed sha256 when the
 configured template is the one that ran.
 
 Every request is appended to --log as one JSON line: method, path and the body
-(parsed when it is JSON, the raw text otherwise). No key is checked and none is
-needed. Standard library only, so it runs from a stock python image and in the
-offline test with the runner's own python3.
+(parsed when it is JSON, the raw text otherwise). The log is opened once at
+startup, and the server refuses to start when it cannot be; a later write
+failure is reported on stderr and the request is still answered. No key is
+checked and none is needed. Standard library only, so it runs from a stock
+python image and in the offline test with the runner's own python3.
+
+Request bodies are read by Content-Length only: a chunked body (no
+Content-Length) reads as empty. The recorder's Go client always sends
+Content-Length, so this fake does not decode chunked transfer encoding.
 """
 
 import argparse
@@ -54,19 +60,22 @@ def canned_reply(system):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "cassini-fake-llm/1"
-    log_path = None
+    log_file = None
     log_lock = threading.Lock()
 
     def log_message(self, fmt, *args):  # quieter than the default, to stderr
         sys.stderr.write("fake-llm: " + (fmt % args) + "\n")
 
     def _record(self, body):
-        if not self.log_path:
+        if self.log_file is None:
             return
         line = json.dumps({"method": self.command, "path": self.path, "body": body}, sort_keys=True)
-        with self.log_lock, open(self.log_path, "a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-            handle.flush()
+        try:
+            with self.log_lock:
+                self.log_file.write(line + "\n")
+                self.log_file.flush()
+        except OSError as error:  # a lost log line must not cost the reply
+            sys.stderr.write(f"fake-llm: could not log {self.command} {self.path}: {error}\n")
 
     def _send_json(self, status, payload):
         data = json.dumps(payload).encode("utf-8")
@@ -125,7 +134,12 @@ def main(argv=None):
     parser.add_argument("--port-file", default="", help="write the bound port here once listening")
     args = parser.parse_args(argv)
 
-    Handler.log_path = args.log or None
+    if args.log:
+        try:
+            Handler.log_file = open(args.log, "a", encoding="utf-8")
+        except OSError as error:
+            sys.stderr.write(f"fake-llm: cannot open the request log {args.log}: {error}\n")
+            return 1
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     port = server.server_address[1]
     if args.port_file:
@@ -138,6 +152,8 @@ def main(argv=None):
         pass
     finally:
         server.server_close()
+        if Handler.log_file is not None:
+            Handler.log_file.close()
     return 0
 
 
