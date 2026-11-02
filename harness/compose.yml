@@ -173,6 +173,24 @@ services:
     volumes:
       - ${TURN_CONF:-./config/turnserver.conf}:/etc/coturn/turnserver.conf:ro
 
+  # Fake OpenAI-compatible endpoint (D-895): /v1/models and a canned
+  # /v1/chat/completions that echoes the SHA-256 of the system prompt it was
+  # sent, logging every request to $FAKE_LLM_LOG_DIR/requests.jsonl. Opt-in
+  # profile, so no existing stack starts it; ci-e2e-summary-template.sh does.
+  # The host port is ephemeral unless FAKE_LLM_HOST_PORT is set: read it with
+  # `docker compose port fake-llm 8000`.
+  fake-llm:
+    image: ${FAKE_LLM_IMAGE:-python:3.12.7-alpine3.20}
+    profiles: ["fake-llm"]
+    restart: "no"
+    user: "${FAKE_LLM_USER:-65534:65534}"
+    command: ["python3", "-u", "/app/fake_llm.py", "--port", "8000", "--log", "/log/requests.jsonl"]
+    ports:
+      - "127.0.0.1:${FAKE_LLM_HOST_PORT:-}:8000"
+    volumes:
+      - ./fake-llm/fake_llm.py:/app/fake_llm.py:ro
+      - ${FAKE_LLM_LOG_DIR:-./runtime/fake-llm}:/log
+
 volumes:
   db_data:
   nextcloud_data:
