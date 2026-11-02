@@ -109,8 +109,10 @@ it("keeps the published figure past a rerun that failed", async () => {
 });
 
 it("says nothing about processing before the meeting is published", async () => {
-  serve("Review", [attempt(1, "initial", { record_started_at: at(0), record_finished_at: at(58), build_started_at: at(60) })]);
+  serve("Review", [attempt(1, "initial", { record_started_at: at(0), record_finished_at: at(58), build_started_at: at(60), state: "running" })]);
   await open("Review");
   await expect.element(page.getByRole("heading", { name: "Attempt history" })).toBeVisible();
   expect(document.body.textContent).not.toContain("real time");
+  // A step underway says so, not only by its colour.
+  await expect.element(page.getByText("In progress", { exact: true }).first()).toBeVisible();
 });

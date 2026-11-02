@@ -6,7 +6,9 @@
 import { processesCapture, spanMs, stageTimes, stepTime } from "./processingSpeed";
 import type { Job, JobAttempt, JobDetailResponse } from "./types";
 
-export type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked";
+// "skipped" is a step that was decided not to run, such as a summary with
+// summaries turned off: settled, unlike a step not reached yet.
+export type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked" | "skipped";
 
 export const ATTEMPT_STEPS = ["record", "build", "seal", "publish"] as const;
 export type AttemptStep = (typeof ATTEMPT_STEPS)[number];
@@ -19,6 +21,8 @@ export interface StageView {
   ms: number | null;
   /** Said in place of a time, when the step has none of its own. */
   note?: string;
+  /** Why the step reads as it does, when its note is not enough. */
+  hint?: string;
   /** The attempt the step comes from. */
   attempt?: number;
 }
@@ -53,6 +57,18 @@ const SUMMARY_NOTES: Record<string, string> = {
   completed: "In Build",
   skipped: "Skipped",
   failed: "Failed",
+};
+
+const SUMMARY_STATUSES: Record<string, StageStatus> = {
+  completed: "done",
+  skipped: "skipped",
+};
+
+const SUMMARY_REASONS: Record<string, string> = {
+  disabled: "Summaries are turned off",
+  not_configured: "No summary model is configured",
+  no_transcript: "There was no transcript to summarize",
+  llm_failed: "The summary model failed; the build log says why",
 };
 
 function newest<T>(items: T[]): T | undefined {
@@ -99,9 +115,10 @@ export function runStages(detail: JobDetailResponse, recordingDeleted = false): 
     stages.summary = {
       key: "summary",
       label: "Summary",
-      status: capture.summary_status === "completed" ? "done" : "pending",
+      status: SUMMARY_STATUSES[capture.summary_status] ?? "pending",
       ms: null,
       note: SUMMARY_NOTES[capture.summary_status],
+      hint: capture.summary_reason ? SUMMARY_REASONS[capture.summary_reason] : undefined,
       attempt: capture.attempt_number,
     };
   }

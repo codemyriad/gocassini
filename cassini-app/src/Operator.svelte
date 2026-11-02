@@ -877,6 +877,14 @@
     }));
   }
 
+  // Said under a step that has not finished, so a coloured bar is not the
+  // only sign of what is happening.
+  const UNFINISHED_NOTES: Partial<Record<StageStatus, string>> = {
+    active: "In progress",
+    queued: "Queued",
+    blocked: "Blocked",
+  };
+
   function stageBarClass(status: StageStatus): string {
     switch (status) {
       case "done":
@@ -889,6 +897,8 @@
         return "bg-warning";
       case "queued":
         return "bg-primary/55";
+      case "skipped":
+        return "bg-base-content/35";
       default:
         return "bg-base-content/12";
     }
@@ -1043,7 +1053,8 @@
     </div>
     <div class="mt-1 flex gap-1 text-xs text-base-content/60">
       {#each stages as stage (stage.key)}
-        <span class="min-w-0 flex-1" title={stage.attempt ? `From attempt ${stage.attempt}` : undefined}>
+        {@const title = [stage.hint, stage.attempt ? `From attempt ${stage.attempt}` : null].filter(Boolean).join(". ")}
+        <span class="min-w-0 flex-1" title={title || undefined}>
           <span
             class="block"
             class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
@@ -1052,8 +1063,8 @@
           </span>
           {#if stage.ms !== null}
             <span class="block whitespace-nowrap text-base-content/45">{formatSpan(stage.ms)}</span>
-          {:else if stage.note}
-            <span class="block whitespace-nowrap text-base-content/45">{stage.note}</span>
+          {:else if stage.note ?? UNFINISHED_NOTES[stage.status]}
+            <span class="block whitespace-nowrap text-base-content/45">{stage.note ?? UNFINISHED_NOTES[stage.status]}</span>
           {/if}
         </span>
       {/each}

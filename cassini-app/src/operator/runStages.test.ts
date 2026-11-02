@@ -41,7 +41,8 @@ describe("runStages", () => {
 
   it("says a summary was skipped, and credits one rewritten with speaker edits", () => {
     const skipped = { ...initial, summary_status: "skipped" };
-    expect(view(run(skipped)).summary).toEqual(["pending", "Skipped", 1]);
+    expect(view(run(skipped)).summary).toEqual(["skipped", "Skipped", 1]);
+    expect(run({ ...skipped, summary_reason: "disabled" })[2].hint).toBe("Summaries are turned off");
     const refine = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed" });
     expect(view(run(skipped, refine))).toMatchObject({ build: ["done", 10, 1], summary: ["done", "With speaker edits", 2] });
   });
