@@ -74,13 +74,6 @@ export function stageTimes(row: StageTimes, key: string) {
   };
 }
 
-// One step's time, once it has finished. A failed step is stamped finished
-// too, so the caller passes a meeting length only for a step that succeeded.
-export function stepSpeed(row: StageTimes, key: string, meetingMs: number | null): Speed | null {
-  const t = stageTimes(row, key);
-  return speed(spanMs(t.started, t.finished), meetingMs);
-}
-
 // From the build starting to the meeting being published. Time spent queued
 // or waiting for resources before the build is not processing.
 export function processingSpeed(row: StageTimes, meetingMs: number | null): Speed | null {

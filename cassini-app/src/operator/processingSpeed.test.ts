@@ -6,7 +6,6 @@ import {
   meetingLengthMs,
   processingSpeed,
   runProcessing,
-  stepSpeed,
 } from "./processingSpeed";
 import type { Job, JobAttempt, JobDetailResponse } from "./types";
 
@@ -38,13 +37,6 @@ describe("processingSpeed", () => {
 
   it("has nothing to say until the meeting is published", () => {
     expect(processingSpeed(attempt(1, "initial", { build_started_at: at(60) }), 1)).toBeNull();
-  });
-
-  it("times each finished step on its own", () => {
-    const row = attempt(1, "initial", { ...processed, publish_finished_at: null });
-    expect(stepSpeed(row, "build", 58 * 60_000)?.factor).toBeCloseTo(5.8);
-    expect(stepSpeed(row, "seal", 58 * 60_000)?.factor).toBe(58);
-    expect(stepSpeed(row, "publish", 58 * 60_000)).toBeNull();
   });
 
   it("gives the time alone when the meeting length is unknown", () => {

@@ -3,15 +3,10 @@
   import type { OperatorPanel } from "./surfaceRouting";
   import {
     describeProcessing,
-    formatFactor,
-    formatMultiplier,
     formatSpan,
-    meetingLengthMs,
-    processesCapture,
     runProcessing,
     spanMs,
     stageTimes,
-    stepSpeed,
   } from "./operator/processingSpeed";
 
   // The operator surface's left nav (D-723). Configuration is not a surface of
@@ -1024,7 +1019,6 @@
   // A run that published without a transcript or a summary says so (D-854,
   // D-814), from the attempt it published.
   $: outcomeSource = selectedJob ? outcomeAttempt(selectedJob) : null;
-  $: meetingMs = selectedJob ? meetingLengthMs(selectedJob.job) : null;
   $: runSpeed = selectedJob ? runProcessing(selectedJob) : null;
   $: outcomeNotices = outcomeSource
     ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)].filter(
@@ -1771,22 +1765,12 @@
                               {/each}
                             </div>
                             <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                              {#each stageProgress(attempt) as stage, index}
-                                {@const step = STAGES[index].key === "record"
-                                  ? null
-                                  : stepSpeed(attempt, STAGES[index].key, stage.status === "done" && processesCapture(attempt) ? meetingMs : null)}
-                                <span class="min-w-0 flex-1">
-                                  <span
-                                    class="block"
-                                    class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                                  >
-                                    {stage.label}
-                                  </span>
-                                  {#if step}
-                                    <span class="block whitespace-nowrap text-base-content/45" title={step.factor !== null ? formatFactor(step.factor) : undefined}>
-                                      {step.factor !== null ? `${formatSpan(step.ms)} · ${formatMultiplier(step.factor)}` : formatSpan(step.ms)}
-                                    </span>
-                                  {/if}
+                              {#each stageProgress(attempt) as stage}
+                                <span
+                                  class="min-w-0 flex-1"
+                                  class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
+                                >
+                                  {stage.label}
                                 </span>
                               {/each}
                             </div>
