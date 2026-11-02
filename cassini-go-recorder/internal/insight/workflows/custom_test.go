@@ -229,13 +229,59 @@ func TestParseCustomTemplateRefusesWhatWillNotRun(t *testing.T) {
 }
 
 func TestParseCustomTemplateReadsTheScalarForms(t *testing.T) {
-	file := "---\n# a comment\nname: 'It''s ours'\ndescription: \"Tab\\there, «quoted»\"\nversion: 12 # trailing comment\n---\nBody\n"
+	file := "---\n# a comment\nname: 'It''s ours'\ndescription: \"Tab\\there, «quoted»\"\nversion: 12\n---\nBody\n"
 	tpl, err := ParseCustomTemplate("ours", []byte(file))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if tpl.Name != "It's ours" || tpl.Description != "Tab\there, «quoted»" || tpl.Version != 12 || tpl.Instruction != "Body" {
 		t.Errorf("parsed %+v", tpl)
+	}
+}
+
+// The front matter is not YAML: a '#' in a plain value is part of it.
+func TestParseCustomTemplateKeepsAHashInAValue(t *testing.T) {
+	file := "---\nname: Issues #3\ndescription: Lists issues #1 and #2\nversion: 1\n---\nBody\n"
+	tpl, err := ParseCustomTemplate("issues", []byte(file))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if tpl.Name != "Issues #3" || tpl.Description != "Lists issues #1 and #2" {
+		t.Errorf("parsed %+v", tpl)
+	}
+}
+
+// A file that will not parse is listed with what can still be read from it,
+// so the panel opens it to be repaired instead of empty.
+func TestLoadDirListsABrokenFileWithItsText(t *testing.T) {
+	dir := t.TempDir()
+	writeTemplateFile(t, dir, "nofm.md", "Summarise the meeting.\n")
+	writeTemplateFile(t, dir, "badfield.md", "---\nname: Weekly\ndescription: The weekly one\nversion: 3\nquestion: what?\n---\n\nWrite the weekly summary.\n")
+	writeTemplateFile(t, dir, "unclosed.md", "---\nname: Half\nversion: 2\nThe body\n")
+	set, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Entry{
+		"nofm":     {Name: "nofm", Instruction: "Summarise the meeting."},
+		"badfield": {Name: "Weekly", Description: "The weekly one", Version: "v3", Instruction: "Write the weekly summary."},
+		"unclosed": {Name: "unclosed", Instruction: "---\nname: Half\nversion: 2\nThe body"},
+	}
+	for _, entry := range set.Entries {
+		w, ok := want[entry.ID]
+		if !ok {
+			continue
+		}
+		delete(want, entry.ID)
+		if entry.Error == "" {
+			t.Errorf("%s: no error", entry.ID)
+		}
+		if entry.Name != w.Name || entry.Description != w.Description || entry.Version != w.Version || entry.Instruction != w.Instruction {
+			t.Errorf("%s = %+v, want %+v", entry.ID, entry, w)
+		}
+	}
+	if len(want) > 0 {
+		t.Errorf("not listed: %v", want)
 	}
 }
 

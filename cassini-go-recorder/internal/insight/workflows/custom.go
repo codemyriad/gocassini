@@ -188,8 +188,10 @@ func (c CustomTemplate) Workflow() (insight.Workflow, error) {
 }
 
 // parseFrontMatterScalar reads one front matter value: a double-quoted string
-// (Go/JSON escapes), a single-quoted string (two single quotes make one), or a plain scalar.
-// Multi-line values are not supported; a template's long text is its body.
+// (Go/JSON escapes), a single-quoted string (two single quotes make one), or a
+// plain scalar, taken as written: this is not YAML, and a '#' in a value is
+// part of it ("Lists issues #1 and #2"), never a comment. Multi-line values
+// are not supported; a template's long text is its body.
 func parseFrontMatterScalar(raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	switch {
@@ -213,11 +215,54 @@ func parseFrontMatterScalar(raw string) (string, error) {
 	case value == "|" || value == ">" || strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">"):
 		return "", errors.New("multi-line values are not supported; put the value on one line")
 	default:
-		if i := strings.Index(value, " #"); i >= 0 {
-			value = strings.TrimSpace(value[:i])
-		}
 		return value, nil
 	}
+}
+
+// salvageCustomTemplate is what can be read from a file ParseCustomTemplate
+// refused, so the panel can open it to be repaired rather than start empty:
+// the body after the front matter (the whole file when no front matter
+// closes), and the name and version when those lines still parse.
+func salvageCustomTemplate(id string, raw []byte) CustomTemplate {
+	tpl := CustomTemplate{ID: id}
+	if len(raw) > maxCustomTemplateBytes || !utf8.Valid(raw) {
+		return tpl
+	}
+	text := strings.TrimPrefix(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\ufeff")
+	tpl.Instruction = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "---\n") {
+		return tpl
+	}
+	rest := text[len("---\n"):]
+	var header string
+	if end := strings.Index(rest, "\n---\n"); end >= 0 {
+		header, tpl.Instruction = rest[:end], strings.TrimSpace(rest[end+len("\n---\n"):])
+	} else if strings.HasSuffix(rest, "\n---") {
+		header, tpl.Instruction = strings.TrimSuffix(rest, "\n---"), ""
+	} else {
+		return tpl
+	}
+	for _, line := range strings.Split(header, "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		parsed, err := parseFrontMatterScalar(value)
+		if err != nil {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "name":
+			tpl.Name = parsed
+		case "description":
+			tpl.Description = parsed
+		case "version":
+			if version, err := strconv.Atoi(parsed); err == nil && version > 0 {
+				tpl.Version = version
+			}
+		}
+	}
+	return tpl
 }
 
 // customFile is one template file's outcome: a workflow, or why it is not one.
@@ -259,7 +304,7 @@ func readCustomDir(dir string) ([]customFile, error) {
 		if err == nil {
 			file.template, err = ParseCustomTemplate(id, raw)
 			if err != nil {
-				file.template.ID = id
+				file.template = salvageCustomTemplate(id, raw)
 			}
 		}
 		if err == nil && builtIn[id] {
