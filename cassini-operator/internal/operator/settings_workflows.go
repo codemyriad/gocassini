@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -68,9 +71,97 @@ func (rt *Runtime) settingsWorkflowsHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // readWorkflowRegistry lists the workflows this deployment can run, custom
-// templates included, through the recorder CLI.
+// templates included, through the recorder CLI. The listing is cached while
+// the recorder binary and the templates directory stay as they were.
 func (rt *Runtime) readWorkflowRegistry(ctx context.Context) ([]workflowView, error) {
-	return readWorkflowRegistry(ctx, strings.TrimSpace(rt.cfg.CassiniBin), rt.cfg.TemplatesRoot)
+	return rt.workflowListing.read(ctx, strings.TrimSpace(rt.cfg.CassiniBin), rt.cfg.TemplatesRoot, false)
+}
+
+// refreshWorkflowRegistry lists the registry afresh, whatever the cache
+// holds, and keeps the result: a save checks its file with it.
+func (rt *Runtime) refreshWorkflowRegistry(ctx context.Context) ([]workflowView, error) {
+	return rt.workflowListing.read(ctx, strings.TrimSpace(rt.cfg.CassiniBin), rt.cfg.TemplatesRoot, true)
+}
+
+// workflowListingCache is the last registry listing, process-local (D-819).
+// Every template GET and the Generate card's mount read the registry, and
+// each read used to spawn the recorder. The listing depends only on the
+// recorder binary and the files in the templates directory, so it is kept
+// under a key made of those: the binary's path, and the directory's mtime
+// with each template file's name, size and mtime (a file edited in place
+// leaves the directory's mtime alone). Saves and deletes also drop it
+// explicitly, under templatesMu.
+type workflowListingCache struct {
+	mu         sync.Mutex
+	key        string
+	entries    []workflowView
+	generation uint64
+}
+
+// invalidate drops the cached listing; a listing begun before this is not
+// kept.
+func (c *workflowListingCache) invalidate() {
+	c.mu.Lock()
+	c.key, c.entries = "", nil
+	c.generation++
+	c.mu.Unlock()
+}
+
+func (c *workflowListingCache) read(ctx context.Context, bin, templatesDir string, fresh bool) ([]workflowView, error) {
+	key, cacheable := workflowListingKey(bin, templatesDir)
+	c.mu.Lock()
+	if !fresh && cacheable && c.key == key && c.entries != nil {
+		entries := slices.Clone(c.entries)
+		c.mu.Unlock()
+		return entries, nil
+	}
+	generation := c.generation
+	c.mu.Unlock()
+
+	entries, err := readWorkflowRegistry(ctx, bin, templatesDir)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	if cacheable && c.generation == generation {
+		c.key, c.entries = key, slices.Clone(entries)
+	}
+	c.mu.Unlock()
+	return entries, nil
+}
+
+// workflowListingKey says what a listing was read from. It is not cacheable
+// when the directory cannot be inspected.
+func workflowListingKey(bin, templatesDir string) (string, bool) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\x00%s\x00", bin, templatesDir)
+	dir := strings.TrimSpace(templatesDir)
+	if dir == "" {
+		return b.String(), true
+	}
+	info, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return b.String() + "absent", true
+	}
+	if err != nil {
+		return "", false
+	}
+	fmt.Fprintf(&b, "%d", info.ModTime().UnixNano())
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, item := range items {
+		if item.IsDir() || !strings.HasSuffix(item.Name(), ".md") {
+			continue
+		}
+		fi, err := item.Info()
+		if err != nil {
+			return "", false
+		}
+		fmt.Fprintf(&b, "\x00%s:%d:%d", item.Name(), fi.Size(), fi.ModTime().UnixNano())
+	}
+	return b.String(), true
 }
 
 // readWorkflowRegistry runs the recorder CLI within the caller's context.
@@ -145,7 +236,16 @@ type workflowChoice struct {
 	Origin        string `json:"origin"`
 }
 
-// insightWorkflowsHandler lists the templates any caller may run, by name.
+// workflowChoices is the USER listing: the templates, and the one a run that
+// names none gets, so the Generate card can preselect it (D-819).
+type workflowChoices struct {
+	Default   string           `json:"default"`
+	Templates []workflowChoice `json:"templates"`
+}
+
+// insightWorkflowsHandler lists the templates any caller may run, by name,
+// and the deployment's default: the configured insight template when it can
+// run, else the built-in summary.
 // Broken custom templates are left out: nobody can run them, and why they are
 // broken is the administrator's to read on the ADMIN route.
 func (rt *Runtime) insightWorkflowsHandler(w http.ResponseWriter, r *http.Request) {
@@ -163,10 +263,15 @@ func (rt *Runtime) insightWorkflowsHandler(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadGateway, "the templates could not be listed")
 		return
 	}
+	configured := strings.TrimSpace(rt.currentLLMSettings().Insight.Template)
 	choices := make([]workflowChoice, 0, len(entries))
+	defaultID := ""
 	for _, entry := range entries {
 		if !entry.runnable() {
 			continue
+		}
+		if entry.ID == configured || (defaultID == "" && entry.ID == defaultInsightWorkflowID) {
+			defaultID = entry.ID
 		}
 		choices = append(choices, workflowChoice{
 			ID:            entry.ID,
@@ -178,6 +283,13 @@ func (rt *Runtime) insightWorkflowsHandler(w http.ResponseWriter, r *http.Reques
 	}
 	// no-store, as for the provider list: AppAPI caches a proxied GET for an
 	// hour, and this list changes the moment an administrator saves a template.
+	if defaultID == "" && len(choices) > 0 {
+		defaultID = choices[0].ID
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, choices)
+	writeJSON(w, http.StatusOK, workflowChoices{Default: defaultID, Templates: choices})
 }
+
+// defaultInsightWorkflowID is the built-in a run falls back to when no
+// insight template is configured (internal/insight/workflows: SummariseID).
+const defaultInsightWorkflowID = "summarise"

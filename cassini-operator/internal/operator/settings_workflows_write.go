@@ -79,7 +79,10 @@ func (rt *Runtime) putWorkflow(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	var request workflowWriteRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxTemplateInstructionBytes+64<<10))
+	// JSON escaping can double an instruction's bytes (every newline is
+	// two), so the cap leaves room for that: an instruction that is too long
+	// is refused by validate, with a message that says so.
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2*maxTemplateInstructionBytes+64<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "the template could not be read: "+err.Error())
@@ -121,6 +124,11 @@ func (rt *Runtime) putWorkflow(w http.ResponseWriter, r *http.Request, id string
 		writeJSONError(w, http.StatusInternalServerError, "the existing template could not be read")
 		return
 	}
+	// A file the recorder cannot parse is listed with no version, but its
+	// version line may still be there; saving over it must not go back to 1.
+	if n := templateFileVersion(previous); n >= version {
+		version = n + 1
+	}
 	if err := writeTemplateFile(dir, path, []byte(request.file(version))); err != nil {
 		rt.logger.Printf("settings workflows: write %s: %v", path, err)
 		writeJSONError(w, http.StatusInternalServerError, "the template could not be written")
@@ -138,9 +146,11 @@ func (rt *Runtime) putWorkflow(w http.ResponseWriter, r *http.Request, id string
 		}
 	}
 
-	after, err := rt.readWorkflowRegistry(r.Context())
+	// The one fresh listing a save needs, which the cache then keeps.
+	after, err := rt.refreshWorkflowRegistry(r.Context())
 	if err != nil {
 		revert()
+		rt.workflowListing.invalidate()
 		rt.logger.Printf("settings workflows: %v", err)
 		writeJSONError(w, http.StatusBadGateway, "the template was not saved: the workflow registry could not be read to check it")
 		return
@@ -151,6 +161,7 @@ func (rt *Runtime) putWorkflow(w http.ResponseWriter, r *http.Request, id string
 		}
 		if !entry.runnable() {
 			revert()
+			rt.workflowListing.invalidate()
 			writeJSONError(w, http.StatusBadRequest, "the template was not saved: "+entry.Error)
 			return
 		}
@@ -158,6 +169,7 @@ func (rt *Runtime) putWorkflow(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	revert()
+	rt.workflowListing.invalidate()
 	writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("the template was not saved: %q did not appear in the registry after it was written", id))
 }
 
@@ -195,7 +207,9 @@ func (rt *Runtime) deleteWorkflow(w http.ResponseWriter, r *http.Request, id str
 			return
 		}
 	}
-	if err := os.Remove(path); err != nil {
+	err = os.Remove(path)
+	rt.workflowListing.invalidate()
+	if err != nil {
 		rt.logger.Printf("settings workflows: remove %s: %v", path, err)
 		writeJSONError(w, http.StatusInternalServerError, "the template could not be deleted")
 		return
@@ -243,6 +257,31 @@ func (q workflowWriteRequest) file(version int) string {
 	b.WriteString(q.Instruction)
 	b.WriteString("\n")
 	return b.String()
+}
+
+// templateFileVersion reads the version line from a template file's front
+// matter, or 0 when there is none that parses.
+func templateFileVersion(raw []byte) int {
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	text = strings.TrimPrefix(text, "\ufeff")
+	if !strings.HasPrefix(text, "---\n") {
+		return 0
+	}
+	for _, line := range strings.Split(text[len("---\n"):], "\n") {
+		if strings.TrimSpace(line) == "---" {
+			break
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(key) != "version" {
+			continue
+		}
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if n, err := strconv.Atoi(value); err == nil && n > 0 {
+			return n
+		}
+		return 0
+	}
+	return 0
 }
 
 // writeTemplateFile writes a template through a dot-named temporary file in

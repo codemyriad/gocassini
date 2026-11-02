@@ -245,6 +245,9 @@ type Runtime struct {
 	// one writes a file and then re-reads the registry to check it, and two
 	// interleaved would check each other's file.
 	templatesMu sync.Mutex
+	// workflowListing keeps the last parsed `cassini insight workflows --json`
+	// so a GET does not spawn the recorder each time (D-819).
+	workflowListing workflowListingCache
 	// storageUsage is an explicitly refreshed, process-local index. GET reads it
 	// in constant time; only POST /storage/usage performs filesystem and WebDAV
 	// traversal. storageUsageRefreshMu keeps two administrator-triggered scans

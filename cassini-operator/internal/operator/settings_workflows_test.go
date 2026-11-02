@@ -219,7 +219,7 @@ func TestSettingsWorkflowsListsCustomTemplatesFromTheTemplatesRoot(t *testing.T)
 	seen := filepath.Join(t.TempDir(), "env")
 	rt.cfg.TemplatesRoot = filepath.Join(t.TempDir(), "templates")
 	listing := `[` + strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(oneWorkflowJSON), "["), "]") +
-		`,{"id":"roto","version":"","sha256":"","name":"roto","description":"","origin":"Custom","instruction":"","error":"the front matter needs a version"}]`
+		`,{"id":"roto","version":"v2","sha256":"","name":"Roto","description":"","origin":"Custom","instruction":"Resume.","error":"the front matter has an unknown field"}]`
 	rt.cfg.CassiniBin = writeFakeCassini(t, "printf '%s' \"$CASSINI_TEMPLATES_DIR\" > "+seen+"\nprintf '%s' '"+listing+"'\n")
 
 	rec := httptest.NewRecorder()
@@ -233,6 +233,11 @@ func TestSettingsWorkflowsListsCustomTemplatesFromTheTemplatesRoot(t *testing.T)
 	}
 	if len(entries) != 2 || entries[1].Origin != "Custom" || entries[1].Error == "" {
 		t.Fatalf("entries = %+v, want the built-in and the broken custom one with its reason", entries)
+	}
+	// What the recorder could still read from the broken file, so the panel
+	// opens it to be repaired.
+	if entries[1].Instruction != "Resume." || entries[1].Name != "Roto" || entries[1].Version != "v2" {
+		t.Errorf("broken entry = %+v, want its text, name and version relayed", entries[1])
 	}
 	got, err := os.ReadFile(seen)
 	if err != nil {

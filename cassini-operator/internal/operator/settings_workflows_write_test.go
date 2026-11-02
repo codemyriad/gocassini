@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeTemplateRecorder stands in for `cassini insight workflows --json` over a
@@ -273,12 +274,15 @@ func TestInsightWorkflowsListsNamesOnlyForEveryone(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "instruction") || strings.Contains(rec.Body.String(), "sha256") {
 		t.Errorf("the USER list carries prompt bytes or hashes: %s", rec.Body.String())
 	}
-	var choices []workflowChoice
-	if err := json.Unmarshal(rec.Body.Bytes(), &choices); err != nil {
+	var listing workflowChoices
+	if err := json.Unmarshal(rec.Body.Bytes(), &listing); err != nil {
 		t.Fatal(err)
 	}
+	if listing.Default != "summarise" {
+		t.Errorf("default = %q, want summarise with no insight template configured", listing.Default)
+	}
 	ids := []string{}
-	for _, choice := range choices {
+	for _, choice := range listing.Templates {
 		ids = append(ids, choice.Origin+":"+choice.ID)
 	}
 	if strings.Join(ids, ",") != "Built in:summarise,Custom:resumen" {
@@ -300,12 +304,12 @@ func TestInsightWorkflowsSaysWhichTakeAQuestion(t *testing.T) {
 	rt.cfg.CassiniBin = writeFakeCassini(t, `printf '%s' '`+listing+`'`)
 	rec := httptest.NewRecorder()
 	rt.insightWorkflowsHandler(rec, httptest.NewRequest(http.MethodGet, "/insights/workflows", nil))
-	var choices []workflowChoice
+	var choices workflowChoices
 	if err := json.Unmarshal(rec.Body.Bytes(), &choices); err != nil {
 		t.Fatalf("%v: %s", err, rec.Body.String())
 	}
 	takes := map[string]bool{}
-	for _, choice := range choices {
+	for _, choice := range choices.Templates {
 		takes[choice.ID] = choice.TakesQuestion
 	}
 	if takes["summarise"] || !takes["ask"] || takes["resumen"] || len(takes) != 3 {
@@ -316,5 +320,164 @@ func TestInsightWorkflowsSaysWhichTakeAQuestion(t *testing.T) {
 func TestManifestRoutesTheTemplateNamesForEveryUser(t *testing.T) {
 	if got := manifestAccess(manifestRoutes(t), "operator/insights/workflows", "GET"); got != "USER" {
 		t.Errorf("GET operator/insights/workflows = %q, want USER", got)
+	}
+}
+
+// The Generate card preselects the deployment's default: the configured
+// insight template when it can run, else the built-in summary (D-819).
+func TestInsightWorkflowsNamesTheDeploymentDefault(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("seed = %d %s", rec.Code, rec.Body.String())
+	}
+	if err := os.WriteFile(filepath.Join(dir, "roto.md"), []byte("BROKEN"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ configured, want string }{
+		{"", "summarise"},
+		{"resumen", "resumen"},
+		{"roto", "summarise"},
+		{"missing", "summarise"},
+	} {
+		settings := rt.currentLLMSettings()
+		settings.Insight.Template = tc.configured
+		rt.setLLMSettings(settings)
+		rec := httptest.NewRecorder()
+		rt.insightWorkflowsHandler(rec, httptest.NewRequest(http.MethodGet, "/insights/workflows", nil))
+		var listing workflowChoices
+		if err := json.Unmarshal(rec.Body.Bytes(), &listing); err != nil {
+			t.Fatalf("%v: %s", err, rec.Body.String())
+		}
+		if listing.Default != tc.want {
+			t.Errorf("configured %q: default = %q, want %q", tc.configured, listing.Default, tc.want)
+		}
+	}
+}
+
+// countingTemplateRuntime is templateWriteRuntime with a recorder that counts
+// how often it is spawned.
+func countingTemplateRuntime(t *testing.T) (*Runtime, string, func() int) {
+	t.Helper()
+	rt, dir := templateWriteRuntime(t)
+	count := filepath.Join(t.TempDir(), "spawns")
+	rt.cfg.CassiniBin = writeFakeCassini(t, "echo x >> '"+count+"'\n"+fakeTemplateRecorder)
+	return rt, dir, func() int {
+		raw, err := os.ReadFile(count)
+		if os.IsNotExist(err) {
+			return 0
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(raw), "x")
+	}
+}
+
+func getTemplateChoices(t *testing.T, rt *Runtime) []string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	rt.insightWorkflowsHandler(rec, httptest.NewRequest(http.MethodGet, "/insights/workflows", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("GET = %d (Cache-Control %q) %s", rec.Code, rec.Header().Get("Cache-Control"), rec.Body.String())
+	}
+	var listing workflowChoices
+	if err := json.Unmarshal(rec.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{}
+	for _, choice := range listing.Templates {
+		ids = append(ids, choice.ID)
+	}
+	return ids
+}
+
+// A GET reads the cached listing while nothing it was read from changed; a
+// save lists once, and that listing is what the next GET serves.
+func TestWorkflowListingIsCachedUntilATemplateChanges(t *testing.T) {
+	rt, _, spawns := countingTemplateRuntime(t)
+	getTemplateChoices(t, rt)
+	getTemplateChoices(t, rt)
+	if n := spawns(); n != 1 {
+		t.Fatalf("two GETs spawned the recorder %d times, want 1", n)
+	}
+
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("save = %d %s", rec.Code, rec.Body.String())
+	}
+	if n := spawns(); n != 2 {
+		t.Errorf("a save spawned the recorder %d times, want once (the check after writing)", n-1)
+	}
+	if ids := getTemplateChoices(t, rt); strings.Join(ids, ",") != "summarise,resumen" {
+		t.Errorf("after the save = %v", ids)
+	}
+	if n := spawns(); n != 2 {
+		t.Errorf("the GET after a save spawned the recorder again (%d)", n)
+	}
+
+	if rec := doTemplateRequest(rt, http.MethodDelete, "resumen", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", rec.Code, rec.Body.String())
+	}
+	if ids := getTemplateChoices(t, rt); strings.Join(ids, ",") != "summarise" {
+		t.Errorf("after the delete = %v", ids)
+	}
+}
+
+// A file changed behind the operator's back (an administrator's shell) is
+// picked up on the next GET.
+func TestWorkflowListingRefreshesWhenTheDirectoryChanges(t *testing.T) {
+	rt, dir, spawns := countingTemplateRuntime(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	getTemplateChoices(t, rt)
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("---\nversion: 1\n---\nA\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(dir, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if ids := getTemplateChoices(t, rt); strings.Join(ids, ",") != "summarise,a" {
+		t.Errorf("after a file appeared = %v", ids)
+	}
+	if n := spawns(); n != 2 {
+		t.Errorf("spawns = %d, want 2", n)
+	}
+}
+
+// A file the recorder cannot parse is listed with no version, but saving over
+// it continues from the version its front matter still names.
+func TestPutWorkflowContinuesTheVersionOfABrokenFile(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "resumen.md"), []byte("---\nname: \"Resumen\"\nversion: 3\nBROKEN: yes\n---\n\nResume.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"version":"v4"`) {
+		t.Fatalf("save over a broken v3 = %d %s, want v4", rec.Code, rec.Body.String())
+	}
+}
+
+// JSON escaping makes an instruction's body larger than the instruction: one
+// within the limit is saved, one over it is refused by the size check, not by
+// the body cap.
+func TestPutWorkflowMeasuresTheInstructionNotItsJSON(t *testing.T) {
+	rt, _ := templateWriteRuntime(t)
+	body := func(n int) string {
+		raw, err := json.Marshal(workflowWriteRequest{Name: "Long", Instruction: strings.Repeat("a\n", n/2)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	if rec := doTemplateRequest(rt, http.MethodPut, "long", body(190<<10)); rec.Code != http.StatusOK {
+		t.Errorf("190 KiB instruction = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := doTemplateRequest(rt, http.MethodPut, "longer", body(210<<10))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "the instruction is longer than") {
+		t.Errorf("210 KiB instruction = %d %s, want the size check's message", rec.Code, rec.Body.String())
 	}
 }
