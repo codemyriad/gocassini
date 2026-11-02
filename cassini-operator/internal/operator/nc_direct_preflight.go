@@ -52,4 +52,8 @@ func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logg
 		return
 	}
 	ncAccessSubstrate.succeed()
+	// The share API answering proves nothing about whether a share will be
+	// accepted; the instance's sharing policy decides that (D-885). Recorded
+	// beside the storage verdict, after it, so storage never waits on it.
+	c.checkSharingPolicy(ctx, client, probe.AdminUser, logger)
 }

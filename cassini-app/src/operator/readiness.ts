@@ -135,6 +135,10 @@ export function repairLabel(check: ReadinessCheck): string {
 export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
+  // Whether Nextcloud's sharing settings let Cassini share recordings with the
+  // people in a meeting (D-885). The same string the operator uses when a row
+  // names this one as what it waits for.
+  "storage.sharing": "Recording sharing",
   "archive.search": "Archive search",
   "talk.discovery": "Talk connection",
   // Nextcloud Talk's own term for it, capitalised the way its documentation

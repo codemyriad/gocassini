@@ -111,6 +111,20 @@ type statusRecordingsAccess struct {
 	Mode      string `json:"mode,omitempty"`
 	Root      string `json:"root,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
+	// SharingPolicy is whether Nextcloud's sharing settings let Cassini share
+	// recordings (D-885): the Recording sharing row, for a monitor. Absent
+	// until a preflight has evaluated it.
+	SharingPolicy *statusSharingPolicy `json:"sharing_policy,omitempty"`
+}
+
+type statusSharingPolicy struct {
+	State   string `json:"state"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// ShareableGroups are the groups Cassini can share through while Nextcloud
+	// restricts sharing to group members.
+	ShareableGroups []string `json:"shareable_groups,omitempty"`
+	CheckedAt       string   `json:"checked_at,omitempty"`
 }
 
 type statusSTT struct {

@@ -24,6 +24,8 @@ export const doctorScenarios = [
   { id: "test-published", title: "Test recording: confirm playback", description: "The recording published. Only a person pressing play can finish this check." },
   { id: "test-failed", title: "Test recording failed", description: "The one check whose failure is a finding rather than a missing verdict." },
   { id: "storage-blocked", title: "Recording storage is blocked", description: "Recording cannot start. The storage action explains its destination." },
+  { id: "sharing-restricted", title: "Sharing limited to group members", description: "Nextcloud only lets accounts share within their groups and Cassini is only in admin: a warning naming the groups it can reach, with the two ways out." },
+  { id: "sharing-blocked", title: "Cassini can share with nobody", description: "Sharing is limited to group members and Cassini is in no group, so every recording share would be refused." },
   { id: "setup-unreadable", title: "Saved configuration is unreadable", description: "Persistent setup needs repair; credentials cannot be confirmed." },
   { id: "search-partial", title: "Archive search is incomplete", description: "Audio is ready. Re-index now simulates progress and completion in this tab." },
   { id: "search-running", title: "Re-indexing is running", description: "Repair progress appears without a duplicate repair button." },
@@ -63,6 +65,7 @@ const rowOrder = [
   "configuration",
   "host", "host.workdir", "host.tmpdir.writable",
   "storage",
+  "storage.sharing",
   "talk.hpb",
   "talk.discovery",
   "talk.handoff",
@@ -97,6 +100,13 @@ function blocked(id: string, blocker: string, unchecked = false): ReadinessCheck
       : `Not checked: this depends on ${blocker}, which needs attention first.` };
 }
 
+// The Recording sharing row's wording, as nc_sharing_policy.go writes it.
+const sharingPermitted = "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting.";
+const sharingGroupSteps = [
+  { label: "To let Cassini share with everyone, open Administration settings → Sharing in Nextcloud and turn off “Restrict users to only share with users in their groups”" },
+  { label: "To keep the restriction, add `cassini` in Nextcloud's Users page to every group whose members should receive their recordings. A group everyone belongs to covers everybody; `cassini` does not need to be an administrator" },
+];
+
 export function scenarioReport(id: string, now = new Date()): RecordingReadiness {
   if (!doctorScenarios.some(item => item.id === id)) throw new Error(`Unknown Doctor preview: ${id}`);
   const checked_at = new Date(now.getTime() - (id === "old-findings" ? 172800000 : 120000)).toISOString();
@@ -111,7 +121,8 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
     checks: [
       { id: "host.workdir", state: "passed", code: "workdir", message: "working directory is writable", checked_at },
       { id: "host.tmpdir.writable", state: "passed", code: "tmpdir.writable", message: "temporary directory is writable", checked_at },
-      { id: "storage", state: "passed", code: "storage_ready", message: "Cassini can store and share recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers.", checked_at },
+      { id: "storage", state: "passed", code: "storage_ready", message: "Cassini can store recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers. Whether its shares are accepted is the Recording sharing check.", checked_at },
+      { id: "storage.sharing", state: "passed", code: "sharing_permitted", message: sharingPermitted, checked_at },
       // Keeps its credential action even while passing: the form has to stay
       // reachable, or the secret can never be rotated from the panel again.
       { id: "talk.hpb", state: "passed", code: "hpb_authenticated", message: "The signaling server accepted Cassini and advertises media support. A test recording verifies the actual call path.", action: "configure_talk", checked_at },
@@ -144,6 +155,7 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
         { id: "host.workdir", state: "not_verified", code: "host_not_checked", message: "Not checked yet.", action: "recheck" },
         { id: "host.tmpdir.writable", state: "not_verified", code: "host_not_checked", message: "Not checked yet.", action: "recheck" },
         { id: "storage", state: "not_verified", code: "storage_not_checked", message: "Nextcloud storage has not been checked yet.", action: "recheck" },
+        { id: "storage.sharing", state: "not_verified", code: "sharing_not_checked", message: "Nextcloud's sharing settings have not been checked yet.", action: "recheck" },
         uncheckedBackend(),
         { id: "talk.discovery", state: "not_verified", code: "connection_not_checked", message: "The Talk connection has not been checked yet.", action: "recheck" },
         { id: "archive.search", state: "not_verified", code: "search_coverage_not_checked", message: "Archive search coverage has not been checked yet.", action: "recheck" },
@@ -203,7 +215,17 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       set(blocked("test", "Recording credential"));
       break;
     case "storage-blocked":
-      set({ id: "storage", state: "needs_action", code: "storage_admission_blocked", message: "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", action: "setup_storage", checked_at }); break;
+      set({ id: "storage", state: "needs_action", code: "storage_admission_blocked", message: "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", action: "setup_storage", checked_at });
+      set(blocked("storage.sharing", "Recording storage"));
+      break;
+    case "sharing-restricted":
+      set({ id: "storage.sharing", state: "warn", code: "sharing_limited_to_groups", checked_at, steps: sharingGroupSteps,
+        message: "Nextcloud only lets accounts share with members of their own groups (“Restrict users to only share with users in their groups”), so Cassini can share recordings only with members of “admin”, and with those groups as a whole. Anyone else in a meeting is left without access to it unless a Team the room includes gives it to them, and a recording started by someone outside these groups is not published. “admin” holds only Nextcloud's administrators." });
+      break;
+    case "sharing-blocked":
+      set({ id: "storage.sharing", state: "needs_action", code: "sharing_no_common_group", checked_at, steps: sharingGroupSteps,
+        message: "Nextcloud only lets accounts share with members of their own groups (“Restrict users to only share with users in their groups”), and the “cassini” account is in no group. Every share to a person or a group is refused — including to whoever starts a recording — so new meetings cannot be published." });
+      break;
     case "setup-unreadable":
       set({ id: "configuration", state: "needs_action", code: "setup_store_unreadable", message: "Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.", action: "repair_configuration", steps: [
         { label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing" },
@@ -261,7 +283,10 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       return !!row && (row.state === "passed" || row.state === "warn");
     };
     const chain = ["storage", "talk.hpb", "talk.discovery"];
-    const blocker = chain.find(id => report.checks.find(check => check.id === id)?.state === "needs_action") ?? chain.find(id => !proven(id));
+    const failed = (id: string) => report.checks.find(check => check.id === id)?.state === "needs_action";
+    // Recording sharing blocks only when it needs action: a warning leaves the
+    // test's own starter reachable.
+    const blocker = chain.find(failed) ?? chain.find(id => !proven(id)) ?? (failed("storage.sharing") ? "storage.sharing" : undefined);
     report.checks.push(blocker
       ? blocked("test", checkLabels[blocker] ?? blocker, report.checks.find(check => check.id === blocker)?.state !== "needs_action")
       : { id: "test", state: "not_verified", code: "test_not_run", action: "test_recording",
@@ -275,7 +300,8 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   for (const check of report.checks) {
     const probe = check.id === "host" || check.id.startsWith("host.") ? "host"
       : check.id.startsWith("archive.") ? "archive"
-      : ({ storage: "storage", "talk.hpb": "talk", "talk.discovery": "talk" } as Record<string, string>)[check.id] ?? "";
+      : check.id === "storage" || check.id.startsWith("storage.") ? "storage"
+      : ({ "talk.hpb": "talk", "talk.discovery": "talk" } as Record<string, string>)[check.id] ?? "";
     // A blocked row is not checkable: running its probe cannot succeed while
     // its prerequisite is unmet, so offering the button invites a failure.
     if (probe && check.code !== "check_blocked") {

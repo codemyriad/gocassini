@@ -697,11 +697,16 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// playback" either. That sentence was this row apologising for what it
 		// could not establish, back when no test recording could be run at all.
 		// The Test recording row says it now, where a reader can act on it.
-		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "Cassini can store and share recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers.", CheckedAt: access.CheckedAt})
+		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "Cassini can store recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers. Whether its shares are accepted is the Recording sharing check.", CheckedAt: access.CheckedAt})
 	} else {
 		// Not "below": the button leaves this panel for the Storage section, so
 		// a reader told to look down the page looks in the wrong place.
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "Cassini cannot store or share recordings in Nextcloud yet. The storage details name the step that failed.", Action: "setup_storage", CheckedAt: access.CheckedAt})
+	}
+	if access.Applicable {
+		// Whether Nextcloud's sharing settings let those shares be made at all
+		// (D-885). Waits on the storage row while that one needs attention.
+		resp.Checks = append(resp.Checks, sharingPolicyRow(ncAccessSubstrate.sharingPolicyFinding()))
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		addWithSteps("talk.handoff", "needs_action", "recording_secret_missing",
@@ -866,6 +871,7 @@ var readinessRowOrder = []string{
 	"configuration",
 	"host", "host.workdir", "host.tmpdir.writable",
 	"storage",
+	"storage.sharing",
 	"talk.hpb",
 	"talk.discovery",
 	"talk.handoff",
