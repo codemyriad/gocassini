@@ -94,16 +94,20 @@ func (rt *Runtime) runRetentionSweep(ctx context.Context, now time.Time) error {
 	}
 	rt.retention.mu.Lock()
 	disabled := rt.retention.loadErr != nil
+	logPolicy := rt.retention.settings.Logs
 	rt.retention.mu.Unlock()
 	if disabled {
 		return errRetentionUnavailable
 	}
 	var failures error
+	if err := rt.supportJournal.expire(logPolicy, now); err != nil {
+		failures = errors.Join(failures, err)
+	}
 	rt.remoteRetentionMu.RLock()
 	remote := rt.remoteRetention
 	rt.remoteRetentionMu.RUnlock()
 	if remote != nil {
-		failures = remote.runRemoteRetention(ctx, now)
+		failures = errors.Join(failures, remote.runRemoteRetention(ctx, now))
 	}
 	// Read bounded pages; no SQLite transaction spans filesystem work.
 	after := ""

@@ -99,6 +99,11 @@ func (s *Store) emitStateChange(ctx context.Context, eventType, jobID string, at
 }
 
 func (rt *Runtime) publishStateChangeEvent(event StateChangeEvent) {
+	failure := ""
+	if event.Job.Error != nil {
+		failure = *event.Job.Error
+	}
+	rt.supportJournal.record(supportEvent{Event: "job_state", Job: event.JobID, Attempt: event.AttemptNumber, Stage: supportStage(event.Job.Stage), State: supportState(event.Job.State), Reason: supportFailure(failure), Detail: failure})
 	if rt.events == nil {
 		return
 	}

@@ -58,6 +58,7 @@ export function createOperatorProxy(operatorBasePath: string, operatorProxyTarge
   const insights = {
     "^/insights(?:/|\\?|$)": directOperatorProxy(operatorProxyTarget),
     "^/annotations(?:/|\\?|$)": directOperatorProxy(operatorProxyTarget),
+    "^/support/bundle(?:\\?|$)": directOperatorProxy(operatorProxyTarget),
   };
 
   if (operatorBasePath === "/") {
@@ -66,7 +67,7 @@ export function createOperatorProxy(operatorBasePath: string, operatorProxyTarge
       // Keep the root-mounted API in sync with operatorAPIRoutes in run.go.
       // In particular /status decides whether the shell shows Operator at all.
       // Match path boundaries so API names cannot swallow Vite source assets.
-      "^/(jobs|events|status|setup|readiness|ai|settings|storage|talk)(?:/|\\?|$)":
+      "^/(jobs|events|status|setup|readiness|ai|settings|storage|talk|support-bundle)(?:/|\\?|$)":
         directOperatorProxy(operatorProxyTarget),
     };
   }

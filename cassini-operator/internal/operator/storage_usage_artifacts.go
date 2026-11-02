@@ -156,6 +156,7 @@ func (c ExAppConfig) scanDetailedStorageUsage(ctx context.Context, workRoot stri
 	for _, root := range []struct{ id, label, path string }{
 		{"current", "Working archive", currentRoot(workRoot)},
 		{"runs", "Build history", runsRoot(workRoot)},
+		{"diagnostics", "Diagnostic logs", filepath.Join(workRoot, "diagnostics")},
 	} {
 		result.Directories = append(result.Directories, scanArtifactStorageRoot(ctx, root.id, root.label, root.path, visit...))
 	}

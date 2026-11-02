@@ -57,6 +57,7 @@ func (index *storageCategoryIndex) assign(category string, anchor time.Time, pat
 // Read only the metadata needed for classification, once per attempt.
 func (rt *Runtime) storageCategoryIndex(ctx context.Context) (*storageCategoryIndex, error) {
 	index := newStorageCategoryIndex(rt.cfg.WorkRoot)
+	index.assign("logs", time.Time{}, filepath.Join(rt.cfg.WorkRoot, "diagnostics", "operator.jsonl"), filepath.Join(rt.cfg.WorkRoot, "diagnostics", "operator.previous.jsonl"))
 	rows, err := rt.store.db.QueryContext(ctx, `SELECT j.id, j.artifact_run_path,
  a.attempt_number, a.stage, a.state, a.record_finished_at, a.publish_finished_at,
  a.completed_at, a.interrupted_at, COALESCE(v.published_attempt, 0)

@@ -12,6 +12,9 @@ Start with concepts, installation, or the reference pages:
 
 The WIP notes identify gaps in installation and configuration coverage.
 
+Reporting a problem? [Download a support bundle](support-bundles.md) from the app
+to collect diagnostics without shell access.
+
 ---
 
 ## Current behavior

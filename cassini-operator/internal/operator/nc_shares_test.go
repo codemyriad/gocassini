@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRecordingSharesUseCallerAndOCSEnvelope(t *testing.T) {
@@ -131,7 +132,8 @@ func TestRecordingSharesKeepValidRecipientsWhenOneIsRefused(t *testing.T) {
 	defer server.Close()
 	defer ncAccessSubstrate.reset()
 	ncAccessSubstrate.reset()
-	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
+	journal := newSupportJournal(t.TempDir())
+	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret", supportJournal: journal}
 	audience := []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}, {Type: "user", ID: "carol"}}
 	if err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false); err != nil {
 		t.Fatal(err)
@@ -141,6 +143,20 @@ func TestRecordingSharesKeepValidRecipientsWhenOneIsRefused(t *testing.T) {
 	}
 	if warning := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles).Warning; !strings.Contains(warning, "bob") {
 		t.Fatalf("warning = %q, want skipped recipient", warning)
+	}
+	// Unlike the in-memory warning, this evidence remains after a restart.
+	events, failed := newSupportJournal(journal.workRoot).read(time.Time{})
+	if failed {
+		t.Fatal("support journal unavailable")
+	}
+	skipped := false
+	for _, event := range events {
+		if event.Event == "share_skipped" && event.OCS == 404 {
+			skipped = true
+		}
+	}
+	if !skipped {
+		t.Fatal("successful publication lost skipped-recipient evidence")
 	}
 }
 

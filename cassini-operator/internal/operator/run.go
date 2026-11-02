@@ -82,6 +82,8 @@ type Config struct {
 }
 
 type Runtime struct {
+	supportJournal    *supportJournal
+	supportGate       supportGate
 	remoteRetentionMu sync.RWMutex
 	remoteRetention   *annotationService
 	retention         *retentionConfig
@@ -376,6 +378,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	logger = runtime.logger
+	exappCfg.supportJournal = runtime.supportJournal
 	exappCfg.meetingMetadata = runtime.meetingMetadata
 	exappCfg.lifecycle = store
 	// Conditional, so a missing store stays a nil interface rather than a
@@ -807,28 +811,32 @@ func normalizeBasePath(value string) (string, error) {
 }
 
 func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
+	cleanupSupportTemps(os.TempDir(), time.Now())
+	journal := newSupportJournal(cfg.WorkRoot)
+	logger = log.New(io.MultiWriter(logger.Writer(), journal), logger.Prefix(), logger.Flags())
 	queueCapacity := cfg.MaxBuildWorkers * 16
 	if queueCapacity < 16 {
 		queueCapacity = 16
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	rt := &Runtime{
-		retention:    newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
-		ctx:          ctx,
-		cancel:       cancel,
-		store:        store,
-		cfg:          cfg,
-		logger:       logger,
-		stdout:       stdout,
-		stderr:       stderr,
-		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
-		buildQueue:   make(chan buildTask, queueCapacity),
-		sealQueue:    make(chan sealTask, queueCapacity),
-		publishQueue: make(chan publishTask, 16),
-		events:       newEventHub(),
-		recordJobs:   map[string]*recordProcessState{},
-		talkRooms:    map[string]*talkRoomState{},
-		talkJobs:     map[string]*talkRoomState{},
+		supportJournal: journal,
+		retention:      newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
+		ctx:            ctx,
+		cancel:         cancel,
+		store:          store,
+		cfg:            cfg,
+		logger:         logger,
+		stdout:         stdout,
+		stderr:         stderr,
+		recordSlots:    make(chan struct{}, cfg.MaxRecordWorkers),
+		buildQueue:     make(chan buildTask, queueCapacity),
+		sealQueue:      make(chan sealTask, queueCapacity),
+		publishQueue:   make(chan publishTask, 16),
+		events:         newEventHub(),
+		recordJobs:     map[string]*recordProcessState{},
+		talkRooms:      map[string]*talkRoomState{},
+		talkJobs:       map[string]*talkRoomState{},
 
 		recordStopAckGrace:      recordStopAckGrace,
 		recordStopFinalizeGrace: recordStopFinalizeGrace,
@@ -1006,6 +1014,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/summaries/missing", http.HandlerFunc(rt.missingSummariesHandler)},
 		{"/events", http.HandlerFunc(rt.eventsHandler)},
 		{"/status", http.HandlerFunc(rt.statusHandler)},
+		{supportAdminPath, rt.supportBundleHandler(exappCfg, true)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
 		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
 		{"/ai/providers/", http.HandlerFunc(rt.aiProviderModelsHandler)},
@@ -1062,6 +1071,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	root.Handle(supportUserPath, rt.supportBundleHandler(exappCfg, false))
 	exappCfg.lifecycle = rt.store
 	exappCfg.meetingMetadata = rt.meetingMetadata
 	if exappCfg.appAPIActive() && exappCfg.PublishSink == publishSinkNextcloudFiles {

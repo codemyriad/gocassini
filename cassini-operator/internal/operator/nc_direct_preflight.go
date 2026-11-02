@@ -48,6 +48,7 @@ func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logg
 	probe.PrivateRoot = true
 	ncAccessSubstrate.setProbe(probe)
 	if _, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodGet, c.shareAPIURL(), nil); err != nil {
+		c.supportShare(ctx, "share_list", "", "", err, 0)
 		ncAccessSubstrate.unavailable("sharing_api", err)
 		return
 	}
