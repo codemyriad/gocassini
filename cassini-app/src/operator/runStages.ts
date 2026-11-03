@@ -93,7 +93,9 @@ export function runStages(detail: JobDetailResponse, recordingDeleted = false): 
   const laterSummary = newest(
     succeeded.filter(
       (a) => a.attempt_number > (capture?.attempt_number ?? 0)
-        && (a.trigger_kind === "summarize" || (a.trigger_kind === "refine" && a.summary_status === "completed")),
+        // A speaker-edit save that kept the summary still carries it, so its
+        // own request decides, not the summary it published.
+        && (a.trigger_kind === "summarize" || (a.trigger_kind === "refine" && a.summary_mode === "rewrite")),
     ),
   );
 

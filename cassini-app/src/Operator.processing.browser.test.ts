@@ -81,7 +81,7 @@ it("says how long the meeting took to process, past a summary written later", as
     attempt(1, "initial", { record_started_at: at(0), record_finished_at: at(58), ...times }),
   ]);
   await open("Standup");
-  await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("12m · 4.8× real time", { exact: true }).first()).toBeVisible();
   // The run's bar keeps the build that transcribed the meeting, and takes the
   // summary, seal and publish from the attempt that wrote them later.
   const bar = document.querySelector(".op-detail-pane section")!.textContent ?? "";
@@ -93,6 +93,11 @@ it("says how long the meeting took to process, past a summary written later", as
   await expect.element(page.getByText("10m", { exact: true }).last()).toBeVisible();
   await expect.element(page.getByText("58m", { exact: true }).first()).toBeVisible();
   expect(document.body.textContent).not.toContain("5.8×");
+  // The attempt that transcribed carries the run's figure; a summary written
+  // later gives its time alone, since it says nothing about transcription.
+  expect(page.getByText("12m · 4.8× real time", { exact: true }).elements()).toHaveLength(2);
+  await userEvent.click(page.getByText("Attempt 2", { exact: true }).last());
+  await expect.element(page.getByText("2m", { exact: true }).last()).toBeVisible();
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-steps.png` });
 });
 
@@ -102,7 +107,7 @@ it("keeps the published figure past a rerun that failed", async () => {
     attempt(1, "initial", { record_started_at: at(0), record_finished_at: at(58), ...times }),
   ]);
   await open("Retro");
-  await expect.element(page.getByText("12m · 4.8× real time", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("12m · 4.8× real time", { exact: true }).first()).toBeVisible();
   // A failed step still says how long it ran.
   await userEvent.click(page.getByText("Attempt 2", { exact: true }).last());
   await expect.element(page.getByText("3s", { exact: true }).last()).toBeVisible();

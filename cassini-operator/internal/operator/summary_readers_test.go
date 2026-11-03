@@ -175,6 +175,18 @@ func TestSpeakersSaveRewritesTheSummaryOnlyWhenAllowed(t *testing.T) {
 	if rewrite, err := f.rt.store.AttemptRewritesSummary(context.Background(), "MEETING1", 3); err != nil || !rewrite {
 		t.Fatalf("moderator's save rewrites = %v %v, want rewrite", rewrite, err)
 	}
+	// The run detail says which save asked for it (D-816).
+	attempts, err := f.rt.store.ListJobAttempts(context.Background(), "MEETING1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modes := map[int]string{}
+	for _, a := range attempts {
+		modes[a.AttemptNumber] = a.SummaryMode
+	}
+	if modes[2] != "" || modes[3] != speakerSummaryRewrite {
+		t.Fatalf("attempt summary modes = %v, want keep (empty) then rewrite", modes)
+	}
 }
 
 // finishQueuedAttempt marks the job's queued attempt done, as a worker would,

@@ -43,9 +43,12 @@ describe("runStages", () => {
     const skipped = { ...initial, summary_status: "skipped" };
     expect(view(run(skipped)).summary).toEqual(["skipped", "Skipped", 1]);
     expect(run({ ...skipped, summary_reason: "disabled" })[2].hint).toBe("Summaries are turned off");
-    const refine = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed" });
+    const refine = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed", summary_mode: "rewrite" });
     expect(view(run(skipped, refine))).toMatchObject({ build: ["done", 10, 1], summary: ["done", 0.2, 2] });
     expect(run(skipped, refine)[2].hint).toBe("Rewritten after speakers were renamed");
+    // A save that kept the summary did not write it, though its meeting still has one.
+    const kept = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed" });
+    expect(view(run(initial, kept))).toMatchObject({ summary: ["done", "In Build", 1], seal: ["done", 1, 2] });
   });
 
   it("shows a rerun in progress over the build and keeps the live publish", () => {
