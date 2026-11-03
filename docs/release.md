@@ -19,8 +19,10 @@ with its `stableXX` branches.
   convention, so the branch starts at the `v0.2.0` tag.
 - **Fixes land on main first, then get cherry-picked.** Merge the fix to main,
   then bring it over with `git cherry-pick -x` in a PR to `release/X.Y` (label
-  the main PR `backport release/X.Y`). A fix goes straight to the release
-  branch only when it doesn't apply to main, and its PR says why.
+  the main PR `backport release/X.Y` and the Backport workflow opens that PR
+  once it merges). A fix goes straight to the release branch only when it
+  doesn't apply to main, and its PR says why. The Release workflow refuses a
+  tag whose commit isn't on the branch its version is cut on.
 - **Release branches take fixes only:** bug fixes, security fixes, docs, and
   the release commit itself. No features and no refactors. A change that needs
   a feature waits for the next minor.
