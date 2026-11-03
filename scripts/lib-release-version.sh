@@ -50,18 +50,22 @@ rv_parse() {
 }
 
 # rv_bump <patch|minor|major> <version>
-# Echo the next version. Every bump restarts the prerelease train at -alpha.1,
-# whether the current version is stable or a prerelease, so the base can be
-# re-targeted mid-cycle:
-#   patch:  A.B.C[-pre] -> A.B.(C+1)-alpha.1
+# Echo the next version. A minor or major bump starts the prerelease train at
+# -alpha.1, whether the current version is stable or a prerelease, so the base
+# can be re-targeted mid-cycle. A patch skips the ladder (it carries fixes, no
+# features to test) and only follows a stable release:
+#   patch:  A.B.C       -> A.B.(C+1)
 #   minor:  A.B.C[-pre] -> A.(B+1).0-alpha.1
 #   major:  A.B.C[-pre] -> (A+1).0.0-alpha.1
 rv_bump() {
-  local level="$1" v="$2" parsed major minor patch
+  local level="$1" v="$2" parsed major minor patch pretype
   parsed="$(rv_parse "$v")" || return 1
-  read -r major minor patch _ _ <<<"$parsed"
+  read -r major minor patch pretype _ <<<"$parsed"
   case "$level" in
-    patch) patch=$((patch + 1)) ;;
+    patch)
+      [[ -z "$pretype" ]] || { echo "error: a patch follows a stable release; finish $v first (--promote stable)" >&2; return 1; }
+      printf '%s.%s.%s\n' "$major" "$minor" "$((patch + 1))"
+      return ;;
     minor) minor=$((minor + 1)); patch=0 ;;
     major) major=$((major + 1)); minor=0; patch=0 ;;
     *) echo "error: bump level must be patch|minor|major, got: '$level'" >&2; return 1 ;;
@@ -69,9 +73,37 @@ rv_bump() {
   printf '%s.%s.%s-alpha.1\n' "$major" "$minor" "$patch"
 }
 
-# rv_promote <beta|rc.1|rc.2|stable> <version>
+# rv_release_branch <version>
+# Echo the branch <version> is cut on (docs/release.md#branches): main for the
+# next release's X.Y.0-alpha.N, release/X.Y for the rest of the X.Y line (its
+# betas, rcs and X.Y.0, and every X.Y.Z patch).
+rv_release_branch() {
+  local parsed major minor patch pretype
+  parsed="$(rv_parse "$1")" || return 1
+  read -r major minor patch pretype _ <<<"$parsed"
+  if [[ "$patch" == 0 && "$pretype" == alpha ]]; then
+    echo main
+  else
+    printf 'release/%s.%s\n' "$major" "$minor"
+  fi
+}
+
+# rv_same_line <a> <b>: return 0 (true) when a and b share MAJOR.MINOR.
+rv_same_line() {
+  local pa pb amaj amin bmaj bmin
+  pa="$(rv_parse "$1")" || return 1
+  pb="$(rv_parse "$2")" || return 1
+  read -r amaj amin _ _ _ <<<"$pa"
+  read -r bmaj bmin _ _ _ <<<"$pb"
+  [[ "$amaj" == "$bmaj" && "$amin" == "$bmin" ]]
+}
+
+# rv_promote <alpha|beta|rc.1|rc.2|stable> <version>
 # Echo the next version along the Nextcloud prerelease ladder. The base X.Y.Z
 # never changes:
+#   promote alpha  : alpha.N -> alpha.(N+1)  (alpha.0 -> alpha.1 cuts the first
+#                    alpha of the version main is developing; see
+#                    docs/release.md#mains-version)
 #   promote beta   : alpha.N -> beta.1
 #   promote rc.1   : beta.N  -> rc.1
 #   promote rc.2   : rc.1    -> rc.2
@@ -85,6 +117,9 @@ rv_promote() {
   read -r major minor patch pretype prenum <<<"$parsed"
   base="${major}.${minor}.${patch}"
   case "$target" in
+    alpha)
+      [[ "$pretype" == alpha ]] || { echo "error: 'promote alpha' requires an alpha.N version, got: '$v'" >&2; return 1; }
+      printf '%s-alpha.%s\n' "$base" "$((prenum + 1))" ;;
     beta)
       [[ "$pretype" == alpha ]] || { echo "error: 'promote beta' requires an alpha.N version, got: '$v'" >&2; return 1; }
       printf '%s-beta.1\n' "$base" ;;
@@ -98,7 +133,7 @@ rv_promote() {
       [[ "$pretype" == rc ]] || { echo "error: 'promote stable' requires an rc.N version, got: '$v'" >&2; return 1; }
       printf '%s\n' "$base" ;;
     *)
-      echo "error: promote target must be beta|rc.1|rc.2|stable, got: '$target'" >&2; return 1 ;;
+      echo "error: promote target must be alpha|beta|rc.1|rc.2|stable, got: '$target'" >&2; return 1 ;;
   esac
 }
 

@@ -11,9 +11,13 @@
 #   ./scripts/prepare-release.sh --promote rc.1
 #   ./scripts/prepare-release.sh --version 0.3.0-beta.1
 #
+# It cuts only on the version's branch (docs/release.md#branches): main for
+# X.Y.0-alpha.N, release/X.Y for the rest of the X.Y line. It fetches origin's
+# tags first and refuses a branch that is behind origin.
+#
 # Options:
 #   --bump patch|minor|major       compute the next version from info.xml
-#   --promote beta|rc.1|rc.2|stable advance along the prerelease ladder
+#   --promote alpha|beta|rc.1|rc.2|stable advance along the prerelease ladder
 #   --version X.Y.Z[-pre]          set an explicit target version
 #   --date YYYY-MM-DD              changelog date (default: today)
 #   --allow-empty-changelog        release even with no changelog.d fragments
@@ -80,13 +84,13 @@ main() {
       read -r -p "Choose a bump [patch/minor/major] (or a version, q to quit): " choice \
         || { echo; die "no choice given"; }
     else
-      read -r -p "Advance [beta/rc.1/rc.2/stable] (or a version, q to quit): " choice \
+      read -r -p "Advance [alpha/beta/rc.1/rc.2/stable] (or a version, q to quit): " choice \
         || { echo; die "no choice given"; }
     fi
     case "$choice" in
       q|Q|quit|"")            echo "Aborted — nothing changed."; return 0 ;;
       patch|minor|major)      mode="bump"; arg="$choice" ;;
-      beta|rc.1|rc.2|stable)  mode="promote"; arg="$choice" ;;
+      alpha|beta|rc.1|rc.2|stable)  mode="promote"; arg="$choice" ;;
       *)
         if rv_validate "$choice" >/dev/null 2>&1; then mode="version"; arg="$choice"
         else die "invalid choice: '$choice'"; fi
@@ -124,20 +128,63 @@ main() {
       || die "appinfo/info.xml is not well-formed"
   fi
 
-  # Tag must not already exist.
-  git -C "$root" rev-parse -q --verify "refs/tags/v$target" >/dev/null 2>&1 \
-    && die "tag v$target already exists"
+  local branch want
+  branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" \
+    || die "HEAD is detached; check out the branch v$target is cut on first"
 
-  # Target must be greater than the latest conforming release tag.
+  # Fetch origin first: the checks below must see every tag, including one cut
+  # in parallel elsewhere, and the branch must not be behind origin's.
+  if git -C "$root" remote get-url origin >/dev/null 2>&1; then
+    git -C "$root" fetch --quiet --tags origin \
+      || die "could not fetch tags from origin; the version check needs them"
+    if git -C "$root" rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null \
+       && ! git -C "$root" merge-base --is-ancestor "origin/$branch" HEAD; then
+      die "$branch is behind origin/$branch; pull it first"
+    fi
+  else
+    echo "warning: no origin remote; checking the version against local tags only" >&2
+  fi
+
+  # The latest release tag in the target's own X.Y line. Lines move
+  # independently: 0.2.2 ships after 0.3.0-alpha.1.
   local latest="" t v
   while IFS= read -r t; do
     [[ -n "$t" ]] || continue
     v="${t#v}"
     rv_validate "$v" >/dev/null 2>&1 || continue
+    rv_same_line "$v" "$target" || continue
     if [[ -z "$latest" ]] || rv_gt "$v" "$latest"; then latest="$v"; fi
   done < <(git -C "$root" tag --list 'v*')
+
+  # Cut on the version's branch (docs/release.md#branches).
+  want="$(rv_release_branch "$target")"
+  if [[ "$branch" != "$want" ]]; then
+    if [[ "$want" == release/* ]] \
+       && ! git -C "$root" rev-parse -q --verify "refs/heads/$want" >/dev/null \
+       && ! git -C "$root" rev-parse -q --verify "refs/remotes/origin/$want" >/dev/null; then
+      # A line that has shipped is branched from its last release, so a patch
+      # carries only cherry-picked fixes; one that hasn't, from main at its
+      # first beta.
+      if [[ -n "$latest" && "$(rv_parse "$latest" | awk '{print $4}')" == "" ]]; then
+        die "v$target is cut on $want, which doesn't exist yet; branch it from the line's last release: git switch -c $want v$latest"
+      fi
+      die "v$target is cut on $want, which doesn't exist yet; branch it from main at the first beta: git switch -c $want main"
+    fi
+    die "v$target is cut on $want, not $branch; git switch $want (see docs/release.md#branches)"
+  fi
+
+  # Tag must not already exist.
+  git -C "$root" rev-parse -q --verify "refs/tags/v$target" >/dev/null 2>&1 \
+    && die "tag v$target already exists"
+
+  # Target must be greater than the latest release tag in its line, and than
+  # the branch's own version: main carries the version it is developing, above
+  # everything shipped, so this also stops an alpha on main going backwards.
   if [[ -n "$latest" ]] && ! rv_gt "$target" "$latest"; then
-    die "target $target is not greater than latest release tag v$latest"
+    die "target $target is not greater than v$latest, the latest release tag in its line"
+  fi
+  if ! rv_gt "$target" "$current"; then
+    die "target $target is not greater than $branch's version $current (appinfo/info.xml)"
   fi
 
   # Fragment presence (unless explicitly allowed to be empty).
@@ -179,8 +226,7 @@ main() {
     echo "Created tag:    v$target"
   fi
 
-  local branch push_ref
-  branch="$(git -C "$root" rev-parse --abbrev-ref HEAD)"
+  local push_ref
   push_ref="$branch"
   [[ "$make_tag" -eq 1 ]] && push_ref="$branch v$target"
 
@@ -188,15 +234,17 @@ main() {
   echo "Release notes: ${notes_file#"$root"/}"
   if [[ "$do_push" -eq 1 ]]; then
     echo "Pushing to origin: $push_ref"
+    # --atomic: if the branch is rejected (someone pushed meanwhile), the tag
+    # must not land either — the tag alone would publish the release images.
     # shellcheck disable=SC2086  # push_ref is intentionally branch + tag (two args).
-    git -C "$root" push origin $push_ref
+    git -C "$root" push --atomic origin $push_ref
     echo "Pushed. The tag push triggers the image build and the release workflow."
   else
     cat <<EOF
 
 Nothing has been pushed. Review the commit, then push intentionally:
   git show
-  git push origin ${push_ref}
+  git push --atomic origin ${push_ref}
 EOF
   fi
 }
