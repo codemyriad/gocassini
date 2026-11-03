@@ -74,8 +74,8 @@ export function isLocalEndpoint(baseUrl: string): boolean {
 }
 
 // What Settings says about the summary step's cost, for the chosen provider.
-export function summaryStepCostText(providerName: string, baseUrl: string): string {
+export function summaryStepLead(providerName: string, baseUrl: string): string {
   return isLocalEndpoint(baseUrl)
-    ? `${providerName} runs on your own network.`
-    : `${providerName} is an external service, which may bill for each call.`;
+    ? `Sends each transcript to ${providerName} on your own network. One request per meeting.`
+    : `Sends each transcript to ${providerName}. One request per meeting, which it may bill.`;
 }

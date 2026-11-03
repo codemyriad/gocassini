@@ -7,6 +7,8 @@
 
   export let search: (query: string) => Promise<ImportSharee[]>;
   export let placeholder = "Add a person or group…";
+  // Fill the container's width instead of the fixed inline size.
+  export let wide = false;
 
   const dispatch = createEventDispatcher<{ pick: ImportSharee }>();
 
@@ -64,15 +66,17 @@
   });
 </script>
 
-<div class="sharee-picker">
+<div class="sharee-picker" class:sharee-picker-wide={wide}>
   <input
     type="text"
-    class="input input-sm input-bordered w-52 max-w-full"
+    class="input input-sm input-bordered max-w-full {wide ? 'w-full' : 'w-52'}"
     {placeholder}
     bind:value={query}
     on:input={handleInput}
     on:keydown={(event) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && open) {
+        // Closes the results only, not the sheet around the picker.
+        event.preventDefault();
         open = false;
       } else if (event.key === "Enter" && results.length > 0) {
         event.preventDefault();
@@ -110,6 +114,9 @@
   .sharee-picker {
     position: relative;
     display: inline-block;
+  }
+  .sharee-picker-wide {
+    display: block;
   }
   .sharee-results {
     position: absolute;
