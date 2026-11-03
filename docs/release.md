@@ -64,6 +64,35 @@ Neither needs a branch of its own.
 - **While on 0.x**, semver lets any minor break things. Name breaking changes
   in the changelog anyway, so the habit is in place by 1.0.
 
+### Main's version
+
+`appinfo/info.xml` `<version>` is the version Nextcloud registers for a build,
+and it only accepts an update to a higher one. Releases cut on a release branch
+bump it there, not on main, so main always carries **the version it is
+developing**, above everything shipped: the next minor's `X.Y.0-alpha.0`. That
+version is never tagged or published; `alpha.0` sits below any real alpha, so it
+never collides with one.
+
+The sync to main after each branch release (see [Cut a release](#cut-a-release))
+moves main's version when it isn't already above the release:
+
+| Just shipped | Main before | Main after |
+|---|---|---|
+| `0.2.1` on `release/0.2` | `0.2.0` | `0.3.0-alpha.0` |
+| `0.2.2` on `release/0.2` | `0.3.0-alpha.0` | unchanged |
+| `0.3.0-beta.1`, the first cut on `release/0.3` | `0.3.0-alpha.2` | `0.4.0-alpha.0` |
+| `0.3.1` on `release/0.3` | `0.4.0-alpha.1` | unchanged |
+
+So a main build (`:latest`, `sha-…`) always reports a version above
+production's and reads as a development build. The first alpha of that version
+is cut from it with `--promote alpha` (`0.3.0-alpha.0 → 0.3.0-alpha.1`), or
+`--bump major` if main turned out to be breaking.
+
+Main's `<image-tag>` follows `<version>`, so main's manifest names an image that
+is never published. Installing from main means building that image yourself:
+the harness's `--build` mode does this (and its default `reuse-local` reuses
+that build); its `pull` mode works only on a release tag's checkout.
+
 ## Cut a release
 
 One guided command, run on the version's `release/X.Y` branch (see
@@ -97,6 +126,23 @@ Cut v0.2.1 and push it? [y/N] y
 
 Then approve the `release` deployment in **Actions** (one click) — that signs the
 package, creates the GitHub release, and publishes to the App Store.
+
+**After a release cut on `release/X.Y`, bring it back to main.** The cut folded
+the branch's fragments, deleted them and bumped `info.xml`, all on the release
+branch. The fixes were cherry-picked from main, so main still holds the same
+fragments: left alone, they would be released again in the next minor's notes,
+and main would report a version below what shipped. On a branch from main:
+
+```bash
+git switch -c chore/sync-0.2.1-to-main origin/main
+./scripts/sync-release-to-main.sh --version 0.2.1
+git push -u origin chore/sync-0.2.1-to-main   # then open a PR to main
+```
+
+It adds the tagged `## [0.2.1]` section to `CHANGELOG.md` in version order,
+deletes the fragments that release consumed, and moves main's version above the
+release when needed (see [Main's version](#mains-version)). `prepare-release.sh`
+prints these commands after a cut on a release branch.
 
 **Non-interactive** (scripting) — pass the choice; drop `--push` to stay local:
 
@@ -160,7 +206,9 @@ to its tested manifest.
 Changes are captured per-PR as fragments in
 [`changelog.d/`](../changelog.d/README.md), not by editing `CHANGELOG.md`.
 `prepare-release.sh` folds them in at release time; a malformed fragment fails
-the fold before anything is committed.
+the fold before anything is committed. A release cut on a release branch folds
+the branch's copies; `sync-release-to-main.sh` then removes them from main
+(see [Cut a release](#cut-a-release)).
 
 ## The `release` environment (one-time setup)
 

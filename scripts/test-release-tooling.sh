@@ -394,6 +394,89 @@ rm -rf "$BARE" "$OTHER"
 
 rm -rf "$PR"
 
+echo "sync-release-to-main.sh — a branch release back to main"
+SY="$(mktemp -d)"
+git -C "$SY" init -q -b main
+git -C "$SY" config user.email t@t
+git -C "$SY" config user.name t
+mkdir -p "$SY/scripts" "$SY/appinfo" "$SY/changelog.d"
+cp "$SCRIPT_DIR"/{lib-release-version.sh,fold-changelog.sh,extract-release-notes.sh,prepare-release.sh,sync-release-to-main.sh} "$SY/scripts/"
+printf '<?xml version="1.0"?>\n<info><version>0.2.0</version><external-app><docker-install><image-tag>0.2.0</image-tag></docker-install></external-app></info>\n' > "$SY/appinfo/info.xml"
+printf '# Changelog\n\n## [Unreleased]\n\n## [0.2.0] - 2026-10-13\n\n### Added\n- Initial.\n' > "$SY/CHANGELOG.md"
+printf '# Fragments\n' > "$SY/changelog.d/README.md"
+git -C "$SY" add -A; git -C "$SY" commit -qm init; git -C "$SY" tag v0.2.0
+# commit_frag <name> <entry> — commit one fragment on the current branch.
+commit_frag() { printf '### Fixed\n- %s\n' "$2" > "$SY/changelog.d/$1"; git -C "$SY" add -A; git -C "$SY" commit -qm "$1"; }
+sy_prep() { ( cd "$SY" && ./scripts/prepare-release.sh "$@" ) >/dev/null 2>&1; }
+sync_cl() { ( cd "$SY" && ./scripts/sync-release-to-main.sh "$@" ) 2>&1; }
+
+# main: a feature ships in 0.3.0-alpha.1, then a fix lands and is cherry-picked
+# onto release/0.2 next to a fix written on the branch only; 0.2.1 is cut there.
+commit_frag 70.feature.md "A feature."
+sy_prep --bump minor
+commit_frag 60.fix.md "A fix from main."
+fix="$(git -C "$SY" rev-parse HEAD)"
+git -C "$SY" switch -q -c release/0.2 v0.2.0
+git -C "$SY" cherry-pick -x "$fix" >/dev/null
+commit_frag 65.branch-only.md "A fix only on the branch."
+hint="$( cd "$SY" && ./scripts/prepare-release.sh --bump patch 2>&1 )"
+if grep -qF "sync-release-to-main.sh --version 0.2.1" <<<"$hint"; then ok "a cut on a release branch prints the sync step"; else bad "prepare-release should print the sync step (got: $hint)"; fi
+hint="$( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.2 --allow-empty-changelog --no-tag 2>&1 )"
+if grep -qF "sync-release-to-main" <<<"$hint"; then bad "an untagged cut should not print the sync step"; else ok "an untagged cut prints no sync step"; fi
+git -C "$SY" reset -q --hard HEAD~1
+git -C "$SY" switch -q main
+
+out="$(sync_cl --version 0.2.1)"
+cl="$SY/CHANGELOG.md"
+if grep -qF "## [0.2.1]" "$cl"; then ok "sync adds the release's section to main"; else bad "sync should add the 0.2.1 section (got: $out)"; fi
+order="$(grep -o '^## \[[^]]*\]' "$cl" | tr '\n' ' ')"
+eq "sections in version order" "## [Unreleased] ## [0.3.0-alpha.1] ## [0.2.1] ## [0.2.0] " "$order"
+if awk '/^## \[0.2.1\]/{s=1;next} /^## \[/{s=0} s' "$cl" | grep -qF -- "- A fix only on the branch."; then ok "section copied as tagged, entries included"; else bad "section should carry the release's entries"; fi
+if [[ ! -e "$SY/changelog.d/60.fix.md" ]]; then ok "sync removes the released fragment from main"; else bad "sync should remove 60.fix.md"; fi
+if grep -qF "65.branch-only.md is not on this branch" <<<"$out"; then ok "sync names a fragment written only on the release branch"; else bad "sync should note the branch-only fragment (got: $out)"; fi
+eq "sync commits once" "chore(release): bring 0.2.1 back to main" "$(git -C "$SY" log -1 --format=%s)"
+eq "main already above 0.2.1 keeps its version" "0.3.0-alpha.1" "$(rv_read_version "$SY/appinfo/info.xml")"
+if git -C "$SY" diff --quiet HEAD; then ok "worktree clean after sync"; else bad "worktree should be clean after sync"; fi
+eq "CHANGELOG.md keeps its mode" "$(stat -c %a "$SY/appinfo/info.xml")" "$(stat -c %a "$cl")"
+
+out="$(sync_cl --version 0.2.1 || true)"
+if grep -qF "main already has everything from 0.2.1" <<<"$out"; then ok "sync refuses a release already on main"; else bad "sync should refuse a second run (got: $out)"; fi
+
+# The first beta of 0.3 on a new release/0.3, with nothing folded: main's
+# version moves above it, to the untagged next minor.
+git -C "$SY" switch -q -c release/0.3 main
+( cd "$SY" && ./scripts/prepare-release.sh --promote beta --allow-empty-changelog ) >/dev/null 2>&1
+git -C "$SY" switch -q main
+out="$(sync_cl --version 0.3.0-beta.1)"
+eq "main moves to the next minor's alpha.0" "0.4.0-alpha.0" "$(rv_read_version "$SY/appinfo/info.xml")"
+if grep -qF "has no 0.3.0-beta.1 section" <<<"$out"; then ok "sync notes a release with no changelog section"; else bad "sync should note the missing section (got: $out)"; fi
+if ! grep -qF "## [0.3.0-beta.1]" "$cl"; then ok "no section invented for an empty release"; else bad "sync should not add an empty section"; fi
+# A section header with no entries is an extraction failure, not "no
+# section": the sync stops before touching main's fragments.
+git -C "$SY" switch -q release/0.2
+printf '### Fixed\n- Another.\n' > "$SY/changelog.d/66.next.md"
+git -C "$SY" add -A; git -C "$SY" commit -qm next
+( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.2 ) >/dev/null 2>&1
+git -C "$SY" tag -d v0.2.2 >/dev/null
+awk '/^## \[0.2.2\]/{print; skip=1; next} /^## \[/{skip=0} !skip' "$SY/CHANGELOG.md" > "$SY/cl.tmp" && mv "$SY/cl.tmp" "$SY/CHANGELOG.md"
+git -C "$SY" commit -q --amend -a --no-edit; git -C "$SY" tag v0.2.2
+git -C "$SY" switch -q main
+before="$(git -C "$SY" rev-parse HEAD)"
+out="$(sync_cl --version 0.2.2 || true)"
+if grep -qF "could not extract the 0.2.2 section" <<<"$out" && [[ "$(git -C "$SY" rev-parse HEAD)" == "$before" ]] && git -C "$SY" diff --quiet HEAD; then
+  ok "sync stops on a section it can't extract, changing nothing"
+else
+  bad "sync should stop on an empty 0.2.2 section (got: $out)"
+fi
+git -C "$SY" reset -q --hard
+
+out="$(sync_cl --version 0.3.0-alpha.1 || true)"
+if grep -qF "cut on main" <<<"$out"; then ok "sync refuses a release cut on main"; else bad "sync should refuse a main release (got: $out)"; fi
+git -C "$SY" switch -q release/0.2
+out="$(sync_cl --version 0.2.1 || true)"
+if grep -qF "not release/0.2" <<<"$out"; then ok "sync refuses to run on a release branch"; else bad "sync should refuse release/0.2 (got: $out)"; fi
+rm -rf "$SY"
+
 echo "build/validate-appstore-tarball.sh — packaging"
 # Build against the real repo's source files, writing only into a temp dir.
 SRCV="$(rv_read_version "$(git rev-parse --show-toplevel)/appinfo/info.xml")"
