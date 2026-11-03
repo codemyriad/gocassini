@@ -36,13 +36,13 @@ EOF
 # report <from> <to>: summarize the edit and print the release follow-up.
 report() {
   local from="$1" to="$2" branch
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '<branch>')"
+  branch="$(rv_release_branch "$to")"
   echo "appinfo/info.xml: version ${from} -> ${to} (image-tag kept in lockstep)"
   echo
-  echo "Next steps (or run scripts/prepare-release.sh to do this for you):"
+  echo "Next steps, on ${branch} (or run scripts/prepare-release.sh, which checks them):"
   echo "  git commit -am \"release: ${to}\""
   echo "  git tag v${to}"
-  echo "  git push origin ${branch} v${to}"
+  echo "  git push --atomic origin ${branch} v${to}"
 }
 
 main() {

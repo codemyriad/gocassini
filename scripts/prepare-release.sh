@@ -128,21 +128,11 @@ main() {
       || die "appinfo/info.xml is not well-formed"
   fi
 
-  # Cut on the version's branch (docs/release.md#branches).
   local branch want
   branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" \
     || die "HEAD is detached; check out the branch v$target is cut on first"
-  want="$(rv_release_branch "$target")"
-  if [[ "$branch" != "$want" ]]; then
-    if [[ "$want" == release/* ]] \
-       && ! git -C "$root" rev-parse -q --verify "refs/heads/$want" >/dev/null \
-       && ! git -C "$root" rev-parse -q --verify "refs/remotes/origin/$want" >/dev/null; then
-      die "v$target is cut on $want, which doesn't exist yet; branch it from main at the first beta: git switch -c $want main"
-    fi
-    die "v$target is cut on $want, not $branch; git switch $want (see docs/release.md#branches)"
-  fi
 
-  # Fetch origin: the version check below must see every tag, including one cut
+  # Fetch origin first: the checks below must see every tag, including one cut
   # in parallel elsewhere, and the branch must not be behind origin's.
   if git -C "$root" remote get-url origin >/dev/null 2>&1; then
     git -C "$root" fetch --quiet --tags origin \
@@ -155,12 +145,8 @@ main() {
     echo "warning: no origin remote; checking the version against local tags only" >&2
   fi
 
-  # Tag must not already exist.
-  git -C "$root" rev-parse -q --verify "refs/tags/v$target" >/dev/null 2>&1 \
-    && die "tag v$target already exists"
-
-  # Target must be greater than the latest release tag in its own X.Y line.
-  # Lines move independently: 0.2.2 ships after 0.3.0-alpha.1.
+  # The latest release tag in the target's own X.Y line. Lines move
+  # independently: 0.2.2 ships after 0.3.0-alpha.1.
   local latest="" t v
   while IFS= read -r t; do
     [[ -n "$t" ]] || continue
@@ -169,8 +155,36 @@ main() {
     rv_same_line "$v" "$target" || continue
     if [[ -z "$latest" ]] || rv_gt "$v" "$latest"; then latest="$v"; fi
   done < <(git -C "$root" tag --list 'v*')
+
+  # Cut on the version's branch (docs/release.md#branches).
+  want="$(rv_release_branch "$target")"
+  if [[ "$branch" != "$want" ]]; then
+    if [[ "$want" == release/* ]] \
+       && ! git -C "$root" rev-parse -q --verify "refs/heads/$want" >/dev/null \
+       && ! git -C "$root" rev-parse -q --verify "refs/remotes/origin/$want" >/dev/null; then
+      # A line that has shipped is branched from its last release, so a patch
+      # carries only cherry-picked fixes; one that hasn't, from main at its
+      # first beta.
+      if [[ -n "$latest" && "$(rv_parse "$latest" | awk '{print $4}')" == "" ]]; then
+        die "v$target is cut on $want, which doesn't exist yet; branch it from the line's last release: git switch -c $want v$latest"
+      fi
+      die "v$target is cut on $want, which doesn't exist yet; branch it from main at the first beta: git switch -c $want main"
+    fi
+    die "v$target is cut on $want, not $branch; git switch $want (see docs/release.md#branches)"
+  fi
+
+  # Tag must not already exist.
+  git -C "$root" rev-parse -q --verify "refs/tags/v$target" >/dev/null 2>&1 \
+    && die "tag v$target already exists"
+
+  # Target must be greater than the latest release tag in its line, and than
+  # the branch's own version: main carries the version it is developing, above
+  # everything shipped, so this also stops an alpha on main going backwards.
   if [[ -n "$latest" ]] && ! rv_gt "$target" "$latest"; then
     die "target $target is not greater than v$latest, the latest release tag in its line"
+  fi
+  if ! rv_gt "$target" "$current"; then
+    die "target $target is not greater than $branch's version $current (appinfo/info.xml)"
   fi
 
   # Fragment presence (unless explicitly allowed to be empty).

@@ -337,9 +337,13 @@ git -C "$PR" tag -d v0.3.0-alpha.3 >/dev/null
 
 # Each version is cut on its own branch (docs/release.md#branches).
 out="$(prep --version 0.2.1 --allow-empty-changelog 2>&1 || true)"
-if grep -qF "cut on release/0.2, which doesn't exist yet" <<<"$out"; then ok "prepare-release refuses a patch on main and says how to create the release branch"; else bad "prepare-release should refuse a patch on main (got: $out)"; fi
+if grep -qF "branch it from the line's last release: git switch -c release/0.2 v0.2.0" <<<"$out"; then ok "prepare-release refuses a patch on main and says to branch from the last release"; else bad "prepare-release should refuse a patch on main (got: $out)"; fi
 out="$(prep --promote beta --allow-empty-changelog 2>&1 || true)"
 if grep -qF "git switch -c release/0.3 main" <<<"$out"; then ok "prepare-release refuses the first beta on main"; else bad "prepare-release should refuse a beta on main (got: $out)"; fi
+( cd "$PR" && ./scripts/release-version.sh set 0.4.0-alpha.0 >/dev/null ) && git -C "$PR" commit -qam "main develops 0.4.0"
+out="$(prep --version 0.3.0-alpha.2 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "not greater than main's version 0.4.0-alpha.0" <<<"$out"; then ok "prepare-release refuses an alpha on main below main's version"; else bad "prepare-release should refuse 0.3.0-alpha.2 below main's 0.4.0-alpha.0 (got: $out)"; fi
+git -C "$PR" reset -q --hard HEAD~1
 
 # A patch on an older line ships after the next minor's alpha: the version is
 # checked against its own X.Y line only.
