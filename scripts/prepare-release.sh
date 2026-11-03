@@ -220,15 +220,17 @@ main() {
   echo "Release notes: ${notes_file#"$root"/}"
   if [[ "$do_push" -eq 1 ]]; then
     echo "Pushing to origin: $push_ref"
+    # --atomic: if the branch is rejected (someone pushed meanwhile), the tag
+    # must not land either — the tag alone would publish the release images.
     # shellcheck disable=SC2086  # push_ref is intentionally branch + tag (two args).
-    git -C "$root" push origin $push_ref
+    git -C "$root" push --atomic origin $push_ref
     echo "Pushed. The tag push triggers the image build and the release workflow."
   else
     cat <<EOF
 
 Nothing has been pushed. Review the commit, then push intentionally:
   git show
-  git push origin ${push_ref}
+  git push --atomic origin ${push_ref}
 EOF
   fi
 }

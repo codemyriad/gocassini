@@ -22,6 +22,7 @@ source "$SCRIPT_DIR/lib-release-version.sh"
 
 info_xml="$(rv_info_xml)"
 current="$(rv_read_version "$info_xml")"
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
 
 echo "Current version: $current"
 echo
@@ -42,7 +43,11 @@ if [[ -z "$pretype" ]]; then
   printf '  %-6s → %-16s %-36s on %s\n' major "$(rv_bump major "$current")" "breaking changes" main
   if [[ -z "${RELEASE_PREVIEW_NO_HINT:-}" ]]; then
     echo
-    echo "Then:  ./scripts/prepare-release.sh --bump <patch|minor|major> --push"
+    case "$branch" in
+      release/*) echo "Then:  ./scripts/prepare-release.sh --bump patch --push" ;;
+      main)      echo "Then:  ./scripts/prepare-release.sh --bump <minor|major> --push   (a patch is cut on its release branch)" ;;
+      *)         echo "Then:  ./scripts/prepare-release.sh --bump <patch|minor|major> --push   (on the branch shown above)" ;;
+    esac
   fi
 else
   base="${_maj}.${_min}.${_pat}"
@@ -60,6 +65,14 @@ else
   echo "  or jump to any explicit target with --version (skip stages), e.g."
   echo "     --version ${base}        # straight to stable, no more prereleases"
   echo "     --version ${base}-rc.1   # skip ahead to a candidate"
+  # On main, a line whose betas have started lives on release/X.Y; the only
+  # move left on main is the next minor's first alpha.
+  if [[ "$branch" == main ]] && { [[ "$pretype" != alpha ]] \
+       || git rev-parse -q --verify "refs/heads/release/${_maj}.${_min}" >/dev/null \
+       || git rev-parse -q --verify "refs/remotes/origin/release/${_maj}.${_min}" >/dev/null; }; then
+    echo "  release/${_maj}.${_min} carries this line; on main, start the next one:"
+    printf '  %-14s → %s\n' "bump minor" "$(rv_bump minor "$current")"
+  fi
   if [[ -z "${RELEASE_PREVIEW_NO_HINT:-}" ]]; then
     echo
     echo "Then:  ./scripts/prepare-release.sh --promote <target> --push"

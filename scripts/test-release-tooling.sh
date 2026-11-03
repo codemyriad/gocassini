@@ -324,7 +324,12 @@ if [[ -z "$(git -C "$PR" remote)" ]]; then ok "prepare-release added no remote /
 if git -C "$PR" diff --quiet && git -C "$PR" diff --cached --quiet; then ok "worktree clean after prepare-release"; else bad "worktree should be clean after commit"; fi
 
 # Re-running for a non-greater version is rejected (tag collision / ordering).
-if prep --version 0.3.0-alpha.1 --allow-empty-changelog >/dev/null 2>&1; then bad "prepare-release should reject a non-greater version"; else ok "prepare-release rejects non-greater version"; fi
+out="$(prep --version 0.3.0-alpha.1 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "tag v0.3.0-alpha.1 already exists" <<<"$out"; then ok "prepare-release rejects an existing tag"; else bad "prepare-release should reject an existing tag (got: $out)"; fi
+git -C "$PR" tag v0.3.0-alpha.3
+out="$(prep --version 0.3.0-alpha.2 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "not greater than v0.3.0-alpha.3, the latest release tag in its line" <<<"$out"; then ok "prepare-release rejects a version below its line's latest tag"; else bad "prepare-release should reject 0.3.0-alpha.2 after v0.3.0-alpha.3 (got: $out)"; fi
+git -C "$PR" tag -d v0.3.0-alpha.3 >/dev/null
 
 # Each version is cut on its own branch (docs/release.md#branches).
 out="$(prep --version 0.2.1 --allow-empty-changelog 2>&1 || true)"
@@ -340,6 +345,8 @@ git -C "$PR" add -A; git -C "$PR" commit -qm fix
 if prep --bump patch >/dev/null 2>&1; then ok "prepare-release cuts 0.2.1 on release/0.2 after 0.3.0-alpha.1"; else bad "prepare-release should cut 0.2.1 on release/0.2"; fi
 eq "patch goes straight to stable" "0.2.1" "$(rv_read_version "$PR/appinfo/info.xml")"
 if git -C "$PR" rev-parse -q --verify refs/tags/v0.2.1 >/dev/null; then ok "tag v0.2.1 created"; else bad "tag v0.2.1 should be created"; fi
+out="$(prep --version 0.2.0-rc.1 --allow-empty-changelog 2>&1 || true)"
+if grep -qF "not greater than v0.2.1, the latest release tag in its line" <<<"$out"; then ok "prepare-release rejects 0.2.0-rc.1 after v0.2.1 on its line"; else bad "prepare-release should reject 0.2.0-rc.1 after v0.2.1 (got: $out)"; fi
 out="$(prep --version 0.3.0-alpha.2 --allow-empty-changelog 2>&1 || true)"
 if grep -qF "cut on main, not release/0.2" <<<"$out"; then ok "prepare-release refuses an alpha on a release branch"; else bad "prepare-release should refuse an alpha on release/0.2 (got: $out)"; fi
 git -C "$PR" switch -q --detach
@@ -573,6 +580,11 @@ if grep -qF "promote rc.1" <<<"$pp" && grep -qF "0.3.0-rc.1" <<<"$pp" && grep -q
   ok "release-preview shows promote + explicit-jump options on a prerelease"
 else
   bad "release-preview should show promote/jump options on a prerelease"
+fi
+if grep -qE "bump minor +→ 0\.4\.0-alpha\.1" <<<"$pp"; then
+  ok "release-preview on main past alpha offers the next minor's alpha"
+else
+  bad "release-preview on main past alpha should offer bump minor"
 fi
 rm -rf "$PV"
 
