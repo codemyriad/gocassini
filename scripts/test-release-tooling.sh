@@ -144,6 +144,7 @@ if ! out="$(crm)" && grep -qF "$MD/0002_backport.up.sql" <<<"$out"; then ok "che
 git -C "$MR" rm -q "$MD/0002_backport.up.sql"; echo "SELECT 3;" >>"$MR/$MD/0001_first.up.sql"
 git -C "$MR" add -A; git -C "$MR" commit -qm "an edited migration"
 if ! out="$(crm)" && grep -qF "$MD/0001_first.up.sql" <<<"$out"; then ok "check-release-migrations refuses an edited migration"; else bad "check-release-migrations should refuse an edited migration (got: $out)"; fi
+if ! out="$(cd "$MR" && GITHUB_ACTIONS='' "$SCRIPT_DIR/check-release-migrations.sh" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 2>&1)" && grep -qF "is not a commit in this checkout" <<<"$out"; then ok "check-release-migrations refuses a base it can't resolve"; else bad "check-release-migrations should refuse an unknown base (got: $out)"; fi
 rm -rf "$MR"
 
 echo "rv_same_line — MAJOR.MINOR"

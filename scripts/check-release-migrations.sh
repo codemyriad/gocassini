@@ -25,15 +25,22 @@ head="${2:-HEAD}"
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+die() {
+  if [[ "${GITHUB_ACTIONS:-}" == true ]]; then echo "::error::$*" >&2; else echo "error: $*" >&2; fi
+  exit 1
+}
+
+# A base git can't resolve would make the diff fail, and a failed diff must not
+# read as "nothing changed".
+git rev-parse -q --verify "$base^{commit}" >/dev/null || die "base $base is not a commit in this checkout"
+diff="$(git diff --name-only "$base...$head" -- "$MIGRATIONS_DIR")"
 # The README documents how migrations work; editing it changes no schema.
-mapfile -t changed < <(git diff --name-only "$base...$head" -- "$MIGRATIONS_DIR" | grep -v "^$MIGRATIONS_DIR/README.md$" || true)
+mapfile -t changed < <(grep -v -e "^$MIGRATIONS_DIR/README.md$" -e '^$' <<<"$diff" || true)
 
 if [[ "${#changed[@]}" -eq 0 ]]; then
   echo "no operator migrations changed"
   exit 0
 fi
 
-msg="release branches take no operator migrations: a schema change ships in the next minor (docs/release.md#branches)"
-if [[ "${GITHUB_ACTIONS:-}" == true ]]; then echo "::error::$msg" >&2; else echo "error: $msg" >&2; fi
 printf '  %s\n' "${changed[@]}" >&2
-exit 1
+die "release branches take no operator migrations: a schema change ships in the next minor (docs/release.md#branches)"

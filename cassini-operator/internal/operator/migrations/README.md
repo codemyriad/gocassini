@@ -19,5 +19,5 @@ migrations under the old numbers must be recreated: the operator will refuse to
 start on it.
 
 Migrations land on `main` only. A release branch takes none, even as a
-backport, and lint refuses one there: see the release branches section of
+backport, and lint fails on one there: see the release branches section of
 `docs/release.md`.

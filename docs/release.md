@@ -31,8 +31,8 @@ with its `stableXX` branches.
   from a later main: keeping main's number leaves a gap the operator refuses to
   load, and taking the next free one strands the patch's installations, which
   then can't upgrade to the next minor. A fix that needs a schema change ships
-  in the next minor; if it can't wait, cut that minor sooner. Lint refuses a
-  change to a release branch that adds or edits a file under
+  in the next minor; if it can't wait, cut that minor sooner. Lint fails on a
+  change to a release branch that adds, edits or removes a file under
   `cassini-operator/internal/operator/migrations/`, including a backport PR.
 - **Only the latest `release/X.Y` gets fixes.** An older branch gets security
   fixes for as long as it is the newest Cassini release for a Nextcloud major
