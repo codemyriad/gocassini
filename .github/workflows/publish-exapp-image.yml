@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 'release/**'
     tags:
       - 'v*'
   pull_request:
@@ -170,6 +171,14 @@ jobs:
             fi
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: A release tag is on the branch its version is cut on
+        # Before any immutable :X.Y.Z image exists. A new tag only: a dispatch
+        # rebuilds an existing one, which may predate release branches.
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/check-tag-branch.sh "$VERSION" "$GITHUB_SHA"
 
   resolve-ffmpeg:
     name: Resolve FFmpeg version
@@ -180,7 +189,7 @@ jobs:
       version: ${{ steps.ffmpeg.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      # Only needed to read the label off the current main image on tag builds.
+      # Only needed to read the FFmpeg label off an earlier image on tag builds.
       - name: Log in to the container registry
         if: github.ref_type == 'tag'
         uses: docker/login-action@v3
@@ -197,40 +206,55 @@ jobs:
           # human is already looking.
           #
           # A release must not be the first place a given FFmpeg appears. Tag
-          # builds therefore inherit the version the current main image was
-          # built with, rather than resolving upstream again: a release
-          # published minutes after an upstream one would otherwise ship an
-          # FFmpeg no main build has ever gated, and rebuilding that tag later
-          # would produce a different binary. Pinning here also decouples
+          # builds therefore inherit an FFmpeg an earlier image was already
+          # built and gated with, rather than resolving upstream again: a
+          # release published minutes after an upstream one would otherwise
+          # ship an FFmpeg no build has ever gated, and rebuilding that tag
+          # later would produce a different binary. Pinning here also decouples
           # rollback — reverting a release no longer silently reverts FFmpeg
           # along with our code.
+          #
+          # The source, in order: for a tag cut on release/X.Y, the line's
+          # previous release (:X.Y.Z is kept forever, unlike branch images,
+          # which are pruned, and the branch's own image doesn't exist yet when
+          # it is pushed with its first beta); then main's current image.
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            main_image="${REGISTRY}/${IMAGE}:branch-main"
-            validated="$(docker buildx imagetools inspect "$main_image" \
-              --format '{{ json .Image }}' 2>/dev/null \
-              | jq -r '
-                  if .config? then
-                    .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty
-                  else
-                    [ .[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] ]
-                    | if length > 0 and all(. != null and . != "") and (unique | length == 1) then
-                        .[0]
-                      else
-                        empty
-                      end
-                  end
-                ' || true)"
-            case "${validated}" in
-              "" | latest | *[!0-9.]* | .* | *..* | *.)
-                echo "::warning::${main_image} carries no validated FFmpeg version" \
-                  "(got '${validated:-none}'); falling back to resolving upstream"
-                ;;
-              *)
-                echo "Pinning FFmpeg ${validated}, as already gated by the current main image"
-                echo "version=${validated}" >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-            esac
+            version="${GITHUB_REF_NAME#v}"
+            sources=()
+            if [[ "$(./scripts/release-version.sh branch "$version")" != main ]]; then
+              previous="$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/v||' \
+                | ./scripts/release-version.sh previous "$version")"
+              if [[ -n "$previous" ]]; then sources+=("${REGISTRY}/${IMAGE}:${previous}"); fi
+            fi
+            sources+=("${REGISTRY}/${IMAGE}:branch-main")
+            for source_image in "${sources[@]}"; do
+              validated="$(docker buildx imagetools inspect "$source_image" \
+                --format '{{ json .Image }}' 2>/dev/null \
+                | jq -r '
+                    if .config? then
+                      .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty
+                    else
+                      [ .[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] ]
+                      | if length > 0 and all(. != null and . != "") and (unique | length == 1) then
+                          .[0]
+                        else
+                          empty
+                        end
+                    end
+                  ' || true)"
+              case "${validated}" in
+                "" | latest | *[!0-9.]* | .* | *..* | *.)
+                  echo "::warning::${source_image} carries no validated FFmpeg version" \
+                    "(got '${validated:-none}'); trying the next source"
+                  ;;
+                *)
+                  echo "Pinning FFmpeg ${validated}, as already gated by ${source_image}"
+                  echo "version=${validated}" >> "$GITHUB_OUTPUT"
+                  exit 0
+                  ;;
+              esac
+            done
+            echo "::warning::no earlier image carries a validated FFmpeg version; falling back to resolving upstream"
           fi
           version=$(deployment/ffmpeg/resolve-latest.sh)
           echo "Resolved FFmpeg ${version} from ffmpeg.org"
@@ -277,11 +301,13 @@ jobs:
                 # git ref: validate-manifest guarantees the git tag is
                 # v<version> and that <image-tag> matches, so the published
                 # :X.Y.Z tag is exactly what a pinned AppAPI install pulls.
+                # A release never moves :latest: it tracks main (below), which
+                # staging and the canary pull, and a patch on an older line
+                # would otherwise point it back at that line.
                 VERSION="${{ needs.validate-manifest.outputs.app_version }}"
-                TAGS+=("${REF}:${VERSION}" "${REF}:latest")
+                TAGS+=("${REF}:${VERSION}")
                 for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
                   TAGS+=("${REF}:${VERSION}${suffix}")
-                  TAGS+=("${REF}:latest${suffix}")
                 done
               else
                 BRANCH="${GITHUB_REF##refs/heads/}"
@@ -874,9 +900,10 @@ jobs:
             push)
               if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
                 # Same source of truth as the CPU build: appinfo/info.xml
-                # <version>, validated against the git tag upstream.
+                # <version>, validated against the git tag upstream. Like
+                # :latest, :latest-cuda and :cuda track main only.
                 VERSION="${{ needs.validate-manifest.outputs.app_version }}"
-                TAGS+=("${REF}:${VERSION}-cuda" "${REF}:latest-cuda" "${REF}:cuda")
+                TAGS+=("${REF}:${VERSION}-cuda")
               else
                 BRANCH="${GITHUB_REF##refs/heads/}"
                 SAFE_BRANCH="$(printf '%s' "${BRANCH}" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"gocassini/internal/insight"
 	"gocassini/internal/portable"
@@ -1290,11 +1291,21 @@ func TestSpeakersApplyRewritesTheSummaryAndUndoRestoresIt(t *testing.T) {
 	if report.SummarySHA256 != want.SHA256 {
 		t.Errorf("report summarySha256 = %q, want the rewritten summary's %q", report.SummarySHA256, want.SHA256)
 	}
+	// The rewrite's model call is timed, so the run can tell it apart from
+	// the rest of the replay (D-899).
+	started, startErr := time.Parse(time.RFC3339Nano, report.SummaryStartedAt)
+	finished, finishErr := time.Parse(time.RFC3339Nano, report.SummaryFinishedAt)
+	if startErr != nil || finishErr != nil || finished.Before(started) {
+		t.Errorf("report summary times = %q..%q, want the rewrite bracketed", report.SummaryStartedAt, report.SummaryFinishedAt)
+	}
 
 	empty := writeSpeakersEdits(t, tmp, "empty.json", `{"format":"cassini.speaker-edits.v1","revision":2,"splits":[],"merges":[],"labels":[]}`)
 	report = speakersApplyOK(t, bundle, empty, turnsDir)
 	if report.Summary != "restored" || report.SummarySHA256 != "" {
 		t.Fatalf("summary after undo = %q (sha256 %q), want restored, the build's own", report.Summary, report.SummarySHA256)
+	}
+	if report.SummaryStartedAt != "" || report.SummaryFinishedAt != "" {
+		t.Errorf("an undo called no model, yet reports times %q..%q", report.SummaryStartedAt, report.SummaryFinishedAt)
 	}
 	if got, _ := os.ReadFile(filepath.Join(bundle, speakersSummaryFile)); !bytes.Equal(got, original) {
 		t.Errorf("summary.md after undo = %q, want the build's", got)
@@ -1649,6 +1660,11 @@ func TestSpeakersApplyARenameOnlyRelabelsTheOneTranscript(t *testing.T) {
 	want := speakersApplyReport{
 		Revision: 1, Splits: []speakersSplitReport{}, Missing: []string{}, Inconclusive: []string{},
 		SpeakerCount: 2, Summary: "regenerated", SummarySHA256: sha256Hex([]byte(rewritten)),
+		// Timed elsewhere; here only present.
+		SummaryStartedAt: report.SummaryStartedAt, SummaryFinishedAt: report.SummaryFinishedAt,
+	}
+	if report.SummaryStartedAt == "" || report.SummaryFinishedAt == "" {
+		t.Errorf("a rewrite reports no times: %+v", report)
 	}
 	if !reflect.DeepEqual(report, want) {
 		t.Errorf("report = %+v, want %+v", report, want)

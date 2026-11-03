@@ -189,7 +189,7 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 |---|---|---|
 | `--exapp-image-mode build` or `--build` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE=build` | Builds `deployment/Dockerfile.exapp` as `cassini-exapp:e2e-v3-cpu-gpu`, then tags it as the production image reference from `appinfo/info.xml`. |
 | `--exapp-image-mode reuse-local` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE=reuse-local` | Default. Reuses an existing local `cassini-exapp:e2e-v3-cpu-gpu` image and tags it as the production reference. Fails if the local image is missing. |
-| `--exapp-image-mode pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE=pull` | Leaves the `ghcr.io` image unmapped so AppAPI can pull the image declared by `appinfo/info.xml`. |
+| `--exapp-image-mode pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE=pull` | Leaves the `ghcr.io` image unmapped so AppAPI can pull the image declared by `appinfo/info.xml`. Only works on a release tag's checkout: main's manifest names its development version, which is never published ([Main's version](../docs/release.md#mains-version)), so on main build the image instead. |
 
 ### 2.7 Lifecycle modes
 
@@ -560,7 +560,8 @@ playback. See [recording permissions](../docs/exapp-nextcloud-recordings-permiss
 
 If you already have a suitable local ExApp image, omit `--build` and use the
 default `reuse-local` mode. If you want AppAPI to pull the manifest image, use
-`--exapp-image-mode pull`.
+`--exapp-image-mode pull` from a release tag's checkout; main's manifest image
+is never published, so on main use `--build`.
 
 ### 5.2 Docker Desktop for Mac runbook
 

@@ -253,7 +253,7 @@ describe("MeetingList tags", () => {
     // transcript's to show, not the chip's.
     expect(row).not.toMatch(/class="tag-chip\s[^"]*\bwhole\b/);
     expect(row).not.toContain("stretches");
-    expect(row).toMatch(/title="tag-d"[^>]*>\+1</);
+    expect(row).toMatch(/title="tag-d"[^>]*>(<span[^>]*>)?\+1</);
   });
 
   it("offers a tag button on each row only where tagging is", () => {

@@ -102,6 +102,18 @@ jobs:
       - name: Install xmllint
         run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends libxml2-utils
 
+      - name: Tag is on the branch its version is cut on
+        # A new tag only: a dispatch re-runs an existing one, which may predate
+        # release branches (v0.2.0 and its betas were cut on main).
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.v.outputs.version }}
+          COMMIT: ${{ steps.v.outputs.commit }}
+        # prepare-release.sh enforces this locally; this catches a tag made by
+        # hand. publish-exapp-image.yml runs the same check.
+        run: ./scripts/check-tag-branch.sh "$VERSION" "$COMMIT"
+
       - name: Manifest, tag and changelog agree with the version
         env:
           VERSION: ${{ steps.v.outputs.version }}

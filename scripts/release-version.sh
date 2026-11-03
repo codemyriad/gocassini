@@ -14,8 +14,10 @@
 # Usage:
 #   ./scripts/release-version.sh current
 #   ./scripts/release-version.sh bump patch|minor|major
-#   ./scripts/release-version.sh promote beta|rc.1|rc.2|stable
+#   ./scripts/release-version.sh promote alpha|beta|rc.1|rc.2|stable
 #   ./scripts/release-version.sh set X.Y.Z[-(alpha|beta|rc).N]
+#   ./scripts/release-version.sh branch X.Y.Z[-pre]   # the branch it is cut on
+#   ./scripts/release-version.sh previous X.Y.Z[-pre] <versions  # newest lower one in its line
 
 set -euo pipefail
 
@@ -28,21 +30,23 @@ usage() {
 Usage:
   ./scripts/release-version.sh current
   ./scripts/release-version.sh bump patch|minor|major
-  ./scripts/release-version.sh promote beta|rc.1|rc.2|stable
+  ./scripts/release-version.sh promote alpha|beta|rc.1|rc.2|stable
   ./scripts/release-version.sh set X.Y.Z[-(alpha|beta|rc).N]
+  ./scripts/release-version.sh branch X.Y.Z[-(alpha|beta|rc).N]
+  ./scripts/release-version.sh previous X.Y.Z[-(alpha|beta|rc).N] < versions
 EOF
 }
 
 # report <from> <to>: summarize the edit and print the release follow-up.
 report() {
   local from="$1" to="$2" branch
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '<branch>')"
+  branch="$(rv_release_branch "$to")"
   echo "appinfo/info.xml: version ${from} -> ${to} (image-tag kept in lockstep)"
   echo
-  echo "Next steps (or run scripts/prepare-release.sh to do this for you):"
+  echo "Next steps, on ${branch} (or run scripts/prepare-release.sh, which checks them):"
   echo "  git commit -am \"release: ${to}\""
   echo "  git tag v${to}"
-  echo "  git push origin ${branch} v${to}"
+  echo "  git push --atomic origin ${branch} v${to}"
 }
 
 main() {
@@ -61,7 +65,7 @@ main() {
       report "$current" "$next"
       ;;
     promote)
-      local target="${2:?usage: $0 promote beta|rc.1|rc.2|stable}"
+      local target="${2:?usage: $0 promote alpha|beta|rc.1|rc.2|stable}"
       current="$(rv_read_version "$info_xml")"
       next="$(rv_promote "$target" "$current")"
       rv_write_version "$info_xml" "$next"
@@ -77,6 +81,12 @@ main() {
       fi
       rv_write_version "$info_xml" "$explicit"
       report "$current" "$explicit"
+      ;;
+    branch)
+      rv_release_branch "${2:?usage: $0 branch X.Y.Z[-(alpha|beta|rc).N]}"
+      ;;
+    previous)
+      rv_previous_in_line "${2:?usage: $0 previous X.Y.Z[-(alpha|beta|rc).N] < versions}"
       ;;
     -h|--help|help|"")
       usage

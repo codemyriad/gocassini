@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // BuildConfig holds runtime options for the transcription pipeline.
@@ -1048,17 +1049,19 @@ func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Se
 	if fallback != "" {
 		fmt.Fprintf(stdout, "  warn: %s\n", fallback)
 	}
+	started := time.Now()
 	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, workflow, streams, segments)
+	finished := time.Now()
 	if err != nil {
 		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)
-		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}, insight.WorkflowRef{}, nil
+		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}.Timed(started, finished), insight.WorkflowRef{}, nil
 	}
 
 	summaryPath := filepath.Join(outputDir, "summary.md")
 	if err := os.WriteFile(summaryPath, []byte(body), 0o644); err != nil {
 		return portable.SummaryStatus{}, insight.WorkflowRef{}, fmt.Errorf("write summary: %w", err)
 	}
-	status := portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}
+	status := portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}.Timed(started, finished)
 	if fallback != "" {
 		status.Reason = portable.SummaryReasonTemplateFallback
 	}

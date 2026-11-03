@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	inspectpkg "gocassini/internal/inspect"
 	"gocassini/internal/portable"
@@ -100,8 +101,17 @@ func TestMeetingsSummarizeWritesASummaryIntoABundle(t *testing.T) {
 	if transcription, _ := processing["transcription"].(map[string]any); transcription["status"] != "completed" {
 		t.Errorf("transcription outcome changed: %v", processing)
 	}
-	if outcome, _ := processing["meetingSummary"].(map[string]any); outcome["status"] != "completed" || outcome["model"] != "test-summary-model" || outcome["reason"] != nil {
+	outcome, _ := processing["meetingSummary"].(map[string]any)
+	if outcome["status"] != "completed" || outcome["model"] != "test-summary-model" || outcome["reason"] != nil {
 		t.Errorf("processing.meetingSummary = %v, want completed by test-summary-model", outcome)
+	}
+	// The model call is timed, so the run can tell the summary's time (D-899).
+	startedAt, _ := outcome["startedAt"].(string)
+	finishedAt, _ := outcome["finishedAt"].(string)
+	started, startErr := time.Parse(time.RFC3339Nano, startedAt)
+	finished, finishErr := time.Parse(time.RFC3339Nano, finishedAt)
+	if startErr != nil || finishErr != nil || finished.Before(started) {
+		t.Errorf("processing.meetingSummary times = %q..%q, want the model call bracketed", startedAt, finishedAt)
 	}
 
 	// Sealed again, the meeting file carries the summary and its outcome.
@@ -130,7 +140,7 @@ func TestMeetingsSummarizeWritesASummaryIntoABundle(t *testing.T) {
 		t.Errorf("packed summary block = %v, want %+v", sealed.Summary, shipped)
 	}
 	if sealed.Processing == nil || sealed.Processing.MeetingSummary == nil ||
-		*sealed.Processing.MeetingSummary != (portable.SummaryStatus{Status: "completed", Model: "test-summary-model"}) {
+		*sealed.Processing.MeetingSummary != (portable.SummaryStatus{Status: "completed", Model: "test-summary-model", StartedAt: startedAt, FinishedAt: finishedAt}) {
 		t.Errorf("packed processing = %+v", sealed.Processing)
 	}
 }

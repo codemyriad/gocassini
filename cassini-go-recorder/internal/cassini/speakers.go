@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"gocassini/internal/insight"
 	"gocassini/internal/portable"
@@ -260,6 +261,11 @@ type speakersApplyReport struct {
 	// reader compares it with the recording it shows: the last apply's
 	// Summary alone does not say whether an earlier one rewrote it.
 	SummarySHA256 string `json:"summarySha256"`
+	// SummaryStartedAt and SummaryFinishedAt bracket the model call when this
+	// apply rewrote the summary ("regenerated"), so the run can time the
+	// rewrite apart from the rest of the replay (D-899). Absent otherwise.
+	SummaryStartedAt  string `json:"summaryStartedAt,omitempty"`
+	SummaryFinishedAt string `json:"summaryFinishedAt,omitempty"`
 }
 
 type speakersSplitReport struct {
@@ -638,6 +644,7 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 			return speakersApplyReport{}, err
 		}
 		report.Summary = summary.status
+		report.SummaryStartedAt, report.SummaryFinishedAt = summary.startedAt, summary.finishedAt
 		editsRecord.Summary = summary.record
 		if summary.record != nil {
 			report.SummarySHA256 = summary.record.SHA256
@@ -1068,6 +1075,8 @@ type speakerSummaryPlan struct {
 	body     []byte // the new summary.md, nil to leave it as it is
 	template insight.WorkflowRef
 	record   *speakerSummaryRecord
+	// When the rewrite's model call ran, for a regenerated summary.
+	startedAt, finishedAt string
 }
 
 // planSpeakerSummary rewrites the summary for the edited speakers, so its
@@ -1110,7 +1119,9 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 	if !rewrite {
 		return speakerSummaryPlan{status: "stale", record: previous}, nil
 	}
+	started := time.Now()
 	body, model, template, err := summarizeSpeakersFn(edited)
+	finished := time.Now()
 	if err != nil {
 		// The transcript is still right; only the prose lags behind it.
 		// No record for these edits, so applying them again retries.
@@ -1118,10 +1129,12 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 		return speakerSummaryPlan{status: "stale", record: previous}, nil
 	}
 	return speakerSummaryPlan{
-		status:   "regenerated",
-		body:     []byte(body),
-		template: template,
-		record:   &speakerSummaryRecord{Rewritten: true, Model: model, SHA256: sha256Hex([]byte(body)), EditsSHA256: editsSHA256, TranscriptSHA256: transcriptSHA256},
+		status:     "regenerated",
+		body:       []byte(body),
+		template:   template,
+		record:     &speakerSummaryRecord{Rewritten: true, Model: model, SHA256: sha256Hex([]byte(body)), EditsSHA256: editsSHA256, TranscriptSHA256: transcriptSHA256},
+		startedAt:  portable.FormatStepTime(started),
+		finishedAt: portable.FormatStepTime(finished),
 	}, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gocassini/internal/portable"
 	"gocassini/internal/transcribe"
@@ -112,7 +113,9 @@ func summarizeMeetingBundle(root string, cfg transcribe.LLMConfig, force, estima
 		return report, nil
 	}
 
+	started := time.Now()
 	body, template, err := transcript.Summarize(cfg)
+	finished := time.Now()
 	if err != nil {
 		report.Status = summarizeFailed
 		return report, fmt.Errorf("generate summary: %w", err)
@@ -121,7 +124,8 @@ func summarizeMeetingBundle(root string, cfg transcribe.LLMConfig, force, estima
 		report.Status = summarizeFailed
 		return report, fmt.Errorf("write summary: %w", err)
 	}
-	if err := recordBundleSummary(manifestPath, manifest, files, processing, report.Model, transcribe.SummaryTemplateRecordOf(template)); err != nil {
+	outcome := portable.SummaryStatus{Status: portable.SummaryCompleted, Model: report.Model}.Timed(started, finished)
+	if err := recordBundleSummary(manifestPath, manifest, files, processing, outcome, transcribe.SummaryTemplateRecordOf(template)); err != nil {
 		report.Status = summarizeFailed
 		return report, err
 	}
@@ -145,7 +149,8 @@ func bundleTranscriptionCompleted(processing *orderedJSONObject) bool {
 
 // recordBundleSummary names summary.md in the manifest, written last so the
 // manifest never lists a summary that is not on disk.
-func recordBundleSummary(manifestPath string, manifest, files, processing *orderedJSONObject, model string, template *transcribe.SummaryTemplateRecord) error {
+func recordBundleSummary(manifestPath string, manifest, files, processing *orderedJSONObject, outcome portable.SummaryStatus, template *transcribe.SummaryTemplateRecord) error {
+	model := outcome.Model
 	if files == nil {
 		files = &orderedJSONObject{}
 	}
@@ -179,7 +184,6 @@ func recordBundleSummary(manifestPath string, manifest, files, processing *order
 
 	// As for a backfilled .opus: only where processing is already recorded.
 	if processing != nil {
-		outcome := portable.SummaryStatus{Status: portable.SummaryCompleted, Model: model}
 		processing.set("meetingSummary", mustJSON(outcome))
 		if err := manifest.setObject("processing", processing); err != nil {
 			return err
