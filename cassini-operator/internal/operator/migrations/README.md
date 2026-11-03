@@ -17,3 +17,7 @@ When that happens on a rebase or merge, renumber your migrations after the ones
 from `main`, and write the newest one to `LATEST`. Any database that ran your
 migrations under the old numbers must be recreated: the operator will refuse to
 start on it.
+
+Migrations land on `main` only. A release branch takes none, even as a
+backport, and lint refuses one there: see the release branches section of
+`docs/release.md`.

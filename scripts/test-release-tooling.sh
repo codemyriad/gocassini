@@ -124,6 +124,28 @@ if ! out="$(ctb fail-404 0.2.1)" && grep -qF "which GitHub doesn't have" <<<"$ou
 if ! out="$(ctb fail-500 0.2.1)" && grep -qF "could not compare abc123 with release/0.2: gh: Server Error (HTTP 500)" <<<"$out"; then ok "check-tag-branch reports an API failure as one"; else bad "check-tag-branch should report the API error (got: $out)"; fi
 rm -rf "$GHSTUB"
 
+echo "check-release-migrations.sh — release branches take no operator migrations"
+MR="$(mktemp -d)"
+MD="cassini-operator/internal/operator/migrations"
+git -C "$MR" init -q
+git -C "$MR" config user.email t@t; git -C "$MR" config user.name t
+mkdir -p "$MR/$MD" "$MR/docs"
+echo "SELECT 1;" >"$MR/$MD/0001_first.up.sql"
+git -C "$MR" add -A; git -C "$MR" commit -qm "release branch point"
+base="$(git -C "$MR" rev-parse HEAD)"
+# crm — run the check from inside the fixture against the branch point.
+crm() { (cd "$MR" && GITHUB_ACTIONS='' "$SCRIPT_DIR/check-release-migrations.sh" "$base" 2>&1); }
+echo "fix" >"$MR/docs/fix.md"; echo "more" >>"$MR/$MD/README.md"
+git -C "$MR" add -A; git -C "$MR" commit -qm "a fix and a migrations README edit"
+if out="$(crm)"; then ok "check-release-migrations passes a fix that changes no migration"; else bad "check-release-migrations should pass a non-migration fix (got: $out)"; fi
+echo "SELECT 2;" >"$MR/$MD/0002_backport.up.sql"
+git -C "$MR" add -A; git -C "$MR" commit -qm "a backported migration"
+if ! out="$(crm)" && grep -qF "$MD/0002_backport.up.sql" <<<"$out"; then ok "check-release-migrations refuses an added migration and names it"; else bad "check-release-migrations should refuse an added migration (got: $out)"; fi
+git -C "$MR" rm -q "$MD/0002_backport.up.sql"; echo "SELECT 3;" >>"$MR/$MD/0001_first.up.sql"
+git -C "$MR" add -A; git -C "$MR" commit -qm "an edited migration"
+if ! out="$(crm)" && grep -qF "$MD/0001_first.up.sql" <<<"$out"; then ok "check-release-migrations refuses an edited migration"; else bad "check-release-migrations should refuse an edited migration (got: $out)"; fi
+rm -rf "$MR"
+
 echo "rv_same_line — MAJOR.MINOR"
 if rv_same_line 0.2.1 0.2.0-beta.3; then ok "0.2.1 and 0.2.0-beta.3 share a line"; else bad "0.2.1 and 0.2.0-beta.3 should share a line"; fi
 if rv_same_line 0.2.1 0.3.0-alpha.1; then bad "0.2.1 and 0.3.0-alpha.1 should not share a line"; else ok "0.2.1 and 0.3.0-alpha.1 are different lines"; fi
