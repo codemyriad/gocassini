@@ -172,25 +172,13 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
       - name: A release tag is on the branch its version is cut on
-        if: github.ref_type == 'tag'
+        # Before any immutable :X.Y.Z image exists. A new tag only: a dispatch
+        # rebuilds an existing one, which may predate release branches.
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          # The same rule as release.yml's check (docs/release.md#branches),
-          # here so an off-branch tag stops before its immutable :X.Y.Z images
-          # exist. compare <branch>...<sha> is "behind" or "identical" exactly
-          # when the commit is on the branch; a shallow checkout can't tell.
-          branch="$(./scripts/release-version.sh branch "$VERSION")"
-          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${branch}...${GITHUB_SHA}" --jq .status 2>/dev/null || echo "no ${branch} branch")"
-          case "$status" in
-            behind|identical) echo "v${VERSION} is on ${branch}" ;;
-            *)
-              echo "::error::v${VERSION} is cut on ${branch}, but its commit is not on ${branch} (${status}; see docs/release.md#branches)"
-              exit 1
-              ;;
-          esac
+        run: ./scripts/check-tag-branch.sh "$VERSION" "$GITHUB_SHA"
 
   resolve-ffmpeg:
     name: Resolve FFmpeg version

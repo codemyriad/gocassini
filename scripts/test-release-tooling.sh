@@ -103,6 +103,27 @@ eq "previous of 0.3.0-beta.1" "0.3.0-alpha.1" "$(rv_previous_in_line 0.3.0-beta.
 eq "previous of 0.4.0-beta.1 (none)" "" "$(rv_previous_in_line 0.4.0-beta.1 <<<"$tags")"
 eq "release-version.sh previous" "0.2.1" "$("$SCRIPT_DIR/release-version.sh" previous 0.2.2 <<<"$tags")"
 
+echo "check-tag-branch.sh — a tag's commit is on its version's branch (gh stubbed)"
+GHSTUB="$(mktemp -d)"
+cat >"$GHSTUB/gh" <<'STUB'
+#!/usr/bin/env bash
+# Echo the compare status named by GH_STUB; fail like gh does for "fail-*".
+case "$GH_STUB" in
+  fail-404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+  fail-500) echo "gh: Server Error (HTTP 500)" >&2; exit 1 ;;
+  *) echo "$GH_STUB" ;;
+esac
+STUB
+chmod +x "$GHSTUB/gh"
+# ctb <stub> <version> — run the check against the stub, echo its output.
+ctb() { PATH="$GHSTUB:$PATH" GH_STUB="$1" GITHUB_REPOSITORY=o/r GITHUB_ACTIONS='' "$SCRIPT_DIR/check-tag-branch.sh" "$2" abc123 2>&1; }
+if out="$(ctb behind 0.2.1)" && grep -qF "v0.2.1 is on release/0.2" <<<"$out"; then ok "check-tag-branch passes a commit on its branch"; else bad "check-tag-branch should pass 'behind' (got: $out)"; fi
+if out="$(ctb identical 0.3.0-alpha.1)" && grep -qF "on main" <<<"$out"; then ok "check-tag-branch passes an alpha at main's head"; else bad "check-tag-branch should pass 'identical' (got: $out)"; fi
+if ! out="$(ctb diverged 0.2.1)" && grep -qF "is not on it (compare: diverged)" <<<"$out"; then ok "check-tag-branch refuses a commit off its branch"; else bad "check-tag-branch should refuse 'diverged' (got: $out)"; fi
+if ! out="$(ctb fail-404 0.2.1)" && grep -qF "which GitHub doesn't have" <<<"$out"; then ok "check-tag-branch names a missing branch"; else bad "check-tag-branch should name a 404 (got: $out)"; fi
+if ! out="$(ctb fail-500 0.2.1)" && grep -qF "could not compare abc123 with release/0.2: gh: Server Error (HTTP 500)" <<<"$out"; then ok "check-tag-branch reports an API failure as one"; else bad "check-tag-branch should report the API error (got: $out)"; fi
+rm -rf "$GHSTUB"
+
 echo "rv_same_line — MAJOR.MINOR"
 if rv_same_line 0.2.1 0.2.0-beta.3; then ok "0.2.1 and 0.2.0-beta.3 share a line"; else bad "0.2.1 and 0.2.0-beta.3 should share a line"; fi
 if rv_same_line 0.2.1 0.3.0-alpha.1; then bad "0.2.1 and 0.3.0-alpha.1 should not share a line"; else ok "0.2.1 and 0.3.0-alpha.1 are different lines"; fi

@@ -103,18 +103,16 @@ jobs:
         run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends libxml2-utils
 
       - name: Tag is on the branch its version is cut on
+        # A new tag only: a dispatch re-runs an existing one, which may predate
+        # release branches (v0.2.0 and its betas were cut on main).
+        if: github.event_name == 'push'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.v.outputs.version }}
-        run: |
-          set -euo pipefail
-          # docs/release.md#branches: X.Y.0-alpha.N on main, the rest of an X.Y
-          # line on release/X.Y. prepare-release.sh enforces this locally; this
-          # catches a tag made by hand.
-          branch="$(./scripts/release-version.sh branch "$VERSION")"
-          if ! git merge-base --is-ancestor HEAD "origin/${branch}" 2>/dev/null; then
-            echo "::error::v${VERSION} is cut on ${branch}, but its commit is not on origin/${branch} (see docs/release.md#branches)"
-            exit 1
-          fi
+          COMMIT: ${{ steps.v.outputs.commit }}
+        # prepare-release.sh enforces this locally; this catches a tag made by
+        # hand. publish-exapp-image.yml runs the same check.
+        run: ./scripts/check-tag-branch.sh "$VERSION" "$COMMIT"
 
       - name: Manifest, tag and changelog agree with the version
         env:
