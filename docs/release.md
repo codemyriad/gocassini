@@ -132,7 +132,9 @@ X.Y.Z-alpha.1 → X.Y.Z-beta.1 → X.Y.Z-rc.1 → X.Y.Z-rc.2 → X.Y.Z
 ```
 
 A minor or major bump starts the ladder at `-alpha.1`; advance with
-`--promote beta|rc.1|rc.2|stable`. You can skip stages: `--version 0.3.0` goes
+`--promote alpha|beta|rc.1|rc.2|stable` (`alpha` cuts the next alpha:
+`alpha.1 → alpha.2`, or `alpha.0 → alpha.1` when main carries the untagged next
+version). You can skip stages: `--version 0.3.0` goes
 straight to stable, and `rc.1 → stable` is fine (one RC instead of two).
 Before the first `--promote beta`, create `release/X.Y` from main and switch to
 it. Patches skip the ladder: `--bump patch` goes straight to `X.Y.Z` (see

@@ -53,7 +53,10 @@ else
   base="${_maj}.${_min}.${_pat}"
   echo "This is a prerelease — advance it along the ladder (beta onwards is cut on release/${_maj}.${_min}):"
   case "$pretype" in
-    alpha) printf '  %-14s → %s\n' "promote beta"   "$(rv_promote beta "$current")" ;;
+    alpha)
+      printf '  %-14s → %-16s %s\n' "promote alpha"  "$(rv_promote alpha "$current")" "on main"
+      printf '  %-14s → %-16s %s\n' "promote beta"   "$(rv_promote beta "$current")" "on release/${_maj}.${_min} (create it from main first)"
+      ;;
     beta)  printf '  %-14s → %s\n' "promote rc.1"   "$(rv_promote rc.1 "$current")" ;;
     rc)
       if [[ "$_prenum" == 1 ]]; then

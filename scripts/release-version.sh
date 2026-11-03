@@ -14,7 +14,7 @@
 # Usage:
 #   ./scripts/release-version.sh current
 #   ./scripts/release-version.sh bump patch|minor|major
-#   ./scripts/release-version.sh promote beta|rc.1|rc.2|stable
+#   ./scripts/release-version.sh promote alpha|beta|rc.1|rc.2|stable
 #   ./scripts/release-version.sh set X.Y.Z[-(alpha|beta|rc).N]
 
 set -euo pipefail
@@ -28,7 +28,7 @@ usage() {
 Usage:
   ./scripts/release-version.sh current
   ./scripts/release-version.sh bump patch|minor|major
-  ./scripts/release-version.sh promote beta|rc.1|rc.2|stable
+  ./scripts/release-version.sh promote alpha|beta|rc.1|rc.2|stable
   ./scripts/release-version.sh set X.Y.Z[-(alpha|beta|rc).N]
 EOF
 }
@@ -61,7 +61,7 @@ main() {
       report "$current" "$next"
       ;;
     promote)
-      local target="${2:?usage: $0 promote beta|rc.1|rc.2|stable}"
+      local target="${2:?usage: $0 promote alpha|beta|rc.1|rc.2|stable}"
       current="$(rv_read_version "$info_xml")"
       next="$(rv_promote "$target" "$current")"
       rv_write_version "$info_xml" "$next"

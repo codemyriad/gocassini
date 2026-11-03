@@ -94,6 +94,10 @@ if rv_same_line 0.2.1 0.3.0-alpha.1; then bad "0.2.1 and 0.3.0-alpha.1 should no
 if rv_same_line 1.2.0 0.2.0; then bad "1.2.0 and 0.2.0 should not share a line"; else ok "1.2.0 and 0.2.0 are different lines"; fi
 
 echo "rv_promote — ladder"
+transition rv_promote alpha  0.3.0-alpha.0 0.3.0-alpha.1
+transition rv_promote alpha  0.3.0-alpha.1 0.3.0-alpha.2
+transition rv_promote beta   0.3.0-alpha.0 0.3.0-beta.1
+transition_fails rv_promote alpha 0.3.0-beta.1   # past the alphas
 transition rv_promote beta   0.2.0-alpha.1 0.2.0-beta.1
 transition rv_promote rc.1   0.2.0-beta.1  0.2.0-rc.1
 transition rv_promote rc.2   0.2.0-rc.1    0.2.0-rc.2
@@ -623,6 +627,19 @@ if [[ "$(rv_read_version "$GD/appinfo/info.xml")" == "0.3.0-alpha.1" ]] \
   ok "guided: choosing minor + confirm cuts v0.3.0-alpha.1"
 else
   bad "guided minor + confirm should cut the release"
+fi
+
+# Main at the untagged next version (what the sync to main sets): 'alpha' cuts
+# its first alpha.
+( cd "$GD" && ./scripts/release-version.sh set 0.4.0-alpha.0 >/dev/null )
+printf '### Added\n- next feature.\n' > "$GD/changelog.d/20.f.md"
+git -C "$GD" add -A; git -C "$GD" commit -qm "main develops 0.4.0"
+guided alpha y
+if [[ "$(rv_read_version "$GD/appinfo/info.xml")" == "0.4.0-alpha.1" ]] \
+   && git -C "$GD" rev-parse -q --verify refs/tags/v0.4.0-alpha.1 >/dev/null; then
+  ok "guided: 'alpha' from 0.4.0-alpha.0 cuts v0.4.0-alpha.1"
+else
+  bad "guided 'alpha' from 0.4.0-alpha.0 should cut v0.4.0-alpha.1"
 fi
 rm -rf "$GD"
 

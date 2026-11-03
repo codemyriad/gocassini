@@ -98,9 +98,12 @@ rv_same_line() {
   [[ "$amaj" == "$bmaj" && "$amin" == "$bmin" ]]
 }
 
-# rv_promote <beta|rc.1|rc.2|stable> <version>
+# rv_promote <alpha|beta|rc.1|rc.2|stable> <version>
 # Echo the next version along the Nextcloud prerelease ladder. The base X.Y.Z
 # never changes:
+#   promote alpha  : alpha.N -> alpha.(N+1)  (alpha.0 -> alpha.1 cuts the first
+#                    alpha of the version main is developing; see
+#                    docs/release.md#mains-version)
 #   promote beta   : alpha.N -> beta.1
 #   promote rc.1   : beta.N  -> rc.1
 #   promote rc.2   : rc.1    -> rc.2
@@ -114,6 +117,9 @@ rv_promote() {
   read -r major minor patch pretype prenum <<<"$parsed"
   base="${major}.${minor}.${patch}"
   case "$target" in
+    alpha)
+      [[ "$pretype" == alpha ]] || { echo "error: 'promote alpha' requires an alpha.N version, got: '$v'" >&2; return 1; }
+      printf '%s-alpha.%s\n' "$base" "$((prenum + 1))" ;;
     beta)
       [[ "$pretype" == alpha ]] || { echo "error: 'promote beta' requires an alpha.N version, got: '$v'" >&2; return 1; }
       printf '%s-beta.1\n' "$base" ;;
@@ -127,7 +133,7 @@ rv_promote() {
       [[ "$pretype" == rc ]] || { echo "error: 'promote stable' requires an rc.N version, got: '$v'" >&2; return 1; }
       printf '%s\n' "$base" ;;
     *)
-      echo "error: promote target must be beta|rc.1|rc.2|stable, got: '$target'" >&2; return 1 ;;
+      echo "error: promote target must be alpha|beta|rc.1|rc.2|stable, got: '$target'" >&2; return 1 ;;
   esac
 }
 

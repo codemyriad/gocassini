@@ -17,7 +17,7 @@
 #
 # Options:
 #   --bump patch|minor|major       compute the next version from info.xml
-#   --promote beta|rc.1|rc.2|stable advance along the prerelease ladder
+#   --promote alpha|beta|rc.1|rc.2|stable advance along the prerelease ladder
 #   --version X.Y.Z[-pre]          set an explicit target version
 #   --date YYYY-MM-DD              changelog date (default: today)
 #   --allow-empty-changelog        release even with no changelog.d fragments
@@ -84,13 +84,13 @@ main() {
       read -r -p "Choose a bump [patch/minor/major] (or a version, q to quit): " choice \
         || { echo; die "no choice given"; }
     else
-      read -r -p "Advance [beta/rc.1/rc.2/stable] (or a version, q to quit): " choice \
+      read -r -p "Advance [alpha/beta/rc.1/rc.2/stable] (or a version, q to quit): " choice \
         || { echo; die "no choice given"; }
     fi
     case "$choice" in
       q|Q|quit|"")            echo "Aborted — nothing changed."; return 0 ;;
       patch|minor|major)      mode="bump"; arg="$choice" ;;
-      beta|rc.1|rc.2|stable)  mode="promote"; arg="$choice" ;;
+      alpha|beta|rc.1|rc.2|stable)  mode="promote"; arg="$choice" ;;
       *)
         if rv_validate "$choice" >/dev/null 2>&1; then mode="version"; arg="$choice"
         else die "invalid choice: '$choice'"; fi
