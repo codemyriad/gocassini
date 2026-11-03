@@ -6,10 +6,12 @@
     formatSpan,
     meetingLengthMs,
     processesCapture,
+    processingHint,
     processingSpeed,
     runProcessing,
     spanMs,
     stepTime,
+    summaryTime,
   } from "./operator/processingSpeed";
   import { runStages, stepStatuses, type StageStatus, type StageView } from "./operator/runStages";
 
@@ -886,13 +888,19 @@
   ] as const;
 
   // One attempt's bar: its own four steps, each with how long it took.
+  // An attempt's own bar has no Summary step, so its Build keeps the summary
+  // and says so (D-899); the run's bar times them apart.
   function stageProgress(row: Job | JobAttempt): StageView[] {
     const statuses = stepStatuses(row);
+    const summaryMs = summaryTime(row);
     return STAGES.map((stage) => ({
       key: stage.key,
       label: stageLabel(stage.key, attemptKind(row)),
       status: statuses[stage.key],
       ms: stepTime(row, stage.key),
+      hint: stage.key === "build" && summaryMs !== null && attemptKind(row) !== "summarize"
+        ? `Includes ${formatSpan(summaryMs)} waiting on the summary model`
+        : undefined,
     }));
   }
 
@@ -1676,7 +1684,7 @@
                     </div>
                     <div>
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
-                      <dd class="text-sm" class:text-warning={runSpeed !== null && runSpeed.factor !== null && runSpeed.factor < 1}>
+                      <dd class="text-sm" class:text-warning={runSpeed !== null && runSpeed.factor !== null && runSpeed.factor < 1} title={runSpeed ? processingHint(runSpeed) : undefined}>
                         {#if runSpeed}{describeProcessing(runSpeed)}{:else}{@render notAvailable()}{/if}
                       </dd>
                     </div>
@@ -1878,7 +1886,7 @@
                             </div>
                             <div>
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
-                              <dd class="text-sm" class:text-warning={attemptSpeed !== null && attemptSpeed.factor !== null && attemptSpeed.factor < 1}>
+                              <dd class="text-sm" class:text-warning={attemptSpeed !== null && attemptSpeed.factor !== null && attemptSpeed.factor < 1} title={attemptSpeed ? processingHint(attemptSpeed) : undefined}>
                                 {#if attemptSpeed}{describeProcessing(attemptSpeed)}{:else}{@render notAvailable()}{/if}
                               </dd>
                             </div>

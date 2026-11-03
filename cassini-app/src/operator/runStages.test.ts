@@ -30,6 +30,28 @@ describe("runStages", () => {
     });
   });
 
+  it("times a summary written in the build apart from the transcription (D-899)", () => {
+    const timed = { ...initial, summary_started_at: at(68), summary_finished_at: at(70) };
+    expect(view(run(timed))).toMatchObject({
+      build: ["done", 8, 1],
+      summary: ["done", 2, 1],
+    });
+    expect(run(timed)[2].hint).toBe("Written during the build");
+    // A failed summary reads as failed, with how long the model was waited on.
+    const failed = { ...timed, summary_status: "failed", summary_reason: "llm_failed" };
+    expect(run(failed)[2]).toMatchObject({ status: "failed", note: "Failed", ms: 2 * 60_000, hint: "The summary model failed; the build log says why" });
+  });
+
+  it("keeps the summary out of a build still in progress or failed, as when published", () => {
+    const failedRerun = attempt(2, "rerun", { ...steps(100, 10), state: "failed", stage: "publish", summary_status: "completed", summary_started_at: at(108), summary_finished_at: at(110) });
+    expect(view(run(initial, failedRerun)).build).toEqual(["done", 8, 2]);
+  });
+
+  it("times a later summary by its own model call, when it has one", () => {
+    const refine = attempt(2, "refine", { ...steps(100, 0.5), summary_status: "completed", summary_mode: "rewrite", summary_started_at: at(100.1), summary_finished_at: at(100.4) });
+    expect(view(run(initial, refine)).summary).toEqual(["done", expect.closeTo(0.3), 2]);
+  });
+
   it("keeps the build that transcribed the meeting past a summary written later", () => {
     const summarize = attempt(2, "summarize", { ...steps(100, 0.5), summary_status: "completed" });
     expect(view(run(initial, summarize))).toMatchObject({
@@ -43,12 +65,15 @@ describe("runStages", () => {
     const skipped = { ...initial, summary_status: "skipped" };
     expect(view(run(skipped)).summary).toEqual(["skipped", "Skipped", 1]);
     expect(run({ ...skipped, summary_reason: "disabled" })[2].hint).toBe("Summaries are turned off");
-    const refine = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed", summary_mode: "rewrite" });
+    const refine = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed", summary_mode: "rewrite", summary_started_at: at(100), summary_finished_at: at(100.2) });
     expect(view(run(skipped, refine))).toMatchObject({ build: ["done", 10, 1], summary: ["done", 0.2, 2] });
     expect(run(skipped, refine)[2].hint).toBe("Rewritten after speakers were renamed");
     // A save that kept the summary did not write it, though its meeting still has one.
     const kept = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed" });
     expect(view(run(initial, kept))).toMatchObject({ summary: ["done", "In Build", 1], seal: ["done", 1, 2] });
+    // Asked to rewrite it, but the rewrite did not happen: kept too.
+    const failedRewrite = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed", summary_mode: "rewrite" });
+    expect(view(run(initial, failedRewrite)).summary).toEqual(["done", "In Build", 1]);
   });
 
   it("shows a rerun in progress over the build and keeps the live publish", () => {

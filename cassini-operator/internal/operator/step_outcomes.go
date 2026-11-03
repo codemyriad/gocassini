@@ -2,7 +2,9 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +34,9 @@ type stepOutcomes struct {
 	TranscriptionRevision string
 	TranscriptionDevice   string
 	SummaryModel          string
+	// When the summary's model call ran (D-899); empty when it did not.
+	SummaryStartedAt  string
+	SummaryFinishedAt string
 }
 
 // Why the operator dropped transcription from a build, as the recorder's
@@ -69,9 +74,11 @@ func readBundleStepOutcomes(meetingPath string) (stepOutcomes, error) {
 				Revision string `json:"revision"`
 			} `json:"transcription"`
 			MeetingSummary *struct {
-				Status string `json:"status"`
-				Reason string `json:"reason"`
-				Model  string `json:"model"`
+				Status     string `json:"status"`
+				Reason     string `json:"reason"`
+				Model      string `json:"model"`
+				StartedAt  string `json:"startedAt"`
+				FinishedAt string `json:"finishedAt"`
 			} `json:"meetingSummary"`
 		} `json:"processing"`
 		Provenance *struct {
@@ -92,6 +99,7 @@ func readBundleStepOutcomes(meetingPath string) (stepOutcomes, error) {
 		if s := p.MeetingSummary; s != nil {
 			out.SummaryStatus, out.SummaryReason = strings.TrimSpace(s.Status), strings.TrimSpace(s.Reason)
 			out.SummaryModel = strings.TrimSpace(s.Model)
+			out.SummaryStartedAt, out.SummaryFinishedAt = strings.TrimSpace(s.StartedAt), strings.TrimSpace(s.FinishedAt)
 		}
 	}
 	// The device is only meaningful for a model that ran.
@@ -106,15 +114,67 @@ func readBundleStepOutcomes(meetingPath string) (stepOutcomes, error) {
 
 // RecordAttemptStepOutcomes copies a built bundle's outcomes onto its attempt.
 // The detail is left alone: it is the operator's, written when it happened.
+//
+// The summary times are decided by attemptSummaryTimes, against what a
+// speaker-edit replay already recorded this build.
 func (s *Store) RecordAttemptStepOutcomes(ctx context.Context, jobID string, attemptNumber int, o stepOutcomes) error {
-	if _, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin step outcomes: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var kind, replayStarted, replayFinished string
+	if err := tx.QueryRowContext(ctx, `
+SELECT trigger_kind, summary_started_at, summary_finished_at FROM job_attempts WHERE job_id = ? AND attempt_number = ?`,
+		jobID, attemptNumber).Scan(&kind, &replayStarted, &replayFinished); errors.Is(err, sql.ErrNoRows) {
+		return nil // no attempt to record them on, as before
+	} else if err != nil {
+		return fmt.Errorf("read attempt for step outcomes: %w", err)
+	}
+	started, finished := attemptSummaryTimes(kind, o.SummaryStartedAt, o.SummaryFinishedAt, replayStarted, replayFinished)
+	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET transcription_status = ?, transcription_reason = ?, summary_status = ?, summary_reason = ?,
-    transcription_model = ?, transcription_revision = ?, transcription_device = ?, summary_model = ?
+    transcription_model = ?, transcription_revision = ?, transcription_device = ?, summary_model = ?,
+    summary_started_at = ?, summary_finished_at = ?
 WHERE job_id = ? AND attempt_number = ?`,
 		o.TranscriptionStatus, o.TranscriptionReason, o.SummaryStatus, o.SummaryReason,
-		o.TranscriptionModel, o.TranscriptionRevision, o.TranscriptionDevice, o.SummaryModel, jobID, attemptNumber); err != nil {
+		o.TranscriptionModel, o.TranscriptionRevision, o.TranscriptionDevice, o.SummaryModel,
+		started, finished, jobID, attemptNumber); err != nil {
 		return fmt.Errorf("record step outcomes: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit step outcomes: %w", err)
+	}
+	return nil
+}
+
+// attemptSummaryTimes says when an attempt wrote its summary (D-899), from the
+// bundle's model call and a speaker-edit replay's rewrite, either possibly
+// empty. A build that replayed edits wrote a summary and then rewrote it, a
+// few seconds of replay apart, so its time runs from the first call to the
+// rewrite's end. A refine wrote only the rewrite: its bundle's summary, when
+// it kept it, is an earlier attempt's.
+func attemptSummaryTimes(kind, bundleStarted, bundleFinished, replayStarted, replayFinished string) (string, string) {
+	switch {
+	case kind == triggerKindRefine:
+		return replayStarted, replayFinished
+	case replayStarted == "":
+		return bundleStarted, bundleFinished
+	case bundleStarted == "":
+		return replayStarted, replayFinished
+	default:
+		return bundleStarted, replayFinished
+	}
+}
+
+// SetAttemptSummaryTimes records when a speaker-edit replay rewrote the
+// summary (D-899), as its apply reported.
+func (s *Store) SetAttemptSummaryTimes(ctx context.Context, jobID string, attemptNumber int, startedAt, finishedAt string) error {
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE job_attempts SET summary_started_at = ?, summary_finished_at = ? WHERE job_id = ? AND attempt_number = ?`,
+		startedAt, finishedAt, jobID, attemptNumber); err != nil {
+		return fmt.Errorf("record summary times: %w", err)
 	}
 	return nil
 }

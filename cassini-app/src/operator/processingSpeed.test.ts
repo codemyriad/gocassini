@@ -4,6 +4,7 @@ import {
   formatFactor,
   formatMultiplier,
   meetingLengthMs,
+  processingHint,
   processingSpeed,
   runProcessing,
   stepTime,
@@ -34,6 +35,19 @@ describe("processingSpeed", () => {
     expect(result?.ms).toBe(12 * 60_000);
     expect(result?.factor).toBeCloseTo(58 / 12);
     expect(describeProcessing(result!)).toBe("12m · 4.8× real time");
+  });
+
+  it("leaves the summary out, which waits on the summary model (D-899)", () => {
+    const timed = attempt(1, "initial", { ...processed, summary_started_at: at(68), summary_finished_at: at(70) });
+    const result = processingSpeed(timed, meetingLengthMs(job));
+    expect(result?.ms).toBe(10 * 60_000);
+    expect(describeProcessing(result!)).toBe("10m · 5.8× real time");
+    expect(processingHint(result!)).toBe("Not counting 2m waiting on the summary model");
+    // Left out whether or not the meeting's length is known, as the run bar's Build does.
+    expect(processingSpeed(timed, null)?.ms).toBe(10 * 60_000);
+    // An attempt that only writes a summary is that summary, all of it.
+    expect(processingSpeed({ ...timed, trigger_kind: "summarize" }, null)?.ms).toBe(12 * 60_000);
+    expect(processingHint(processingSpeed(attempt(1, "initial"), meetingLengthMs(job))!)).toBeUndefined();
   });
 
   it("has nothing to say until the meeting is published", () => {

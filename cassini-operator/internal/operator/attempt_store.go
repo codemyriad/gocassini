@@ -76,6 +76,10 @@ type JobAttempt struct {
 	// What a speaker-edit attempt was asked to do with the summary (D-814):
 	// "rewrite", or empty to keep it. The Operator says which (D-816).
 	SummaryMode string `json:"summary_mode,omitempty"`
+	// When this attempt's summary was written (D-899): the build's model
+	// call, or a speaker-edit replay's rewrite. Empty when it wrote none.
+	SummaryStartedAt  string `json:"summary_started_at,omitempty"`
+	SummaryFinishedAt string `json:"summary_finished_at,omitempty"`
 }
 
 func insertInitialAttemptTx(tx *sql.Tx, job Job) error {
@@ -299,7 +303,8 @@ SELECT job_id, attempt_number, trigger_kind, request_json,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        transcription_status, transcription_reason, transcription_detail, summary_status, summary_reason,
-       transcription_model, transcription_revision, transcription_device, summary_model, summary_mode
+       transcription_model, transcription_revision, transcription_device, summary_model, summary_mode,
+       summary_started_at, summary_finished_at
 FROM job_attempts
 WHERE job_id = ?
 ORDER BY attempt_number DESC`, jobID)
@@ -408,6 +413,8 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 		&attempt.TranscriptionDevice,
 		&attempt.SummaryModel,
 		&attempt.SummaryMode,
+		&attempt.SummaryStartedAt,
+		&attempt.SummaryFinishedAt,
 	)
 	if err != nil {
 		return JobAttempt{}, fmt.Errorf("scan job attempt: %w", err)

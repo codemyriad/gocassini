@@ -19,6 +19,8 @@ export interface Speed {
   ms: number;
   /** Meeting length over processing time; null when either is zero. */
   factor: number | null;
+  /** Time spent waiting on the summary model, left out of ms. */
+  summaryMs?: number;
 }
 
 export function spanMs(start: string | null | undefined, end: string | null | undefined): number | null {
@@ -84,10 +86,36 @@ export function stepTime(row: StageTimes, key: string): number | null {
   return spanMs(t.started, t.finished);
 }
 
+// How long the attempt spent waiting on the summary model inside its build
+// (D-899), whether or not the summary came back.
+export function summaryTime(row: StageTimes): number | null {
+  if (!("summary_started_at" in row)) return null;
+  return spanMs(row.summary_started_at, row.summary_finished_at);
+}
+
+// A span of an attempt that processed the capture, without the summary wait
+// inside it: that waits on the summary model, not on this server. Attempts
+// that only write a summary or replay speaker edits keep it, as it is all
+// they do.
+function withoutSummary(row: StageTimes, ms: number | null): { ms: number | null; summaryMs?: number } {
+  if (ms === null || !("trigger_kind" in row) || !processesCapture(row)) return { ms };
+  const summaryMs = summaryTime(row);
+  return summaryMs !== null && summaryMs < ms ? { ms: ms - summaryMs, summaryMs } : { ms };
+}
+
+// The build's time, without the summary for an attempt that processed the capture.
+export function buildTimeWithoutSummary(row: StageTimes): number | null {
+  return withoutSummary(row, stepTime(row, "build")).ms;
+}
+
 // From the build starting to the meeting being published. Time spent queued
-// or waiting for resources before the build is not processing.
+// or waiting for resources before the build is not processing, and neither is
+// the summary wait: a slow summary model would read as hardware that cannot
+// keep up.
 export function processingSpeed(row: StageTimes, meetingMs: number | null): Speed | null {
-  return speed(spanMs(stageTimes(row, "build").started, stageTimes(row, "publish").finished), meetingMs);
+  const { ms, summaryMs } = withoutSummary(row, spanMs(stageTimes(row, "build").started, stageTimes(row, "publish").finished));
+  const result = speed(ms, meetingMs);
+  return result && summaryMs !== undefined ? { ...result, summaryMs } : result;
 }
 
 // The run's figure: the newest attempt that processed the capture and
@@ -107,4 +135,10 @@ export function runProcessing(detail: JobDetailResponse): Speed | null {
 export function describeProcessing(result: Speed): string {
   if (result.factor === null) return formatSpan(result.ms);
   return `${formatSpan(result.ms)} · ${formatFactor(result.factor)}`;
+}
+
+// Said on hover when the summary was left out of the figure.
+export function processingHint(result: Speed): string | undefined {
+  if (result.summaryMs === undefined) return undefined;
+  return `Not counting ${formatSpan(result.summaryMs)} waiting on the summary model`;
 }

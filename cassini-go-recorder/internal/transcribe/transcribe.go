@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // BuildConfig holds runtime options for the transcription pipeline.
@@ -1039,17 +1040,19 @@ func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Se
 	}
 
 	fmt.Fprintln(stdout, "  generating meeting summary...")
+	started := time.Now()
 	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
+	finished := time.Now()
 	if err != nil {
 		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)
-		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}, nil
+		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}.Timed(started, finished), nil
 	}
 
 	summaryPath := filepath.Join(outputDir, "summary.md")
 	if err := os.WriteFile(summaryPath, []byte(body), 0o644); err != nil {
 		return portable.SummaryStatus{}, fmt.Errorf("write summary: %w", err)
 	}
-	return portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}, nil
+	return portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}.Timed(started, finished), nil
 }
 
 // defaultCacheDir returns the default cache directory for models.

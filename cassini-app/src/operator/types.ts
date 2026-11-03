@@ -112,6 +112,10 @@ export interface JobAttempt {
   summary_model?: string;
   /** A speaker-edit attempt's summary choice: "rewrite", or absent to keep it. */
   summary_mode?: string;
+  // When this attempt wrote its summary (D-899): the build's model call, or a
+  // speaker-edit rewrite. Absent when it wrote none, and before D-899.
+  summary_started_at?: string;
+  summary_finished_at?: string;
 }
 
 // What writing (or rewriting) a meeting's summary would do and cost, as

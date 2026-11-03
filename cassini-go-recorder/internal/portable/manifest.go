@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -51,10 +52,30 @@ type Processing struct {
 // model wrote it), "skipped" (Reason: disabled, not_configured, no_transcript)
 // or "failed" (Reason: llm_failed). The failure itself stays in the build log;
 // the file only says that it happened.
+//
+// StartedAt and FinishedAt bracket the model call, when one was made (D-899):
+// the summary is written inside the build, and these are what separate its
+// time from the transcription's. Absent when the step was skipped, and in
+// files written before they were recorded.
 type SummaryStatus struct {
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-	Model  string `json:"model,omitempty"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
+	Model      string `json:"model,omitempty"`
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+}
+
+// Timed records when the summary's model call started and finished, in UTC
+// with milliseconds: a summary can take under a second.
+func (s SummaryStatus) Timed(started, finished time.Time) SummaryStatus {
+	s.StartedAt = FormatStepTime(started)
+	s.FinishedAt = FormatStepTime(finished)
+	return s
+}
+
+// FormatStepTime is how a step's time is written in a manifest.
+func FormatStepTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
 // The summary step's statuses and reasons, as SummaryStatus carries them.
