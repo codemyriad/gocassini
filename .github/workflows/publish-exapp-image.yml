@@ -1158,3 +1158,83 @@ jobs:
             docker builder prune -af || true
           fi
           df -h / | tail -1
+
+  # D-895: the summary step runs the template the administrator configured.
+  # Same runner, image and gating as e2e-talk-record-cuda (it shares that
+  # job's phases through harness/bin/lib/talk-roundtrip.sh), plus a fake
+  # OpenAI-compatible endpoint from the harness compose profile fake-llm. Not
+  # a required check yet.
+  e2e-summary-template-cuda:
+    name: E2E summary step runs the configured template (CUDA / GPU)
+    runs-on: [self-hosted, Linux, X64, gpu]
+    needs: build-image-cuda
+    timeout-minutes: 25
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    steps:
+      - name: Ensure git-lfs is available
+        # See e2e-talk-record-cuda: portable across runner types, no sudo.
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            git-lfs --version
+            exit 0
+          fi
+          GIT_LFS_VERSION="3.5.1"
+          tmpdir="$(mktemp -d)"
+          curl -fsSL \
+            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz" \
+            | tar -xz -C "$tmpdir"
+          mkdir -p "$HOME/.local/bin"
+          install "$tmpdir/git-lfs-${GIT_LFS_VERSION}/git-lfs" "$HOME/.local/bin/git-lfs"
+          rm -rf "$tmpdir"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/git-lfs" install --skip-repo
+          "$HOME/.local/bin/git-lfs" --version
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Force LFS smudge
+        run: git lfs pull
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Confirm bot media fixture is materialized
+        run: |
+          set -euo pipefail
+          f=harness/media/processed/showcase-lantern-festival-v1/mira.ogg
+          if [[ ! -s "$f" ]] || [[ $(stat -c%s "$f") -le 10000 ]]; then
+            echo "::error::Talk e2e bot media missing or still an LFS pointer at $f" >&2
+            exit 1
+          fi
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ format('ghcr.io/{0}@{1}', github.repository, needs.build-image-cuda.outputs.digest) }}
+          pr-source: registry
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull compose stack images
+        run: docker compose -f harness/compose.yml --profile full --profile fake-llm pull
+      - name: Run summary template e2e (GPU)
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          TALK_E2E_USE_GPU: "1"
+          RECORD_DURATION_SECONDS: "75"
+        run: ./harness/bin/ci-e2e-summary-template.sh
+
+      - name: Reclaim docker disk (post-job)
+        if: always()
+        # See transcribe-smoke-cuda: same self-hosted GPU runner, same D-377
+        # disk-exhaustion guard.
+        run: |
+          docker container prune -f --filter until=2h || true
+          docker image prune -af --filter until=6h || true
+          docker builder prune -af --filter until=6h || true
+          if [ "$(df --output=pcent / | tail -1 | tr -dc 0-9)" -ge 85 ]; then
+            docker image prune -af || true
+            docker builder prune -af || true
+          fi
+          df -h / | tail -1
