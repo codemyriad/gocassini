@@ -20,12 +20,23 @@ with its `stableXX` branches.
 - **Fixes land on main first, then get cherry-picked.** Merge the fix to main,
   then bring it over with `git cherry-pick -x` in a PR to `release/X.Y` (label
   the main PR `backport release/X.Y` and the Backport workflow opens that PR
-  once it merges). A fix goes straight to the release branch only when it
-  doesn't apply to main, and its PR says why. The Release workflow refuses a
+  once it merges). Close and reopen that PR to start its checks, which must
+  pass before it can merge: a PR a workflow opens starts no checks itself.
+  That step is deliberate. As with release tags, CI holds no token that could
+  start them, and a person does it instead. A fix goes straight to the release
+  branch only when it doesn't apply to main, and its PR says why. The Release workflow refuses a
   tag whose commit isn't on the branch its version is cut on.
 - **Release branches take fixes only:** bug fixes, security fixes, docs, and
   the release commit itself. No features and no refactors. A change that needs
   a feature waits for the next minor.
+- **Release branches take no operator migrations.** A migration's number
+  means one migration everywhere, and `release/X.Y` has no free number for one
+  from a later main: keeping main's number leaves a gap the operator refuses to
+  load, and taking the next free one strands the patch's installations, which
+  then can't upgrade to the next minor. A fix that needs a schema change ships
+  in the next minor; if it can't wait, cut that minor sooner. Lint fails on a
+  change to a release branch that adds, edits or removes a file under
+  `cassini-operator/internal/operator/migrations/`, including a backport PR.
 - **Only the latest `release/X.Y` gets fixes.** An older branch gets security
   fixes for as long as it is the newest Cassini release for a Nextcloud major
   Cassini still supports, or until the next minor's `.0` ships, whichever is
@@ -49,8 +60,8 @@ Neither needs a branch of its own.
   stages mean features still landing or under test, and a patch has none. Each
   fix already passed CI on main and again in its cherry-pick PR, so go straight
   to stable with `--version X.Y.Z`. What CI doesn't prove is that a fix behaves
-  the same on the branch's older code; for a risky one (a migration, the
-  recording pipeline, anything CI can't exercise), cut `X.Y.Z-rc.1`, run it on
+  the same on the branch's older code; for a risky one (the recording
+  pipeline, anything CI can't exercise), cut `X.Y.Z-rc.1`, run it on
   staging, then promote it.
 - **A security fix** lands on main and is cherry-picked to every branch still
   supported, each getting its own patch tag.

@@ -203,6 +203,27 @@ jobs:
           fi
           ./scripts/check-added-blobs.sh "$BASE_SHA" HEAD
 
+      # Release branches take no operator migrations (D-901): a migration's
+      # number means one migration everywhere, and a release/X.Y branch has no
+      # free number for one from a later main. The backport workflow
+      # cherry-picks whatever a labelled PR contains, so the rule is checked
+      # here rather than left to whoever adds the label. Main is unaffected.
+      # The base is chosen as for the blob check above, with one more fallback:
+      # after a force push, `before` is the old tip, which the checkout doesn't
+      # have. The merge base with main is then the branch point, so the check
+      # covers everything the release branch ever took, which is stricter.
+      - name: no operator migrations on release branches
+        if: startsWith(github.base_ref, 'release/') || startsWith(github.ref, 'refs/heads/release/')
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            BASE_SHA="$(git merge-base origin/main HEAD)"
+          fi
+          ./scripts/check-release-migrations.sh "$BASE_SHA" HEAD
+
       - name: actionlint (all workflows)
         run: |
           set -euo pipefail
