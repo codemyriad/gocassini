@@ -5,6 +5,7 @@
   import { filterByTagLabel, wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
   import TagChip from "./tags/TagChip.svelte";
+  import { suggestedBadge } from "../viewer/topics";
   import TagPicker from "./tags/TagPicker.svelte";
   import {
     filterMeetingCatalogEntries,
@@ -111,6 +112,8 @@
   export let insightRetryError: { id: string; message: string } | null = null;
 
   export let meetingTags: MeetingTags = new Map();
+  // Topic suggestions waiting on each meeting, by meeting id.
+  export let suggestedCounts: Record<string, number> = {};
   // Null offers no row tag button: the build cannot tag, or the vocabulary has not loaded.
   export let tags: readonly VocabularyTag[] | null = null;
   export let tagFilterCount = 0;
@@ -644,6 +647,9 @@
                       </span>
                     {/if}
                   </span>
+                  {#if suggestedCounts[meeting.id]}
+                    <span class="row-suggested">{suggestedBadge(suggestedCounts[meeting.id])}</span>
+                  {/if}
                   {#if rowTags.length > 0}
                     <span class="row-tags">
                       {#each rowTags.slice(0, 3) as { tag } (tag.tagId)}
@@ -1026,6 +1032,16 @@
     border-radius: 5px;
   }
 
+  .row-suggested {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 5px;
+    font-size: 11px;
+    border: 1px dashed color-mix(in oklch, var(--color-base-content) 35%, transparent);
+    border-radius: 5px;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
   .resultline :global(.tag-chip) {
     height: 22px;
     gap: 4px;

@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,21 @@ type ExtractedMeeting struct {
 	SummaryMarkdown []byte
 }
 
+// Errors ExtractMeeting wraps, for callers that treat a file without a
+// usable transcript differently from one they could not read.
+var (
+	// ErrNotPortableMeeting: the file carries no Cassini meeting.
+	ErrNotPortableMeeting = errors.New("not a portable meeting")
+	// ErrNoDefaultTranscript: the meeting declares no default words transcript.
+	ErrNoDefaultTranscript = errors.New("no default words transcript")
+	// ErrTranscriptIntegrity: the transcript body does not match what its
+	// manifest entry says about it (chunks, encoding, sizes or sha256).
+	ErrTranscriptIntegrity = errors.New("transcript body does not match its manifest")
+	// ErrUnsupportedFormat: a Cassini file in a shape this build does not
+	// read, such as the pre-publication drafts of the portable format.
+	ErrUnsupportedFormat = errors.New("unsupported portable meeting format")
+)
+
 // ExtractMeeting reads a published portable .opus back into its manifest, its
 // default words transcript, and its summary markdown.
 //
@@ -74,10 +90,10 @@ func ExtractMeeting(path string) (ExtractedMeeting, error) {
 func extractMeetingTags(path string, tags map[string]string) (ExtractedMeeting, error) {
 	formatTag := metadataTag(tags, "CASSINI_FORMAT")
 	if formatTag == "" {
-		return ExtractedMeeting{}, fmt.Errorf("%s carries no CASSINI_FORMAT metadata (not a portable meeting)", path)
+		return ExtractedMeeting{}, fmt.Errorf("%s carries no CASSINI_FORMAT metadata (%w)", path, ErrNotPortableMeeting)
 	}
 	if !isPublishedPortableFormat(formatTag) {
-		return ExtractedMeeting{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
+		return ExtractedMeeting{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s: %w", formatTag, ErrUnsupportedFormat)
 	}
 
 	_, manifest, err := decodePortableMeeting(tags)
@@ -93,7 +109,7 @@ func extractMeetingTags(path string, tags map[string]string) (ExtractedMeeting, 
 
 	entry, _, ok := defaultWordsTranscriptEntry(tags, manifest)
 	if !ok {
-		return ExtractedMeeting{}, fmt.Errorf("portable meeting %s declares no default words transcript", path)
+		return ExtractedMeeting{}, fmt.Errorf("portable meeting %s declares %w", path, ErrNoDefaultTranscript)
 	}
 	body, _, err := decodeTranscriptBody(tags, entry)
 	if err != nil {
@@ -106,6 +122,7 @@ func extractMeetingTags(path string, tags map[string]string) (ExtractedMeeting, 
 	if transcript.Format == "" {
 		transcript.Format = entry.Format
 	}
+	transcript.PayloadSHA256 = entry.PayloadRef.SHA256
 	extracted.Transcript = transcript
 	return extracted, nil
 }

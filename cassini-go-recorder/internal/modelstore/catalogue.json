@@ -152,6 +152,32 @@
           "required": true
         }
       ]
+    },
+    {
+      "id": "embeddinggemma-2-text-int8",
+      "kind": "embedding",
+      "name": "EmbeddingGemma 2 (text) \u2014 int8",
+      "description": "Multilingual text embeddings for topic suggestions, quantized weights (ONNX export onnx-community/embeddinggemma-2-ONNX@daa72c51, tokenizer google/embeddinggemma-2@914f7f89)",
+      "license": "Apache-2.0",
+      "source_url": "https://huggingface.co/onnx-community/embeddinggemma-2-ONNX/tree/daa72c51243991dfcaf9f9137d2c573d8f7790c0/onnx",
+      "source_sha256": "89cef0454bc6e723f9f7fc53df0e2c881ba672fd00d8678c02d677f0b1ebee2c",
+      "files": [
+        {
+          "path": "model_quantized.onnx",
+          "artifact": "models/files/8f912d26b82373cdfd247def50560fd557ff8aa4b1577f2b6c00420c7dd29019/model_quantized.onnx.zst",
+          "required": true
+        },
+        {
+          "path": "model_quantized.onnx_data",
+          "artifact": "models/files/27f17e9f046dbcd0d65ebc770eb1b365423428c7c747bbdc902272187cdf7b43/model_quantized.onnx_data.zst",
+          "required": true
+        },
+        {
+          "path": "tokenizer.model",
+          "artifact": "models/files/c6886ebe170620f8d875a316b36427438babecaa2137a34e183ff4e4775220d8/tokenizer.model.zst",
+          "required": true
+        }
+      ]
     }
   ],
   "retired_models": [
@@ -605,6 +631,60 @@
       "frame_size": 262144,
       "frame_count": 97,
       "seek_table_size": 793,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
+    {
+      "id": "8f912d26b82373cdfd247def50560fd557ff8aa4b1577f2b6c00420c7dd29019",
+      "key": "models/files/8f912d26b82373cdfd247def50560fd557ff8aa4b1577f2b6c00420c7dd29019/model_quantized.onnx.zst",
+      "filename": "model_quantized.onnx.zst",
+      "name": "model_quantized.onnx",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/8f912d26b82373cdfd247def50560fd557ff8aa4b1577f2b6c00420c7dd29019/model_quantized.onnx.zst",
+      "size": 24610,
+      "sha256": "8f912d26b82373cdfd247def50560fd557ff8aa4b1577f2b6c00420c7dd29019",
+      "uncompressed_size": 495165,
+      "uncompressed_sha256": "d06edd601f851c633a2519304cbeb8dc6170d7ceb61b436625c17fb9b6e74953",
+      "frame_size": 262144,
+      "frame_count": 2,
+      "seek_table_size": 33,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
+    {
+      "id": "27f17e9f046dbcd0d65ebc770eb1b365423428c7c747bbdc902272187cdf7b43",
+      "key": "models/files/27f17e9f046dbcd0d65ebc770eb1b365423428c7c747bbdc902272187cdf7b43/model_quantized.onnx_data.zst",
+      "filename": "model_quantized.onnx_data.zst",
+      "name": "model_quantized.onnx_data",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/27f17e9f046dbcd0d65ebc770eb1b365423428c7c747bbdc902272187cdf7b43/model_quantized.onnx_data.zst",
+      "size": 286514764,
+      "sha256": "27f17e9f046dbcd0d65ebc770eb1b365423428c7c747bbdc902272187cdf7b43",
+      "uncompressed_size": 313724928,
+      "uncompressed_sha256": "278a7ff1248c3618e4bd11a607fc54f7bdc7778854230f3956d3f86bd9db4f3b",
+      "frame_size": 262144,
+      "frame_count": 1197,
+      "seek_table_size": 9593,
+      "compression_level": 6,
+      "encoding": "zstd-seekable",
+      "format_version": "0.1.0"
+    },
+    {
+      "id": "c6886ebe170620f8d875a316b36427438babecaa2137a34e183ff4e4775220d8",
+      "key": "models/files/c6886ebe170620f8d875a316b36427438babecaa2137a34e183ff4e4775220d8/tokenizer.model.zst",
+      "filename": "tokenizer.model.zst",
+      "name": "tokenizer.model",
+      "description": "Seekable Zstandard model file",
+      "url": "https://dist.gocassini.com/models/files/c6886ebe170620f8d875a316b36427438babecaa2137a34e183ff4e4775220d8/tokenizer.model.zst",
+      "size": 2194091,
+      "sha256": "c6886ebe170620f8d875a316b36427438babecaa2137a34e183ff4e4775220d8",
+      "uncompressed_size": 4689013,
+      "uncompressed_sha256": "e594c8a90eb08d8bda498ff4747977dc827ae0c3c56b5c0d41a605a22d02ef03",
+      "frame_size": 262144,
+      "frame_count": 18,
+      "seek_table_size": 161,
       "compression_level": 6,
       "encoding": "zstd-seekable",
       "format_version": "0.1.0"

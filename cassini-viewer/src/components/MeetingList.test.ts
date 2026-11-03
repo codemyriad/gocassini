@@ -317,3 +317,12 @@ describe("MeetingList tag filter over insights", () => {
     expect(meetingListSource).toContain("by name, date or tag");
   });
 });
+
+describe("MeetingList suggested badge", () => {
+  const meetings = [{ id: "m1", title: "Hiring sync", dateLabel: "2026-09-01" }, { id: "m2", title: "Budget", dateLabel: "2026-09-02" }];
+  it("marks rows with suggestions to review, dashed and apart from tags", () => {
+    const body = render(MeetingList as never, { props: { meetings, totalCount: 2, suggestedCounts: { m1: 2 } } } as never).body;
+    expect(body).toContain('class="row-suggested');
+    expect(body.match(/2 suggested/g)).toHaveLength(1);
+  });
+});

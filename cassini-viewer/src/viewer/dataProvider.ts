@@ -44,6 +44,7 @@ import type {
   VocabularyTag,
 } from "./annotations";
 import type { SpeakerEditsDoc, SpeakerEditsState } from "./speakerEdits";
+import type { MeetingSuggestions, ProposalAction, Topic, TopicBatchResult, TopicProposal, TopicCoverage, TopicDecision, TopicLibrary, TopicQueue, TopicQueueQuery, TopicRevision, TopicSave, TopicTagRooms } from "./topics";
 import {
   searchMeetingTranscripts,
   type MeetingSearchOptions,
@@ -149,6 +150,39 @@ export interface DataProvider {
   mergeTag?(tagId: string, intoTagId: string): Promise<TagJob>;
   deleteTag?(tagId: string): Promise<TagJob>;
   loadTagJob?(): Promise<TagJob | null>;
+
+  // OPTIONAL: the topic library (docs/topic-suggestions.md) — `GET|POST
+  // annotations/topics/library…`. Only an operator with topic suggestions
+  // switched on serves it; loadTopicLibrary answers {enabled:false}
+  // otherwise, and the Topics tab stays hidden. Writes reject with an
+  // AnnotationError whose code the editor acts on: label-taken,
+  // topic-retired (with the retired topic's tagId), revision-conflict,
+  // rate-limited, library-full, disabled.
+  loadTopicLibrary?(): Promise<TopicLibrary>;
+  saveTopic?(save: TopicSave): Promise<{ topic: Topic; job?: TagJob | null }>;
+  loadTopicHistory?(tagId: string): Promise<TopicRevision[]>;
+  redactTopicRevision?(tagId: string, revision: number): Promise<void>;
+  loadTopicTagRooms?(tagId: string): Promise<TopicTagRooms>;
+
+  // OPTIONAL: suggestions for one meeting and the decisions on them —
+  // `GET|POST annotations/topics/meetings/<id>…`. A static export has none,
+  // so the public viewer never shows a suggestion. A confirm answers the
+  // meeting's new annotations, as applyAnnotationOps does.
+  loadMeetingSuggestions?(entry: MeetingCatalogEntry): Promise<MeetingSuggestions>;
+  decideSuggestion?(entry: MeetingCatalogEntry, tagId: string, decision: TopicDecision, requestId: string): Promise<{ annotations?: AnnotationResult; replayed?: boolean }>;
+  loadTopicCoverage?(room?: string): Promise<TopicCoverage>;
+
+  // OPTIONAL: the review queue across the caller's meetings and a decision
+  // of one topic on many of them (at most 100), each as a single decision
+  // would be made.
+  loadReviewQueue?(query?: TopicQueueQuery): Promise<TopicQueue>;
+  // OPTIONAL: recurring-topic proposals, per room, and what people decide
+  // about them. Approve answers 409 terms-from-meetings (with the terms) when
+  // the typed label or definition shares words with the draft name and
+  // confirmTerms was not set.
+  loadTopicProposals?(room?: string): Promise<{ enabled: boolean; proposals?: TopicProposal[] }>;
+  decideTopicProposal?(id: string, action: ProposalAction & { requestId: string }): Promise<{ proposal: { id: string; state: string }; topic?: { tagId: string } }>;
+  decideSuggestionBatch?(request: { requestId: string; tagId: string; meetingIds: string[]; decision: "confirm" | "reject" }): Promise<{ results: TopicBatchResult[] }>;
 
   // OPTIONAL (D-736): what was SAID across the meetings this caller can read —
   // `GET published/search`.

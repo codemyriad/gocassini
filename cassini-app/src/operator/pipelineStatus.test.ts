@@ -92,6 +92,9 @@ describe("helpers", () => {
     // Voice separation's download holds nothing in the pipeline up.
     const diarizer = { id: "m", kind: "diarization", name: "", revision: "r", download_bytes: 1, installed_bytes: 1, installed: false, ready: false, device: "cpu" };
     expect(runningDownload({ models: [diarizer], jobs: [{ ...job, state: "downloading" }], downloads_allowed: true, device: "cpu" })).toBeNull();
+    // Nor does the topic suggestions model's.
+    const embedder = { ...diarizer, kind: "embedding" };
+    expect(runningDownload({ models: [embedder], jobs: [{ ...job, state: "downloading" }], downloads_allowed: true, device: "cpu" })).toBeNull();
   });
   it("says a retention span", () => {
     expect(retentionSpan({ forever: false, count: 1, unit: "days" })).toBe("1 day");

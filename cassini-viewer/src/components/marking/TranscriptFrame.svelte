@@ -53,6 +53,8 @@
   export let viewHeight = 0;
   export let barTarget: HTMLElement | null = null;
   export let revealBar: () => void = () => {};
+  // An open topic suggestion's evidence: drawn dotted and read-only.
+  export let evidence: readonly { startMs: number; endMs: number }[] = [];
 
   function mountIn(node: HTMLElement, target: HTMLElement | null) {
     const home = node.parentNode;
@@ -191,6 +193,17 @@
     await tick();
     page = [...(textCell?.querySelectorAll<HTMLElement>("[data-word-id]") ?? [])];
     pageAt = new Map(page.map((element, at) => [element.dataset.wordId!, at]));
+  }
+
+  $: paintEvidence(evidence, page);
+  function paintEvidence(ranges: readonly { startMs: number; endMs: number }[], elements: HTMLElement[]) {
+    for (const element of elements) {
+      const index = indexById.get(element.dataset.wordId ?? "");
+      const word = index === undefined ? undefined : words[index];
+      const inside = !!word && ranges.some((range) => word.startMs >= range.startMs && word.startMs < range.endMs);
+      if (inside) element.setAttribute("data-topic-evidence", "");
+      else element.removeAttribute("data-topic-evidence");
+    }
   }
 
   let seenStops = stops;
@@ -1173,6 +1186,11 @@
   /* A word carries its own section's colour at rest, so the open and lit
      colours come from above it: the selection's from the grid, the lit
      section's from the text cell. */
+  .frame :global([data-word-id][data-topic-evidence]) {
+    text-decoration: underline dotted color-mix(in oklch, var(--color-base-content) 55%, transparent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
   .frame :global([data-word-id][data-sel]) {
     --hl-edge: var(--sel-edge);
     --hl-fill: var(--sel-fill);

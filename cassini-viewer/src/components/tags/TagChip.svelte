@@ -10,6 +10,9 @@
   export let icon: TagIconId | "" = "";
   export let removable = false;
   export let disabled = false;
+  // A suggestion nobody has confirmed: dashed, with no fill, so it never
+  // reads as a tag the meeting carries.
+  export let suggested = false;
 
   const dispatch = createEventDispatcher<{ remove: void }>();
 </script>
@@ -22,7 +25,7 @@
      whether or not it supports text-box. As a separate flex item it was centred
      on the label's box instead, which sits higher wherever text-box is not
      trimming it. -->
-<span class="tag-chip" data-tag-color={color}>
+<span class="tag-chip" class:suggested data-tag-color={color}>
   <span class="tag-chip-label"
     ><span class="tag-chip-mark">{#if icon}<TagIcon {icon} size={11} />{:else}<TagIcon size={8} />{/if}</span
     >{label}</span
@@ -59,6 +62,10 @@
     background: color-mix(in srgb, var(--tag) 18%, transparent);
     border: 1px solid transparent;
     border-radius: 5px;
+  }
+  .tag-chip.suggested {
+    background: transparent;
+    border: 1px dashed color-mix(in srgb, var(--tag) 70%, transparent);
   }
   .tag-chip-mark {
     display: inline-flex;

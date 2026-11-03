@@ -150,6 +150,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runServe(ctx, args[1:], stdout, stderr)
 	case "speakers":
 		return runSpeakers(ctx, args[1:], stdout, stderr)
+	case "topics":
+		// Unlisted while topic suggestions are an unannounced preview.
+		return runTopics(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
 		printRootUsage(stderr)
@@ -438,7 +441,7 @@ Commands:
   annotate Read and write the tags and marks a packed .opus file carries
   build    Build a browser-ready meeting artifact from a recording
   dev      Access the local harness namespace
-  models   Install, check, pack and import optional transcription models
+  models   Install, check, pack and import optional models
   doctor   Validate the local environment before expensive work starts
   insight  Ask one question of several meetings and keep the answer
   inspect  Inspect a run, meeting, site, or lower-level Cassini artifact

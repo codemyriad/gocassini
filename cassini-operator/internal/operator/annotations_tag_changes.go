@@ -220,6 +220,11 @@ func (s *annotationService) changeTag(w http.ResponseWriter, r *http.Request, ca
 		}
 		job = s.startTagJob(w, r, scope, tagJob{Kind: tagJobMerge, TagID: tag.TagID, Into: into.TagID},
 			map[string]any{"op": "merge-tag", "tagId": tag.TagID, "into": map[string]string{"id": into.TagID, "label": into.Label}})
+		if job != nil && s.rt.topics != nil {
+			if err := s.rt.topics.libraryFollowMerge(r.Context(), tag.TagID, into.TagID, into.Label, scope.caller); err != nil {
+				s.logf("topics: library merge of %s into %s: %v", tag.TagID, into.TagID, err)
+			}
+		}
 	case "delete":
 		job = s.startTagJob(w, r, scope, tagJob{Kind: tagJobDelete, TagID: tag.TagID},
 			map[string]any{"op": "unmark-tag", "tagId": tag.TagID})
@@ -272,6 +277,27 @@ func (s *annotationService) editTag(w http.ResponseWriter, r *http.Request, scop
 		writeJSONError(w, http.StatusConflict, "busy")
 		return
 	}
+	// A library topic follows first, so later confirms write the new label
+	// and colour.
+	if (rename != "" || restyle) && s.rt.topics != nil {
+		var label *string
+		if rename != "" {
+			label = &rename
+		}
+		var color, icon *string
+		if restyle {
+			color, icon = edit.Color, edit.Icon
+		}
+		if err := s.rt.topics.libraryFollowTagEdit(r.Context(), tag.TagID, scope.caller, label, color, icon); err != nil {
+			var refusal *topicError
+			if errors.As(err, &refusal) {
+				writeJSON(w, refusal.status, refusal.body)
+			} else {
+				s.tagIndexFailed(w, scope.caller, err)
+			}
+			return
+		}
+	}
 	var job *tagJob
 	if rename != "" || restyle {
 		ops := make([]any, 0, 2)
@@ -303,10 +329,19 @@ func (s *annotationService) editTag(w http.ResponseWriter, r *http.Request, scop
 // startTagJob starts op over each of the caller's recordings carrying the tag,
 // or answers why not and returns nil.
 func (s *annotationService) startTagJob(w http.ResponseWriter, r *http.Request, scope tagScope, job tagJob, op any) *tagJob {
-	targets, err := scope.store.tagCarriers(r.Context(), job.TagID, scope.visible)
+	started, status, message := s.startTagJobFor(r.Context(), scope, job, op)
+	if started == nil {
+		writeJSONError(w, status, message)
+	}
+	return started
+}
+
+// startTagJobFor starts the job, or says why not with a status and message.
+func (s *annotationService) startTagJobFor(ctx context.Context, scope tagScope, job tagJob, op any) (*tagJob, int, string) {
+	targets, err := scope.store.tagCarriers(ctx, job.TagID, scope.visible)
 	if err != nil {
-		s.tagIndexFailed(w, scope.caller, err)
-		return nil
+		s.logf("annotations: tag index failed for %s: %v", scope.caller, err)
+		return nil, http.StatusBadGateway, tagIndexUnreadableMessage
 	}
 	raw, err := json.Marshal(op)
 	if err == nil {
@@ -314,14 +349,12 @@ func (s *annotationService) startTagJob(w http.ResponseWriter, r *http.Request, 
 	}
 	if err != nil {
 		s.logf("annotations: start a %s job: %v", job.Kind, err)
-		writeJSONError(w, http.StatusInternalServerError, "the job could not be started")
-		return nil
+		return nil, http.StatusInternalServerError, "the job could not be started"
 	}
 	job.Actor, job.State, job.Total, job.Failed = scope.caller, tagJobRunning, len(targets), []tagJobFailure{}
 	job.StartedAtUTC = time.Now().UTC().Format(time.RFC3339)
 	if !s.jobs.start(&job) {
-		writeJSONError(w, http.StatusConflict, "busy")
-		return nil
+		return nil, http.StatusConflict, "busy"
 	}
 	titles := make(map[string]string, len(scope.entries))
 	for _, entry := range scope.entries {
@@ -329,11 +362,10 @@ func (s *annotationService) startTagJob(w http.ResponseWriter, r *http.Request, 
 	}
 	if err := s.persistTagJob(&job, targets, raw, titles); err != nil {
 		s.jobs.finish(&job, tagJobInterrupted)
-		writeJSONError(w, 503, "could not save tag job")
-		return nil
+		return nil, 503, "could not save tag job"
 	}
 	s.background(func() { s.runTagJob(&job, targets, raw, titles) })
-	return s.jobs.snapshot(scope.caller)
+	return s.jobs.snapshot(scope.caller), 0, ""
 }
 
 // runTagJob applies op to each recording in turn, as the job's actor. A

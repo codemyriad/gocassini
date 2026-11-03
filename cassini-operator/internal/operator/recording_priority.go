@@ -16,8 +16,8 @@ func (rt *Runtime) reserveRecordSlot() bool {
 	defer rt.priorityMu.Unlock()
 	select {
 	case rt.recordSlots <- struct{}{}:
-		if rt.priorityBuildCancel != nil && (rt.processingPolicy() == policyRecordingFirst || (rt.processingPolicy() == policyAuto && (!rt.autoFreshLocked() || !rt.autoCanContinue))) {
-			rt.priorityBuildCancel(errRecordingPriority)
+		if rt.processingPolicy() == policyRecordingFirst || (rt.processingPolicy() == policyAuto && (!rt.autoFreshLocked() || !rt.autoCanContinue)) {
+			rt.cancelPriorityWorkLocked()
 		}
 		return true
 	default:
@@ -46,11 +46,16 @@ func (rt *Runtime) beginBackgroundBuild() (context.Context, func(), error) {
 		rt.priorityMu.Lock()
 		if rt.processingPolicy() == policyConcurrent || rt.recordingIdleLocked() || (rt.processingPolicy() == policyAuto && rt.autoFreshLocked() && rt.autoCanStart) {
 			ctx, cancel := context.WithCancelCause(rt.ctx)
-			rt.priorityBuildCancel = cancel
+			if rt.priorityCancels == nil {
+				rt.priorityCancels = map[uint64]context.CancelCauseFunc{}
+			}
+			rt.priorityNext++
+			id := rt.priorityNext
+			rt.priorityCancels[id] = cancel
 			rt.priorityMu.Unlock()
 			return ctx, func() {
 				rt.priorityMu.Lock()
-				rt.priorityBuildCancel = nil
+				delete(rt.priorityCancels, id)
 				cancel(nil)
 				rt.priorityMu.Unlock()
 			}, nil
@@ -61,6 +66,14 @@ func (rt *Runtime) beginBackgroundBuild() (context.Context, func(), error) {
 			return nil, nil, rt.ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+}
+
+// cancelPriorityWorkLocked cancels every running build and topic embed that
+// yields to recordings. The caller holds priorityMu.
+func (rt *Runtime) cancelPriorityWorkLocked() {
+	for _, cancel := range rt.priorityCancels {
+		cancel(errRecordingPriority)
 	}
 }
 

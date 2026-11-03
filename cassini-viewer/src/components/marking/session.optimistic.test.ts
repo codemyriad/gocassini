@@ -176,6 +176,21 @@ describe("optimistic annotation intents", () => {
     expect(get(session).annotations!.annotations!.items).toHaveLength(2);
   });
 
+  it("takes a write made elsewhere (a topic confirm) as its own: the page hears of it and its sync is followed", async () => {
+    vi.useFakeTimers();
+    const changed = vi.fn();
+    const loader = vi.fn(async () => answer([item("server-item")], 2));
+    const session = createMarksSession(changed);
+    await session.open(loader, async () => answer());
+    const loads = loader.mock.calls.length;
+    const confirmed = { ...answer([item("server-item")], 2), sync: { state: "pending" as const, desired: 2, confirmed: 1 } };
+    session.accept(confirmed);
+    expect(changed).toHaveBeenCalledWith(confirmed);
+    expect(get(session).annotations!.annotations!.items).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(loader.mock.calls.length).toBeGreaterThan(loads);
+  });
+
   it("does not optimistically draw ranges against different audio", async () => {
     const { session, calls } = await held({ ...answer([item("existing")]), resolved: false });
     expect(session.write(markRequest(pick, range()))).toBe(false);

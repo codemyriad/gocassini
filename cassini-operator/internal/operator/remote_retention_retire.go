@@ -79,6 +79,12 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 			return err
 		}
 	}
+	if s.rt.topics != nil {
+		if err = s.rt.topics.vectors.forgetMeeting(ctx, op.Name); err != nil {
+			projectionRelease()
+			return err
+		}
+	}
 	projectionRelease()
 	release, err = annotationMutationLocks.acquire(ctx, store.path)
 	if err != nil {
@@ -87,6 +93,9 @@ func (s *annotationService) resumeRemoteRetirement(ctx context.Context, op remot
 	defer release()
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
 		if err := deleteAnnotationRows(ctx, tx, op.Name); err != nil {
+			return err
+		}
+		if err := forgetTopicMeeting(ctx, tx, op.Name, reason); err != nil {
 			return err
 		}
 		// Keep single-request hashes and explicit terminal outcomes for idempotency.

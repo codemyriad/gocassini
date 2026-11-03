@@ -94,6 +94,14 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
     return true;
   }
 
+  // A write made for this meeting elsewhere (a topic confirm or its undo) is
+  // taken like one of this session's own: the page hears of it and its sync
+  // is followed.
+  function accept(answer: AnnotationResult) {
+    if (receive(answer)) onChanged(answer);
+    schedulePoll();
+  }
+
   function schedulePoll() {
     clearTimeout(pollTimer);
     if (!active || pending.length || get(state).status !== "ready") return;
@@ -287,7 +295,7 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
   }
 
   return {
-    subscribe: state.subscribe, open, write, receive, retryWrite, setTitle,
+    subscribe: state.subscribe, open, write, receive, accept, retryWrite, setTitle,
     dismissError() { if (!blocked) state.update((s) => ({ ...s, error: "" })); },
     retrySync: () => write({ ops: [], retrySync: true }),
     // A registry retains this session while the overlay is closed. Stop reads,

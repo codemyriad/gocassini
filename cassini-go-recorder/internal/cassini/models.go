@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"gocassini/internal/modelstore"
+	"gocassini/internal/topics"
 	"gocassini/internal/transcribe"
 )
 
@@ -22,8 +23,8 @@ type modelView struct {
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
 	Device         string `json:"device"`
-	// RuntimeSupported is set for diarization models only: whether this
-	// binary's native runtime can run them at all.
+	// RuntimeSupported is set for diarization and embedding models only:
+	// whether this binary's native runtime can run them at all.
 	RuntimeSupported *bool `json:"runtime_supported,omitempty"`
 	// ReplacedBy is set on a retired model an install still has: the shipped
 	// model that replaced it, which it can stand in for until that one is
@@ -35,7 +36,13 @@ type modelView struct {
 // the sizes and is ready once it passed the runtime check on the device. A
 // diarizer always runs on the CPU, has nothing to pair with, and is ready when
 // it is installed and the runtime supports Nemotron: that is cheap to check
-// on every listing and, unlike a receipt, survives a reboot.
+// on every listing and, unlike a receipt, survives a reboot. An embedding
+// model is CPU only too, and ready when installed, the ONNX Runtime library
+// loads with the API version the binding needs, and its probe passed: a
+// receipt bound to topics.ReadyFingerprint, never to the boot or the image,
+// whose probe compares vectors with a reference and so is a quality gate. A
+// receipt bound to the runtime fingerprint would turn topic suggestions off
+// after every reboot and every image upgrade.
 func listModelView(s *modelstore.Store, m modelstore.Model, device string) modelView {
 	var dl, installed int64
 	for _, c := range s.Components(m) {
@@ -51,6 +58,13 @@ func listModelView(s *modelstore.Store, m modelstore.Model, device string) model
 		view.Ready = view.Installed && supported
 		return view
 	}
+	if m.Kind == modelstore.KindEmbedding {
+		supported := embeddingRuntimeFn()
+		view.RuntimeSupported = &supported
+		view.Device = "cpu"
+		view.Ready = view.Installed && supported && s.Ready(m, "cpu", topics.ReadyFingerprint)
+		return view
+	}
 	view.Ready = s.Ready(m, device, transcribe.ModelRuntimeFingerprint())
 	return view
 }
@@ -60,11 +74,15 @@ var (
 	diarizationRuntimeFn   = transcribe.HasDiarizationRuntime
 	probeInstalledModelFn  = transcribe.ProbeInstalledModel
 	probeInstalledDiarizer = transcribe.ProbeInstalledDiarizer
+	embeddingRuntimeFn     = func() bool { return topics.RuntimeCheck() == nil }
+	probeInstalledEmbedder = topics.ProbeInstalled
 )
 
 func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "Usage: cassini models list|install|probe|pack|import [model] [options]")
+		// Topic suggestions are an unannounced preview: their model is not
+		// named here (docs/proposals/automatic-tagging/release-notes-draft.md).
 		fmt.Fprintln(stderr, "Models are speech models (installed with their VAD) and the speaker separation model "+transcribe.DefaultDiarizationModelID+".")
 		return 2
 	}
@@ -190,10 +208,11 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return fail(err)
 	}
 	if m.Kind == modelstore.KindVAD {
-		return fail(fmt.Errorf("select a speech or diarization model; VAD is included with speech models automatically"))
+		return fail(fmt.Errorf("select a speech, diarization or embedding model; VAD is included with speech models automatically"))
 	}
 	diarizer := m.Kind == modelstore.KindDiarization
-	if diarizer && *device != "cpu" && command != "pack" {
+	embedder := m.Kind == modelstore.KindEmbedding
+	if (diarizer || embedder) && *device != "cpu" && command != "pack" {
 		return fail(fmt.Errorf("%s runs on the CPU only; omit --device", m.ID))
 	}
 	switch command {
@@ -219,9 +238,29 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	if !*noProbe {
 		s.Progress(modelstore.Progress{Version: 1, Phase: "checking"})
-		if diarizer {
+		switch {
+		case diarizer:
 			err = probeInstalledDiarizer(ctx, s, m)
-		} else {
+		case embedder:
+			threads, warn := topics.Threads(transcribe.DefaultNumThreads())
+			if warn != nil {
+				fmt.Fprintln(stderr, "models:", warn)
+			}
+			// The probe is the model's quality gate: only a pass makes it
+			// ready, and a failure takes readiness away. Waiting (memory, a
+			// cancelled wait for the lock) says nothing about the model. The
+			// receipt changes under the inference lock, so probes record in
+			// the order they ran.
+			err = probeInstalledEmbedder(ctx, s, m, threads, func(err error) error {
+				switch {
+				case err == nil:
+					return s.MarkReady(m, "cpu", topics.ReadyFingerprint)
+				case !errors.Is(err, transcribe.ErrRuntimeCheckDeferred) && ctx.Err() == nil:
+					return s.ClearReady(m, "cpu")
+				}
+				return nil
+			})
+		default:
 			err = probeInstalledModelFn(ctx, s, m, *device)
 		}
 		if err != nil {
