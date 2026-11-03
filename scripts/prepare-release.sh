@@ -247,13 +247,13 @@ Nothing has been pushed. Review the commit, then push intentionally:
   git push --atomic origin ${push_ref}
 EOF
   fi
-  # Only a tagged cut that folded a section has something to bring back.
-  if [[ "$branch" == release/* && "$make_tag" -eq 1 && "$frag_count" -gt 0 ]]; then
+  # The sync works from the tag, so an untagged cut has nothing to bring back.
+  if [[ "$branch" == release/* && "$make_tag" -eq 1 ]]; then
     cat <<EOF
 
-Then bring this release's changelog back to main (docs/release.md#branches):
-  git switch -c chore/sync-${target}-changelog origin/main
-  ./scripts/sync-release-changelog.sh --version ${target}
+Then bring this release back to main (its changelog, and main's version):
+  git switch -c chore/sync-${target}-to-main origin/main
+  ./scripts/sync-release-to-main.sh --version ${target}
 EOF
   fi
 }
