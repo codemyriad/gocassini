@@ -17,6 +17,7 @@
 #   ./scripts/release-version.sh promote alpha|beta|rc.1|rc.2|stable
 #   ./scripts/release-version.sh set X.Y.Z[-(alpha|beta|rc).N]
 #   ./scripts/release-version.sh branch X.Y.Z[-pre]   # the branch it is cut on
+#   ./scripts/release-version.sh previous X.Y.Z[-pre] <versions  # newest lower one in its line
 
 set -euo pipefail
 
@@ -32,6 +33,7 @@ Usage:
   ./scripts/release-version.sh promote alpha|beta|rc.1|rc.2|stable
   ./scripts/release-version.sh set X.Y.Z[-(alpha|beta|rc).N]
   ./scripts/release-version.sh branch X.Y.Z[-(alpha|beta|rc).N]
+  ./scripts/release-version.sh previous X.Y.Z[-(alpha|beta|rc).N] < versions
 EOF
 }
 
@@ -82,6 +84,9 @@ main() {
       ;;
     branch)
       rv_release_branch "${2:?usage: $0 branch X.Y.Z[-(alpha|beta|rc).N]}"
+      ;;
+    previous)
+      rv_previous_in_line "${2:?usage: $0 previous X.Y.Z[-(alpha|beta|rc).N] < versions}"
       ;;
     -h|--help|help|"")
       usage

@@ -88,6 +88,22 @@ rv_release_branch() {
   fi
 }
 
+# rv_previous_in_line <version>
+# Read versions on stdin, one per line (anything not a release version is
+# skipped), and echo the newest one in <version>'s X.Y line that is lower than
+# <version>. Echo nothing when there is none.
+rv_previous_in_line() {
+  local target="$1" v best=""
+  rv_validate "$target" || return 1
+  while IFS= read -r v; do
+    rv_validate "$v" >/dev/null 2>&1 || continue
+    rv_same_line "$v" "$target" || continue
+    rv_gt "$target" "$v" || continue
+    if [[ -z "$best" ]] || rv_gt "$v" "$best"; then best="$v"; fi
+  done
+  [[ -z "$best" ]] || printf '%s\n' "$best"
+}
+
 # rv_same_line <a> <b>: return 0 (true) when a and b share MAJOR.MINOR.
 rv_same_line() {
   local pa pb amaj amin bmaj bmin

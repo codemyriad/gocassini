@@ -90,6 +90,19 @@ eq "1.10.0 on release/1.10" "release/1.10" "$(rv_release_branch 1.10.0)"
 
 eq "release-version.sh branch (used by the release workflows)" "release/0.2" "$("$SCRIPT_DIR/release-version.sh" branch 0.2.1)"
 
+echo "rv_previous_in_line — the newest lower version in the same X.Y line"
+tags=$'0.2.0
+0.2.1
+0.3.0-alpha.1
+0.2.0-beta.8
+not-a-version
+0.2.3'
+eq "previous of 0.2.2" "0.2.1" "$(rv_previous_in_line 0.2.2 <<<"$tags")"
+eq "previous of 0.2.1" "0.2.0" "$(rv_previous_in_line 0.2.1 <<<"$tags")"
+eq "previous of 0.3.0-beta.1" "0.3.0-alpha.1" "$(rv_previous_in_line 0.3.0-beta.1 <<<"$tags")"
+eq "previous of 0.4.0-beta.1 (none)" "" "$(rv_previous_in_line 0.4.0-beta.1 <<<"$tags")"
+eq "release-version.sh previous" "0.2.1" "$("$SCRIPT_DIR/release-version.sh" previous 0.2.2 <<<"$tags")"
+
 echo "rv_same_line — MAJOR.MINOR"
 if rv_same_line 0.2.1 0.2.0-beta.3; then ok "0.2.1 and 0.2.0-beta.3 share a line"; else bad "0.2.1 and 0.2.0-beta.3 should share a line"; fi
 if rv_same_line 0.2.1 0.3.0-alpha.1; then bad "0.2.1 and 0.3.0-alpha.1 should not share a line"; else ok "0.2.1 and 0.3.0-alpha.1 are different lines"; fi
