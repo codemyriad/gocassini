@@ -521,7 +521,7 @@ git -C "$SY" commit -qam "edit the notes"
 commit_frag 65.branch-only.md "A fix only on the branch."
 hint="$( cd "$SY" && ./scripts/prepare-release.sh --bump patch 2>&1 )"
 if grep -qF "sync-release-to-main.sh --version 0.2.1" <<<"$hint"; then ok "a cut on a release branch prints the sync step"; else bad "prepare-release should print the sync step (got: $hint)"; fi
-hint="$( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.2 --allow-empty-changelog --no-tag 2>&1 )"
+hint="$( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.2 --allow-empty-changelog --no-user-notes --no-tag 2>&1 )"
 if grep -qF "sync-release-to-main" <<<"$hint"; then bad "an untagged cut should not print the sync step"; else ok "an untagged cut prints no sync step"; fi
 git -C "$SY" reset -q --hard HEAD~1
 git -C "$SY" switch -q main
@@ -563,7 +563,7 @@ if ! grep -qF "## [0.3.0-beta.1]" "$cl"; then ok "no section invented for an emp
 git -C "$SY" switch -q release/0.2
 printf '### Fixed\n- Another.\n' > "$SY/changelog.d/66.next.md"
 git -C "$SY" add -A; git -C "$SY" commit -qm next
-( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.2 ) >/dev/null 2>&1
+( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.2 --no-user-notes ) >/dev/null 2>&1
 git -C "$SY" tag -d v0.2.2 >/dev/null
 awk '/^## \[0.2.2\]/{print; skip=1; next} /^## \[/{skip=0} !skip' "$SY/CHANGELOG.md" > "$SY/cl.tmp" && mv "$SY/cl.tmp" "$SY/CHANGELOG.md"
 git -C "$SY" commit -q --amend -a --no-edit; git -C "$SY" tag v0.2.2
