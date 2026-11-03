@@ -451,6 +451,25 @@ out="$(sync_cl --version 0.3.0-beta.1)"
 eq "main moves to the next minor's alpha.0" "0.4.0-alpha.0" "$(rv_read_version "$SY/appinfo/info.xml")"
 if grep -qF "has no 0.3.0-beta.1 section" <<<"$out"; then ok "sync notes a release with no changelog section"; else bad "sync should note the missing section (got: $out)"; fi
 if ! grep -qF "## [0.3.0-beta.1]" "$cl"; then ok "no section invented for an empty release"; else bad "sync should not add an empty section"; fi
+# A section header with no entries is an extraction failure, not "no
+# section": the sync stops before touching main's fragments.
+git -C "$SY" switch -q release/0.2
+printf '### Fixed\n- Another.\n' > "$SY/changelog.d/66.next.md"
+git -C "$SY" add -A; git -C "$SY" commit -qm next
+( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.2 ) >/dev/null 2>&1
+git -C "$SY" tag -d v0.2.2 >/dev/null
+awk '/^## \[0.2.2\]/{print; skip=1; next} /^## \[/{skip=0} !skip' "$SY/CHANGELOG.md" > "$SY/cl.tmp" && mv "$SY/cl.tmp" "$SY/CHANGELOG.md"
+git -C "$SY" commit -q --amend -a --no-edit; git -C "$SY" tag v0.2.2
+git -C "$SY" switch -q main
+before="$(git -C "$SY" rev-parse HEAD)"
+out="$(sync_cl --version 0.2.2 || true)"
+if grep -qF "could not extract the 0.2.2 section" <<<"$out" && [[ "$(git -C "$SY" rev-parse HEAD)" == "$before" ]] && git -C "$SY" diff --quiet HEAD; then
+  ok "sync stops on a section it can't extract, changing nothing"
+else
+  bad "sync should stop on an empty 0.2.2 section (got: $out)"
+fi
+git -C "$SY" reset -q --hard
+
 out="$(sync_cl --version 0.3.0-alpha.1 || true)"
 if grep -qF "cut on main" <<<"$out"; then ok "sync refuses a release cut on main"; else bad "sync should refuse a main release (got: $out)"; fi
 git -C "$SY" switch -q release/0.2

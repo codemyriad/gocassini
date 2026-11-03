@@ -88,9 +88,14 @@ main() {
   git -C "$root" show "$tag:CHANGELOG.md" >"$tagged"
   if grep -qF "## [$version]" "$changelog"; then
     echo "note: CHANGELOG.md already has a $version section"
-  elif ! section="$("$SCRIPT_DIR/extract-release-notes.sh" --version "$version" --changelog "$tagged" --with-header 2>/dev/null)"; then
-    section=""
+  elif ! grep -qF "## [$version]" "$tagged"; then
     echo "note: $tag's CHANGELOG.md has no $version section"
+  else
+    # The header is there, so a failure here is real (an empty section, an
+    # I/O error): stop before deleting main's fragments for entries that would
+    # then exist nowhere on main.
+    section="$("$SCRIPT_DIR/extract-release-notes.sh" --version "$version" --changelog "$tagged" --with-header)" \
+      || die "could not extract the $version section from $tag's CHANGELOG.md"
   fi
 
   if [[ -n "$section" ]]; then
