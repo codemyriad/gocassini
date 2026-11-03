@@ -88,6 +88,11 @@ production's and reads as a development build. The first alpha of that version
 is cut from it with `--promote alpha` (`0.3.0-alpha.0 → 0.3.0-alpha.1`), or
 `--bump major` if main turned out to be breaking.
 
+Main's `<image-tag>` follows `<version>`, so main's manifest names an image that
+is never published. Installing from main means building that image yourself:
+the harness's `--build` mode does this (and its default `reuse-local` reuses
+that build); its `pull` mode works only on a release tag's checkout.
+
 ## Cut a release
 
 One guided command, run on the version's `release/X.Y` branch (see
