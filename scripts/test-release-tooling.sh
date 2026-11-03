@@ -419,7 +419,11 @@ fix="$(git -C "$SY" rev-parse HEAD)"
 git -C "$SY" switch -q -c release/0.2 v0.2.0
 git -C "$SY" cherry-pick -x "$fix" >/dev/null
 commit_frag 65.branch-only.md "A fix only on the branch."
-sy_prep --bump patch
+hint="$( cd "$SY" && ./scripts/prepare-release.sh --bump patch 2>&1 )"
+if grep -qF "sync-release-changelog.sh --version 0.2.1" <<<"$hint"; then ok "a cut on a release branch prints the sync step"; else bad "prepare-release should print the sync step (got: $hint)"; fi
+hint="$( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.2 --allow-empty-changelog --no-tag 2>&1 )"
+if grep -qF "sync-release-changelog" <<<"$hint"; then bad "a cut with nothing folded should not print the sync step"; else ok "a cut with nothing folded prints no sync step"; fi
+git -C "$SY" reset -q --hard HEAD~1
 git -C "$SY" switch -q main
 
 out="$(sync_cl --version 0.2.1)"
@@ -432,6 +436,7 @@ if [[ ! -e "$SY/changelog.d/60.fix.md" ]]; then ok "sync removes the released fr
 if grep -qF "65.branch-only.md is not on this branch" <<<"$out"; then ok "sync names a fragment written only on the release branch"; else bad "sync should note the branch-only fragment (got: $out)"; fi
 eq "sync commits once" "chore(release): bring the 0.2.1 changelog to main" "$(git -C "$SY" log -1 --format=%s)"
 if git -C "$SY" diff --quiet HEAD; then ok "worktree clean after sync"; else bad "worktree should be clean after sync"; fi
+eq "CHANGELOG.md keeps its mode" "$(stat -c %a "$SY/appinfo/info.xml")" "$(stat -c %a "$cl")"
 
 out="$(sync_cl --version 0.2.1 || true)"
 if grep -qF "already has a 0.2.1 section" <<<"$out"; then ok "sync refuses a release already on main"; else bad "sync should refuse a second run (got: $out)"; fi

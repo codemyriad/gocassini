@@ -247,7 +247,8 @@ Nothing has been pushed. Review the commit, then push intentionally:
   git push --atomic origin ${push_ref}
 EOF
   fi
-  if [[ "$branch" == release/* ]]; then
+  # Only a tagged cut that folded a section has something to bring back.
+  if [[ "$branch" == release/* && "$make_tag" -eq 1 && "$frag_count" -gt 0 ]]; then
     cat <<EOF
 
 Then bring this release's changelog back to main (docs/release.md#branches):

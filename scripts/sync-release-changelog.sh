@@ -75,18 +75,17 @@ main() {
     die "CHANGELOG.md already has a $version section"
   fi
 
-  # The section as tagged, header included, trailing blank lines trimmed.
+  # Globals, not locals: the EXIT trap runs after main has returned.
+  SYNC_TAGGED="$(mktemp)"
+  SYNC_TMP="$(mktemp)"
+  trap 'rm -f "$SYNC_TAGGED" "$SYNC_TMP"' EXIT
+  local tagged="$SYNC_TAGGED" tmp="$SYNC_TMP"
+
+  # The section as tagged, header included.
   local section
-  section="$(git -C "$root" show "$tag:CHANGELOG.md" | awk -v hdr="## [$version]" '
-    index($0, hdr) == 1 { insec = 1 }
-    insec && index($0, "## [") == 1 && index($0, hdr) != 1 { insec = 0 }
-    insec { buf[n++] = $0 }
-    END {
-      e = n - 1; while (e >= 0 && buf[e] ~ /^[[:space:]]*$/) e--
-      for (i = 0; i <= e; i++) print buf[i]
-    }
-  ')"
-  [[ -n "$section" ]] || die "$tag's CHANGELOG.md has no $version section"
+  git -C "$root" show "$tag:CHANGELOG.md" >"$tagged"
+  section="$("$SCRIPT_DIR/extract-release-notes.sh" --version "$version" --changelog "$tagged" --with-header)" \
+    || die "$tag's CHANGELOG.md has no $version section"
 
   # Insert before the first versioned section that is older than this one; main
   # lists 0.3.0-alpha.1 above 0.2.2 above 0.2.1. Append if every one is newer.
@@ -98,8 +97,6 @@ main() {
     if rv_gt "$version" "$v"; then insert_at="$n"; break; fi
   done < <(grep -n '^## \[' "$changelog")
 
-  local tmp
-  tmp="$(mktemp)"
   if [[ -n "$insert_at" ]]; then
     {
       head -n "$((insert_at - 1))" "$changelog"
@@ -109,7 +106,8 @@ main() {
   else
     { cat "$changelog"; printf '\n%s\n' "$section"; } >"$tmp"
   fi
-  mv "$tmp" "$changelog"
+  # Write in place: mv would give CHANGELOG.md mktemp's 0600 mode.
+  cat "$tmp" >"$changelog"
   git -C "$root" add -- "$changelog"
 
   # Fragments the release commit deleted. One written directly on the release
