@@ -75,6 +75,6 @@ describe("describeImportSharing", () => {
     expect(got.title).toBe("you, Bob Lee, Design (group), Core (team), nolabel");
   });
   it("says so when the meeting is private", () => {
-    expect(describeImportSharing({ sharing: { share: false } })).toEqual({ line: "Visible only to you", title: "Only you can open this meeting." });
+    expect(describeImportSharing({ sharing: { share: false } })).toEqual({ line: "Only you", title: "Only you can open this meeting." });
   });
 });
