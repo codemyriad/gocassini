@@ -45,7 +45,7 @@ Nextcloud's own pending-share endpoint, and only shares that are in that
 person's own pending list and are Cassini's recordings. Nothing is accepted
 unasked, and never for anyone else. Every recording share carries a note
 naming the meeting, its date and its length ("Recording of Weekly sync,
-Friday 30 October 2026, 10:00 (42 min). Open it in Cassini."), so the file is
+Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini."), so the file is
 recognisable in Files; the notification itself does not show the note.
 
 Nextcloud's sharing settings apply to the `cassini` account like to anyone:

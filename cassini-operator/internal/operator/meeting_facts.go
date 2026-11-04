@@ -15,7 +15,7 @@ import (
 // Every time here is UTC. The operator records a recording's start and end
 // in UTC (jobs.record_started_at and record_finished_at), and an imported
 // meeting's createdAtUtc is UTC by name. Neither records a zone, so none is
-// applied: a share note says "10:00" for a meeting that started at 10:00 UTC.
+// applied: a share note says "10:00 UTC" for a meeting that started then.
 type meetingFacts struct {
 	Title     string
 	StartedAt time.Time     // zero when unknown

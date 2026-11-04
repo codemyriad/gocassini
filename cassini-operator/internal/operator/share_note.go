@@ -32,10 +32,12 @@ func oneLineTitle(title string) string {
 // recordings waiting for them. No URL — the deep link into Cassini is not
 // stable across versions, and a stale link would be worse than none.
 //
-//	Recording of Weekly sync, Friday 30 October 2026, 10:00 (42 min). Open it in Cassini.
-//	Imported meeting Weekly sync, Friday 30 October 2026, 10:00 (42 min). Open it in Cassini.
+//	Recording of Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
+//	Imported meeting Weekly sync, Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini.
 //
-// A missing title or date is left out rather than written as a blank.
+// The clock time says it is UTC: Browse shows the same start in the reader's
+// own zone, and the two must not look like different meetings. A missing
+// title or date is left out rather than written as a blank.
 func (f meetingFacts) shareNote(imported bool) string {
 	title := oneLineTitle(f.Title)
 	var b strings.Builder
@@ -58,7 +60,7 @@ func (f meetingFacts) shareNote(imported bool) string {
 		} else {
 			b.WriteString(" from ")
 		}
-		b.WriteString(f.StartedAt.UTC().Format("Monday 2 January 2006, 15:04"))
+		b.WriteString(f.StartedAt.UTC().Format("Monday 2 January 2006, 15:04") + " UTC")
 	}
 	if f.Duration > 0 {
 		b.WriteString(" (" + formatMeetingDuration(f.Duration) + ")")
