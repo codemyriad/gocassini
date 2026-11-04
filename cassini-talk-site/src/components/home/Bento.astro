@@ -1,0 +1,182 @@
+---
+import { styler } from "../../demos/bind";
+import { search, SEARCH_STILL } from "../../demos/search";
+import { voice, quote } from "../../demos/voice";
+import { mark, pinLefts, markRows } from "../../demos/mark";
+import { desk, Conversation, SAMPLES } from "../../demos/voices";
+import { mulberry32 } from "../../demos/util";
+
+const EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
+const sb = search(SEARCH_STILL, true, null, false);
+const sst = styler(sb);
+const vb = voice(0, true);
+const vst = styler(vb);
+const mb = mark(0, true);
+const mst = styler(mb);
+const db = desk(new Conversation(mulberry32(1100)).samples, 0, true);
+const dst = styler(db);
+const T = (b: Record<string, { t?: string }>, k: string) => b[k]?.t ?? "";
+const cursor = `<svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 7.2-6.3 1.7L9.6 18z" style="fill: var(--color-base-content); stroke: var(--color-base-200); stroke-width: 1.2; stroke-linejoin: round"></path></svg>`;
+const laneMask = "flex: 1 1 220px; height: 44px; -webkit-mask-image: linear-gradient(to right, transparent, #000 16%, #000 94%, transparent); mask-image: linear-gradient(to right, transparent, #000 16%, #000 94%, transparent)";
+const lanes = [
+  { label: "Me", bar: "bg-primary", style: "", icon: `<path d="M12 19v3"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><rect x="9" y="2" width="6" height="13" rx="3"></rect>` },
+  { label: "The others", bar: "", style: "; background: var(--color-accent)", icon: `<path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"></path><path d="M16 9a5 5 0 0 1 0 6"></path><path d="M19.364 18.364a9 9 0 0 0 0-12.728"></path>` },
+];
+---
+
+<section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pt-16 pb-32 flex flex-col gap-10">
+  <div class="flex flex-col gap-3 text-center items-center" data-reveal>
+    <h2 class="text-4xl md:text-5xl font-bold text-base-content">Everything after you press Record</h2>
+    <p class="text-lg text-base-content/60" style="max-width: 36rem">Speakers told apart, every word searchable, and nothing to set up.</p>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+    <div class="md:col-span-2 rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6" style="min-height: 320px" data-demo="search">
+      <div>
+        <h3 class="text-xl font-bold text-base-content">Find what was said</h3>
+        <p class="text-base text-base-content/60">Titles, transcripts and bookmarks, across every recording.</p>
+      </div>
+      <div class="flex-1 flex flex-col justify-center gap-5">
+        <label class="input w-full" style="height: 3.25rem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content/60"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <span class="relative grow flex items-center" style="height: 100%">
+            <input type="search" class="grow" data-k="input" placeholder={sb.input.a!.placeholder} aria-label="Search what was said" />
+            <span class="absolute left-0 top-0 bottom-0 flex items-center" aria-hidden="true" data-k="ov" style={sst("ov", "pointer-events: none; white-space: pre; transform: translateZ(0); transition: opacity 0.2s ease")}><span class="rounded-sm" data-k="sel" style={sst("sel", "transition: background-color 0.18s ease")}>{T(sb, "sel")}</span><span class="rounded-full bg-primary" data-k="caret" style={sst("caret", "width: 2px; height: 1.2em; transition: opacity 0.12s ease")}></span></span>
+          </span>
+        </label>
+        <div class="relative" style="height: 96px">
+          {[0, 1].map(i => (
+            <div class="absolute left-0 right-0 flex items-start gap-3" data-k={"r" + i} style={sst("r" + i, `top: ${i * 52}px`)}>
+              <span class="inline-flex shrink-0 items-center justify-center rounded-lg border border-base-300 bg-base-100" style="width: 32px; height: 32px; margin-top: 4px">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-k={"rim" + i} style={sst("rim" + i, "color: var(--color-base-content)")}><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"></path></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content/60" data-k={"rit" + i} style={sst("rit" + i)}><path d="M2 10v3"></path><path d="M6 6v11"></path><path d="M10 3v18"></path><path d="M14 8v7"></path><path d="M18 5v13"></path><path d="M22 10v3"></path></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-base-content/60 truncate" data-k={"rt" + i}>{T(sb, "rt" + i)}</p>
+                <p class="flex text-base text-base-content/80" style="margin-top: 2px"><span class="flex justify-end overflow-hidden" data-k={"rb" + i} style={sst("rb" + i, "flex: 0 1 auto; min-width: 0; white-space: pre")}>{T(sb, "rb" + i)}</span><span class="relative shrink-0" data-k={"rm" + i} style={sst("rm" + i, "white-space: pre")}><span class="absolute rounded-sm" aria-hidden="true" data-k={"rh" + i} style={sst("rh" + i, "top: -1px; bottom: -1px; left: -2px; right: -2px; background: color-mix(in oklab, var(--color-primary) 16%, transparent)")}></span><span class="relative" data-k={"rmt" + i}>{T(sb, "rmt" + i)}</span></span><span class="truncate" data-k={"ra" + i} style="flex: 1 1 0; min-width: 0; white-space: pre">{T(sb, "ra" + i)}</span></p>
+              </div>
+            </div>
+          ))}
+          <p class="absolute left-0 top-0 text-base text-base-content/60" data-k="miss" style={sst("miss", "transform: translateZ(0); transition: opacity 0.3s ease")}>{T(sb, "miss")}</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6" style="min-height: 320px; overflow: clip" data-demo="voice">
+      <div>
+        <h3 class="text-xl font-bold text-base-content">Put a name to every voice</h3>
+        <p class="text-base text-base-content/60">Name someone once. Later recordings automatically suggest them.</p>
+      </div>
+      <div class="flex-1 flex flex-col justify-center gap-3" aria-hidden="true">
+        <div class="flex items-center gap-2" style="height: 28px">
+          <span class="relative inline-flex text-sm font-bold whitespace-nowrap">
+            <span data-k="va" style={vst("va", `left: 0; top: 0; color: color-mix(in oklab, var(--color-base-content) 60%, transparent); transition: opacity 0.35s ease, transform 0.55s ${EASE}, filter 0.35s ${EASE}`)}>Speaker 2</span>
+            <span data-k="vb" style={vst("vb", `left: 0; top: 0; transition: color 0.4s ease, opacity 0.35s ease, transform 0.55s ${EASE}, filter 0.35s ${EASE}`)}>Chris<span data-k="vq" style={vst("vq", "transition: opacity 0.25s ease")}>?</span></span>
+          </span>
+          <span class="relative grid items-center">
+            <span class="relative inline-flex" data-k="okw" style={vst("okw", "grid-area: 1 / 1")}>
+              <span class="inline-flex items-center rounded-md text-xs font-semibold whitespace-nowrap" data-k="ok" style={vst("ok", "height: 26px; padding: 0 10px; color: var(--color-accent-content)")}>Confirm</span>
+            </span>
+            <span class="rounded-md" aria-hidden="true" data-k="okr" style={vst("okr", "grid-area: 1 / 1; align-self: stretch; pointer-events: none; transform: translateZ(0); outline: 2px solid transparent")}></span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-k="ck" style={vst("ck", "color: var(--color-accent); grid-area: 1 / 1; margin-left: -4px; transform: translateZ(0); transition: opacity 0.2s ease")}><path d="M20 6 9 17l-5-5" data-k="ckp" style={vst("ckp", "stroke-dasharray: 24")}></path></svg>
+            <span class="absolute" aria-hidden="true" data-k="vcur" style={vst("vcur", "left: 50%; top: 50%; z-index: 10; pointer-events: none")}>
+              <span data-k="vcuri" style={vst("vcuri", "display: block; transform-origin: 8px 5px")} set:html={cursor} />
+            </span>
+          </span>
+          <span class="flex items-center ml-auto" style="gap: 2px; height: 16px" aria-hidden="true">
+            {[0, 1, 2, 3].map(i => (
+              <span class="rounded-full" data-k={"eq" + i} style={vst("eq" + i, "width: 3px; background: var(--color-accent); transition: height 0.18s ease, opacity 0.4s ease")}></span>
+            ))}
+          </span>
+        </div>
+        <p class="text-xl font-medium leading-snug text-base-content flex flex-wrap" style="column-gap: 0.26em">
+          {quote.map((w, i) => <span data-k={"vw" + i} style={vst("vw" + i, "display: inline-block")}>{w}</span>)}
+        </p>
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6" style="min-height: 320px" data-demo="mark">
+      <div>
+        <h3 class="text-xl font-bold text-base-content">Mark a moment</h3>
+        <p class="text-base text-base-content/60">Tap while you record. Jump straight back to those bookmarks later.</p>
+      </div>
+      <div class="flex-1 flex flex-col justify-center gap-5" aria-hidden="true">
+        <div class="flex items-center gap-4">
+          <span class="relative inline-flex shrink-0">
+            <span class="inline-flex items-center justify-center rounded-full border border-base-300" data-k="mbtn" style={mst("mbtn", "color: var(--color-base-content); width: 36px; height: 36px")}><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"></path></svg></span>
+            <span class="absolute inset-0 rounded-full" aria-hidden="true" data-k="mring" style={mst("mring", "pointer-events: none; transform: translateZ(0); outline: 2px solid transparent")}></span>
+          </span>
+          <div class="relative flex-1" style="height: 24px" aria-hidden="true">
+            <div class="absolute left-0 right-0 rounded-full bg-base-300 overflow-hidden" style="top: 10px; height: 4px">
+              <div class="absolute inset-0" data-k="mrec" style={mst("mrec", "background: color-mix(in oklab, var(--color-base-content) 22%, transparent)")}></div>
+              <div class="absolute inset-0 bg-primary" data-k="mfill" style={mst("mfill")}></div>
+            </div>
+            {pinLefts.map((left, i) => (
+              <span class="absolute" style={`top: 6px; left: ${left}%; width: 12px; height: 12px; margin-left: -6px`}>
+                <span class="block rounded-full" data-k={"pin" + i} style={mst("pin" + i, "width: 12px; height: 12px; background: var(--color-base-content); box-shadow: 0 0 0 3px var(--color-base-200); transition: opacity 0.25s ease, transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1)")}></span>
+                <span class="absolute inset-0 rounded-full" data-k={"pinr" + i} style={mst("pinr" + i, "pointer-events: none; transform: translateZ(0); outline: 2px solid transparent")}></span>
+              </span>
+            ))}
+            <div class="absolute inset-0" data-k="mhead" style={mst("mhead")}><span class="absolute rounded-full bg-base-content" style="right: -1px; top: 4px; width: 2px; height: 16px"></span></div>
+          </div>
+        </div>
+        <div class="relative" style="height: 72px">
+          {markRows.map((x, i) => (
+            <div class="absolute flex items-center gap-3 rounded-lg text-sm text-base-content" data-k={"row" + i} style={mst("row" + i, `left: -8px; right: -8px; top: ${i * 40}px; height: 32px; padding: 0 8px`)}>
+              <span class="font-mono text-xs text-base-content/60 tabular-nums">{x[0]}</span>
+              <span class="flex-1 truncate">{x[1]}</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="text-primary shrink-0" data-k={"rowp" + i} style={mst("rowp" + i, "transform: translateZ(0); transition: opacity 0.3s ease")}><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+
+    <div class="md:col-span-2 rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6" style="min-height: 320px" data-demo="desk">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 class="text-xl font-bold text-base-content">Record the call you’re on</h3>
+          <p class="text-base text-base-content/60">On Mac, Windows and Linux: your microphone and everyone else, together.</p>
+        </div>
+        <span class="text-4xl font-bold tabular-nums text-base-content" data-k="dtime" aria-hidden="true">{T(db, "dtime")}</span>
+      </div>
+      <div class="flex-1 flex flex-col justify-center gap-4" aria-hidden="true">
+        {lanes.map((lane, sp) => (
+          <div class="flex flex-wrap items-center" style="column-gap: 16px; row-gap: 8px">
+            <span class="inline-flex items-center gap-2 text-sm font-medium shrink-0" data-k={"lane" + sp} style={dst("lane" + sp, "width: 112px; transition: color 0.4s ease")}><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" set:html={lane.icon} />{lane.label}</span>
+            <div class="relative overflow-hidden" aria-hidden="true" style={laneMask}>
+              <div class="absolute top-0 bottom-0 right-0 flex items-center" data-k={"strip" + sp} style={dst("strip" + sp, "gap: 3px")}>
+                {Array.from({ length: SAMPLES }, (_, k) => (
+                  <span class:list={["shrink-0 rounded-full", lane.bar]} data-k={`d${sp}_${k}`} style={dst(`d${sp}_${k}`, "width: 3px" + lane.style)}></span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+  <div class="facts">
+    <div class="fact" data-reveal>
+      <svg class="text-primary shrink-0" style="margin-top: 1px" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path><path d="M5 12.859a10 10 0 0 1 5.17-2.69"></path><path d="M19 12.859a10 10 0 0 0-2.007-1.523"></path><path d="M2 8.82a15 15 0 0 1 4.177-2.643"></path><path d="M22 8.82a15 15 0 0 0-11.288-3.764"></path><path d="m2 2 20 20"></path></svg>
+      <div class="flex flex-col gap-1">
+        <h3 class="text-base font-semibold text-base-content">Works offline</h3>
+        <p class="text-sm text-base-content/60">About <span class="text-base-content">530 MB</span>, once. Then no network.</p>
+      </div>
+    </div>
+    <div class="fact" data-reveal>
+      <svg class="text-primary shrink-0" style="margin-top: 1px" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="m17 8 5 5"></path><path d="m22 8-5 5"></path></svg>
+      <div class="flex flex-col gap-1">
+        <h3 class="text-base font-semibold text-base-content">No account</h3>
+        <p class="text-sm text-base-content/60">No analytics, no ads.</p>
+      </div>
+    </div>
+    <div class="fact" data-reveal>
+      <svg class="text-primary shrink-0" style="margin-top: 1px" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><path d="m16 6-4-4-4 4"></path><path d="M12 2v13"></path></svg>
+      <div class="flex flex-col gap-1">
+        <h3 class="text-base font-semibold text-base-content">Take it with you</h3>
+        <p class="text-sm text-base-content/60">Export <span class="text-base-content">TXT</span>, <span class="text-base-content">SRT</span>, <span class="text-base-content">WebVTT</span> or one <span class="text-base-content">.opus</span> file.</p>
+      </div>
+    </div>
+  </div>
+</section>

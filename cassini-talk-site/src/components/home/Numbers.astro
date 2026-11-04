@@ -1,0 +1,59 @@
+---
+import Glyph from "../Glyph.astro";
+import { styler } from "../../demos/bind";
+import { nums, greetings, ONE_BARS, NUMS_STILL } from "../../demos/nums";
+import type { Glyph as G } from "../../data/glyphs";
+
+const b = nums(NUMS_STILL);
+const st = styler(b);
+const EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
+const plats: [G, number][] = [["apple", 18], ["android", 18], ["apple", 18], ["windows", 16], ["linux", 18]];
+const big = "font-size: 4rem; line-height: 1";
+---
+
+<section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pt-16 pb-16">
+  <div class="nums grid rounded-2xl border border-base-300 bg-base-300 overflow-hidden" data-demo="nums" style="grid-template-columns: repeat(auto-fit, minmax(clamp(calc((100% - 4px) / 4), calc((1000px - 100%) * 999), clamp(calc((100% - 2px) / 2), calc((500px - 100%) * 999), 100%)), 1fr)); gap: 1px">
+    <div class="flex flex-col py-8 px-6 bg-base-100">
+      <p class="font-bold tabular-nums text-base-content" style={big}>25</p>
+      <p class="text-sm text-base-content/60 mt-3">European languages, recognised on the device by default</p>
+      <div class="flex-1"></div>
+      <div class="pt-6"><div class="relative overflow-hidden" style="height: 24px" aria-hidden="true">
+        {greetings.map((g, i) => (
+          <span class="absolute left-0 top-0 flex items-center gap-2 text-sm whitespace-nowrap" data-k={"g" + i} style={st("g" + i, `height: 24px; transition: opacity 0.45s ease, transform 0.6s ${EASE}`)}><span class="font-medium text-primary">{g[0]}</span><span class="text-base-content/60">{g[1]}</span></span>
+        ))}
+      </div></div>
+    </div>
+    <div class="flex flex-col py-8 px-6 bg-base-100">
+      <p class="font-bold tabular-nums text-base-content" style={big}>5</p>
+      <p class="text-sm text-base-content/60 mt-3">Available on iPhone and iPad, Android, Mac, Windows, Linux</p>
+      <div class="flex-1"></div>
+      <div class="pt-6"><div class="relative overflow-hidden" style="height: 24px" aria-hidden="true">
+        <span class="flex items-center gap-3" style="height: 24px">
+          {plats.map(([g, size], i) => (
+            <span class="inline-flex" data-k={"p" + i} style={st("p" + i, `transition: color 0.4s ease, transform 0.5s ${EASE}${g === "windows" ? "; margin: 1px" : ""}`)}><Glyph name={g} size={size} /></span>
+          ))}
+        </span>
+      </div></div>
+    </div>
+    <div class="flex flex-col py-8 px-6 bg-base-100">
+      <p class="font-bold tabular-nums text-base-content" style={big}>1</p>
+      <p class="text-sm text-base-content/60 mt-3">File per recording, with the transcript inside</p>
+      <div class="flex-1"></div>
+      <div class="pt-6"><div class="relative overflow-hidden" style="height: 24px">
+        <span class="absolute left-0 top-0 flex items-center" aria-hidden="true" data-k="owave" style={st("owave", `height: 24px; gap: 3px; transition: opacity 0.4s ease, transform 0.6s ${EASE}`)}>
+          {Array.from({ length: ONE_BARS }, (_, i) => (
+            <span class="rounded-full bg-primary" data-k={"ob" + i} style={st("ob" + i, "width: 3px; transition: height 0.15s ease")}></span>
+          ))}
+        </span>
+        <span class="absolute left-0 top-0 flex items-center gap-2 text-xs font-mono whitespace-nowrap" data-k="ofile" style={st("ofile", `height: 24px; transition: opacity 0.45s ease, transform 0.6s ${EASE}`)}><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg><span class="text-base-content">weekly-planning-call.opus</span></span>
+      </div></div>
+    </div>
+    <div class="flex flex-col py-8 px-6 bg-base-100">
+      <p class="font-bold tabular-nums text-base-content" style={big}>0</p>
+      <p class="text-sm text-base-content/60 mt-3">Your audio, transcripts and saved voices stay on your device.</p>
+      <div class="flex-1"></div>
+      <div class="pt-6"><div class="relative overflow-hidden" style="height: 24px" aria-hidden="true"><span class="flex items-center gap-2 text-sm whitespace-nowrap" style="height: 24px"><span class="size-1.5 rounded-full bg-primary" data-k="dot" style={st("dot", "transition: opacity 0.4s ease")}></span><span class="tabular-nums text-base-content" data-k="ztime">{b.ztime.t}</span><span class="text-base-content/60">recorded</span><span class="text-base-content/40">·</span><span class="tabular-nums text-primary font-medium">0 MB</span><span class="text-base-content/60">sent</span></span>
+      </div></div>
+    </div>
+  </div>
+</section>

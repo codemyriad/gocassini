@@ -1,0 +1,87 @@
+---
+import DownloadIcon from "../DownloadIcon.astro";
+import { href } from "../../lib/paths";
+import { styler } from "../../demos/bind";
+import { hero, steps, sentence, chipAt, BAR_COUNT, HERO_STILL } from "../../demos/hero";
+
+const b = hero(HERO_STILL, true);
+const st = styler(b);
+const txt = (k: string) => b[k]?.t ?? "";
+const EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
+const cursor = `<svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 7.2-6.3 1.7L9.6 18z" style="fill: var(--color-base-content); stroke: var(--color-base-200); stroke-width: 1.2; stroke-linejoin: round"></path></svg>`;
+---
+
+<section class="lead w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20" data-demo="hero">
+  <h1 class="lead-head font-bold text-base-content whitespace-nowrap" style="font-size: clamp(1.75rem, 7.6vw, 6.25rem); line-height: 0.95; letter-spacing: -0.035em">Every word written down.<br /><span class="text-base-content/40">None of it uploaded.</span></h1>
+  <div class="lead-side">
+    <div class="lead-steps" role="tablist" aria-label="How cassini.talk works">
+      {steps.map((x, i) => (
+        <button
+          type="button"
+          role="tab"
+          id={`hero-step-${x.id}`}
+          aria-controls="hero-demo"
+          aria-selected={b["step" + i].a!["aria-selected"]}
+          tabindex={b["step" + i].a!.tabindex}
+          class="lead-step"
+          data-k={"step" + i}
+          data-step={i}
+          style={st("step" + i, "transition: color 0.4s ease")}
+        ><span class="lead-track" aria-hidden="true"><span class="lead-fill" data-k={"fill" + i} style={st("fill" + i)}></span></span><span class="lead-long">{x.long}</span><span class="lead-short">{x.label}</span></button>
+      ))}
+    </div>
+    <div class="lead-cta">
+      <a href={href("download")} class="btn btn-primary btn-lg">
+        <DownloadIcon size={18} />
+        Download
+      </a>
+      <p class="text-sm text-base-content/60" style="max-width: 22rem">Free and open source, for iPhone and iPad, Android, Mac, Windows and Linux.</p>
+    </div>
+  </div>
+  <div class="lead-demo">
+    <div id="hero-demo" role="tabpanel" aria-label="A recording made, read back and searched" class="lead-card w-full rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col shadow-2xl text-left">
+      <div class="relative flex-1 min-h-0 mx-auto w-full" style="max-width: 44rem">
+        <div class="absolute inset-0 flex flex-col items-center justify-center gap-6" data-k="s1" style={st("s1", `transition: opacity 0.75s ${EASE}, transform 0.6s ${EASE}, filter 0.75s ${EASE}`)}>
+          <div class="relative w-full flex items-center justify-center" style="height: 80px">
+            <div class="absolute inset-0 flex items-center justify-center gap-1" aria-hidden="true">
+              {Array.from({ length: BAR_COUNT }, (_, i) => (
+                <span class="bg-primary rounded-full" data-k={"bar" + i} style={st("bar" + i, `width: 4px; transition: height 0.2s ${EASE}, opacity 0.3s ease`)}></span>
+              ))}
+            </div>
+            <span class="relative inline-flex" data-k="btnw" style={st("btnw")}>
+              <button type="button" class="btn btn-primary btn-lg rounded-full" data-k="btn" data-record style={st("btn")} tabindex="-1">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19v3"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><rect x="9" y="2" width="6" height="13" rx="3"></rect></svg>
+                Record
+              </button>
+              <span class="absolute inset-0 rounded-full" aria-hidden="true" data-k="ring" style={st("ring", "pointer-events: none; transform: translateZ(0); outline: 2px solid transparent")}></span>
+            </span>
+          </div>
+          <p class="text-5xl font-bold tabular-nums" data-k="timer" style={st("timer", `transition: color 0.4s ease, opacity 0.45s ease, transform 0.6s ${EASE}`)}>{txt("timer")}</p>
+        </div>
+        <div class="absolute inset-0 flex flex-col items-center justify-center gap-4" data-k="s2" style={st("s2", `transition: opacity 0.45s ${EASE}, transform 0.6s ${EASE}, filter 0.45s ${EASE}`)}>
+          <div class="relative w-full flex items-center justify-center" style="height: 40px">
+            <p class="absolute text-sm font-bold text-primary" data-k="label" style={st("label", `transition: opacity 0.3s ease, transform 0.5s ${EASE}`)}>Silvio <span class="font-normal text-base-content/60 tabular-nums" data-k="ltime">{txt("ltime")}</span></p>
+            <div class="absolute inline-flex items-center gap-2 rounded-full border border-base-300 bg-base-100 px-4 py-2 text-sm text-base-content" data-k="pill" style={st("pill", `width: 260px; justify-content: flex-start; transition: opacity 0.4s ease, transform 0.55s ${EASE}, filter 0.4s ${EASE}`)}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content/60"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+              <span class="whitespace-nowrap"><span data-k="query">{txt("query")}</span><span aria-hidden="true" data-k="caret" style={st("caret", "margin-left: 1px")}>▋</span></span>
+            </div>
+          </div>
+          <p class="text-2xl md:text-4xl font-medium leading-tight text-base-content text-center flex flex-wrap justify-center items-baseline" style="column-gap: 0.1em">
+            {sentence.map((w, i) => (
+              <span class="relative" data-k={"w" + i} style={st("w" + i, "display: inline-block; padding: 0 0.08em")}><span class="absolute inset-0 rounded-sm" data-k={"wbg" + i} style={st("wbg" + i, "background: var(--color-primary)")}></span><span class="relative" data-k={"wt" + i} style={st("wt" + i, "transition: color 0.5s ease")}>{w}</span><span class="absolute inset-0" aria-hidden="true" data-k={"wov" + i} style={st("wov" + i, "padding: 0 0.08em; color: var(--color-primary-content)")}>{w}</span></span>
+            ))}
+          </p>
+          <div class="relative w-full flex items-center justify-center" style="height: 34px">
+            <span class="inline-flex items-center gap-2 rounded-full bg-primary/10 text-primary px-3 py-1.5 text-sm font-medium" data-k="chip" style={st("chip", `transition: opacity 0.6s ${EASE}, transform 0.7s ${EASE}, filter 0.6s ${EASE}`)}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
+              <span>Play from</span><span>{chipAt}</span><span>· Silvio</span>
+            </span>
+          </div>
+        </div>
+        <span class="absolute" aria-hidden="true" data-k="cur" style={st("cur", "left: 50%; top: 50%; z-index: 10; pointer-events: none")}>
+          <span data-k="curi" style={st("curi", "display: block; transform-origin: 8px 5px")} set:html={cursor} />
+        </span>
+      </div>
+    </div>
+  </div>
+</section>

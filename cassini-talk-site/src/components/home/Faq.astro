@@ -1,0 +1,28 @@
+---
+import { href } from "../../lib/paths";
+
+const linkCls = "text-base-content hover:text-primary underline underline-offset-4 decoration-base-content/30 hover:decoration-primary transition-colors";
+const faqs = [
+  { q: "Does audio leave my device?", a: "No. Recording, transcription and speaker analysis all happen on your phone or computer. The only download is the speech model, and only after you agree." },
+  { q: "How much space does it need?", a: "On a phone the speech model is a one-time download of about 530 MB. Allow about 1.3 GB free while it installs." },
+  { q: "Is it free?", a: "Yes. cassini.talk is free software under the GPLv3, and the source for every app is on GitHub." },
+  { q: "Do I have to tell people I’m recording?", a: "Yes. Before your first recording, cassini.talk reminds you that telling the people you record is your responsibility." },
+  { q: "Is there a version for Nextcloud?", a: `Yes. Cassini for Nextcloud records Talk calls on your own server and shares them with your team. It lives at <a href="https://gocassini.com" class="${linkCls}">gocassini.com</a>, and it reads the same <code class="text-primary bg-base-300 px-1 rounded text-sm">.opus</code> files.` },
+];
+---
+
+<section class="faq-sec w-full px-5 md:px-10 lg:px-20 pt-16 pb-24">
+  <div class="mx-auto flex flex-col gap-8" style="max-width: 48rem">
+    <h2 class="text-4xl font-bold text-base-content text-center" data-reveal>Questions</h2>
+    <div class="flex flex-col gap-3">
+      {faqs.map((f, i) => (
+        <details open={i === 0} class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer" data-reveal>
+          <summary class="flex items-center justify-between cursor-pointer list-none text-base font-medium text-base-content select-none">{f.q}
+<svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></summary>
+          <p class="mt-3 text-sm text-base-content/60 leading-relaxed" set:html={f.a} />
+        </details>
+      ))}
+    </div>
+    <p class="text-sm text-base-content/60 text-center">More in the <a href={href("help")} class={linkCls}>help centre</a>.</p>
+  </div>
+</section>

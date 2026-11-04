@@ -1,0 +1,27 @@
+---
+import DownloadIcon from "../DownloadIcon.astro";
+import { href } from "../../lib/paths";
+import { styler } from "../../demos/bind";
+import { wave, Conversation, WAVE_HALF } from "../../demos/voices";
+import { mulberry32 } from "../../demos/util";
+
+const b = wave(new Conversation(mulberry32(72)).samples);
+const st = styler(b);
+---
+
+<section class="cta-band w-full border-t border-base-300/60 bg-base-200 px-5 md:px-10 lg:px-20" data-demo="wave">
+  <div class="max-w-7xl mx-auto flex flex-col items-center text-center">
+    <h2 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em" data-reveal>Keep your<br />conversations.</h2>
+    <div class="relative w-full flex items-center justify-between mt-6" style="max-width: 40rem; height: 120px" aria-hidden="true">
+      {Array.from({ length: WAVE_HALF * 2 }, (_, j) => (
+        <span class="rounded-full shrink-0" data-k={"wv" + j} style={st("wv" + j, "width: min(3px, 0.6vw); transition: height 0.1s linear, background-color 0.15s linear")}></span>
+      ))}
+    </div>
+    <div class="flex flex-wrap items-center justify-center gap-4 mt-4">
+      <a href={href("download")} class="btn btn-primary btn-lg" data-k="cta" style={st("cta", "transition: color 0.4s ease, background-color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease, transform 0.2s cubic-bezier(0, 0, 0.2, 1)")}>
+        <DownloadIcon size={18} />
+        Download
+      </a>
+    </div>
+  </div>
+</section>

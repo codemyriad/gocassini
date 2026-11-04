@@ -1,0 +1,47 @@
+---
+const greet = [
+  ["Hello", "English"], ["Hallo", "German"], ["Hei", "Finnish"], ["Goedendag", "Dutch"], ["Hej", "Danish"],
+  ["Здравейте", "Bulgarian"], ["Olá", "Portuguese"], ["Dobrý deň", "Slovak"], ["Bok", "Croatian"], ["Γεια σας", "Greek"],
+  ["Szia", "Hungarian"], ["Bonjour", "French"], ["Tere", "Estonian"], ["Привет", "Russian"], ["Ciao", "Italian"],
+  ["Привіт", "Ukrainian"], ["Ahoj", "Czech"], ["Bonġu", "Maltese"], ["Hola", "Spanish"], ["Cześć", "Polish"],
+  ["Živjo", "Slovenian"], ["Sveiki", "Latvian"], ["Hallå", "Swedish"], ["Labas", "Lithuanian"], ["Bună", "Romanian"],
+];
+const orbit = 55;
+const items = greet.map((g, i) => ({
+  word: g[0],
+  name: g[1],
+  a: ((360 * i) / greet.length).toFixed(2),
+  na: ((-360 * i) / greet.length).toFixed(2),
+  dl: ((orbit * i) / greet.length - orbit).toFixed(2),
+}));
+---
+
+<section class="lang-band w-full border-t border-base-300/60 bg-base-200 px-5 md:px-10 lg:px-20 pt-32 pb-32">
+  <div class="max-w-7xl mx-auto flex flex-col items-center text-center" style="gap: 16px">
+    <div class="flex flex-col gap-3 items-center" data-reveal>
+      <h2 class="text-4xl md:text-5xl font-bold text-base-content">Speak your language</h2>
+      <p class="text-lg text-base-content/60" style="max-width: 36rem">Parakeet Ultra recognises 25 European languages by default.</p>
+    </div>
+    <div class="lang-stage" role="img" aria-label="Hello in 25 languages, circling a label that names the language it hears" data-ring>
+      <div class="lang-tilt">
+        <div class="lang-spin">
+          {items.map(l => (
+            <div class="lang-item" style={`transform: rotateY(${l.a}deg) translateZ(var(--R))`}>
+              <div class="lang-turn" style={`transform: rotateY(${l.na}deg)`}>
+                <div class="lang-counter">
+                  <p class="lang-word" style={`animation-delay: ${l.dl}s`}>{l.word}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div class="absolute flex flex-col items-center gap-2" style="left: 50%; top: calc(var(--cy) + var(--label-dy)); transform: translateZ(0) translate(-50%, -50%); z-index: 1" aria-hidden="true">
+        <p class="inline-flex items-center gap-2 text-xs font-bold tracking-widest uppercase text-base-content/60"><span class="inline-flex items-center" style="gap: 2px; height: 12px"><span class="lang-eq"></span><span class="lang-eq" style="animation-delay: -0.35s"></span><span class="lang-eq" style="animation-delay: -0.7s"></span></span>Detected</p>
+        <div class="relative text-2xl md:text-4xl font-bold text-base-content" style="width: 16rem; height: 2.75rem">
+          {items.map(l => <p class="lang-name" style={`animation-delay: ${l.dl}s`}>{l.name}</p>)}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

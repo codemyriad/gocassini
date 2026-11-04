@@ -1,0 +1,27 @@
+---
+import Glyph from "../Glyph.astro";
+import { apps } from "../../data/apps";
+import { href } from "../../lib/paths";
+---
+
+<section class="w-full px-5 md:px-10 lg:px-20 pt-32 pb-16">
+  <div class="max-w-7xl mx-auto flex flex-col items-center text-center gap-6">
+    <p class="text-xs font-bold tracking-widest uppercase text-base-content/60" data-reveal>Privacy</p>
+    <h2 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em" data-reveal>Nothing leaves<br />your device.</h2>
+    <div class="flex flex-wrap justify-center gap-x-6 gap-y-3 pt-4">
+      <p class="text-base text-base-content/60"><span class="text-primary" aria-hidden="true">✓</span> Transcribed on the device</p>
+      <p class="text-base text-base-content/60"><span class="text-primary" aria-hidden="true">✓</span> Voiceprints never leave it</p>
+      <p class="text-base text-base-content/60"><span class="text-primary" aria-hidden="true">✓</span> No account, no analytics</p>
+    </div>
+    <div class="plats w-full" style="margin-top: 32px; max-width: 70rem">
+      {apps.map(app => (
+        <a href={href(`download#${app.id}`)} class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col items-center gap-3 text-center hover:bg-base-300/30 transition-colors" data-reveal>
+          <Glyph name={app.glyph} size={app.glyph === "windows" ? 28 : 32} class="text-base-content" style={app.glyph === "windows" ? "margin: 2px" : undefined} />
+          <p class="text-base font-semibold text-base-content">{app.name}</p>
+          <p class="text-xs text-base-content/60">{app.tileCaption}</p>
+        </a>
+      ))}
+    </div>
+    <p class="text-base text-base-content/60">Free on all five. Recordings move between them as one file.</p>
+  </div>
+</section>

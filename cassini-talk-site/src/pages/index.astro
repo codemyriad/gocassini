@@ -1,7 +1,26 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import Hero from "../components/home/Hero.astro";
+import Numbers from "../components/home/Numbers.astro";
+import Bento from "../components/home/Bento.astro";
+import Languages from "../components/home/Languages.astro";
+import Privacy from "../components/home/Privacy.astro";
+import OpusFile from "../components/home/OpusFile.astro";
+import Faq from "../components/home/Faq.astro";
+import Closing from "../components/home/Closing.astro";
 ---
 
-<BaseLayout title="cassini.talk" description="Every word written down. None of it uploaded." mainClass="home">
-  <section class="w-full max-w-7xl mx-auto px-5 pt-32 pb-16"><h1 class="text-5xl font-bold">Home</h1></section>
+<BaseLayout
+  title="cassini.talk – Every word written down. None of it uploaded."
+  description="cassini.talk records conversations and transcribes them on your device, with speakers told apart and every word searchable. Free and open source for iPhone and iPad, Android, Mac, Windows and Linux."
+  mainClass="home"
+>
+  <Hero />
+  <Numbers />
+  <Bento />
+  <Languages />
+  <Privacy />
+  <OpusFile />
+  <Faq />
+  <Closing />
 </BaseLayout>
