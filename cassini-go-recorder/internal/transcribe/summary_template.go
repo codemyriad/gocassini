@@ -55,19 +55,17 @@ func resolveSummaryWorkflow() (insight.Workflow, string) {
 	if id == "" {
 		id = workflows.SummariseID
 	}
-	var fallback string
 	set, err := workflows.Load()
 	if err != nil {
-		// The templates directory could not be read; the built-ins can.
-		fallback = fmt.Sprintf("summary template: %v — using the built-in %s", err, workflows.SummariseID)
-		set, err = workflows.LoadDir("")
-		if err != nil {
-			panic(fmt.Sprintf("the built-in workflows do not resolve: %v", err))
-		}
+		// Load fails only when a built-in does not resolve: a broken build.
+		panic(fmt.Sprintf("the built-in workflows do not resolve: %v", err))
 	}
 	workflow, ok := set.Registry.Lookup(id)
+	var fallback string
 	switch {
 	case !ok:
+		// Problem names the real cause, an unreadable templates directory
+		// included (Set.DirError).
 		reason := set.Problem(id)
 		if reason == "" {
 			reason = "no template has this id"
@@ -76,7 +74,9 @@ func resolveSummaryWorkflow() (insight.Workflow, string) {
 	case workflow.TakesQuestion():
 		fallback = fmt.Sprintf("summary template %q takes a question, and a summary has nobody to ask — using the built-in %s", id, workflows.SummariseID)
 	default:
-		return workflow, fallback
+		// The configured template runs. A directory that could not be read
+		// does not make this a fallback: the template it names is not in it.
+		return workflow, ""
 	}
 	builtIn, _ := set.Registry.Lookup(workflows.SummariseID)
 	return builtIn, fallback

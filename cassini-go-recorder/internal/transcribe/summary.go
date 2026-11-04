@@ -26,10 +26,10 @@ var (
 )
 
 // summaryTemplatePlaceholder is the literal token in the summarise prompt
-// where the V0 structure template is spliced in at runtime. If the prompt
-// file ever stops containing this token, summarySystemPrompt becomes a no-op
-// for the template and the existing TestSummarySystemPromptPinsTemplateAndRules
-// test will fail because the headings disappear from the prompt.
+// where the V0 structure template is spliced in. If the prompt file ever stops
+// containing this token, the splice becomes a no-op and
+// TestSummarySystemPromptPinsTemplateAndRules fails because the headings
+// disappear from the prompt the step sends.
 const summaryTemplatePlaceholder = "{{TEMPLATE}}"
 
 // The workflow the pipeline's summary step runs, named and versioned so that a
@@ -101,10 +101,6 @@ func EstimateSummaryInputTokens(streams []AudioStream, segments []Segment) int {
 	workflow, _ := resolveSummaryWorkflow()
 	chars := len(workflow.SystemPrompt()) + len(formatTranscriptForSummary(streams, segments))
 	return (chars + 3) / 4
-}
-
-func summarySystemPrompt(template string) string {
-	return strings.Replace(summaryV0Prompt, summaryTemplatePlaceholder, template, 1)
 }
 
 func formatTranscriptForSummary(streams []AudioStream, segments []Segment) string {
