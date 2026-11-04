@@ -32,7 +32,7 @@ const guide = "text-sm text-base-content/80";
       {categories.map(cat => {
         const first = cat.guides.find(g => g.slug);
         return (
-          <div id={cat.id} class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-4" data-reveal>
+          <div id={cat.id} class="rounded-2xl bg-base-200 p-6 flex flex-col gap-4" data-reveal>
             <span class="flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary" set:html={cat.icon} /><h2 class="text-lg font-semibold text-base-content">{cat.title}</h2></span>
             <ul class="flex flex-col gap-2">
               {cat.guides.map(g => (
@@ -57,18 +57,18 @@ const guide = "text-sm text-base-content/80";
       <h2 class="text-3xl md:text-4xl font-bold text-base-content">Still stuck?</h2>
     </div>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-3" data-reveal>
+      <div class="rounded-2xl bg-base-200 p-6 flex flex-col gap-3" data-reveal>
         <h3 class="text-lg font-semibold text-base-content">Email us</h3>
         <p class="text-sm text-base-content/60 leading-relaxed">Tell us which device you use and which version of cassini.talk it runs. You’ll find the version under Settings › About.</p>
         <a href="mailto:hello@codemyriad.io?subject=cassini.talk%20support" class="text-sm text-base-content hover:text-primary transition-colors">hello@codemyriad.io →</a>
       </div>
-      <div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-3" data-reveal>
+      <div class="rounded-2xl bg-base-200 p-6 flex flex-col gap-3" data-reveal>
         <h3 class="text-lg font-semibold text-base-content">Report a problem</h3>
         <p class="text-sm text-base-content/60 leading-relaxed">Each app has its own issue tracker on GitHub. Search it first: someone may have asked already.</p>
         <a href="https://github.com/codemyriad" class="text-sm text-base-content hover:text-primary transition-colors">Issue trackers ↗</a>
       </div>
     </div>
-    <div class="rounded-2xl border border-base-300 bg-base-200 px-5 py-4 flex flex-wrap items-center gap-4" data-reveal>
+    <div class="rounded-2xl border border-base-300 px-5 py-4 flex flex-wrap items-center gap-4" data-reveal>
       <NextcloudLogo />
       <p class="text-sm text-base-content/60" style="flex: 1 1 16rem">Using Cassini for Nextcloud? Its documentation is on gocassini.com.</p>
       <a href="https://gocassini.com/docs" class="text-sm font-medium text-base-content hover:text-primary transition-colors">gocassini.com/docs ↗</a>

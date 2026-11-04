@@ -25,7 +25,7 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
           data-reveal
           data-placeholder={app.placeholder ? "true" : undefined}
           class:list={[
-            "rounded-2xl border border-base-300 bg-base-200 p-8 pg-card",
+            "rounded-2xl bg-base-200 p-8 pg-card",
             app.width === "half" ? "pg-half" : "pg-third",
             i === apps.length - 1 && "pg-wide",
           ]}
@@ -68,12 +68,12 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
   <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-last flex flex-col gap-6">
     <div class="flex flex-col gap-3 pg-rule border-t border-base-300" data-reveal>
       <h2 class="text-3xl md:text-4xl font-bold text-base-content">Build it yourself</h2>
-      <p class="text-base text-base-content/60 leading-relaxed max-w-2xl">Every app is free software under the GPLv3. The source, build steps and release notes are on GitHub.</p>
+      <p class="text-base text-base-content/60 leading-relaxed">Every app is free software under the GPLv3. The source, build steps and release notes are on GitHub.</p>
       <div class="flex flex-wrap items-center gap-x-6 gap-y-3 pt-1">
         {apps.map(app => <a href={app.source} class={link}>{app.name} ↗</a>)}
       </div>
     </div>
-    <div class="rounded-2xl border border-base-300 bg-base-200 px-5 py-4 flex flex-wrap items-center gap-4 mt-4" data-reveal>
+    <div class="rounded-2xl border border-base-300 px-5 py-4 flex flex-wrap items-center gap-4 mt-4" data-reveal>
       <NextcloudLogo />
       <p class="text-sm text-base-content/60" style="flex: 1 1 16rem">Recording Nextcloud Talk calls? Cassini for Nextcloud runs on your own server.</p>
       <a href="https://gocassini.com" class="text-sm font-medium text-base-content hover:text-primary transition-colors">gocassini.com ↗</a>

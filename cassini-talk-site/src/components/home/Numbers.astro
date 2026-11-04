@@ -15,7 +15,7 @@ const big = "font-size: 4rem; line-height: 1";
   <div class="nums grid rounded-2xl border border-base-300 bg-base-300 overflow-hidden" data-demo="nums" style="grid-template-columns: repeat(auto-fit, minmax(clamp(calc((100% - 4px) / 4), calc((1000px - 100%) * 999), clamp(calc((100% - 2px) / 2), calc((500px - 100%) * 999), 100%)), 1fr)); gap: 1px">
     <div class="flex flex-col py-8 px-6 bg-base-100">
       <p class="font-bold tabular-nums text-base-content" style={big}>25</p>
-      <p class="text-sm text-base-content/60 mt-3">European languages, recognised on the device by default</p>
+      <p class="text-sm text-base-content/60 mt-3 text-balance">European languages, recognised on the device by default</p>
       <div class="flex-1"></div>
       <div class="pt-6"><div class="relative overflow-hidden" style="height: 24px" aria-hidden="true">
         {greetings.map((g, i) => (
@@ -25,7 +25,7 @@ const big = "font-size: 4rem; line-height: 1";
     </div>
     <div class="flex flex-col py-8 px-6 bg-base-100">
       <p class="font-bold tabular-nums text-base-content" style={big}>5</p>
-      <p class="text-sm text-base-content/60 mt-3">Available on iPhone and iPad, Android, Mac, Windows, Linux</p>
+      <p class="text-sm text-base-content/60 mt-3 text-balance">Apps available on iPhone, iPad, Android, Mac, Windows, Linux</p>
       <div class="flex-1"></div>
       <div class="pt-6"><div class="relative overflow-hidden" style="height: 24px" aria-hidden="true">
         <span class="flex items-center gap-3" style="height: 24px">
@@ -37,7 +37,7 @@ const big = "font-size: 4rem; line-height: 1";
     </div>
     <div class="flex flex-col py-8 px-6 bg-base-100">
       <p class="font-bold tabular-nums text-base-content" style={big}>1</p>
-      <p class="text-sm text-base-content/60 mt-3">File per recording, with the transcript inside</p>
+      <p class="text-sm text-base-content/60 mt-3 text-balance">File per recording, with the transcript and speakers inside</p>
       <div class="flex-1"></div>
       <div class="pt-6"><div class="relative overflow-hidden" style="height: 24px">
         <span class="absolute left-0 top-0 flex items-center" aria-hidden="true" data-k="owave" style={st("owave", `height: 24px; gap: 3px; transition: opacity 0.4s ease, transform 0.6s ${EASE}`)}>
@@ -50,7 +50,7 @@ const big = "font-size: 4rem; line-height: 1";
     </div>
     <div class="flex flex-col py-8 px-6 bg-base-100">
       <p class="font-bold tabular-nums text-base-content" style={big}>0</p>
-      <p class="text-sm text-base-content/60 mt-3">Your audio, transcripts and saved voices stay on your device.</p>
+      <p class="text-sm text-base-content/60 mt-3 text-balance">Bytes leave your device. Everything stays in local storage</p>
       <div class="flex-1"></div>
       <div class="pt-6"><div class="relative overflow-hidden" style="height: 24px" aria-hidden="true"><span class="flex items-center gap-2 text-sm whitespace-nowrap" style="height: 24px"><span class="size-1.5 rounded-full bg-primary" data-k="dot" style={st("dot", "transition: opacity 0.4s ease")}></span><span class="tabular-nums text-base-content" data-k="ztime">{b.ztime.t}</span><span class="text-base-content/60">recorded</span><span class="text-base-content/40">·</span><span class="tabular-nums text-primary font-medium">0 MB</span><span class="text-base-content/60">sent</span></span>
       </div></div>

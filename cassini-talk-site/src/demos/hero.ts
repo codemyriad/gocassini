@@ -13,6 +13,8 @@ export const steps = [
 ] as const;
 
 export const BAR_COUNT = 44;
+/** The tallest a bar gets; bars sit at this height and are clipped to their current one. */
+export const BAR_MAX = 78;
 export const sentence = "What if being productive meant paying closer attention, rather than doing more?".split(" ");
 const target = "attention";
 
@@ -62,7 +64,9 @@ export function hero(h: number, still: boolean): Binds {
     const d = Math.abs(i - 21.5) / 21.5;
     const grow = clamp01((bloom - d * 0.6) / 0.4);
     const v = Math.abs(Math.sin((i + h) * 0.5) * Math.sin(i * 0.31 + h * 0.17));
-    b["bar" + i] = { s: { height: (live ? Math.round(3 + (5 + v * 70) * grow) : 3) + "px", opacity: live ? 1 : 0 } };
+    const bh = live ? Math.round(3 + (5 + v * 70) * grow) : 3;
+    const gap = (BAR_MAX - bh) / 2;
+    b["bar" + i] = { s: { "clip-path": `inset(${Math.ceil(gap)}px 0 ${Math.floor(gap)}px round 2px)`, opacity: live ? 1 : 0 } };
   }
 
   const hovering = !still && between(11, 17);

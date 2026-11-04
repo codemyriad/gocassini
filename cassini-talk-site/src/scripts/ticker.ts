@@ -27,15 +27,28 @@ export function run(demos: Demo[]) {
   const byEl = new Map(demos.map(d => [d.el, d]));
   let raf = 0;
 
+  let timer = 0;
   const tick = (now: number) => {
+    raf = 0;
+    let wait = FRAME;
     for (const [d, start] of started) {
-      const n = Math.floor((now - start) / FRAME);
+      const at = (now - start) / FRAME;
+      const n = Math.floor(at);
       if (n !== shown.get(d)) {
         shown.set(d, n);
         d.frame(n);
       }
+      wait = Math.min(wait, (n + 1 - at) * FRAME);
     }
-    raf = started.size ? requestAnimationFrame(tick) : 0;
+    if (!started.size) return;
+    // Sleep until just before the next 30fps frame instead of waking on every display refresh.
+    timer = window.setTimeout(() => {
+      timer = 0;
+      raf = requestAnimationFrame(tick);
+    }, Math.max(0, wait - 6));
+  };
+  const wake = () => {
+    if (!raf && !timer) raf = requestAnimationFrame(tick);
   };
 
   const io = new IntersectionObserver(entries => {
@@ -49,7 +62,7 @@ export function run(demos: Demo[]) {
         });
         shown.set(d, 0);
         started.set(d, performance.now());
-        if (!raf) raf = requestAnimationFrame(tick);
+        wake();
       } else if (!e.isIntersecting && started.has(d)) {
         started.delete(d);
         d.leave?.();

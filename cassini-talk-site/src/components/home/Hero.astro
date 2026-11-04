@@ -2,7 +2,7 @@
 import DownloadIcon from "../DownloadIcon.astro";
 import { href } from "../../lib/paths";
 import { styler } from "../../demos/bind";
-import { hero, steps, sentence, chipAt, BAR_COUNT, HERO_STILL } from "../../demos/hero";
+import { hero, steps, sentence, chipAt, BAR_COUNT, BAR_MAX, HERO_STILL } from "../../demos/hero";
 
 const b = hero(HERO_STILL, true);
 const st = styler(b);
@@ -39,13 +39,13 @@ const cursor = `<svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="tru
     </div>
   </div>
   <div class="lead-demo">
-    <div id="hero-demo" role="tabpanel" aria-label="A recording made, read back and searched" class="lead-card w-full rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col shadow-2xl text-left">
+    <div id="hero-demo" role="tabpanel" aria-label="A recording made, read back and searched" class="lead-card w-full rounded-2xl bg-base-200 p-8 flex flex-col shadow-2xl text-left">
       <div class="relative flex-1 min-h-0 mx-auto w-full" style="max-width: 44rem">
         <div class="absolute inset-0 flex flex-col items-center justify-center gap-6" data-k="s1" style={st("s1", `transition: opacity 0.75s ${EASE}, transform 0.6s ${EASE}, filter 0.75s ${EASE}`)}>
           <div class="relative w-full flex items-center justify-center" style="height: 80px">
             <div class="absolute inset-0 flex items-center justify-center gap-1" aria-hidden="true">
               {Array.from({ length: BAR_COUNT }, (_, i) => (
-                <span class="bg-primary rounded-full" data-k={"bar" + i} style={st("bar" + i, `width: 4px; transition: height 0.2s ${EASE}, opacity 0.3s ease`)}></span>
+                <span class="bg-primary" data-k={"bar" + i} style={st("bar" + i, `width: 4px; height: ${BAR_MAX}px; transition: clip-path 0.2s ${EASE}, opacity 0.3s ease`)}></span>
               ))}
             </div>
             <span class="relative inline-flex" data-k="btnw" style={st("btnw")}>

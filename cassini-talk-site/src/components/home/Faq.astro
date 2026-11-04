@@ -11,12 +11,11 @@ const faqs = [
 ];
 ---
 
-<section class="faq-sec w-full px-5 md:px-10 lg:px-20 pt-16 pb-24">
+<section class="faq-sec w-full px-5 md:px-10 lg:px-20 pt-16 pb-24" aria-label="Questions">
   <div class="mx-auto flex flex-col gap-8" style="max-width: 48rem">
-    <h2 class="text-4xl font-bold text-base-content text-center" data-reveal>Questions</h2>
     <div class="flex flex-col gap-3">
       {faqs.map((f, i) => (
-        <details open={i === 0} class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer" data-reveal>
+        <details open={i === 0} class="group rounded-2xl bg-base-200/40 px-5 py-4 hover:bg-base-200/70 open:bg-base-200/70 transition-colors cursor-pointer" data-reveal>
           <summary class="flex items-center justify-between cursor-pointer list-none text-base font-medium text-base-content select-none">{f.q}
 <svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></summary>
           <p class="mt-3 text-sm text-base-content/60 leading-relaxed" set:html={f.a} />
