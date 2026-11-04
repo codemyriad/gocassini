@@ -181,7 +181,25 @@ func TestSetupTellsTheCallerWhatIsWaitingAndWhatWasRefused(t *testing.T) {
 		}
 	}
 	record("J4", shareOutcomePartial, skippedShare{Type: "user", ID: "alice", Reason: "Sharing is only allowed with group members"})
+	// J5 reached alice through staff alone: bob started it, carol was in the
+	// room herself. J10's room had alice in it, so her own share reached her
+	// and the group's refusal costs her nothing. J11 captured no audience.
+	captureAudience := func(id, starter string, roster ...sharePrincipal) {
+		t.Helper()
+		if err := rt.store.SetJobTalkBinding(ctx, id, `{"backend_url":"https://talk.example","room_token":"room1","owner":"`+starter+`","room_public":false}`); err != nil {
+			t.Fatal(err)
+		}
+		if err := rt.store.MergeJobRoomAudience(ctx, id, roster, nowUTCString()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	record("J5", shareOutcomePartial, skippedShare{Type: "group", ID: "staff"})
+	captureAudience("J5", "bob", sharePrincipal{Type: "user", ID: "carol"}, sharePrincipal{Type: "group", ID: "staff"})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "J10", Stage: "done", State: "succeeded", CreatedAt: "2026-10-30T09:00:00Z"})
+	record("J10", shareOutcomePartial, skippedShare{Type: "group", ID: "staff"})
+	captureAudience("J10", "bob", sharePrincipal{Type: "user", ID: "alice"}, sharePrincipal{Type: "group", ID: "staff"})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "J11", Stage: "done", State: "succeeded", CreatedAt: "2026-10-30T09:00:00Z"})
+	record("J11", shareOutcomePartial, skippedShare{Type: "group", ID: "staff"})
 	record("J6", shareOutcomePartial, skippedShare{Type: "user", ID: "bob"}, skippedShare{Type: "circle", ID: "team-alice-is-in"})
 	record("J7", shareOutcomeStarterRefused, skippedShare{Type: "user", ID: "alice"})
 	if _, err := rt.store.db.Exec(`UPDATE jobs SET state='failed', error=? WHERE id='J7'`, "the recording "+starterRefusedMarker+", alice: refused"); err != nil {
@@ -205,8 +223,10 @@ func TestSetupTellsTheCallerWhatIsWaitingAndWhatWasRefused(t *testing.T) {
 	if !reflect.DeepEqual(sharing.Pending, want) {
 		t.Fatalf("pending = %+v\nwant      %+v", sharing.Pending, want)
 	}
-	if sharing.Refused != 2 || sharing.RefusedStarted != 1 {
-		t.Fatalf("refused = %d, refused_started = %d, want 2 and 1", sharing.Refused, sharing.RefusedStarted)
+	// J4 by name, J5 through staff alone, J11 through staff with nothing
+	// known about the room; not J10, whose room alice was in.
+	if sharing.Refused != 3 || sharing.RefusedStarted != 1 {
+		t.Fatalf("refused = %d, refused_started = %d, want 3 and 1", sharing.Refused, sharing.RefusedStarted)
 	}
 	for _, call := range []string{"GET /ocs/v2.php/apps/files_sharing/api/v1/shares/pending", "GET /ocs/v2.php/cloud/user"} {
 		method, path, _ := strings.Cut(call, " ")
@@ -214,10 +234,11 @@ func TestSetupTellsTheCallerWhatIsWaitingAndWhatWasRefused(t *testing.T) {
 			t.Errorf("%s ran as %q, want the caller", call, actor)
 		}
 	}
-	// Somebody else sees their own view, and nothing of alice's.
-	if other := getSetup(t, rt, "carol").Sharing; !other.Checked || len(other.Pending) != 2 || other.Refused != 1 || other.RefusedStarted != 0 {
-		// carol is in staff too (the fake answers the same groups), so J5
-		// counts for her; J4 and J7 are alice's alone.
+	// Somebody else sees their own view, and nothing of alice's. carol is in
+	// staff too (the fake answers the same groups): J10 and J11 count for
+	// her, J5 does not, because she was in that room and has her own share;
+	// J4 and J7 are alice's alone.
+	if other := getSetup(t, rt, "carol").Sharing; !other.Checked || len(other.Pending) != 2 || other.Refused != 2 || other.RefusedStarted != 0 {
 		t.Fatalf("carol's view = %+v", other)
 	}
 }

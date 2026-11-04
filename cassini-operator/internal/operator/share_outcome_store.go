@@ -48,35 +48,45 @@ type jobShareOutcome struct {
 	AudienceCount int `json:"audience_count,omitempty"`
 }
 
-// capturedAudienceCount counts the recipients a publish used, from the job
-// row alone: the starter in its Talk binding, plus the captured room
-// audience, without the recordings owner and without repeats — as
-// reconcileRecordingShares walks them. Zero when no audience was captured,
-// because the publish then resolved the room live and that list is not kept.
-func capturedAudienceCount(job Job) int {
+// capturedAudience is the list a publish shared with, from the job row
+// alone: the starter in its Talk binding, then the captured room audience,
+// without the recordings owner and without repeats — as
+// reconcileRecordingShares walks them. captured is false when no audience was
+// captured, because the publish then resolved the room live and that list is
+// not kept.
+func capturedAudience(job Job) (audience []sharePrincipal, captured bool) {
 	if job.RoomAudienceAt == nil || strings.TrimSpace(*job.RoomAudienceAt) == "" || job.RoomAudience == nil {
-		return 0
+		return nil, false
 	}
-	audience, err := decodeRoomAudience(*job.RoomAudience)
+	roster, err := decodeRoomAudience(*job.RoomAudience)
 	if err != nil {
-		return 0
+		return nil, false
 	}
 	seen := map[string]bool{}
-	if job.TalkBinding != nil {
-		if state, err := decodeTalkBinding(*job.TalkBinding); err == nil {
-			if starter := strings.TrimSpace(state.Owner); starter != "" && starter != ncRecordingsOwner {
-				seen["user\x00"+starter] = true
-			}
-		}
-	}
-	for _, principal := range audience {
-		kind, id := strings.TrimSpace(principal.Type), strings.TrimSpace(principal.ID)
-		if id == "" || (kind == "user" && id == ncRecordingsOwner) {
-			continue
+	add := func(kind, id string) {
+		kind, id = strings.TrimSpace(kind), strings.TrimSpace(id)
+		if id == "" || (kind == "user" && id == ncRecordingsOwner) || seen[kind+"\x00"+id] {
+			return
 		}
 		seen[kind+"\x00"+id] = true
+		audience = append(audience, sharePrincipal{Type: kind, ID: id})
 	}
-	return len(seen)
+	if job.TalkBinding != nil {
+		if state, err := decodeTalkBinding(*job.TalkBinding); err == nil {
+			add("user", state.Owner)
+		}
+	}
+	for _, principal := range roster {
+		add(principal.Type, principal.ID)
+	}
+	return audience, true
+}
+
+// capturedAudienceCount is how many recipients the publish used, for the run
+// detail. Zero when no audience was captured.
+func capturedAudienceCount(job Job) int {
+	audience, _ := capturedAudience(job)
+	return len(audience)
 }
 
 const maxShareRefusalReason = 200
@@ -224,11 +234,11 @@ func (rt *Runtime) jobSharing(ctx context.Context, job *Job) *jobShareOutcome {
 }
 
 // refusedShareCounts is how many published meetings Nextcloud would not share
-// with this caller: refused counts partial outcomes whose skipped list names
-// the caller, or a group the caller is in; refusedStarted counts recordings
-// the caller started that were not published because the caller was refused
-// — while that is still why the run failed, as jobSharing judges it. Retired
-// meetings are not counted: nobody has them.
+// with this caller: refused counts partial outcomes that left the caller
+// without the recording, as refusedToCaller judges it; refusedStarted counts
+// recordings the caller started that were not published because the caller
+// was refused — while that is still why the run failed, as jobSharing judges
+// it. Retired meetings are not counted: nobody has them.
 //
 // Teams are not matched. Whether the caller is in a Team takes the Teams
 // app's own API, which is not worth a call on every page open; a meeting
@@ -239,7 +249,8 @@ func (s *Store) refusedShareCounts(ctx context.Context, caller string, groups []
 		inGroup[group] = true
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT o.job_id, o.status, o.skipped, COALESCE(j.state, ''), COALESCE(j.error, '')
+SELECT o.job_id, o.status, o.skipped, COALESCE(j.state, ''), COALESCE(j.error, ''),
+  j.talk_binding, j.room_audience, j.room_audience_at
 FROM job_share_outcomes o LEFT JOIN jobs j ON j.id = o.job_id
 WHERE o.status IN (?, ?)`, shareOutcomePartial, shareOutcomeStarterRefused)
 	if err != nil {
@@ -248,7 +259,8 @@ WHERE o.status IN (?, ?)`, shareOutcomePartial, shareOutcomeStarterRefused)
 	defer rows.Close()
 	for rows.Next() {
 		var jobID, status, raw, state, jobErr string
-		if err := rows.Scan(&jobID, &status, &raw, &state, &jobErr); err != nil {
+		var binding, audience, audienceAt sql.NullString
+		if err := rows.Scan(&jobID, &status, &raw, &state, &jobErr, &binding, &audience, &audienceAt); err != nil {
 			return 0, 0, err
 		}
 		if retired[jobID] {
@@ -260,11 +272,9 @@ WHERE o.status IN (?, ?)`, shareOutcomePartial, shareOutcomeStarterRefused)
 		}
 		switch status {
 		case shareOutcomePartial:
-			for _, skip := range skipped {
-				if (skip.Type == "user" && skip.ID == caller) || (skip.Type == "group" && inGroup[skip.ID]) {
-					refused++
-					break
-				}
+			job := Job{TalkBinding: nullableStringPtr(binding), RoomAudience: nullableStringPtr(audience), RoomAudienceAt: nullableStringPtr(audienceAt)}
+			if refusedToCaller(skipped, caller, inGroup, job) {
+				refused++
 			}
 		case shareOutcomeStarterRefused:
 			if state == "failed" && strings.Contains(jobErr, starterRefusedMarker) &&
@@ -274,4 +284,42 @@ WHERE o.status IN (?, ?)`, shareOutcomePartial, shareOutcomeStarterRefused)
 		}
 	}
 	return refused, refusedStarted, rows.Err()
+}
+
+// refusedToCaller says whether a partial outcome left the caller without the
+// recording: Nextcloud refused them by name, or refused a group they are in
+// and no share of their own reached them. Someone in a refused group who was
+// in the room themselves holds their own user share, so the group's refusal
+// costs them nothing — with "Allow sharing with groups" off, every group in
+// every room is refused, and counting those would tell each person in the
+// room that a recording they can open could not be shared with them.
+//
+// Whether their own share reached them is read from the audience the publish
+// used (the starter and the captured room, the list a re-share re-applies):
+// the caller named there as a user, and not among the skipped, was shared
+// with by name. When no audience was captured that cannot be known, and the
+// refusal counts, as it does for someone the group alone reached.
+func refusedToCaller(skipped []skippedShare, caller string, inGroup map[string]bool, job Job) bool {
+	viaGroup := false
+	for _, skip := range skipped {
+		if skip.Type == "user" && skip.ID == caller {
+			return true
+		}
+		if skip.Type == "group" && inGroup[skip.ID] {
+			viaGroup = true
+		}
+	}
+	if !viaGroup {
+		return false
+	}
+	audience, captured := capturedAudience(job)
+	if !captured {
+		return true
+	}
+	for _, principal := range audience {
+		if principal.Type == "user" && principal.ID == caller {
+			return false
+		}
+	}
+	return true
 }

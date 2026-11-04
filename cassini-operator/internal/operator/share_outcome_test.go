@@ -456,3 +456,42 @@ func TestCapturedAudienceCountIsThePublishedList(t *testing.T) {
 		t.Fatalf("count without a capture = %d, want none", got)
 	}
 }
+
+// A refused group costs the caller the recording only when the group was
+// their only way to it. Someone who was in the room holds their own share:
+// with "Allow sharing with groups" off, every group in the room is refused,
+// and that must not read as "could not be shared with you" to each person
+// who can open it.
+func TestARefusedGroupCountsOnlyWhenItWasTheCallersOnlyWay(t *testing.T) {
+	binding := `{"backend_url":"https://talk.example","room_token":"room1","owner":"bob","room_public":false}`
+	at := nowUTCString()
+	withAlice := `[{"type":"user","id":"alice"},{"type":"group","id":"staff"}]`
+	withoutAlice := `[{"type":"user","id":"carol"},{"type":"group","id":"staff"}]`
+	staff := map[string]bool{"staff": true}
+	groupRefused := []skippedShare{{Type: "group", ID: "staff"}}
+	for name, tc := range map[string]struct {
+		skipped []skippedShare
+		job     Job
+		want    bool
+	}{
+		"refused by name":                    {[]skippedShare{{Type: "user", ID: "alice"}}, Job{TalkBinding: &binding, RoomAudience: &withAlice, RoomAudienceAt: &at}, true},
+		"reached through the group alone":    {groupRefused, Job{TalkBinding: &binding, RoomAudience: &withoutAlice, RoomAudienceAt: &at}, true},
+		"in the room, own share succeeded":   {groupRefused, Job{TalkBinding: &binding, RoomAudience: &withAlice, RoomAudienceAt: &at}, false},
+		"in the room, own share refused too": {append(groupRefused, skippedShare{Type: "user", ID: "alice"}), Job{TalkBinding: &binding, RoomAudience: &withAlice, RoomAudienceAt: &at}, true},
+		"the starter, in a re-share":         {groupRefused, Job{TalkBinding: &binding, RoomAudience: &withoutAlice, RoomAudienceAt: &at}, true},
+		"no audience captured":               {groupRefused, Job{TalkBinding: &binding, RoomAudience: &withAlice}, true},
+		"a group the caller is not in":       {[]skippedShare{{Type: "group", ID: "sales"}}, Job{TalkBinding: &binding, RoomAudience: &withoutAlice, RoomAudienceAt: &at}, false},
+		"somebody else, and a Team":          {[]skippedShare{{Type: "user", ID: "bob"}, {Type: "circle", ID: "team"}}, Job{TalkBinding: &binding, RoomAudience: &withoutAlice, RoomAudienceAt: &at}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			caller := "alice"
+			if name == "the starter, in a re-share" {
+				caller = "bob"
+				tc.want = false // bob started it: the starter is in the list by name.
+			}
+			if got := refusedToCaller(tc.skipped, caller, staff, tc.job); got != tc.want {
+				t.Fatalf("refusedToCaller = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
