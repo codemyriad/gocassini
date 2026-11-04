@@ -224,7 +224,10 @@ func (c ExAppConfig) ownerSharesForPath(ctx context.Context, client *http.Client
 	return shares, nil
 }
 
-func (c ExAppConfig) createRecordingShare(ctx context.Context, client *http.Client, relPath string, principal sharePrincipal, permissions int) (ncShare, error) {
+// createRecordingShare makes one share as the recordings owner. note is the
+// text the recipient sees on it in Files and in Cassini's own list of
+// recordings waiting for them (D-885); empty sends none.
+func (c ExAppConfig) createRecordingShare(ctx context.Context, client *http.Client, relPath string, principal sharePrincipal, permissions int, note string) (ncShare, error) {
 	shareType := -1
 	switch principal.Type {
 	case "user":
@@ -239,12 +242,16 @@ func (c ExAppConfig) createRecordingShare(ctx context.Context, client *http.Clie
 	if principal.ID == "" || (permissions != ncShareRead && permissions != ncShareRead|ncShareReshare) {
 		return ncShare{}, fmt.Errorf("invalid recording share")
 	}
-	data, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodPost, c.shareAPIURL(), url.Values{
+	form := url.Values{
 		"path":        {"/" + strings.TrimPrefix(relPath, "/")},
 		"shareType":   {strconv.Itoa(shareType)},
 		"shareWith":   {principal.ID},
 		"permissions": {strconv.Itoa(permissions)},
-	})
+	}
+	if note = strings.TrimSpace(note); note != "" {
+		form.Set("note", note)
+	}
+	data, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodPost, c.shareAPIURL(), form)
 	if err != nil {
 		return ncShare{}, err
 	}
@@ -329,7 +336,9 @@ const (
 // that recipient: a refused starter is a *starterShareRefusedError. Anything
 // else (the server unreachable, a share that did not land) fails, as it says
 // nothing about who may receive the recording.
-func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool, mode shareMode) ([]skippedShare, error) {
+//
+// note goes on every share made here; see meetingFacts.shareNote.
+func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool, mode shareMode, note string) ([]skippedShare, error) {
 	if len(audience) == 0 || audience[0].Type != "user" || audience[0].ID == "" || audience[0].ID == ncRecordingsOwner {
 		return nil, fmt.Errorf("recording has no local starter to share with")
 	}
@@ -365,11 +374,11 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 		var createErr error
 		for attempt := 0; attempt < 3; attempt++ {
 			var share ncShare
-			share, createErr = c.createRecordingShare(ctx, client, relPath, principal, permissions)
+			share, createErr = c.createRecordingShare(ctx, client, relPath, principal, permissions, note)
 			if createErr != nil && public && resharePermissionRefusal(createErr) {
 				// Respect instance policy: read access can still work when
 				// resharing is disabled for this recipient.
-				share, createErr = c.createRecordingShare(ctx, client, relPath, principal, ncShareRead)
+				share, createErr = c.createRecordingShare(ctx, client, relPath, principal, ncShareRead, note)
 			}
 			if createErr == nil {
 				existing = append(existing, share)

@@ -73,6 +73,8 @@ type directPublishFixture struct {
 	shares  map[string]bool
 	refuse  map[string]bool
 	fail    map[string]bool
+	// notes is the note each share was created with, by the same key.
+	notes map[string]string
 }
 
 const directPublishJob = "SHARE1"
@@ -89,7 +91,7 @@ func newDirectPublishFixture(t *testing.T, audience []sharePrincipal, refuse ...
 	if err := rt.store.MergeJobRoomAudience(ctx, directPublishJob, audience, nowUTCString()); err != nil {
 		t.Fatal(err)
 	}
-	f := &directPublishFixture{rt: rt, attempt: t.TempDir(), shares: map[string]bool{}, refuse: map[string]bool{}, fail: map[string]bool{}}
+	f := &directPublishFixture{rt: rt, attempt: t.TempDir(), shares: map[string]bool{}, refuse: map[string]bool{}, fail: map[string]bool{}, notes: map[string]string{}}
 	for _, id := range refuse {
 		f.refuse[id] = true
 	}
@@ -126,6 +128,7 @@ func newDirectPublishFixture(t *testing.T, audience []sharePrincipal, refuse ...
 				return
 			}
 			f.shares[r.FormValue("shareType")+"/"+who] = true
+			f.notes[r.FormValue("shareType")+"/"+who] = r.FormValue("note")
 			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"id":"11"}}}`)
 			return
 		}

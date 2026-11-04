@@ -149,7 +149,8 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 	if err != nil {
 		return nil, err
 	}
-	skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, public, shareReapply)
+	note := s.rt.meetingFactsFor(ctx, jobID).shareNote(false)
+	skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, public, shareReapply, note)
 	if err != nil {
 		return nil, err
 	}

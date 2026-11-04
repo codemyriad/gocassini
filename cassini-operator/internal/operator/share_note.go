@@ -1,0 +1,66 @@
+package operator
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// maxShareNoteTitle keeps a note one line a person can read in Files.
+const maxShareNoteTitle = 120
+
+// shareNote is the text on every recording share Cassini makes: what the
+// file is, so the person recognises it in Files and in Cassini's own list of
+// recordings waiting for them. No URL — the deep link into Cassini is not
+// stable across versions, and a stale link would be worse than none.
+//
+//	Recording of Weekly sync, Friday 30 October 2026, 10:00 (42 min). Open it in Cassini.
+//	Imported meeting Weekly sync, Friday 30 October 2026, 10:00 (42 min). Open it in Cassini.
+//
+// A missing title or date is left out rather than written as a blank.
+func (f meetingFacts) shareNote(imported bool) string {
+	title := strings.TrimSpace(oneLineListField(f.Title))
+	if runes := []rune(title); len(runes) > maxShareNoteTitle {
+		title = strings.TrimSpace(string(runes[:maxShareNoteTitle])) + "…"
+	}
+	var b strings.Builder
+	if imported {
+		b.WriteString("Imported meeting")
+	} else {
+		b.WriteString("Recording")
+	}
+	if title != "" {
+		if imported {
+			b.WriteString(" ")
+		} else {
+			b.WriteString(" of ")
+		}
+		b.WriteString(title)
+	}
+	if !f.StartedAt.IsZero() {
+		if title != "" {
+			b.WriteString(", ")
+		} else {
+			b.WriteString(" from ")
+		}
+		b.WriteString(f.StartedAt.UTC().Format("Monday 2 January 2006, 15:04"))
+	}
+	if f.Duration > 0 {
+		b.WriteString(" (" + formatMeetingDuration(f.Duration) + ")")
+	}
+	b.WriteString(". Open it in Cassini.")
+	return b.String()
+}
+
+// formatMeetingDuration is the length as a person says it: "42 min", "1 h 05".
+func formatMeetingDuration(d time.Duration) string {
+	minutes := int((d + 30*time.Second) / time.Minute)
+	switch {
+	case minutes < 1:
+		return "under a minute"
+	case minutes < 60:
+		return fmt.Sprintf("%d min", minutes)
+	default:
+		return fmt.Sprintf("%d h %02d", minutes/60, minutes%60)
+	}
+}

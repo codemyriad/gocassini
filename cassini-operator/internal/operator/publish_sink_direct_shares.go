@@ -143,7 +143,10 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 		if err := s.rt.store.ClearJobShareOutcome(ctx, d.JobID); err != nil {
 			return "", err
 		}
-		skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, public, sharePublish)
+		// The note on each share names the meeting for its recipient; the
+		// facts are read now, after the entry was indexed above.
+		note := s.rt.meetingFactsFor(ctx, d.JobID).shareNote(false)
+		skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, public, sharePublish, note)
 		var starterRefused *starterShareRefusedError
 		switch {
 		case errors.As(err, &starterRefused):
