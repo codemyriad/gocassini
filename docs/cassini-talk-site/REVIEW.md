@@ -14,6 +14,57 @@ Branch `feat/cassini-talk-site`, local only (not pushed, no PR). The plan was bu
 
 `cassini-microsite/` and `microsite.yml` are unchanged (`git diff main..HEAD -- cassini-microsite .github/workflows/microsite.yml` is empty).
 
+## Design pass after the build
+
+After the six phases were built, a review session in the browser refined the design. These changes are deliberate, so the site no longer matches `design-reference/shots/` in the places listed here. The phase sections below still describe the build as first done.
+
+**Surfaces**
+- The hero demo card, the bento tiles, the Download cards, the Help cards, the FAQ items and the .opus tree boxes have no border; their fill alone defines them.
+- The Home platform tiles have no border. On hover or keyboard focus they lighten, lift 3px and gain a soft shadow (no lift with reduced motion).
+- The Nextcloud cross-link cards on Download and Help are outline with no fill, like the numbers row: they point off the site, so they read as asides.
+- Borders stay on controls: search fields, the hero search pill, icon tiles, the Mark button, the footer chips and the filter tabs.
+- The facts strip under the bento has no dividers, and has more space above it.
+- The closing band sits on the page ground instead of the raised surface, with no top rule, so the page descends straight into the footer.
+
+**The footer is deep space**
+- A band that darkens from the page ground to `oklch(11% 0.018 258)` along an eased curve, with a seeded, static starfield (`Footer.astro`) that fades in with it. No planet, no motion.
+- The fade and the star mask are sized from the space area's height (`--space-h`), not the whole footer, so on phones they settle above the stacked links.
+- The space area is `clamp(120px, min(15vw, 22vh), 210px)` on desktop and `clamp(96px, 16vh, 128px)` on phones, so short screens get less of it.
+- Layout: links left and chips right on the first row; the Nextcloud line left and © right on the second. Links stay at the nav's 14px; the line below and the © are 13px. On phones it stacks into links, the Nextcloud line, then a sign-off of chips and © under a faint hairline.
+
+**Copy (Home)**
+- Bento heading: "Better than taking notes", with no subline.
+- The FAQ has no "Questions" heading; the section keeps it as a hidden label.
+- Numbers row captions, all balanced to two lines:
+  - 5: "Apps available on iPhone, iPad, Android, Mac, Windows, Linux"
+  - 1: "File per recording, with the transcript and speakers inside"
+  - 0: "Bytes leave your device. Everything stays in local storage"
+- Download: "Build it yourself" description uses the full width (one line from 1024 up).
+
+**Motion**
+- Reveal: 0.75s per item (the plan said about 450ms), and items revealed together are staggered 110ms apart in reading order, capped at 660ms.
+- The nav no longer crossfades during page transitions; it swaps instantly, so its semi-transparent GitHub icon doesn't flash brighter.
+
+**Spacing**
+- The closing band's padding is 48px top and 32px bottom on desktop (was 96 and 96), and 32 and 24 on phones. At 1270 × 779 and up, the whole closing section fits under the nav at the end of the page.
+
+**Performance**
+- The hero's 44 waveform bars are clipped (`clip-path: inset(… round 2px)`) instead of resized, so they no longer trigger layout 30 times a second. They are pixel-identical to the old bars at desktop widths; on phones, where bars are 2.58px wide, a few cap pixels antialias a shade differently.
+- `--p` (the step rail fill) is a registered, non-inherited `@property`.
+- The ticker sleeps until the next 30fps frame instead of waking on every display refresh.
+- Over one full hero loop at 1440: layout ~50ms → ~5ms, style ~479ms → ~370ms, all main-thread work ~2,630ms → ~2,180ms. With no demo in view, still 0.
+
+**Typeface: the system stack stays.** Nine web fonts and eleven serifs were compared on the real Home sections. The decision was to keep `ui-sans-serif, system-ui, sans-serif`, as gocassini.com does. On macOS, every greeting on Home (Latin Extended, Cyrillic including Ukrainian, Greek, Maltese) was verified to draw in SF Pro with no fallback. Segoe UI and Roboto cover the same scripts; Linux depends on the distro and may substitute Noto or DejaVu for some words. Not verified on Windows, Android or Linux.
+
+**Page weight** (gzip, first visit): Home ≈ 55 KB, Download ≈ 33 KB, Help ≈ 30 KB, article ≈ 30 KB. No images or web fonts.
+
+**Still open from the review**
+- A privacy policy page: the footer's Privacy link goes to the help centre's Privacy and storage card, but the App Store and Google Play both require a privacy policy URL.
+- A 404 page: a bad URL currently gets Cloudflare's bare 404.
+- The `#` store buttons jump to the top of the page; until the real links exist they could show as disabled ("Coming soon").
+- Unwritten help guides look like links but aren't; dim them or list only written ones.
+- At 1280 × 720 and on small phones (390 × 664), "Keep your conversations." still slides about 3–21px under the nav at the very end of the page.
+
 ## What was built
 
 ### Phase 1: scaffold
