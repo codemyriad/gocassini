@@ -193,7 +193,13 @@ describe("MeetingList insights", () => {
   // false — the design's invariant 4 is that coverage is never overstated.
   it("will not say nothing matched when the search could not say so", () => {
     expect(meetingListSource).toContain("searchCoveredEverything");
-    expect(meetingListSource).toContain("{:else if trimmedFilter && searchProblem}");
+    const problemArm = "{:else if trimmedFilter && searchProblem && types.meetings}";
+    expect(meetingListSource).toContain(problemArm);
+    // Ahead of the tag and room arms, which would otherwise say no meeting
+    // matched under a "Search could not finish" heading.
+    expect(meetingListSource.indexOf(problemArm)).toBeLessThan(
+      meetingListSource.indexOf("{:else if tagFilterCount > 0}"),
+    );
     expect(meetingListSource).toContain("{:else if trimmedFilter && !searchCoveredEverything}");
   });
 
