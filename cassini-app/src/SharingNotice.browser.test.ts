@@ -123,8 +123,9 @@ it("keeps a refused row, with the operator's reason under it", async () => {
   await userEvent.click(page.getByRole("button", { name: "Accept all 2" }));
   await expect.element(page.getByRole("alert").filter({ hasText: "Wrong share ID, share does not exist" })).toBeVisible();
   expect(details().open).toBe(true);
-  // Neither accepted nor refused by name: the row says so rather than nothing.
-  await expect.element(page.getByRole("alert").filter({ hasText: "Nextcloud did not accept this share." })).toBeVisible();
+  // Retro's share is in neither list: not attempted, so nothing is said on
+  // its row (the test below). Weekly sync's refusal is the one alert.
+  expect(host.querySelectorAll("[role=alert]")).toHaveLength(1);
   // Still there, still offered: the shell decides what the refreshed list says.
   await expect.element(page.getByRole("button", { name: "Accept Weekly sync" })).toBeEnabled();
   // A request that failed outright says so on the row it was for, in place
@@ -138,6 +139,28 @@ it("keeps a refused row, with the operator's reason under it", async () => {
   accept.mockImplementation(async (shareIds: string[]) => answered({ accepted: shareIds }));
   await userEvent.click(page.getByRole("button", { name: "Accept Retro" }));
   await expect.poll(() => host.querySelectorAll("[role=alert]").length).toBe(1);
+});
+
+it("leaves a share the operator did not get to as still waiting", async () => {
+  // Accept all, answered for Weekly sync alone: the operator works through
+  // the pending list in bounded rounds and can stop short, and a share it
+  // never attempted is in neither list. That is not a refusal.
+  const accept = vi.fn(async () => answered({ accepted: ["34", "35"] }));
+  show(checked({ pending: [weekly, retro] }), accept);
+  await userEvent.click(page.getByRole("button", { name: "Accept all 2" }));
+  await expect.poll(() => accepted.length).toBe(1);
+  expect(host.querySelectorAll("[role=alert]")).toHaveLength(0);
+  expect(host.textContent).not.toContain("Nextcloud did not accept this share.");
+  // Nothing to read, so the rows stay behind the disclosure; the shell's
+  // refreshed shares decide whether Retro's row stays.
+  expect(details().open).toBe(false);
+  await userEvent.click(page.getByText("Show them", { exact: true }));
+  await expect.element(page.getByRole("button", { name: "Accept Retro" })).toBeEnabled();
+  // A share the operator names as failed, even without a reason, is refused.
+  accept.mockImplementation(async () => answered({ failed: [{ shareId: "36", reason: "" }] }));
+  await userEvent.click(page.getByRole("button", { name: "Accept Retro" }));
+  await expect.element(page.getByRole("alert").filter({ hasText: "Nextcloud did not accept this share." })).toBeVisible();
+  expect(host.querySelectorAll("[role=alert]")).toHaveLength(1);
 });
 
 it("draws the same two lines above a list that has meetings", async () => {

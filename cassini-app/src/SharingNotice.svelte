@@ -89,12 +89,14 @@
       const result = await accept(ids);
       const next = new Map(failures);
       for (const entry of entries) {
+        // Only a share the operator names as failed was refused. One in
+        // neither list was never attempted — the operator works through the
+        // pending list in bounded rounds and can stop short — so it is still
+        // waiting, and the refreshed shares say so by keeping its row.
         const refusals = result.failed.filter((failure) => entry.shareIds.includes(failure.shareId));
-        const accepted = entry.shareIds.some((id) => result.accepted.includes(id));
-        if (refusals.length > 0 || !accepted) {
-          const reasons = refusals.map((failure) => failure.reason).filter((reason) => reason !== "");
-          next.set(pendingRowKey(entry), reasons.join(" ") || "Nextcloud did not accept this share.");
-        }
+        if (refusals.length === 0) continue;
+        const reasons = refusals.map((failure) => failure.reason).filter((reason) => reason !== "");
+        next.set(pendingRowKey(entry), reasons.join(" ") || "Nextcloud did not accept this share.");
       }
       failures = next;
       // A refusal is something to read, and the rows are where it is said.
