@@ -26,6 +26,7 @@ type sharingFake struct {
 	delay    time.Duration
 	accepted []string
 	actors   map[string]string // method+path -> actor
+	calls    map[string]int    // method+path -> how many times
 	// acceptFail names share ids whose accept Nextcloud refuses, with its
 	// own message.
 	acceptFail map[string]string
@@ -43,10 +44,12 @@ func (f *sharingFake) serve(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	if f.actors == nil {
 		f.actors = map[string]string{}
+		f.calls = map[string]int{}
 	}
 	auth, _ := base64.StdEncoding.DecodeString(r.Header.Get("AUTHORIZATION-APP-API"))
 	actor, _, _ := strings.Cut(string(auth), ":")
 	f.actors[r.Method+" "+r.URL.Path] = actor
+	f.calls[r.Method+" "+r.URL.Path]++
 	if f.delay > 0 {
 		f.mu.Unlock()
 		time.Sleep(f.delay)
@@ -92,6 +95,19 @@ func (f *sharingFake) actor(method, path string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.actors[method+" "+path]
+}
+
+func (f *sharingFake) callCount(method, path string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[method+" "+path]
+}
+
+// acceptedIDs is what Nextcloud saw accepted, in order.
+func (f *sharingFake) acceptedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.accepted...)
 }
 
 // sharingRuntime is a runtime publishing to that Nextcloud.

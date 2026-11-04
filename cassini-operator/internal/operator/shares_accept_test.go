@@ -2,6 +2,7 @@ package operator
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -123,6 +124,104 @@ func TestAcceptAllAcceptsEveryWaitingRecording(t *testing.T) {
 		if id == "50" {
 			t.Fatal("accepted a share that is not a recording")
 		}
+	}
+}
+
+const pendingListPath = "/ocs/v2.php/apps/files_sharing/api/v1/shares/pending"
+
+// manyWaitingFake has n recordings waiting, share ids 1..n, each its own
+// meeting.
+func manyWaitingFake(n int) *sharingFake {
+	fake := &sharingFake{groups: []string{"staff"}}
+	for i := 1; i <= n; i++ {
+		fake.pending = append(fake.pending, pendingShare(i, ncShareTypeUser, fmt.Sprintf("/CassiniRecordings/meetings/J%d.opus", i)))
+	}
+	return fake
+}
+
+// "Accept all" with more recordings waiting than one round takes: every one
+// is accepted, in rounds, and the pending list is read again between them.
+// Nothing a person asked for is left out because there was a lot of it.
+func TestAcceptAllTakesEveryWaitingRecordingInRounds(t *testing.T) {
+	fake := manyWaitingFake(150)
+	rt := sharingRuntime(t, fake)
+	rec, resp := postAccept(t, rt, "alice", `{"all":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /shares/accept = %d %s", rec.Code, rec.Body.String())
+	}
+	if len(resp.Accepted) != 150 || len(resp.Failed) != 0 {
+		t.Fatalf("accepted %d, failed %d; want all 150 accepted", len(resp.Accepted), len(resp.Failed))
+	}
+	if accepted := fake.acceptedIDs(); len(accepted) != 150 {
+		t.Fatalf("Nextcloud saw %d accepts", len(accepted))
+	}
+	// Two rounds (100 then 50), then the refreshed view: three reads.
+	if reads := fake.callCount(http.MethodGet, pendingListPath); reads != 3 {
+		t.Fatalf("the pending list was read %d times, want 3", reads)
+	}
+	if !resp.Sharing.Checked || len(resp.Sharing.Pending) != 0 {
+		t.Fatalf("refreshed sharing = %+v", resp.Sharing)
+	}
+
+	// A share Nextcloud refuses stays pending and is attempted once: the
+	// next round takes what is new, and does not report it failed twice.
+	fake = manyWaitingFake(150)
+	fake.acceptFail = map[string]string{}
+	for i := 1; i <= 50; i++ {
+		fake.acceptFail[fmt.Sprint(i)] = "Wrong share ID, share does not exist"
+	}
+	rt = sharingRuntime(t, fake)
+	if _, resp = postAccept(t, rt, "alice", `{"all":true}`); len(resp.Accepted) != 100 || len(resp.Failed) != 50 {
+		t.Fatalf("accepted %d, failed %d; want 100 and 50", len(resp.Accepted), len(resp.Failed))
+	}
+	if len(resp.Sharing.Pending) != 50 {
+		t.Fatalf("refreshed view lists %d meetings, want the 50 refused", len(resp.Sharing.Pending))
+	}
+}
+
+// A round that accepts nothing ends it: a share refused for good must not
+// keep the operator looping. What was never attempted is reported as
+// neither accepted nor failed — it is still waiting, and the view says so.
+func TestAcceptAllStopsWhenARoundAcceptsNothing(t *testing.T) {
+	fake := manyWaitingFake(150)
+	fake.acceptFail = map[string]string{}
+	for i := 1; i <= 150; i++ {
+		fake.acceptFail[fmt.Sprint(i)] = "Wrong share ID, share does not exist"
+	}
+	rt := sharingRuntime(t, fake)
+	rec, resp := postAccept(t, rt, "alice", `{"all":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /shares/accept = %d %s", rec.Code, rec.Body.String())
+	}
+	if len(resp.Accepted) != 0 || len(resp.Failed) != maxShareAcceptIDs {
+		t.Fatalf("accepted %d, failed %d; want none and one round's worth", len(resp.Accepted), len(resp.Failed))
+	}
+	for _, failure := range resp.Failed {
+		if failure.ShareID == "150" || failure.Reason != "Wrong share ID, share does not exist" {
+			t.Fatalf("failed carries %+v", failure)
+		}
+	}
+	// One round, then the refreshed view, which still lists all 150.
+	if reads := fake.callCount(http.MethodGet, pendingListPath); reads != 2 {
+		t.Fatalf("the pending list was read %d times, want 2", reads)
+	}
+	if len(resp.Sharing.Pending) != 150 {
+		t.Fatalf("refreshed view lists %d meetings, want 150", len(resp.Sharing.Pending))
+	}
+}
+
+// A runtime without a store — the readiness guard every sibling applies —
+// answers that it cannot, instead of panicking, and accepts nothing.
+func TestAcceptSharesWithoutAStoreAnswersUnavailable(t *testing.T) {
+	fake := waitingFake()
+	rt := sharingRuntime(t, fake)
+	bare := &Runtime{logger: rt.logger, publishSink: rt.publishSink}
+	rec, _ := postAccept(t, bare, "alice", `{"all":true}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("without a store = %d %s", rec.Code, rec.Body.String())
+	}
+	if accepted := fake.acceptedIDs(); len(accepted) != 0 {
+		t.Fatalf("accepted %v without a store", accepted)
 	}
 }
 
