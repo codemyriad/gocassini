@@ -245,9 +245,13 @@ describe("the reader's own recording shares in Browse", () => {
     expect(appSource).toMatch(/function handleSharesAccepted[\s\S]{0,500}void refresh\(\);/);
   });
 
-  it("takes the refreshed shares from the answer, and asks /setup again only without them", () => {
+  it("takes the refreshed shares from the answer, and asks /setup again without them or unchecked ones", () => {
+    // An answer the operator could not establish (`checked: false`, its
+    // re-read as the caller timed out) carries empty lists. Taking it would
+    // hide every row still waiting until the next /setup, so it counts as no
+    // answer and the shell re-reads.
     expect(appSource).toMatch(
-      /if \(result\.sharing && setupHealth\) \{\s*setupHealth = \{ \.\.\.setupHealth, sharing: result\.sharing \};\s*\} else \{\s*void refreshSetupFeatures\(\);/,
+      /if \(result\.sharing\?\.checked && setupHealth\) \{\s*setupHealth = \{ \.\.\.setupHealth, sharing: result\.sharing \};\s*\} else \{\s*void refreshSetupFeatures\(\);/,
     );
   });
 

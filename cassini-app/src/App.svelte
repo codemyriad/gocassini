@@ -234,12 +234,15 @@
 
   // After the operator answered an acceptance. The answer carries the
   // refreshed shares, so they replace what /setup said at mount without a
-  // second round trip; an answer without them is followed by a re-read. Then
-  // the list is re-read through the viewer's own refresh — the slot prop it
-  // handed down, the same path an import takes — so the recording appears
-  // without remounting anything.
+  // second round trip; an answer without them is followed by a re-read. So is
+  // one the operator could not establish (`checked: false`: its re-read as
+  // the caller failed or timed out) — taking that would hide every row still
+  // waiting, and the refused lines, until the next /setup. Then the list is
+  // re-read through the viewer's own refresh — the slot prop it handed down,
+  // the same path an import takes — so the recording appears without
+  // remounting anything.
   function handleSharesAccepted(result: AcceptSharesResult, refresh: () => void | Promise<void>): void {
-    if (result.sharing && setupHealth) {
+    if (result.sharing?.checked && setupHealth) {
       setupHealth = { ...setupHealth, sharing: result.sharing };
     } else {
       void refreshSetupFeatures();
