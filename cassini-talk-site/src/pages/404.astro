@@ -1,0 +1,26 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { href } from "../lib/paths";
+
+const link = "text-sm font-medium text-base-content hover:text-primary transition-colors";
+---
+
+<BaseLayout
+  title="Page not found – cassini.talk"
+  description="This page doesn't exist on cassini.talk."
+  mainClass="flex-1 justify-center"
+  noindex
+>
+  <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-hero flex flex-col items-center text-center gap-6">
+    <p class="text-xs font-bold tracking-widest uppercase text-base-content/60">404</p>
+    <h1 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em">Nothing out here.</h1>
+    <p class="text-lg text-base-content/60 text-balance" style="max-width: 32rem">The page you were looking for has moved, or never existed.</p>
+    <div class="flex flex-col items-center gap-5 pt-2">
+      <a href={href()} class="inline-flex items-center bg-primary text-base font-bold px-4 py-2.5 rounded-md hover:opacity-80 transition-opacity" style="color: var(--color-primary-content)">Back to the home page</a>
+      <span class="flex items-center gap-6">
+        <a href={href("download")} class={link}>Download</a>
+        <a href={href("help")} class={link}>Help</a>
+      </span>
+    </div>
+  </section>
+</BaseLayout>

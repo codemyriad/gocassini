@@ -7,15 +7,16 @@ interface Props {
   title: string;
   description: string;
   mainClass?: string;
+  noindex?: boolean;
 }
 
-const { title, description, mainClass } = Astro.props;
+const { title, description, mainClass, noindex } = Astro.props;
 ---
 
 <!doctype html>
 <html lang="en" data-theme="saturn-night">
   <head>
-    <Head title={title} description={description} />
+    <Head title={title} description={description} noindex={noindex} />
   </head>
   <body class="bg-base-100 text-base-content min-h-screen flex flex-col">
     <Nav />

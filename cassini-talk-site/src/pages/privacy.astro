@@ -1,0 +1,68 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { href } from "../lib/paths";
+
+const updated = "4 Nov 2026";
+const prose = "prose prose-base max-w-none prose-headings:text-base-content prose-p:text-base-content/90 prose-li:text-base-content/90 prose-a:text-primary hover:prose-a:text-primary/80 prose-strong:text-base-content prose-code:text-primary prose-code:bg-base-200 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:before:content-none prose-code:after:content-none";
+---
+
+<BaseLayout
+  title="Privacy – cassini.talk"
+  description="How cassini.talk handles your data: recordings, transcripts and voices stay on your device, with no account and no analytics."
+>
+  <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-hero flex flex-col items-center text-center gap-6">
+    <h1 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em">Privacy</h1>
+    <p class="text-lg text-base-content/60 text-balance" style="max-width: 36rem">Your recordings, transcripts and voices stay on your device. Here is exactly what does and doesn’t leave it.</p>
+    <p class="text-sm text-base-content/60">Updated {updated}</p>
+  </section>
+
+  <section class="w-full mx-auto px-5 md:px-10 pg-last" style="max-width: 46rem">
+    <div class={prose}>
+      <h2 id="short-version">The short version</h2>
+      <ul>
+        <li>Recording, transcription and speaker analysis happen on your phone or computer. We never receive your audio, transcripts, names or voiceprints.</li>
+        <li>There is no account, and the apps contain no analytics and no ads.</li>
+        <li>The only thing the apps download is the speech model, once, and only after you agree.</li>
+        <li>Anything you export or share goes only where you send it.</li>
+      </ul>
+
+      <h2 id="who-we-are">Who we are</h2>
+      <p>cassini.talk is made by Codemyriad OÜ, Järvevana tee 9, 11314 Tallinn, Estonia. Codemyriad is responsible for this policy and for any personal data it handles. You can reach us at <a href="mailto:hello@codemyriad.io?subject=cassini.talk%20privacy">hello@codemyriad.io</a>.</p>
+
+      <h2 id="on-your-device">What stays on your device</h2>
+      <p>The apps keep all of this in your device’s local storage, and none of it is sent to us:</p>
+      <ul>
+        <li>your recordings, and any audio you import;</li>
+        <li>transcripts, including edits and earlier versions;</li>
+        <li>speaker names and the voiceprints used to suggest them in later recordings;</li>
+        <li>bookmarks, titles and your settings.</li>
+      </ul>
+      <p>You can delete any of it in the app. Deleted notes go to Recently Deleted first, and you can erase all saved voice data at any time.</p>
+
+      <h2 id="what-leaves">What leaves your device, and when</h2>
+      <h3 id="speech-model">The speech model</h3>
+      <p>The first transcription needs the speech model, about 530 MB. The app asks before downloading it from Cassini’s model host, <code>dist.gocassini.com</code>. As with any download, the server that sends the file receives your IP address and the time of the request. [To confirm: whether these requests are logged, by whom, and for how long.]</p>
+      <h3 id="apple-speech">Apple Speech on iPhone and iPad</h3>
+      <p>On an iPhone or iPad without the memory for the speech model, cassini.talk uses Apple Speech instead, after a download for the language you choose. That download, and Apple’s speech recognition, are covered by Apple’s privacy policy. [To confirm: whether recognition in this mode stays on the device.]</p>
+      <h3 id="sharing">Exports and sharing</h3>
+      <p>When you export text or subtitles, or share a recording as an <code>.opus</code> file, it goes only to the app, person or place you choose. What happens to it there is up to them.</p>
+      <h3 id="stores">App stores and updates</h3>
+      <p>If you install cassini.talk from the App Store, Google Play or Flathub, the store’s own privacy policy covers the download and any updates. Packages from our GitHub releases page are downloaded from GitHub.</p>
+      <h3 id="diagnostics">Crash reports</h3>
+      <p>[To confirm: whether any of the apps send crash reports or diagnostics, for example through the diagnostics you can choose to share with app developers in iOS and macOS settings, and what they contain.]</p>
+
+      <h2 id="recording-others">Recording other people</h2>
+      <p>Before your first recording, cassini.talk reminds you that telling the people you record is your responsibility. Depending on where you are, recording a conversation may require everyone’s consent.</p>
+
+      <h2 id="website">This website</h2>
+      <p>cassini.talk uses no cookies, no analytics and no third-party trackers. It is served by Cloudflare, which processes your IP address and request details to deliver the pages and protect the site from abuse. [To confirm: Cloudflare log retention for this site.]</p>
+      <p>If you email us, we use your message and address only to reply, and keep them only as long as we need to.</p>
+
+      <h2 id="your-rights">Your rights</h2>
+      <p>Because your recordings and transcripts never reach us, you control them directly on your device. For anything we do hold, such as an email you sent us, you can ask to see, correct or delete it by writing to <a href="mailto:hello@codemyriad.io?subject=cassini.talk%20privacy">hello@codemyriad.io</a>. You can also complain to a data protection authority: in Estonia, where Codemyriad is based, that is the <a href="https://www.aki.ee/en">Estonian Data Protection Inspectorate</a> (Andmekaitse Inspektsioon), or you can contact the authority where you live.</p>
+
+      <h2 id="changes">Changes to this policy</h2>
+      <p>If this policy changes, we’ll update this page and the date at the top. For how each app handles your data in practice, see <a href={href("help#privacy-and-storage")}>Privacy and storage</a> in the help centre.</p>
+    </div>
+  </section>
+</BaseLayout>

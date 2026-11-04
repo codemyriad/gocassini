@@ -16,6 +16,8 @@
   "workers_dev": true,
   "assets": {
     "directory": "./dist",
-    "html_handling": "auto-trailing-slash"
+    "html_handling": "auto-trailing-slash",
+    // Unknown paths get dist/404.html with a 404 status.
+    "not_found_handling": "404-page"
   }
 }
