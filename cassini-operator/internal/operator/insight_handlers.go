@@ -421,34 +421,25 @@ func (e *insightRegistryUnavailableError) Unwrap() error { return e.err }
 
 // resolveWorkflow decides which prompt this run sends, SERVER-side.
 //
-// In order: what the request named, else the configured insight template, else
-// the shipped default. The registry lives in the recorder — the operator cannot
-// import it and must not keep a second copy of the set — so the candidate is
-// resolved against what `cassini insight workflows --json` prints, which is the
-// same list the settings panel shows.
+// What the request named, refused when it cannot run; else the default
+// defaultInsightWorkflow picks, the same one the USER listing advertises: the
+// configured insight template when it can run, else the built-in summary. The
+// registry lives in the recorder — the operator cannot import it and must not
+// keep a second copy of the set — so the candidate is resolved against what
+// `cassini insight workflows --json` prints, which is the same list the
+// settings panel shows.
 //
-// The last fallback is the registry's FIRST entry rather than an id written
-// here. The run row has to carry a concrete id, version and content hash — a
-// document that cannot say which prompt made it is a claim with no way to check
-// it — so the default has to resolve to a real entry at create time, and the
-// registry's own listing order is the one statement of "the first one we offer"
-// that the settings panel and this share.
+// The run row has to carry a concrete id, version and content hash — a
+// document that cannot say which prompt made it is a claim with no way to
+// check it — so the default has to resolve to a real entry at create time.
 func (s *insightService) resolveWorkflow(r *http.Request, request insightCreateRequest) (workflowView, error) {
 	entries, err := s.rt.readWorkflowRegistry(r.Context())
 	if err != nil {
 		return workflowView{}, &insightRegistryUnavailableError{err: err}
 	}
-	if len(entries) == 0 {
-		return workflowView{}, &insightRegistryUnavailableError{err: errors.New("this deployment ships no workflows")}
-	}
 
-	wanted := request.Workflow
-	if wanted == "" {
-		wanted = strings.TrimSpace(s.rt.currentLLMSettings().Insight.Template)
-	}
-
-	chosen := entries[0]
-	if wanted != "" {
+	var chosen workflowView
+	if wanted := request.Workflow; wanted != "" {
 		found := false
 		problem := ""
 		for _, entry := range entries {
@@ -475,6 +466,16 @@ func (s *insightService) resolveWorkflow(r *http.Request, request insightCreateR
 				}
 			}
 			return workflowView{}, fmt.Errorf("no workflow called %q; this deployment ships %s", wanted, strings.Join(ids, ", "))
+		}
+	} else {
+		configured := strings.TrimSpace(s.rt.currentLLMSettings().Insight.Template)
+		var ok bool
+		chosen, ok = defaultInsightWorkflow(entries, configured)
+		if !ok {
+			return workflowView{}, &insightRegistryUnavailableError{err: errors.New("this deployment ships no workflows")}
+		}
+		if configured != "" && chosen.ID != configured {
+			s.rt.logger.Printf("insight: the configured insight template %q cannot run; this run uses %q", configured, chosen.ID)
 		}
 	}
 

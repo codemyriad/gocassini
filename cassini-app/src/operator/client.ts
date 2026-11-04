@@ -306,12 +306,21 @@ export class OperatorClient {
 
   // Writes one custom template. The operator checks it against the recorder's
   // registry and refuses (400, with the recorder's reason) one that would not
-  // run, so a rejection here is the message to show.
-  async saveInsightTemplate(id: string, draft: InsightTemplateDraft): Promise<InsightWorkflow> {
+  // run, so a rejection here is the message to show. createOnly sends
+  // `If-None-Match: *`: the operator answers 412 rather than replace a
+  // template that is already there under this id.
+  async saveInsightTemplate(
+    id: string,
+    draft: InsightTemplateDraft,
+    options: { createOnly?: boolean } = {},
+  ): Promise<InsightWorkflow> {
     const saved = normalizeInsightWorkflows([
       await this.#request<unknown>(`/settings/workflows/${encodeURIComponent(id)}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.createOnly ? { "If-None-Match": "*" } : {}),
+        },
         body: JSON.stringify(draft),
       }),
     ]);

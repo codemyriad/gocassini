@@ -137,7 +137,9 @@ describe("InsightTemplatesPanel", () => {
     // here is copy it. A custom one is a file the operator writes.
     expect(insightTemplatesPanelSource).toContain("Duplicate");
     expect(insightTemplatesPanelSource).not.toContain("Start from this");
-    expect(insightTemplatesPanelSource).toContain("client.saveInsightTemplate(id, toRequest(editor.draft))");
+    expect(insightTemplatesPanelSource).toContain(
+      "client.saveInsightTemplate(id, toRequest(current.draft), { createOnly: creating })",
+    );
     expect(insightTemplatesPanelSource).toContain("client.deleteInsightTemplate(workflow.id)");
     // One textarea, for the prompt; the version and the id are never typed.
     expect(insightTemplatesPanelSource.match(/<textarea/g)).toHaveLength(1);
@@ -247,6 +249,24 @@ describe("insight template writes", () => {
     expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ name: "Resumen", description: "", instruction: "I" });
     expect(calls[1][0]).toBe("https://operator.test/settings/workflows/resumen");
     expect(calls[1][1]?.method).toBe("DELETE");
+  });
+
+  it("asks the operator to create, never replace, when createOnly is set", async () => {
+    const calls: Array<RequestInit | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        calls.push(init);
+        const body = { id: "resumen", version: "v1", sha256: "abc", name: "Resumen", origin: "Custom", instruction: "I" };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      }),
+    );
+    const client = new OperatorClient("https://operator.test");
+    const draft = { name: "Resumen", description: "", instruction: "I" };
+    await client.saveInsightTemplate("resumen", draft, { createOnly: true });
+    await client.saveInsightTemplate("resumen", draft);
+    expect(new Headers(calls[0]?.headers).get("If-None-Match")).toBe("*");
+    expect(new Headers(calls[1]?.headers).get("If-None-Match")).toBeNull();
   });
 
   it("raises a refused save with the operator's reason", async () => {

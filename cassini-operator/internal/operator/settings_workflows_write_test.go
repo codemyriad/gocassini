@@ -17,6 +17,8 @@ import (
 // templates directory: one built-in, then one row per <id>.md file. A file
 // carrying BROKEN is listed with an error, the way the recorder lists a file
 // it cannot run; the version is read off the file's own front matter.
+// fakeTemplateRecorder lists a broken file with the version its front matter
+// still names, as the recorder's salvageCustomTemplate does.
 const fakeTemplateRecorder = `dir="$CASSINI_TEMPLATES_DIR"
 printf '[{"id":"summarise","version":"v0","sha256":"aaaa","name":"Meeting summary","description":"d","origin":"Built in","instruction":"Summarise."}'
 for f in "$dir"/*.md; do
@@ -24,7 +26,7 @@ for f in "$dir"/*.md; do
   id=$(basename "$f" .md)
   v=$(sed -n 's/^version: //p' "$f")
   if grep -q BROKEN "$f"; then
-    printf ',{"id":"%s","version":"","sha256":"","name":"%s","description":"","origin":"Custom","instruction":"","error":"the instruction is BROKEN"}' "$id" "$id"
+    printf ',{"id":"%s","version":"%s","sha256":"","name":"%s","description":"","origin":"Custom","instruction":"","error":"the instruction is BROKEN"}' "$id" "${v:+v$v}" "$id"
   else
     printf ',{"id":"%s","version":"v%s","sha256":"bbbb","name":"%s","description":"","origin":"Custom","instruction":"I"}' "$id" "$v" "$id"
   fi
@@ -445,8 +447,8 @@ func TestWorkflowListingRefreshesWhenTheDirectoryChanges(t *testing.T) {
 	}
 }
 
-// A file the recorder cannot parse is listed with no version, but saving over
-// it continues from the version its front matter still names.
+// A file the recorder cannot parse is listed with the version its front
+// matter still names, and saving over it continues from there.
 func TestPutWorkflowContinuesTheVersionOfABrokenFile(t *testing.T) {
 	rt, dir := templateWriteRuntime(t)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -479,5 +481,74 @@ func TestPutWorkflowMeasuresTheInstructionNotItsJSON(t *testing.T) {
 	rec := doTemplateRequest(rt, http.MethodPut, "longer", body(210<<10))
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "the instruction is longer than") {
 		t.Errorf("210 KiB instruction = %d %s, want the size check's message", rec.Code, rec.Body.String())
+	}
+}
+
+// A PUT with If-None-Match: * creates and never replaces: the panel sends it
+// for a new template, whose id comes from a list that may be stale.
+func TestPutWorkflowCreateOnlyRefusesAnExistingFile(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	put := func(createOnly bool) *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		for _, route := range operatorAPIRoutes(rt, ExAppConfig{}) {
+			mux.Handle(route.pattern, route.handler)
+		}
+		req := httptest.NewRequest(http.MethodPut, "/settings/workflows/resumen", strings.NewReader(spanishTemplate))
+		if createOnly {
+			req.Header.Set("If-None-Match", "*")
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := put(true); rec.Code != http.StatusOK {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, "resumen.md"))
+	if rec := put(true); rec.Code != http.StatusPreconditionFailed || !strings.Contains(rec.Body.String(), "already exists") {
+		t.Errorf("second create = %d %s, want 412", rec.Code, rec.Body.String())
+	}
+	if after, _ := os.ReadFile(filepath.Join(dir, "resumen.md")); string(after) != string(before) {
+		t.Errorf("the refused create changed the file:\n%s", after)
+	}
+	if rec := put(false); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"version":"v2"`) {
+		t.Errorf("an edit = %d %s, want v2", rec.Code, rec.Body.String())
+	}
+}
+
+// A broken file that shares a built-in's id never runs, so deleting it is
+// allowed while that built-in is a step's template: the built-in still
+// answers to the id.
+func TestDeleteWorkflowRemovesAFileShadowingTheConfiguredBuiltIn(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "summarise.md"), []byte("---\nversion: 1\n---\nShadow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings := rt.currentLLMSettings()
+	settings.Summary.Template = "summarise"
+	rt.setLLMSettings(settings)
+	if rec := doTemplateRequest(rt, http.MethodDelete, "summarise", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "summarise.md")); !os.IsNotExist(err) {
+		t.Errorf("the shadowing file is still there: %v", err)
+	}
+}
+
+// A recorder binary replaced at the same path is listed afresh, without a
+// template change or a restart.
+func TestWorkflowListingRefreshesWhenTheBinaryChanges(t *testing.T) {
+	rt, _, spawns := countingTemplateRuntime(t)
+	getTemplateChoices(t, rt)
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(rt.cfg.CassiniBin, later, later); err != nil {
+		t.Fatal(err)
+	}
+	getTemplateChoices(t, rt)
+	if n := spawns(); n != 2 {
+		t.Errorf("spawns = %d, want 2: the replaced binary was not listed again", n)
 	}
 }

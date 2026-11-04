@@ -74,20 +74,32 @@ func (rt *Runtime) settingsWorkflowsHandler(w http.ResponseWriter, r *http.Reque
 // templates included, through the recorder CLI. The listing is cached while
 // the recorder binary and the templates directory stay as they were.
 func (rt *Runtime) readWorkflowRegistry(ctx context.Context) ([]workflowView, error) {
-	return rt.workflowListing.read(ctx, strings.TrimSpace(rt.cfg.CassiniBin), rt.cfg.TemplatesRoot, false)
+	return rt.listWorkflows(ctx, false)
 }
 
 // refreshWorkflowRegistry lists the registry afresh, whatever the cache
 // holds, and keeps the result: a save checks its file with it.
 func (rt *Runtime) refreshWorkflowRegistry(ctx context.Context) ([]workflowView, error) {
-	return rt.workflowListing.read(ctx, strings.TrimSpace(rt.cfg.CassiniBin), rt.cfg.TemplatesRoot, true)
+	return rt.listWorkflows(ctx, true)
+}
+
+// listWorkflows reads the listing and logs what the recorder warned about
+// while making it: an unreadable templates directory is listed as the
+// built-ins alone, and this log line is where an administrator finds out why
+// their templates are missing.
+func (rt *Runtime) listWorkflows(ctx context.Context, fresh bool) ([]workflowView, error) {
+	entries, warning, err := rt.workflowListing.read(ctx, strings.TrimSpace(rt.cfg.CassiniBin), rt.cfg.TemplatesRoot, fresh)
+	if warning != "" {
+		rt.logger.Printf("workflow registry: %s", warning)
+	}
+	return entries, err
 }
 
 // workflowListingCache is the last registry listing, process-local (D-819).
 // Every template GET and the Generate card's mount read the registry, and
 // each read used to spawn the recorder. The listing depends only on the
 // recorder binary and the files in the templates directory, so it is kept
-// under a key made of those: the binary's path, and the directory's mtime
+// under a key made of those: the binary's path, size and mtime, and the directory's mtime
 // with each template file's name, size and mtime (a file edited in place
 // leaves the directory's mtime alone). Saves and deletes also drop it
 // explicitly, under templatesMu.
@@ -107,34 +119,47 @@ func (c *workflowListingCache) invalidate() {
 	c.mu.Unlock()
 }
 
-func (c *workflowListingCache) read(ctx context.Context, bin, templatesDir string, fresh bool) ([]workflowView, error) {
+// read returns the listing and, when it spawned the recorder for it, what the
+// recorder printed on stderr ("" for a cached listing).
+func (c *workflowListingCache) read(ctx context.Context, bin, templatesDir string, fresh bool) ([]workflowView, string, error) {
 	key, cacheable := workflowListingKey(bin, templatesDir)
 	c.mu.Lock()
 	if !fresh && cacheable && c.key == key && c.entries != nil {
 		entries := slices.Clone(c.entries)
 		c.mu.Unlock()
-		return entries, nil
+		return entries, "", nil
 	}
 	generation := c.generation
 	c.mu.Unlock()
 
-	entries, err := readWorkflowRegistry(ctx, bin, templatesDir)
+	entries, warning, err := readWorkflowRegistry(ctx, bin, templatesDir)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	c.mu.Lock()
 	if cacheable && c.generation == generation {
 		c.key, c.entries = key, slices.Clone(entries)
 	}
 	c.mu.Unlock()
-	return entries, nil
+	return entries, warning, nil
 }
 
 // workflowListingKey says what a listing was read from. It is not cacheable
-// when the directory cannot be inspected.
+// when the binary or the directory cannot be inspected. The binary's size and
+// mtime are in the key so that one replaced at the same path (a standalone or
+// dev deploy, without an operator restart) is listed afresh.
 func workflowListingKey(bin, templatesDir string) (string, bool) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\x00%s\x00", bin, templatesDir)
+	fmt.Fprintf(&b, "%s\x00", bin)
+	resolved, err := exec.LookPath(bin)
+	if err != nil {
+		return "", false
+	}
+	binInfo, err := os.Stat(resolved)
+	if err != nil {
+		return "", false
+	}
+	fmt.Fprintf(&b, "%d:%d\x00%s\x00", binInfo.Size(), binInfo.ModTime().UnixNano(), templatesDir)
 	dir := strings.TrimSpace(templatesDir)
 	if dir == "" {
 		return b.String(), true
@@ -164,9 +189,10 @@ func workflowListingKey(bin, templatesDir string) (string, bool) {
 	return b.String(), true
 }
 
-// readWorkflowRegistry runs the recorder CLI within the caller's context.
+// readWorkflowRegistry runs the recorder CLI within the caller's context, and
+// returns what it printed on stderr alongside a listing it succeeded in making.
 // A successful empty registry is a non-nil slice so the API encodes [] rather than null.
-func readWorkflowRegistry(ctx context.Context, bin, templatesDir string) ([]workflowView, error) {
+func readWorkflowRegistry(ctx context.Context, bin, templatesDir string) ([]workflowView, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, workflowsTimeout)
 	defer cancel()
 
@@ -186,20 +212,20 @@ func readWorkflowRegistry(ctx context.Context, bin, templatesDir string) ([]work
 		cmd.Env = setEnvKey(cmd.Env, envTemplatesDir, dir)
 	}
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("cassini insight workflows --json: %w: %s", err, strings.TrimSpace(stderr.buf.String()))
+		return nil, "", fmt.Errorf("cassini insight workflows --json: %w: %s", err, strings.TrimSpace(stderr.buf.String()))
 	}
 
 	var entries []workflowView
 	if err := json.Unmarshal(stdout.buf.Bytes(), &entries); err != nil {
-		return nil, fmt.Errorf("decode the workflow registry: %w", err)
+		return nil, "", fmt.Errorf("decode the workflow registry: %w", err)
 	}
 	if err := validateWorkflowListing(entries); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if entries == nil {
 		entries = []workflowView{}
 	}
-	return entries, nil
+	return entries, strings.TrimSpace(stderr.buf.String()), nil
 }
 
 // validateWorkflowListing checks the fields needed to display and identify a workflow.
@@ -263,15 +289,14 @@ func (rt *Runtime) insightWorkflowsHandler(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadGateway, "the templates could not be listed")
 		return
 	}
-	configured := strings.TrimSpace(rt.currentLLMSettings().Insight.Template)
 	choices := make([]workflowChoice, 0, len(entries))
 	defaultID := ""
+	if chosen, ok := defaultInsightWorkflow(entries, rt.currentLLMSettings().Insight.Template); ok {
+		defaultID = chosen.ID
+	}
 	for _, entry := range entries {
 		if !entry.runnable() {
 			continue
-		}
-		if entry.ID == configured || (defaultID == "" && entry.ID == defaultInsightWorkflowID) {
-			defaultID = entry.ID
 		}
 		choices = append(choices, workflowChoice{
 			ID:            entry.ID,
@@ -283,9 +308,6 @@ func (rt *Runtime) insightWorkflowsHandler(w http.ResponseWriter, r *http.Reques
 	}
 	// no-store, as for the provider list: AppAPI caches a proxied GET for an
 	// hour, and this list changes the moment an administrator saves a template.
-	if defaultID == "" && len(choices) > 0 {
-		defaultID = choices[0].ID
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, workflowChoices{Default: defaultID, Templates: choices})
 }
@@ -293,3 +315,32 @@ func (rt *Runtime) insightWorkflowsHandler(w http.ResponseWriter, r *http.Reques
 // defaultInsightWorkflowID is the built-in a run falls back to when no
 // insight template is configured (internal/insight/workflows: SummariseID).
 const defaultInsightWorkflowID = "summarise"
+
+// defaultInsightWorkflow is the template a run that names none gets: the
+// configured insight template when it can run, else the built-in summary,
+// else the first runnable entry. It is the one rule both the USER listing's
+// "default" and resolveWorkflow follow, so the template the Generate card
+// preselects is the one an API or CLI create without a workflow runs. ok is
+// false only when nothing in the listing can run.
+func defaultInsightWorkflow(entries []workflowView, configured string) (workflowView, bool) {
+	configured = strings.TrimSpace(configured)
+	var fallback, first workflowView
+	for _, entry := range entries {
+		if !entry.runnable() {
+			continue
+		}
+		if configured != "" && entry.ID == configured {
+			return entry, true
+		}
+		if fallback.ID == "" && entry.ID == defaultInsightWorkflowID {
+			fallback = entry
+		}
+		if first.ID == "" {
+			first = entry
+		}
+	}
+	if fallback.ID != "" {
+		return fallback, true
+	}
+	return first, first.ID != ""
+}

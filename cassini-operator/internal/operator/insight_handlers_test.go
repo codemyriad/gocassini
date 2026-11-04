@@ -399,6 +399,28 @@ func TestCreateInsightFallsBackToTheConfiguredTemplate(t *testing.T) {
 	}
 }
 
+// A configured insight template that cannot run does not refuse an
+// unqualified create: the run gets the default the Generate card is shown
+// (defaultInsightWorkflow), the built-in summary.
+func TestCreateInsightWithAConfiguredTemplateThatCannotRunUsesTheAdvertisedDefault(t *testing.T) {
+	harness := newInsightHandlerHarness(t)
+	llm := harness.service.rt.currentLLMSettings()
+	llm.Insight = LLMStep{Enabled: true, Provider: "local", Template: "missing"}
+	harness.service.rt.setLLMSettings(llm)
+
+	w := harness.do(t, http.MethodPost, "/insights", "alice", `{"meetingIds":["MEETING1"]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code = %d, want 201 (%s)", w.Code, w.Body.String())
+	}
+	var run InsightRun
+	if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if run.WorkflowID != defaultInsightWorkflowID {
+		t.Errorf("workflowId = %q, want %q", run.WorkflowID, defaultInsightWorkflowID)
+	}
+}
+
 func TestListInsightsServesOnlyTheCallersOwn(t *testing.T) {
 	harness := newInsightHandlerHarness(t,
 		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusSucceeded, MeetingIDs: []string{"MEETING1"}, CreatedAt: time.Now()},
