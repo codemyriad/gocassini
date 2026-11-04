@@ -166,6 +166,44 @@ it("re-shares a partly shared meeting once the policy is fixed", async () => {
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/03-reshared.png` });
 });
 
+it("drops a re-share's answer once the person leaves the run", async () => {
+  const standup = job("Standup", "succeeded", { unshared_count: 1 });
+  const planning = job("Planning", "succeeded", { created_at: "2026-11-01T09:00:00Z" });
+  const partial = { status: "partial", skipped: [{ type: "user", id: "bob", reason: "Sharing is only allowed with group members" }] };
+  let reshared = false;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (init?.method === "POST") {
+      reshared = true;
+      return Response.json({ sharing: { status: "complete", skipped: [] } });
+    }
+    const current = reshared ? { ...standup, unshared_count: 0 } : standup;
+    if (path === "/operator/jobs") return Response.json([current, planning]);
+    const id = path.split("/").pop()!;
+    const recording = id === "Standup" ? current : planning;
+    return Response.json({
+      job: recording,
+      attempts: [{ job_id: id, attempt_number: 1, trigger_kind: "initial", request_json: "{}", stage: "done", state: "succeeded", created_at: stamp, updated_at: stamp, build_deferral_count: 0 }],
+      availability: { source: "present", output: "present", published_attempt: 1 },
+      sharing: id === "Standup" && !reshared ? partial : { status: "complete", skipped: [] },
+    });
+  }));
+  app = mount(Operator, { target: host });
+  await expect.element(page.getByText("Standup", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByText("Standup", { exact: true }).element().closest(".run-card")!);
+  await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
+  await expect.element(page.getByText("Shared with everyone.", { exact: true })).toBeVisible();
+  // Read there; gone with the run. Coming back finds the run as it now is,
+  // not the answer again.
+  await userEvent.click(page.getByText("Planning", { exact: true }).element().closest(".run-card")!);
+  await expect.element(page.getByRole("heading", { name: "Planning" })).toBeVisible();
+  expect(document.querySelector(".op-detail-pane")?.textContent).not.toContain("Shared with everyone.");
+  await userEvent.click(page.getByText("Standup", { exact: true }).element().closest(".run-card")!);
+  await expect.element(page.getByRole("heading", { name: "Standup" })).toBeVisible();
+  expect(document.querySelector(".op-detail-pane")?.textContent).not.toContain("Shared with everyone.");
+  expect(document.querySelector(".op-detail-pane")?.textContent).not.toContain("Published, but not shared with");
+});
+
 it("says beside the button why a re-share failed", async () => {
   serveReshare(job("Standup", "succeeded", { unshared_count: 1 }), "fails");
   await open("Standup");

@@ -438,6 +438,7 @@
         await refreshJobs();
       }
     }
+    if (jobId !== selectedJobId) dropReshareAnswer(selectedJobId);
     selectedJobId = jobId;
     detailError = "";
     loadingDetail = true;
@@ -478,6 +479,7 @@
 
   function handleBackToList() {
     pushJobUrl("");
+    dropReshareAnswer(selectedJobId);
     selectedJobId = "";
     selectedJob = null;
     detailError = "";
@@ -489,6 +491,7 @@
       return;
     }
     if (urlJobId === "") {
+      dropReshareAnswer(selectedJobId);
       selectedJobId = "";
       selectedJob = null;
       detailError = "";
@@ -649,6 +652,16 @@
   // button under it, away with the next read of the run.
   let reshareResult: { jobId: string; refused: string[] } | null = null;
   $: reshareLine = reshareResult && reshareResult.jobId === selectedJob?.job.id ? reshareOutcome(reshareResult.refused) : "";
+  // The answer is dropped when the person leaves the run it was made for:
+  // they have read it there, and the run's next read says what is true now.
+  // Otherwise "Shared with everyone." would come back with every reselection
+  // for the rest of the session, beside a new warning if the run turned
+  // partial again. An answer that arrives while another run is open is kept
+  // for its run until that one is opened and left.
+  function dropReshareAnswer(jobId: string) {
+    if (reshareResult?.jobId === jobId) reshareResult = null;
+    if (reshareError?.jobId === jobId) reshareError = null;
+  }
   $: shareNoticeShown = outcomeNotices.some((notice) => notice.action?.kind === "reshare");
   async function handleReshare() {
     if (!operatorClient || !selectedJob?.job || reshareJobId) return;
