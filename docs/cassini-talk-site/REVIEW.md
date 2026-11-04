@@ -58,9 +58,11 @@ After the six phases were built, a review session in the browser refined the des
 
 **Page weight** (gzip, first visit): Home ≈ 55 KB, Download ≈ 33 KB, Help ≈ 30 KB, article ≈ 30 KB. No images or web fonts.
 
+**Privacy and 404 pages (added after the design pass)**
+- `/privacy` is a draft policy for Codemyriad OÜ (Tallinn, Estonia), written only from what the site and apps already state: on-device processing, no account or analytics, the one-time model download from `dist.gocassini.com`, the consent reminder, Recently Deleted and erasing voice data. It names the Estonian Data Protection Inspectorate. The footer's Privacy link goes here. Four facts are still marked `[To confirm]` on the page: whether `dist.gocassini.com` logs downloads (by whom, for how long); whether Apple Speech recognition stays on the device in the iPhone and iPad fallback; whether any app sends crash reports or diagnostics; and Cloudflare log retention for the site. Also worth confirming: the email-retention line, the registry code if it should be shown, and a legal-basis line for the model download and support emails. It needs a legal once-over before the store submissions.
+- `/404` ("Nothing out here.") has `noindex` and is left out of the sitemap. `wrangler.jsonc` sets `not_found_handling: "404-page"`, so the Worker serves it with a 404 status for any unknown path.
+
 **Still open from the review**
-- A privacy policy page: the footer's Privacy link goes to the help centre's Privacy and storage card, but the App Store and Google Play both require a privacy policy URL.
-- A 404 page: a bad URL currently gets Cloudflare's bare 404.
 - The `#` store buttons jump to the top of the page; until the real links exist they could show as disabled ("Coming soon").
 - Unwritten help guides look like links but aren't; dim them or list only written ones.
 - At 1280 × 720 and on small phones (390 × 664), "Keep your conversations." still slides about 3–21px under the nav at the very end of the page.
