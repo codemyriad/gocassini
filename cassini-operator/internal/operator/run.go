@@ -1010,6 +1010,8 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/events", http.HandlerFunc(rt.eventsHandler)},
 		{"/status", http.HandlerFunc(rt.statusHandler)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
+		// USER: accept the recording shares waiting for the caller (D-885).
+		{"/shares/accept", http.HandlerFunc(rt.sharesAcceptHandler)},
 		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
 		{"/ai/providers/", http.HandlerFunc(rt.aiProviderModelsHandler)},
 		{"/settings", http.HandlerFunc(rt.settingsHandler)},
