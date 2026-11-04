@@ -46,6 +46,7 @@ import {
   startImports as postImports,
 } from "./imports/client";
 import { nextcloudRootPath } from "./operator/ncSetup";
+import { readServedMessage } from "./servedMessage";
 import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/dataProvider";
 
 // The in-Nextcloud shell's data provider (D-626).
@@ -388,32 +389,4 @@ async function describeBundleFailure(response: Response): Promise<string> {
     default:
       return `Could not prepare the bundle (HTTP ${response.status}).`;
   }
-}
-
-// readServedMessage reads the endpoint's own explanation, whether it arrives as
-// a JSON error envelope (the operator API's shape) or as the plain-text line
-// Go's http.Error writes. Anything longer or multi-line is a page, not a
-// message, and is discarded rather than pasted into the panel.
-async function readServedMessage(response: Response): Promise<string> {
-  let body: string;
-  try {
-    body = (await response.text()).trim();
-  } catch {
-    return "";
-  }
-  if (body === "") {
-    return "";
-  }
-  try {
-    const payload = JSON.parse(body) as { error?: unknown };
-    if (typeof payload.error === "string" && payload.error.trim() !== "") {
-      return payload.error.trim();
-    }
-  } catch {
-    // Not JSON; fall through to the plain-text form.
-  }
-  if (body.length <= 200 && !body.includes("\n") && !body.startsWith("<")) {
-    return body;
-  }
-  return "";
 }

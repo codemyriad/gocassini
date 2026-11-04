@@ -3,7 +3,8 @@
 // setting kept from them. The copy and the wire call live here, pure, for the
 // reason buildSetupNotice gives: the sentences are the part worth testing, and
 // SharingNotice.svelte renders what it is handed.
-import { readSharing, type PendingRecording, type SharingStatus } from "./setupHealth";
+import { readServedMessage } from "../servedMessage";
+import { isRecord, readSharing, type PendingRecording, type SharingStatus } from "./setupHealth";
 
 // hasSharingNews is the one rule for whether there is anything to say: the
 // shell uses it to fill the list's empty state, and the notice uses it to
@@ -142,7 +143,7 @@ export async function acceptShares(
     body: JSON.stringify(body),
   });
   if (response.status !== 200) {
-    throw new Error((await readServedError(response)) || `Could not accept the share (HTTP ${response.status}).`);
+    throw new Error((await readServedMessage(response)) || `Could not accept the share (HTTP ${response.status}).`);
   }
   return readAcceptSharesResult(await response.json());
 }
@@ -157,23 +158,4 @@ export function readAcceptSharesResult(value: unknown): AcceptSharesResult {
       })
     : [];
   return { accepted, failed, sharing: readSharing(body.sharing) };
-}
-
-async function readServedError(response: Response): Promise<string> {
-  try {
-    const text = (await response.text()).trim();
-    if (text === "") return "";
-    try {
-      const payload: unknown = JSON.parse(text);
-      return isRecord(payload) && typeof payload.error === "string" ? payload.error.trim() : "";
-    } catch {
-      return text.length <= 200 && !text.includes("\n") && !text.startsWith("<") ? text : "";
-    }
-  } catch {
-    return "";
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

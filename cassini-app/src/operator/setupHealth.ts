@@ -294,6 +294,8 @@ export function buildFeatureNotice(options: {
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+// The one object guard for the operator's answers; sharingNotice.ts reads the
+// accept answer with it too.
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
