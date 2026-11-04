@@ -632,6 +632,10 @@ func TestRecordingSharingRowCountsWhatIsUnshared(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// J1 was recorded on 12 October and re-shared today: since is the
+	// meeting's day, not the re-share's.
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "J1", Stage: "done", State: "succeeded", CreatedAt: "2026-10-12T09:00:00Z"})
+	setJobTimes(t, rt, "J1", "2026-10-12T09:14:00.000000000Z", "2026-10-12T10:00:00.000000000Z")
 	record("J1", shareOutcomePartial, skippedShare{Type: "user", ID: "bob"}, skippedShare{Type: "group", ID: "staff"})
 	record("J2", shareOutcomePartial, skippedShare{Type: "user", ID: "bob"}, skippedShare{Type: "user", ID: "carol"}, skippedShare{Type: "circle", ID: "sales"})
 	record("J3", shareOutcomeComplete)
@@ -639,9 +643,6 @@ func TestRecordingSharingRowCountsWhatIsUnshared(t *testing.T) {
 	// An expired meeting is nobody's any more.
 	record("J5", shareOutcomePartial, skippedShare{Type: "user", ID: "erin"})
 	retireMeeting(t, rt, "J5.opus")
-	if _, err := rt.store.db.Exec(`UPDATE job_share_outcomes SET updated_at='2026-10-12T09:14:00.000000000Z' WHERE job_id='J1'`); err != nil {
-		t.Fatal(err)
-	}
 	want := &unsharedSummary{Jobs: 2, Users: 2, Groups: 1, Since: "2026-10-12T09:14:00Z"}
 
 	// Not checked yet.

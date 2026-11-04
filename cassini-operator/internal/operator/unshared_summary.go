@@ -9,8 +9,9 @@ import (
 // unsharedSummary is what is currently unshared across the archive, for the
 // Recording sharing row: how many published meetings Nextcloud would not
 // share with everyone, how many distinct people and groups are missing one,
-// and since when. Nil when nothing is. Retired meetings are left out. Teams
-// are counted in neither figure: the row says people and groups.
+// and since when — the oldest affected meeting's start. Nil when nothing is.
+// Retired meetings are left out. Teams are counted in neither figure: the
+// row says people and groups.
 type unsharedSummary struct {
 	Jobs   int    `json:"jobs"`
 	Users  int    `json:"users"`
@@ -23,7 +24,18 @@ func (s *Store) unsharedSummary(ctx context.Context) (*unsharedSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT job_id, skipped, updated_at FROM job_share_outcomes WHERE status = ?`, shareOutcomePartial)
+	// Since is when the oldest affected meeting happened — its recording's
+	// start, or an import's creation, the rule meetingFactsForJobs uses — not
+	// when its shares were last reconciled: pressing Re-share on an old
+	// meeting must not move "since" to today. A meeting whose start is not
+	// known stands at its reconciliation time.
+	rows, err := s.db.QueryContext(ctx, `
+SELECT o.job_id, o.skipped, o.updated_at, COALESCE(j.record_started_at, ''),
+  COALESCE((SELECT l.created_at_utc FROM meeting_lifecycle l
+            WHERE l.name IN (o.job_id || '.opus', o.job_id || '.json')
+            ORDER BY l.name LIMIT 1), '')
+FROM job_share_outcomes o LEFT JOIN jobs j ON j.id = o.job_id
+WHERE o.status = ?`, shareOutcomePartial)
 	if err != nil {
 		return nil, err
 	}
@@ -32,8 +44,8 @@ func (s *Store) unsharedSummary(ctx context.Context) (*unsharedSummary, error) {
 	var summary unsharedSummary
 	var since time.Time
 	for rows.Next() {
-		var jobID, raw, updatedAt string
-		if err := rows.Scan(&jobID, &raw, &updatedAt); err != nil {
+		var jobID, raw, updatedAt, recordStarted, created string
+		if err := rows.Scan(&jobID, &raw, &updatedAt, &recordStarted, &created); err != nil {
 			return nil, err
 		}
 		if retired[jobID] {
@@ -52,7 +64,14 @@ func (s *Store) unsharedSummary(ctx context.Context) (*unsharedSummary, error) {
 				groups[skip.ID] = true
 			}
 		}
-		if at := parseUTCTime(updatedAt); !at.IsZero() && (since.IsZero() || at.Before(since)) {
+		at := parseUTCTime(recordStarted)
+		if at.IsZero() {
+			at = parseUTCTime(created)
+		}
+		if at.IsZero() {
+			at = parseUTCTime(updatedAt)
+		}
+		if !at.IsZero() && (since.IsZero() || at.Before(since)) {
 			since = at
 		}
 	}
