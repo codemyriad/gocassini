@@ -1,0 +1,24 @@
+---
+import "../tailwind.css";
+import SocialMeta from "./SocialMeta.astro";
+import { href } from "../lib/paths";
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
+<title>{title}</title>
+<SocialMeta title={title} description={description} />
+<link rel="icon" type="image/svg+xml" href={href("favicon.svg")} />
+<script is:inline>
+  if ("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.documentElement.classList.add("js");
+  }
+</script>

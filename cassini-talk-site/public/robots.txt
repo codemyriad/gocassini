@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://cassini.talk/sitemap-index.xml

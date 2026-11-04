@@ -1,0 +1,21 @@
+{
+  // Static-assets-only Worker (no server code): `wrangler deploy` uploads the
+  // built site in ./dist and serves it. .github/workflows/cassini-talk-site.yml
+  // runs it on site or workflow changes pushed to main.
+  //
+  // `name` and `account_id` pin the Worker this deploys to. The account id is
+  // the Code Myriad account; it is not a secret.
+  //
+  // No custom-domain route yet: until the cassini.talk DNS is confirmed on
+  // Cloudflare the Worker is served only at its workers.dev URL. Add
+  //   "routes": [{ "pattern": "cassini.talk", "custom_domain": true }]
+  // once it is.
+  "name": "cassini-talk",
+  "account_id": "4ca1b102baca2e7067daf57e186e20c4",
+  "compatibility_date": "2025-07-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash"
+  }
+}

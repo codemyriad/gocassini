@@ -1,0 +1,14 @@
+---
+import { glyphs, type Glyph } from "../data/glyphs";
+
+interface Props {
+  name: Glyph;
+  size?: number;
+  class?: string;
+  style?: string;
+}
+
+const { name, size = 22, class: className, style } = Astro.props;
+---
+
+<svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class={className} style={style}><path d={glyphs[name]}></path></svg>

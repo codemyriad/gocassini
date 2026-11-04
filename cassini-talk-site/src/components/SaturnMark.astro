@@ -1,0 +1,35 @@
+---
+import nav from "../assets/logo/saturn-nav.svg?raw";
+import mid from "../assets/logo/saturn-mid.svg?raw";
+import full from "../assets/logo/saturn-full.svg?raw";
+
+interface Props {
+  detail?: "nav" | "mid" | "full";
+  /** ID prefix for the gradients, clips and filters inside the SVG. Must be unique on the page. */
+  prefix?: string;
+  class?: string;
+  style?: string;
+  label?: string;
+}
+
+const { detail = "nav", prefix, class: className, style, label } = Astro.props;
+const sources = { nav: [nav, "sn"], mid: [mid, "sm"], full: [full, "sf"] } as const;
+const [raw, own] = sources[detail];
+const id = prefix ?? own;
+
+const inner = raw
+  .replace(/^[\s\S]*?<svg[^>]*>/, "")
+  .replace(/<\/svg>\s*$/, "")
+  .replaceAll(`id="${own}`, `id="${id}`)
+  .replaceAll(`url(#${own}`, `url(#${id}`);
+---
+
+<svg
+  viewBox="0 0 184 120"
+  class={className}
+  style={`overflow: visible;${style ? " " + style : ""}`}
+  role={label ? "img" : undefined}
+  aria-label={label}
+  aria-hidden={label ? undefined : "true"}
+  set:html={inner}
+/>
