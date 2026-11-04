@@ -215,3 +215,44 @@ describe("the setup notice in the shell", () => {
     expect(rule).toContain("overflow-y: auto;");
   });
 });
+
+// D-885: what the shell tells a reader about their own recording shares, in
+// the list's empty state and above a list that has meetings. The viewer owns
+// the slots and the list; the shell owns the answer and the request.
+describe("the reader's own recording shares in Browse", () => {
+  it("fills both list slots wherever the browse surface is mounted", () => {
+    // Three call sites, the same rule as the Prepare slots: a slot filled in
+    // two of the three is a notice some readers never see.
+    expect(appSource.match(/slot="list-empty"/g) ?? []).toHaveLength(3);
+    expect(appSource.match(/slot="list-notice"/g) ?? []).toHaveLength(3);
+    expect(appSource.match(/listEmptyFilled=\{sharingNews\}/g) ?? []).toHaveLength(3);
+  });
+
+  it("gates the empty state on the rule the notice renders by", () => {
+    // A slot cannot be provided conditionally and one that renders nothing
+    // still replaces the viewer's "No meetings yet", so the viewer is told —
+    // from the same bit the notice draws by, never a second condition.
+    expect(appSource).toContain("$: sharing = setupHealth?.sharing ?? null;");
+    expect(appSource).toContain("$: sharingNews = hasSharingNews(sharing);");
+  });
+
+  it("re-reads the list through the viewer's own refresh after an acceptance", () => {
+    // The refresh rides down as a slot prop from the viewer, so the accepted
+    // recording appears through the path an import takes, with nothing
+    // remounted — in every mount, for both slots.
+    expect(appSource.match(/let:refresh/g) ?? []).toHaveLength(6);
+    expect(appSource.match(/on:accepted=\{\(event\) => handleSharesAccepted\(event\.detail, refresh\)\}/g) ?? []).toHaveLength(6);
+    expect(appSource).toMatch(/function handleSharesAccepted[\s\S]{0,500}void refresh\(\);/);
+  });
+
+  it("takes the refreshed shares from the answer, and asks /setup again only without them", () => {
+    expect(appSource).toMatch(
+      /if \(result\.sharing && setupHealth\) \{\s*setupHealth = \{ \.\.\.setupHealth, sharing: result\.sharing \};\s*\} else \{\s*void refreshSetupFeatures\(\);/,
+    );
+  });
+
+  it("makes the request from the shell, with the operator's base path", () => {
+    expect(appSource).toMatch(/function acceptRecordingShares[\s\S]{0,200}return acceptShares\(operatorBasePath, shareIds\);/);
+    expect(appSource.match(/accept=\{acceptRecordingShares\}/g) ?? []).toHaveLength(6);
+  });
+});
