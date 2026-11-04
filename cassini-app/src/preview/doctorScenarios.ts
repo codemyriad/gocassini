@@ -24,7 +24,7 @@ export const doctorScenarios = [
   { id: "test-published", title: "Test recording: confirm playback", description: "The recording published. Only a person pressing play can finish this check." },
   { id: "test-failed", title: "Test recording failed", description: "The one check whose failure is a finding rather than a missing verdict." },
   { id: "storage-blocked", title: "Recording storage is blocked", description: "Recording cannot start. The storage action explains its destination." },
-  { id: "sharing-restricted", title: "Sharing limited to group members", description: "Nextcloud only lets accounts share within their groups and Cassini is only in admin: a warning naming the groups it can reach, with the two ways out." },
+  { id: "sharing-restricted", title: "Sharing limited to group members", description: "Nextcloud only lets accounts share within their groups and Cassini is only in admin: a warning naming the groups it can reach, with the two ways out and what is unshared meanwhile." },
   { id: "sharing-blocked", title: "Cassini can share with nobody", description: "Sharing is limited to group members and Cassini is in no group, so every recording share would be refused." },
   { id: "setup-unreadable", title: "Saved configuration is unreadable", description: "Persistent setup needs repair; credentials cannot be confirmed." },
   { id: "search-partial", title: "Archive search is incomplete", description: "Audio is ready. Re-index now simulates progress and completion in this tab." },
@@ -100,11 +100,19 @@ function blocked(id: string, blocker: string, unchecked = false): ReadinessCheck
       : `Not checked: this depends on ${blocker}, which needs attention first.` };
 }
 
-// The Recording sharing row's wording, as nc_sharing_policy.go writes it.
-const sharingPermitted = "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting.";
-const sharingGroupSteps = [
-  { label: "To let Cassini share with everyone, open Administration settings → Sharing in Nextcloud and turn off “Restrict users to only share with users in their groups”" },
-  { label: "To keep the restriction, add `cassini` in Nextcloud's Users page to every group whose members should receive their recordings. A group everyone belongs to covers everybody; `cassini` does not need to be an administrator" },
+// The Recording sharing row's wording, as nc_sharing_policy.go writes it
+// (D-885): VERDICT, then the setting by its Nextcloud name and that Cassini
+// shares from its cassini account, then the consequence. Steps are full
+// sentences.
+const sharingPermitted = "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting. Whether each person has accepted the share is theirs to decide; anyone with recordings waiting sees them in Browse.";
+const restrictOff = { label: "Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing." };
+const sharingRestrictedSteps = [
+  restrictOff,
+  { label: "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator." },
+];
+const sharingBlockedSteps = [
+  restrictOff,
+  { label: "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator." },
 ];
 
 export function scenarioReport(id: string, now = new Date()): RecordingReadiness {
@@ -219,12 +227,14 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
       set(blocked("storage.sharing", "Recording storage"));
       break;
     case "sharing-restricted":
-      set({ id: "storage.sharing", state: "warn", code: "sharing_limited_to_groups", checked_at, steps: sharingGroupSteps,
-        message: "Nextcloud only lets accounts share with members of their own groups (“Restrict users to only share with users in their groups”), so Cassini can share recordings only with members of “admin”, and with those groups as a whole. Anyone else in a meeting is left without access to it unless a Team the room includes gives it to them, and a recording started by someone outside these groups is not published. “admin” holds only Nextcloud's administrators." });
+      set({ id: "storage.sharing", state: "warn", code: "sharing_limited_to_groups", checked_at, steps: sharingRestrictedSteps,
+        message: "Only administrators can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is only in “admin”, the administrators' group. Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all.",
+        // What the setting has already cost, from job_share_outcomes.
+        unshared: { jobs: 7, users: 3, groups: 1, since: "2026-10-12T09:14:00Z" } });
       break;
     case "sharing-blocked":
-      set({ id: "storage.sharing", state: "needs_action", code: "sharing_no_common_group", checked_at, steps: sharingGroupSteps,
-        message: "Nextcloud only lets accounts share with members of their own groups (“Restrict users to only share with users in their groups”), and the “cassini” account is in no group. Every share to a person or a group is refused — including to whoever starts a recording — so new meetings cannot be published." });
+      set({ id: "storage.sharing", state: "needs_action", code: "sharing_no_common_group", checked_at, steps: sharingBlockedSteps,
+        message: "Nobody can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is in no group. Every share is refused, so no new meetings can be published." });
       break;
     case "setup-unreadable":
       set({ id: "configuration", state: "needs_action", code: "setup_store_unreadable", message: "Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.", action: "repair_configuration", steps: [

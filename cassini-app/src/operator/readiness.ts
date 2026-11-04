@@ -44,6 +44,43 @@ export interface ReadinessCheck {
   // procedure: an instruction we cannot verify is worse than a reference.
   docs?: string;
   checked_at?: string;
+  // What is currently unshared (D-885), in any state: published meetings
+  // Nextcloud refused to share with someone in their room. The setting may be
+  // fixed and these still unshared — each one is re-shared from its run.
+  unshared?: UnsharedCount;
+}
+
+export interface UnsharedCount {
+  // Published meetings with a partial share outcome.
+  jobs: number;
+  // Distinct people and groups refused across them.
+  users: number;
+  groups: number;
+  // ISO 8601: the oldest such outcome.
+  since?: string;
+}
+
+// "7 recordings since 12 Oct were not shared with 3 people and 1 group."
+// Singulars handled, a kind with none omitted. The date is the compact
+// en-GB form the viewer uses for its own dates, with the year only when it is
+// not this one.
+export function unsharedSummary(unshared: UnsharedCount, now: Date = new Date()): string {
+  const jobs = unshared.jobs === 1 ? "1 recording" : `${unshared.jobs} recordings`;
+  const since = formatSince(unshared.since, now);
+  const who = [
+    unshared.users === 0 ? "" : unshared.users === 1 ? "1 person" : `${unshared.users} people`,
+    unshared.groups === 0 ? "" : unshared.groups === 1 ? "1 group" : `${unshared.groups} groups`,
+  ].filter((part) => part !== "");
+  const verb = unshared.jobs === 1 ? "was" : "were";
+  return `${jobs}${since ? ` since ${since}` : ""} ${verb} not shared with ${who.length > 0 ? who.join(" and ") : "everyone"}.`;
+}
+
+function formatSince(iso: string | undefined, now: Date): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const sameYear = date.getFullYear() === now.getFullYear();
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) }).format(date);
 }
 
 
