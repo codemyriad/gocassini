@@ -111,8 +111,13 @@ func (rt *Runtime) sharingForCaller(ctx context.Context, caller string) setupSha
 		return emptySetupSharing()
 	}
 	entries := groupPendingRecordingShares(pending, retired)
+	jobIDs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		jobIDs = append(jobIDs, entry.JobID)
+	}
+	allFacts := rt.meetingFactsForJobs(ctx, jobIDs)
 	for i := range entries {
-		facts := rt.meetingFactsFor(ctx, entries[i].JobID)
+		facts := allFacts[entries[i].JobID]
 		entries[i].Title = facts.Title
 		if !facts.StartedAt.IsZero() {
 			entries[i].StartedAt = facts.StartedAt.UTC().Format(time.RFC3339)
