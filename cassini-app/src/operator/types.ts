@@ -153,6 +153,9 @@ export interface JobShareOutcome {
   status: "complete" | "partial" | "starter_refused" | string;
   skipped?: SkippedShare[];
   updated_at?: string;
+  /** The size of the room audience the publish used — the list a re-share
+   * re-applies. Absent when the operator did not have it at hand. */
+  audience_count?: number;
 }
 
 export type SettingsQuality = "fast" | "balanced" | "best";

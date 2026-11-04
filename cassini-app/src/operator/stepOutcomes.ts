@@ -14,11 +14,20 @@ export interface OutcomeNotice {
   detail?: string;
   /** What can be done about it, when something can. */
   hint?: string;
-  /** Who it concerns, behind a disclosure: the list can be long, and the
-   *  title already says how many. */
-  items?: { summary: string; entries: string[] };
-  /** Something the panel can do about it, rendered as a button. */
-  action?: { kind: "reshare"; label: string };
+  /** Who it concerns, behind a disclosure closed by default: the list can be
+   *  long, and the summary says how many. */
+  items?: { summary: string; entries: RefusedEntry[] };
+  /** Something the panel can do about it, rendered as a button, with a
+   *  small line under it saying what the button does. */
+  action?: { kind: "reshare"; label: string; note: string };
+}
+
+/** One recipient Nextcloud refused: the id, its kind as a small label
+ *  (person, group or Team) and Nextcloud's reason, muted. */
+export interface RefusedEntry {
+  id: string;
+  kind: string;
+  reason: string;
 }
 
 // The attempt whose outcomes the run detail shows: the published one, or, for
@@ -84,43 +93,75 @@ export function summaryNotice(attempt: JobAttempt): OutcomeNotice | null {
   return { tone: "warning", title: `No summary (${reason || status})` };
 }
 
-const principalKinds: Record<string, string> = { group: "group", circle: "Team" };
+const principalKinds: Record<string, string> = { user: "person", group: "group", circle: "Team" };
 
-function describeSkipped(skipped: SkippedShare): string {
-  const kind = principalKinds[skipped.type];
-  const who = kind ? `${skipped.id} (${kind})` : skipped.id;
-  return skipped.reason ? `${who}: ${skipped.reason}` : who;
+function refusedEntry(skipped: SkippedShare): RefusedEntry {
+  return { id: skipped.id, kind: principalKinds[skipped.type] ?? skipped.type, reason: skipped.reason ?? "" };
 }
 
-function recipients(count: number): string {
+// The one-line form of an entry, for a sentence: "bob", "marketing (group)",
+// with the reason after a colon where there is one.
+export function describeRefused(entry: RefusedEntry): string {
+  const who = entry.kind === "person" ? entry.id : `${entry.id} (${entry.kind})`;
+  return entry.reason ? `${who}: ${entry.reason}` : who;
+}
+
+export function recipients(count: number): string {
   return count === 1 ? "1 recipient" : `${count} recipients`;
+}
+
+// "bob", "bob and carol", "bob, carol and dave", "bob, carol, dave and 2 more".
+export function listRefusedIds(ids: string[], shown = 3): string {
+  const named = ids.slice(0, shown);
+  const rest = ids.length - named.length;
+  if (rest > 0) return `${named.join(", ")} and ${rest} more`;
+  if (named.length <= 1) return named.join("");
+  return `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]}`;
+}
+
+// What a re-share's answer says beside the button: everyone, or who is still
+// refused and where the setting is named.
+export function reshareOutcome(refusedIds: string[]): string {
+  if (refusedIds.length === 0) return "Shared with everyone.";
+  return `Shared again. Nextcloud still refused ${recipients(refusedIds.length)} (${listRefusedIds(refusedIds)}). Check Doctor › Recording sharing.`;
 }
 
 // Who a meeting could not be shared with (D-885). The person who started the
 // recording must receive it or it is not published; anyone else Nextcloud
 // refused is listed, because otherwise the meeting simply does not appear for
-// them and nobody can tell why.
+// them and nobody can tell why. Doctor names the setting; the run names the
+// people.
 export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAvailable = true, reshareAvailable = true): OutcomeNotice | null {
   if (!sharing) return null;
   const skipped = sharing.skipped ?? [];
   if (sharing.status === "starter_refused") {
+    const starter = skipped[0]?.id ?? "";
     return {
       tone: "error",
-      title: "Not published: Nextcloud refused to share it with the person who started the recording",
-      detail: skipped.length > 0 ? describeSkipped(skipped[0]) : undefined,
+      title: `Not published: Nextcloud refused to share it with ${starter || "the person who started the recording"}${starter ? ", who started the recording" : ""}.`,
+      detail: skipped.length > 0 ? describeRefused(refusedEntry(skipped[0])) : undefined,
       hint: rerunAvailable
-        ? "Doctor → Recording sharing names the setting and how to change it. Rerun then publishes it and shares it with the whole room."
-        : "Doctor → Recording sharing names the setting and how to change it, so that later recordings publish. This run cannot be rerun.",
+        ? "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room."
+        : "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
     };
   }
   if (sharing.status !== "partial" || skipped.length === 0) return null;
+  const audience = typeof sharing.audience_count === "number" && sharing.audience_count > 0 ? sharing.audience_count : 0;
   return {
     tone: "warning",
-    title: `Published, but not shared with everyone: Nextcloud refused ${recipients(skipped.length)}`,
-    items: { summary: `Not shared with ${recipients(skipped.length)}`, entries: skipped.map(describeSkipped) },
-    hint: "Doctor → Recording sharing names the setting and how to change it. Once it is changed, re-share: a rerun does not share an already published meeting again. Re-sharing only adds who is missing, so it also brings back anyone removed by hand.",
+    title: audience
+      ? `Published, but not shared with ${skipped.length} of ${audience} recipients`
+      : `Published, but not shared with ${recipients(skipped.length)}`,
+    items: { summary: `Who was refused (${skipped.length})`, entries: skipped.map(refusedEntry) },
+    hint: "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
     // Offered only where the operator would do it: not while the meeting is
     // being processed again.
-    action: reshareAvailable ? { kind: "reshare", label: "Re-share with room audience" } : undefined,
+    action: reshareAvailable
+      ? {
+          kind: "reshare",
+          label: "Re-share with the room",
+          note: "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
+        }
+      : undefined,
   };
 }
