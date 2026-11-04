@@ -140,6 +140,8 @@
   // searchOffered is false for a build with no operator (a standalone export),
   // where the box narrows names and dates and claims nothing about transcripts.
   export let searchOffered = false;
+  // Whether the shell offers import: the empty state then points at it.
+  export let importOffered = false;
   // "idle" | "searching" | "ok" | "rateLimited" | "indexUnavailable" | "failed"
   //
   // Each failure is its own state ON PURPOSE. Folding any of them into an empty
@@ -182,6 +184,7 @@
     // in full — the words are fetched there as the caller, so Nextcloud still
     // re-checks the ACL on the bytes.
     openMoment: { entry: MeetingCatalogEntry; startMs: number; query: string };
+    openImport: void;
   }>();
 
   function toggleTagging(meeting: MeetingCatalogEntry, anchor: HTMLElement) {
@@ -365,6 +368,9 @@
         {/if}
       </label>
 
+      <!-- The Import button, where the shell offers import. -->
+      <slot name="search-actions" />
+
       {#if !ncMode}
         <label class="theme-toggle">
           <Sun size={15} strokeWidth={2} class="text-base-content/70" aria-hidden="true" />
@@ -495,7 +501,13 @@
     {#if totalCount === 0 && totalInsightCount === 0}
       <div class="list-empty">
         <strong>No meetings yet</strong>
-        <span>Published recordings appear here.</span>
+        <span>Recordings you publish from Talk show up here.</span>
+        {#if importOffered}
+          <span>
+            Moving from another Cassini?
+            <button type="button" class="link link-primary" on:click={() => dispatch("openImport")}>Import meetings</button>
+          </span>
+        {/if}
       </div>
     <!-- "You have never made one" is a claim about the whole archive, so every
          narrowing has to be off and the listing has to have come back before it
@@ -658,7 +670,7 @@
                       {/each}
                       {#if rowTags.length > 3}
                         <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}
-                          >+{rowTags.length - 3}</span
+                          ><span>+{rowTags.length - 3}</span></span
                         >
                       {/if}
                     </span>
@@ -1282,13 +1294,25 @@
   }
   .row-tags {
     display: inline-flex;
+    align-items: center;
     gap: 4px;
     min-width: 0;
     overflow: hidden;
   }
+  /* Sized and trimmed like a chip's label (TagChip), so the count sits on the
+     same line as the chips beside it. */
   .row-tags-more {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    font-size: 11.5px;
     font-weight: 600;
+    line-height: 1;
+  }
+  .row-tags-more span {
+    text-box: trim-both ex alphabetic;
+    translate: 0 0.5px;
   }
   /* Above the open action's hit area, like the checkbox. Hidden, not removed, so it stays in the tab order. */
   .row-tag {

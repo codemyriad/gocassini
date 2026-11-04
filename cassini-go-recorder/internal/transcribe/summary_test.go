@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gocassini/internal/portable"
 )
@@ -98,7 +99,7 @@ func TestWriteSummaryArtifactWarnsAndSkipsOnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected summary failure to be swallowed, got %v", err)
 	}
-	if want := (portable.SummaryStatus{Status: "failed", Reason: "llm_failed"}); status != want {
+	if want := (portable.SummaryStatus{Status: "failed", Reason: "llm_failed"}); untimed(t, status) != want {
 		t.Fatalf("status = %+v, want %+v", status, want)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "summary.md")); !errors.Is(err, os.ErrNotExist) {
@@ -130,7 +131,7 @@ func TestWriteSummaryArtifactWritesSummaryMd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
-	if want := (portable.SummaryStatus{Status: "completed", Model: "test-model"}); status != want {
+	if want := (portable.SummaryStatus{Status: "completed", Model: "test-model"}); untimed(t, status) != want {
 		t.Fatalf("status = %+v, want %+v", status, want)
 	}
 	got, err := os.ReadFile(filepath.Join(tmp, "summary.md"))
@@ -140,6 +141,25 @@ func TestWriteSummaryArtifactWritesSummaryMd(t *testing.T) {
 	if string(got) != expected {
 		t.Fatalf("summary.md mismatch\nwant: %q\ngot:  %q", expected, string(got))
 	}
+}
+
+// untimed checks that the outcome brackets the model call (D-899) and returns
+// it without the times, which no test can predict.
+func untimed(t *testing.T, status portable.SummaryStatus) portable.SummaryStatus {
+	t.Helper()
+	started, err := time.Parse(time.RFC3339Nano, status.StartedAt)
+	if err != nil {
+		t.Fatalf("startedAt = %q: %v", status.StartedAt, err)
+	}
+	finished, err := time.Parse(time.RFC3339Nano, status.FinishedAt)
+	if err != nil {
+		t.Fatalf("finishedAt = %q: %v", status.FinishedAt, err)
+	}
+	if finished.Before(started) {
+		t.Fatalf("finishedAt %s is before startedAt %s", status.FinishedAt, status.StartedAt)
+	}
+	status.StartedAt, status.FinishedAt = "", ""
+	return status
 }
 
 func TestBuildMeetingSummaryRejectsUnconfiguredLLM(t *testing.T) {

@@ -364,3 +364,77 @@ func nested(doc map[string]any, keys ...string) map[string]any {
 	}
 	return current
 }
+
+// A transcript made by a retired model standing in for its replacement says
+// so in processing.transcription.standIn. The packed file carries it, and it
+// is the shape the schema declares.
+func TestTranscriptionStandInSurvivesPackingAndMatchesTheSchema(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "meeting.meeting")
+	if err := writeReadyMeetingBundleFixture(bundle, "source.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(bundle, "manifest.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	standIn := &portable.TranscriptionStandIn{For: "parakeet-ultra-0.6b-int8", Reason: portable.StandInReasonInstalling, Detail: "replaces retired parakeet-tdt-0.6b-v3-int8; being installed (downloading, 40%)"}
+	manifest["processing"] = portable.Processing{Transcription: portable.TranscriptionStatus{Status: "completed", Model: "parakeet-tdt-0.6b-v3-int8", Revision: "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf", StandIn: standIn}}
+	raw, _ = json.Marshal(manifest)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := packAnnotateBundle(t, bundle, filepath.Join(dir, "meeting.opus"))
+
+	tags, err := portableMeetingTags(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := decodePortableMeetingPayload(tags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Processing portable.Processing `json:"processing"`
+	}
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatal(err)
+	}
+	if got := document.Processing.Transcription; got.Model != "parakeet-tdt-0.6b-v3-int8" || got.StandIn == nil || *got.StandIn != *standIn {
+		t.Fatalf("packed transcription %+v standIn %+v", got, got.StandIn)
+	}
+
+	var generic struct {
+		Processing struct {
+			Transcription map[string]any `json:"transcription"`
+		} `json:"processing"`
+	}
+	if err := json.Unmarshal(payload, &generic); err != nil {
+		t.Fatal(err)
+	}
+	schema := readManifestSchema(t)
+	transcription := nested(schema, "properties", "processing", "properties", "transcription")
+	checkAgainstSchemaObject(t, schema, "processing.transcription", generic.Processing.Transcription, transcription)
+	def := nested(transcription, "properties", "standIn")
+	packed := generic.Processing.Transcription["standIn"].(map[string]any)
+	checkAgainstSchemaObject(t, schema, "processing.transcription.standIn", packed, def)
+	reasons, _ := nested(def, "properties", "reason")["enum"].([]any)
+	var declared []string
+	for _, r := range reasons {
+		declared = append(declared, r.(string))
+	}
+	for _, reason := range []string{portable.StandInReasonInstalling, portable.StandInReasonInstallFailed, portable.StandInReasonDownloadsDisabled, portable.StandInReasonNotInstalled, portable.StandInReasonRuntimeCheckFailed} {
+		if !strings.Contains(" "+strings.Join(declared, " ")+" ", " "+reason+" ") {
+			t.Errorf("the schema does not declare stand-in reason %q (it has %v)", reason, declared)
+		}
+	}
+	if len(declared) != 5 {
+		t.Errorf("the schema declares stand-in reasons %v; internal/portable has five", declared)
+	}
+}

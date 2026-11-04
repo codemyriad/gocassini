@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -51,10 +52,30 @@ type Processing struct {
 // model wrote it), "skipped" (Reason: disabled, not_configured, no_transcript)
 // or "failed" (Reason: llm_failed). The failure itself stays in the build log;
 // the file only says that it happened.
+//
+// StartedAt and FinishedAt bracket the model call, when one was made (D-899):
+// the summary is written inside the build, and these are what separate its
+// time from the transcription's. Absent when the step was skipped, and in
+// files written before they were recorded.
 type SummaryStatus struct {
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-	Model  string `json:"model,omitempty"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
+	Model      string `json:"model,omitempty"`
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+}
+
+// Timed records when the summary's model call started and finished, in UTC
+// with milliseconds: a summary can take under a second.
+func (s SummaryStatus) Timed(started, finished time.Time) SummaryStatus {
+	s.StartedAt = FormatStepTime(started)
+	s.FinishedAt = FormatStepTime(finished)
+	return s
+}
+
+// FormatStepTime is how a step's time is written in a manifest.
+func FormatStepTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
 // The summary step's statuses and reasons, as SummaryStatus carries them.
@@ -74,7 +95,31 @@ type TranscriptionStatus struct {
 	Reason   string `json:"reason,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Revision string `json:"revision,omitempty"`
+	// StandIn is set when Model is a retired model that transcribed in place
+	// of the model replacing it, which was not ready on this device.
+	StandIn *TranscriptionStandIn `json:"standIn,omitempty"`
 }
+
+// TranscriptionStandIn says which model a retired one stood in for, and why
+// that model was not ready.
+type TranscriptionStandIn struct {
+	// For is the model that replaced the retired one and was not ready.
+	For string `json:"for"`
+	// Reason is one of the StandInReason values.
+	Reason string `json:"reason,omitempty"`
+	// Detail is the operator's description of the replacement's state.
+	Detail string `json:"detail,omitempty"`
+}
+
+// Why the replacement of a retired model was not ready, as
+// TranscriptionStandIn.Reason records it.
+const (
+	StandInReasonInstalling         = "installing"
+	StandInReasonInstallFailed      = "install_failed"
+	StandInReasonDownloadsDisabled  = "downloads_disabled"
+	StandInReasonNotInstalled       = "not_installed"
+	StandInReasonRuntimeCheckFailed = "runtime_check_failed"
+)
 
 type Manifest struct {
 	Processing *Processing `json:"processing,omitempty"`
@@ -180,6 +225,17 @@ type ProcessingStep struct {
 	Host     string `json:"host,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Version  string `json:"version,omitempty"`
+	// NativeFrontend, ReferenceFrontend and Encoder mirror the build
+	// manifest's speech-to-text step for the same reason as Hints: a field
+	// this struct does not declare is written by the build and dropped at
+	// pack time. NativeFrontend names the native feature frontend a Parakeet
+	// boundary-policy model ran on (sherpa 2.0.1 and later);
+	// ReferenceFrontend is what recorders on the 1.13.7 runtimes wrote in its
+	// place, kept so their bundles pack whole; Encoder names the ONNX export
+	// that actually loaded.
+	NativeFrontend    string             `json:"nativeFrontend,omitempty"`
+	ReferenceFrontend *bool              `json:"referenceFrontend,omitempty"`
+	Encoder           *EncoderProvenance `json:"encoder,omitempty"`
 	// Hints records decoder biasing for a speech-to-text step. It mirrors the
 	// build manifest's shape field for field so the packer can carry it into
 	// the published file by plain JSON round-trip. Without this the record
@@ -199,8 +255,17 @@ type ProcessingStep struct {
 	SpeakerEdits json.RawMessage `json:"x-speakerEdits,omitempty"`
 }
 
+// EncoderProvenance is what a speech model encoder's own ONNX metadata says
+// it is: the url sherpa keys its frontend selection on and the comment where
+// a Cassini export records its weights and toolchain.
+type EncoderProvenance struct {
+	URL     string `json:"url,omitempty"`
+	Comment string `json:"comment,omitempty"`
+}
+
 // HintsProvenance says what decoder biasing a speech-to-text pass actually
-// applied, and when it could not, why. Absent means the pass ran unbiased.
+// applied, and when it did not, why. Absent means the pass had no vocabulary
+// and ran unbiased.
 type HintsProvenance struct {
 	TermCount            int     `json:"termCount"`
 	Score                float32 `json:"score,omitempty"`

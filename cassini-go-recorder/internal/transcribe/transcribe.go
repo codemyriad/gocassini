@@ -7,11 +7,13 @@ import (
 	"gocassini/internal/modelstore"
 	"gocassini/internal/portable"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // BuildConfig holds runtime options for the transcription pipeline.
@@ -20,13 +22,25 @@ type BuildConfig struct {
 	TranscriptionMode   string
 	TranscriptionReason string
 	ModelRevision       string
-	Device              string     // "cpu" or "cuda"
-	ModelID             ModelID    // defaults to defaultModelID
-	AdditionalModels    []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
-	CacheDir            string     // root cache directory, e.g. ~/.cache/cassini
-	SummaryLLM          LLMConfig  // optional; if not configured, skip summary generation
-	NumThreads          int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
-	Quality             STTQuality // "" = balanced; picks model/device when not explicitly set
+	Device              string  // "cpu" or "cuda"
+	ModelID             ModelID // defaults to defaultModelID
+	// ReplacedModelID is the retired id the configuration named when ModelID
+	// stands in for it (see ResolveModel); the build log says so.
+	ReplacedModelID ModelID
+	// StandIn is set when ModelID is a retired model the operator asked to
+	// stand in for its replacement, which is not ready (CASSINI_STT_STAND_IN_*,
+	// checked by StandInFor). The manifest records it. Never part of the
+	// resume fingerprint: its detail changes as a download progresses, and
+	// ModelID already tells a stand-in build from one with the replacement.
+	StandIn *portable.TranscriptionStandIn `json:"-"`
+	// StandInIgnored is a stand-in request DefaultBuildConfig refused because
+	// the model is not a retired one that model replaced; the log says so.
+	StandInIgnored   ModelID    `json:"-"`
+	AdditionalModels []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
+	CacheDir         string     // root cache directory, e.g. ~/.cache/cassini
+	SummaryLLM       LLMConfig  // optional; if not configured, skip summary generation
+	NumThreads       int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
+	Quality          STTQuality // "" = balanced; picks model/device when not explicitly set
 	// Vocabulary lists preferred spellings for names and project terms. It is
 	// biasing evidence for the decoder itself (see hotwords.go), not a
 	// post-processing rewrite. The score must stay conservative because this
@@ -55,6 +69,7 @@ var (
 	// no multi-hundred-MB model download.
 	ensureModelFn           = InstalledModel
 	ensureVADFn             = InstalledVAD
+	modelReadyFn            = ModelReady
 	buildSpeakerEnvelopesFn = BuildSpeakerEnvelopes
 )
 
@@ -180,6 +195,19 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	if err != nil {
 		return err
 	}
+	if cfg.ReplacedModelID != "" {
+		fmt.Fprintf(stdout, "  STT model %s is retired; using %s, which replaces it\n", cfg.ReplacedModelID, cfg.ModelID)
+	}
+	if cfg.StandInIgnored != "" {
+		requested := cfg.ReplacedModelID
+		if requested == "" {
+			requested = cfg.ModelID
+		}
+		fmt.Fprintf(stdout, "  STT stand-in for %s ignored: %s is not a retired model it replaced\n", cfg.StandInIgnored, requested)
+	}
+	if cfg.StandIn != nil {
+		fmt.Fprintf(stdout, "  STT model %s stands in for %s, which is not ready (%s)\n", cfg.ModelID, cfg.StandIn.For, cfg.StandIn.Detail)
+	}
 	fmt.Fprintf(stdout, "  STT policy: backend=%s device=%s model=%s threads=%d quality=%s\n",
 		backend,
 		cfg.Device, cfg.ModelID, cfg.NumThreads, NormalizeQuality(string(cfg.Quality)))
@@ -193,13 +221,27 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	}
 	defer unlock()
 	if cfg.ModelRevision == "" {
-		if m, e := modelstore.Shipped().Model(string(cfg.ModelID), ""); e == nil {
+		if m, _, e := modelstore.Shipped().Lookup(string(cfg.ModelID), ""); e == nil {
 			cfg.ModelRevision = m.Revision
 		}
 	}
 	// --- 3. Resolve already installed STT model and VAD ---
 	fmt.Fprintf(stdout, "  resolving installed model %s...\n", cfg.ModelID)
 	modelPaths, err := ensureModelFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
+	if err != nil && cfg.StandIn != nil && errors.Is(err, fs.ErrNotExist) && modelReadyFn(cfg.CacheDir, ModelID(cfg.StandIn.For), cfg.Device) {
+		// The retired files were removed after the operator admitted this
+		// build, by a runtime check of their replacement run outside it
+		// (RemoveReplacedModels), so transcribe with the replacement instead
+		// of keeping only the audio. Retired files that are there but no
+		// longer intact, or a replacement that has not passed its check on
+		// this device, keep only the audio: the build was not admitted for it.
+		fmt.Fprintf(stdout, "  retired %s is gone (%v); using %s, which replaced it\n", cfg.ModelID, err, cfg.StandIn.For)
+		cfg.ModelID, cfg.ModelRevision, cfg.StandIn = ModelID(cfg.StandIn.For), "", nil
+		if m, e := modelstore.Shipped().Model(string(cfg.ModelID), ""); e == nil {
+			cfg.ModelRevision = m.Revision
+		}
+		modelPaths, err = ensureModelFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
+	}
 	if err != nil {
 		return fmt.Errorf("%w: %v", errModelUnavailable, err)
 	}
@@ -218,7 +260,7 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	// records what its decoder declared, and the claim survives only if all of
 	// them made it. See wordEndGuarantee in backend.go.
 	wordEnds := &wordEndGuarantee{}
-	refGuarantee := &referenceFrontendGuarantee{}
+	frontendGuarantee := &nativeFrontendGuarantee{}
 
 	// Resolve the vocabulary pool once before any pass runs. Each participant
 	// track derives a decoder that omits its own name; the manifest
@@ -250,15 +292,15 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 		}
 	}
 	pass := passConfig{
-		ModelPaths:         modelPaths,
-		VADPath:            vadPath,
-		Backend:            backend,
-		Device:             cfg.Device,
-		NumThreads:         cfg.NumThreads,
-		Decoder:            decoder,
-		SpeakerDecoders:    speakerDecoderMap,
-		Guarantee:          wordEnds,
-		ReferenceGuarantee: refGuarantee,
+		ModelPaths:        modelPaths,
+		VADPath:           vadPath,
+		Backend:           backend,
+		Device:            cfg.Device,
+		NumThreads:        cfg.NumThreads,
+		Decoder:           decoder,
+		SpeakerDecoders:   speakerDecoderMap,
+		Guarantee:         wordEnds,
+		FrontendGuarantee: frontendGuarantee,
 	}
 
 	segments, err := transcribePass(ctx, mkvPath, streams, pass, stdout)
@@ -341,26 +383,27 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath, recor
 	srcBasename := filepath.Base(mkvPath)
 	if err := WriteManifest(manifestPath, ManifestInput{
 		Processing: &portable.Processing{
-			Transcription:  portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision},
+			Transcription:  portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision, StandIn: cfg.StandIn},
 			MeetingSummary: &summaryStatus,
 		},
-		SrcBasename:       srcBasename,
-		RecordedAtLocal:   recordedAtLocal,
-		SrcDurationMS:     srcDurationMS,
-		DigestDurationMS:  audioDurationMS,
-		AudioEncode:       &enc,
-		Streams:           streams,
-		Segments:          segments,
-		STTBackend:        backend,
-		STTModelID:        cfg.ModelID,
-		STTDevice:         cfg.Device,
-		Hints:             hintsProv,
-		SummaryModel:      cfg.SummaryLLM.Model,
-		HasSummary:        summaryStatus.Status == portable.SummaryCompleted,
-		Additional:        additionalTranscripts,
-		Attribution:       attrProv,
-		WordTimings:       wordEnds.provenance(),
-		ReferenceFrontend: refGuarantee.provenance(cfg.ModelID),
+		SrcBasename:      srcBasename,
+		RecordedAtLocal:  recordedAtLocal,
+		SrcDurationMS:    srcDurationMS,
+		DigestDurationMS: audioDurationMS,
+		AudioEncode:      &enc,
+		Streams:          streams,
+		Segments:         segments,
+		STTBackend:       backend,
+		STTModelID:       cfg.ModelID,
+		STTDevice:        cfg.Device,
+		Hints:            hintsProv,
+		SummaryModel:     cfg.SummaryLLM.Model,
+		HasSummary:       summaryStatus.Status == portable.SummaryCompleted,
+		Additional:       additionalTranscripts,
+		Attribution:      attrProv,
+		WordTimings:      wordEnds.provenance(),
+		NativeFrontend:   frontendGuarantee.provenance(cfg.ModelID),
+		Encoder:          encoderProvenance(modelPaths.EncoderFile),
 	}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
@@ -378,6 +421,9 @@ type AdditionalTranscript struct {
 	Path    string  // relative to outputDir, e.g. transcript-parakeet-tdt-06b-v2-int8.words.v1.json
 	ModelID ModelID // raw STT model id, kept for provenance
 	Backend string  // resolved STT backend id that produced this transcript
+	// NativeFrontend is this model's own nativeFrontend record (see
+	// nativeFrontendGuarantee), "" when it does not use the boundary policy.
+	NativeFrontend string
 }
 
 // ensureMergedFallback transcribes the already-mixed meeting.webm under a
@@ -428,9 +474,9 @@ type passConfig struct {
 	// SpeakerDecoders overrides Decoder for participant streams whose own
 	// label was removed. Mixed fallback has no speaker to exclude and selects
 	// its decoder separately through mergedFallbackDecoder.
-	SpeakerDecoders    map[int]*DecoderConfig
-	Guarantee          *wordEndGuarantee
-	ReferenceGuarantee *referenceFrontendGuarantee
+	SpeakerDecoders   map[int]*DecoderConfig
+	Guarantee         *wordEndGuarantee
+	FrontendGuarantee *nativeFrontendGuarantee
 }
 
 // withThreads returns a copy running on a different thread budget, for the
@@ -441,7 +487,7 @@ func (p passConfig) withThreads(n int) passConfig {
 }
 
 func (p passConfig) newRecognizer() (SpeechRecognizer, error) {
-	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee, p.ReferenceGuarantee)
+	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee, p.FrontendGuarantee)
 }
 
 func (p passConfig) decoderForStream(stream AudioStream) *DecoderConfig {
@@ -758,6 +804,10 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		}
 		extra := primary
 		extra.ModelPaths = modelPaths
+		// The frontend is this model's own record: sharing the primary's
+		// would let a model without the boundary policy clear the primary
+		// transcript's nativeFrontend.
+		extra.FrontendGuarantee = &nativeFrontendGuarantee{}
 		extra.VADPath = vadPath
 		vocabulary := vocabularyForBuild(cfg.Vocabulary, streams)
 		extra.Decoder, _, err = resolveDecoderVocabulary(outputDir, vocabulary, modelPaths)
@@ -782,7 +832,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
 			return out, fmt.Errorf("write additional transcript %s: %w", id, err)
 		}
-		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: primary.Backend})
+		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: primary.Backend, NativeFrontend: extra.FrontendGuarantee.provenance(modelID)})
 	}
 	return out, nil
 }
@@ -850,6 +900,16 @@ func DefaultInsightLLMConfig() LLMConfig {
 	return cfg
 }
 
+// The operator sets these for one build, when it admits a retired model to
+// transcribe in place of its replacement: the replacement, and why it is not
+// ready (a portable.StandInReason* value and a description). They are not
+// configuration.
+const (
+	envSTTStandInFor    = "CASSINI_STT_STAND_IN_FOR"
+	envSTTStandInReason = "CASSINI_STT_STAND_IN_REASON"
+	envSTTStandInDetail = "CASSINI_STT_STAND_IN_DETAIL"
+)
+
 // DefaultBuildConfig returns a BuildConfig populated from standard environment
 // variables. The caller should override Device and CacheDir as needed.
 func DefaultBuildConfig() BuildConfig {
@@ -861,7 +921,27 @@ func DefaultBuildConfig() BuildConfig {
 	// Leave an unset model empty: BuildMeetingArtifact derives it from the
 	// quality tier and the resolved device (GPU -> fp32, CPU -> int8). An
 	// explicit CASSINI_STT_MODEL still wins.
-	primary := ModelID(strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")))
+	// A retired id (Parakeet v3) resolves to the model that replaced it,
+	// unless the operator asks for it to stand in for that model, which is
+	// not ready yet (CASSINI_STT_STAND_IN_FOR, set for one build only).
+	primary, revision, replaced := ModelID(""), os.Getenv("CASSINI_STT_REVISION"), ModelID("")
+	var standIn *portable.TranscriptionStandIn
+	var standInIgnored ModelID
+	if explicit := strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")); explicit != "" {
+		standInFor := ModelID(strings.TrimSpace(os.Getenv(envSTTStandInFor)))
+		if standInFor != "" && StandInFor(ModelID(explicit), standInFor) {
+			primary = ModelID(explicit)
+			standIn = &portable.TranscriptionStandIn{
+				For:    string(standInFor),
+				Reason: strings.TrimSpace(os.Getenv(envSTTStandInReason)),
+				Detail: strings.TrimSpace(os.Getenv(envSTTStandInDetail)),
+			}
+		} else {
+			resolved := ResolveModel(explicit, revision, "", "")
+			primary, revision, replaced = resolved.ID, resolved.Revision, resolved.Replaces
+			standInIgnored = standInFor
+		}
+	}
 
 	var additional []ModelID
 	if raw := strings.TrimSpace(os.Getenv("CASSINI_STT_ADDITIONAL_MODELS")); raw != "" {
@@ -870,7 +950,8 @@ func DefaultBuildConfig() BuildConfig {
 			if part == "" {
 				continue
 			}
-			additional = append(additional, ModelID(part))
+			id, _ := ReplacementModelID(ModelID(part))
+			additional = append(additional, id)
 		}
 	}
 
@@ -881,9 +962,12 @@ func DefaultBuildConfig() BuildConfig {
 	return BuildConfig{
 		TranscriptionMode:   mode,
 		TranscriptionReason: os.Getenv("CASSINI_TRANSCRIPTION_REASON"),
-		ModelRevision:       os.Getenv("CASSINI_STT_REVISION"),
+		ModelRevision:       revision,
 		Device:              defaultDevice(),
 		ModelID:             primary,
+		ReplacedModelID:     replaced,
+		StandIn:             standIn,
+		StandInIgnored:      standInIgnored,
 		AdditionalModels:    additional,
 		SummaryLLM:          summaryLLM,
 		NumThreads:          envInt("CASSINI_STT_NUM_THREADS"),
@@ -956,17 +1040,19 @@ func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Se
 	}
 
 	fmt.Fprintln(stdout, "  generating meeting summary...")
+	started := time.Now()
 	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
+	finished := time.Now()
 	if err != nil {
 		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)
-		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}, nil
+		return portable.SummaryStatus{Status: portable.SummaryFailed, Reason: portable.SummaryReasonLLMFailed}.Timed(started, finished), nil
 	}
 
 	summaryPath := filepath.Join(outputDir, "summary.md")
 	if err := os.WriteFile(summaryPath, []byte(body), 0o644); err != nil {
 		return portable.SummaryStatus{}, fmt.Errorf("write summary: %w", err)
 	}
-	return portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}, nil
+	return portable.SummaryStatus{Status: portable.SummaryCompleted, Model: cfg.SummaryLLM.Model}.Timed(started, finished), nil
 }
 
 // defaultCacheDir returns the default cache directory for models.
@@ -1154,17 +1240,28 @@ func applyAttributionReported(mkvPath string, streams []AudioStream, segments []
 // Mixed recovery has different acoustics from isolated participant tracks.
 // Keep its validated unbiased decoder without mutating participant settings.
 func mergedFallbackDecoder(paths ModelPaths, base *DecoderConfig) *DecoderConfig {
-	if usesParakeetV3ReferencePolicy(paths.ModelID) {
+	if usesParakeetBoundaryPolicy(paths.ModelID) {
 		return &DecoderConfig{Method: decodingGreedySearch}
 	}
 	return base
 }
 
+// mergedFallbackHints is the hints record of a build whose words came from the
+// merged-audio fallback, which decodes greedily without hints. A vocabulary
+// that was never applied keeps its own reason (hints off by default, or a
+// bundle that cannot take them), which names what would change it; only the
+// decoder it records changes to the one the fallback ran.
 func mergedFallbackHints(paths ModelPaths, original *HintsProvenance, accepted bool) *HintsProvenance {
-	if original == nil || !accepted || !usesParakeetV3ReferencePolicy(paths.ModelID) {
+	if original == nil || !accepted || !usesParakeetBoundaryPolicy(paths.ModelID) {
 		return original
 	}
 	result := *original
+	if !original.Applied {
+		if result.DecodingMethod != "" {
+			result.DecodingMethod = decodingGreedySearch
+		}
+		return &result
+	}
 	result.Applied = false
 	result.DecodingMethod = decodingGreedySearch
 	result.Score = 0

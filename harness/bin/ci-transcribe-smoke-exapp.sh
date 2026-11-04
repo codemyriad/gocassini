@@ -66,6 +66,13 @@ cleanup() {
       log "build log:"
       sed 's/^/    /' "${LOG_DIR}/build.log" || true
     fi
+    # Steps that redirect into LOG_DIR fail silently otherwise (doctor,
+    # install, the models list).
+    for f in "${LOG_DIR}"/*.log "${LOG_DIR}"/*.json; do
+      [[ -s "$f" && "$f" != "${LOG_DIR}/build.log" && "$f" != "${LOG_DIR}/container.log" ]] || continue
+      log "${f##*/} (last 40 lines):"
+      tail -n 40 "$f" | sed 's/^/    /' || true
+    done
   fi
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   docker volume rm "${MODEL_VOLUME}" >/dev/null 2>&1 || true
@@ -80,11 +87,12 @@ read_env() {
 }
 
 CACHE_ROOT=$(read_env CASSINI_CACHE_ROOT)
-MODEL_ID=parakeet-tdt-0.6b-v3-int8
+MODEL_ID=parakeet-ultra-0.6b-int8
 DEVICE=$(read_env CASSINI_STT_DEVICE)
 
 : "${DEVICE:=cpu}"
-if [[ "$DEVICE" == cuda ]]; then MODEL_ID=parakeet-tdt-0.6b-v3; fi
+# The balanced tier's model on each device: int8 on the CPU, fp32 on CUDA.
+if [[ "$DEVICE" == cuda ]]; then MODEL_ID=parakeet-ultra-0.6b; fi
 
 # CUDA images need GPU exposed via CDI. Set DOCKER_RUN_GPU=1 to opt-in (or
 # set CASSINI_STT_DEVICE=cuda in the image ENV — we honor either).
@@ -237,7 +245,7 @@ log "OK   build log contains no 'downloading ...' line (STT model + VAD both ins
 
 # ---- Assertion 5 (CUDA only): the GPU was ACTUALLY used ----
 if (( GPU_ASSERT )); then
-  # 5a. Negative proof. sherpa-onnx v1.13.7 (csrc/session.cc) logs
+  # 5a. Negative proof. sherpa-onnx (csrc/session.cc, 1.13.7 and 2.0.1) logs
   #     "Please compile with -DSHERPA_ONNX_ENABLE_GPU=ON. Available
   #     providers: %s. Fallback to cpu!" to stderr — and carries on, exit 0 —
   #     when the bundled onnxruntime has no CUDA provider. It logs NOTHING on

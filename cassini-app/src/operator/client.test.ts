@@ -74,7 +74,7 @@ describe("operator settings client", () => {
             effective: {
               quality: "balanced",
               device: "cpu",
-              model: "parakeet-tdt-0.6b-v3-int8",
+              model: "parakeet-ultra-0.6b-int8",
               note: "no usable GPU on this host",
             },
           }),
@@ -88,7 +88,7 @@ describe("operator settings client", () => {
     expect(settings.effective).toEqual({
       quality: "balanced",
       device: "cpu",
-      model: "parakeet-tdt-0.6b-v3-int8",
+      model: "parakeet-ultra-0.6b-int8",
       model_download_mb: 0,
       min_free_memory_mb: 0,
       note: "no usable GPU on this host",

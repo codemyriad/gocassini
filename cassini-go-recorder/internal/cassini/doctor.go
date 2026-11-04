@@ -177,37 +177,40 @@ func collectDoctorChecks(target string) []doctorCheck {
 // to substring-match these across a module boundary, against its own second
 // copy of the strings that nothing kept in agreement; it now reads the
 // speech.runtime check by id, so these are free to be reworded (D-798). They
-// stay named so the two summaries below phrase the same fact the same way —
-// not because anything parses them.
+// stay named so tests can find them, not because anything parses them.
 const (
-	SpeechEngineRefActiveMarker   = "reference frontend active"
-	SpeechEngineRefInactiveMarker = "reference frontend optimization inactive"
+	SpeechEngineFrontendMarker    = "NeMo log-guard frontend, whole-utterance boundary policy"
+	SpeechEngineUnsupportedMarker = "cannot run this model"
 )
 
 func nativeRuntimeCheck(modelID transcribe.ModelID) doctorCheck {
-	return nativeRuntimeCheckWithState(modelID, transcribe.RuntimeVersion(), transcribe.HasReferenceRuntime())
+	return nativeRuntimeCheckForVersion(modelID, transcribe.RuntimeVersion())
 }
 
-func nativeRuntimeCheckWithState(modelID transcribe.ModelID, ver string, hasRef bool) doctorCheck {
-	if !transcribe.UsesParakeetV3ReferencePolicy(modelID) {
+// nativeRuntimeCheckForVersion asks the model's own spec what the runtime must
+// carry: every model needs the 2.0.1 C API this binary links, and Parakeet
+// Ultra needs the joiner-size TDT detection on top. warn means a build with
+// this model will fail to transcribe; ok means it runs as specified.
+func nativeRuntimeCheckForVersion(modelID transcribe.ModelID, ver string) doctorCheck {
+	if err := transcribe.CheckNativeRuntime(modelID, ver); err != nil {
 		return doctorCheck{
 			ID:      "speech.runtime",
-			Status:  doctorOK,
-			Summary: fmt.Sprintf("speech engine runtime %s", ver),
+			Status:  doctorWarn,
+			Summary: fmt.Sprintf("speech engine runtime %s (%s: %v)", ver, SpeechEngineUnsupportedMarker, err),
+			Advice:  "verify that the Go module replace directives for github.com/codemyriad/sherpa-onnx-go-*/v2 are intact and no other libsherpa-onnx-c-api is shadowing on LD_LIBRARY_PATH",
 		}
 	}
-	if hasRef {
+	if transcribe.UsesParakeetBoundaryPolicy(modelID) {
 		return doctorCheck{
 			ID:      "speech.runtime",
 			Status:  doctorOK,
-			Summary: fmt.Sprintf("speech engine runtime %s (%s)", ver, SpeechEngineRefActiveMarker),
+			Summary: fmt.Sprintf("speech engine runtime %s (%s)", ver, SpeechEngineFrontendMarker),
 		}
 	}
 	return doctorCheck{
 		ID:      "speech.runtime",
-		Status:  doctorWarn,
-		Summary: fmt.Sprintf("speech engine runtime %s (%s; falling back to standard decode profile)", ver, SpeechEngineRefInactiveMarker),
-		Advice:  "verify that Go module replace directives for github.com/codemyriad/sherpa-onnx-go are intact and no unpatched libsherpa-onnx-c-api.so is shadowing on LD_LIBRARY_PATH",
+		Status:  doctorOK,
+		Summary: fmt.Sprintf("speech engine runtime %s", ver),
 	}
 }
 
@@ -277,16 +280,21 @@ func sttModelCacheChecks() []doctorCheck {
 	// Report the *resolved* device+model the build will actually use, so doctor
 	// reflects GPU auto-detection and the quality-tier model choice.
 	device := transcribe.ResolveDevice(os.Getenv("CASSINI_STT_DEVICE"))
-	modelID := transcribe.ResolveModelID(os.Getenv("CASSINI_STT_MODEL"), os.Getenv("CASSINI_STT_QUALITY"), device)
+	resolved := transcribe.ResolveModel(os.Getenv("CASSINI_STT_MODEL"), os.Getenv("CASSINI_STT_REVISION"), os.Getenv("CASSINI_STT_QUALITY"), device)
+	modelID := resolved.ID
+	idSummary := fmt.Sprintf("STT model id: %s", modelID)
+	if resolved.Replaces != "" {
+		idSummary += fmt.Sprintf(" (configured %s is retired; %s replaces it)", resolved.Replaces, modelID)
+	}
 
 	checks := []doctorCheck{
-		{ID: "model.id", Status: doctorOK, Summary: fmt.Sprintf("STT model id: %s", modelID)},
+		{ID: "model.id", Status: doctorOK, Summary: idSummary},
 		{ID: "model.device", Status: doctorOK, Summary: fmt.Sprintf("STT device: %s (quality=%s)", device, transcribe.NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")))},
 		parentWritableCheck("cache.root", cacheRoot, "cassini cache root"),
 	}
 
 	s := modelstore.New(cacheRoot)
-	m, err := s.Catalogue.Model(string(modelID), os.Getenv("CASSINI_STT_REVISION"))
+	m, err := s.Catalogue.Model(string(modelID), resolved.Revision)
 	if err == nil {
 		err = s.Complete(m)
 	}

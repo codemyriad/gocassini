@@ -26,6 +26,19 @@ describe("SettingsPanel device policy", () => {
     expect(settingsPanelSource).toContain("on {runsOnLine}.");
     expect(settingsPanelSource).toContain("settings.effective.note");
   });
+
+  it("warns that recordings get no transcript only when that is what happens", () => {
+    // While Ultra downloads, v3 transcribes (stand_in) or recordings wait for
+    // the download; the warning is for a model nothing transcribes for.
+    expect(settingsPanelSource).toContain("inUseModelState(inUseModel, inUseDownload)");
+    expect(settingsPanelSource).toContain('class:in-use-warn={inUseState === "missing"}');
+    expect(settingsPanelSource).toContain('{#if inUseModel && inUseState === "missing"}');
+    expect(settingsPanelSource).toContain("the previous model transcribes recordings on {runsOnLine} meanwhile.");
+    // Installed files that failed their check: v3 transcribes, not because
+    // Ultra is downloading or missing.
+    expect(settingsPanelSource).toContain("is installed but failed its runtime check; the previous model");
+    expect(settingsPanelSource).toContain("; recordings wait for it.");
+  });
 });
 
 describe("SettingsPanel search spellings", () => {
@@ -39,8 +52,7 @@ describe("SettingsPanel search spellings", () => {
 
   it("says what the setting does and does not do", () => {
     // It widens a search; it never rewrites a recording. An admin who thought
-    // this fixed transcripts would use it for the wrong job — the vocabulary
-    // above is that one.
+    // this fixed transcripts would use it for the wrong job.
     expect(settingsPanelSource).toContain("Doesn't change any transcript, only what search finds.");
   });
 });
@@ -126,7 +138,7 @@ describe("SettingsPanel layout", () => {
     // chips above follow the same order, so chip N points at question N.
     const cardAt = settingsPanelSource.indexOf('aria-labelledby="recording-publication-heading"');
     const headingAt = settingsPanelSource.indexOf(">After each meeting<");
-    const at = [">Transcript<", ">Summary<", ">What participants receive<", ">What stays on this server<"]
+    const at = [">Transcript<", ">Summary<", ">What participants receive<", ">What media stays on the server<"]
       .map((title) => settingsPanelSource.indexOf(title));
     expect([cardAt, headingAt, ...at].every((index) => index > -1)).toBe(true);
     expect([cardAt, headingAt, ...at]).toEqual([...[cardAt, headingAt, ...at]].sort((a, b) => a - b));
@@ -144,27 +156,22 @@ describe("SettingsPanel layout", () => {
     expect(settingsPanelSource).not.toContain(">Summary settings<");
   });
 
-  it("asks quality and the model inside the transcript question", () => {
+  it("asks the tiers, each with its model, inside the transcript question", () => {
     const transcriptAt = settingsPanelSource.indexOf('aria-label="Transcription settings"');
-    const qualityAt = settingsPanelSource.indexOf(">Quality<");
-    const modelsAt = settingsPanelSource.indexOf("<SpeechModels");
+    const listAt = settingsPanelSource.indexOf('aria-label="What transcribes recordings"');
+    const modelsAt = settingsPanelSource.indexOf("<SpeechModelCell");
     const summaryAt = settingsPanelSource.indexOf('aria-labelledby="summary-heading"');
-    expect([transcriptAt, qualityAt, modelsAt, summaryAt]).toEqual(
-      [...[transcriptAt, qualityAt, modelsAt, summaryAt]].sort((a, b) => a - b));
+    expect([transcriptAt, listAt, modelsAt, summaryAt].every((at) => at > -1)).toBe(true);
+    expect([transcriptAt, listAt, modelsAt, summaryAt]).toEqual(
+      [...[transcriptAt, listAt, modelsAt, summaryAt]].sort((a, b) => a - b));
   });
 
-  it("gives the transcript hints a card of their own", () => {
-    // Vocabulary and search spellings share one card: both steer how names
-    // come out, one when transcribing and one when searching.
-    const steps = settingsPanelSource.match(/<section\b[^>]*class="[^"\n]*\bpipe-step\b[^"\n]*"[^>]*>/g);
-    expect(steps?.length).toBe(1);
-    const hintsAt = settingsPanelSource.indexOf(">Transcript hints<");
-    const vocabularyAt = settingsPanelSource.indexOf(">Vocabulary<");
-    const spellingsAt = settingsPanelSource.indexOf(">Search spellings<");
-    expect(hintsAt).toBeGreaterThan(-1);
-    expect(hintsAt).toBeLessThan(vocabularyAt);
-    expect(vocabularyAt).toBeLessThan(spellingsAt);
-    expect(settingsPanelSource).not.toContain("rounded-box border border-base-300 bg-base-200 p-3");
+  it("keeps search spellings in their own card without transcription hints", () => {
+    expect(settingsPanelSource).toContain('aria-labelledby="search-spellings-heading"');
+    expect(settingsPanelSource).toContain(">Search spellings<");
+    expect(settingsPanelSource).not.toContain(">Transcript hints<");
+    expect(settingsPanelSource).not.toContain(">Vocabulary<");
+    expect(settingsPanelSource).not.toContain("transcription_terms:");
   });
 });
 
@@ -230,5 +237,68 @@ describe("SettingsPanel recording readiness", () => {
     // action. The removed Setup page used to provide that id; without it the
     // action silently does nothing.
     expect(settingsPanelSource).toContain('<div id="recording-storage">');
+  });
+});
+
+// The Transcript step as one list, and the steps after it as inset panels.
+// The old layout put a switch that could not be flipped above a hint that
+// pointed five blocks down to the Download button; the tier is the model now.
+describe("SettingsPanel transcript step", () => {
+  it("answers what transcribes recordings with one list: Off, or a tier", () => {
+    expect(settingsPanelSource).toContain('aria-label="What transcribes recordings"');
+    expect(settingsPanelSource).toContain('<span class="q-label">Off</span>');
+    expect(settingsPanelSource).toContain("Recordings are published without a transcript.");
+    expect(settingsPanelSource).not.toContain('aria-label="Transcribe every recording"');
+    expect(settingsPanelSource).not.toContain("Download the model below to turn it on.");
+    expect(settingsPanelSource).not.toContain("Transcription needs to be on to edit the settings below.");
+  });
+
+  it("puts each tier's model, state and download on the tier's own row", () => {
+    // A tier whose model is not ready cannot be picked, so its words grey;
+    // the Download (or Check) button is the one live control on the row.
+    expect(settingsPanelSource).toContain("class:unavailable={!row.selectable}");
+    expect(settingsPanelSource).toContain("disabled={!row.selectable}");
+    expect(settingsPanelSource).toContain("selectable: model?.ready === true");
+    // Picking a tier sets the tier, the model and the switch at once.
+    expect(settingsPanelSource).toContain("quality = row.option.value;");
+    expect(settingsPanelSource).toContain("function useModel(model: SpeechModel)");
+  });
+
+  it("turns transcription on when a download started here is ready", () => {
+    // Downloading a model is the clearest statement of intent there is; the
+    // pick still has to be saved.
+    expect(settingsPanelSource).toContain("on:queued={(event) => (pendingSelect = event.detail.id)}");
+    expect(settingsPanelSource).toContain("function pickWhenReady(");
+    expect(settingsPanelSource).toContain("Transcription turns on when it finishes.");
+    expect(settingsPanelSource).toContain("Install and pick a model to turn transcription on.");
+  });
+
+  it("shows the GPU's one model once under the tiers", () => {
+    expect(settingsPanelSource).toContain("tiersShareModel = new Set(tierModelIds).size === 1");
+    expect(settingsPanelSource).toContain("{#if tiersShareModel}");
+  });
+
+  it("numbers the strip chips after the steps they jump to", () => {
+    expect(settingsPanelSource).toContain('<span class="chip-num" aria-hidden="true">{index + 1}</span>');
+    expect(settingsPanelSource).toContain('{ name: "Media retention", step: status.keep');
+  });
+
+  it("greys the summary step while there is no transcript and says why in a pill", () => {
+    expect(settingsPanelSource).toContain('<span class="q-pill q-pill-warn">needs a transcript</span>');
+    // The switch is out of the way rather than shown on inside a greyed step.
+    const pillAt = settingsPanelSource.indexOf('<span class="q-pill q-pill-warn">needs a transcript</span>');
+    const switchAt = settingsPanelSource.indexOf('aria-label="Summarise every meeting"');
+    expect(settingsPanelSource.slice(pillAt, switchAt)).toContain("{:else}");
+    expect(settingsPanelSource).toContain("summaryStepLead(providerName(summaryProviderRow.id), summaryProviderRow.base_url)");
+  });
+
+  it("keeps steps 3 and 4 editable while transcription is off", () => {
+    // Only a transcript-only meeting and keeping nothing need a transcript,
+    // and each says so in its place; the rest of both steps is a choice
+    // either way.
+    expect(settingsPanelSource).toContain("<PublishedFormatSelect value={publishedFormat} transcript={transcriptionEnabled} disabled={saving}");
+    expect(settingsPanelSource).toContain('disabled={saving} tabindex="-1" bind:this={keepSettings}');
+    expect(settingsPanelSource).toContain("Unavailable while audio is published (step 3).");
+    expect(settingsPanelSource).not.toContain("Transcription is off. Turn it on above to include a transcript.");
   });
 });

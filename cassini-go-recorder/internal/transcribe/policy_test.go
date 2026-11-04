@@ -23,16 +23,17 @@ func TestModelForQuality(t *testing.T) {
 		device string
 		want   ModelID
 	}{
-		// GPU always uses fp32 (int8 fragments under the CUDA EP).
-		{QualityBest, "cuda", ModelParakeet06BV3},
-		{QualityBalanced, "cuda", ModelParakeet06BV3},
-		{QualityFast, "cuda", ModelParakeet06BV3},
-		// CPU trades accuracy for speed across tiers.
-		{QualityBest, "cpu", ModelParakeet06BV3},
-		{QualityBalanced, "cpu", ModelParakeet06BV3Int8},
+		// GPU always uses fp32 (int8 fragments under the CUDA EP): Parakeet
+		// Ultra since 2026-10.
+		{QualityBest, "cuda", ModelParakeetUltra},
+		{QualityBalanced, "cuda", ModelParakeetUltra},
+		{QualityFast, "cuda", ModelParakeetUltra},
+		// CPU trades accuracy for speed across tiers; v3 is gone from all of them.
+		{QualityBest, "cpu", ModelParakeetUltra},
+		{QualityBalanced, "cpu", ModelParakeetUltraInt8},
 		{QualityFast, "cpu", ModelParakeet110M},
 		// Unset quality behaves as balanced.
-		{"", "cpu", ModelParakeet06BV3Int8},
+		{"", "cpu", ModelParakeetUltraInt8},
 	}
 	for _, c := range cases {
 		if got := ModelForQuality(c.q, c.device); got != c.want {
@@ -65,8 +66,12 @@ func TestResolveModelID(t *testing.T) {
 	if got := ResolveModelID("", "fast", "cpu"); got != ModelParakeet110M {
 		t.Errorf("ResolveModelID(fast,cpu) = %q", got)
 	}
-	if got := ResolveModelID("", "fast", "cuda"); got != ModelParakeet06BV3 {
-		t.Errorf("ResolveModelID(fast,cuda) = %q, want fp32 (cuda overrides tier)", got)
+	if got := ResolveModelID("", "fast", "cuda"); got != ModelParakeetUltra {
+		t.Errorf("ResolveModelID(fast,cuda) = %q, want Ultra fp32 (cuda overrides tier)", got)
+	}
+	// A pin to retired v3 fp32 moves to Ultra fp32, whatever the tier says.
+	if got := ResolveModelID("parakeet-tdt-0.6b-v3", "fast", "cpu"); got != ModelParakeetUltra {
+		t.Errorf("pinned v3 fp32 resolved to %q", got)
 	}
 }
 

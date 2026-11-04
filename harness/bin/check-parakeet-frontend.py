@@ -51,10 +51,12 @@ def main():
                 sess_options=opts, providers=['CPUExecutionProvider'])
                 for name in ['encoder', 'decoder', 'joiner']}
     meta = sessions['encoder'].get_modelmeta().custom_metadata_map
-    if (not meta.get('url', '').rstrip('/').endswith('/parakeet-tdt-0.6b-v3')
+    url = meta.get('url', '').rstrip('/')
+    # Parakeet Ultra (Moondream's post-training of v3) keeps v3's frontend.
+    if (not (url.endswith('/parakeet-tdt-0.6b-v3') or url.startswith('https://huggingface.co/moondream/parakeet-ultra'))
             or meta.get('feat_dim') != '128'
             or meta.get('normalize_type') != 'per_feature'):
-        p.error('requires the 128-bin Parakeet TDT 0.6B v3 export with per_feature normalization')
+        p.error('requires the 128-bin Parakeet TDT 0.6B v3 or Parakeet Ultra export with per_feature normalization')
     bins = int(meta['feat_dim'])
     blank = int(meta['vocab_size'])
     layers, hidden = int(meta['pred_rnn_layers']), int(meta['pred_hidden'])

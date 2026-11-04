@@ -18,7 +18,8 @@ import (
 // appended to "$0.calls". diarize writes a turn set numbered by how many
 // diarizations ran so far, so a test can tell which run's turns an apply got;
 // apply copies the edits and the turns it was handed into the bundle and
-// prints a report. "$0.diarize-unavailable" and "$0.apply-fails" make the
+// prints a report, with the rewrite's times when asked to rewrite the summary.
+// "$0.diarize-unavailable" and "$0.apply-fails" make the
 // matching command fail the way the real CLI does. Each diarize appends the
 // CASSINI_DIARIZATION_THREADS it was given to "$0.threads".
 func fakeSpeakersCLI(t *testing.T) string {
@@ -33,6 +34,7 @@ while [ $# -gt 0 ]; do
     --out) out="$2"; shift 2 ;;
     --edits) edits="$2"; shift 2 ;;
     --turns-dir) turns="$2"; shift 2 ;;
+    --summary) summary="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -50,7 +52,11 @@ case "$sub" in
     cp "$edits" "$target/speaker-edits.json"
     cat "$turns"/*.json > "$target/turns-used.json" 2>/dev/null || : > "$target/turns-used.json"
     rev=$(sed -n 's/.*"revision":\([0-9]*\).*/\1/p' "$edits")
-    printf '{"revision":%s,"splits":[],"missing":[],"inconclusive":[],"merged":0,"speakerCount":3}\n' "$rev"
+    if [ "$summary" = rewrite ]; then
+      printf '{"revision":%s,"splits":[],"missing":[],"inconclusive":[],"merged":0,"speakerCount":3,"summary":"regenerated","summaryStartedAt":"2026-11-02T10:05:00.000Z","summaryFinishedAt":"2026-11-02T10:05:09.250Z"}\n' "$rev"
+    else
+      printf '{"revision":%s,"splits":[],"missing":[],"inconclusive":[],"merged":0,"speakerCount":3}\n' "$rev"
+    fi
     ;;
   *) echo "unexpected speakers command: $sub" >&2; exit 2 ;;
 esac
@@ -181,6 +187,48 @@ func TestRefineDiarizesOnceAppliesAndPublishes(t *testing.T) {
 	}
 	if got := len(speakersCalls(t, bin, "speakers apply")); got != 2 {
 		t.Fatalf("apply ran %d times, want 2", got)
+	}
+}
+
+// A refine's summary times are its rewrite's, from the apply's report, and
+// never the published bundle's, which an earlier build wrote (D-899).
+func TestRefineRecordsTheSummaryRewriteTimes(t *testing.T) {
+	rt, _ := newSpeakerRuntime(t, "JOB1")
+	ctx := context.Background()
+	writeArtifactManifest(t, canonicalMeetingPath(rt.cfg.WorkRoot, "JOB1"), func(m map[string]any) {
+		m["processing"] = map[string]any{
+			"transcription":  map[string]any{"status": "completed"},
+			"meetingSummary": map[string]any{"status": "completed", "startedAt": "2026-11-01T09:00:00.000Z", "finishedAt": "2026-11-01T09:00:30.000Z"},
+		}
+	})
+	doc := splitDoc(speakerTestRoom)
+	doc.Labels = []speakerEditsLabel{{SpeakerID: speakerTestRoom + "~1", Label: "Ann"}}
+
+	// Kept: the refine wrote no summary.
+	queueSpeakerEdits(t, rt, "JOB1", 0, doc)
+	waitForPublishedAttempt(t, rt, "JOB1", 2)
+	kept, err := rt.store.GetJobAttempt(ctx, "JOB1", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.SummaryStartedAt != "" || kept.SummaryFinishedAt != "" {
+		t.Fatalf("a refine that kept the summary has times %s..%s, the build's", kept.SummaryStartedAt, kept.SummaryFinishedAt)
+	}
+
+	// Rewritten: the rewrite's.
+	doc.Labels[0].Label = "Bea"
+	rt.store.lockArtifacts("JOB1")()
+	if _, err := rt.store.QueueSpeakerEditsWithSummary(ctx, "JOB1", 1, doc, speakerSummaryRewrite, "alice", nowUTCString()); err != nil {
+		t.Fatalf("QueueSpeakerEditsWithSummary() error = %v", err)
+	}
+	rt.dispatchQueuedRefine("JOB1")
+	waitForPublishedAttempt(t, rt, "JOB1", 3)
+	rewritten, err := rt.store.GetJobAttempt(ctx, "JOB1", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rewritten.SummaryStartedAt != "2026-11-02T10:05:00.000Z" || rewritten.SummaryFinishedAt != "2026-11-02T10:05:09.250Z" {
+		t.Fatalf("a rewriting refine has times %s..%s, want the rewrite's", rewritten.SummaryStartedAt, rewritten.SummaryFinishedAt)
 	}
 }
 
@@ -540,7 +588,7 @@ func newProductionBuildRuntime(t *testing.T, bin string) *Runtime {
 		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		return sitePath, writeReadySiteBundleFixture(sitePath, currentRoot(rt.cfg.WorkRoot))
 	}
-	rt.referenceFrontendProbe = func() (bool, bool) { return true, true }
+	rt.speechRuntimeProbe = func() (bool, bool) { return true, true }
 	t.Cleanup(func() { cleanupTestRuntime(t, rt, store) })
 	return rt
 }

@@ -221,7 +221,7 @@ def main():
     parser.add_argument('--cuda-lib', action='append', default=[])
     parser.add_argument('--ssh-host')
     parser.add_argument('--ssh-sudo', action='store_true')
-    parser.add_argument('--model', default='parakeet-tdt-0.6b-v3')
+    parser.add_argument('--model', default='parakeet-ultra-0.6b')
     parser.add_argument('--timeout', default='12h')
     args = parser.parse_args()
     try:

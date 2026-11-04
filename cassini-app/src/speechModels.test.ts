@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
 
-import SpeechModelsSource from "./SpeechModels.svelte?raw";
+import SpeechModelCellSource from "./SpeechModelCell.svelte?raw";
 import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
 import type { SpeechModel, SpeechModelInventory, SpeechModelJob } from "./operator/types";
 import { jobStepText, modelJob, transcriptionModelId, VOICE_SEPARATION_MODEL_ID, voiceSeparationModel } from "./speechModels";
@@ -41,11 +41,20 @@ describe("voice separation in the speech models", () => {
     }
   });
 
+  it("runs Parakeet Ultra on every tier but the CPU fast one", () => {
+    for (const quality of ["fast", "balanced", "best"]) {
+      expect(transcriptionModelId(quality, "cuda")).toBe("parakeet-ultra-0.6b");
+    }
+    expect(transcriptionModelId("best", "cpu")).toBe("parakeet-ultra-0.6b");
+    expect(transcriptionModelId("balanced", "cpu")).toBe("parakeet-ultra-0.6b-int8");
+    expect(transcriptionModelId("fast", "cpu")).toBe("parakeet-tdt-ctc-110m-en-int8");
+  });
+
   it("follows its own CPU job whatever device transcribes", () => {
     const inv = inventory([diarizer], [job("downloading", "cuda"), { ...job("downloading"), id: "j2" }]);
     expect(modelJob(inv, diarizer, "cpu")?.id).toBe("j2");
     // It has its own Settings card; the transcript step no longer lists it.
-    expect(SpeechModelsSource).not.toContain("VoiceSeparationModel");
+    expect(SpeechModelCellSource).not.toContain("VoiceSeparationModel");
   });
 
   it("offers the download with its size, and nothing that selects it for transcription", () => {

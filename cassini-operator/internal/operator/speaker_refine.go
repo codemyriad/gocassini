@@ -255,7 +255,26 @@ func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetin
 	if !json.Valid(report) {
 		return fmt.Errorf("cassini speakers apply: report is not JSON")
 	}
-	return rt.store.SetAttemptSpeakerEditsReport(context.Background(), task.JobID, task.AttemptNumber, string(report))
+	if err := rt.store.SetAttemptSpeakerEditsReport(context.Background(), task.JobID, task.AttemptNumber, string(report)); err != nil {
+		return err
+	}
+	// A rewrite reports when its model call ran (D-899). Best-effort and
+	// logged: a missing time costs the run a figure, never the meeting.
+	var times struct {
+		StartedAt  string `json:"summaryStartedAt"`
+		FinishedAt string `json:"summaryFinishedAt"`
+	}
+	if err := json.Unmarshal(report, &times); err != nil {
+		rt.logger.Printf("summary times unreadable id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+		return nil
+	}
+	if times.StartedAt == "" || times.FinishedAt == "" {
+		return nil
+	}
+	if err := rt.store.SetAttemptSummaryTimes(context.Background(), task.JobID, task.AttemptNumber, times.StartedAt, times.FinishedAt); err != nil {
+		rt.logger.Printf("summary times update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+	}
+	return nil
 }
 
 // diarizeSpeaker runs the diarizer over one participant's own track of the

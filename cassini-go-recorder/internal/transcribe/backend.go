@@ -63,19 +63,19 @@ type AudioBoundedWordEnds interface {
 	WordEndsAreBoundedByAudio() bool
 }
 
-// ReferenceFrontendRecognizer is the optional interface a recognizer implements
-// to declare whether the native reference frontend optimization is active.
-type ReferenceFrontendRecognizer interface {
+// NativeFrontendRecognizer is the optional interface a recognizer implements
+// to declare which native feature frontend its boundary policy runs on.
+type NativeFrontendRecognizer interface {
 	SpeechRecognizer
-	HasReferenceFrontend() bool
+	NativeFrontend() string
 }
 
 // The bundled decoder is the one backend that makes the promise today. The
 // assertion fails the build if the declaration is dropped, so losing the
 // marker cannot be silent.
 var (
-	_ AudioBoundedWordEnds        = (*Recognizer)(nil)
-	_ ReferenceFrontendRecognizer = (*Recognizer)(nil)
+	_ AudioBoundedWordEnds     = (*Recognizer)(nil)
+	_ NativeFrontendRecognizer = (*Recognizer)(nil)
 )
 
 // declaresAudioBoundedWordEnds reports whether rec makes the guarantee. Not
@@ -86,9 +86,11 @@ func declaresAudioBoundedWordEnds(rec SpeechRecognizer) bool {
 	return ok && decl.WordEndsAreBoundedByAudio()
 }
 
-func declaresReferenceFrontend(rec SpeechRecognizer) bool {
-	decl, ok := rec.(ReferenceFrontendRecognizer)
-	return ok && decl.HasReferenceFrontend()
+func declaredNativeFrontend(rec SpeechRecognizer) string {
+	if decl, ok := rec.(NativeFrontendRecognizer); ok {
+		return decl.NativeFrontend()
+	}
+	return ""
 }
 
 // wordEndGuarantee accumulates that answer across every transcription pass of
@@ -133,46 +135,48 @@ func (g *wordEndGuarantee) provenance() *WordTimingProvenance {
 	return &WordTimingProvenance{EndsBoundedByAudio: true}
 }
 
-// referenceFrontendGuarantee accumulates whether the reference frontend optimization
-// was active across all recognizers used for Parakeet v3 models.
-type referenceFrontendGuarantee struct {
-	mu           sync.Mutex
-	observed     bool
-	allReference bool
+// nativeFrontendGuarantee accumulates the native frontend every recognizer of
+// a Parakeet boundary-policy model declared. The manifest names it only if all
+// of them agree; a pass that ran without it leaves the record empty.
+type nativeFrontendGuarantee struct {
+	mu       sync.Mutex
+	observed bool
+	frontend string
 }
 
-func (g *referenceFrontendGuarantee) observe(rec SpeechRecognizer) {
-	ref := declaresReferenceFrontend(rec)
+func (g *nativeFrontendGuarantee) observe(rec SpeechRecognizer) {
+	frontend := declaredNativeFrontend(rec)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if !g.observed {
-		g.observed, g.allReference = true, ref
+		g.observed, g.frontend = true, frontend
 		return
 	}
-	g.allReference = g.allReference && ref
+	if g.frontend != frontend {
+		g.frontend = ""
+	}
 }
 
-func (g *referenceFrontendGuarantee) provenance(modelID ModelID) *bool {
+func (g *nativeFrontendGuarantee) provenance(modelID ModelID) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.observed || !usesParakeetV3ReferencePolicy(modelID) {
-		return nil
+	if !g.observed || !usesParakeetBoundaryPolicy(modelID) {
+		return ""
 	}
-	val := g.allReference
-	return &val
+	return g.frontend
 }
 
 // newRecognizerForPass builds a recognizer for one transcription pass and
 // records its word-end guarantee in the same step, so a new construction site
 // cannot pick up the recognizer while forgetting what it promises.
-func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, guarantee *wordEndGuarantee, refGuarantee *referenceFrontendGuarantee) (SpeechRecognizer, error) {
+func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, guarantee *wordEndGuarantee, frontendGuarantee *nativeFrontendGuarantee) (SpeechRecognizer, error) {
 	rec, err := NewRecognizerForBackend(id, paths, vadModelPath, provider, numThreads, decoder)
 	if err != nil {
 		return nil, err
 	}
 	guarantee.observe(rec)
-	if refGuarantee != nil {
-		refGuarantee.observe(rec)
+	if frontendGuarantee != nil {
+		frontendGuarantee.observe(rec)
 	}
 	return rec, nil
 }

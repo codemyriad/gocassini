@@ -11,9 +11,12 @@ let retainVideo: boolean;
 let quality: string;
 let failSave: boolean;
 let writes: Record<string, unknown>[];
+let activeModel: string;
+const fastModel = { id: "parakeet-tdt-ctc-110m-en-int8", name: "Parakeet fast", description: "", revision: "r1",
+  download_bytes: 1, installed_bytes: 1, installed: true, ready: true, device: "cpu" };
 
 beforeEach(() => {
-  retainVideo = true; quality = "balanced"; failSave = false; writes = [];
+  retainVideo = true; quality = "balanced"; failSave = false; writes = []; activeModel = "m";
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.href).pathname;
     if (path === "/operator/settings") {
@@ -22,12 +25,14 @@ beforeEach(() => {
         if (failSave) return Response.json({ error: "Settings save failed" }, { status: 500 });
         retainVideo = body.retain_video;
         quality = body.quality ?? quality;
+        activeModel = body.active_model ?? activeModel;
       }
       // What stays on the server is asked once transcription is saved on.
-      return Response.json({ quality, retain_video: retainVideo, transcription_enabled: true, active_model: "m", active_revision: "r1" });
+      return Response.json({ quality, retain_video: retainVideo, transcription_enabled: true, active_model: activeModel, active_revision: "r1" });
     }
     if (path === "/operator/settings/workflows") return Response.json([]);
-    if (path === "/operator/settings/models") return Response.json({ models: [], jobs: [] });
+    // A tier can only be picked once its model is ready, so the fast one is.
+    if (path === "/operator/settings/models") return Response.json({ models: [fastModel], jobs: [], downloads_allowed: true, device: "cpu" });
     if (path === "/operator/readiness") return Response.json({ state: "passed", checks: [], secret_configured: true, secret_source: "env", test_room_url: "", test: { state: "", published: false } });
     if (path === "/operator/storage") return Response.json({ ok: true, service_account: { exists: true }, setup: [] });
     return Response.json({});
@@ -63,15 +68,17 @@ describe("later video settings", () => {
     await unmount(component); component = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
     await expect.element(video).not.toBeChecked();
   });
-  it("includes quality when the administrator changes the tier", async () => {
+  it("includes quality when the administrator picks another tier", async () => {
+    // Picking a tier sets the tier and the model together: they were two
+    // controls that had to agree.
     component = mount(SettingsPanel, { target: host, props: { operatorClient: new OperatorClient("/operator") } });
     const fast = page.getByRole("radio", { name: "Fast Fastest transcription, lower accuracy.", exact: true });
-    await expect.element(fast).toBeVisible();
+    await expect.element(fast).toBeEnabled();
     await fast.click();
     const save = page.getByRole("button", { name: "Save", exact: true });
     await save.click();
     await expect.element(save).not.toBeInTheDocument();
-    expect(writes.at(-1)).toMatchObject({ quality: "fast", retain_video: true });
+    expect(writes.at(-1)).toMatchObject({ quality: "fast", retain_video: true, transcription_enabled: true, active_model: fastModel.id, active_revision: "r1" });
     await expect.element(fast).toBeChecked();
   });
 

@@ -13,20 +13,20 @@ while [[ $# -gt 0 ]]; do
     --output-bin) output_bin=$2; shift 2 ;;
     --test) testing=1; shift; break ;;
     --run) running=1; shift; break ;;
-    --sherpa-version) [[ ${2#v} == 1.13.7 ]] || { echo 'Native frontend is pinned to sherpa 1.13.7' >&2; exit 2; }; shift 2 ;;
+    --sherpa-version) [[ ${2#v} == 2.0.1 ]] || { echo 'Native runtime is pinned to sherpa 2.0.1' >&2; exit 2; }; shift 2 ;;
     -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 case $(go env GOOS) in
- linux) binding=github.com/k2-fsa/sherpa-onnx-go-linux; extension=so
+ linux) binding=github.com/k2-fsa/sherpa-onnx-go-linux/v2; extension=so
    case $(go env GOARCH) in
     amd64) triplet=x86_64-unknown-linux-gnu ;;
     arm64) triplet=aarch64-unknown-linux-gnu ;;
     arm) triplet=arm-unknown-linux-gnueabihf ;;
     *) echo 'Unsupported Linux architecture' >&2; exit 1 ;;
    esac ;;
- darwin) binding=github.com/k2-fsa/sherpa-onnx-go-macos; extension=dylib
+ darwin) binding=github.com/k2-fsa/sherpa-onnx-go-macos/v2; extension=dylib
    case $(go env GOARCH) in
     amd64) triplet=x86_64-apple-darwin ;;
     arm64) triplet=aarch64-apple-darwin ;;
@@ -52,7 +52,7 @@ if [[ $backend == cpu ]]; then
 fi
 
 binding_version=$(go -C "$rec" list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "$binding")
-[[ "$binding_version" =~ ^v1\.13\.7 ]] || { echo "Go binding/native version mismatch: $binding_version" >&2; exit 1; }
+[[ "$binding_version" =~ ^v2\.0\.1 ]] || { echo "Go binding/native version mismatch: $binding_version" >&2; exit 1; }
 
 cache=$rec/.build-cache/native-$backend
 dist=$rec/dist

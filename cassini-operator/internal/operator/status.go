@@ -114,13 +114,17 @@ type statusRecordingsAccess struct {
 }
 
 type statusSTT struct {
-	Device            string `json:"device"`
-	Quality           string `json:"quality"`
-	ModelID           string `json:"model_id,omitempty"`
-	DeviceUsable      bool   `json:"device_usable"`
-	Detail            string `json:"detail,omitempty"`
-	ReferenceFrontend *bool  `json:"reference_frontend,omitempty"`
-	Warning           string `json:"warning,omitempty"`
+	Device       string `json:"device"`
+	Quality      string `json:"quality"`
+	ModelID      string `json:"model_id,omitempty"`
+	DeviceUsable bool   `json:"device_usable"`
+	Detail       string `json:"detail,omitempty"`
+	// RuntimeSupportsModel is whether the native sherpa runtime can run the
+	// selected model (Parakeet Ultra: the 2.0.1 C API plus the joiner-size TDT
+	// detection); absent when the model needs no runtime marker or the probe
+	// could not tell.
+	RuntimeSupportsModel *bool  `json:"runtime_supports_model,omitempty"`
+	Warning              string `json:"warning,omitempty"`
 }
 
 type statusTalk struct {
@@ -155,33 +159,40 @@ const (
 	speechRuntimeCheckID = "speech.runtime"
 )
 
-// probeReferenceFrontend reports whether the active sherpa runtime includes
-// the Cassini Parakeet v3 reference frontend optimization. It prefers
+// probeSpeechRuntime reports whether the active sherpa runtime can run the
+// model (doctor's speech.runtime check). It prefers
 // probing the recorder binary directly (which evaluates sherpa.GetVersion()),
 // falling back to buildinfo metadata if the binary is absent or unexecutable.
 // Probing is cached across requests so repeated /status polling does not fork
 // doctor subprocesses.
-func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
-	if rt.referenceFrontendProbe != nil {
-		return rt.referenceFrontendProbe()
+//
+// The answer is per model: Parakeet Ultra needs a runtime marker the 110M
+// model does not, so a runtime can run one and not the other.
+func (rt *Runtime) probeSpeechRuntime(model string) (known bool, ok bool) {
+	if rt.speechRuntimeProbe != nil {
+		return rt.speechRuntimeProbe()
 	}
 	bin := strings.TrimSpace(rt.cfg.CassiniBin)
-	rt.refFrontendMu.Lock()
-	defer rt.refFrontendMu.Unlock()
+	rt.speechRuntimeMu.Lock()
+	defer rt.speechRuntimeMu.Unlock()
 	// Coalesce concurrent callers and cache unknown results too. Retry after
 	// a short TTL so a repaired binary/runtime is detected without a restart.
-	if rt.refFrontendBin == bin && time.Since(rt.refFrontendChecked) < 30*time.Second {
-		return rt.refFrontendKnown, rt.refFrontendIsRef
+	if rt.speechRuntimeBin == bin && rt.speechRuntimeModel == model && time.Since(rt.speechRuntimeChecked) < 30*time.Second {
+		return rt.speechRuntimeKnown, rt.speechRuntimeOK
 	}
-	known, isReference = rt.doProbeReferenceFrontend(bin)
-	rt.refFrontendBin = bin
-	rt.refFrontendKnown = known
-	rt.refFrontendIsRef = isReference
-	rt.refFrontendChecked = time.Now()
-	return known, isReference
+	known, ok = rt.doProbeSpeechRuntime(bin, model)
+	rt.speechRuntimeBin = bin
+	rt.speechRuntimeModel = model
+	rt.speechRuntimeKnown = known
+	rt.speechRuntimeOK = ok
+	rt.speechRuntimeChecked = time.Now()
+	return known, ok
 }
 
-func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference bool) {
+// doProbeSpeechRuntime asks doctor, which runs with the operator's child
+// environment and so checks the selected model, and falls back to the native
+// build-info version string checked against this model's markers.
+func (rt *Runtime) doProbeSpeechRuntime(bin, model string) (known bool, ok bool) {
 	if bin != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -206,15 +217,15 @@ func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference
 			if err := json.Unmarshal(out, &checks); err != nil {
 				// Left unknown, but not unsaid: a doctor whose document does
 				// not parse is a broken contract between the two modules, and
-				// silence here would look exactly like "no reference runtime".
+				// silence here would look exactly like "runtime cannot run it".
 				rt.logger.Printf("WARNING: could not read doctor --json while probing the speech runtime: %v", err)
 			} else {
 				for _, check := range checks {
 					if check.ID != speechRuntimeCheckID {
 						continue
 					}
-					// warn is how doctor reports the reference frontend being
-					// absent; ok means it is active. Anything else is a doctor
+					// warn is how doctor reports a runtime that cannot run
+					// the model; ok means it can. Anything else is a doctor
 					// this operator does not understand, and is left unknown
 					// rather than guessed at.
 					switch check.Status {
@@ -235,7 +246,22 @@ func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference
 	if err != nil {
 		return false, false
 	}
-	return true, strings.Contains(string(data), "+cassini-parakeet-v3-reference-v1")
+	return true, runtimeRunsModel(model, string(data))
+}
+
+// speechRuntimeWarning says what a runtime that cannot run the selected model
+// means: the recorder refuses to load it, so builds fail to transcribe. A
+// model with markers (Parakeet Ultra) needs the Cassini runtime; any other
+// needs only the 2.0.1 C API, which a stock 2.0.1 library has too.
+func speechRuntimeWarning(model string) string {
+	if modelNeedsRuntimeMarkers(model) {
+		name := model
+		if strings.Contains(model, "ultra") {
+			name = "Parakeet Ultra"
+		}
+		return name + " needs the Cassini sherpa runtime 2.0.1 (sherpa-onnx-go-*/v2 v2.0.1-cassini.1) or later (a stock or older runtime was found); builds with this model will fail to transcribe"
+	}
+	return model + " needs sherpa runtime 2.0.1 or later (sherpa-onnx-go-*/v2 v2.0.1-cassini.1 ships it; an older runtime was found); builds with this model will fail to transcribe"
 }
 
 type statusCheck struct {
@@ -294,11 +320,11 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
 	}
-	if effective.Model == modelParakeetV3Fp32 || effective.Model == modelParakeetV3Int8 {
-		if known, isRef := rt.probeReferenceFrontend(); known {
-			resp.STT.ReferenceFrontend = &isRef
-			if !isRef {
-				resp.STT.Warning = "Parakeet v3 running on upstream sherpa runtime; reference frontend optimization is inactive; falling back to standard decode profile"
+	if isSpeechModel(effective.Model) {
+		if known, ok := rt.probeSpeechRuntime(effective.Model); known {
+			resp.STT.RuntimeSupportsModel = &ok
+			if !ok {
+				resp.STT.Warning = speechRuntimeWarning(effective.Model)
 			}
 		}
 	}

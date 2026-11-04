@@ -32,7 +32,7 @@ func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	t.Setenv("CASSINI_STT_MODEL", "stale-image-model")
 	t.Setenv(envSTTCUDACapable, "1")
 	stubNVIDIADevice(t, true)
-	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityFast})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, Quality: sttQualityFast})
 	var probedDevices []string
 	rt.computeProbe = func(device string) (bool, string) {
 		probedDevices = append(probedDevices, device)
@@ -60,8 +60,8 @@ func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	if resp.STT.Device != "cuda" || resp.STT.Quality != sttQualityFast || !resp.STT.DeviceUsable {
 		t.Fatalf("unexpected stt status: %#v", resp.STT)
 	}
-	if resp.STT.ModelID != modelParakeetV3Fp32 {
-		t.Fatalf("model_id = %q, want %s", resp.STT.ModelID, modelParakeetV3Fp32)
+	if resp.STT.ModelID != modelParakeetUltraFp32 {
+		t.Fatalf("model_id = %q, want %s", resp.STT.ModelID, modelParakeetUltraFp32)
 	}
 	if len(probedDevices) != 1 || probedDevices[0] != "cuda" {
 		t.Fatalf("probed devices = %v, want [cuda]", probedDevices)
@@ -160,7 +160,7 @@ func TestStatusHandlerReportsCudaUnusable(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	t.Setenv(envSTTCUDACapable, "1")
-	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, DeviceOverride: "cuda", Quality: sttQualityBest})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, DeviceOverride: "cuda", Quality: sttQualityBest})
 	stubNVIDIADevice(t, true)
 	t.Setenv("CASSINI_STT_DEVICE", "cpu") // stale process env must not win
 	rt.computeProbe = func(device string) (bool, string) {
@@ -199,7 +199,7 @@ func TestStatusHandlerRejectsPortableImageOnGPUHost(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	t.Setenv(envSTTCUDACapable, "0")
-	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBest, DeviceOverride: "cuda"})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, Quality: sttQualityBest, DeviceOverride: "cuda"})
 	probeCalled := false
 	rt.computeProbe = func(device string) (bool, string) {
 		probeCalled = true
@@ -252,7 +252,7 @@ func TestStatusHandlerReportsPinnedCPUAsReady(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	t.Setenv(envSTTCUDACapable, "0")
-	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBest, DeviceOverride: deviceCPU})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, Quality: sttQualityBest, DeviceOverride: deviceCPU})
 	var probedDevices []string
 	rt.computeProbe = func(device string) (bool, string) {
 		probedDevices = append(probedDevices, device)
@@ -271,8 +271,8 @@ func TestStatusHandlerReportsPinnedCPUAsReady(t *testing.T) {
 	if resp.STT.Device != deviceCPU || !resp.STT.DeviceUsable {
 		t.Fatalf("pinned CPU reported unusable: %#v", resp.STT)
 	}
-	if resp.STT.ModelID != modelParakeetV3Fp32 {
-		t.Fatalf("model_id = %q, want %s (best on CPU is fp32)", resp.STT.ModelID, modelParakeetV3Fp32)
+	if resp.STT.ModelID != modelParakeetUltraFp32 {
+		t.Fatalf("model_id = %q, want %s (best on CPU is fp32)", resp.STT.ModelID, modelParakeetUltraFp32)
 	}
 	if len(probedDevices) != 1 || probedDevices[0] != deviceCPU {
 		t.Fatalf("probed devices = %v, want [cpu]", probedDevices)
@@ -284,7 +284,7 @@ func TestStatusHandlerRejectsUnknownDeviceOverride(t *testing.T) {
 	// rejected before any hardware probe runs.
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBest, DeviceOverride: "tpu"})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, Quality: sttQualityBest, DeviceOverride: "tpu"})
 	probeCalled := false
 	rt.computeProbe = func(string) (bool, string) {
 		probeCalled = true
@@ -358,7 +358,7 @@ func TestLogComputeDeviceStatusLoudWhenUnusable(t *testing.T) {
 	stubNVIDIADevice(t, true)
 	rt := &Runtime{
 		logger:       log.New(buf, "", 0),
-		settings:     STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBest},
+		settings:     STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, Quality: sttQualityBest},
 		computeProbe: func(device string) (bool, string) { return false, "GPU absent" },
 	}
 	rt.logComputeDeviceStatus()
@@ -814,7 +814,7 @@ func TestStatusHandlerMissingOptionalModelDoesNotBlockAudio(t *testing.T) {
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
-	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Int8, Quality: sttQualityBalanced, Source: sttSourceUser})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraInt8, Quality: sttQualityBalanced, Source: sttSourceUser})
 	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
 
 	rec := httptest.NewRecorder()
@@ -826,12 +826,12 @@ func TestStatusHandlerMissingOptionalModelDoesNotBlockAudio(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode status response: %v", err)
 	}
-	if !resp.STT.DeviceUsable || resp.STT.ModelID != modelParakeetV3Int8 {
+	if !resp.STT.DeviceUsable || resp.STT.ModelID != modelParakeetUltraInt8 {
 		t.Fatalf("unexpected stt status for a downloadable tier: %#v", resp.STT)
 	}
 }
 
-func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
+func TestStatusHandlerReportsSpeechRuntimeStatus(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	// This handler-only test replaces runtime configuration between requests.
@@ -841,11 +841,11 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
-	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBalanced, Source: sttSourceUser})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetUltraFp32, Quality: sttQualityBalanced, Source: sttSourceUser})
 	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
 
-	// 1. Test with referenceFrontendProbe stubbed to true (patched runtime)
-	rt.referenceFrontendProbe = func() (bool, bool) { return true, true }
+	// 1. Test with speechRuntimeProbe stubbed to true (Cassini runtime)
+	rt.speechRuntimeProbe = func() (bool, bool) { return true, true }
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
 	if rec.Code != http.StatusOK {
@@ -855,8 +855,8 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.STT.ReferenceFrontend == nil || !*resp.STT.ReferenceFrontend {
-		t.Fatalf("expected reference_frontend=true, got %#v", resp.STT.ReferenceFrontend)
+	if resp.STT.RuntimeSupportsModel == nil || !*resp.STT.RuntimeSupportsModel {
+		t.Fatalf("expected runtime_supports_model=true, got %#v", resp.STT.RuntimeSupportsModel)
 	}
 	if resp.STT.Warning != "" {
 		t.Fatalf("expected empty warning, got %q", resp.STT.Warning)
@@ -865,8 +865,8 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 		t.Fatalf("expected ok=true, got %#v", resp)
 	}
 
-	// 2. Test with referenceFrontendProbe stubbed to false (unpatched runtime)
-	rt.referenceFrontendProbe = func() (bool, bool) { return true, false }
+	// 2. Test with speechRuntimeProbe stubbed to false (stock or older runtime)
+	rt.speechRuntimeProbe = func() (bool, bool) { return true, false }
 	rec = httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
 	if rec.Code != http.StatusOK {
@@ -875,18 +875,18 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.STT.ReferenceFrontend == nil || *resp.STT.ReferenceFrontend {
-		t.Fatalf("expected reference_frontend=false, got %#v", resp.STT.ReferenceFrontend)
+	if resp.STT.RuntimeSupportsModel == nil || *resp.STT.RuntimeSupportsModel {
+		t.Fatalf("expected runtime_supports_model=false, got %#v", resp.STT.RuntimeSupportsModel)
 	}
-	if !strings.Contains(resp.STT.Warning, "upstream sherpa runtime") {
-		t.Fatalf("expected warning about upstream runtime, got %q", resp.STT.Warning)
+	if !strings.Contains(resp.STT.Warning, "Cassini sherpa runtime 2.0.1") {
+		t.Fatalf("expected warning naming the runtime Ultra needs, got %q", resp.STT.Warning)
 	}
 	if !resp.OK {
 		t.Fatalf("unpatched runtime warning must NOT set ok=false: %#v", resp)
 	}
 
 	// 3. Test with fallback buildinfo file when CassiniBin is unset
-	rt.referenceFrontendProbe = nil
+	rt.speechRuntimeProbe = nil
 	rt.cfg.CassiniBin = ""
 	tmp := t.TempDir()
 	infoUnpatched := filepath.Join(tmp, "buildinfo-unpatched.txt")
@@ -899,8 +899,8 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.STT.ReferenceFrontend == nil || *resp.STT.ReferenceFrontend {
-		t.Fatalf("expected reference_frontend=false via buildinfo fallback, got %#v", resp.STT.ReferenceFrontend)
+	if resp.STT.RuntimeSupportsModel == nil || *resp.STT.RuntimeSupportsModel {
+		t.Fatalf("expected runtime_supports_model=false via buildinfo fallback, got %#v", resp.STT.RuntimeSupportsModel)
 	}
 
 	// 4. Test with CassiniBin executing a mock cassini binary
@@ -913,7 +913,7 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 [{"id":"speech.runtime","status":"ok","summary":"any wording at all"}]
 JSON
 `)
-	rt.referenceFrontendProbe = nil
+	rt.speechRuntimeProbe = nil
 	rt.cfg.CassiniBin = fakeBin
 	rec = httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -929,15 +929,15 @@ JSON
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.STT.ReferenceFrontend == nil || !*resp.STT.ReferenceFrontend {
-		t.Fatalf("expected cached reference_frontend=true after binary removed, got %#v", resp.STT.ReferenceFrontend)
+	if resp.STT.RuntimeSupportsModel == nil || !*resp.STT.RuntimeSupportsModel {
+		t.Fatalf("expected cached runtime_supports_model=true after binary removed, got %#v", resp.STT.RuntimeSupportsModel)
 	}
 }
 
-func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
+func TestSpeechRuntimeProbeCoalescesUnknownAndRetries(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.referenceFrontendProbe = nil
+	rt.speechRuntimeProbe = nil
 	t.Setenv(envNativeBuildInfo, filepath.Join(t.TempDir(), "missing"))
 	calls := filepath.Join(t.TempDir(), "calls")
 	rt.cfg.CassiniBin = writeFakeCassini(t, "echo call >> '"+calls+"'\n")
@@ -946,7 +946,7 @@ func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if known, _ := rt.probeReferenceFrontend(); known {
+			if known, _ := rt.probeSpeechRuntime(modelParakeetUltraFp32); known {
 				t.Error("unknown runtime reported as known")
 			}
 		}()
@@ -959,8 +959,8 @@ func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
 	if got := strings.Count(string(data), "call\n"); got != 1 {
 		t.Fatalf("concurrent unknown probes: got %d subprocesses, want 1", got)
 	}
-	rt.refFrontendChecked = time.Now().Add(-time.Minute)
-	rt.probeReferenceFrontend()
+	rt.speechRuntimeChecked = time.Now().Add(-time.Minute)
+	rt.probeSpeechRuntime(modelParakeetUltraFp32)
 	data, err = os.ReadFile(calls)
 	if err != nil {
 		t.Fatal(err)
@@ -975,30 +975,30 @@ func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
 // The stub stands in for `cassini doctor --target build --json`. What matters
 // is that rewording a summary cannot change the answer, which is what the
 // marker-matching this replaced could not promise.
-func TestReferenceFrontendProbeReadsTheCheckByID(t *testing.T) {
+func TestSpeechRuntimeProbeReadsTheCheckByID(t *testing.T) {
 	bin := writeFakeDoctor(t, `[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
 	  {"id":"speech.runtime","status":"ok","summary":"wording nothing may depend on"}]`)
 	rt := &Runtime{}
-	known, isReference := rt.doProbeReferenceFrontend(bin)
-	if !known || !isReference {
-		t.Fatalf("ok on speech.runtime should mean the reference frontend is active: known=%v ref=%v", known, isReference)
+	known, ok := rt.doProbeSpeechRuntime(bin, modelParakeetUltraFp32)
+	if !known || !ok {
+		t.Fatalf("ok on speech.runtime should mean the runtime runs the model: known=%v ok=%v", known, ok)
 	}
 
 	bin = writeFakeDoctor(t, `[{"id":"speech.runtime","status":"warn","summary":"different wording again"}]`)
-	known, isReference = rt.doProbeReferenceFrontend(bin)
-	if !known || isReference {
-		t.Fatalf("warn on speech.runtime should mean it is inactive: known=%v ref=%v", known, isReference)
+	known, ok = rt.doProbeSpeechRuntime(bin, modelParakeetUltraFp32)
+	if !known || ok {
+		t.Fatalf("warn on speech.runtime should mean it cannot: known=%v ok=%v", known, ok)
 	}
 }
 
 // A doctor that does not report the check leaves the answer unknown rather
 // than guessed at — the same discipline the rest of the health work follows.
-func TestReferenceFrontendProbeLeavesAnAbsentCheckUnknown(t *testing.T) {
+func TestSpeechRuntimeProbeLeavesAnAbsentCheckUnknown(t *testing.T) {
 	bin := writeFakeDoctor(t, `[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"}]`)
 	rt := &Runtime{}
 	// Falls through to the build-info file, which is absent here.
 	t.Setenv(envNativeBuildInfo, filepath.Join(t.TempDir(), "absent"))
-	if known, _ := rt.doProbeReferenceFrontend(bin); known {
+	if known, _ := rt.doProbeSpeechRuntime(bin, modelParakeetUltraFp32); known {
 		t.Error("an absent speech.runtime check was treated as an answer")
 	}
 }

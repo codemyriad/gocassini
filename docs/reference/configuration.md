@@ -32,8 +32,9 @@ Optional capability pass-through:
 | `SUMMARY_MODEL` | summary model and the fallback for inherited insights |
 | `CASSINI_SUMMARY_DISABLED` | disable summary generation |
 | `CASSINI_STT_BACKEND` | speech-to-text engine id (default `sherpa-onnx`; unknown ids fail the build loudly) |
-| `CASSINI_STT_HINTS_DISABLED` | disable decoder vocabulary biasing without deleting the vocabulary; with non-empty terms, also restore `greedy_search` |
-| `CASSINI_STT_HINTS_SCORE` | override the decoder hotword boost (default `2.0`) |
+| `CASSINI_STT_HINTS_DISABLED` | decoder vocabulary biasing switch. Unset, empty or true (the default) decodes with `greedy_search` and no hints on every tier; only an explicit false (`0`, `false`, `no`, `off`) applies the vocabulary with `modified_beam_search`, for research. Search spellings are unaffected |
+| `CASSINI_STT_HINTS_SCORE` | override the decoder hotword boost (default `2.0`) when hints are turned on |
+| `CASSINI_STT_STAND_IN_FOR` | set by the operator for one build, with `CASSINI_STT_STAND_IN_REASON` and `CASSINI_STT_STAND_IN_DETAIL`, when the retired Parakeet v3 named in `CASSINI_STT_MODEL` transcribes in place of the Ultra model replacing it; honoured only for that pair, and recorded in `processing.transcription.standIn`. Not configuration |
 | `CASSINI_ATTRIBUTION_DISABLED` | skip the cross-track speaker-attribution measurement |
 | `CASSINI_ATTRIBUTION_DROP` | delete words the attribution evidence contradicts instead of annotating them |
 

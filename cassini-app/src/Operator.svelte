@@ -1,6 +1,19 @@
 <script module lang="ts">
   import type { Job, JobAttempt } from "./operator/types";
   import type { OperatorPanel } from "./surfaceRouting";
+  import {
+    describeProcessing,
+    formatSpan,
+    meetingLengthMs,
+    processesCapture,
+    processingHint,
+    processingSpeed,
+    runProcessing,
+    spanMs,
+    stepTime,
+    summaryTime,
+  } from "./operator/processingSpeed";
+  import { runStages, stepStatuses, type StageStatus, type StageView } from "./operator/runStages";
 
   // The operator surface's left nav (D-723). Configuration is not a surface of
   // its own: Console and Settings are two groups of ONE surface, so there is a
@@ -86,6 +99,13 @@
       // Ignore invalid JSON payload
     }
     return {};
+  }
+
+  export function captureModeLabel(requestJSON: string): string {
+    const mode = parseRequestJSON(requestJSON).capture_mode;
+    if (mode === "audio-only") return "Audio only";
+    if (mode === "audio-video") return "Audio and video";
+    return "Unknown (older recording)";
   }
 
   export function requestUrlLabel(requestJSON: string): string {
@@ -191,20 +211,8 @@
     startStr: string | null | undefined,
     endStr: string | null | undefined,
   ): string | null {
-    if (!startStr || !endStr) return null;
-    const start = Date.parse(startStr);
-    const end = Date.parse(endStr);
-    if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
-    const totalSeconds = Math.round((end - start) / 1000);
-    if (totalSeconds < 60) return `${totalSeconds}s`;
-    const totalMinutes = Math.floor(totalSeconds / 60);
-    const remSeconds = totalSeconds % 60;
-    if (totalMinutes < 60) {
-      return remSeconds > 0 ? `${totalMinutes}m ${remSeconds}s` : `${totalMinutes}m`;
-    }
-    const hours = Math.floor(totalMinutes / 60);
-    const remMinutes = totalMinutes % 60;
-    return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+    const ms = spanMs(startStr, endStr);
+    return ms === null ? null : formatSpan(ms);
   }
 
   export function isHttpUrl(value: string | null | undefined): boolean {
@@ -274,7 +282,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { Activity, ArrowLeft, CassetteTape, ChevronRight, FileText, Inbox, Info, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
+  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Download, FileText, Inbox, Info, PanelLeft, RefreshCw, Square, TriangleAlert, X } from "@lucide/svelte";
   import { fade } from "svelte/transition";
   import { guardLeave } from "./operator/unsaved";
   import { loadConfig } from "./operator/config";
@@ -287,6 +295,15 @@
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
   import { outcomeAttempt, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
+  import {
+    attemptLogs,
+    attemptReason,
+    attemptSpeech,
+    attemptSummary,
+    speechModelLabel,
+    type AttemptLog,
+    type FieldValue,
+  } from "./operator/attemptModels";
   import {
     summaryActionLabel,
     summaryConfirmTitle,
@@ -861,8 +878,8 @@
     }).format(date);
   }
 
-  // stageTimes below reads `${key}_queued_at` / `_started_at` / `_finished_at`,
-  // so a stage appears here only if the operator names its columns to match.
+  // stageTimes reads `${key}_queued_at` / `_started_at` / `_finished_at`, so a
+  // stage appears here only if the operator names its columns to match.
   const STAGES = [
     { key: "record", label: "Record" },
     { key: "build", label: "Build" },
@@ -870,45 +887,30 @@
     { key: "publish", label: "Publish" },
   ] as const;
 
-  type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked";
-
-  function stageTimes(job: Job | JobAttempt, key: string) {
-    const row = job as unknown as Record<string, string | null | undefined>;
-    return {
-      queued: row[`${key}_queued_at`] ?? null,
-      started: row[`${key}_started_at`] ?? null,
-      finished: row[`${key}_finished_at`] ?? null,
-    };
+  // One attempt's bar: its own four steps, each with how long it took.
+  // An attempt's own bar has no Summary step, so its Build keeps the summary
+  // and says so (D-899); the run's bar times them apart.
+  function stageProgress(row: Job | JobAttempt): StageView[] {
+    const statuses = stepStatuses(row);
+    const summaryMs = summaryTime(row);
+    return STAGES.map((stage) => ({
+      key: stage.key,
+      label: stageLabel(stage.key, attemptKind(row)),
+      status: statuses[stage.key],
+      ms: stepTime(row, stage.key),
+      hint: stage.key === "build" && summaryMs !== null && attemptKind(row) !== "summarize"
+        ? `Includes ${formatSpan(summaryMs)} waiting on the summary model`
+        : undefined,
+    }));
   }
 
-  function stageProgress(job: Job | JobAttempt, recordingDeleted = false): Array<{ label: string; status: StageStatus }> {
-    const buildBlocked = isBuildBlocked(job);
-    const halted = buildBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
-    let lastTouched = -1;
-    const times = STAGES.map((stage, index) => {
-      const t = stageTimes(job, stage.key);
-      if (t.queued || t.started || t.finished) {
-        lastTouched = index;
-      }
-      return t;
-    });
-    return STAGES.map((stage, index) => {
-      if (stage.key === "record" && recordingDeleted) return { label: "Record (deleted)", status: "pending" };
-      const t = times[index];
-      let status: StageStatus = "pending";
-      if (t.finished) {
-        status = "done";
-      } else if (t.started) {
-        status = "active";
-      } else if (t.queued) {
-        status = "queued";
-      }
-      if (halted && index === lastTouched) {
-        status = buildBlocked ? "blocked" : "failed";
-      }
-      return { label: stageLabel(stage.key, attemptKind(job)), status };
-    });
-  }
+  // Said under a step that has not finished, so a coloured bar is not the
+  // only sign of what is happening.
+  const UNFINISHED_NOTES: Partial<Record<StageStatus, string>> = {
+    active: "In progress",
+    queued: "Queued",
+    blocked: "Blocked",
+  };
 
   function stageBarClass(status: StageStatus): string {
     switch (status) {
@@ -922,6 +924,8 @@
         return "bg-warning";
       case "queued":
         return "bg-primary/55";
+      case "skipped":
+        return "bg-base-content/35";
       default:
         return "bg-base-content/12";
     }
@@ -938,6 +942,52 @@
     const hours = Math.round(minutes / 60);
     if (hours < 24) return `${hours}h ago`;
     return `${Math.round(hours / 24)}d ago`;
+  }
+
+  // The one log open in the run detail, read from the operator (D-816). Shown
+  // inline under its attempt: the app runs in a shadow root on Nextcloud's
+  // page, where a top-layer <dialog> does not reliably keep its styling.
+  interface OpenLog {
+    jobId: string;
+    attempt: number;
+    stage: AttemptLog["stage"];
+    label: string;
+    text: string;
+    truncated: boolean;
+    loading: boolean;
+    error: string;
+  }
+  let openLog: OpenLog | null = null;
+
+  async function toggleLog(jobId: string, attempt: number, log: AttemptLog) {
+    if (openLog && openLog.jobId === jobId && openLog.attempt === attempt && openLog.stage === log.stage) {
+      openLog = null;
+      return;
+    }
+    if (!operatorClient) return;
+    const opening: OpenLog = { jobId, attempt, stage: log.stage, label: log.label, text: "", truncated: false, loading: true, error: "" };
+    openLog = opening;
+    try {
+      const { text, truncated } = await operatorClient.getAttemptLog(jobId, attempt, log.stage);
+      if (openLog === opening) openLog = { ...opening, text, truncated, loading: false };
+    } catch (error) {
+      console.error("attempt log read failed", jobId, attempt, log.stage, error);
+      if (openLog === opening) openLog = { ...opening, loading: false, error: asMessage(error) };
+    }
+  }
+
+  $: if (openLog && openLog.jobId !== selectedJobId) openLog = null;
+
+  // Where an attempt's artifacts sit inside the operator's container, for
+  // whoever debugs it there. Its logs are read from the Logs row instead.
+  function attemptPaths(attempt: JobAttempt): { label: string; path: string | null; missing: boolean }[] {
+    const entries: [string, string | null, string][] = [
+      ["Run artifact", attempt.artifact_run_path, "run"],
+      ["Meeting artifact", attempt.artifact_meeting_path, "meeting"],
+      ["Sealed meeting", attempt.artifact_opus_path, "opus"],
+      ["Site artifact", attempt.artifact_site_path, "site"],
+    ];
+    return entries.map(([label, path, key]) => ({ label, path, missing: !!path && attempt.files_present?.[key] === false }));
   }
 
   function attemptStageLabel(attempt: JobAttempt): string {
@@ -1033,6 +1083,8 @@
   // A run that published without a transcript or a summary says so (D-854,
   // D-814), from the attempt it published.
   $: outcomeSource = selectedJob ? outcomeAttempt(selectedJob) : null;
+  $: runSpeed = selectedJob ? runProcessing(selectedJob) : null;
+  $: meetingMs = selectedJob ? meetingLengthMs(selectedJob.job) : null;
   $: outcomeNotices = outcomeSource
     ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)].filter(
         (notice): notice is OutcomeNotice => notice !== null,
@@ -1063,6 +1115,37 @@
   };
 </script>
 
+<!-- A stage bar: each step's progress and how long it took once finished
+     (D-817), or a note when it has no time of its own. No multiplier: only
+     the run's overall figure gets one. -->
+{#snippet stageBar(stages: StageView[])}
+  <div>
+    <div class="flex gap-1">
+      {#each stages as stage (stage.key)}
+        <span class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}" aria-hidden="true"></span>
+      {/each}
+    </div>
+    <div class="mt-1 flex gap-1 text-xs text-base-content/60">
+      {#each stages as stage (stage.key)}
+        {@const title = [stage.hint, stage.attempt ? `From attempt ${stage.attempt}` : null].filter(Boolean).join(". ")}
+        <span class="min-w-0 flex-1" title={title || undefined}>
+          <span
+            class="block"
+            class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
+          >
+            {stage.label}
+          </span>
+          {#if stage.ms !== null}
+            <span class="block whitespace-nowrap text-base-content/45">{formatSpan(stage.ms)}</span>
+          {:else if stage.note ?? UNFINISHED_NOTES[stage.status]}
+            <span class="block whitespace-nowrap text-base-content/45">{stage.note ?? UNFINISHED_NOTES[stage.status]}</span>
+          {/if}
+        </span>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
 <svelte:head>
   <title>Cassini Control Panel</title>
   <meta
@@ -1077,6 +1160,24 @@
      not the active panel, and the settings host does not exist unless it is — so
      auto-placement puts whichever survives in the second column. -->
 <svelte:window on:keydown={handleNavKeydown} />
+
+<!-- The run detail shows a fixed set of fields in fixed places (D-816); one
+     with nothing to show says so rather than disappearing. -->
+{#snippet notAvailable()}
+  <span class="text-base-content/45">Not available</span>
+{/snippet}
+
+<!-- A known value, or a muted account of why there is none (reused,
+     skipped, kept); "Not available" only when nothing is known. -->
+{#snippet fieldValue(value: FieldValue | null)}
+  {#if value?.muted}
+    <span class="text-base-content/60">{value.text}</span>
+  {:else if value}
+    {value.text}
+  {:else}
+    {@render notAvailable()}
+  {/if}
+{/snippet}
 
 <div
   class="op-shell grid min-h-full grid-cols-1 bg-base-200 text-base-content min-[721px]:grid-cols-[268px_minmax(0,1fr)]"
@@ -1297,7 +1398,7 @@
                       <div class="min-w-0 text-xs">
                         <p class="truncate">
                           <span class={jobStatusToneClass(job)}>{jobStatusLabel(job)}</span>
-                          <span class="text-base-content/50"> · {relativeTime(job.updated_at)}</span>
+                          <span class="text-base-content/50" title={formatTimestamp(job.record_started_at ?? job.created_at)}> · {relativeTime(job.record_started_at ?? job.created_at)}</span>
                           {#if formatDuration(job.record_started_at, job.record_finished_at)}
                             <span class="text-base-content/50"> · {formatDuration(job.record_started_at, job.record_finished_at)}</span>
                           {/if}
@@ -1426,26 +1527,7 @@
                     </p>
                   </div>
 
-                  <div>
-                    <div class="flex gap-1">
-                      {#each stageProgress(selectedJob.job, recordingDeleted) as stage}
-                        <span
-                          class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}"
-                          aria-hidden="true"
-                        ></span>
-                      {/each}
-                    </div>
-                    <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                      {#each stageProgress(selectedJob.job, recordingDeleted) as stage}
-                        <span
-                          class="flex-1"
-                          class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                        >
-                          {stage.label}
-                        </span>
-                      {/each}
-                    </div>
-                  </div>
+                  {@render stageBar(runStages(selectedJob, recordingDeleted))}
                   {#if selectedJob.availability?.media_cleanup}
                     {@const cleanup = selectedJob.availability.media_cleanup}
                     <div class="op-tint p-3 grid gap-2" role="status">
@@ -1501,7 +1583,9 @@
                           <FileText size={15} aria-hidden="true" />{summaryActionLabel(summaryPlan)}
                         </button>
                       </div>
-                    {:else if summaryUnavailableText(summaryPlan)}
+                    {:else if summaryUnavailableText(summaryPlan) && !(summaryPlan.reason === "no_local_copy" && rerunBlockedReason && rerunVisible)}
+                      <!-- With the meeting's files gone, the rerun warning below
+                           already says why; the summary note would repeat it (D-816). -->
                       <p class="text-xs text-base-content/60">{summaryUnavailableText(summaryPlan)}</p>
                     {/if}
                   {/if}
@@ -1585,93 +1669,117 @@
                       </dl>
                     </div>
                   {/if}
-                  <dl class="mt-2 grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <!-- What an administrator checks a run for. The rest is folded
+                       into Technical details below (D-816). -->
+                  <dl class="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 lg:grid-cols-3">
                     <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Provider</dt>
-                      <dd class="text-sm">{selectedJob.job.provider}</dd>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recorded</dt>
+                      <dd class="text-sm">
+                        {#if selectedJob.job.record_started_at}
+                          {formatTimestamp(selectedJob.job.record_started_at)}{#if formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}<span class="text-base-content/60">{" · "}{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</span>{/if}
+                        {:else}
+                          {@render notAvailable()}
+                        {/if}
+                      </dd>
                     </div>
                     <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Capture mode</dt>
-                      <dd class="text-sm">{parseRequestJSON(selectedJob.job.request_json).capture_mode === "audio-only" ? "Audio only" : parseRequestJSON(selectedJob.job.request_json).capture_mode === "audio-video" ? "Audio and video" : "Unknown (older recording)"}</dd>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                      <dd class="text-sm" class:text-warning={runSpeed !== null && runSpeed.factor !== null && runSpeed.factor < 1} title={runSpeed ? processingHint(runSpeed) : undefined}>
+                        {#if runSpeed}{describeProcessing(runSpeed)}{:else}{@render notAvailable()}{/if}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
+                      <dd class="text-sm">
+                        {#if selectedJob.job.completed_at}{formatTimestamp(selectedJob.job.completed_at)}{:else}{@render notAvailable()}{/if}
+                      </dd>
                     </div>
                     <div class="min-w-0">
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting URL</dt>
-                      <dd class="text-sm break-all">
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Speech model</dt>
+                      <dd class="text-sm break-words">
+                        {#if outcomeSource && speechModelLabel(outcomeSource)}{speechModelLabel(outcomeSource)}{:else}{@render notAvailable()}{/if}
+                      </dd>
+                    </div>
+                    <div class="min-w-0">
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Summary model</dt>
+                      <dd class="text-sm break-words">
+                        {@render fieldValue(outcomeSource ? attemptSummary(outcomeSource) : null)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Capture</dt>
+                      <dd class="text-sm">{captureModeLabel(selectedJob.job.request_json)}</dd>
+                    </div>
+                    <div>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stopped because</dt>
+                      <dd class="text-sm">
+                        {#if selectedJob.job.stop_reason}{formatStopReason(selectedJob.job.stop_reason)}{:else}{@render notAvailable()}{/if}
+                      </dd>
+                    </div>
+                    <div class="min-w-0">
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Conversation</dt>
+                      <dd class="text-sm">
                         {#if isHttpUrl(requestUrlLabel(selectedJob.job.request_json))}
                           <a
                             class="link link-hover text-primary"
                             href={requestUrlLabel(selectedJob.job.request_json)}
+                            title={requestUrlLabel(selectedJob.job.request_json)}
                             target="_blank"
                             rel="noreferrer noopener"
                           >
-                            {requestUrlLabel(selectedJob.job.request_json)}
+                            Open in Talk
                           </a>
                         {:else}
-                          {requestUrlLabel(selectedJob.job.request_json)}
+                          {@render notAvailable()}
                         {/if}
                       </dd>
                     </div>
-                    {#if recordingHref}
-                      <div class="min-w-0">
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recording</dt>
-                        <dd class="text-sm">
+                    <div class="min-w-0">
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recording</dt>
+                      <dd class="text-sm">
+                        {#if recordingHref}
                           <a class="link link-hover text-primary" href={recordingHref} target="_blank" rel="noreferrer noopener">
                             Open in Files
                           </a>
-                        </dd>
-                      </div>
-                    {/if}
-                    <div class="min-w-0">
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
-                      <dd class="font-mono text-xs break-all">{selectedJob.job.id}</dd>
+                        {:else}
+                          {@render notAvailable()}
+                        {/if}
+                      </dd>
                     </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Current attempt</dt>
-                      <dd class="text-sm">{selectedJob.job.current_attempt_number}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Reruns</dt>
-                      <dd class="text-sm">{selectedJob.job.rerun_count}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Interrupted</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.interrupted_at)}</dd>
-                    </div>
-                    {#if selectedJob.job.stop_reason}
-                      <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop reason</dt>
-                        <dd class="text-sm">{formatStopReason(selectedJob.job.stop_reason)}</dd>
-                      </div>
-                    {/if}
-                    {#if formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}
-                      <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record duration</dt>
-                        <dd class="text-sm">{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</dd>
-                      </div>
-                    {/if}
-                    {#if selectedJob.job.stop_requested_at}
-                      <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop requested</dt>
-                        <dd class="text-sm">{formatTimestamp(selectedJob.job.stop_requested_at)}</dd>
-                      </div>
-                    {/if}
                   </dl>
 
-                  <div class="my-2 h-px w-full bg-base-content/12" aria-hidden="true"></div>
-                  <dl class="mt-1 grid gap-x-6 gap-y-3 grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Created</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.created_at)}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Updated</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.updated_at)}</dd>
-                    </div>
-                    <div>
-                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.completed_at)}</dd>
-                    </div>
-                  </dl>
+                  <details class="group">
+                    <summary class="flex w-fit cursor-pointer list-none items-center gap-1 text-xs text-base-content/60 hover:text-base-content">
+                      <ChevronRight size={12} class="shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+                      Technical details
+                    </summary>
+                    <dl class="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 lg:grid-cols-3">
+                      <div class="col-span-2 min-w-0 lg:col-span-3">
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
+                        <dd class="font-mono text-xs break-all">{selectedJob.job.id}</dd>
+                      </div>
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Created</dt>
+                        <dd class="text-sm">{formatTimestamp(selectedJob.job.created_at)}</dd>
+                      </div>
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Updated</dt>
+                        <dd class="text-sm">{formatTimestamp(selectedJob.job.updated_at)}</dd>
+                      </div>
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop requested</dt>
+                        <dd class="text-sm">
+                          {#if selectedJob.job.stop_requested_at}{formatTimestamp(selectedJob.job.stop_requested_at)}{:else}{@render notAvailable()}{/if}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Interrupted</dt>
+                        <dd class="text-sm">
+                          {#if selectedJob.job.interrupted_at}{formatTimestamp(selectedJob.job.interrupted_at)}{:else}{@render notAvailable()}{/if}
+                        </dd>
+                      </div>
+                    </dl>
+                  </details>
                 </section>
 
                 <section class="mt-4 grid gap-3">
@@ -1683,6 +1791,9 @@
                   </div>
                   <div class="grid gap-3">
                     {#each selectedJob.attempts as attempt (attempt.attempt_number)}
+                      <!-- Only a transcription is timed against the meeting: a summary
+                           written in a minute is not the server running at 58×. -->
+                      {@const attemptSpeed = attempt.state === "succeeded" ? processingSpeed(attempt, processesCapture(attempt) ? meetingMs : null) : null}
                       <details class="group overflow-hidden rounded-box border border-base-300">
                         <summary
                           class="flex cursor-pointer list-none items-center gap-2 bg-base-200/50 px-3 py-2 transition group-open:bg-base-200 hover:bg-base-200"
@@ -1697,8 +1808,10 @@
                             <span class="ml-2 capitalize">{attempt.trigger_kind}</span>
                             <span class="mx-1.5 text-base-content/40">·</span>
                             <span class={jobStatusToneClass(attempt)}>{jobStatusLabel(attempt)}</span>
-                            {#if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
-                              <span class="text-base-content/50"> · {formatDuration(attempt.record_started_at, attempt.record_finished_at)}</span>
+                            {#if attemptSpeed}
+                              <span class="text-base-content/50"> · processed in {formatSpan(attemptSpeed.ms)}</span>
+                            {:else if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
+                              <span class="text-base-content/50"> · recorded {formatDuration(attempt.record_started_at, attempt.record_finished_at)}</span>
                             {/if}
                           </span>
                         </summary>
@@ -1762,104 +1875,113 @@
                             </div>
                           {/if}
 
-                          <div>
-                            <div class="flex gap-1">
-                              {#each stageProgress(attempt) as stage}
-                                <span class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}" aria-hidden="true"
-                                ></span>
-                              {/each}
-                            </div>
-                            <div class="mt-1 flex gap-1 text-xs text-base-content/60">
-                              {#each stageProgress(attempt) as stage}
-                                <span
-                                  class="flex-1"
-                                  class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
-                                >
-                                  {stage.label}
-                                </span>
-                              {/each}
-                            </div>
-                          </div>
+                          {@render stageBar(stageProgress(attempt))}
 
-                          <dl class="grid gap-x-6 gap-y-3 grid-cols-2 sm:grid-cols-3">
+                          <dl class="grid grid-cols-3 gap-x-6 gap-y-3">
                             <div>
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Queued</dt>
-                              <dd class="text-sm">{formatTimestamp(attempt.record_queued_at)}</dd>
+                              <dd class="text-sm">
+                                {#if attempt.record_queued_at ?? attempt.build_queued_at}{formatTimestamp(attempt.record_queued_at ?? attempt.build_queued_at)}{:else}{@render notAvailable()}{/if}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Processing</dt>
+                              <dd class="text-sm" class:text-warning={attemptSpeed !== null && attemptSpeed.factor !== null && attemptSpeed.factor < 1} title={attemptSpeed ? processingHint(attemptSpeed) : undefined}>
+                                {#if attemptSpeed}{describeProcessing(attemptSpeed)}{:else}{@render notAvailable()}{/if}
+                              </dd>
                             </div>
                             <div>
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
-                              <dd class="text-sm">{formatTimestamp(attempt.completed_at)}</dd>
+                              <dd class="text-sm">
+                                {#if attempt.completed_at}{formatTimestamp(attempt.completed_at)}{:else}{@render notAvailable()}{/if}
+                              </dd>
                             </div>
-                            {#if attempt.stop_reason}
-                              <div>
-                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop reason</dt>
-                                <dd class="text-sm">{formatStopReason(attempt.stop_reason)}</dd>
-                              </div>
-                            {/if}
-                            {#if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
-                              <div>
-                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record duration</dt>
-                                <dd class="text-sm">{formatDuration(attempt.record_started_at, attempt.record_finished_at)}</dd>
-                              </div>
-                            {/if}
+                            <div>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Reason</dt>
+                              <dd class="text-sm">{attemptReason(attempt, formatStopReason)}</dd>
+                            </div>
+                            <div class="min-w-0">
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Speech model</dt>
+                              <dd class="text-sm break-words" title={attempt.transcription_revision && speechModelLabel(attempt) ? `Revision ${attempt.transcription_revision}` : undefined}>
+                                {@render fieldValue(attemptSpeech(attempt, selectedJob.attempts))}
+                              </dd>
+                            </div>
+                            <div class="min-w-0">
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Summary model</dt>
+                              <dd class="text-sm break-words">{@render fieldValue(attemptSummary(attempt))}</dd>
+                            </div>
                           </dl>
 
-                          {#if attempt.artifact_run_path || attempt.artifact_meeting_path || attempt.artifact_opus_path || attempt.artifact_site_path || attempt.record_log_path || attempt.build_log_path || attempt.seal_log_path || attempt.publish_log_path}
-                            <div class="my-1 h-px w-full bg-base-content/12" aria-hidden="true"></div>
-                            <dl class="grid gap-3">
-                              {#if attempt.artifact_run_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run artifact</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.artifact_run_path}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.artifact_meeting_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting artifact</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.artifact_meeting_path}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.artifact_opus_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Sealed meeting</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.artifact_opus_path}</dd>
-                                  {#if attempt.artifact_opus_sha256}
-                                    <dd class="font-mono text-xs break-all text-base-content/45">sha256 {attempt.artifact_opus_sha256}</dd>
+                          <div class="grid gap-2">
+                            <div class="flex flex-wrap items-center gap-1.5">
+                              {#each attemptLogs(attempt) as log (log.stage)}
+                                {@const isOpen = openLog?.attempt === attempt.attempt_number && openLog?.stage === log.stage}
+                                <button
+                                  class="btn btn-sm {isOpen ? 'btn-active' : 'btn-outline border-base-content/20'} font-normal"
+                                  type="button"
+                                  disabled={!log.present}
+                                  title={log.present
+                                    ? `Show the ${log.label.toLowerCase()} log`
+                                    : log.written
+                                      ? "No longer on disk: retention or a cleanup removed it"
+                                      : log.stage === "record" && attempt.trigger_kind !== "initial"
+                                        ? "Not part of this attempt: only the first one records"
+                                        : "This step has not written a log"}
+                                  aria-expanded={isOpen}
+                                  on:click={() => selectedJob && toggleLog(selectedJob.job.id, attempt.attempt_number, log)}
+                                >
+                                  <FileText size={14} aria-hidden="true" />{log.label} log
+                                </button>
+                              {/each}
+                            </div>
+                            {#if openLog && openLog.attempt === attempt.attempt_number}
+                              <div class="grid gap-1 rounded-box border border-base-300 bg-base-100" role="region" aria-label="{openLog.label} log">
+                                <div class="flex items-center gap-2 border-b border-base-300 px-3 py-1.5 text-xs">
+                                  <span class="font-medium">{openLog.label} log</span>
+                                  {#if openLog.truncated}
+                                    <span class="text-base-content/55">· the end of it</span>
                                   {/if}
+                                  <span class="flex-1"></span>
+                                  {#if operatorClient}
+                                    <a class="btn btn-ghost btn-xs" href={operatorClient.attemptLogUrl(openLog.jobId, openLog.attempt, openLog.stage, true)} download>
+                                      <Download size={12} aria-hidden="true" />Download
+                                    </a>
+                                  {/if}
+                                  <button class="btn btn-ghost btn-xs btn-square" type="button" aria-label="Close the log" on:click={() => (openLog = null)}>
+                                    <X size={12} aria-hidden="true" />
+                                  </button>
                                 </div>
-                              {/if}
-                              {#if attempt.artifact_site_path}
+                                {#if openLog.loading}
+                                  <p class="px-3 py-2 text-xs text-base-content/60">Loading…</p>
+                                {:else if openLog.error}
+                                  <p class="px-3 py-2 text-xs text-error" role="alert">{openLog.error}</p>
+                                {:else if openLog.text === ""}
+                                  <p class="px-3 py-2 text-xs text-base-content/60">This step wrote nothing to its log.</p>
+                                {:else}
+                                  <pre class="attempt-log max-h-80 overflow-auto px-3 py-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all">{openLog.text}</pre>
+                                {/if}
+                              </div>
+                            {/if}
+                          </div>
+
+                          <!-- On-disk paths are for debugging inside the
+                               container; folded so they do not bury the outcome (D-816). -->
+                          <details class="group/tech">
+                            <summary class="flex w-fit cursor-pointer list-none items-center gap-1 text-xs text-base-content/60 hover:text-base-content">
+                              <ChevronRight size={12} class="shrink-0 transition-transform group-open/tech:rotate-90" aria-hidden="true" />
+                              Technical details
+                            </summary>
+                            <dl class="mt-2 grid gap-x-6 gap-y-3">
+                              {#each attemptPaths(attempt) as entry (entry.label)}
                                 <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Site artifact</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.artifact_site_path}</dd>
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{entry.label}</dt>
+                                  <dd class="font-mono text-xs break-all">
+                                    {#if entry.path}{entry.path}{entry.missing ? " (no longer on disk)" : ""}{:else}{@render notAvailable()}{/if}
+                                  </dd>
                                 </div>
-                              {/if}
-                              {#if attempt.record_log_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}{attempt.files_present?.record_log === false ? " (unavailable)" : ""}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.build_log_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Build log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}{attempt.files_present?.build_log === false ? " (unavailable)" : ""}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.seal_log_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Seal log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}{attempt.files_present?.seal_log === false ? " (unavailable)" : ""}</dd>
-                                </div>
-                              {/if}
-                              {#if attempt.publish_log_path}
-                                <div class="min-w-0">
-                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Publish log</dt>
-                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}{attempt.files_present?.publish_log === false ? " (unavailable)" : ""}</dd>
-                                </div>
-                              {/if}
+                              {/each}
                             </dl>
-                          {/if}
+                          </details>
                         </div>
                       </details>
                     {/each}
