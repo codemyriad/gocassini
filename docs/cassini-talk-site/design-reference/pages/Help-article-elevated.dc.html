@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cassini.talk Help – Transcribe on your device</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/cassinimicrosite/tokens.css">
+<link rel="stylesheet" href="ds/cassinimicrosite/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+[data-theme="saturn-night"]{color-scheme:dark;--color-base-100:oklch(15% 0.014 255);--color-base-200:oklch(19.5% 0.016 255);--color-base-300:oklch(28% 0.018 255);--color-neutral-content:oklch(15% 0.014 255);--color-info:oklch(28% 0.018 255)}
+.alert.alert-warning{background:color-mix(in oklab,var(--color-warning) 10%,var(--color-base-100));color:var(--color-base-content);border:1px solid color-mix(in oklab,var(--color-warning) 40%,transparent)}
+.alert.alert-warning>svg{color:var(--color-warning)}
+[role="tablist"].tabs{max-width:100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+[role="tablist"].tabs::-webkit-scrollbar{display:none}
+[role="tablist"].tabs .tab{flex:none}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="overflow-hidden flex flex-col bg-base-100 text-base-content" style="height: 100vh">
+<dc-import name="AppsNav" embedded="{{yes}}" theme="{{theme}}" mark="saturn" home-href="Home-elevated.dc.html" help-href="Help-elevated.dc.html" download-href="Download-elevated.dc.html" hint-size="100%,0px"></dc-import>
+<div class="fixed top-[60px] left-0 right-0 h-px bg-base-300 z-40"></div>
+<div class="flex overflow-hidden" style="height: calc(100vh - 61px); margin-top: 61px;">
+<aside class="fixed top-0 left-0 bottom-0 z-[53] w-64 bg-base-100 border-r border-base-300 overflow-y-auto translate-x-[-100%] transition-transform duration-300 md:translate-x-0 md:sticky md:top-[60px] md:h-[calc(100vh-60px)]">
+<nav class="p-4 flex flex-col gap-6">
+<div>
+<p class="text-xs font-semibold uppercase tracking-wider text-base-content/60 mb-2 px-2">Getting started</p>
+<ul class="flex flex-col gap-0.5">
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Install cassini.talk</a></li>
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Make your first recording</a></li>
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Download the speech model</a></li>
+</ul>
+</div>
+<div>
+<p class="text-xs font-semibold uppercase tracking-wider text-base-content/60 mb-2 px-2">Transcription</p>
+<ul class="flex flex-col gap-0.5">
+<li><a href="Help-article-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-primary bg-base-200">Transcribe on your device</a></li>
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Choose the speech language</a></li>
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Stop and keep progress</a></li>
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Transcribe a recording again</a></li>
+</ul>
+</div>
+<div>
+<p class="text-xs font-semibold uppercase tracking-wider text-base-content/60 mb-2 px-2">Speakers and voices</p>
+<ul class="flex flex-col gap-0.5">
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Name a speaker</a></li>
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Save a voice for next time</a></li>
+</ul>
+</div>
+<div>
+<p class="text-xs font-semibold uppercase tracking-wider text-base-content/60 mb-2 px-2">Privacy and storage</p>
+<ul class="flex flex-col gap-0.5">
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">What stays on your device</a></li>
+<li><a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded transition-colors text-base-content hover:bg-base-200">Recently Deleted</a></li>
+</ul>
+</div>
+<div class="border-t border-base-300 pt-4 flex flex-col gap-0.5">
+<a href="Help-elevated.dc.html" class="block px-2 py-1.5 text-sm rounded text-base-content/60 hover:text-base-content hover:bg-base-200 transition-colors">All guides</a>
+<a href="https://format.gocassini.com" target="_blank" rel="noopener noreferrer" class="block px-2 py-1.5 text-sm rounded text-base-content/60 hover:text-base-content hover:bg-base-200 transition-colors">The .opus file format ↗</a>
+<a href="https://gocassini.com/docs" target="_blank" rel="noopener noreferrer" class="block px-2 py-1.5 text-sm rounded text-base-content/60 hover:text-base-content hover:bg-base-200 transition-colors">Cassini for Nextcloud docs ↗</a>
+</div>
+</nav>
+</aside>
+<main class="flex-1 min-w-0 flex flex-col overflow-y-auto">
+<div class="sticky top-0 z-10 flex items-center gap-3 px-5 py-2.5 border-b border-base-300 bg-base-100 md:hidden">
+<button class="flex items-center gap-1.5 min-w-0 text-base-content/60 hover:text-base-content/70 transition-colors cursor-pointer" aria-label="Open the guide list">
+<span class="shrink-0"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 12H3"></path><path d="M17 18H3"></path><path d="M21 6H3"></path></svg></span>
+<span class="flex items-center gap-1.5 text-sm min-w-0"><span class="truncate">Transcription</span><span class="shrink-0">/</span><span class="truncate text-base-content">Transcribe on your device</span></span>
+</button>
+</div>
+<div class="flex flex-1 gap-0">
+<article class="flex-1 min-w-0 px-6 py-8 md:px-10 md:py-10">
+<div class="prose prose-base max-w-none prose-headings:text-base-content prose-p:text-base-content/90 prose-a:text-primary hover:prose-a:text-primary/80 prose-strong:text-base-content prose-code:text-primary prose-code:bg-base-200 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-hr:border-base-300 prose-th:text-base-content prose-td:text-base-content/90">
+<h1>Transcribe on your device</h1>
+<p class="text-sm text-base-content/60">Updated 2 Nov 2026 · cassini.talk 0.1.0 for iPhone and iPad</p>
+<div role="tablist" aria-label="Platform" class="tabs tabs-box not-prose mb-8">
+<sc-for list="{{platforms}}" as="p" hint-placeholder-count="5">
+<button type="button" role="tab" class="{{p.cls}}" aria-selected="{{p.selected}}" onClick="{{p.pick}}">{{p.label}}</button>
+</sc-for>
+</div>
+<p>cassini.talk writes a recording down on the device that made it. The speech model runs on your iPhone or iPad, so transcription works without a network and nothing is sent anywhere.</p>
+<h2 id="before-you-start">Before you start</h2>
+<p>The first transcription needs the speech model, and cassini.talk asks before it downloads anything.</p>
+<ul>
+<li>Parakeet Ultra, its speech detector and the speaker models are a one-time download of about 531 MB from Cassini’s model host, <code>dist.gocassini.com</code>.</li>
+<li>On a device without the memory for Parakeet Ultra, cassini.talk uses Apple Speech instead, after a download for the language you choose.</li>
+</ul>
+<div role="alert" class="alert alert-warning not-prose mb-8 items-start">
+<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 mt-0.5" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+<p class="m-0"><strong>Use Wi-Fi for the first download.</strong> The model is about 531 MB. You can cancel it in Settings › On-device models and start it again later.</p>
+</div>
+<h2 id="transcribe-a-recording">Transcribe a recording</h2>
+<ol>
+<li>Finish the recording. With <strong>Transcribe after recording or import</strong> turned on in Settings › Transcription, cassini.talk starts straight away.</li>
+<li>Otherwise, open the note and tap <strong>Transcribe</strong>.</li>
+<li>Watch the progress card: it shows each stage, the percent, the time left and the words so far.</li>
+</ol>
+<p>Transcription carries on in the background. A notification tells you when the note is done, or if iOS paused it.</p>
+<h2 id="stop-and-keep-progress">Stop and keep progress</h2>
+<p>Progress is saved every 30 seconds of audio. Tap <strong>Stop and keep progress</strong> to pause a long transcription. It resumes from the last checkpoint, as it does after a crash or when iOS takes the background time back.</p>
+<h2 id="change-the-speech-language">Change the speech language</h2>
+<p>On a device that uses Apple Speech, choose the language in <strong>Settings › Transcription › Speech language</strong>. A new language applies to the next transcription. Parakeet Ultra needs no setting: it recognises its 25 languages by itself.</p>
+<h2 id="if-something-goes-wrong">If something goes wrong</h2>
+<table>
+<thead>
+<tr><th>You see</th><th>What to do</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>All words shown as one voice</strong></td><td>Speakers couldn’t be told apart in this recording. Check that <strong>Identify speakers after transcription</strong> is on, then tap <strong>Transcribe again</strong>.</td></tr>
+<tr><td><strong>Telling speakers apart: Not available</strong></td><td>The speaker models aren’t on this device yet. Download them in Settings › On-device models.</td></tr>
+<tr><td>A notification says iOS paused the note</td><td>Open cassini.talk. It picks up from the last checkpoint.</td></tr>
+</tbody>
+</table>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="Help-elevated.dc.html">Name a speaker</a>: give a voice a name across a whole note.</li>
+<li><a href="Help-elevated.dc.html">What stays on your device</a>: what cassini.talk stores, and what it never uploads.</li>
+</ul>
+</div>
+<nav class="flex items-center justify-between gap-4 mt-16 pt-6 border-t border-base-300">
+<a href="Help-elevated.dc.html" class="group flex items-center gap-2 p-3 rounded-lg hover:bg-base-300/30 transition-colors">
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0 text-base-content/60"><path d="m15 18-6-6 6-6"></path></svg>
+<span class="flex flex-col gap-0.5 text-sm"><span class="text-base-content/60 text-xs uppercase tracking-wider">Previous</span><span class="text-base-content group-hover:text-primary transition-colors">Download the speech model</span></span>
+</a>
+<a href="Help-elevated.dc.html" class="group flex items-center gap-2 p-3 rounded-lg hover:bg-base-300/30 transition-colors">
+<span class="flex flex-col gap-0.5 text-sm text-right"><span class="text-base-content/60 text-xs uppercase tracking-wider">Next</span><span class="text-base-content group-hover:text-primary transition-colors">Choose the speech language</span></span>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0 text-base-content/60"><path d="m9 18 6-6-6-6"></path></svg>
+</a>
+</nav>
+</article>
+<aside class="hidden lg:block w-56 xl:w-72 shrink-0 pb-8 pr-6 pt-0">
+<div class="sticky top-10">
+<p class="text-xs font-semibold uppercase tracking-wider text-base-content/60 mb-3">Contents</p>
+<nav>
+<ul class="flex flex-col gap-1">
+<li><a href="#before-you-start" class="text-sm text-base-content/60 hover:text-primary transition-colors leading-snug block py-0.5">Before you start</a></li>
+<li><a href="#transcribe-a-recording" class="text-sm text-base-content/60 hover:text-primary transition-colors leading-snug block py-0.5">Transcribe a recording</a></li>
+<li><a href="#stop-and-keep-progress" class="text-sm text-base-content/60 hover:text-primary transition-colors leading-snug block py-0.5">Stop and keep progress</a></li>
+<li><a href="#change-the-speech-language" class="text-sm text-base-content/60 hover:text-primary transition-colors leading-snug block py-0.5">Change the speech language</a></li>
+<li><a href="#if-something-goes-wrong" class="text-sm text-base-content/60 hover:text-primary transition-colors leading-snug block py-0.5">If something goes wrong</a></li>
+<li><a href="#related" class="text-sm text-base-content/60 hover:text-primary transition-colors leading-snug block py-0.5">Related</a></li>
+</ul>
+</nav>
+</div>
+</aside>
+</div>
+<dc-import name="AppsFooter" theme="{{theme}}" download-href="Download-elevated.dc.html" help-href="Help-elevated.dc.html" privacy-href="Help-article-elevated.dc.html" hint-size="100%,130px"></dc-import>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["saturn-night","saturn-dark"],"default":"saturn-night"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { platform: 'ios' };
+  }
+  renderVals() {
+    const list = [
+      { id: 'ios', label: 'iPhone and iPad' },
+      { id: 'android', label: 'Android' },
+      { id: 'mac', label: 'Mac' },
+      { id: 'windows', label: 'Windows' },
+      { id: 'linux', label: 'Linux' }
+    ];
+    const current = this.state.platform;
+    return {
+      yes: true,
+      theme: this.props.theme ?? 'saturn-night',
+      platforms: list.map((p) => ({
+        label: p.label,
+        selected: p.id === current ? 'true' : 'false',
+        cls: p.id === current ? 'tab tab-active' : 'tab',
+        pick: () => this.setState({ platform: p.id })
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

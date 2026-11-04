@@ -1,0 +1,1073 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cassini.talk – Home, elevated</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/cassinimicrosite/tokens.css">
+<link rel="stylesheet" href="ds/cassinimicrosite/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+[data-theme="saturn-night"]{color-scheme:dark;--color-base-100:oklch(15% 0.014 255);--color-base-200:oklch(19.5% 0.016 255);--color-base-300:oklch(28% 0.018 255);--color-neutral-content:oklch(15% 0.014 255);--color-info:oklch(28% 0.018 255)}
+@keyframes mark-ring{from{outline-offset:0;outline-color:color-mix(in oklab,var(--color-base-content) 70%,transparent)}to{outline-offset:12px;outline-color:color-mix(in oklab,var(--color-base-content) 0%,transparent)}}
+@keyframes pin-ring{from{outline-offset:0;outline-color:color-mix(in oklab,var(--color-base-content) 80%,transparent)}to{outline-offset:9px;outline-color:color-mix(in oklab,var(--color-base-content) 0%,transparent)}}
+.facts{display:grid;grid-template-columns:1fr}
+.fact{display:flex;align-items:flex-start;gap:14px;padding:20px 0}
+.fact+.fact{border-top:1px solid var(--color-base-300)}
+.fact:first-child{padding-top:0}.fact:last-child{padding-bottom:0}
+@media (min-width:40rem){.facts{grid-template-columns:repeat(3,1fr);margin-top:24px}.fact{flex-direction:column;align-items:center;gap:16px;padding:0 24px;text-align:center}.fact svg{width:32px;height:32px;margin-top:0!important;stroke-width:1.5}.fact p{text-wrap:balance}.fact+.fact{border-top:0;border-left:1px solid var(--color-base-300)}}
+[data-theme] main>section.lang-band{padding-top:96px;padding-bottom:70px}
+@media (max-width:47.98rem){[data-theme] main>section{padding-top:32px;padding-bottom:32px}[data-theme] main>section:first-child{padding-top:96px}[data-theme] main>section.bg-base-200{padding-top:64px;padding-bottom:64px}[data-theme] main>section.bg-base-200+section{padding-top:64px}[data-theme] main>section:has(+section.bg-base-200){padding-bottom:56px}[data-theme] main>section.lang-band{padding-top:52px;padding-bottom:34px}[data-theme] main>section.gap-10,[data-theme] main>section>.gap-10{gap:32px}.nums>div{padding-top:24px;padding-bottom:24px}}
+.lang-stage{position:relative;width:100%;height:var(--stage-h);perspective:var(--persp);overflow:hidden;--R:clamp(330px,34vw,440px);--persp:1300px;--edge:12%;--stage-h:168px;--cy:44px;--label-dy:calc(var(--R) * 0.05);--tilt:13deg;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--edge),#000 calc(100% - var(--edge)),transparent),linear-gradient(to bottom,transparent,#000 28px);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent,#000 var(--edge),#000 calc(100% - var(--edge)),transparent),linear-gradient(to bottom,transparent,#000 28px);mask-composite:intersect}
+.lang-tilt{position:absolute;left:50%;top:var(--cy);transform-style:preserve-3d;transform:translateZ(calc(var(--R) * -0.96)) rotateX(calc(var(--tilt) * -1))}
+.lang-spin,.lang-item,.lang-turn,.lang-counter{position:absolute;left:0;top:0;transform-style:preserve-3d}
+.lang-spin{animation:lang-spin 55s linear infinite}
+.lang-counter{animation:lang-counter 55s linear infinite}
+.lang-word{position:absolute;left:0;top:0;white-space:nowrap;font-weight:600;font-size:clamp(1.0625rem,1.5vw,1.25rem);line-height:1.2;padding:0.15em 0.55em;border-radius:9999px;transform:rotateX(var(--tilt)) translate(-50%,-50%);animation:lang-depth-q 55s linear infinite,lang-front 55s linear infinite}
+.lang-name{position:absolute;inset:0;animation:lang-label 55s linear infinite}
+.lang-eq{display:block;width:3px;height:12px;border-radius:9999px;background:var(--color-primary);transform-origin:50% 50%;animation:lang-eq 1.1s ease-in-out infinite}
+@keyframes lang-spin{to{transform:rotateY(-360deg)}}
+@keyframes lang-counter{to{transform:rotateY(360deg)}}
+@keyframes lang-eq{0%,100%{transform:translateZ(0) scaleY(0.35)}50%{transform:translateZ(0) scaleY(1)}}
+@keyframes lang-depth-q{0%{opacity:1.000}2.5%{opacity:0.970}5%{opacity:0.886}7.5%{opacity:0.761}10%{opacity:0.613}12.5%{opacity:0.464}15%{opacity:0.329}17.5%{opacity:0.219}20%{opacity:0.138}22.5%{opacity:0.083}25%{opacity:0.051}27.5%{opacity:0.033}30%{opacity:0.025}32.5%{opacity:0.021}35%{opacity:0.020}37.5%{opacity:0.020}40%{opacity:0.020}42.5%{opacity:0.020}45%{opacity:0.020}47.5%{opacity:0.020}50%{opacity:0.020}52.5%{opacity:0.020}55%{opacity:0.020}57.5%{opacity:0.020}60%{opacity:0.020}62.5%{opacity:0.020}65%{opacity:0.020}67.5%{opacity:0.021}70%{opacity:0.025}72.5%{opacity:0.033}75%{opacity:0.051}77.5%{opacity:0.083}80%{opacity:0.138}82.5%{opacity:0.219}85%{opacity:0.329}87.5%{opacity:0.464}90%{opacity:0.613}92.5%{opacity:0.761}95%{opacity:0.886}97.5%{opacity:0.970}100%{opacity:1.000}}
+@keyframes lang-front{0%,1.2%,98.8%,100%{color:var(--color-primary-content);background-color:var(--color-primary)}2.8%,97.2%{color:var(--color-base-content);background-color:color-mix(in oklab,var(--color-primary) 0%,transparent)}}
+@keyframes lang-label{0%,100%{opacity:1;transform:translateZ(0) translateY(0);filter:blur(0)}1.3%{opacity:1;transform:translateZ(0) translateY(0);filter:blur(0);animation-timing-function:cubic-bezier(0.4,0,1,1)}2.4%{opacity:0;transform:translateZ(0) translateY(-10px);filter:blur(4px)}97.6%{opacity:0;transform:translateZ(0) translateY(10px);filter:blur(4px);animation-timing-function:cubic-bezier(0.32,0.72,0,1)}98.9%{opacity:1;transform:translateZ(0) translateY(0);filter:blur(0)}}
+@media (min-width:48rem) and (max-width:79.98rem){.lang-stage{--stage-h:190px;--cy:48px;--tilt:16deg}.lang-word{font-size:1rem}}
+@media (max-width:47.98rem){.lang-stage{--stage-h:154px;--cy:40px;--tilt:22deg;--R:252px;--persp:820px;--edge:7%;width:calc(100% + 40px);margin:0 -20px}.lang-word{font-size:0.8125rem;padding:0.15em 0.45em}}
+.plats{display:flex;flex-wrap:wrap;justify-content:center;gap:16px}
+.plats>a{flex:0 0 calc((100% - 64px) / 5)}
+@media (max-width:63.98rem){.plats>a{flex-basis:calc((100% - 32px) / 3)}}
+@media (max-width:39.98rem){.plats>a{flex-basis:calc((100% - 16px) / 2)}}
+.file-split{display:grid;gap:40px;align-items:center}
+.file-copy{align-items:center;text-align:center}
+@media (min-width:64rem){.file-split{grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:64px}.file-copy{align-items:flex-start;text-align:left}.file-split .file-copy h2{font-size:clamp(2.25rem,3.4vw,3rem)}}
+.ft-line{height:46px}
+@media (min-width:40rem) and (max-width:63.98rem),(min-width:80rem){.ft-line{height:24px}}
+.lead{display:grid;grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "cta" "steps" "demo";justify-items:center;text-align:center;padding-top:128px;padding-bottom:64px}
+.lead-head{grid-area:head}
+.lead-side{display:contents}
+.lead-cta{grid-area:cta;display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:32px}
+.lead-steps{grid-area:steps;width:100%;max-width:56rem;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:56px;margin-bottom:16px}
+.lead-step{display:flex;flex-direction:column;align-items:flex-start;gap:10px;font-size:0.875rem;font-weight:500;line-height:1.25;text-align:left;cursor:pointer}
+.lead-step[aria-selected="false"]:hover{color:color-mix(in oklab,var(--color-base-content) 75%,transparent)!important}
+.lead-track{position:relative;display:block;width:100%;height:2px;border-radius:9999px;background:var(--color-base-300);overflow:hidden}
+.lead-fill{position:absolute;inset:0;border-radius:inherit;background:var(--color-primary);transform-origin:left center;transform:translateZ(0) scaleX(var(--p))}
+.lead-long{display:none}
+.lead-demo{grid-area:demo;width:100%;max-width:56rem}
+.lead-card{height:340px}
+@media (min-width:64rem){
+.lead{grid-template-columns:minmax(0,5fr) minmax(0,7fr);grid-template-areas:"head head" "side demo";column-gap:64px;justify-items:stretch;text-align:left;padding-top:120px;padding-bottom:64px}
+.lead-head{margin-bottom:56px}
+.lead-side{grid-area:side;display:flex;flex-direction:column;justify-content:space-between;gap:40px}
+.lead-steps{display:flex;flex-direction:column;gap:4px;margin:0;max-width:none}
+.lead-step{flex-direction:row;align-items:stretch;gap:24px;font-size:clamp(1.25rem,1.9vw,1.75rem);letter-spacing:-0.01em}
+.lead-track{width:2px;height:auto;flex:none}
+.lead-fill{transform-origin:center top;transform:translateZ(0) scaleY(var(--p))}
+.lead-long{display:block;padding:14px 0}.lead-short{display:none}
+.lead-cta{align-items:flex-start;margin-top:0}
+.lead-demo{max-width:none}
+.lead-card{height:420px}
+}
+.cta-band{padding-top:96px;padding-bottom:96px}
+@media (max-width:47.98rem){[data-theme] main>section.faq-sec.faq-sec{padding-bottom:40px}[data-theme] main>section.cta-band.cta-band{padding-top:48px;padding-bottom:48px}}
+.ft-tick{position:absolute;left:-21px;top:26px;width:20px;height:1px;background:var(--color-base-300)}
+@keyframes click-ring-accent{from{outline-offset:0;outline-color:color-mix(in oklab,var(--color-accent) 75%,transparent)}to{outline-offset:16px;outline-color:color-mix(in oklab,var(--color-accent) 0%,transparent)}}
+@keyframes click-ring{from{outline-offset:0;outline-color:color-mix(in oklab,var(--color-primary) 75%,transparent)}to{outline-offset:16px;outline-color:color-mix(in oklab,var(--color-primary) 0%,transparent)}}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="bg-base-100 text-base-content min-h-screen flex flex-col">
+<dc-import name="AppsNav" embedded="{{yes}}" theme="{{theme}}" mark="saturn" home-href="Home-elevated.dc.html" help-href="Help-elevated.dc.html" download-href="Download-elevated.dc.html" hint-size="100%,0px"></dc-import>
+<main class="flex flex-col">
+
+<section class="lead w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20">
+<h1 class="lead-head font-bold text-base-content whitespace-nowrap" style="font-size: clamp(1.75rem, 7.6vw, 6.25rem); line-height: 0.95; letter-spacing: -0.035em">Every word written down.<br><span class="text-base-content/40">None of it uploaded.</span></h1>
+<div class="lead-side">
+<div class="lead-steps" role="tablist" aria-label="How cassini.talk works">
+<sc-for list="{{steps}}" as="st" hint-placeholder-count="3">
+<button type="button" role="tab" aria-selected="{{st.selected}}" class="lead-step" style="color: {{st.c}}; transition: color 0.4s ease" onClick="{{st.pick}}"><span class="lead-track" aria-hidden="true"><span class="lead-fill" style="--p: {{st.p}}; opacity: {{st.o}}; transition: {{st.t}}"></span></span><span class="lead-long">{{st.long}}</span><span class="lead-short">{{st.label}}</span></button>
+</sc-for>
+</div>
+<div class="lead-cta">
+<a href="Download-elevated.dc.html" class="btn btn-primary btn-lg">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path></svg>
+Download
+</a>
+<p class="text-sm text-base-content/60" style="max-width: 22rem">Free and open source, for iPhone and iPad, Android, Mac, Windows and Linux.</p>
+</div>
+</div>
+<div class="lead-demo">
+<div class="lead-card w-full rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col shadow-2xl text-left">
+<div class="relative flex-1 min-h-0 mx-auto w-full" style="max-width: 44rem">
+<div class="absolute inset-0 flex flex-col items-center justify-center gap-6" style="opacity: {{hero.s1.o}}; transform: {{hero.s1.tf}}; filter: {{hero.s1.fl}}; pointer-events: {{hero.s1.pe}}; transition: opacity 0.75s cubic-bezier(0.32, 0.72, 0, 1), transform 0.6s cubic-bezier(0.32, 0.72, 0, 1), filter 0.75s cubic-bezier(0.32, 0.72, 0, 1)">
+<div class="relative w-full flex items-center justify-center" style="height: 80px">
+<div class="absolute inset-0 flex items-center justify-center gap-1" aria-hidden="true">
+<sc-for list="{{hero.bars}}" as="b" hint-placeholder-count="44">
+<span class="bg-primary rounded-full" style="width: 4px; height: {{b.h}}px; opacity: {{b.o}}; transition: height 0.2s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.3s ease"></span>
+</sc-for>
+</div>
+<span class="relative inline-flex" style="opacity: {{hero.btn.o}}; transform: {{hero.btn.tf}}; pointer-events: {{hero.btn.pe}}; transition: opacity 0.35s ease, transform {{hero.btn.td}}">
+<button type="button" class="btn btn-primary btn-lg rounded-full" style="--btn-color: {{hero.btn.bg}}; transition: background-color {{hero.btn.bd}}s ease-out, border-color {{hero.btn.bd}}s ease-out" onClick="{{hero.btn.start}}">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19v3"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><rect x="9" y="2" width="6" height="13" rx="3"></rect></svg>
+Record
+</button>
+<span class="absolute inset-0 rounded-full" aria-hidden="true" style="pointer-events: none; transform: translateZ(0); outline: 2px solid transparent; animation: {{hero.btn.ring}}"></span>
+</span>
+</div>
+<p class="text-5xl font-bold tabular-nums" style="color: {{hero.timer.c}}; opacity: {{hero.timer.o}}; transform: {{hero.timer.tf}}; transition: color 0.4s ease, opacity 0.45s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1)">{{hero.timer.text}}</p>
+</div>
+<div class="absolute inset-0 flex flex-col items-center justify-center gap-4" style="opacity: {{hero.s2.o}}; transform: {{hero.s2.tf}}; filter: {{hero.s2.fl}}; pointer-events: {{hero.s2.pe}}; transition: opacity 0.45s cubic-bezier(0.32, 0.72, 0, 1), transform 0.6s cubic-bezier(0.32, 0.72, 0, 1), filter 0.45s cubic-bezier(0.32, 0.72, 0, 1)">
+<div class="relative w-full flex items-center justify-center" style="height: 40px">
+<p class="absolute text-sm font-bold text-primary" style="opacity: {{hero.label.o}}; transform: {{hero.label.tf}}; transition: opacity 0.3s ease, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1)">Silvio <span class="font-normal text-base-content/60 tabular-nums">{{hero.label.time}}</span></p>
+<div class="absolute inline-flex items-center gap-2 rounded-full border border-base-300 bg-base-100 px-4 py-2 text-sm text-base-content" style="width: 260px; justify-content: flex-start; opacity: {{hero.pill.o}}; transform: {{hero.pill.tf}}; filter: {{hero.pill.fl}}; transition: opacity 0.4s ease, transform 0.55s cubic-bezier(0.32, 0.72, 0, 1), filter 0.4s cubic-bezier(0.32, 0.72, 0, 1)">
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content/60"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+<span class="whitespace-nowrap">{{hero.pill.query}}<span aria-hidden="true" style="margin-left: 1px; opacity: {{hero.pill.caret}}">▋</span></span>
+</div>
+</div>
+<p class="text-2xl md:text-4xl font-medium leading-tight text-base-content text-center flex flex-wrap justify-center items-baseline" style="column-gap: 0.1em">
+<sc-for list="{{hero.words}}" as="w" hint-placeholder-count="12">
+<span class="relative" style="display: inline-block; padding: 0 0.08em; opacity: {{w.o}}; transform: {{w.tf}}; filter: {{w.fl}}; transition: opacity {{w.od}}s ease {{w.dl}}s, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1) {{w.dl}}s, filter 0.4s cubic-bezier(0.32, 0.72, 0, 1) {{w.dl}}s"><span class="absolute inset-0 rounded-sm" style="background: var(--color-primary); clip-path: {{w.clip}}; transition: {{w.ct}}"></span><span class="relative" style="color: {{w.c}}; transition: color 0.5s ease">{{w.text}}</span><span class="absolute inset-0" aria-hidden="true" style="padding: 0 0.08em; color: var(--color-primary-content); clip-path: {{w.clip}}; transition: {{w.ct}}">{{w.text}}</span></span>
+</sc-for>
+</p>
+<div class="relative w-full flex items-center justify-center" style="height: 34px">
+<span class="inline-flex items-center gap-2 rounded-full bg-primary/10 text-primary px-3 py-1.5 text-sm font-medium" style="opacity: {{hero.chip.o}}; transform: {{hero.chip.tf}}; filter: {{hero.chip.fl}}; transition: opacity 0.6s cubic-bezier(0.32, 0.72, 0, 1), transform 0.7s cubic-bezier(0.32, 0.72, 0, 1), filter 0.6s cubic-bezier(0.32, 0.72, 0, 1)">
+<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
+Play from {{hero.chip.at}} · Silvio
+</span>
+</div>
+</div>
+<span class="absolute" aria-hidden="true" style="left: 50%; top: 50%; z-index: 10; pointer-events: none; transform: translate3d({{hero.cursor.x}}px, {{hero.cursor.y}}px, 0); transition: transform {{hero.cursor.dur}}s cubic-bezier(0.32, 0.72, 0, 1)">
+<span style="display: block; transform-origin: 8px 5px; opacity: {{hero.cursor.o}}; transform: translateZ(0) scale({{hero.cursor.s}}); filter: drop-shadow({{hero.cursor.sh}}); transition: opacity 0.3s ease, transform {{hero.cursor.sd}}, filter {{hero.cursor.sd}}">
+<svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 7.2-6.3 1.7L9.6 18z" style="fill: var(--color-base-content); stroke: var(--color-base-200); stroke-width: 1.2; stroke-linejoin: round"></path></svg>
+</span>
+</span>
+</div>
+</div>
+</div>
+</section>
+
+<section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pt-16 pb-16">
+<div class="nums grid rounded-2xl border border-base-300 bg-base-300 overflow-hidden" style="grid-template-columns: repeat(auto-fit, minmax(clamp(calc((100% - 4px) / 4), calc((1000px - 100%) * 999), clamp(calc((100% - 2px) / 2), calc((500px - 100%) * 999), 100%)), 1fr)); gap: 1px">
+<div class="flex flex-col py-8 px-6 bg-base-100">
+<p class="font-bold tabular-nums text-base-content" style="font-size: 4rem; line-height: 1">25</p>
+<p class="text-sm text-base-content/60 mt-3">European languages, recognised on the device by default</p>
+<div class="flex-1"></div>
+<div class="pt-6"><div class="relative overflow-hidden" style="height: 24px">
+<sc-for list="{{nums.greets}}" as="g" hint-placeholder-count="25">
+<span class="absolute left-0 top-0 flex items-center gap-2 text-sm whitespace-nowrap" style="height: 24px; opacity: {{g.o}}; transform: {{g.tf}}; transition: opacity 0.45s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1)"><span class="font-medium text-primary">{{g.word}}</span><span class="text-base-content/60">{{g.name}}</span></span>
+</sc-for>
+</div></div>
+</div>
+<div class="flex flex-col py-8 px-6 bg-base-100">
+<p class="font-bold tabular-nums text-base-content" style="font-size: 4rem; line-height: 1">5</p>
+<p class="text-sm text-base-content/60 mt-3">Available on iPhone and iPad, Android, Mac, Windows, Linux</p>
+<div class="flex-1"></div>
+<div class="pt-6"><div class="relative overflow-hidden" style="height: 24px">
+<span class="flex items-center gap-3" style="height: 24px">
+<span class="inline-flex" style="color: {{nums.plats.p0.c}}; transform: {{nums.plats.p0.tf}}; transition: color 0.4s ease, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"></path></svg></span>
+<span class="inline-flex" style="color: {{nums.plats.p1.c}}; transform: {{nums.plats.p1.tf}}; transition: color 0.4s ease, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-.9997s.4483-.9993.9993-.9993c.5511 0 .9993.4483.9993.9993.0001.5511-.4482.9997-.9993.9997m-11.046 0c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9993.4483.9993.9993 0 .5511-.4483.9997-.9993.9997m11.4045-6.02l1.9973-3.4592a.416.416 0 00-.1521-.5676.416.416 0 00-.5676.1521l-2.0223 3.503C15.5902 8.2439 13.8533 7.8508 12 7.8508s-3.5902.3931-5.1367 1.0989L4.841 5.4467a.4161.4161 0 00-.5677-.1521.4157.4157 0 00-.1521.5676l1.9973 3.4592C2.6889 11.1867.3432 14.6589 0 18.761h24c-.3435-4.1021-2.6892-7.5743-6.1185-9.4396"></path></svg></span>
+<span class="inline-flex" style="color: {{nums.plats.p2.c}}; transform: {{nums.plats.p2.tf}}; transition: color 0.4s ease, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"></path></svg></span>
+<span class="inline-flex" style="color: {{nums.plats.p3.c}}; transform: {{nums.plats.p3.tf}}; transition: color 0.4s ease, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1); margin: 1px"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0,0H11.377V11.372H0ZM12.623,0H24V11.372H12.623ZM0,12.623H11.377V24H0Zm12.623,0H24V24H12.623"></path></svg></span>
+<span class="inline-flex" style="color: {{nums.plats.p4.c}}; transform: {{nums.plats.p4.tf}}; transition: color 0.4s ease, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"></path></svg></span>
+</span>
+</div></div>
+</div>
+<div class="flex flex-col py-8 px-6 bg-base-100">
+<p class="font-bold tabular-nums text-base-content" style="font-size: 4rem; line-height: 1">1</p>
+<p class="text-sm text-base-content/60 mt-3">File per recording, with the transcript inside</p>
+<div class="flex-1"></div>
+<div class="pt-6"><div class="relative overflow-hidden" style="height: 24px">
+<span class="absolute left-0 top-0 flex items-center" style="height: 24px; gap: 3px; opacity: {{nums.one.waveO}}; transform: {{nums.one.waveTf}}; transition: opacity 0.4s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1)" aria-hidden="true">
+<sc-for list="{{nums.one.bars}}" as="b" hint-placeholder-count="12">
+<span class="rounded-full bg-primary" style="width: 3px; height: {{b.h}}px; transition: height 0.15s ease"></span>
+</sc-for>
+</span>
+<span class="absolute left-0 top-0 flex items-center gap-2 text-xs font-mono whitespace-nowrap" style="height: 24px; opacity: {{nums.one.fileO}}; transform: {{nums.one.fileTf}}; transition: opacity 0.45s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1)"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg><span class="text-base-content">weekly-planning-call.opus</span></span>
+</div></div>
+</div>
+<div class="flex flex-col py-8 px-6 bg-base-100">
+<p class="font-bold tabular-nums text-base-content" style="font-size: 4rem; line-height: 1">0</p>
+<p class="text-sm text-base-content/60 mt-3">Your audio, transcripts and saved voices stay on your device.</p>
+<div class="flex-1"></div>
+<div class="pt-6"><div class="relative overflow-hidden" style="height: 24px"><span class="flex items-center gap-2 text-sm whitespace-nowrap" style="height: 24px"><span class="size-1.5 rounded-full bg-primary" style="opacity: {{nums.zero.dot}}; transition: opacity 0.4s ease"></span><span class="tabular-nums text-base-content">{{nums.zero.time}}</span><span class="text-base-content/60">recorded</span><span class="text-base-content/40">·</span><span class="tabular-nums text-primary font-medium">0 MB</span><span class="text-base-content/60">sent</span></span>
+</div></div>
+</div>
+</div>
+</section>
+
+<section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pt-16 pb-32 flex flex-col gap-10">
+<div class="flex flex-col gap-3 text-center items-center">
+<h2 class="text-4xl md:text-5xl font-bold text-base-content">Everything after you press Record</h2>
+<p class="text-lg text-base-content/60" style="max-width: 36rem">Speakers told apart, every word searchable, and nothing to set up.</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+<div class="md:col-span-2 rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6" style="min-height: 320px">
+<div>
+<h3 class="text-xl font-bold text-base-content">Find what was said</h3>
+<p class="text-base text-base-content/60">Titles, transcripts and bookmarks, across every recording.</p>
+</div>
+<div class="flex-1 flex flex-col justify-center gap-5">
+<label class="input w-full" style="height: 3.25rem">
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content/60"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+<span class="relative grow flex items-center" style="height: 100%">
+<input type="search" class="grow" value="{{search.value}}" placeholder="{{search.ph}}" onChange="{{search.onChange}}" onFocus="{{search.onFocus}}" onBlur="{{search.onBlur}}" aria-label="Search what was said">
+<span class="absolute left-0 top-0 bottom-0 flex items-center" aria-hidden="true" style="pointer-events: none; white-space: pre; transform: translateZ(0); opacity: {{search.demo}}; transition: opacity 0.2s ease"><span class="rounded-sm" style="background-color: {{search.sel}}; transition: background-color 0.18s ease">{{search.typed}}</span><span class="rounded-full bg-primary" style="width: 2px; height: 1.2em; margin-left: {{search.cm}}px; opacity: {{search.caret}}; transition: opacity 0.12s ease"></span></span>
+</span>
+</label>
+<div class="relative" style="height: 96px">
+<sc-for list="{{search.rows}}" as="r" hint-placeholder-count="2">
+<div class="absolute left-0 right-0 flex items-start gap-3" style="top: {{r.top}}px; opacity: {{r.o}}; transform: {{r.tf}}; filter: {{r.fl}}; transition: opacity 0.4s ease {{r.dl}}s, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1) {{r.dl}}s, filter 0.4s cubic-bezier(0.32, 0.72, 0, 1) {{r.dl}}s">
+<span class="inline-flex shrink-0 items-center justify-center rounded-lg border border-base-300 bg-base-100" style="width: 32px; height: 32px; margin-top: 4px">
+<sc-if value="{{r.isMark}}" hint-placeholder-val="{{false}}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--color-base-content)"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"></path></svg></sc-if>
+<sc-if value="{{r.isText}}" hint-placeholder-val="{{true}}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content/60"><path d="M2 10v3"></path><path d="M6 6v11"></path><path d="M10 3v18"></path><path d="M14 8v7"></path><path d="M18 5v13"></path><path d="M22 10v3"></path></svg></sc-if>
+</span>
+<div class="min-w-0 flex-1">
+<p class="text-xs text-base-content/60 truncate">{{r.title}}</p>
+<p class="flex text-base text-base-content/80" style="margin-top: 2px"><span class="flex justify-end overflow-hidden" style="flex: 0 1 auto; min-width: 0; white-space: pre; -webkit-mask-image: {{r.fade}}; mask-image: {{r.fade}}">{{r.before}}</span><span class="relative shrink-0" style="white-space: pre; color: {{r.mc}}; transition: color 0.45s ease {{r.hd}}s"><span class="absolute rounded-sm" aria-hidden="true" style="top: -1px; bottom: -1px; left: -2px; right: -2px; background: color-mix(in oklab, var(--color-primary) 16%, transparent); clip-path: {{r.clip}}; transition: {{r.ct}}"></span><span class="relative">{{r.match}}</span></span><span class="truncate" style="flex: 1 1 0; min-width: 0; white-space: pre">{{r.after}}</span></p>
+</div>
+</div>
+</sc-for>
+<p class="absolute left-0 top-0 text-base text-base-content/60" style="transform: translateZ(0); opacity: {{search.missO}}; transition: opacity 0.3s ease">{{search.missText}}</p>
+</div>
+</div>
+</div>
+
+<div class="rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6" style="min-height: 320px; overflow: clip">
+<div>
+<h3 class="text-xl font-bold text-base-content">Put a name to every voice</h3>
+<p class="text-base text-base-content/60">Name someone once. Later recordings automatically suggest them.</p>
+</div>
+<div class="flex-1 flex flex-col justify-center gap-3">
+<div class="flex items-center gap-2" style="height: 28px">
+<span class="relative inline-flex text-sm font-bold whitespace-nowrap">
+<span style="position: {{voice.apos}}; left: 0; top: 0; color: color-mix(in oklab, var(--color-base-content) 60%, transparent); opacity: {{voice.a.o}}; transform: {{voice.a.tf}}; filter: {{voice.a.fl}}; transition: opacity 0.35s ease, transform 0.55s cubic-bezier(0.32, 0.72, 0, 1), filter 0.35s cubic-bezier(0.32, 0.72, 0, 1)">Speaker 2</span>
+<span style="position: {{voice.bpos}}; left: 0; top: 0; color: {{voice.bc}}; opacity: {{voice.b.o}}; transform: {{voice.b.tf}}; filter: {{voice.b.fl}}; transition: color 0.4s ease, opacity 0.35s ease, transform 0.55s cubic-bezier(0.32, 0.72, 0, 1), filter 0.35s cubic-bezier(0.32, 0.72, 0, 1)">Chris<span style="opacity: {{voice.q}}; transition: opacity 0.25s ease">?</span></span>
+</span>
+<span class="relative grid items-center">
+<span class="relative inline-flex" style="grid-area: 1 / 1; opacity: {{voice.ok.o}}; transform: {{voice.ok.tf}}; filter: {{voice.ok.fl}}; transition: opacity 0.35s ease, transform {{voice.ok.td}}, filter 0.35s cubic-bezier(0.32, 0.72, 0, 1)">
+<span class="inline-flex items-center rounded-md text-xs font-semibold whitespace-nowrap" style="height: 26px; padding: 0 10px; color: var(--color-accent-content); background-color: {{voice.ok.bg}}; transition: background-color {{voice.ok.bd}}s ease-out">Confirm</span>
+</span>
+<span class="rounded-md" aria-hidden="true" style="grid-area: 1 / 1; align-self: stretch; pointer-events: none; transform: translateZ(0); outline: 2px solid transparent; animation: {{voice.ok.ring}}"></span>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--color-accent); grid-area: 1 / 1; margin-left: -4px; transform: translateZ(0); opacity: {{voice.ck.o}}; transition: opacity 0.2s ease"><path d="M20 6 9 17l-5-5" style="stroke-dasharray: 24; stroke-dashoffset: {{voice.ck.d}}; transition: {{voice.ck.t}}"></path></svg>
+<span class="absolute" aria-hidden="true" style="left: 50%; top: 50%; z-index: 10; pointer-events: none; transform: translate3d({{voice.cur.x}}px, {{voice.cur.y}}px, 0); transition: transform {{voice.cur.dur}}s cubic-bezier(0.32, 0.72, 0, 1)">
+<span style="display: block; transform-origin: 8px 5px; opacity: {{voice.cur.o}}; transform: translateZ(0) scale({{voice.cur.s}}); filter: drop-shadow({{voice.cur.sh}}); transition: opacity 0.3s ease, transform {{voice.cur.sd}}, filter {{voice.cur.sd}}">
+<svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 7.2-6.3 1.7L9.6 18z" style="fill: var(--color-base-content); stroke: var(--color-base-200); stroke-width: 1.2; stroke-linejoin: round"></path></svg>
+</span>
+</span>
+</span>
+<span class="flex items-center ml-auto" style="gap: 2px; height: 16px" aria-hidden="true">
+<sc-for list="{{voice.eq}}" as="e" hint-placeholder-count="4">
+<span class="rounded-full" style="width: 3px; height: {{e.h}}px; background: var(--color-accent); opacity: {{e.o}}; transition: height 0.18s ease, opacity 0.4s ease"></span>
+</sc-for>
+</span>
+</div>
+<p class="text-xl font-medium leading-snug text-base-content flex flex-wrap" style="column-gap: 0.26em">
+<sc-for list="{{voice.words}}" as="w" hint-placeholder-count="10">
+<span style="display: inline-block; color: {{w.c}}; opacity: {{w.o}}; transform: {{w.tf}}; filter: {{w.fl}}; transition: color 0.5s ease, opacity 0.35s ease {{w.dl}}s, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1) {{w.dl}}s, filter 0.4s cubic-bezier(0.32, 0.72, 0, 1) {{w.dl}}s">{{w.text}}</span>
+</sc-for>
+</p>
+</div>
+</div>
+
+<div class="rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6" style="min-height: 320px">
+<div>
+<h3 class="text-xl font-bold text-base-content">Mark a moment</h3>
+<p class="text-base text-base-content/60">Tap while you record. Jump straight back to those bookmarks later.</p>
+</div>
+<div class="flex-1 flex flex-col justify-center gap-5">
+<div class="flex items-center gap-4">
+<span class="relative inline-flex shrink-0">
+<span class="inline-flex items-center justify-center rounded-full border border-base-300" style="color: var(--color-base-content); width: 36px; height: 36px; background-color: {{mark.btn.bg}}; transition: background-color {{mark.btn.bd}}s ease-out"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"></path></svg></span>
+<span class="absolute inset-0 rounded-full" aria-hidden="true" style="pointer-events: none; transform: translateZ(0); outline: 2px solid transparent; animation: {{mark.btn.ring}}"></span>
+</span>
+<div class="relative flex-1" style="height: 24px" aria-hidden="true">
+<div class="absolute left-0 right-0 rounded-full bg-base-300 overflow-hidden" style="top: 10px; height: 4px">
+<div class="absolute inset-0" style="background: color-mix(in oklab, var(--color-base-content) 22%, transparent); transform: translateZ(0) translateX({{mark.rec}}%); transition: {{mark.pt}}"></div>
+<div class="absolute inset-0 bg-primary" style="transform: translateZ(0) translateX({{mark.fill}}%); transition: {{mark.pt}}"></div>
+</div>
+<sc-for list="{{mark.pins}}" as="pin" hint-placeholder-count="2">
+<span class="absolute" style="top: 6px; left: {{pin.left}}%; width: 12px; height: 12px; margin-left: -6px">
+<span class="block rounded-full" style="width: 12px; height: 12px; background: var(--color-base-content); box-shadow: 0 0 0 3px var(--color-base-200); opacity: {{pin.o}}; transform: {{pin.tf}}; transition: opacity 0.25s ease, transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1)"></span>
+<span class="absolute inset-0 rounded-full" style="pointer-events: none; transform: translateZ(0); outline: 2px solid transparent; animation: {{pin.ring}}"></span>
+</span>
+</sc-for>
+<div class="absolute inset-0" style="transform: translateZ(0) translateX({{mark.fill}}%); transition: {{mark.pt}}"><span class="absolute rounded-full bg-base-content" style="right: -1px; top: 4px; width: 2px; height: 16px"></span></div>
+</div>
+</div>
+<div class="relative" style="height: 72px">
+<sc-for list="{{mark.rows}}" as="row" hint-placeholder-count="2">
+<div class="absolute flex items-center gap-3 rounded-lg text-sm text-base-content" style="left: -8px; right: -8px; top: {{row.top}}px; height: 32px; padding: 0 8px; background-color: {{row.bg}}; opacity: {{row.o}}; transform: {{row.tf}}; filter: {{row.fl}}; transition: background-color 0.35s ease, opacity 0.4s ease {{row.dl}}s, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1) {{row.dl}}s, filter 0.4s cubic-bezier(0.32, 0.72, 0, 1) {{row.dl}}s">
+<span class="font-mono text-xs text-base-content/60 tabular-nums">{{row.at}}</span>
+<span class="flex-1 truncate">{{row.label}}</span>
+<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="text-primary shrink-0" style="transform: translateZ(0); opacity: {{row.play}}; transition: opacity 0.3s ease"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+
+<div class="md:col-span-2 rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6" style="min-height: 320px">
+<div class="flex flex-wrap items-start justify-between gap-4">
+<div>
+<h3 class="text-xl font-bold text-base-content">Record the call you’re on</h3>
+<p class="text-base text-base-content/60">On Mac, Windows and Linux: your microphone and everyone else, together.</p>
+</div>
+<span class="text-4xl font-bold tabular-nums text-base-content">{{desk.time}}</span>
+</div>
+<div class="flex-1 flex flex-col justify-center gap-4">
+<div class="flex flex-wrap items-center" style="column-gap: 16px; row-gap: 8px">
+<span class="inline-flex items-center gap-2 text-sm font-medium shrink-0" style="width: 112px; color: {{desk.me.c}}; transition: color 0.4s ease"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19v3"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><rect x="9" y="2" width="6" height="13" rx="3"></rect></svg>Me</span>
+<div class="relative overflow-hidden" aria-hidden="true" style="flex: 1 1 220px; height: 44px; -webkit-mask-image: linear-gradient(to right, transparent, #000 16%, #000 94%, transparent); mask-image: linear-gradient(to right, transparent, #000 16%, #000 94%, transparent)">
+<div class="absolute top-0 bottom-0 right-0 flex items-center" style="gap: 3px; transform: translateZ(0) translateX({{desk.dx}}px)">
+<sc-for list="{{desk.me.bars}}" as="b" hint-placeholder-count="110">
+<span class="shrink-0 rounded-full bg-primary" style="width: 3px; height: {{b.h}}px"></span>
+</sc-for>
+</div>
+</div>
+</div>
+<div class="flex flex-wrap items-center" style="column-gap: 16px; row-gap: 8px">
+<span class="inline-flex items-center gap-2 text-sm font-medium shrink-0" style="width: 112px; color: {{desk.others.c}}; transition: color 0.4s ease"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"></path><path d="M16 9a5 5 0 0 1 0 6"></path><path d="M19.364 18.364a9 9 0 0 0 0-12.728"></path></svg>The others</span>
+<div class="relative overflow-hidden" aria-hidden="true" style="flex: 1 1 220px; height: 44px; -webkit-mask-image: linear-gradient(to right, transparent, #000 16%, #000 94%, transparent); mask-image: linear-gradient(to right, transparent, #000 16%, #000 94%, transparent)">
+<div class="absolute top-0 bottom-0 right-0 flex items-center" style="gap: 3px; transform: translateZ(0) translateX({{desk.dx}}px)">
+<sc-for list="{{desk.others.bars}}" as="b" hint-placeholder-count="110">
+<span class="shrink-0 rounded-full" style="width: 3px; height: {{b.h}}px; background: var(--color-accent)"></span>
+</sc-for>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="facts">
+<div class="fact">
+<svg class="text-primary shrink-0" style="margin-top: 1px" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path><path d="M5 12.859a10 10 0 0 1 5.17-2.69"></path><path d="M19 12.859a10 10 0 0 0-2.007-1.523"></path><path d="M2 8.82a15 15 0 0 1 4.177-2.643"></path><path d="M22 8.82a15 15 0 0 0-11.288-3.764"></path><path d="m2 2 20 20"></path></svg>
+<div class="flex flex-col gap-1">
+<h3 class="text-base font-semibold text-base-content">Works offline</h3>
+<p class="text-sm text-base-content/60">About <span class="text-base-content">530 MB</span>, once. Then no network.</p>
+</div>
+</div>
+<div class="fact">
+<svg class="text-primary shrink-0" style="margin-top: 1px" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="m17 8 5 5"></path><path d="m22 8-5 5"></path></svg>
+<div class="flex flex-col gap-1">
+<h3 class="text-base font-semibold text-base-content">No account</h3>
+<p class="text-sm text-base-content/60">No analytics, no ads.</p>
+</div>
+</div>
+<div class="fact">
+<svg class="text-primary shrink-0" style="margin-top: 1px" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><path d="m16 6-4-4-4 4"></path><path d="M12 2v13"></path></svg>
+<div class="flex flex-col gap-1">
+<h3 class="text-base font-semibold text-base-content">Take it with you</h3>
+<p class="text-sm text-base-content/60">Export <span class="text-base-content">TXT</span>, <span class="text-base-content">SRT</span>, <span class="text-base-content">WebVTT</span> or one <span class="text-base-content">.opus</span> file.</p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="lang-band w-full border-t border-base-300/60 bg-base-200 px-5 md:px-10 lg:px-20 pt-32 pb-32">
+<div class="max-w-7xl mx-auto flex flex-col items-center text-center" style="gap: 16px">
+<div class="flex flex-col gap-3 items-center">
+<h2 class="text-4xl md:text-5xl font-bold text-base-content">Speak your language</h2>
+<p class="text-lg text-base-content/60" style="max-width: 36rem">Parakeet Ultra recognises 25 European languages by default.</p>
+</div>
+<div class="lang-stage" role="img" aria-label="Hello in 25 languages, circling a label that names the language it hears">
+<div class="lang-tilt">
+<div class="lang-spin" style="animation-play-state: {{ring.ps}}">
+<sc-for list="{{ring.items}}" as="l" hint-placeholder-count="25">
+<div class="lang-item" style="transform: rotateY({{l.a}}deg) translateZ(var(--R))">
+<div class="lang-turn" style="transform: rotateY({{l.na}}deg)">
+<div class="lang-counter" style="animation-play-state: {{ring.ps}}">
+<p class="lang-word" style="animation-delay: {{l.dl}}s; animation-play-state: {{ring.ps}}">{{l.word}}</p>
+</div>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div class="absolute flex flex-col items-center gap-2" style="left: 50%; top: calc(var(--cy) + var(--label-dy)); transform: translateZ(0) translate(-50%, -50%); z-index: 1" aria-hidden="true">
+<p class="inline-flex items-center gap-2 text-xs font-bold tracking-widest uppercase text-base-content/60"><span class="inline-flex items-center" style="gap: 2px; height: 12px"><span class="lang-eq" style="animation-play-state: {{ring.ps}}"></span><span class="lang-eq" style="animation-delay: -0.35s; animation-play-state: {{ring.ps}}"></span><span class="lang-eq" style="animation-delay: -0.7s; animation-play-state: {{ring.ps}}"></span></span>Detected</p>
+<div class="relative text-2xl md:text-4xl font-bold text-base-content" style="width: 16rem; height: 2.75rem">
+<sc-for list="{{ring.items}}" as="l" hint-placeholder-count="25">
+<p class="lang-name" style="animation-delay: {{l.dl}}s; animation-play-state: {{ring.ps}}">{{l.name}}</p>
+</sc-for>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="w-full px-5 md:px-10 lg:px-20 pt-32 pb-16">
+<div class="max-w-7xl mx-auto flex flex-col items-center text-center gap-6">
+<p class="text-xs font-bold tracking-widest uppercase text-base-content/60">Privacy</p>
+<h2 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em">Nothing leaves<br>your device.</h2>
+<div class="flex flex-wrap justify-center gap-x-6 gap-y-3 pt-4">
+<p class="text-base text-base-content/60"><span class="text-primary" aria-hidden="true">✓</span> Transcribed on the device</p>
+<p class="text-base text-base-content/60"><span class="text-primary" aria-hidden="true">✓</span> Voiceprints never leave it</p>
+<p class="text-base text-base-content/60"><span class="text-primary" aria-hidden="true">✓</span> No account, no analytics</p>
+</div>
+<div class="plats w-full" style="margin-top: 32px; max-width: 70rem">
+<a href="Download-elevated.dc.html#ios" class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col items-center gap-3 text-center hover:bg-base-300/30 transition-colors">
+<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="text-base-content"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"></path></svg>
+<p class="text-base font-semibold text-base-content">iPhone and iPad</p>
+<p class="text-xs text-base-content/60">App Store</p>
+</a>
+<a href="Download-elevated.dc.html#android" class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col items-center gap-3 text-center hover:bg-base-300/30 transition-colors">
+<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="text-base-content"><path d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-.9997s.4483-.9993.9993-.9993c.5511 0 .9993.4483.9993.9993.0001.5511-.4482.9997-.9993.9997m-11.046 0c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9993.4483.9993.9993 0 .5511-.4483.9997-.9993.9997m11.4045-6.02l1.9973-3.4592a.416.416 0 00-.1521-.5676.416.416 0 00-.5676.1521l-2.0223 3.503C15.5902 8.2439 13.8533 7.8508 12 7.8508s-3.5902.3931-5.1367 1.0989L4.841 5.4467a.4161.4161 0 00-.5677-.1521.4157.4157 0 00-.1521.5676l1.9973 3.4592C2.6889 11.1867.3432 14.6589 0 18.761h24c-.3435-4.1021-2.6892-7.5743-6.1185-9.4396"></path></svg>
+<p class="text-base font-semibold text-base-content">Android</p>
+<p class="text-xs text-base-content/60">Google Play or APK</p>
+</a>
+<a href="Download-elevated.dc.html#mac" class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col items-center gap-3 text-center hover:bg-base-300/30 transition-colors">
+<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="text-base-content"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"></path></svg>
+<p class="text-base font-semibold text-base-content">Mac</p>
+<p class="text-xs text-base-content/60">Download</p>
+</a>
+<a href="Download-elevated.dc.html#windows" class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col items-center gap-3 text-center hover:bg-base-300/30 transition-colors">
+<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="text-base-content" style="margin: 2px"><path d="M0,0H11.377V11.372H0ZM12.623,0H24V11.372H12.623ZM0,12.623H11.377V24H0Zm12.623,0H24V24H12.623"></path></svg>
+<p class="text-base font-semibold text-base-content">Windows</p>
+<p class="text-xs text-base-content/60">Download</p>
+</a>
+<a href="Download-elevated.dc.html#linux" class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col items-center gap-3 text-center hover:bg-base-300/30 transition-colors">
+<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="text-base-content"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"></path></svg>
+<p class="text-base font-semibold text-base-content">Linux</p>
+<p class="text-xs text-base-content/60">Flathub, .deb, .rpm</p>
+</a>
+</div>
+<p class="text-base text-base-content/60">Free on all five. Recordings move between them as one file.</p>
+</div>
+</section>
+
+<section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pt-16 pb-16">
+<div class="file-split">
+<div class="file-copy flex flex-col gap-4">
+<h2 class="text-4xl md:text-5xl font-bold text-base-content" style="line-height: 1.05">One file.<br>Everything inside.</h2>
+<p class="text-lg text-base-content/60 text-balance" style="max-width: 40rem">Any audio player plays it. Cassini.talk opens it on every platform, and so does <a href="https://gocassini.com" class="text-base-content hover:text-primary underline underline-offset-4 decoration-base-content/30 hover:decoration-primary transition-colors">Cassini for Nextcloud</a>. An open specification at <a href="https://format.gocassini.com" class="text-base-content hover:text-primary underline underline-offset-4 decoration-base-content/30 hover:decoration-primary transition-colors">format.gocassini.com</a>.</p>
+</div>
+<div class="w-full flex flex-col" style="max-width: 36rem; gap: 12px; justify-self: center" role="img" aria-label="weekly-planning-call.opus opening into its audio, transcript and speakers, playing back together">
+<div class="relative flex items-center gap-3 rounded-xl border border-base-300 bg-base-200 px-4" style="height: 48px; z-index: 1"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content shrink-0"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"></path><path d="M12 22V12"></path><polyline points="3.29 7 12 12 20.71 7"></polyline><path d="m7.5 4.27 9 5.15"></path></svg><span class="text-sm font-mono text-base-content">weekly-planning-call.opus</span></div>
+<div class="relative flex flex-col" style="gap: 12px; margin-left: 23px; padding-left: 20px">
+<span class="absolute bg-base-300" style="left: 0; top: -12px; bottom: 66px; width: 1px" aria-hidden="true"></span>
+<div class="relative rounded-xl border border-base-300 bg-base-200 p-4 flex flex-col gap-3">
+<span class="ft-tick" aria-hidden="true"></span>
+<p class="flex items-center gap-2 text-sm"><span class="flex items-center"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content shrink-0"><path d="M12 19v3"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><rect x="9" y="2" width="6" height="13" rx="3"></rect></svg></span><span class="font-semibold text-base-content">Audio</span><span class="text-xs text-base-content/60">Opus, plays anywhere</span></p>
+<div class="relative flex items-center justify-between" style="height: 32px" aria-hidden="true">
+<sc-for list="{{file.bars}}" as="b" hint-placeholder-count="56">
+<span class="rounded-full shrink-0" style="width: 3px; height: {{b.h}}px; background: {{b.c}}; opacity: {{b.o}}; transition: opacity 0.25s ease"></span>
+</sc-for>
+<div class="absolute inset-0" style="pointer-events: none; transform: translateZ(0) translateX({{file.ph}}%); transition: {{file.pt}}"><span class="absolute rounded-full bg-base-content" style="right: -1px; top: -4px; bottom: -4px; width: 2px"></span></div>
+</div>
+</div>
+<div class="relative rounded-xl border border-base-300 bg-base-200 p-4 flex flex-col gap-3">
+<span class="ft-tick" aria-hidden="true"></span>
+<p class="flex items-center gap-2 text-sm"><span class="flex items-center"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content shrink-0"><path d="M15 12h-5"></path><path d="M15 8h-5"></path><path d="M19 17V5a2 2 0 0 0-2-2H4"></path><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"></path></svg></span><span class="font-semibold text-base-content">Transcript</span><span class="text-xs text-base-content/60">Word-timed, with versions</span></p>
+<div class="ft-line relative text-sm">
+<sc-for list="{{file.lines}}" as="ln" hint-placeholder-count="2">
+<p class="absolute inset-0 leading-relaxed" style="opacity: {{ln.o}}; transform: {{ln.tf}}; filter: {{ln.fl}}; transition: opacity 0.4s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1), filter 0.4s ease"><span class="font-semibold" style="color: {{ln.c}}; margin-right: 0.6em">{{ln.who}}</span><sc-for list="{{ln.words}}" as="w" hint-placeholder-count="8"><span style="color: {{w.c}}; transition: color 0.25s ease">{{w.w}} </span></sc-for></p>
+</sc-for>
+</div>
+</div>
+<div class="relative rounded-xl border border-base-300 bg-base-200 p-4 flex flex-col gap-3">
+<span class="ft-tick" aria-hidden="true"></span>
+<p class="flex items-center gap-2 text-sm"><span class="flex items-center"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content shrink-0"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></span><span class="font-semibold text-base-content">Speakers</span><span class="text-xs text-base-content/60">The names you gave them</span></p>
+<div class="flex flex-wrap items-center gap-2" style="min-height: 28px">
+<sc-for list="{{file.chips}}" as="c" hint-placeholder-count="2">
+<span class="inline-flex items-center gap-2 rounded-full border px-3 text-xs font-medium text-base-content" style="height: 28px; border-color: {{c.bd}}; background-color: {{c.bg}}; transition: border-color 0.3s ease, background-color 0.3s ease"><span class="block rounded-full" style="width: 6px; height: 6px; background: {{c.dot}}"></span>{{c.name}}</span>
+</sc-for>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="faq-sec w-full px-5 md:px-10 lg:px-20 pt-16 pb-24">
+<div class="mx-auto flex flex-col gap-8" style="max-width: 48rem">
+<h2 class="text-4xl font-bold text-base-content text-center">Questions</h2>
+<div class="flex flex-col gap-3">
+<details open="" class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">
+<summary class="flex items-center justify-between cursor-pointer list-none text-base font-medium text-base-content select-none">Does audio leave my device?
+<svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></summary>
+<p class="mt-3 text-sm text-base-content/60 leading-relaxed">No. Recording, transcription and speaker analysis all happen on your phone or computer. The only download is the speech model, and only after you agree.</p>
+</details>
+<details class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">
+<summary class="flex items-center justify-between cursor-pointer list-none text-base font-medium text-base-content select-none">How much space does it need?
+<svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></summary>
+<p class="mt-3 text-sm text-base-content/60 leading-relaxed">On a phone the speech model is a one-time download of about 530 MB. Allow about 1.3 GB free while it installs.</p>
+</details>
+<details class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">
+<summary class="flex items-center justify-between cursor-pointer list-none text-base font-medium text-base-content select-none">Is it free?
+<svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></summary>
+<p class="mt-3 text-sm text-base-content/60 leading-relaxed">Yes. cassini.talk is free software under the GPLv3, and the source for every app is on GitHub.</p>
+</details>
+<details class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">
+<summary class="flex items-center justify-between cursor-pointer list-none text-base font-medium text-base-content select-none">Do I have to tell people I’m recording?
+<svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></summary>
+<p class="mt-3 text-sm text-base-content/60 leading-relaxed">Yes. Before your first recording, cassini.talk reminds you that telling the people you record is your responsibility.</p>
+</details>
+<details class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">
+<summary class="flex items-center justify-between cursor-pointer list-none text-base font-medium text-base-content select-none">Is there a version for Nextcloud?
+<svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg></summary>
+<p class="mt-3 text-sm text-base-content/60 leading-relaxed">Yes. Cassini for Nextcloud records Talk calls on your own server and shares them with your team. It lives at <a href="https://gocassini.com" class="text-base-content hover:text-primary underline underline-offset-4 decoration-base-content/30 hover:decoration-primary transition-colors">gocassini.com</a>, and it reads the same <code class="text-primary bg-base-300 px-1 rounded text-sm">.opus</code> files.</p>
+</details>
+</div>
+<p class="text-sm text-base-content/60 text-center">More in the <a href="Help-elevated.dc.html" class="text-base-content hover:text-primary underline underline-offset-4 decoration-base-content/30 hover:decoration-primary transition-colors">help centre</a>.</p>
+</div>
+</section>
+
+<section class="cta-band w-full border-t border-base-300/60 bg-base-200 px-5 md:px-10 lg:px-20">
+<div class="max-w-7xl mx-auto flex flex-col items-center text-center">
+<h2 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em">Keep your<br>conversations.</h2>
+<div class="relative w-full flex items-center justify-between mt-6" style="max-width: 40rem; height: 120px" aria-hidden="true">
+<sc-for list="{{wave}}" as="wv" hint-placeholder-count="72">
+<span class="rounded-full shrink-0" style="width: min(3px, 0.6vw); height: {{wv.h}}px; background: {{wv.c}}; opacity: {{wv.o}}; transition: height 0.1s linear, background-color 0.15s linear"></span>
+</sc-for>
+</div>
+<div class="flex flex-wrap items-center justify-center gap-4 mt-4">
+<a href="Download-elevated.dc.html" class="btn btn-primary btn-lg" style="--btn-color: {{cta.bg}}; --btn-fg: {{cta.fg}}; transition: color 0.4s ease, background-color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease, transform 0.2s cubic-bezier(0, 0, 0.2, 1)">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path></svg>
+Download
+</a>
+</div>
+</div>
+</section>
+</main>
+<dc-import name="AppsFooter" theme="{{theme}}" download-href="Download-elevated.dc.html" help-href="Help-elevated.dc.html" privacy-href="Help-article-elevated.dc.html" hint-size="100%,130px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["saturn-night","saturn-dark"],"default":"saturn-night"},"$preview":{"width":1440,"height":5420}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.voice = { speaker: 0, turnLeft: 30, pause: 0, gap: 0, step: 3, sylLen: 3, peak: 0.6 };
+    const samples = [];
+    for (let i = 0; i < 110; i++) samples.unshift(this.nextSample());
+    this.state = { t: 0, offset: 0, query: null, focus: false, still: false, samples };
+  }
+  nextSample() {
+    const g = this.voice;
+    const r = Math.random;
+    if (g.pause > 0) {
+      g.pause -= 1;
+      if (g.pause === 0) {
+        g.speaker = 1 - g.speaker;
+        g.turnLeft = 20 + Math.floor(r() * 40);
+      }
+      return { a: 0.02 + r() * 0.04, sp: g.speaker };
+    }
+    if (g.turnLeft <= 0) {
+      g.pause = 5 + Math.floor(r() * 8);
+      return { a: 0.03, sp: g.speaker };
+    }
+    g.turnLeft -= 1;
+    if (g.gap > 0) {
+      g.gap -= 1;
+      return { a: 0.05 + r() * 0.08, sp: g.speaker };
+    }
+    if (g.step >= g.sylLen) {
+      g.step = 0;
+      g.sylLen = 2 + Math.floor(r() * 3);
+      g.peak = 0.3 + r() * 0.7;
+      if (r() < 0.2) g.gap = 1 + Math.floor(r() * 2);
+    }
+    const env = Math.sin(Math.PI * (g.step + 0.5) / g.sylLen);
+    g.step += 1;
+    return { a: Math.min(1, g.peak * env * (0.8 + r() * 0.4)), sp: g.speaker };
+  }
+  componentDidMount() {
+    const reduce = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      this.setState({ still: true });
+      return;
+    }
+    this.frame = 0;
+    this.timer = setInterval(() => {
+      this.frame += 1;
+      const next = this.frame % 3 === 0 ? this.nextSample() : null;
+      this.setState((s) => ({ t: this.frame / 3, samples: next ? [next].concat(s.samples).slice(0, 110) : s.samples }));
+    }, 1000 / 30);
+  }
+  componentWillUnmount() {
+    clearInterval(this.timer);
+  }
+  numbers(t) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const greet = [
+      ['Hello', 'English'], ['Bonjour', 'French'], ['Hallo', 'German'], ['Ciao', 'Italian'], ['Hola', 'Spanish'],
+      ['Olá', 'Portuguese'], ['Goedendag', 'Dutch'], ['Cześć', 'Polish'], ['Hej', 'Danish'], ['Hallå', 'Swedish'],
+      ['Hei', 'Finnish'], ['Tere', 'Estonian'], ['Sveiki', 'Latvian'], ['Labas', 'Lithuanian'], ['Szia', 'Hungarian'],
+      ['Ahoj', 'Czech'], ['Dobrý deň', 'Slovak'], ['Živjo', 'Slovenian'], ['Bok', 'Croatian'], ['Bună', 'Romanian'],
+      ['Здравейте', 'Bulgarian'], ['Γεια σας', 'Greek'], ['Bonġu', 'Maltese'], ['Привет', 'Russian'], ['Привіт', 'Ukrainian']
+    ];
+    const n = greet.length;
+    const cur = Math.floor(t / 14) % n;
+    const greets = greet.map((g, i) => {
+      const rel = ((i - cur) % n + n) % n;
+      return {
+        word: g[0],
+        name: g[1],
+        o: rel === 0 ? 1 : 0,
+        tf: 'translateZ(0) translateY(' + (rel === 0 ? 0 : rel === n - 1 ? -16 : 16) + 'px)'
+      };
+    });
+
+    const sec = 14 + Math.floor(t / 10);
+    const zero = { time: pad(Math.floor(sec / 60)) + ':' + pad(sec % 60), dot: Math.floor(t / 5) % 2 === 0 ? 1 : 0.3 };
+
+    const litP = Math.floor(t / 9) % 5;
+    const plats = {};
+    for (let i = 0; i < 5; i++) {
+      plats['p' + i] = {
+        c: i === litP ? 'var(--color-primary)' : 'color-mix(in oklab, var(--color-base-content) 40%, transparent)',
+        tf: i === litP ? 'translateZ(0) translateY(-2px)' : 'translateZ(0)'
+      };
+    }
+
+    const p = t % 45;
+    const recording = p < 18;
+    const bars = [];
+    for (let i = 0; i < 12; i++) {
+      const v = Math.abs(Math.sin((i + t) * 0.7) * Math.sin(i * 0.45 + t * 0.23));
+      bars.push({ h: recording ? Math.round(4 + v * 18) : 3 });
+    }
+    const fileOn = p >= 19 && p < 41;
+    const one = {
+      bars,
+      waveO: p < 19 || p >= 43 ? 1 : 0,
+      waveTf: p < 19 || p >= 43 ? 'translateZ(0)' : 'translateZ(0) translateX(24px)',
+      fileO: fileOn ? 1 : 0,
+      fileTf: fileOn ? 'translateZ(0)' : 'translateZ(0) translateX(' + (p < 19 || p >= 43 ? -12 : 12) + 'px)'
+    };
+
+    return { greets, zero, plats, one };
+  }
+  renderVals() {
+    const s = this.state;
+    const pad = (n) => String(n).padStart(2, '0');
+    const clock = (sec) => pad(Math.floor(sec / 60)) + ':' + pad(sec % 60);
+    const wrap = (n, m) => ((n % m) + m) % m;
+
+    const T = 158;
+    const h = s.still ? 130 : wrap(s.t - s.offset, T);
+    const between = (from, to) => h >= from && h < to;
+    const stage = h < 52 ? 'rec' : h < 104 ? 'trx' : 'find';
+    const jump = (to) => this.setState((st) => ({ offset: st.t - to }));
+    const steps = [['rec', 'Record', 0, 52, 'Record the conversation.'], ['trx', 'Transcribe', 52, 52, 'Read it back, word for word.'], ['find', 'Search', 104, 54, 'Find the part that mattered.']].map((x) => {
+      const on = x[0] === stage;
+      return {
+        label: x[1],
+        long: x[4],
+        selected: on ? 'true' : 'false',
+        c: on ? 'var(--color-base-content)' : 'color-mix(in oklab, var(--color-base-content) 40%, transparent)',
+        p: on ? Math.max(0, Math.min(1, (h - x[2]) / x[3])).toFixed(4) : 0,
+        o: on ? 1 : 0,
+        t: on ? 'transform 0.15s linear, opacity 0.3s ease' : 'transform 0s linear 0.45s, opacity 0.45s ease',
+        pick: () => jump(x[2])
+      };
+    });
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    const tfm = (y, k) => 'translateZ(0)' + (y ? ' translateY(' + y + 'px)' : '') + (k !== undefined && k !== 1 ? ' scale(' + k + ')' : '');
+    const blr = (b) => (b ? 'blur(' + b + 'px)' : 'none');
+    const scene = (from, to) => {
+      const on = between(from, to);
+      return { o: on ? 1 : 0, tf: 'translateZ(0)', fl: on ? 'none' : 'blur(5px)', pe: on ? 'auto' : 'none' };
+    };
+
+    const live = between(17, 64);
+    const bloom = clamp01((h - 17) / 5);
+    const bars = [];
+    for (let i = 0; i < 44; i++) {
+      const d = Math.abs(i - 21.5) / 21.5;
+      const grow = clamp01((bloom - d * 0.6) / 0.4);
+      const v = Math.abs(Math.sin((i + h) * 0.5) * Math.sin(i * 0.31 + h * 0.17));
+      bars.push({ h: live ? Math.round(3 + (5 + v * 70) * grow) : 3, o: live ? 1 : 0 });
+    }
+    const hovering = !s.still && between(11, 17);
+    const pressing = !s.still && between(13, 14.33);
+    const btn = {
+      o: between(2, 17) ? 1 : 0,
+      k: pressing ? 0.95 : between(17, 52) ? 0.85 : 1,
+      y: h < 2 || h >= 52 ? 10 : 0,
+      pe: between(2, 17) ? 'auto' : 'none',
+      td: pressing ? '0.09s cubic-bezier(0.3, 0, 0.2, 1)' : '0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
+      bg: pressing ? 'color-mix(in oklab, var(--color-primary), #000 16%)' : hovering ? 'color-mix(in oklab, var(--color-primary), #000 7%)' : 'var(--color-primary)',
+      bd: pressing ? 0.06 : 0.2,
+      ring: between(14.33, 23) ? 'click-ring 0.8s cubic-bezier(0.22, 1, 0.36, 1)' : 'none',
+      start: () => jump(17)
+    };
+    btn.tf = tfm(btn.y, btn.k);
+    const timer = {
+      text: clock(Math.max(0, Math.floor((Math.min(h, 52) - 17) / 10))),
+      c: h < 17 ? 'color-mix(in oklab, var(--color-base-content) 50%, transparent)' : 'var(--color-base-content)',
+      o: between(3, 52) ? 1 : 0,
+      y: h < 3 ? 8 : h < 52 ? 0 : -8
+    };
+    timer.tf = tfm(timer.y);
+    const showCursor = !s.still && between(5, 18);
+    const cursor = {
+      x: h < 6 ? 170 : h < 18 ? 4 : 50,
+      y: h < 6 ? 100 : h < 18 ? -42 : 10,
+      dur: h < 6 ? 0 : h < 18 ? 0.8 : 0.6,
+      o: showCursor ? 1 : 0,
+      s: !showCursor ? (h < 5 ? 0.5 : 0.6) : pressing ? 0.85 : 1,
+      sh: pressing ? '0 2px 3px rgba(0, 0, 0, 0.5)' : '0 6px 14px rgba(0, 0, 0, 0.45)',
+      sd: pressing ? '0.08s cubic-bezier(0.3, 0, 0.2, 1)' : '0.4s cubic-bezier(0.34, 1.56, 0.64, 1)'
+    };
+
+    const sentence = 'What if being productive meant paying closer attention, rather than doing more?'.split(' ');
+    let cue = 54;
+    const cues = sentence.map((w) => {
+      const at = cue;
+      cue += Math.round((160 + 18 * w.replace(/[^A-Za-z]/g, '').length) / 100) + (/,$/.test(w) ? 3 : 0);
+      return at;
+    });
+    const said = (at) => clock(Math.max(0, Math.floor((Math.min(at, cue) - cues[0]) / 10)));
+    const target = 'attention';
+    const typed = Math.max(0, Math.min(target.length, Math.floor(h - 107)));
+    const typedEdge = [100, 84.2, 76.5, 69.2, 56.8, 44, 36.3, 31.1, 18.3, 5.5];
+    const finding = h >= 104;
+    const swept = h >= 118;
+    const leaving = h >= 145;
+    const words = sentence.map((w, i) => {
+      const shown = h >= cues[i];
+      const fresh = shown && h - cues[i] < 2 && !finding;
+      const hit = w.toLowerCase().indexOf(target) === 0;
+      return {
+        text: w,
+        o: !shown || leaving ? 0 : swept && !hit ? 0.32 : 1,
+        od: leaving ? 0.35 : swept ? 0.6 : 0.3,
+        dl: leaving ? (i * 0.035).toFixed(3) : 0,
+        y: !shown ? 10 : leaving ? -10 : 0,
+        b: shown && !leaving ? 0 : leaving ? 4 : 6,
+        c: fresh ? 'var(--color-primary)' : 'var(--color-base-content)',
+        tf: tfm(!shown ? 10 : leaving ? -10 : 0),
+        fl: blr(shown && !leaving ? 0 : leaving ? 4 : 6),
+        clip: !hit || !typed ? 'inset(0 100% 0 0 round 3px)' : 'inset(0 ' + typedEdge[typed] + '% 0 ' + (h < 143 ? 0 : 100) + '% round 3px)',
+        ct: !hit || !typed || h < 143 ? 'none' : 'clip-path 0.6s cubic-bezier(0.65, 0, 0.35, 1)'
+      };
+    });
+
+    const hero = {
+      s1: scene(0, 52),
+      s2: scene(52, 156),
+      bars,
+      btn,
+      timer,
+      cursor,
+      label: { o: between(53, 104) ? 1 : 0, tf: tfm(finding ? -10 : 0), time: said(h) },
+      pill: {
+        o: between(104, 144) ? 1 : 0,
+        y: h < 104 ? 10 : h < 144 ? 0 : -8,
+        tf: tfm(h < 104 ? 10 : h < 144 ? 0 : -8),
+        fl: blr(h < 144 ? 0 : 4),
+        query: target.slice(0, typed),
+        caret: !between(104, 144) ? 0 : h < 116 || Math.floor((h - 116) / 5.3) % 2 === 0 ? 1 : 0
+      },
+      words,
+      chip: {
+        o: between(118, 142) ? 1 : 0,
+        tf: tfm(h < 118 ? 12 : h < 142 ? 0 : -6),
+        fl: blr(between(118, 142) ? 0 : 4),
+        at: said(cues[sentence.findIndex((w) => w.toLowerCase().indexOf(target) === 0)])
+      }
+    };
+
+    const notes = [
+      { title: 'A quieter kind of productivity · today', text: 'What if being productive meant paying closer attention, rather than doing more? The best ideas usually arrive in the space between things. A walk, a conversation, a moment to pause. Let’s protect an hour on Thursday for focused work.' },
+      { title: 'Weekly planning call · today', text: 'Morning, everyone. Three things on the agenda today: the launch date, the onboarding copy and hiring. Let’s start with the launch.' },
+      { title: 'Garden plans for the spring · Monday', text: 'We could move the tomatoes to the sunny corner and leave Thursday free for planting.' },
+      { title: 'Bookmark · Weekly planning call · 12:44', text: 'Launch date agreed', mark: true },
+      { title: 'Bookmark · Weekly planning call · 12:51', text: 'Ask Giulia about the copy', mark: true }
+    ];
+    const lookup = (q) => {
+      const needle = q.trim().toLowerCase();
+      const out = [];
+      if (!needle) return out;
+      for (const nt of notes) {
+        const i = nt.text.toLowerCase().indexOf(needle);
+        if (i < 0) continue;
+        let from = Math.max(0, i - 22);
+        const sp = from > 0 ? nt.text.indexOf(' ', from) : -1;
+        if (sp >= 0 && sp < i) from = sp + 1;
+        const to = Math.min(nt.text.length, i + needle.length + 64);
+        out.push({ title: nt.title, mark: !!nt.mark, before: (from > 0 ? '…' : '') + nt.text.slice(from, i), match: nt.text.slice(i, i + needle.length), after: nt.text.slice(i + needle.length, to) + (to < nt.text.length ? '…' : '') });
+      }
+      return out.slice(0, 2);
+    };
+    const queries = ['Thursday', 'attention', 'launch'];
+    const Q = 64;
+    const sq = s.still ? 40 : wrap(s.t, Q * queries.length);
+    const word = queries[Math.floor(sq / Q)];
+    const ph = sq % Q;
+    const jit = [0, 0.4, -0.2, 0.3, -0.3, 0.5, 0, -0.2, 0.3];
+    const keyAt = [];
+    let typedEnd = 3;
+    for (let i = 0; i < word.length; i++) {
+      keyAt.push(typedEnd);
+      typedEnd += 1.1 + jit[i % jit.length];
+    }
+    const cleared = ph >= Q - 7;
+    const selected = ph >= Q - 11 && !cleared;
+    const typedN = cleared ? 0 : keyAt.filter((x) => ph >= x).length;
+    const since = cleared ? ph - (Q - 7) : ph < 3 ? ph + 7 : ph - typedEnd;
+    const demo = s.query === null && !s.focus;
+    const results = demo ? lookup(word) : lookup(s.query || '');
+    const showing = demo ? ph >= typedEnd + 2.5 && !cleared : results.length > 0;
+    const blank = { title: '', mark: false, before: '', match: '', after: '' };
+    const search = {
+      value: s.query === null ? '' : s.query,
+      ph: demo && typedN > 0 ? '' : 'Search what was said',
+      demo: demo ? 1 : 0,
+      typed: word.slice(0, typedN),
+      cm: typedN === 0 ? -3 : 1,
+      sel: selected ? 'color-mix(in oklab, var(--color-primary) 35%, transparent)' : 'transparent',
+      caret: !demo || selected ? 0 : s.still || (ph >= 3 && ph < typedEnd) || Math.floor(since / 5.3) % 2 === 0 ? 1 : 0,
+      rows: [0, 1].map((i) => {
+        const r = results[i] || results[0] || blank;
+        const on = showing && i < results.length;
+        const hd = (0.3 + i * 0.07).toFixed(2);
+        return {
+          top: i * 52,
+          o: on ? 1 : 0,
+          tf: tfm(on ? 0 : demo && cleared ? -6 : 8),
+          fl: blr(on ? 0 : 4),
+          dl: (on ? i * 0.07 : i * 0.04).toFixed(2),
+          isMark: r.mark,
+          isText: !r.mark,
+          title: r.title,
+          before: r.before,
+          fade: r.before.charAt(0) === '…' ? 'linear-gradient(to right, transparent, #000 14px)' : 'none',
+          match: r.match,
+          after: r.after,
+          mc: on ? 'var(--color-primary)' : 'color-mix(in oklab, var(--color-base-content) 80%, transparent)',
+          hd,
+          clip: on ? 'inset(0 0 0 0)' : 'inset(0 100% 0 0)',
+          ct: on ? 'clip-path 0.55s cubic-bezier(0.65, 0, 0.35, 1) ' + hd + 's' : 'clip-path 0.3s ease'
+        };
+      }),
+      missO: !demo && (s.query || '').trim() !== '' && results.length === 0 ? 1 : 0,
+      missText: 'Nothing matches “' + (s.query || '').trim() + '”.',
+      onChange: (e) => {
+        const v = e.target.value;
+        this.setState({ query: v === '' ? null : v });
+      },
+      onFocus: () => this.setState({ focus: true }),
+      onBlur: () => this.setState({ focus: false })
+    };
+
+    const K = 100;
+    const vk = s.still ? 70 : wrap(s.t - 12, K);
+    const quote = 'The best ideas usually arrive in the space between things.'.split(' ');
+    let vEnd = 5;
+    const vCues = quote.map((w) => {
+      const at = vEnd;
+      vEnd += Math.round((160 + 18 * w.replace(/[^A-Za-z]/g, '').length) / 100);
+      return at;
+    });
+    const suggestAt = vEnd + 6;
+    const curAt = suggestAt + 7;
+    const pressAt = curAt + 8;
+    const releaseAt = pressAt + 1.33;
+    const confirmAt = pressAt + 2;
+    const vOut = vk >= 88;
+    const named = vk >= confirmAt && !vOut;
+    const talking = !s.still && vk >= vCues[0] && vk < vEnd + 1;
+    const swap = (on, before) => ({ o: on ? 1 : 0, tf: tfm(on ? 0 : before ? 6 : -6), fl: blr(on ? 0 : 3) });
+    const okOn = vk >= suggestAt + 2 && vk < confirmAt && !vOut;
+    const vHover = !s.still && vk >= curAt + 6 && vk < confirmAt;
+    const vPress = !s.still && vk >= pressAt && vk < releaseAt;
+    const curOn = !s.still && vk >= curAt && vk < confirmAt + 3;
+    const voice = {
+      apos: vk < suggestAt ? 'relative' : 'absolute',
+      bpos: vk < suggestAt ? 'absolute' : 'relative',
+      a: swap(vk >= 1 && vk < suggestAt && !vOut, vk < 1),
+      b: swap(vk >= suggestAt && !vOut, vk < suggestAt),
+      bc: named ? 'var(--color-accent)' : 'color-mix(in oklab, var(--color-accent) 70%, transparent)',
+      q: vk < confirmAt ? 1 : 0,
+      ok: {
+        o: okOn ? 1 : 0,
+        tf: 'translateZ(0)' + (vPress ? ' scale(0.95)' : vk >= confirmAt ? ' scale(0.92)' : okOn ? '' : ' translateX(-6px)'),
+        fl: blr(okOn ? 0 : 3),
+        td: vPress ? '0.09s cubic-bezier(0.3, 0, 0.2, 1)' : vk >= releaseAt && vk < confirmAt ? '0.5s cubic-bezier(0.34, 1.56, 0.64, 1)' : '0.55s cubic-bezier(0.32, 0.72, 0, 1)',
+        bg: vPress ? 'color-mix(in oklab, var(--color-accent), #000 16%)' : vHover ? 'color-mix(in oklab, var(--color-accent), #000 7%)' : 'var(--color-accent)',
+        bd: vPress ? 0.06 : 0.2,
+        ring: !s.still && vk >= releaseAt && vk < releaseAt + 9 ? 'click-ring-accent 0.8s cubic-bezier(0.22, 1, 0.36, 1)' : 'none'
+      },
+      cur: {
+        x: vk < curAt + 1 ? -64 : vk < confirmAt + 3 ? 0 : -30,
+        y: vk < curAt + 1 ? 70 : vk < confirmAt + 3 ? -4 : 30,
+        dur: vk < curAt + 1 ? 0 : vk < confirmAt + 3 ? 0.8 : 0.6,
+        o: curOn ? 1 : 0,
+        s: !curOn ? (vk < curAt ? 0.5 : 0.6) : vPress ? 0.85 : 1,
+        sh: vPress ? '0 2px 3px rgba(0, 0, 0, 0.5)' : '0 6px 14px rgba(0, 0, 0, 0.45)',
+        sd: vPress ? '0.08s cubic-bezier(0.3, 0, 0.2, 1)' : '0.4s cubic-bezier(0.34, 1.56, 0.64, 1)'
+      },
+      ck: { o: named ? 1 : 0, d: vk >= confirmAt ? 0 : 24, t: vk >= confirmAt ? 'stroke-dashoffset 0.5s cubic-bezier(0.65, 0, 0.35, 1) 0.12s' : 'none' },
+      eq: [0, 1, 2, 3].map((i) => ({
+        h: talking ? Math.round(4 + 12 * Math.abs(Math.sin(s.t * (0.55 + i * 0.21) + i * 1.7))) : 4,
+        o: vOut || vk < 1 ? 0 : talking ? 1 : 0.35
+      })),
+      words: quote.map((w, i) => {
+        const shown = vk >= vCues[i];
+        return {
+          text: w,
+          c: shown && vk - vCues[i] < 3 ? 'var(--color-accent)' : 'var(--color-base-content)',
+          o: !shown || vOut ? 0 : 1,
+          tf: tfm(!shown ? 8 : vOut ? -8 : 0),
+          fl: blr(shown && !vOut ? 0 : vOut ? 4 : 6),
+          dl: vOut ? (i * 0.03).toFixed(2) : 0
+        };
+      })
+    };
+
+    const M = 106;
+    const mk = s.still ? 76 : wrap(s.t - 30, M);
+    const recFrom = 3;
+    const recTo = 72;
+    const recMax = 90;
+    const recP = (x) => (x < recFrom ? 0 : Math.min(recMax, (x - recFrom) / (recTo - recFrom) * recMax));
+    const pinAt = [28, 62].map((p) => recFrom + p / recMax * (recTo - recFrom));
+    const jumpAt = 80;
+    const mOut = 98;
+    const playhead = mk >= mOut ? 0 : mk >= jumpAt + 8 ? 28 + (mk - jumpAt - 8) * 0.3 : mk >= jumpAt ? 28 : recP(mk);
+    const tapping = !s.still && pinAt.some((x) => mk >= x - 1.4 && mk < x);
+    const mark = {
+      fill: (playhead - 100).toFixed(2),
+      rec: ((mk >= mOut ? 0 : recP(mk)) - 100).toFixed(2),
+      pt: (mk >= jumpAt && mk < jumpAt + 8) || mk >= mOut ? 'transform 0.75s cubic-bezier(0.32, 0.72, 0, 1)' : 'transform 0.12s linear',
+      btn: {
+        bg: tapping ? 'color-mix(in oklab, var(--color-base-content) 24%, var(--color-base-100))' : 'var(--color-base-100)',
+        bd: tapping ? 0.06 : 0.3,
+        ring: !s.still && pinAt.some((x) => mk >= x && mk < x + 8) ? 'mark-ring 0.8s cubic-bezier(0.22, 1, 0.36, 1)' : 'none'
+      },
+      pins: [28, 62].map((left, i) => {
+        const on = mk >= pinAt[i] && mk < mOut;
+        return {
+          left,
+          o: on ? 1 : 0,
+          tf: 'translateZ(0) scale(' + (on ? 1 : 0.4) + ')',
+          ring: !s.still && ((mk >= pinAt[i] && mk < pinAt[i] + 9) || (i === 0 && mk >= jumpAt + 5 && mk < jumpAt + 14)) ? 'pin-ring 0.9s cubic-bezier(0.22, 1, 0.36, 1)' : 'none'
+        };
+      }),
+      rows: [['12:44', 'Launch date agreed'], ['12:51', 'Ask Giulia about the copy']].map((x, i) => {
+        const on = mk >= pinAt[i] + 1 && mk < mOut - 2;
+        const lit = i === 0 && mk >= jumpAt - 3 && mk < mOut - 2;
+        return {
+          at: x[0],
+          label: x[1],
+          top: i * 40,
+          o: on ? 1 : 0,
+          tf: tfm(on ? 0 : mk < pinAt[i] + 1 ? 8 : -6),
+          fl: blr(on ? 0 : 4),
+          dl: (on ? 0 : i * 0.05).toFixed(2),
+          bg: lit ? 'color-mix(in oklab, var(--color-primary) 12%, transparent)' : 'transparent',
+          play: lit ? 1 : 0
+        };
+      })
+    };
+
+    const fr = Math.round(s.t * 3) % 3;
+    const talkingNow = (sp) => s.samples.slice(0, 8).some((x) => x.sp === sp && x.a > 0.15);
+    const lane = (sp) => ({
+      c: talkingNow(sp) ? 'var(--color-base-content)' : 'color-mix(in oklab, var(--color-base-content) 55%, transparent)',
+      bars: s.samples.map((x) => ({ h: x.sp === sp ? Math.round(3 + 38 * x.a) : 3 })).reverse()
+    });
+    const desk = {
+      time: clock(1100 + Math.floor(s.t / 10)),
+      dx: s.still ? 0 : (2 - fr) * 2,
+      me: lane(0),
+      others: lane(1)
+    };
+
+    const greet = [
+      ['Hello', 'English'], ['Hallo', 'German'], ['Hei', 'Finnish'], ['Goedendag', 'Dutch'], ['Hej', 'Danish'],
+      ['Здравейте', 'Bulgarian'], ['Olá', 'Portuguese'], ['Dobrý deň', 'Slovak'], ['Bok', 'Croatian'], ['Γεια σας', 'Greek'],
+      ['Szia', 'Hungarian'], ['Bonjour', 'French'], ['Tere', 'Estonian'], ['Привет', 'Russian'], ['Ciao', 'Italian'],
+      ['Привіт', 'Ukrainian'], ['Ahoj', 'Czech'], ['Bonġu', 'Maltese'], ['Hola', 'Spanish'], ['Cześć', 'Polish'],
+      ['Živjo', 'Slovenian'], ['Sveiki', 'Latvian'], ['Hallå', 'Swedish'], ['Labas', 'Lithuanian'], ['Bună', 'Romanian']
+    ];
+    const orbit = 55;
+    const ring = {
+      ps: s.still ? 'paused' : 'running',
+      items: greet.map((g, i) => ({
+        word: g[0],
+        name: g[1],
+        a: (360 * i / greet.length).toFixed(2),
+        na: (-360 * i / greet.length).toFixed(2),
+        dl: ((orbit * i) / greet.length - orbit).toFixed(2)
+      }))
+    };
+
+    const fu = s.still ? 64 : wrap(s.t, 112);
+    const fplay = s.still || (fu >= 6 && fu < 100);
+    const fp = s.still ? 0.62 : clamp01((fu - 6) / 94);
+    const fsplit = 0.45;
+    const you = 'var(--color-primary)';
+    const sam = 'var(--color-accent)';
+    const dim = 'color-mix(in oklab, var(--color-base-content) 40%, transparent)';
+    const readAlong = (text, from, to, colour) => text.split(' ').map((w, j, ws) => {
+      const a = from + ((to - from) * j) / ws.length;
+      const b = from + ((to - from) * (j + 1)) / ws.length;
+      return { w, c: fp >= a && fp < b && fplay ? colour : fp >= b ? 'var(--color-base-content)' : dim };
+    });
+    const samTalking = fp >= fsplit;
+    const file = {
+      bars: Array.from({ length: 56 }, (_, j) => {
+        const x = j / 55;
+        const v = Math.abs(Math.sin(j * 1.7) * Math.sin(j * 0.37 + 1.3));
+        return { h: Math.abs(x - fsplit) < 0.025 ? 3 : Math.round(5 + 26 * v), c: x < fsplit ? you : sam, o: fu >= 6 && x <= fp ? 1 : 0.32 };
+      }),
+      ph: (fp * 100 - 100).toFixed(2),
+      pt: fu < 6 ? 'transform 0.55s cubic-bezier(0.32, 0.72, 0, 1)' : 'transform 0.12s linear',
+      lines: [
+        { who: 'You', c: you, words: readAlong('Morning, everyone. Three things on the agenda today.', 0.02, fsplit - 0.02, you) },
+        { who: 'Chris', c: sam, words: readAlong('The best ideas usually arrive in the space between things.', fsplit + 0.02, 0.98, sam) }
+      ].map((ln, i) => {
+        const on = i === 0 ? !samTalking : samTalking;
+        return { ...ln, o: on ? 1 : 0, tf: tfm(on ? 0 : i === 0 ? -8 : 8), fl: blr(on ? 0 : 4) };
+      }),
+      chips: [['You', you, false], ['Chris', sam, true]].map(([name, dot, isSam]) => {
+        const lit = fplay && isSam === samTalking;
+        return { name, dot, bd: lit ? 'color-mix(in oklab, ' + dot + ' 60%, transparent)' : 'var(--color-base-300)', bg: lit ? 'color-mix(in oklab, ' + dot + ' 14%, transparent)' : 'transparent' };
+      })
+    };
+
+    const half = 36;
+    const samples = s.samples;
+    const colour = (sp) => (sp === 0 ? 'var(--color-primary)' : 'var(--color-accent)');
+    const bar = (j) => {
+      const smp = samples[j] || { a: 0.02, sp: 0 };
+      return {
+        h: Math.round(4 + 110 * smp.a),
+        c: colour(smp.sp),
+        o: (0.95 - 0.7 * j / (half - 1)).toFixed(2)
+      };
+    };
+    const wave = [];
+    for (let j = half - 1; j >= 0; j--) wave.push(bar(j));
+    for (let j = 0; j < half; j++) wave.push(bar(j));
+    const nowSp = (samples[0] || { sp: 0 }).sp;
+    const cta = { bg: colour(nowSp), fg: nowSp === 0 ? 'var(--color-primary-content)' : 'var(--color-accent-content)' };
+
+    return {
+      yes: true,
+      theme: this.props.theme ?? 'saturn-night',
+      wave,
+      cta,
+      steps,
+      hero,
+      loop: { x: (h / T).toFixed(4), t: h < 0.5 ? 'none' : 'transform 0.15s linear' },
+      search,
+      voice,
+      mark,
+      desk,
+      ring,
+      file,
+      nums: this.numbers(s.still ? 30 : Math.floor(s.t))
+    };
+  }
+}
+</script>
+</body>
+</html>

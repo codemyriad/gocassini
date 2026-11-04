@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cassini.talk – Help</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/cassinimicrosite/tokens.css">
+<link rel="stylesheet" href="ds/cassinimicrosite/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+[data-theme="saturn-night"]{color-scheme:dark;--color-base-100:oklch(15% 0.014 255);--color-base-200:oklch(19.5% 0.016 255);--color-base-300:oklch(28% 0.018 255);--color-neutral-content:oklch(15% 0.014 255);--color-info:oklch(28% 0.018 255)}
+.pg-hero{padding-top:128px;padding-bottom:56px}
+.pg-sec{padding-bottom:64px}
+.pg-last{padding-bottom:128px}
+.pg-rule{padding-top:40px}
+.pg-tabs{max-width:100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.pg-tabs::-webkit-scrollbar{display:none}
+.pg-tabs .tab{flex:none}
+.pg-cats{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+@media (min-width:48rem){.pg-cats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pg-card{display:grid;grid-row:span 4;grid-template-rows:subgrid;row-gap:20px}
+.pg-card>.pg-meta{margin-top:-8px}
+.pg-bento{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+@media (min-width:48rem){.pg-bento{grid-template-columns:repeat(2,minmax(0,1fr))}.pg-wide{grid-column:span 2}}
+@media (min-width:64rem){.pg-cats{grid-template-columns:repeat(3,minmax(0,1fr))}.pg-bento{grid-template-columns:repeat(6,minmax(0,1fr))}.pg-half{grid-column:span 3}.pg-third{grid-column:span 2}}
+.pg-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:48px;height:48px;border-radius:0.75rem;border:1px solid var(--color-base-300);background:var(--color-base-100);color:var(--color-base-content)}
+.ink-btn{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;background:var(--color-base-content);color:var(--color-base-100);font-size:0.875rem;font-weight:700;padding:8px 12px;border-radius:0.375rem;transition:opacity .15s}
+.ink-btn:hover{opacity:.8}
+@media (max-width:47.98rem){.pg-hero{padding-top:104px;padding-bottom:40px}.pg-sec{padding-bottom:40px}.pg-last{padding-bottom:64px}}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="bg-base-100 text-base-content min-h-screen flex flex-col">
+<dc-import name="AppsNav" embedded="{{yes}}" theme="{{theme}}" mark="saturn" home-href="Home-elevated.dc.html" help-href="Help-elevated.dc.html" download-href="Download-elevated.dc.html" hint-size="100%,0px"></dc-import>
+<main class="flex flex-col">
+
+<section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-hero flex flex-col items-center text-center gap-6">
+<h1 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em">How can we help?</h1>
+<p class="text-lg text-base-content/60 text-balance" style="max-width: 36rem">Guides for cassini.talk on iPhone, iPad, Android, Mac, Windows and Linux.</p>
+<label class="input w-full max-w-2xl" style="height: 3.5rem; margin-top: 8px">
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content/60"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+<input type="search" class="grow" placeholder="Search the help centre" aria-label="Search the help centre">
+<kbd class="kbd kbd-sm">/</kbd>
+</label>
+<div role="tablist" aria-label="Show guides for" class="tabs tabs-box pg-tabs">
+<sc-for list="{{platforms}}" as="p" hint-placeholder-count="6">
+<button type="button" role="tab" class="{{p.cls}}" aria-selected="{{p.selected}}" onClick="{{p.pick}}">{{p.label}}</button>
+</sc-for>
+</div>
+</section>
+
+<section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-sec">
+<div class="pg-cats">
+<div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-4">
+<span class="flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary"><circle cx="12" cy="12" r="10"></circle><path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z"></path></svg><h2 class="text-lg font-semibold text-base-content">Getting started</h2></span>
+<ul class="flex flex-col gap-2">
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Install cassini.talk</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Make your first recording</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Download the speech model</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Allow microphone access</a></li>
+</ul>
+<a href="Help-article-elevated.dc.html" class="text-sm text-base-content/60 hover:text-base-content transition-colors" style="margin-top: auto">All guides →</a>
+</div>
+<div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-4">
+<span class="flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary"><path d="M12 19v3"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><rect x="9" y="2" width="6" height="13" rx="3"></rect></svg><h2 class="text-lg font-semibold text-base-content">Recording</h2></span>
+<ul class="flex flex-col gap-2">
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Pause, resume and mark a moment</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Record a call on your computer</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Keep recording with the screen locked</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Import audio from another app</a></li>
+</ul>
+<a href="Help-article-elevated.dc.html" class="text-sm text-base-content/60 hover:text-base-content transition-colors" style="margin-top: auto">All guides →</a>
+</div>
+<div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-4">
+<span class="flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary"><path d="M15 12h-5"></path><path d="M15 8h-5"></path><path d="M19 17V5a2 2 0 0 0-2-2H4"></path><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"></path></svg><h2 class="text-lg font-semibold text-base-content">Transcription</h2></span>
+<ul class="flex flex-col gap-2">
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Transcribe on your device</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Choose the speech language</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Stop and keep progress</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Transcribe a recording again</a></li>
+</ul>
+<a href="Help-article-elevated.dc.html" class="text-sm text-base-content/60 hover:text-base-content transition-colors" style="margin-top: auto">All guides →</a>
+</div>
+<div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-4">
+<span class="flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg><h2 class="text-lg font-semibold text-base-content">Speakers and voices</h2></span>
+<ul class="flex flex-col gap-2">
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Name a speaker</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Merge two speakers</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Save a voice for next time</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Forget saved voices</a></li>
+</ul>
+<a href="Help-article-elevated.dc.html" class="text-sm text-base-content/60 hover:text-base-content transition-colors" style="margin-top: auto">All guides →</a>
+</div>
+<div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-4">
+<span class="flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg><h2 class="text-lg font-semibold text-base-content">Files and sharing</h2></span>
+<ul class="flex flex-col gap-2">
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Export text or subtitles</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Share a Cassini .opus file</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Open a file someone sent you</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Edit a passage and go back</a></li>
+</ul>
+<a href="Help-article-elevated.dc.html" class="text-sm text-base-content/60 hover:text-base-content transition-colors" style="margin-top: auto">All guides →</a>
+</div>
+<div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-4">
+<span class="flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg><h2 class="text-lg font-semibold text-base-content">Privacy and storage</h2></span>
+<ul class="flex flex-col gap-2">
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">What stays on your device</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Recently Deleted</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Free up space</a></li>
+<li><a href="Help-article-elevated.dc.html" class="text-sm text-base-content/80 hover:text-primary transition-colors">Erase all voice data</a></li>
+</ul>
+<a href="Help-article-elevated.dc.html" class="text-sm text-base-content/60 hover:text-base-content transition-colors" style="margin-top: auto">All guides →</a>
+</div>
+</div>
+</section>
+
+<section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-last flex flex-col gap-6">
+<div class="flex flex-col gap-3 pg-rule border-t border-base-300">
+<h2 class="text-3xl md:text-4xl font-bold text-base-content">Still stuck?</h2>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-3">
+<h3 class="text-lg font-semibold text-base-content">Email us</h3>
+<p class="text-sm text-base-content/60 leading-relaxed">Tell us which device you use and which version of cassini.talk it runs. You’ll find the version under Settings › About.</p>
+<a href="mailto:hello@codemyriad.io?subject=cassini.talk%20support" class="text-sm text-base-content hover:text-primary transition-colors">hello@codemyriad.io →</a>
+</div>
+<div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-3">
+<h3 class="text-lg font-semibold text-base-content">Report a problem</h3>
+<p class="text-sm text-base-content/60 leading-relaxed">Each app has its own issue tracker on GitHub. Search it first: someone may have asked already.</p>
+<a href="https://github.com/codemyriad" class="text-sm text-base-content hover:text-primary transition-colors">Issue trackers ↗</a>
+</div>
+</div>
+<div class="rounded-2xl border border-base-300 bg-base-200 px-5 py-4 flex flex-wrap items-center gap-4">
+<svg width="30" height="15" viewBox="14 33 122 58" class="shrink-0" aria-hidden="true"><defs><linearGradient id="nc-grad" x1="0" y1="150" x2="150" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#0082c9"></stop><stop offset="1" stop-color="#1cafff"></stop></linearGradient></defs><path fill="url(#nc-grad)" d="M75.091,35.685c-12.438,0-22.981,8.433-26.248,19.857-2.84-6.06-8.994-10.305-16.082-10.305-9.748,0-17.761,8.013-17.761,17.761s8.013,17.765,17.761,17.765c7.088,0,13.242-4.248,16.082-10.309,3.268,11.426,13.81,19.861,26.248,19.861,12.346,0,22.835-8.308,26.186-19.605,2.892,5.924,8.97,10.053,15.958,10.053,9.748,0,17.765-8.017,17.765-17.765s-8.017-17.761-17.765-17.761c-6.988,0-13.065,4.127-15.958,10.05-3.352-11.296-13.84-19.601-26.186-19.601h0ZM75.091,46.11c9.39,0,16.89,7.497,16.89,16.887s-7.501,16.89-16.89,16.89-16.887-7.501-16.887-16.89,7.497-16.887,16.887-16.887ZM32.762,55.663c4.114,0,7.338,3.221,7.338,7.335s-3.225,7.338-7.338,7.338-7.335-3.225-7.335-7.338,3.221-7.335,7.335-7.335ZM117.234,55.663c4.114,0,7.338,3.221,7.338,7.335s-3.225,7.338-7.338,7.338-7.335-3.225-7.335-7.338,3.221-7.335,7.335-7.335Z"></path></svg>
+<p class="text-sm text-base-content/60" style="flex: 1 1 16rem">Using Cassini for Nextcloud? Its documentation is on gocassini.com.</p>
+<a href="https://gocassini.com/docs" class="text-sm font-medium text-base-content hover:text-primary transition-colors">gocassini.com/docs ↗</a>
+</div>
+</section>
+</main>
+<dc-import name="AppsFooter" theme="{{theme}}" download-href="Download-elevated.dc.html" help-href="Help-elevated.dc.html" privacy-href="Help-article-elevated.dc.html" hint-size="100%,130px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["saturn-night","saturn-dark"],"default":"saturn-night"},"$preview":{"width":1440,"height":1730}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { platform: 'all' };
+  }
+  renderVals() {
+    const list = [
+      { id: 'all', label: 'All' },
+      { id: 'ios', label: 'iPhone and iPad' },
+      { id: 'android', label: 'Android' },
+      { id: 'mac', label: 'Mac' },
+      { id: 'windows', label: 'Windows' },
+      { id: 'linux', label: 'Linux' }
+    ];
+    const current = this.state.platform;
+    const platforms = list.map((p) => ({
+      label: p.label,
+      selected: p.id === current ? 'true' : 'false',
+      cls: p.id === current ? 'tab tab-active' : 'tab',
+      pick: () => this.setState({ platform: p.id })
+    }));
+    return {
+      yes: true,
+      theme: this.props.theme ?? 'saturn-night', platforms
+    };
+  }
+}
+</script>
+</body>
+</html>
