@@ -184,3 +184,56 @@ func (rt *Runtime) jobSharing(ctx context.Context, job *Job) *jobShareOutcome {
 	}
 	return outcome
 }
+
+// refusedShareCounts is how many published meetings Nextcloud would not share
+// with this caller: refused counts partial outcomes whose skipped list names
+// the caller, or a group the caller is in; refusedStarted counts recordings
+// the caller started that were not published because the caller was refused
+// — while that is still why the run failed, as jobSharing judges it. Retired
+// meetings are not counted: nobody has them.
+//
+// Teams are not matched. Whether the caller is in a Team takes the Teams
+// app's own API, which is not worth a call on every page open; a meeting
+// refused only to a Team the caller is in is not counted here.
+func (s *Store) refusedShareCounts(ctx context.Context, caller string, groups []string, retired map[string]bool) (refused, refusedStarted int, err error) {
+	inGroup := map[string]bool{}
+	for _, group := range groups {
+		inGroup[group] = true
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT o.job_id, o.status, o.skipped, COALESCE(j.state, ''), COALESCE(j.error, '')
+FROM job_share_outcomes o LEFT JOIN jobs j ON j.id = o.job_id
+WHERE o.status IN (?, ?)`, shareOutcomePartial, shareOutcomeStarterRefused)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var jobID, status, raw, state, jobErr string
+		if err := rows.Scan(&jobID, &status, &raw, &state, &jobErr); err != nil {
+			return 0, 0, err
+		}
+		if retired[jobID] {
+			continue
+		}
+		var skipped []skippedShare
+		if err := json.Unmarshal([]byte(raw), &skipped); err != nil {
+			continue
+		}
+		switch status {
+		case shareOutcomePartial:
+			for _, skip := range skipped {
+				if (skip.Type == "user" && skip.ID == caller) || (skip.Type == "group" && inGroup[skip.ID]) {
+					refused++
+					break
+				}
+			}
+		case shareOutcomeStarterRefused:
+			if state == "failed" && strings.Contains(jobErr, starterRefusedMarker) &&
+				len(skipped) > 0 && skipped[0].Type == "user" && skipped[0].ID == caller {
+				refusedStarted++
+			}
+		}
+	}
+	return refused, refusedStarted, rows.Err()
+}

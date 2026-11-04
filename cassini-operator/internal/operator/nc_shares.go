@@ -35,7 +35,13 @@ type ncShare struct {
 	FileTarget   string    `json:"file_target"`
 	Path         string    `json:"path"`
 	UIDFileOwner string    `json:"uid_file_owner"`
-	ItemType     string    `json:"item_type"`
+	// UIDOwner is who made the share; for a reshare it differs from the
+	// file's owner.
+	UIDOwner string `json:"uid_owner"`
+	ItemType string `json:"item_type"`
+	// Note is the text Cassini puts on every recording share (D-885). It
+	// comes back on the share and on the pending share.
+	Note string `json:"note"`
 }
 
 // ncShareError distinguishes a recipient or policy refusal from an outage.
@@ -99,8 +105,23 @@ func (c ExAppConfig) shareAPIURL() string {
 }
 
 // shareRequest validates both HTTP and OCS status. Nextcloud can put a refusal
-// in an HTTP 200 response, so neither status alone is sufficient.
+// in an HTTP 200 response, so neither status alone is sufficient. A reply
+// that carries no data is an error here: every read and create expects some.
 func (c ExAppConfig) shareRequest(ctx context.Context, client *http.Client, actor, method, rawURL string, form url.Values) (json.RawMessage, error) {
+	data, err := c.shareCall(ctx, client, actor, method, rawURL, form)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 || string(data) == "null" {
+		return nil, fmt.Errorf("Nextcloud share API %s returned no data", method)
+	}
+	return data, nil
+}
+
+// shareCall is shareRequest without the data requirement, for a call whose
+// success is the status alone — accepting a pending share answers with an
+// empty data element.
+func (c ExAppConfig) shareCall(ctx context.Context, client *http.Client, actor, method, rawURL string, form url.Values) (json.RawMessage, error) {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -144,9 +165,6 @@ func (c ExAppConfig) shareRequest(ctx context.Context, client *http.Client, acto
 		strings.EqualFold(meta.Status, "failure") {
 		return nil, &ncShareError{HTTPStatus: resp.StatusCode, OCSStatus: meta.StatusCode, Message: meta.Message}
 	}
-	if len(envelope.OCS.Data) == 0 || string(envelope.OCS.Data) == "null" {
-		return nil, fmt.Errorf("Nextcloud share API %s returned no data", method)
-	}
 	return envelope.OCS.Data, nil
 }
 
@@ -164,6 +182,28 @@ func (c ExAppConfig) receivedShares(ctx context.Context, client *http.Client, ca
 	var shares []ncShare
 	if err := json.Unmarshal(data, &shares); err != nil {
 		return nil, fmt.Errorf("decode received shares: %w", err)
+	}
+	if shares == nil {
+		shares = []ncShare{}
+	}
+	return shares, nil
+}
+
+// pendingShares lists the shares waiting for the caller's acceptance, as the
+// caller. A pending share has permissions 0 until it is accepted, and its
+// path is the owner's; neither grants anything, which is the point: the
+// caller is told what is waiting, and accepts it themselves (D-885).
+func (c ExAppConfig) pendingShares(ctx context.Context, client *http.Client, caller string) ([]ncShare, error) {
+	if strings.TrimSpace(caller) == "" {
+		return nil, fmt.Errorf("Nextcloud caller is required")
+	}
+	data, err := c.shareRequest(ctx, client, caller, http.MethodGet, c.shareAPIURL()+"/pending", nil)
+	if err != nil {
+		return nil, err
+	}
+	var shares []ncShare
+	if err := json.Unmarshal(data, &shares); err != nil {
+		return nil, fmt.Errorf("decode pending shares: %w", err)
 	}
 	if shares == nil {
 		shares = []ncShare{}
