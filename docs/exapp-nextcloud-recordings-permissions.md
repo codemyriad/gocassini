@@ -32,6 +32,22 @@ list of who was refused and why, and the run list flags it. An administrator
 can re-share once the policy is fixed. Outages and malformed share responses
 still stop publication.
 
+A share that was made may still be waiting for the person. Nextcloud lets an
+account accept shared files by hand (Personal settings › Sharing), and an
+administrator can make that the rule for everyone. Until the person accepts,
+the recording is in none of their lists, and Nextcloud's notification shows
+the share with Accept and Decline. Cassini tells them too: `GET
+operator/setup` (USER) carries the caller's waiting recording shares and
+their refusals as `sharing`, and Browse lists the waiting ones with **Accept**
+for one and **Accept all** for the lot. Accepting goes through `POST
+operator/shares/accept` (USER): the operator accepts as the person, through
+Nextcloud's own pending-share endpoint, and only shares that are in that
+person's own pending list and are Cassini's recordings. Nothing is accepted
+unasked, and never for anyone else. Every recording share carries a note
+naming the meeting, its date and its length ("Recording of Weekly sync,
+Friday 30 October 2026, 10:00 (42 min). Open it in Cassini."), so the file is
+recognisable in Files; the notification itself does not show the note.
+
 Nextcloud's sharing settings apply to the `cassini` account like to anyone:
 "Allow apps to use the Share API", "Exclude some groups from sharing" /
 "Limit sharing to some groups", "Restrict users to only share with users in

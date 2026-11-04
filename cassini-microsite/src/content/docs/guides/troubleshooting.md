@@ -98,6 +98,18 @@ These come from `recordings_access` on `/operator/status`.
 Listings fail closed: a misconfigured instance degrades to "no meetings",
 never to "everyone's meetings".
 
+**Someone sees no meetings, or misses one they were in.** Two causes, each
+told where the person concerned looks. Either Nextcloud is holding the share
+until they accept it (their account accepts shared files by hand, or the
+server asks everyone to): Browse tells them how many recordings are waiting
+and offers **Accept**; Nextcloud's notification offers the same. Or a sharing
+setting stopped Cassini sharing with them at all: Browse tells them that too,
+with a link to hand to an administrator, and **Doctor › Recording sharing**
+names the setting and the fix for the administrator, with a count of what is
+currently unshared. Once the setting is fixed, **Re-share with the room** on
+the run reaches whoever was refused; a recording that was not published
+because the person who started it was refused is published by **Rerun**.
+
 ## Transcription
 
 **Jobs go straight to `build/blocked` on a CUDA install.** The daemon asked for
