@@ -9,6 +9,42 @@ export interface SetupHealth {
   mode: string;
   cause: string;
   features: SetupFeatures | null;
+  // The caller's own recording shares (D-885): null on an operator too old to
+  // report them, which must read as "nobody said" and not as "nothing waiting".
+  sharing: SharingStatus | null;
+}
+
+// A published meeting whose share the caller has not accepted yet. Nextcloud
+// keeps a share out of the recipient's files until they accept it, and nothing
+// in Cassini ever accepts on their behalf.
+export interface PendingRecording {
+  // One entry per meeting, but a person can hold both a user share and a group
+  // share of the same file: accepting the meeting means accepting every id.
+  shareIds: string[];
+  jobId: string;
+  // "" when the operator no longer knows the job; the row then shows the date
+  // alone, or "A recording" when there is no date either.
+  title: string;
+  // ISO 8601, or "" when unknown.
+  startedAt: string;
+  // 0 when unknown.
+  durationSeconds: number;
+}
+
+// What `GET operator/setup` says about the caller's recording shares (D-885).
+//
+// `checked` false means the reads as the caller failed or timed out: the
+// counts are then zero because nothing was established, not because nothing is
+// waiting, and the app shows nothing rather than guess.
+export interface SharingStatus {
+  checked: boolean;
+  pending: PendingRecording[];
+  // Published meetings the caller was in the room for, whose share to them
+  // Nextcloud refused.
+  refused: number;
+  // Recordings the caller started that were not published because Nextcloud
+  // refused to share them with the caller.
+  refusedStarted: number;
 }
 export interface RecordingsAccess {
   ok: boolean;
@@ -53,7 +89,50 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
     mode: typeof body.mode === "string" ? body.mode : "",
     cause: typeof body.cause === "string" ? body.cause : "",
     features: readSetupFeatures(body.features),
+    sharing: readSharing(body.sharing),
   };
+}
+
+// readSharing reads the `sharing` object defensively: a missing or malformed
+// one is null (an operator that predates it), and a `checked: false` one keeps
+// its counts at zero whatever else it carries, because the operator says it
+// established nothing. A malformed entry in `pending` is dropped rather than
+// failing the whole object; an entry with no usable share id is nothing the
+// app could accept, so it is dropped too.
+export function readSharing(value: unknown): SharingStatus | null {
+  if (!isRecord(value) || typeof value.checked !== "boolean") return null;
+  if (!value.checked) return { checked: false, pending: [], refused: 0, refusedStarted: 0 };
+  const pending = Array.isArray(value.pending)
+    ? value.pending.flatMap((entry) => {
+        const recording = readPendingRecording(entry);
+        return recording ? [recording] : [];
+      })
+    : [];
+  return {
+    checked: true,
+    pending,
+    refused: readCount(value.refused),
+    refusedStarted: readCount(value.refused_started),
+  };
+}
+
+function readPendingRecording(value: unknown): PendingRecording | null {
+  if (!isRecord(value)) return null;
+  const shareIds = Array.isArray(value.share_ids)
+    ? value.share_ids.filter((id): id is string => typeof id === "string" && id !== "")
+    : [];
+  if (shareIds.length === 0) return null;
+  return {
+    shareIds,
+    jobId: typeof value.job_id === "string" ? value.job_id : "",
+    title: typeof value.title === "string" ? value.title : "",
+    startedAt: typeof value.started_at === "string" ? value.started_at : "",
+    durationSeconds: readCount(value.duration_seconds),
+  };
+}
+
+function readCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 // A missing setup answer leaves the audience unknown. Every current recording
