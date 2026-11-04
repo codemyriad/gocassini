@@ -109,3 +109,34 @@ func newChatStub(t *testing.T, reply string) string {
 	t.Cleanup(srv.Close)
 	return srv.URL
 }
+
+// An unreadable templates directory is a fallback only for a configured custom
+// template, and the warning names the directory's error rather than "no
+// template has this id". The built-in, configured or by default, runs without
+// a warning: it is what was asked for.
+func TestResolveSummaryWorkflowWithAnUnreadableDirectory(t *testing.T) {
+	notADir := filepath.Join(t.TempDir(), "templates")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(workflows.TemplatesDirEnv, notADir)
+	for _, tc := range []struct{ env, warn string }{
+		{"", ""},
+		{workflows.SummariseID, ""},
+		{"resumen", "could not be read"},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv(SummaryTemplateEnv, tc.env)
+			workflow, fallback := resolveSummaryWorkflow()
+			if workflow.ID != workflows.SummariseID {
+				t.Errorf("resolved %q", workflow.ID)
+			}
+			if tc.warn == "" && fallback != "" {
+				t.Errorf("fallback = %q, want none", fallback)
+			}
+			if tc.warn != "" && !strings.Contains(fallback, tc.warn) {
+				t.Errorf("fallback = %q, want it to say %q", fallback, tc.warn)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package workflows
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -103,27 +104,14 @@ func ParseCustomTemplate(id string, raw []byte) (CustomTemplate, error) {
 		return CustomTemplate{}, fmt.Errorf("the file name %q is not a usable id: use letters, digits, '.', '_' or '-', starting with a letter or digit", id+customTemplateExt)
 	}
 	if len(raw) > maxCustomTemplateBytes {
-		return CustomTemplate{}, fmt.Errorf("the file is %d bytes; a template may be at most %d", len(raw), maxCustomTemplateBytes)
+		return CustomTemplate{}, fmt.Errorf("a template may be at most %d bytes, and this file is larger", maxCustomTemplateBytes)
 	}
 	if !utf8.Valid(raw) {
 		return CustomTemplate{}, errors.New("the file is not UTF-8 text")
 	}
-	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
-	text = strings.TrimPrefix(text, "\ufeff")
-
-	if !strings.HasPrefix(text, "---\n") {
-		return CustomTemplate{}, errors.New("the file must start with a '---' line opening its front matter (name, description, version)")
-	}
-	rest := text[len("---\n"):]
-	end := strings.Index(rest, "\n---\n")
-	var header, body string
-	switch {
-	case end >= 0:
-		header, body = rest[:end], rest[end+len("\n---\n"):]
-	case strings.HasSuffix(rest, "\n---"):
-		header, body = strings.TrimSuffix(rest, "\n---"), ""
-	default:
-		return CustomTemplate{}, errors.New("the front matter has no closing '---' line")
+	header, body, err := splitFrontMatter(raw)
+	if err != nil {
+		return CustomTemplate{}, err
 	}
 
 	tpl := CustomTemplate{ID: id}
@@ -219,27 +207,47 @@ func parseFrontMatterScalar(raw string) (string, error) {
 	}
 }
 
+// errNoFrontMatter and errUnclosedFrontMatter are the two ways a file fails
+// to split into front matter and body.
+var (
+	errNoFrontMatter       = errors.New("the file must start with a '---' line opening its front matter (name, description, version)")
+	errUnclosedFrontMatter = errors.New("the front matter has no closing '---' line")
+)
+
+// splitFrontMatter is the one reading of a template file's layout: CRLF read
+// as LF, a leading BOM dropped, then a '---' line, the front matter, and a
+// closing '---' line (the last line of the file, or followed by the body).
+// ParseCustomTemplate and salvageCustomTemplate both read files through it,
+// so a file the panel opens for repair is split exactly as a run splits it.
+func splitFrontMatter(raw []byte) (header, body string, err error) {
+	text := strings.TrimPrefix(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\ufeff")
+	if !strings.HasPrefix(text, "---\n") {
+		return "", text, errNoFrontMatter
+	}
+	rest := text[len("---\n"):]
+	if end := strings.Index(rest, "\n---\n"); end >= 0 {
+		return rest[:end], rest[end+len("\n---\n"):], nil
+	}
+	if strings.HasSuffix(rest, "\n---") {
+		return strings.TrimSuffix(rest, "\n---"), "", nil
+	}
+	return "", text, errUnclosedFrontMatter
+}
+
 // salvageCustomTemplate is what can be read from a file ParseCustomTemplate
 // refused, so the panel can open it to be repaired rather than start empty:
 // the body after the front matter (the whole file when no front matter
-// closes), and the name and version when those lines still parse.
+// closes), and the name, description and version when those lines still
+// parse. The front matter is read even from a file too large or not UTF-8,
+// so a save over it still continues its version; the body of such a file is
+// not offered, because it is not text the panel could edit.
 func salvageCustomTemplate(id string, raw []byte) CustomTemplate {
 	tpl := CustomTemplate{ID: id}
-	if len(raw) > maxCustomTemplateBytes || !utf8.Valid(raw) {
-		return tpl
+	header, body, err := splitFrontMatter(raw)
+	if len(raw) <= maxCustomTemplateBytes && utf8.Valid(raw) {
+		tpl.Instruction = strings.TrimSpace(body)
 	}
-	text := strings.TrimPrefix(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\ufeff")
-	tpl.Instruction = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "---\n") {
-		return tpl
-	}
-	rest := text[len("---\n"):]
-	var header string
-	if end := strings.Index(rest, "\n---\n"); end >= 0 {
-		header, tpl.Instruction = rest[:end], strings.TrimSpace(rest[end+len("\n---\n"):])
-	} else if strings.HasSuffix(rest, "\n---") {
-		header, tpl.Instruction = strings.TrimSuffix(rest, "\n---"), ""
-	} else {
+	if err != nil {
 		return tpl
 	}
 	for _, line := range strings.Split(header, "\n") {
@@ -248,7 +256,7 @@ func salvageCustomTemplate(id string, raw []byte) CustomTemplate {
 			continue
 		}
 		parsed, err := parseFrontMatterScalar(value)
-		if err != nil {
+		if err != nil || !utf8.ValidString(parsed) {
 			continue
 		}
 		switch strings.TrimSpace(key) {
@@ -274,7 +282,8 @@ type customFile struct {
 
 // readCustomDir reads every template file in dir, sorted by id. A missing
 // directory is no templates; an unreadable one is an error, because an empty
-// list would then be a lie about what the administrator put there.
+// list would then be a lie about what the administrator put there. LoadDir
+// keeps that error beside the built-ins (Set.DirError) rather than failing.
 func readCustomDir(dir string) ([]customFile, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
@@ -300,7 +309,7 @@ func readCustomDir(dir string) ([]customFile, error) {
 		}
 		id := strings.TrimSuffix(name, customTemplateExt)
 		file := customFile{template: CustomTemplate{ID: id}}
-		raw, err := os.ReadFile(filepath.Join(dir, name))
+		raw, err := readTemplateFile(filepath.Join(dir, name))
 		if err == nil {
 			file.template, err = ParseCustomTemplate(id, raw)
 			if err != nil {
@@ -318,4 +327,16 @@ func readCustomDir(dir string) ([]customFile, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].template.ID < out[j].template.ID })
 	return out, nil
+}
+
+// readTemplateFile reads at most one byte more than a template may hold, so a
+// stray large file costs a bounded read on every listing, not its whole size;
+// ParseCustomTemplate then refuses it as too large.
+func readTemplateFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, maxCustomTemplateBytes+1))
 }

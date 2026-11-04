@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gocassini/internal/insight"
+	"gocassini/internal/insight/workflows"
 	"gocassini/internal/portable"
 )
 
@@ -185,7 +186,11 @@ func TestBuildMeetingSummaryRejectsEmptyTranscript(t *testing.T) {
 }
 
 func TestSummarySystemPromptPinsTemplateAndRules(t *testing.T) {
-	prompt := summarySystemPrompt(summaryV0Template)
+	// The prompt the step actually sends: the resolved workflow's, with no
+	// template configured.
+	t.Setenv(SummaryTemplateEnv, "")
+	t.Setenv(workflows.TemplatesDirEnv, "")
+	prompt := ResolveSummaryWorkflow().SystemPrompt()
 	mustContain := []string{
 		"# Meeting Summary",
 		"## Overview",

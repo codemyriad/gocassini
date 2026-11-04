@@ -207,10 +207,17 @@ template someone added never disappears without a reason.
 		return 2
 	}
 
-	entries, err := workflows.Catalog()
+	set, err := workflows.Load()
 	if err != nil {
 		fmt.Fprintf(stderr, "insight workflows failed: %v\n", err)
 		return 1
+	}
+	entries := set.Entries
+	// An unreadable templates directory leaves the built-ins listed: the
+	// listing still succeeds, and says on stderr why no custom template is in
+	// it (the operator logs what it reads there).
+	if set.DirError != "" {
+		fmt.Fprintf(stderr, "warn: custom templates are left out: %s\n", set.DirError)
 	}
 
 	if *asJSON {

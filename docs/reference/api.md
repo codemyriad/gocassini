@@ -305,8 +305,11 @@ Content-Type: application/json
 Behavior:
 
 - requires at least one `meetingIds` entry
-- `workflow` is optional — it falls back to the configured insight template, then
-  to the shipped default. `cassini insight workflows --json` lists the registry
+- `workflow` is optional — it falls back to the configured insight template
+  when that can run, else to `summarise`: the same `default` that
+  `GET /operator/insights/workflows` advertises. A configured template that
+  cannot run is logged, not refused. A `workflow` that is named and cannot run
+  is a `400`. `cassini insight workflows --json` lists the registry
 - `question` belongs only to a workflow that has somewhere to put one, and is
   refused **both ways**: sent to a workflow that takes none it would be dropped
   without being asked, and withheld from one that needs it the prompt would go
@@ -445,17 +448,23 @@ DELETE /operator/settings/workflows/<id>         (ADMIN)
   with an `error` and no `sha256`, and a run that names it is a `400` carrying
   that reason. It still carries what could be read from the file — its body
   as `instruction` (the whole file when no front matter closes), and the
-  `name` and `version` when those lines parse — so it can be opened and fixed
+  `name` and `version` when those lines parse — so it can be opened and fixed.
+  A templates directory that cannot be read leaves the built-ins listed; the
+  operator logs the recorder's warning saying why no custom template is there
 - `PUT` takes `{"name", "description", "instruction"}` (`description` may be
   empty), writes the
-  file with the previous version plus one (the higher of the listed version
-  and the `version` line in the file, which a broken file may still have),
+  file with the previous version plus one (the listed version, which a broken
+  file still carries when its `version` line parses),
   and asks the recorder to list it
   again. A file the recorder will not run is put back as it was and the save is
   a `400` with the recorder's reason; otherwise the answer is the saved entry.
-  A built-in id is a `400`: start a custom template from it instead
+  A built-in id is a `400`: start a custom template from it instead. With
+  `If-None-Match: *` the `PUT` only creates: a template already there under
+  that id is a `412`, and the panel sends it for every new template
 - `DELETE` removes a custom template. A built-in is a `400`, a missing one a
-  `404`, and one that is the configured summary or insight template a `409`
+  `404`, and one that is the configured summary or insight template a `409` —
+  unless the file shares a built-in's id, which it never runs in place of, so
+  deleting it is allowed
 
 ## What the API does not try to be
 

@@ -304,3 +304,52 @@ func TestParseCustomTemplateReadsWhatTheOperatorWrites(t *testing.T) {
 		t.Errorf("empty description: %+v, %v", empty, err)
 	}
 }
+
+// A templates directory that cannot be read leaves the built-ins running and
+// says why no custom template is there, rather than failing the whole set.
+func TestLoadDirKeepsTheBuiltInsWhenTheDirectoryCannotBeRead(t *testing.T) {
+	// A regular file where the directory should be: ReadDir fails with
+	// ENOTDIR whoever runs the test, root included.
+	dir := filepath.Join(t.TempDir(), "templates")
+	writeTemplateFile(t, filepath.Dir(dir), "templates", "not a directory")
+	set, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if len(set.Entries) != len(shipped) {
+		t.Errorf("listed %d entries, want the %d built-ins", len(set.Entries), len(shipped))
+	}
+	if _, ok := set.Registry.Lookup(SummariseID); !ok {
+		t.Error("the built-in summarise is not in the registry")
+	}
+	if !strings.Contains(set.DirError, "read the templates directory") {
+		t.Errorf("DirError = %q", set.DirError)
+	}
+	if problem := set.Problem("resumen"); !strings.Contains(problem, "could not be read") {
+		t.Errorf("Problem(resumen) = %q, want the directory's error", problem)
+	}
+	if problem := set.Problem(SummariseID); problem != "" {
+		t.Errorf("Problem(summarise) = %q, want none: the built-in runs", problem)
+	}
+}
+
+// A file over the size bound is read only up to it, and is still listed with
+// its version, so a save over it continues the numbering.
+func TestLoadDirListsAnOversizedFileWithItsVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeTemplateFile(t, dir, "huge.md", "---\nname: Huge\nversion: 5\n---\n"+strings.Repeat("a", 2*maxCustomTemplateBytes))
+	set, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range set.Entries {
+		if entry.ID != "huge" {
+			continue
+		}
+		if !strings.Contains(entry.Error, "at most") || entry.Version != "v5" || entry.Name != "Huge" || entry.Instruction != "" {
+			t.Errorf("huge = %+v", entry)
+		}
+		return
+	}
+	t.Error("huge.md is not listed")
+}

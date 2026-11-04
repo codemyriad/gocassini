@@ -19,6 +19,12 @@ import (
 //	PUT    operator/settings/workflows/<id>   {name, description, instruction}
 //	DELETE operator/settings/workflows/<id>
 //
+// A PUT carrying `If-None-Match: *` creates and never replaces: it is answered
+// 412 when <id>.md is already there. The panel sends it for a new template,
+// whose id it derives from the name and the list it last loaded, so a list
+// that is stale or failed to load cannot turn "New template" into an
+// overwrite of somebody else's.
+//
 // A template is a file, <id>.md, in the templates root on the app's volume.
 // The recorder owns the format and the registry; the operator writes the file
 // and then asks the recorder whether it resolves, by listing the registry
@@ -124,11 +130,14 @@ func (rt *Runtime) putWorkflow(w http.ResponseWriter, r *http.Request, id string
 		writeJSONError(w, http.StatusInternalServerError, "the existing template could not be read")
 		return
 	}
-	// A file the recorder cannot parse is listed with no version, but its
-	// version line may still be there; saving over it must not go back to 1.
-	if n := templateFileVersion(previous); n >= version {
-		version = n + 1
+	if existed && createOnly(r) {
+		writeJSONError(w, http.StatusPreconditionFailed, fmt.Sprintf("a custom template %q already exists", id))
+		return
 	}
+	// The version comes from the listing above. A file the recorder cannot
+	// parse is listed with the version its front matter still gives
+	// (salvageCustomTemplate), so saving over it does not go back to 1, and
+	// the operator keeps no second reader of the format.
 	if err := writeTemplateFile(dir, path, []byte(request.file(version))); err != nil {
 		rt.logger.Printf("settings workflows: write %s: %v", path, err)
 		writeJSONError(w, http.StatusInternalServerError, "the template could not be written")
@@ -183,26 +192,34 @@ func (rt *Runtime) deleteWorkflow(w http.ResponseWriter, r *http.Request, id str
 	defer rt.templatesMu.Unlock()
 
 	path := filepath.Join(dir, id+".md")
+	entries, listErr := rt.readWorkflowRegistry(r.Context())
+	if listErr != nil {
+		rt.logger.Printf("settings workflows: %v", listErr)
+	}
+	builtIn := false
+	for _, entry := range entries {
+		if entry.ID == id && entry.Origin == originBuiltIn {
+			builtIn = true
+		}
+	}
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		entries, listErr := rt.readWorkflowRegistry(r.Context())
-		if listErr == nil {
-			for _, entry := range entries {
-				if entry.ID == id && entry.Origin == originBuiltIn {
-					writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("%q is a built-in template and cannot be deleted", id))
-					return
-				}
-			}
+		if builtIn {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("%q is a built-in template and cannot be deleted", id))
+			return
 		}
 		writeJSONError(w, http.StatusNotFound, fmt.Sprintf("there is no custom template %q", id))
 		return
 	}
 	// A template a step is pointed at would leave that step naming nothing.
+	// A file that shares a built-in's id is the exception: it never runs (the
+	// recorder lists it broken), the built-in answers to the id before and
+	// after, so deleting it changes nothing a step runs.
 	settings := rt.currentLLMSettings()
 	for _, use := range []struct{ step, template string }{
 		{"meeting summaries", settings.Summary.Template},
 		{"insights", settings.Insight.Template},
 	} {
-		if strings.TrimSpace(use.template) == id {
+		if !builtIn && strings.TrimSpace(use.template) == id {
 			writeJSONError(w, http.StatusConflict, fmt.Sprintf("%q is the template for %s; choose another one there before deleting it", id, use.step))
 			return
 		}
@@ -259,29 +276,9 @@ func (q workflowWriteRequest) file(version int) string {
 	return b.String()
 }
 
-// templateFileVersion reads the version line from a template file's front
-// matter, or 0 when there is none that parses.
-func templateFileVersion(raw []byte) int {
-	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
-	text = strings.TrimPrefix(text, "\ufeff")
-	if !strings.HasPrefix(text, "---\n") {
-		return 0
-	}
-	for _, line := range strings.Split(text[len("---\n"):], "\n") {
-		if strings.TrimSpace(line) == "---" {
-			break
-		}
-		key, value, ok := strings.Cut(line, ":")
-		if !ok || strings.TrimSpace(key) != "version" {
-			continue
-		}
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		if n, err := strconv.Atoi(value); err == nil && n > 0 {
-			return n
-		}
-		return 0
-	}
-	return 0
+// createOnly reports whether a PUT asked to create and never replace.
+func createOnly(r *http.Request) bool {
+	return strings.TrimSpace(r.Header.Get("If-None-Match")) == "*"
 }
 
 // writeTemplateFile writes a template through a dot-named temporary file in

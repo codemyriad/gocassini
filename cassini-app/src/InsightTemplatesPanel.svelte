@@ -238,16 +238,30 @@
     if (promptProblem(editor.draft.prompt)) {
       return;
     }
-    const id =
-      editor.id ??
-      templateIdFromName(
-        editor.draft.name,
-        workflows.map((workflow) => workflow.id),
-      );
+    const current = editor;
+    // A new template's id comes from the list last loaded, which may be stale
+    // (another administrator saved one since) or empty (it failed to load).
+    // So a new template is saved create-only: the operator answers 412 rather
+    // than overwrite one already there, and the id is derived once more from
+    // a fresh list.
+    const creating = current.id === null;
+    let taken = workflows.map((workflow) => workflow.id);
     saving = true;
     saveError = "";
     try {
-      await client.saveInsightTemplate(id, toRequest(editor.draft));
+      for (let attempt = 0; ; attempt++) {
+        const id = current.id ?? templateIdFromName(current.draft.name, taken);
+        try {
+          await client.saveInsightTemplate(id, toRequest(current.draft), { createOnly: creating });
+          break;
+        } catch (error) {
+          if (!creating || attempt > 0 || !(error instanceof OperatorHttpError) || error.status !== 412) {
+            throw error;
+          }
+          const fresh = await client.listInsightWorkflows();
+          taken = [...taken, id, ...fresh.map((workflow) => workflow.id)];
+        }
+      }
       editor = null;
       await load();
     } catch (error) {
@@ -258,7 +272,10 @@
   }
 
   async function askDelete(workflow: InsightWorkflow) {
-    deletion = { workflow, error: "", inUse: await stepUsing(workflow.id) };
+    // A custom file sharing a built-in's id never runs; the built-in answers
+    // to the id whether or not the file is there, so no step uses the file.
+    const shadowsBuiltIn = isCustom(workflow) && builtIns.some((builtIn) => builtIn.id === workflow.id);
+    deletion = { workflow, error: "", inUse: shadowsBuiltIn ? "" : await stepUsing(workflow.id) };
     await tick();
     // showModal is absent only where there is no real browser (jsdom).
     if (deleteDialog && !deleteDialog.open) {

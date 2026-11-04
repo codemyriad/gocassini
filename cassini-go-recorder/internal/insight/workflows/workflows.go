@@ -191,16 +191,24 @@ type Entry struct {
 type Set struct {
 	Registry insight.Registry
 	Entries  []Entry
+	// DirError says why the templates directory could not be read, or "" when
+	// it was read or none is configured. The built-ins are still in the set:
+	// custom templates are then unknown, not every template.
+	DirError string
 }
 
-// Problem says why the custom template id is listed and cannot run, or "" when
-// no such broken template exists.
+// Problem says why the custom template id cannot run, or "" when nothing is
+// known to be wrong with it: the reason a listed broken file gives, or, for
+// an id the set does not hold, that the templates directory could not be read.
 func (s Set) Problem(id string) string {
 	id = strings.TrimSpace(id)
 	for _, entry := range s.Entries {
 		if entry.ID == id && entry.Error != "" {
 			return entry.Error
 		}
+	}
+	if _, ok := s.Registry.Lookup(id); !ok && s.DirError != "" {
+		return "the custom templates could not be read: " + s.DirError
 	}
 	return ""
 }
@@ -218,7 +226,9 @@ func Load() (Set, error) {
 // is a broken build. A custom file that will not resolve is listed with its
 // error and left out of the registry, because one bad file an administrator
 // dropped in must not stop every other template, the summary step included,
-// from running.
+// from running. A templates directory that cannot be read is the same rule
+// one level up: the built-ins load, and Set.DirError says why no custom
+// template is there.
 func LoadDir(dir string) (Set, error) {
 	built := make([]insight.Workflow, 0, len(shipped))
 	entries := make([]Entry, 0, len(shipped))
@@ -239,9 +249,10 @@ func LoadDir(dir string) (Set, error) {
 		})
 	}
 
-	custom, err := readCustomDir(dir)
-	if err != nil {
-		return Set{}, err
+	custom, dirErr := readCustomDir(dir)
+	var dirError string
+	if dirErr != nil {
+		dirError = dirErr.Error()
 	}
 	for _, file := range custom {
 		entry := Entry{
@@ -273,7 +284,7 @@ func LoadDir(dir string) (Set, error) {
 	if err != nil {
 		return Set{}, err
 	}
-	return Set{Registry: registry, Entries: entries}, nil
+	return Set{Registry: registry, Entries: entries, DirError: dirError}, nil
 }
 
 // Registry builds the workflows a run may name: the shipped ones, and the

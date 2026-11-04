@@ -425,8 +425,9 @@ Summaries and questions use whichever language model you connect, so their ratin
       </route>
       <!--
         USER: the insight templates anybody may pick when generating an
-        insight (D-819). Id, name, question, description, whether it takes a
-        question, and origin: never the instruction, which stays on the ADMIN
+        insight (D-819), and the default a run that names none gets. Id,
+        name, description, whether it takes a question, and origin: never
+        the instruction, which stays on the ADMIN
         operator/settings/workflows route.
       -->
       <route>
