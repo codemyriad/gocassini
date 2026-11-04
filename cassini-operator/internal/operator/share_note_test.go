@@ -1,9 +1,12 @@
 package operator
 
 import (
+	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // The note on a share, in the words the contract fixes: what the file is,
@@ -61,5 +64,40 @@ func TestRecordingSharesCarryANoteNamingTheMeeting(t *testing.T) {
 		if f.notes[key] != want {
 			t.Fatalf("note on %s = %q, want %q", key, f.notes[key], want)
 		}
+	}
+}
+
+// A title is cut between characters, never inside one: a Cyrillic title
+// well over 80 bytes but under the cap must come through whole, and a longer
+// CJK one is still valid UTF-8 after the cut. A note with a broken character
+// in it is refused by a utf8mb4 Nextcloud database, which fails the publish.
+func TestMeetingTitlesAreCutBetweenCharacters(t *testing.T) {
+	cyrillic := strings.TrimSpace(strings.Repeat("Совещание ", 6)) // 59 characters, 113 bytes
+	if got := oneLineTitle(cyrillic); got != cyrillic {
+		t.Fatalf("a %d-byte title was cut: %q", len(cyrillic), got)
+	}
+	cjk := strings.Repeat("会議", 70) // 140 characters
+	got := oneLineTitle(cjk)
+	if !utf8.ValidString(got) {
+		t.Fatalf("the cut title is not valid UTF-8: %q", got)
+	}
+	if runes := []rune(got); len(runes) != maxShareNoteTitle+1 || !strings.HasSuffix(got, "…") || !strings.HasPrefix(cjk, strings.TrimSuffix(got, "…")) {
+		t.Fatalf("cut title = %q (%d characters)", got, len(runes))
+	}
+	if got := oneLineTitle("  Weekly\r\n\tsync  "); got != "Weekly   sync" {
+		t.Fatalf("one-line title = %q", got)
+	}
+	// Through the operator's own record of the meeting, and into the note.
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "J1", Stage: "done", State: "succeeded", CreatedAt: "2026-10-30T09:00:00Z"})
+	indexMeeting(t, rt, "J1.opus", cyrillic, 2520000)
+	facts := rt.meetingFactsFor(ctx, "J1")
+	if facts.Title != cyrillic {
+		t.Fatalf("indexed title came back as %q", facts.Title)
+	}
+	if note := facts.shareNote(false); !utf8.ValidString(note) || !strings.Contains(note, cyrillic) {
+		t.Fatalf("note = %q", note)
 	}
 }

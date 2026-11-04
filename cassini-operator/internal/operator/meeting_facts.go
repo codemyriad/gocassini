@@ -53,7 +53,7 @@ func (rt *Runtime) meetingFactsFor(ctx context.Context, jobID string) meetingFac
 			if json.Unmarshal(entries[fileID], &entry) != nil {
 				continue
 			}
-			facts.Title = strings.TrimSpace(oneLineListField(entry.Title))
+			facts.Title = oneLineTitle(entry.Title)
 			if entry.DigestDurationMS > 0 {
 				audioLength = time.Duration(entry.DigestDurationMS) * time.Millisecond
 			}
