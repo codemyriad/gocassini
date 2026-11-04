@@ -1,0 +1,87 @@
+name: cassini.talk site
+
+# Build + lint gate for the cassini.talk marketing site (cassini-talk-site/),
+# and its deploy: a push to main that passes the gate is deployed to the
+# `cassini-talk` Worker with the exact `dist` the build job produced.
+#
+# Modelled on microsite.yml, without its embed job: this site has no
+# committed build output to check.
+#
+# Until the cassini.talk DNS is confirmed, wrangler.jsonc has no custom-domain
+# route, so the deploy is served only at the Worker's workers.dev URL.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cassini-talk-site/**'
+      - '.github/workflows/cassini-talk-site.yml'
+  pull_request:
+    paths:
+      - 'cassini-talk-site/**'
+      - '.github/workflows/cassini-talk-site.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cassini-talk-site-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cassini-talk-site
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: cassini-talk-site/.nvmrc
+          cache: npm
+          cache-dependency-path: cassini-talk-site/package-lock.json
+
+      - name: Install (fails if manifest/lockfile are missing or out of sync)
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Keep the build for the deploy job
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cassini-talk-site-dist
+          path: cassini-talk-site/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  # Deploy what the build job tested. `wrangler deploy` reads wrangler.jsonc
+  # (Worker name, account) and uploads ./dist as static assets. Needs the
+  # CLOUDFLARE_API_TOKEN repo secret, the same one microsite.yml uses.
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment:
+      name: cassini.talk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cassini-talk-site-dist
+          path: cassini-talk-site/dist
+
+      - name: Deploy to the cassini-talk Worker
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: cassini-talk-site
+          command: deploy
