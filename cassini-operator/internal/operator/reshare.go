@@ -85,6 +85,9 @@ func (rt *Runtime) handleReshareJob(w http.ResponseWriter, r *http.Request, id s
 		writeJSONError(w, http.StatusBadGateway, "Cassini could not share the meeting again. Check Doctor's Recording storage and Recording sharing, then try again.")
 		return
 	}
+	if fresh != nil {
+		fresh.AudienceCount = capturedAudienceCount(job)
+	}
 	// Other open panels learn of it as of any change to the run.
 	rt.store.emitStateChange(ctx, "job.updated", id, job.CurrentAttemptNumber)
 	writeJSON(w, http.StatusOK, reshareResponse{Sharing: fresh})

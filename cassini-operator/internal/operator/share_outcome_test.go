@@ -281,8 +281,21 @@ func TestShareOutcomeReachesTheRunListDetailAndEvents(t *testing.T) {
 	defer cleanup()
 	insertJob(t, rt.store.db, "J1", nowUTCString())
 	insertJob(t, rt.store.db, "J2", nowUTCString())
+	insertJob(t, rt.store.db, "J3", nowUTCString())
 	skipped := []skippedShare{{Type: "user", ID: "bob", Reason: "Sharing is only allowed with group members"}}
 	if err := rt.store.RecordJobShareOutcome(ctx, "J1", shareOutcomePartial, skipped); err != nil {
+		t.Fatal(err)
+	}
+	// J1's publish used its starter plus the captured room: alice (who is
+	// also in the roster), bob and the staff group — three recipients.
+	if err := rt.store.SetJobTalkBinding(ctx, "J1", `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":false}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.MergeJobRoomAudience(ctx, "J1", []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}, {Type: "group", ID: "staff"}}, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	// J3 has an outcome but no captured audience: no count to report.
+	if err := rt.store.RecordJobShareOutcome(ctx, "J3", shareOutcomeComplete, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,13 +319,18 @@ func TestShareOutcomeReachesTheRunListDetailAndEvents(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("detail: %v %s", err, rec.Body.String())
 	}
-	if detail.Sharing == nil || detail.Sharing.Status != shareOutcomePartial || !reflect.DeepEqual(detail.Sharing.Skipped, skipped) || detail.Job.UnsharedCount != 1 {
+	if detail.Sharing == nil || detail.Sharing.Status != shareOutcomePartial || !reflect.DeepEqual(detail.Sharing.Skipped, skipped) || detail.Job.UnsharedCount != 1 || detail.Sharing.AudienceCount != 3 {
 		t.Fatalf("detail sharing = %+v, job count %d", detail.Sharing, detail.Job.UnsharedCount)
 	}
 	rec = httptest.NewRecorder()
 	rt.jobDetailHandler(rec, httptest.NewRequest(http.MethodGet, "/jobs/J2", nil))
 	if strings.Contains(rec.Body.String(), `"sharing"`) {
 		t.Fatalf("a job with no recorded outcome reports one: %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	rt.jobDetailHandler(rec, httptest.NewRequest(http.MethodGet, "/jobs/J3", nil))
+	if !strings.Contains(rec.Body.String(), `"sharing"`) || strings.Contains(rec.Body.String(), `"audience_count"`) {
+		t.Fatalf("a job with no captured audience reports a count: %s", rec.Body.String())
 	}
 
 	hub := newEventHub()
@@ -326,7 +344,7 @@ func TestShareOutcomeReachesTheRunListDetailAndEvents(t *testing.T) {
 	rt.publishStateChangeEvent(StateChangeEvent{Type: "job.updated", JobID: "J1", Job: job})
 	select {
 	case event := <-events:
-		if event.Sharing == nil || event.Sharing.Status != shareOutcomePartial || event.Job.UnsharedCount != 1 {
+		if event.Sharing == nil || event.Sharing.Status != shareOutcomePartial || event.Job.UnsharedCount != 1 || event.Sharing.AudienceCount != 3 {
 			t.Fatalf("event sharing = %+v, job count %d", event.Sharing, event.Job.UnsharedCount)
 		}
 	case <-time.After(2 * time.Second):
@@ -417,5 +435,24 @@ func TestADeletedMeetingCarriesNoShareOutcome(t *testing.T) {
 	job := Job{ID: "J1", State: "succeeded", MeetingDeleted: true}
 	if got := rt.jobSharing(ctx, &job); got != nil || job.UnsharedCount != 0 {
 		t.Fatalf("deleted meeting sharing = %+v, count %d", got, job.UnsharedCount)
+	}
+}
+
+// The count a run reports is the list its publish shared with: the starter
+// and the captured room, without the recordings owner and without repeats.
+// No capture, no count: the live roster a publish fell back to is not kept.
+func TestCapturedAudienceCountIsThePublishedList(t *testing.T) {
+	binding := `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":false}`
+	at := nowUTCString()
+	audience := `[{"type":"user","id":"alice"},{"type":"user","id":"bob"},{"type":"group","id":"staff"},{"type":"user","id":"cassini"},{"type":"user","id":"bob"}]`
+	if got := capturedAudienceCount(Job{TalkBinding: &binding, RoomAudience: &audience, RoomAudienceAt: &at}); got != 3 {
+		t.Fatalf("count = %d, want alice, bob and staff", got)
+	}
+	empty := "[]"
+	if got := capturedAudienceCount(Job{TalkBinding: &binding, RoomAudience: &empty, RoomAudienceAt: &at}); got != 1 {
+		t.Fatalf("count with an empty room = %d, want the starter alone", got)
+	}
+	if got := capturedAudienceCount(Job{TalkBinding: &binding, RoomAudience: &audience}); got != 0 {
+		t.Fatalf("count without a capture = %d, want none", got)
 	}
 }

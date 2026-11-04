@@ -42,6 +42,41 @@ type jobShareOutcome struct {
 	Status    string         `json:"status"`
 	Skipped   []skippedShare `json:"skipped,omitempty"`
 	UpdatedAt string         `json:"updated_at,omitempty"`
+	// AudienceCount is how many recipients the publish shared with: the
+	// recording's starter plus the room audience captured for it, the same
+	// list a re-share re-applies. Absent when no audience was captured.
+	AudienceCount int `json:"audience_count,omitempty"`
+}
+
+// capturedAudienceCount counts the recipients a publish used, from the job
+// row alone: the starter in its Talk binding, plus the captured room
+// audience, without the recordings owner and without repeats — as
+// reconcileRecordingShares walks them. Zero when no audience was captured,
+// because the publish then resolved the room live and that list is not kept.
+func capturedAudienceCount(job Job) int {
+	if job.RoomAudienceAt == nil || strings.TrimSpace(*job.RoomAudienceAt) == "" || job.RoomAudience == nil {
+		return 0
+	}
+	audience, err := decodeRoomAudience(*job.RoomAudience)
+	if err != nil {
+		return 0
+	}
+	seen := map[string]bool{}
+	if job.TalkBinding != nil {
+		if state, err := decodeTalkBinding(*job.TalkBinding); err == nil {
+			if starter := strings.TrimSpace(state.Owner); starter != "" && starter != ncRecordingsOwner {
+				seen["user\x00"+starter] = true
+			}
+		}
+	}
+	for _, principal := range audience {
+		kind, id := strings.TrimSpace(principal.Type), strings.TrimSpace(principal.ID)
+		if id == "" || (kind == "user" && id == ncRecordingsOwner) {
+			continue
+		}
+		seen[kind+"\x00"+id] = true
+	}
+	return len(seen)
 }
 
 const maxShareRefusalReason = 200
@@ -181,6 +216,9 @@ func (rt *Runtime) jobSharing(ctx context.Context, job *Job) *jobShareOutcome {
 	}
 	if outcome != nil && outcome.Status == shareOutcomePartial {
 		job.UnsharedCount = len(outcome.Skipped)
+	}
+	if outcome != nil {
+		outcome.AudienceCount = capturedAudienceCount(*job)
 	}
 	return outcome
 }

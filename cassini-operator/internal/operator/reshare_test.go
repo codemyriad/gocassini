@@ -60,6 +60,10 @@ func TestReshareReachesWhoPublicationCouldNot(t *testing.T) {
 	if rec.Code != http.StatusOK || body.Sharing == nil || body.Sharing.Status != shareOutcomeComplete || len(body.Sharing.Skipped) != 0 {
 		t.Fatalf("reshare after the fix = %d %+v", rec.Code, body.Sharing)
 	}
+	// Out of how many: the starter and the captured room.
+	if body.Sharing.AudienceCount != 3 {
+		t.Fatalf("reshare reports %d recipients, want alice, bob and marketing", body.Sharing.AudienceCount)
+	}
 	if !f.shared("0/bob") || !f.shared("1/marketing") {
 		t.Fatalf("re-share did not reach them: %v", f.shares)
 	}
