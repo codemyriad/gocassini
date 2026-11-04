@@ -59,6 +59,12 @@ type readinessCheck struct {
 	// by a single check, whichever of them asked for it.
 	Probe     string `json:"probe,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
+	// Unshared is, on the Recording sharing row, what is currently unshared
+	// across the archive (D-885): published meetings Nextcloud would not
+	// share with everyone, as a count the panel renders under the message.
+	// Carried in every state of that row, because a setting fixed today
+	// leaves yesterday's meetings unshared until they are re-shared.
+	Unshared *unsharedSummary `json:"unshared,omitempty"`
 }
 
 // readinessStep mirrors SetupNoticeStep, deliberately: the app already renders
@@ -706,7 +712,9 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	if access.Applicable {
 		// Whether Nextcloud's sharing settings let those shares be made at all
 		// (D-885). Waits on the storage row while that one needs attention.
-		resp.Checks = append(resp.Checks, sharingPolicyRow(ncAccessSubstrate.sharingPolicyFinding()))
+		row := sharingPolicyRow(ncAccessSubstrate.sharingPolicyFinding())
+		row.Unshared = rt.unsharedSummaryForRow(ctx)
+		resp.Checks = append(resp.Checks, row)
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		addWithSteps("talk.handoff", "needs_action", "recording_secret_missing",
