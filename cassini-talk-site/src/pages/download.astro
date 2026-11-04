@@ -1,7 +1,82 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import Glyph from "../components/Glyph.astro";
+import DownloadIcon from "../components/DownloadIcon.astro";
+import NextcloudLogo from "../components/NextcloudLogo.astro";
+import { apps, metaLine, PLACEHOLDER } from "../data/apps";
+
+const link = "text-sm text-base-content hover:text-primary transition-colors";
 ---
 
-<BaseLayout title="cassini.talk – Download" description="cassini.talk download">
-  <section class="w-full max-w-7xl mx-auto px-5 pt-32 pb-16"><h1 class="text-5xl font-bold">Download</h1></section>
+<BaseLayout
+  title="Download cassini.talk"
+  description="cassini.talk is free and open source on iPhone and iPad, Android, Mac, Windows and Linux. Recording and transcription stay on the device you install it on."
+>
+  <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-hero flex flex-col items-center text-center gap-6">
+    <h1 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em">Download <span class="text-primary">cassini.talk</span></h1>
+    <p class="text-lg text-base-content/60 text-balance" style="max-width: 38rem">Free and open source on every platform. Recording and transcription stay on the device you install it on.</p>
+  </section>
+
+  <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-sec">
+    <div class="pg-bento">
+      {apps.map((app, i) => (
+        <div
+          id={app.id}
+          data-reveal
+          data-placeholder={app.placeholder ? "true" : undefined}
+          class:list={[
+            "rounded-2xl border border-base-300 bg-base-200 p-8 pg-card",
+            app.width === "half" ? "pg-half" : "pg-third",
+            i === apps.length - 1 && "pg-wide",
+          ]}
+        >
+          <div class="flex items-start gap-4">
+            <span class="pg-icon"><Glyph name={app.glyph} size={app.glyphSize} /></span>
+            <div>
+              <h3 class="text-xl font-bold text-base-content">{app.name}</h3>
+              <p class="text-sm text-base-content/60">{app.requirement}</p>
+            </div>
+          </div>
+          <p class="text-base text-base-content/60 leading-relaxed">{app.blurb}</p>
+          <div class="flex flex-col gap-3" style="align-self: start">
+            {app.linksStyle === "inline" ? (
+              <div class="flex flex-wrap items-center gap-4">
+                <a href={app.button.href} class="ink-btn" data-placeholder={app.button.href === PLACEHOLDER ? "true" : undefined}>
+                  {app.button.icon === "download" ? <DownloadIcon /> : <Glyph name={app.button.icon} size={16} />}{app.button.label}
+                </a>
+                {app.links?.map(l => <a href={l.href} class={link}>{l.label}</a>)}
+              </div>
+            ) : (
+              <>
+                <a href={app.button.href} class="ink-btn" data-placeholder={app.button.href === PLACEHOLDER ? "true" : undefined}>
+                  {app.button.icon === "download" ? <DownloadIcon /> : <Glyph name={app.button.icon} size={16} />}{app.button.label}
+                </a>
+                {app.links && (
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-3">
+                    {app.links.map(l => <a href={l.href} class={link}>{l.label}</a>)}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <p class="text-xs font-mono text-base-content/60 pg-meta">{metaLine(app)}</p>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-last flex flex-col gap-6">
+    <div class="flex flex-col gap-3 pg-rule border-t border-base-300" data-reveal>
+      <h2 class="text-3xl md:text-4xl font-bold text-base-content">Build it yourself</h2>
+      <p class="text-base text-base-content/60 leading-relaxed max-w-2xl">Every app is free software under the GPLv3. The source, build steps and release notes are on GitHub.</p>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-3 pt-1">
+        {apps.map(app => <a href={app.source} class={link}>{app.name} ↗</a>)}
+      </div>
+    </div>
+    <div class="rounded-2xl border border-base-300 bg-base-200 px-5 py-4 flex flex-wrap items-center gap-4 mt-4" data-reveal>
+      <NextcloudLogo />
+      <p class="text-sm text-base-content/60" style="flex: 1 1 16rem">Recording Nextcloud Talk calls? Cassini for Nextcloud runs on your own server.</p>
+      <a href="https://gocassini.com" class="text-sm font-medium text-base-content hover:text-primary transition-colors">gocassini.com ↗</a>
+    </div>
+  </section>
 </BaseLayout>

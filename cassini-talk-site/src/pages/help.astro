@@ -1,7 +1,88 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import NextcloudLogo from "../components/NextcloudLogo.astro";
+import { categories, platforms } from "../data/help";
+import { href } from "../lib/paths";
+
+const filters = [{ id: "all", label: "All" }, ...platforms];
+const guide = "text-sm text-base-content/80";
 ---
 
-<BaseLayout title="cassini.talk – Help" description="cassini.talk help">
-  <section class="w-full max-w-7xl mx-auto px-5 pt-32 pb-16"><h1 class="text-5xl font-bold">Help</h1></section>
+<BaseLayout
+  title="cassini.talk – Help"
+  description="Guides for cassini.talk on iPhone, iPad, Android, Mac, Windows and Linux."
+>
+  <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-hero flex flex-col items-center text-center gap-6">
+    <h1 class="font-bold text-base-content" style="font-size: clamp(2.5rem, 6vw, 5rem); line-height: 1; letter-spacing: -0.03em">How can we help?</h1>
+    <p class="text-lg text-base-content/60 text-balance" style="max-width: 36rem">Guides for cassini.talk on iPhone, iPad, Android, Mac, Windows and Linux.</p>
+    <label class="input w-full max-w-2xl" style="height: 3.5rem; margin-top: 8px">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-base-content/60"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      <input id="help-search" type="search" class="grow" placeholder="Search the help centre" aria-label="Search the help centre" />
+      <kbd class="kbd kbd-sm">/</kbd>
+    </label>
+    <div role="tablist" aria-label="Show guides for" class="tabs tabs-box pg-tabs" data-tabs>
+      {filters.map((p, i) => (
+        <button type="button" role="tab" class:list={["tab", i === 0 && "tab-active"]} aria-selected={i === 0 ? "true" : "false"} tabindex={i === 0 ? 0 : -1}>{p.label}</button>
+      ))}
+    </div>
+  </section>
+
+  <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-sec">
+    <div class="pg-cats">
+      {categories.map(cat => {
+        const first = cat.guides.find(g => g.slug);
+        return (
+          <div id={cat.id} class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-4" data-reveal>
+            <span class="flex items-center gap-3"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="text-primary" set:html={cat.icon} /><h2 class="text-lg font-semibold text-base-content">{cat.title}</h2></span>
+            <ul class="flex flex-col gap-2">
+              {cat.guides.map(g => (
+                <li>
+                  {g.slug
+                    ? <a href={href(`help/${g.slug}`)} class={`${guide} hover:text-primary transition-colors`}>{g.label}</a>
+                    : <span class={guide}>{g.label}</span>}
+                </li>
+              ))}
+            </ul>
+            {first
+              ? <a href={href(`help/${first.slug}`)} class="text-sm text-base-content/60 hover:text-base-content transition-colors" style="margin-top: auto">All guides →</a>
+              : <span class="text-sm text-base-content/60" style="margin-top: auto">All guides →</span>}
+          </div>
+        );
+      })}
+    </div>
+  </section>
+
+  <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-last flex flex-col gap-6">
+    <div class="flex flex-col gap-3 pg-rule border-t border-base-300" data-reveal>
+      <h2 class="text-3xl md:text-4xl font-bold text-base-content">Still stuck?</h2>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-3" data-reveal>
+        <h3 class="text-lg font-semibold text-base-content">Email us</h3>
+        <p class="text-sm text-base-content/60 leading-relaxed">Tell us which device you use and which version of cassini.talk it runs. You’ll find the version under Settings › About.</p>
+        <a href="mailto:hello@codemyriad.io?subject=cassini.talk%20support" class="text-sm text-base-content hover:text-primary transition-colors">hello@codemyriad.io →</a>
+      </div>
+      <div class="rounded-2xl border border-base-300 bg-base-200 p-6 flex flex-col gap-3" data-reveal>
+        <h3 class="text-lg font-semibold text-base-content">Report a problem</h3>
+        <p class="text-sm text-base-content/60 leading-relaxed">Each app has its own issue tracker on GitHub. Search it first: someone may have asked already.</p>
+        <a href="https://github.com/codemyriad" class="text-sm text-base-content hover:text-primary transition-colors">Issue trackers ↗</a>
+      </div>
+    </div>
+    <div class="rounded-2xl border border-base-300 bg-base-200 px-5 py-4 flex flex-wrap items-center gap-4" data-reveal>
+      <NextcloudLogo />
+      <p class="text-sm text-base-content/60" style="flex: 1 1 16rem">Using Cassini for Nextcloud? Its documentation is on gocassini.com.</p>
+      <a href="https://gocassini.com/docs" class="text-sm font-medium text-base-content hover:text-primary transition-colors">gocassini.com/docs ↗</a>
+    </div>
+  </section>
 </BaseLayout>
+
+<script>
+  const search = document.getElementById("help-search") as HTMLInputElement | null;
+  document.addEventListener("keydown", e => {
+    if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target as HTMLElement;
+    if (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return;
+    e.preventDefault();
+    search?.focus();
+  });
+</script>
