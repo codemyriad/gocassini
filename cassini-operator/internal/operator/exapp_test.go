@@ -42,6 +42,39 @@ func TestUISourceMapManifestAccess(t *testing.T) {
 	t.Fatal("AppAPI manifest has no route for the source map discovery URL")
 }
 
+// An attempt's logs reach the Operator through AppAPI, for administrators
+// only (D-816).
+func TestAttemptLogRouteIsAdminOnly(t *testing.T) {
+	data, err := os.ReadFile("../../../appinfo/info.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Routes []struct {
+			URL    string `xml:"url"`
+			Verb   string `xml:"verb"`
+			Access string `xml:"access_level"`
+		} `xml:"external-app>routes>route"`
+	}
+	if err := xml.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	match := func(path string) (string, bool) {
+		for _, route := range manifest.Routes {
+			if regexp.MustCompile(route.URL).MatchString(path) {
+				return route.Access + " " + route.Verb, true
+			}
+		}
+		return "", false
+	}
+	if got, ok := match("operator/jobs/01KS0C0NMARG6DYTGJ3W8KKQEQ/attempts/2/logs/build"); !ok || got != "ADMIN GET" {
+		t.Fatalf("attempt log route = %q (declared %v), want ADMIN GET", got, ok)
+	}
+	if got, ok := match("operator/jobs/01KS0C0NMARG6DYTGJ3W8KKQEQ/attempts/2/logs/secrets"); ok {
+		t.Fatalf("an unknown log stage is routed: %q", got)
+	}
+}
+
 func setExAppEnv(t *testing.T, kv map[string]string) {
 	t.Helper()
 	for k, v := range kv {

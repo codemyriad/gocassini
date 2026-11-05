@@ -5,7 +5,8 @@
 # fragments (so you can see what would ship BEFORE choosing a bump), and the
 # concrete next moves:
 #   - on a stable version: the patch / minor / major candidates, with semver
-#     guidance, so the changelog tells you which to pick.
+#     guidance and the branch each is cut on, so the changelog tells you which
+#     to pick.
 #   - mid-prerelease: how to advance the ladder (and that you can skip stages
 #     or jump straight to stable).
 #
@@ -21,6 +22,7 @@ source "$SCRIPT_DIR/lib-release-version.sh"
 
 info_xml="$(rv_info_xml)"
 current="$(rv_read_version "$info_xml")"
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
 
 echo "Current version: $current"
 echo
@@ -32,20 +34,29 @@ echo
 read -r _maj _min _pat pretype _prenum <<<"$(rv_parse "$current")"
 
 if [[ -z "$pretype" ]]; then
-  echo "This is a stable version — a release starts a new prerelease train at -alpha.1."
+  patch="$(rv_bump patch "$current")"
+  echo "This is a stable version — a patch goes straight to stable (--version ${patch}-rc.1"
+  echo "for a risky fix); a minor or major starts a prerelease train at -alpha.1."
   echo "Pick the bump from the changes above:"
-  printf '  %-6s → %-16s %s\n' patch "$(rv_bump patch "$current")" "backward-compatible fixes only"
-  printf '  %-6s → %-16s %s\n' minor "$(rv_bump minor "$current")" "new features, no breaking changes"
-  printf '  %-6s → %-16s %s\n' major "$(rv_bump major "$current")" "breaking changes"
+  printf '  %-6s → %-16s %-36s on %s\n' patch "$patch" "backward-compatible fixes only" "$(rv_release_branch "$patch")"
+  printf '  %-6s → %-16s %-36s on %s\n' minor "$(rv_bump minor "$current")" "new features, no breaking changes" main
+  printf '  %-6s → %-16s %-36s on %s\n' major "$(rv_bump major "$current")" "breaking changes" main
   if [[ -z "${RELEASE_PREVIEW_NO_HINT:-}" ]]; then
     echo
-    echo "Then:  ./scripts/prepare-release.sh --bump <patch|minor|major> --push"
+    case "$branch" in
+      release/*) echo "Then:  ./scripts/prepare-release.sh --bump patch --push" ;;
+      main)      echo "Then:  ./scripts/prepare-release.sh --bump <minor|major> --push   (a patch is cut on its release branch)" ;;
+      *)         echo "Then:  ./scripts/prepare-release.sh --bump <patch|minor|major> --push   (on the branch shown above)" ;;
+    esac
   fi
 else
   base="${_maj}.${_min}.${_pat}"
-  echo "This is a prerelease — advance it along the ladder:"
+  echo "This is a prerelease — advance it along the ladder (beta onwards is cut on release/${_maj}.${_min}):"
   case "$pretype" in
-    alpha) printf '  %-14s → %s\n' "promote beta"   "$(rv_promote beta "$current")" ;;
+    alpha)
+      printf '  %-14s → %-16s %s\n' "promote alpha"  "$(rv_promote alpha "$current")" "on main"
+      printf '  %-14s → %-16s %s\n' "promote beta"   "$(rv_promote beta "$current")" "on release/${_maj}.${_min} (create it from main first)"
+      ;;
     beta)  printf '  %-14s → %s\n' "promote rc.1"   "$(rv_promote rc.1 "$current")" ;;
     rc)
       if [[ "$_prenum" == 1 ]]; then
@@ -57,6 +68,14 @@ else
   echo "  or jump to any explicit target with --version (skip stages), e.g."
   echo "     --version ${base}        # straight to stable, no more prereleases"
   echo "     --version ${base}-rc.1   # skip ahead to a candidate"
+  # On main, a line whose betas have started lives on release/X.Y; the only
+  # move left on main is the next minor's first alpha.
+  if [[ "$branch" == main ]] && { [[ "$pretype" != alpha ]] \
+       || git rev-parse -q --verify "refs/heads/release/${_maj}.${_min}" >/dev/null \
+       || git rev-parse -q --verify "refs/remotes/origin/release/${_maj}.${_min}" >/dev/null; }; then
+    echo "  release/${_maj}.${_min} carries this line; on main, start the next one:"
+    printf '  %-14s → %s\n' "bump minor" "$(rv_bump minor "$current")"
+  fi
   if [[ -z "${RELEASE_PREVIEW_NO_HINT:-}" ]]; then
     echo
     echo "Then:  ./scripts/prepare-release.sh --promote <target> --push"

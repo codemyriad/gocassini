@@ -45,3 +45,8 @@ and an hourly refresh keep the comments current.
 Maintainers cut releases with `scripts/prepare-release.sh` and the **Release**
 workflow. See [`docs/release.md`](docs/release.md) for the version ladder, the
 local release-prep flow, and the App Store publish path.
+
+Open pull requests against `main`, including fixes. Each minor version has a
+`release/X.Y` branch that releases are cut from; a fix that should reach a
+released version is cherry-picked there after it merges to main (label the PR
+`backport release/X.Y`). See [Branches](docs/release.md#branches).

@@ -5,42 +5,164 @@ the Docker image (`ghcr.io/codemyriad/gocassini:<version>` + `:<version>-cuda`)
 and the App Store package (`gocassini.tar.gz`). The git tag `v<version>` and the
 manifest's `<image-tag>` must equal `<version>` — CI enforces it.
 
+## Branches
+
+Cassini keeps one branch per minor version and ships from it, as Nextcloud does
+with its `stableXX` branches.
+
+- **`main` is the next release** — a minor, or a major if it breaks something
+  (see [Patches and majors](#patches-and-majors)). Features land only here.
+  Keep it releasable, but only its `-alpha` releases are tagged on main.
+- **`release/X.Y` is the X.Y line.** It is branched from main at X.Y's first
+  `-beta` (or `-rc`), and every later X.Y tag, `X.Y.0` and each `X.Y.Z` patch,
+  is cut from it. `release/0.2` is the exception: 0.2.0 shipped before this
+  convention, so the branch starts at the `v0.2.0` tag.
+- **Fixes land on main first, then get cherry-picked.** Merge the fix to main,
+  then bring it over with `git cherry-pick -x` in a PR to `release/X.Y` (label
+  the main PR `backport release/X.Y` and the Backport workflow opens that PR
+  once it merges). Close and reopen that PR to start its checks, which must
+  pass before it can merge: a PR a workflow opens starts no checks itself.
+  That step is deliberate. As with release tags, CI holds no token that could
+  start them, and a person does it instead. A fix goes straight to the release
+  branch only when it doesn't apply to main, and its PR says why. The Release workflow refuses a
+  tag whose commit isn't on the branch its version is cut on.
+- **Release branches take fixes only:** bug fixes, security fixes, docs, and
+  the release commit itself. No features and no refactors. A change that needs
+  a feature waits for the next minor.
+- **Release branches take no operator migrations.** A migration's number
+  means one migration everywhere, and `release/X.Y` has no free number for one
+  from a later main: keeping main's number leaves a gap the operator refuses to
+  load, and taking the next free one strands the patch's installations, which
+  then can't upgrade to the next minor. A fix that needs a schema change ships
+  in the next minor; if it can't wait, cut that minor sooner. Lint fails on a
+  change to a release branch that adds, edits or removes a file under
+  `cassini-operator/internal/operator/migrations/`, including a backport PR.
+- **Only the latest `release/X.Y` gets fixes.** An older branch gets security
+  fixes for as long as it is the newest Cassini release for a Nextcloud major
+  Cassini still supports, or until the next minor's `.0` ships, whichever is
+  later. The App Store serves each server the highest release compatible with
+  its Nextcloud version, so dropping a Nextcloud major leaves its servers on
+  the previous line. Other branches are frozen.
+
+```text
+main          ──●── v0.2.0 ──●──●──●──●──●──   (features: next release)
+                       │          fix│     fix│
+                       │             ▼ -x     ▼ -x
+release/0.2            └─────────────●── v0.2.1 ──●── v0.2.2
+```
+
+### Patches and majors
+
+Neither needs a branch of its own.
+
+- **A patch (`X.Y.Z`, Z > 0)** is cut on `release/X.Y`: the branch's previous
+  tag plus the fixes cherry-picked since. Patches skip alpha and beta: those
+  stages mean features still landing or under test, and a patch has none. Each
+  fix already passed CI on main and again in its cherry-pick PR, so go straight
+  to stable with `--version X.Y.Z`. What CI doesn't prove is that a fix behaves
+  the same on the branch's older code; for a risky one (the recording
+  pipeline, anything CI can't exercise), cut `X.Y.Z-rc.1`, run it on
+  staging, then promote it.
+- **A security fix** lands on main and is cherry-picked to every branch still
+  supported, each getting its own patch tag.
+- **A major (`X.0.0`)** is a minor that breaks something, and gets the same
+  `release/X.0` branch. Main isn't numbered in advance: whether its next
+  release is a minor or a major is decided when the branch is created, from
+  what is on main. Anything under *Removed*, or a breaking *Changed* entry,
+  makes it a major.
+- **Breaking, for Cassini:** dropping a supported Nextcloud major
+  (`ci/nextcloud-compatibility.json`); a data or layout migration with no way
+  back; removing or changing an operator route, CLI command or settings key;
+  a new required install step, such as an AppAPI or Talk prerequisite.
+- **While on 0.x**, semver lets any minor break things. Name breaking changes
+  in the changelog anyway, so the habit is in place by 1.0.
+
+### Main's version
+
+`appinfo/info.xml` `<version>` is the version Nextcloud registers for a build,
+and it only accepts an update to a higher one. Releases cut on a release branch
+bump it there, not on main, so main always carries **the version it is
+developing**, above everything shipped: the next minor's `X.Y.0-alpha.0`. That
+version is never tagged or published; `alpha.0` sits below any real alpha, so it
+never collides with one.
+
+The sync to main after each branch release (see [Cut a release](#cut-a-release))
+moves main's version when it isn't already above the release:
+
+| Just shipped | Main before | Main after |
+|---|---|---|
+| `0.2.1` on `release/0.2` | `0.2.0` | `0.3.0-alpha.0` |
+| `0.2.2` on `release/0.2` | `0.3.0-alpha.0` | unchanged |
+| `0.3.0-beta.1`, the first cut on `release/0.3` | `0.3.0-alpha.2` | `0.4.0-alpha.0` |
+| `0.3.1` on `release/0.3` | `0.4.0-alpha.1` | unchanged |
+
+So a main build (`:latest`, `sha-…`) always reports a version above
+production's and reads as a development build. The first alpha of that version
+is cut from it with `--promote alpha` (`0.3.0-alpha.0 → 0.3.0-alpha.1`), or
+`--bump major` if main turned out to be breaking.
+
+Main's `<image-tag>` follows `<version>`, so main's manifest names an image that
+is never published. Installing from main means building that image yourself:
+the harness's `--build` mode does this (and its default `reuse-local` reuses
+that build); its `pull` mode works only on a release tag's checkout.
+
 ## Cut a release
 
-One guided command:
+One guided command, run on the version's `release/X.Y` branch (see
+[Branches](#branches)):
 
 ```bash
 ./scripts/prepare-release.sh --push
 ```
 
 It previews the pending changes, asks for your choice, confirms, then bumps the
-version, folds the changelog, commits, tags `v<version>`, and pushes:
+version, folds the changelog, commits, tags `v<version>`, and pushes. It first
+fetches origin's tags, and refuses to cut on the wrong branch or on one that is
+behind origin:
 
 ```text
 $ ./scripts/prepare-release.sh --push
 Current version: 0.2.0
 
 Pending changes (changelog.d/):
-  ### Added
-  - Auto-retry Talk recordings that drop mid-call.
+  ### Fixed
+  - Recordings that drop mid-call are retried.
 
-  patch  → 0.2.1-alpha.1    backward-compatible fixes only
-  minor  → 0.3.0-alpha.1    new features, no breaking changes
-  major  → 1.0.0-alpha.1    breaking changes
+  patch  → 0.2.1            backward-compatible fixes only       on release/0.2
+  minor  → 0.3.0-alpha.1    new features, no breaking changes    on main
+  major  → 1.0.0-alpha.1    breaking changes                     on main
 
-Choose a bump [patch/minor/major] (or a version, q to quit): minor
-Preparing release: 0.2.0 -> 0.3.0-alpha.1
-Cut v0.3.0-alpha.1 and push it? [y/N] y
+Choose a bump [patch/minor/major] (or a version, q to quit): patch
+Preparing release: 0.2.0 -> 0.2.1
+Cut v0.2.1 and push it? [y/N] y
 ```
 
 Then approve the `release` deployment in **Actions** (one click) — that signs the
 package, creates the GitHub release, and publishes to the App Store.
 
+**After a release cut on `release/X.Y`, bring it back to main.** The cut folded
+the branch's fragments, deleted them and bumped `info.xml`, all on the release
+branch. The fixes were cherry-picked from main, so main still holds the same
+fragments: left alone, they would be released again in the next minor's notes,
+and main would report a version below what shipped. On a branch from main:
+
+```bash
+git switch -c chore/sync-0.2.1-to-main origin/main
+./scripts/sync-release-to-main.sh --version 0.2.1
+git push -u origin chore/sync-0.2.1-to-main   # then open a PR to main
+```
+
+It adds the tagged `## [0.2.1]` section to `CHANGELOG.md` in version order,
+deletes the fragments that release consumed, and moves main's version above the
+release when needed (see [Main's version](#mains-version)). `prepare-release.sh`
+prints these commands after a cut on a release branch.
+
 **Non-interactive** (scripting) — pass the choice; drop `--push` to stay local:
 
 ```bash
-./scripts/prepare-release.sh --bump minor --push        # 0.2.0        → 0.3.0-alpha.1
-./scripts/prepare-release.sh --promote rc.1 --push      # 0.3.0-beta.1 → 0.3.0-rc.1
+./scripts/prepare-release.sh --bump patch --push        # 0.2.0        → 0.2.1          (release/0.2)
+./scripts/prepare-release.sh --bump minor --push        # 0.2.0        → 0.3.0-alpha.1  (main)
+./scripts/prepare-release.sh --promote rc.1 --push      # 0.3.0-beta.1 → 0.3.0-rc.1     (release/0.3)
 ./scripts/prepare-release.sh --version 0.3.0 --push     # straight to stable
 ./scripts/release-preview.sh                            # just show what's pending
 ```
@@ -49,7 +171,9 @@ package, creates the GitHub release, and publishes to the App Store.
 
 The tag push triggers two workflows automatically:
 
-1. `publish-exapp-image.yml` — builds and pushes the `:<version>` images.
+1. `publish-exapp-image.yml` — builds and pushes the `:<version>` images. A
+   release never moves `:latest` (or `:latest-cuda`, `:cuda`): those track
+   main's newest build, which staging and the canary pull.
 2. `release.yml` — waits for the exact tagged image workflow and its complete
    compatibility evidence. It checks the commit, manifest, policy, required
    baselines and image digests, validates an unsigned package, then offers the
@@ -68,9 +192,14 @@ existing tag (`publish_appstore=false` = signed GitHub release only, no store).
 X.Y.Z-alpha.1 → X.Y.Z-beta.1 → X.Y.Z-rc.1 → X.Y.Z-rc.2 → X.Y.Z
 ```
 
-Every bump restarts the ladder at `-alpha.1`; advance with
-`--promote beta|rc.1|rc.2|stable`. You can skip stages: `--version 0.3.0` goes
+A minor or major bump starts the ladder at `-alpha.1`; advance with
+`--promote alpha|beta|rc.1|rc.2|stable` (`alpha` cuts the next alpha:
+`alpha.1 → alpha.2`, or `alpha.0 → alpha.1` when main carries the untagged next
+version). You can skip stages: `--version 0.3.0` goes
 straight to stable, and `rc.1 → stable` is fine (one RC instead of two).
+Before the first `--promote beta`, create `release/X.Y` from main and switch to
+it. Patches skip the ladder: `--bump patch` goes straight to `X.Y.Z` (see
+[Patches and majors](#patches-and-majors)).
 Suffixed versions upload as App Store pre-releases automatically.
 
 Cassini supports the maintained Nextcloud majors recorded in
@@ -92,7 +221,9 @@ to its tested manifest.
 Changes are captured per-PR as fragments in
 [`changelog.d/`](../changelog.d/README.md), not by editing `CHANGELOG.md`.
 `prepare-release.sh` folds them in at release time; a malformed fragment fails
-the fold before anything is committed.
+the fold before anything is committed. A release cut on a release branch folds
+the branch's copies; `sync-release-to-main.sh` then removes them from main
+(see [Cut a release](#cut-a-release)).
 
 ## The `release` environment (one-time setup)
 
