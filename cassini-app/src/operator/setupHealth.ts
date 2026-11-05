@@ -40,18 +40,19 @@ export interface SharingStatus {
   checked: boolean;
   pending: PendingRecording[];
   // Published meetings the caller was in the room for, whose share to them
-  // Nextcloud refused.
-  refused: number;
+  // Nextcloud refused, one per meeting, newest first.
+  refused: RecordingNotice[];
   // Recordings the caller started that were not published because Nextcloud
   // refused to share them with the caller, one per meeting, newest first.
-  // The ones the caller dismissed are not among them.
-  unpublished: UnpublishedRecording[];
+  unpublished: RecordingNotice[];
+  // Neither list carries a meeting whose notice the caller dismissed.
 }
 
-// A recording the caller started that was not published: Nextcloud refused
-// to share it with them. Never published, so it usually has no title; the
-// room and the time are what the person recognises it by.
-export interface UnpublishedRecording {
+// One meeting Browse tells the reader about by name: a recording Nextcloud
+// refused them, or one they started that was not published. One that was
+// never published usually has no title; the room and the time are what the
+// person recognises it by.
+export interface RecordingNotice {
   jobId: string;
   title: string;
   roomName: string;
@@ -108,13 +109,13 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
 // readSharing reads the `sharing` object defensively: a missing or malformed
 // one is null (an operator that predates it), and a `checked: false` one keeps
 // its counts at zero whatever else it carries, because the operator says it
-// established nothing. A malformed entry in `pending` or
+// established nothing. A malformed entry in `pending`, `refused_meetings` or
 // `refused_started_meetings` is dropped rather than failing the whole object;
 // an entry with no usable share id is nothing the app could accept, so it is
 // dropped too.
 export function readSharing(value: unknown): SharingStatus | null {
   if (!isRecord(value) || typeof value.checked !== "boolean") return null;
-  if (!value.checked) return { checked: false, pending: [], refused: 0, unpublished: [] };
+  if (!value.checked) return { checked: false, pending: [], refused: [], unpublished: [] };
   const pending = Array.isArray(value.pending)
     ? value.pending.flatMap((entry) => {
         const recording = readPendingRecording(entry);
@@ -124,19 +125,22 @@ export function readSharing(value: unknown): SharingStatus | null {
   return {
     checked: true,
     pending,
-    refused: readCount(value.refused),
-    unpublished: Array.isArray(value.refused_started_meetings)
-      ? value.refused_started_meetings.flatMap((entry) => {
-          const recording = readUnpublishedRecording(entry);
-          return recording ? [recording] : [];
-        })
-      : [],
+    refused: readRecordingNotices(value.refused_meetings),
+    unpublished: readRecordingNotices(value.refused_started_meetings),
   };
 }
 
+function readRecordingNotices(value: unknown): RecordingNotice[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const notice = readRecordingNotice(entry);
+    return notice ? [notice] : [];
+  });
+}
+
 // An entry without a job id could be neither dismissed nor matched to the
-// meeting once it is published, so it is dropped.
-function readUnpublishedRecording(value: unknown): UnpublishedRecording | null {
+// meeting once the reader can see it, so it is dropped.
+function readRecordingNotice(value: unknown): RecordingNotice | null {
   if (!isRecord(value) || typeof value.job_id !== "string" || value.job_id === "") return null;
   return {
     jobId: value.job_id,

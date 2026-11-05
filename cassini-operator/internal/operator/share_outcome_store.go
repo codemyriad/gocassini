@@ -233,21 +233,21 @@ func (rt *Runtime) jobSharing(ctx context.Context, job *Job) *jobShareOutcome {
 	return outcome
 }
 
-// refusedShareCounts is how many published meetings Nextcloud would not share
-// with this caller: refused counts partial outcomes that left the caller
-// without the recording, as refusedToCaller judges it; refusedStarted names
-// the jobs of recordings the caller started that were not published because
-// the caller was refused — while that is still why the run failed, as
-// jobSharing judges it, and unless the caller dismissed that notice. Retired
-// meetings are not counted: nobody has them.
+// refusedRecordings names the meetings Nextcloud would not share with this
+// caller, by job: refused, the published meetings whose partial outcome left
+// the caller without the recording, as refusedToCaller judges it;
+// refusedStarted, the recordings the caller started that were not published
+// because the caller was refused — while that is still why the run failed,
+// as jobSharing judges it. Retired meetings are left out: nobody has them.
+// So is every meeting whose notice the caller dismissed. Newest job first.
 //
 // Teams are not matched. Whether the caller is in a Team takes the Teams
 // app's own API, which is not worth a call on every page open; a meeting
 // refused only to a Team the caller is in is not counted here.
-func (s *Store) refusedShareCounts(ctx context.Context, caller string, groups []string, retired map[string]bool) (refused int, refusedStarted []string, err error) {
+func (s *Store) refusedRecordings(ctx context.Context, caller string, groups []string, retired map[string]bool) (refused, refusedStarted []string, err error) {
 	dismissed, err := s.dismissedShareNotices(ctx, caller)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	inGroup := map[string]bool{}
 	for _, group := range groups {
@@ -260,16 +260,16 @@ FROM job_share_outcomes o LEFT JOIN jobs j ON j.id = o.job_id
 WHERE o.status IN (?, ?)
 ORDER BY o.job_id DESC`, shareOutcomePartial, shareOutcomeStarterRefused)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var jobID, status, raw, state, jobErr string
 		var binding, audience, audienceAt sql.NullString
 		if err := rows.Scan(&jobID, &status, &raw, &state, &jobErr, &binding, &audience, &audienceAt); err != nil {
-			return 0, nil, err
+			return nil, nil, err
 		}
-		if retired[jobID] {
+		if retired[jobID] || dismissed[jobID] {
 			continue
 		}
 		var skipped []skippedShare
@@ -280,11 +280,11 @@ ORDER BY o.job_id DESC`, shareOutcomePartial, shareOutcomeStarterRefused)
 		case shareOutcomePartial:
 			job := Job{TalkBinding: nullableStringPtr(binding), RoomAudience: nullableStringPtr(audience), RoomAudienceAt: nullableStringPtr(audienceAt)}
 			if refusedToCaller(skipped, caller, inGroup, job) {
-				refused++
+				refused = append(refused, jobID)
 			}
 		case shareOutcomeStarterRefused:
 			if state == "failed" && strings.Contains(jobErr, starterRefusedMarker) &&
-				len(skipped) > 0 && skipped[0].Type == "user" && skipped[0].ID == caller && !dismissed[jobID] {
+				len(skipped) > 0 && skipped[0].Type == "user" && skipped[0].ID == caller {
 				refusedStarted = append(refusedStarted, jobID)
 			}
 		}
@@ -330,7 +330,8 @@ func refusedToCaller(skipped []skippedShare, caller string, inGroup map[string]b
 	return true
 }
 
-// dismissedShareNotices is the jobs whose Browse notice this person dismissed.
+// dismissedShareNotices is the jobs whose Browse notice this person
+// dismissed: a refused share or an unpublished recording alike.
 func (s *Store) dismissedShareNotices(ctx context.Context, user string) (map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT job_id FROM share_notice_dismissals WHERE user_id = ?`, user)
 	if err != nil {

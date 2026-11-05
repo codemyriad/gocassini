@@ -40,22 +40,23 @@ type setupSharing struct {
 	// newest first.
 	Pending []pendingRecordingShare `json:"pending"`
 	// Refused counts published meetings whose share to the caller, or to a
-	// group the caller is in, Nextcloud refused.
-	Refused int `json:"refused"`
+	// group the caller is in, Nextcloud refused, and whose notice the caller
+	// has not dismissed; RefusedMeetings names them.
+	Refused         int               `json:"refused"`
+	RefusedMeetings []recordingNotice `json:"refused_meetings"`
 	// RefusedStarted counts recordings the caller started that were not
 	// published because Nextcloud refused to share them with the caller, and
-	// whose notice the caller has not dismissed.
-	RefusedStarted int `json:"refused_started"`
-	// RefusedStartedMeetings names them, one entry per meeting, newest first,
-	// so Browse can tell the person which recording it is and let them
-	// dismiss each notice.
-	RefusedStartedMeetings []refusedStartedMeeting `json:"refused_started_meetings"`
+	// whose notice the caller has not dismissed; RefusedStartedMeetings names
+	// them.
+	RefusedStarted         int               `json:"refused_started"`
+	RefusedStartedMeetings []recordingNotice `json:"refused_started_meetings"`
 }
 
-// refusedStartedMeeting is one recording the caller started that was not
-// published. It was never published, so its title is usually unknown; the
-// room it was recorded in and when are what identify it.
-type refusedStartedMeeting struct {
+// recordingNotice is one meeting Browse tells the caller about by name, one
+// notice each, so they can recognise it and dismiss it. A recording that was
+// never published usually has no title; the room it was recorded in and when
+// are what identify it.
+type recordingNotice struct {
 	JobID     string `json:"job_id"`
 	Title     string `json:"title"`
 	RoomName  string `json:"room_name"`
@@ -76,7 +77,7 @@ type pendingRecordingShare struct {
 }
 
 func emptySetupSharing() setupSharing {
-	return setupSharing{Pending: []pendingRecordingShare{}, RefusedStartedMeetings: []refusedStartedMeeting{}}
+	return setupSharing{Pending: []pendingRecordingShare{}, RefusedMeetings: []recordingNotice{}, RefusedStartedMeetings: []recordingNotice{}}
 }
 
 // sharingReadTimeout bounds both reads as the caller together. /setup is
@@ -120,7 +121,7 @@ func (rt *Runtime) sharingForCaller(ctx context.Context, caller string) setupSha
 		rt.logger.Printf("sharing for %s: retired meetings: %v", caller, err)
 		return emptySetupSharing()
 	}
-	refused, refusedStarted, err := rt.store.refusedShareCounts(ctx, caller, groups, retired)
+	refused, refusedStarted, err := rt.store.refusedRecordings(ctx, caller, groups, retired)
 	if err != nil {
 		rt.logger.Printf("sharing for %s: refused shares: %v", caller, err)
 		return emptySetupSharing()
@@ -140,15 +141,20 @@ func (rt *Runtime) sharingForCaller(ctx context.Context, caller string) setupSha
 		entries[i].DurationSeconds = int(facts.Duration / time.Second)
 	}
 	sortPendingNewestFirst(entries)
-	started := rt.refusedStartedMeetings(ctx, refusedStarted)
-	return setupSharing{Checked: true, Pending: entries, Refused: refused, RefusedStarted: len(started), RefusedStartedMeetings: started}
+	refusedMeetings := rt.recordingNotices(ctx, refused)
+	started := rt.recordingNotices(ctx, refusedStarted)
+	return setupSharing{
+		Checked: true, Pending: entries,
+		Refused: len(refusedMeetings), RefusedMeetings: refusedMeetings,
+		RefusedStarted: len(started), RefusedStartedMeetings: started,
+	}
 }
 
-// refusedStartedMeetings describes the caller's unpublished recordings: the
-// room's name from the job's Talk binding or the room names the operator
-// keeps, and when the recording started. Newest first.
-func (rt *Runtime) refusedStartedMeetings(ctx context.Context, jobIDs []string) []refusedStartedMeeting {
-	out := make([]refusedStartedMeeting, 0, len(jobIDs))
+// recordingNotices describes meetings for the caller's notices: the title the
+// metadata index has, the room's name from the job's Talk binding or the room
+// names the operator keeps, and when the recording started. Newest first.
+func (rt *Runtime) recordingNotices(ctx context.Context, jobIDs []string) []recordingNotice {
+	out := make([]recordingNotice, 0, len(jobIDs))
 	if len(jobIDs) == 0 {
 		return out
 	}
@@ -163,7 +169,7 @@ func (rt *Runtime) refusedStartedMeetings(ctx context.Context, jobIDs []string) 
 	}
 	rt.projectJobRoomNames(ctx, jobs)
 	for _, job := range jobs {
-		entry := refusedStartedMeeting{JobID: job.ID, Title: facts[job.ID].Title, RoomName: job.RoomDisplayName}
+		entry := recordingNotice{JobID: job.ID, Title: facts[job.ID].Title, RoomName: job.RoomDisplayName}
 		if at := facts[job.ID].StartedAt; !at.IsZero() {
 			entry.StartedAt = at.UTC().Format(time.RFC3339)
 		}

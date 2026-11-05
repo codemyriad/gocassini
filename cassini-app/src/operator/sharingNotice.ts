@@ -4,7 +4,7 @@
 // reason buildSetupNotice gives: the sentences are the part worth testing, and
 // SharingNotice.svelte renders what it is handed.
 import { readServedMessage } from "../servedMessage";
-import { isRecord, readSharing, type PendingRecording, type SharingStatus, type UnpublishedRecording } from "./setupHealth";
+import { isRecord, readSharing, type PendingRecording, type RecordingNotice, type SharingStatus } from "./setupHealth";
 
 // hasSharingNews is the one rule for whether there is anything to say: the
 // shell uses it to fill the list's empty state, and the notice uses it to
@@ -12,14 +12,16 @@ import { isRecord, readSharing, type PendingRecording, type SharingStatus, type 
 // zero because nothing was established, not because nothing is waiting.
 export function hasSharingNews(sharing: SharingStatus | null | undefined): boolean {
   if (!sharing || !sharing.checked) return false;
-  return sharing.pending.length > 0 || sharing.refused > 0 || sharing.unpublished.length > 0;
+  return sharing.pending.length > 0 || sharing.refused.length > 0 || sharing.unpublished.length > 0;
 }
 
-// withoutDismissed takes out the unpublished recordings the reader dismissed
-// in this page, before the operator's next /setup leaves them out itself.
+// withoutDismissed takes out the notices the reader dismissed in this page,
+// refused and unpublished alike, before the operator's next /setup leaves
+// them out itself.
 export function withoutDismissed(sharing: SharingStatus | null, dismissed: ReadonlySet<string>): SharingStatus | null {
   if (!sharing || dismissed.size === 0) return sharing;
-  return { ...sharing, unpublished: sharing.unpublished.filter((entry) => !dismissed.has(entry.jobId)) };
+  const kept = (entries: RecordingNotice[]) => entries.filter((entry) => !dismissed.has(entry.jobId));
+  return { ...sharing, refused: kept(sharing.refused), unpublished: kept(sharing.unpublished) };
 }
 
 // The paths a Browse list entry may carry its meeting by. A meeting's files
@@ -31,9 +33,10 @@ export interface ListedMeeting {
   artifactPath?: string;
 }
 
-// listedJobIds is every job id the reader's list shows a meeting for. An
-// unpublished recording found here was published since — a rerun after the
-// sharing setting was fixed — and the reader can open it, so it is not news.
+// listedJobIds is every job id the reader's list shows a meeting for. A
+// recording found here reached the reader since — a rerun or a re-share after
+// the sharing setting was fixed, or a share they accepted in Nextcloud — and
+// they can open it, so nothing about it is news any more.
 export function listedJobIds(meetings: readonly ListedMeeting[]): Set<string> {
   const ids = new Set<string>();
   for (const meeting of meetings) {
@@ -98,23 +101,36 @@ export function starterRefusedLine(count: number): string {
   return `Nextcloud refused to share ${count === 1 ? "it" : "them"} with you.`;
 }
 
-// Past this many, the unpublished recordings are one line with the count,
-// and their rows behind a disclosure; up to it, each has its own notice.
-export const UNPUBLISHED_GROUP_AFTER = 2;
+// Past this many, the recordings of one kind (refused, or unpublished) are
+// one line with the count, and their rows behind a disclosure; up to it,
+// each has its own notice.
+export const NOTICE_GROUP_AFTER = 2;
 
-// One unpublished recording's notice, in bold: "Your recording in “Weekly
-// sync” on Fri 30 Oct, 10:00 could not be published." The room is what the
-// person recognises it by; a title stands in for a room the operator does not
+// "in “Weekly sync” on Fri 30 Oct, 10:00": the room is what the person
+// recognises a meeting by; a title stands in for a room the operator does not
 // know, and each part is left out when it is unknown.
-export function unpublishedTitle(entry: UnpublishedRecording, options: DateFormatOptions = {}): string {
+function where(entry: RecordingNotice, options: DateFormatOptions): string {
   const name = entry.roomName || entry.title;
   const date = formatShareDate(entry.startedAt, options);
-  if (!name && !date) return "A recording you started could not be published.";
-  return `Your recording${name ? ` in “${name}”` : ""}${date ? ` on ${date}` : ""} could not be published.`;
+  return `${name ? ` in “${name}”` : ""}${date ? ` on ${date}` : ""}`;
 }
 
-// A row in the grouped list: "Weekly sync · Fri 30 Oct, 10:00".
-export function unpublishedRowLabel(entry: UnpublishedRecording, options: DateFormatOptions = {}): string {
+// One refused recording's notice, in bold: "The recording in “Weekly sync” on
+// Fri 30 Oct, 10:00 could not be shared with you."
+export function refusedNoticeTitle(entry: RecordingNotice, options: DateFormatOptions = {}): string {
+  const at = where(entry, options);
+  return at ? `The recording${at} could not be shared with you.` : "A recording could not be shared with you.";
+}
+
+// One unpublished recording's notice, in bold: "Your recording in “Weekly
+// sync” on Fri 30 Oct, 10:00 could not be published."
+export function unpublishedTitle(entry: RecordingNotice, options: DateFormatOptions = {}): string {
+  const at = where(entry, options);
+  return at ? `Your recording${at} could not be published.` : "A recording you started could not be published.";
+}
+
+// A row in a grouped list: "Weekly sync · Fri 30 Oct, 10:00".
+export function noticeRowLabel(entry: RecordingNotice, options: DateFormatOptions = {}): string {
   const parts = [entry.roomName || entry.title || "A recording", formatShareDate(entry.startedAt, options)];
   return parts.filter((part) => part !== "").join(" · ");
 }
@@ -229,10 +245,10 @@ export function readAcceptSharesResult(value: unknown): AcceptSharesResult {
 
 // --- POST operator/shares/dismiss ---
 
-// dismissUnpublished tells the operator the reader dismissed these notices,
+// dismissNotices tells the operator the reader dismissed these notices,
 // for good and on every device. Throws the operator's own sentence on a
 // non-200 answer.
-export async function dismissUnpublished(
+export async function dismissNotices(
   operatorBasePath: string,
   jobIds: string[],
   fetchImpl: typeof fetch = fetch,

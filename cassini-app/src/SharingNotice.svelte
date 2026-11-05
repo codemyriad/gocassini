@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { TriangleAlert, X } from "@lucide/svelte";
-  import type { PendingRecording, SharingStatus } from "./operator/setupHealth";
+  import type { PendingRecording, RecordingNotice, SharingStatus } from "./operator/setupHealth";
   import {
     acceptAllLabel,
     ADMIN_FIX_LEAD,
@@ -23,8 +23,9 @@
     SHOW_THEM,
     starterRefusedLine,
     starterRefusedTitle,
-    UNPUBLISHED_GROUP_AFTER,
-    unpublishedRowLabel,
+    NOTICE_GROUP_AFTER,
+    noticeRowLabel,
+    refusedNoticeTitle,
     unpublishedTitle,
     WHY_ACCEPT,
     type AcceptSharesResult,
@@ -41,11 +42,12 @@
   // what to do about it, with the link to hand on inside the sentence. The
   // pending block keeps its rows behind a disclosure so a person can accept
   // one at a time, and the primary button on its first line accepts them all.
-  // A recording the reader started that could not be published has a notice
-  // of its own, naming its room and time, which they may dismiss for good;
-  // past two, they are one line with the count and the rows behind a
-  // disclosure. One that turns up in the reader's list was published since,
-  // and goes without a reload.
+  // A recording a sharing setting kept from the reader, and one they started
+  // that could not be published, each have a notice of their own, naming the
+  // room and time, which they may dismiss for good; past two of a kind, they
+  // are one line with the count and the rows behind a disclosure. Anything —
+  // refused, unpublished or waiting — that turns up in the reader's list has
+  // reached them since, and goes without a reload.
   //
   // Every sentence comes from sharingNotice.ts, where it is tested. What is
   // here is presentation, and the one piece of state that belongs beside the
@@ -61,11 +63,13 @@
   // and its failure reason are this component's, because they belong to the
   // row.
   export let accept: (shareIds: string[]) => Promise<AcceptSharesResult>;
-  // Dismissing an unpublished recording's notice, for good: the shell's
-  // request too. The button's spinner and its failure are this component's.
+  // Dismissing a refused or unpublished recording's notice, for good: the
+  // shell's request too. The button's spinner and its failure are this
+  // component's.
   export let dismiss: (jobIds: string[]) => Promise<void>;
-  // The meetings the reader's list shows, as the viewer hands them down. An
-  // unpublished recording among them was published since and is not news.
+  // The meetings the reader's list shows, as the viewer hands them down. A
+  // recording among them reached the reader since — published, re-shared or
+  // accepted in Nextcloud — and nothing about it is news.
   export let meetings: readonly ListedMeeting[] = [];
 
   // `accepted` whenever the operator answered an acceptance: the detail
@@ -77,15 +81,33 @@
   // Nothing is drawn unless there is news: an unchecked answer and zero counts
   // both render nothing, by the same rule the shell fills the empty state by.
   $: news = hasSharingNews(sharing) ? sharing : null;
-  $: pending = news?.pending ?? [];
-  $: refused = news?.refused ?? 0;
   $: listed = listedJobIds(meetings);
-  $: unpublished = (news?.unpublished ?? []).filter((entry) => !listed.has(entry.jobId));
-  $: grouped = unpublished.length > UNPUBLISHED_GROUP_AFTER;
-  $: shown = pending.length > 0 || refused > 0 || unpublished.length > 0;
+  $: pending = (news?.pending ?? []).filter((entry) => !entry.jobId || !listed.has(entry.jobId));
+  $: notListed = (entries: RecordingNotice[]) => entries.filter((entry) => !listed.has(entry.jobId));
+  // The two kinds told one meeting at a time, in this order, each by the same
+  // rules: a notice each, dismissable, grouped past NOTICE_GROUP_AFTER.
+  $: kinds = [
+    {
+      key: "refused",
+      label: "Recordings that could not be shared with you",
+      entries: notListed(news?.refused ?? []),
+      title: refusedNoticeTitle,
+      groupTitle: refusedTitle,
+      line: () => REFUSED_LINE,
+    },
+    {
+      key: "unpublished",
+      label: "Recordings you started that could not be published",
+      entries: notListed(news?.unpublished ?? []),
+      title: unpublishedTitle,
+      groupTitle: starterRefusedTitle,
+      line: starterRefusedLine,
+    },
+  ].filter((kind) => kind.entries.length > 0);
+  $: shown = pending.length > 0 || kinds.length > 0;
 
-  // The unpublished recordings' disclosure, when they are grouped.
-  let unpublishedExpanded = false;
+  // Which kinds' disclosures are open, when they are grouped.
+  let groupOpen: Record<string, boolean> = {};
   // Job ids whose dismissal is in flight, and why one failed, by job id.
   let dismissing: ReadonlySet<string> = new Set();
   let dismissFailures: ReadonlyMap<string, string> = new Map();
@@ -216,99 +238,88 @@
       </section>
     {/if}
 
-    {#if refused > 0}
-      <section class="sharing-block sharing-refused" role="status">
-        <div class="sharing-line">
-          <TriangleAlert size={16} class="shrink-0 text-warning" aria-hidden="true" />
-          <!-- The strip keeps to the fact and the fix: the cause is the card's. -->
-          <p class="text-sm">
-            <strong class="font-semibold">{refusedTitle(refused)}</strong>
-            {#if variant === "card"}{REFUSED_LINE}{/if}
-            {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
-          </p>
-        </div>
-      </section>
-    {/if}
-
-    {#if grouped}
-      <section class="sharing-block sharing-refused" role="status" aria-label="Recordings you started that could not be published">
-        <details class="sharing-details" bind:open={unpublishedExpanded}>
-          <summary class="sharing-summary sharing-line">
-            <TriangleAlert size={16} class="shrink-0 text-warning" aria-hidden="true" />
-            <p class="text-sm">
-              <strong class="font-semibold">{starterRefusedTitle(unpublished.length)}</strong>
-              {#if variant === "card"}{starterRefusedLine(unpublished.length)}{/if}
-            </p>
-            <span class="link link-primary text-xs">{unpublishedExpanded ? HIDE_THEM : SHOW_THEM}</span>
-          </summary>
-          <ul class="sharing-rows">
-            {#each unpublished as entry (entry.jobId)}
-              <li class="sharing-row">
-                <div class="min-w-0 flex-1">
-                  <p class="truncate text-sm">{unpublishedRowLabel(entry)}</p>
-                  {#if dismissFailures.get(entry.jobId)}
-                    <p class="text-xs text-error" role="alert">{dismissFailures.get(entry.jobId)}</p>
-                  {/if}
-                </div>
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  disabled={dismissing.size > 0}
-                  aria-label={`${DISMISS} ${unpublishedRowLabel(entry)}`}
-                  on:click={() => dismissRows([entry.jobId])}
-                >
-                  {#if dismissing.has(entry.jobId) && dismissing.size === 1}
-                    <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-                  {/if}
-                  {DISMISS}
-                </button>
-              </li>
-            {/each}
-          </ul>
-          <div class="sharing-line mt-2">
-            <p class="text-xs text-base-content/75">
-              {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
-            </p>
-            <button type="button" class="btn btn-sm btn-ghost" disabled={dismissing.size > 0} on:click={() => dismissRows(unpublished.map((entry) => entry.jobId))}>
-              {#if dismissing.size > 1}
-                <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-              {/if}
-              {DISMISS_ALL}
-            </button>
-          </div>
-        </details>
-      </section>
-    {:else}
-      {#each unpublished as entry (entry.jobId)}
-        <section class="sharing-block sharing-refused" role="status">
-          <div class="sharing-line">
-            <TriangleAlert size={16} class="shrink-0 text-warning" aria-hidden="true" />
-            <p class="text-sm">
-              <strong class="font-semibold">{unpublishedTitle(entry)}</strong>
-              {#if variant === "card"}{starterRefusedLine(1)}{/if}
-              {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
-            </p>
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs btn-square"
-              title={DISMISS}
-              aria-label={`${DISMISS}: ${unpublishedTitle(entry)}`}
-              disabled={dismissing.size > 0}
-              on:click={() => dismissRows([entry.jobId])}
-            >
-              {#if dismissing.has(entry.jobId)}
-                <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-              {:else}
-                <X size={14} aria-hidden="true" />
-              {/if}
-            </button>
-          </div>
-          {#if dismissFailures.get(entry.jobId)}
-            <p class="text-xs text-error" role="alert">{dismissFailures.get(entry.jobId)}</p>
-          {/if}
+    {#each kinds as kind (kind.key)}
+      {#if kind.entries.length > NOTICE_GROUP_AFTER}
+        <section class="sharing-block sharing-refused" role="status" aria-label={kind.label}>
+          <details class="sharing-details" bind:open={groupOpen[kind.key]}>
+            <summary class="sharing-summary sharing-line">
+              <TriangleAlert size={16} class="shrink-0 text-warning" aria-hidden="true" />
+              <p class="text-sm">
+                <strong class="font-semibold">{kind.groupTitle(kind.entries.length)}</strong>
+                {#if variant === "card"}{kind.line(kind.entries.length)}{/if}
+              </p>
+              <span class="link link-primary text-xs">{groupOpen[kind.key] ? HIDE_THEM : SHOW_THEM}</span>
+            </summary>
+            <ul class="sharing-rows">
+              {#each kind.entries as entry (entry.jobId)}
+                <li class="sharing-row">
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-sm">{noticeRowLabel(entry)}</p>
+                    {#if dismissFailures.get(entry.jobId)}
+                      <p class="text-xs text-error" role="alert">{dismissFailures.get(entry.jobId)}</p>
+                    {/if}
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    disabled={dismissing.size > 0}
+                    aria-label={`${DISMISS} ${noticeRowLabel(entry)}`}
+                    on:click={() => dismissRows([entry.jobId])}
+                  >
+                    {#if dismissing.has(entry.jobId) && dismissing.size === 1}
+                      <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+                    {/if}
+                    {DISMISS}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+            <div class="sharing-line mt-2">
+              <p class="text-xs text-base-content/75">
+                {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
+              </p>
+              <button type="button" class="btn btn-sm btn-ghost" disabled={dismissing.size > 0} on:click={() => dismissRows(kind.entries.map((entry) => entry.jobId))}>
+                {#if dismissing.size > 1 && kind.entries.some((entry) => dismissing.has(entry.jobId))}
+                  <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+                {/if}
+                {DISMISS_ALL}
+              </button>
+            </div>
+          </details>
         </section>
-      {/each}
-    {/if}
+      {:else}
+        {#each kind.entries as entry (entry.jobId)}
+          <section class="sharing-block sharing-refused" role="status">
+            <div class="sharing-line">
+              <TriangleAlert size={16} class="shrink-0 text-warning" aria-hidden="true" />
+              <!-- The strip keeps to the fact and the fix: the cause is the card's. -->
+              <p class="text-sm">
+                <strong class="font-semibold">{kind.title(entry)}</strong>
+                {#if variant === "card"}{kind.line(1)}{/if}
+                {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
+              </p>
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs btn-square"
+                title={DISMISS}
+                aria-label={`${DISMISS}: ${kind.title(entry)}`}
+                disabled={dismissing.size > 0}
+                on:click={() => dismissRows([entry.jobId])}
+              >
+                {#if dismissing.has(entry.jobId)}
+                  <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+                {:else}
+                  <X size={14} aria-hidden="true" />
+                {/if}
+              </button>
+            </div>
+            {#if dismissFailures.get(entry.jobId)}
+              <p class="text-xs text-error" role="alert">{dismissFailures.get(entry.jobId)}</p>
+            {/if}
+          </section>
+        {/each}
+      {/if}
+    {/each}
   </div>
 {/if}
 

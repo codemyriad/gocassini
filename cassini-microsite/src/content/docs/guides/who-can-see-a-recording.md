@@ -101,13 +101,14 @@ and annotation goes through Nextcloud as the person asking.
   and everybody else keeps access. The run says "Published, but not shared with
   everyone" and lists who was left out and why; the run list flags it. Once the
   cause is fixed, an administrator can re-share the meeting with its room.
-- The person left out is told as well: Browse says how many recordings could
-  not be shared with them, with a link to hand to an administrator. A
-  recording they started that was not published gets a notice of its own,
-  naming its room and when it was recorded; past two, they are grouped under
-  one line. Each can be dismissed, and a dismissed notice does not come back.
-  Once the recording is published (a rerun after the setting is fixed), its
-  notice goes by itself as the meeting appears in the list.
+- The person left out is told as well, in Browse, one notice per meeting
+  naming its room and when it was recorded: a recording that could not be
+  shared with them, or one they started that was not published. Each carries
+  a link to hand to an administrator; past two of a kind, they are grouped
+  under one line. Each can be dismissed, and a dismissed notice does not come
+  back. Once the recording reaches them (a rerun or a re-share after the
+  setting is fixed), its notice goes by itself as the meeting appears in the
+  list.
 - A refusal almost always comes from one of Nextcloud's sharing settings, which
   apply to Cassini's account like to anyone else. **Doctor › Recording sharing**
   checks them before anyone records and names the setting to change.

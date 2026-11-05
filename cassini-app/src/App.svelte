@@ -27,7 +27,7 @@
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
   import { onSetupChanged } from "./operator/setupSignal";
-  import { acceptShares, dismissUnpublished, hasSharingNews, withoutDismissed, type AcceptSharesResult } from "./operator/sharingNotice";
+  import { acceptShares, dismissNotices, hasSharingNews, withoutDismissed, type AcceptSharesResult } from "./operator/sharingNotice";
   import {
     applyPanel,
     applySurface,
@@ -219,8 +219,8 @@
   // viewer has no idea what a share is, and a standalone export has none.
   // Notices the reader dismissed here leave at once; the operator keeps them
   // out of every later /setup.
-  let dismissedUnpublished: ReadonlySet<string> = new Set();
-  $: sharing = withoutDismissed(setupHealth?.sharing ?? null, dismissedUnpublished);
+  let dismissedNotices: ReadonlySet<string> = new Set();
+  $: sharing = withoutDismissed(setupHealth?.sharing ?? null, dismissedNotices);
   // One rule for both: whether the empty state is the shell's to fill, and
   // whether the notice draws anything at all. A slot cannot be provided
   // conditionally, so the viewer is told.
@@ -235,13 +235,21 @@
     return acceptShares(operatorBasePath, shareIds);
   }
 
-  function dismissUnpublishedRecordings(jobIds: string[]): Promise<void> {
+  function dismissRecordingNotices(jobIds: string[]): Promise<void> {
     const { operatorBasePath } = loadConfig();
-    return dismissUnpublished(operatorBasePath, jobIds);
+    return dismissNotices(operatorBasePath, jobIds);
   }
 
-  function handleUnpublishedDismissed(jobIds: string[]): void {
-    dismissedUnpublished = new Set([...dismissedUnpublished, ...jobIds]);
+  // The reader's shares change while the page is away: an administrator
+  // re-shares a meeting, and for someone who accepts shares by hand it moves
+  // from refused to waiting without ever reaching their list. So /setup is
+  // asked again on the way back, as the viewer re-reads its list.
+  function refreshSharingOnReturn(): void {
+    if (document.visibilityState === "visible") void refreshSetupFeatures();
+  }
+
+  function handleNoticesDismissed(jobIds: string[]): void {
+    dismissedNotices = new Set([...dismissedNotices, ...jobIds]);
   }
 
   // After the operator answered an acceptance. The answer carries the
@@ -564,6 +572,7 @@
     });
     stopListeningForRetentionChanges = onRetentionChanged(acceptRetention);
     window.addEventListener("focus", refreshRetention);
+    document.addEventListener("visibilitychange", refreshSharingOnReturn);
 
     await readInstanceState();
     // Advisory only: Operator never waits for this request.
@@ -575,6 +584,7 @@
     retentionGeneration++;
     stopListeningForRetentionChanges?.();
     window.removeEventListener("focus", refreshRetention);
+    document.removeEventListener("visibilitychange", refreshSharingOnReturn);
     stopListeningForSetupChanges?.();
     stopListeningForSetupChanges = null;
     if (typeof window !== "undefined") {
@@ -686,10 +696,10 @@
              nothing when there is no news; `refresh` is the viewer's catalog
              re-read and `meetings` what it lists, handed down as slot props. -->
         <svelte:fragment slot="list-empty" let:refresh let:meetings>
-          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
+          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
         </svelte:fragment>
         <svelte:fragment slot="list-notice" let:refresh let:meetings>
-          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
+          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
         </svelte:fragment>
       </ViewerApp>
     </div>
@@ -744,10 +754,10 @@
              nothing when there is no news; `refresh` is the viewer's catalog
              re-read and `meetings` what it lists, handed down as slot props. -->
         <svelte:fragment slot="list-empty" let:refresh let:meetings>
-          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
+          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
         </svelte:fragment>
         <svelte:fragment slot="list-notice" let:refresh let:meetings>
-          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
+          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
         </svelte:fragment>
       </ViewerApp>
     </div>
@@ -770,10 +780,10 @@
          nothing when there is no news; `refresh` is the viewer's catalog
          re-read and `meetings` what it lists, handed down as slot props. -->
     <svelte:fragment slot="list-empty" let:refresh let:meetings>
-      <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
+      <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
     </svelte:fragment>
     <svelte:fragment slot="list-notice" let:refresh let:meetings>
-      <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
+      <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
     </svelte:fragment>
   </ViewerApp>
 {/if}

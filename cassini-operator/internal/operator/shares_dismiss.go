@@ -9,12 +9,13 @@ import (
 	"cassini-operator/internal/operator/appapi"
 )
 
-// Dismissing a Browse notice (D-885). A recording Nextcloud would not share
-// with the person who started it is not published, and Browse tells that
-// person, one meeting at a time. They may dismiss each notice, and a
-// dismissed notice is never shown to them again. Only their own: the
-// dismissal is keyed by the caller AppAPI names, and hides nothing from
-// anyone else, administrators' run views included.
+// Dismissing a Browse notice (D-885). Browse tells a person, one meeting at a
+// time, about each published recording Nextcloud would not share with them,
+// and each recording they started that was not published because Nextcloud
+// refused them. They may dismiss each notice, and a dismissed notice is never
+// shown to them again. Only their own: the dismissal is keyed by the caller
+// AppAPI names, and hides nothing from anyone else, administrators' run views
+// included.
 
 type sharesDismissRequest struct {
 	JobIDs []string `json:"job_ids"`

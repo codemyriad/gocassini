@@ -49,7 +49,7 @@ func TestSetupNamesEachUnpublishedRecordingAndForgetsADismissedOne(t *testing.T)
 	seedStarterRefused(t, rt, "J22", "bob", "Bob's room", "2026-10-31T16:00:00.000000000Z")
 
 	sharing := getSetup(t, rt, "alice").Sharing
-	want := []refusedStartedMeeting{
+	want := []recordingNotice{
 		{JobID: "J21", RoomName: "Design review", StartedAt: "2026-10-31T15:00:00Z"},
 		{JobID: "J20", RoomName: "Weekly sync", StartedAt: "2026-10-30T10:00:00Z"},
 	}
@@ -92,6 +92,44 @@ func TestSetupNamesEachUnpublishedRecordingAndForgetsADismissedOne(t *testing.T)
 	// Bob's own notice is untouched by any of it.
 	if got := getSetup(t, rt, "bob").Sharing.RefusedStartedMeetings; len(got) != 1 || got[0].JobID != "J22" {
 		t.Fatalf("bob's notices = %+v", got)
+	}
+}
+
+// A published meeting Nextcloud would not share with the caller — the
+// customer's case: cassini only in "admin" — is named the same way, title,
+// room and time, newest first, and dismissed the same way.
+func TestSetupNamesEachRefusedMeetingAndForgetsADismissedOne(t *testing.T) {
+	rt := sharingRuntime(t, &sharingFake{groups: []string{"staff"}, pending: []map[string]any{}})
+	ctx := context.Background()
+	for _, row := range []struct{ id, room, started string }{
+		{"J30", "Weekly sync", "2026-10-30T10:00:00.000000000Z"},
+		{"J31", "All hands", "2026-10-31T15:00:00.000000000Z"},
+	} {
+		seedJobRow(t, rt.store.db, seededJobRow{ID: row.id, Stage: "done", State: "succeeded", CreatedAt: row.started})
+		if err := rt.store.SetJobTalkBinding(ctx, row.id, `{"backend_url":"https://talk.example","room_token":"tok-`+row.id+`","owner":"bob","room_name":"`+row.room+`","room_type":2}`); err != nil {
+			t.Fatal(err)
+		}
+		setJobTimes(t, rt, row.id, row.started, "")
+		if err := rt.store.RecordJobShareOutcome(ctx, row.id, shareOutcomePartial, []skippedShare{{Type: "user", ID: "alice", Reason: "Sharing is only allowed with group members"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	indexMeeting(t, rt, "J30.opus", "Weekly sync, 30 Oct", 0)
+
+	sharing := getSetup(t, rt, "alice").Sharing
+	want := []recordingNotice{
+		{JobID: "J31", RoomName: "All hands", StartedAt: "2026-10-31T15:00:00Z"},
+		{JobID: "J30", Title: "Weekly sync, 30 Oct", RoomName: "Weekly sync", StartedAt: "2026-10-30T10:00:00Z"},
+	}
+	if sharing.Refused != 2 || !reflect.DeepEqual(sharing.RefusedMeetings, want) {
+		t.Fatalf("refused = %d %+v\nwant 2 %+v", sharing.Refused, sharing.RefusedMeetings, want)
+	}
+	if rec := postDismiss(t, rt, "alice", `{"job_ids":["J31"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("POST /shares/dismiss = %d %s", rec.Code, rec.Body.String())
+	}
+	sharing = getSetup(t, rt, "alice").Sharing
+	if sharing.Refused != 1 || len(sharing.RefusedMeetings) != 1 || sharing.RefusedMeetings[0].JobID != "J30" {
+		t.Fatalf("after dismissing J31: %+v", sharing)
 	}
 }
 
