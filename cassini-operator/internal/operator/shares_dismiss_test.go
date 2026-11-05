@@ -77,6 +77,10 @@ func TestSetupNamesEachUnpublishedRecordingAndForgetsADismissedOne(t *testing.T)
 	if sharing.RefusedStarted != 1 || len(sharing.RefusedStartedMeetings) != 1 || sharing.RefusedStartedMeetings[0].JobID != "J20" {
 		t.Fatalf("after dismissing J21: %+v", sharing)
 	}
+	// Quiet in the list, still explained when opened from a link.
+	if !reflect.DeepEqual(sharing.DismissedRefusedStarted, []string{"J21"}) || len(sharing.DismissedRefused) != 0 {
+		t.Fatalf("dismissed = %v / %v, want [J21] / []", sharing.DismissedRefused, sharing.DismissedRefusedStarted)
+	}
 	// Dismissed for good: a rerun that is refused again does not bring it back.
 	if err := rt.store.RecordJobShareOutcome(context.Background(), "J21", shareOutcomeStarterRefused, []skippedShare{{Type: "user", ID: "alice"}}); err != nil {
 		t.Fatal(err)
@@ -130,6 +134,11 @@ func TestSetupNamesEachRefusedMeetingAndForgetsADismissedOne(t *testing.T) {
 	sharing = getSetup(t, rt, "alice").Sharing
 	if sharing.Refused != 1 || len(sharing.RefusedMeetings) != 1 || sharing.RefusedMeetings[0].JobID != "J30" {
 		t.Fatalf("after dismissing J31: %+v", sharing)
+	}
+	// A link to J31 (Talk's chat, a notification) must still say why it is
+	// not there rather than "not found", so /setup keeps naming it.
+	if !reflect.DeepEqual(sharing.DismissedRefused, []string{"J31"}) || len(sharing.DismissedRefusedStarted) != 0 {
+		t.Fatalf("dismissed = %v / %v, want [J31] / []", sharing.DismissedRefused, sharing.DismissedRefusedStarted)
 	}
 }
 

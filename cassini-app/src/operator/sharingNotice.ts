@@ -262,3 +262,74 @@ export async function dismissNotices(
     throw new Error((await readServedMessage(response)) || `Could not dismiss the notice (HTTP ${response.status}).`);
   }
 }
+
+// --- A meeting opened from a link that the reader's list does not have ---
+//
+// Talk's chat and Nextcloud's notifications link straight to a meeting
+// (`#meeting=<job id>`). When the reader cannot open it yet, Browse says why
+// in place of "Meeting not found": a share waiting for them to accept gets
+// the Accept button; one a sharing setting refused gets the same sentence the
+// list's notice has, with the link to hand on to an administrator. A notice
+// dismissed in the list is still explained here: the reader asked to stop
+// being told in the list, not to be told "not found" when they follow a link.
+
+export type MeetingAccess =
+  | { kind: "pending"; entry: PendingRecording }
+  | { kind: "refused"; entry: RecordingNotice | null }
+  | { kind: "unpublished"; entry: RecordingNotice | null };
+
+// meetingAccess says what Browse knows about why the reader cannot open this
+// meeting, or null when it knows nothing — the plain not-found card then
+// stands. Waiting comes first: a meeting re-shared since it was refused
+// is one the reader can now accept.
+export function meetingAccess(sharing: SharingStatus | null | undefined, jobId: string): MeetingAccess | null {
+  const id = jobId.trim();
+  if (!sharing || !sharing.checked || id === "") return null;
+  const entry = sharing.pending.find((pending) => pending.jobId === id);
+  if (entry) return { kind: "pending", entry };
+  const refused = sharing.refused.find((notice) => notice.jobId === id);
+  if (refused || sharing.dismissedRefused.includes(id)) return { kind: "refused", entry: refused ?? null };
+  const unpublished = sharing.unpublished.find((notice) => notice.jobId === id);
+  if (unpublished || sharing.dismissedUnpublished.includes(id)) return { kind: "unpublished", entry: unpublished ?? null };
+  return null;
+}
+
+// explainedMeetingIds is every job id meetingAccess has something to say
+// about: the viewer fills its not-found card from the shell for these only.
+export function explainedMeetingIds(sharing: SharingStatus | null | undefined): string[] {
+  if (!sharing || !sharing.checked) return [];
+  const ids = new Set<string>();
+  for (const entry of sharing.pending) if (entry.jobId) ids.add(entry.jobId);
+  for (const entry of [...sharing.refused, ...sharing.unpublished]) ids.add(entry.jobId);
+  for (const id of [...sharing.dismissedRefused, ...sharing.dismissedUnpublished]) ids.add(id);
+  return [...ids];
+}
+
+export const WAITING_TITLE = "This recording is waiting for you";
+export const ACCEPT = "Accept";
+
+// The bold sentence for a refused or unpublished meeting opened from a link.
+// With the notice's room and time it is the list's own sentence; for one
+// dismissed (only its id is known), the same sentence about "this" recording.
+export function accessTitle(access: MeetingAccess, options: DateFormatOptions = {}): string {
+  switch (access.kind) {
+    case "pending":
+      return WAITING_TITLE;
+    case "refused":
+      return access.entry ? refusedNoticeTitle(access.entry, options) : "This recording could not be shared with you.";
+    case "unpublished":
+      return access.entry ? unpublishedTitle(access.entry, options) : "This recording you started could not be published.";
+  }
+}
+
+// The line after it: the cause, as the list's card variant says it.
+export function accessLine(access: MeetingAccess): string {
+  switch (access.kind) {
+    case "pending":
+      return PENDING_LINE;
+    case "refused":
+      return REFUSED_LINE;
+    case "unpublished":
+      return starterRefusedLine(1);
+  }
+}

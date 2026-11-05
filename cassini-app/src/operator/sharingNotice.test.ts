@@ -18,6 +18,10 @@ import {
   refusedNoticeTitle,
   unpublishedTitle,
   withoutDismissed,
+  meetingAccess,
+  explainedMeetingIds,
+  accessTitle,
+  accessLine,
 } from "./sharingNotice";
 import type { PendingRecording, RecordingNotice, SharingStatus } from "./setupHealth";
 
@@ -26,7 +30,7 @@ const weekly: PendingRecording = {
   startedAt: "2026-10-30T10:00:00Z", durationSeconds: 2520,
 };
 const checked = (over: Partial<SharingStatus> = {}): SharingStatus =>
-  ({ checked: true, pending: [], refused: [], unpublished: [], ...over });
+  ({ checked: true, pending: [], refused: [], unpublished: [], dismissedRefused: [], dismissedUnpublished: [], ...over });
 const design: RecordingNotice = { jobId: "J7", title: "", roomName: "Design review", startedAt: "2026-10-31T15:00:00Z" };
 
 describe("whether Browse has anything to say about the reader's shares", () => {
@@ -34,7 +38,7 @@ describe("whether Browse has anything to say about the reader's shares", () => {
     expect(hasSharingNews(null)).toBe(false);
     expect(hasSharingNews(undefined)).toBe(false);
     expect(hasSharingNews(checked())).toBe(false);
-    expect(hasSharingNews({ checked: false, pending: [], refused: [], unpublished: [] })).toBe(false);
+    expect(hasSharingNews({ checked: false, pending: [], refused: [], unpublished: [], dismissedRefused: [], dismissedUnpublished: [] })).toBe(false);
   });
 
   it("speaks for a pending recording or a refused one", () => {
@@ -144,7 +148,7 @@ describe("POST operator/shares/accept", () => {
     expect(result).toEqual({
       accepted: ["34"],
       failed: [{ shareId: "35", reason: "Wrong share ID, share does not exist" }],
-      sharing: { checked: true, pending: [], refused: [], unpublished: [] },
+      sharing: { checked: true, pending: [], refused: [], unpublished: [], dismissedRefused: [], dismissedUnpublished: [] },
     });
   });
 
@@ -183,5 +187,51 @@ describe("POST operator/shares/dismiss", () => {
     await expect(dismissNotices("/operator", ["J7"], refused as unknown as typeof fetch)).rejects.toThrow("Cassini could not dismiss the notice. Try again.");
     const bare = vi.fn(async () => new Response("", { status: 404 }));
     await expect(dismissNotices("/operator", ["J7"], bare as unknown as typeof fetch)).rejects.toThrow("Could not dismiss the notice (HTTP 404).");
+  });
+});
+
+describe("a meeting opened from a link that the reader's list does not have", () => {
+  const allHands: RecordingNotice = { jobId: "J4", title: "", roomName: "All hands", startedAt: "2026-10-30T10:00:00Z" };
+  const utc = { locale: "en-GB", timeZone: "UTC" };
+
+  it("offers to accept a share waiting for the reader", () => {
+    const access = meetingAccess(checked({ pending: [weekly] }), weekly.jobId);
+    expect(access).toEqual({ kind: "pending", entry: weekly });
+    expect(accessTitle(access!)).toBe("This recording is waiting for you");
+    expect(accessLine(access!)).toBe("Nextcloud holds files shared with you until you accept them.");
+  });
+
+  it("says a refused share in the list's own words, and still after the notice was dismissed", () => {
+    const listed = meetingAccess(checked({ refused: [allHands] }), "J4");
+    expect(listed).toEqual({ kind: "refused", entry: allHands });
+    expect(accessTitle(listed!, utc)).toBe("The recording in “All hands” on Fri 30 Oct, 10:00 could not be shared with you.");
+    expect(accessLine(listed!)).toBe("A Nextcloud sharing setting stops it.");
+
+    const dismissed = meetingAccess(checked({ dismissedRefused: ["J4"] }), "J4");
+    expect(dismissed).toEqual({ kind: "refused", entry: null });
+    expect(accessTitle(dismissed!)).toBe("This recording could not be shared with you.");
+  });
+
+  it("says an unpublished recording of the reader's own could not be published", () => {
+    expect(accessTitle(meetingAccess(checked({ dismissedUnpublished: ["J7"] }), "J7")!)).toBe("This recording you started could not be published.");
+    expect(accessLine(meetingAccess(checked({ unpublished: [design] }), "J7")!)).toBe("Nextcloud refused to share it with you.");
+  });
+
+  it("prefers waiting to refused: a meeting re-shared since is one the reader can accept", () => {
+    const pending = { ...weekly, jobId: "J4" };
+    expect(meetingAccess(checked({ pending: [pending], dismissedRefused: ["J4"] }), "J4")?.kind).toBe("pending");
+  });
+
+  it("knows nothing about any other meeting, or from an unchecked answer", () => {
+    expect(meetingAccess(checked({ refused: [allHands] }), "OTHER")).toBeNull();
+    expect(meetingAccess(null, "J4")).toBeNull();
+    expect(meetingAccess({ ...checked({ refused: [allHands] }), checked: false }, "J4")).toBeNull();
+    expect(explainedMeetingIds({ ...checked({ refused: [allHands] }), checked: false })).toEqual([]);
+  });
+
+  it("names every meeting it can explain, once", () => {
+    expect(explainedMeetingIds(checked({
+      pending: [weekly], refused: [allHands], unpublished: [design], dismissedRefused: ["J9", "J4"], dismissedUnpublished: ["J10"],
+    })).sort()).toEqual([weekly.jobId, "J4", "J7", "J9", "J10"].sort());
   });
 });

@@ -116,6 +116,13 @@
   // of the same name on MeetingList. Forwarded, not decided, like the slot.
   export let listEmptyFilled = false;
 
+  // The meeting ids the shell fills the `meeting-not-found` slot for (D-885):
+  // a deep link (Talk's chat, a Nextcloud notification) to a meeting the
+  // reader's list does not have, which the shell can explain — a share
+  // waiting for them to accept, or one a sharing setting refused. Any other
+  // missing meeting keeps the plain not-found card.
+  export let notFoundFilledFor: readonly string[] = [];
+
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
   let bundledMode = false;
@@ -1265,7 +1272,14 @@
     tagMatch,
   );
   $: bulkTagState = wholeTagState(meetingTags, selection.ids);
-  $: annotationCalls = bindAnnotations(dataProvider, selectedMeetingId);
+  // Marks are read only for a meeting the catalog has. A link to one it does
+  // not have (deleted, or not shared with the reader yet) has no marks to
+  // read, and asking anyway put "Meeting not found in catalog" in the list's
+  // notice line, over whatever the meeting view says about it (D-885). A
+  // string, so a catalog refresh that keeps the meeting does not rebind;
+  // one that brings it (a share just accepted) does.
+  $: marksMeetingId = selectedMeetingId && catalogMeetings.some((meeting) => meeting.id === selectedMeetingId) ? selectedMeetingId : "";
+  $: annotationCalls = bindAnnotations(dataProvider, marksMeetingId);
 
   // A picked meeting can leave the archive under a 15-second refresh; run this
   // against every catalog the shell observes.
@@ -1776,6 +1790,7 @@
             {prefersReducedMotion}
             hasCatalog={catalogMeetings.length > 0}
             {notFoundMessage}
+            notFoundFilled={!!selectedMeetingId && notFoundFilledFor.includes(selectedMeetingId)}
             {linkedInsights}
             {insightSourceCounts}
             on:back={handleBackToList}
@@ -1789,7 +1804,11 @@
             applyAnnotations={annotationCalls.apply}
             marksSession={annotationCalls.session}
             on:tagsChanged={(event) => reconcileMeetingTags(event.detail)}
-          />
+          >
+            <!-- Forwarded, not decided, like the list's slots: refresh re-reads
+                 the catalog, so a share accepted here opens the meeting. -->
+            {#snippet notFound()}<slot name="meeting-not-found" meetingId={selectedMeetingId} refresh={refreshCatalog} />{/snippet}
+          </MeetingView>
         {/if}
       </aside>
     {/if}

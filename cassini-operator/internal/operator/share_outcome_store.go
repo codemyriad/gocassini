@@ -239,15 +239,18 @@ func (rt *Runtime) jobSharing(ctx context.Context, job *Job) *jobShareOutcome {
 // refusedStarted, the recordings the caller started that were not published
 // because the caller was refused — while that is still why the run failed,
 // as jobSharing judges it. Retired meetings are left out: nobody has them.
-// So is every meeting whose notice the caller dismissed. Newest job first.
+// Meetings whose notice the caller dismissed are kept, and named in
+// dismissed: a dismissal quiets Browse's list, but the caller who opens one
+// of those meetings from a link is still told why it is not there. Newest
+// job first.
 //
 // Teams are not matched. Whether the caller is in a Team takes the Teams
 // app's own API, which is not worth a call on every page open; a meeting
 // refused only to a Team the caller is in is not counted here.
-func (s *Store) refusedRecordings(ctx context.Context, caller string, groups []string, retired map[string]bool) (refused, refusedStarted []string, err error) {
-	dismissed, err := s.dismissedShareNotices(ctx, caller)
+func (s *Store) refusedRecordings(ctx context.Context, caller string, groups []string, retired map[string]bool) (refused, refusedStarted []string, dismissed map[string]bool, err error) {
+	dismissed, err = s.dismissedShareNotices(ctx, caller)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	inGroup := map[string]bool{}
 	for _, group := range groups {
@@ -260,16 +263,16 @@ FROM job_share_outcomes o LEFT JOIN jobs j ON j.id = o.job_id
 WHERE o.status IN (?, ?)
 ORDER BY o.job_id DESC`, shareOutcomePartial, shareOutcomeStarterRefused)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var jobID, status, raw, state, jobErr string
 		var binding, audience, audienceAt sql.NullString
 		if err := rows.Scan(&jobID, &status, &raw, &state, &jobErr, &binding, &audience, &audienceAt); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		if retired[jobID] || dismissed[jobID] {
+		if retired[jobID] {
 			continue
 		}
 		var skipped []skippedShare
@@ -289,7 +292,7 @@ ORDER BY o.job_id DESC`, shareOutcomePartial, shareOutcomeStarterRefused)
 			}
 		}
 	}
-	return refused, refusedStarted, rows.Err()
+	return refused, refusedStarted, dismissed, rows.Err()
 }
 
 // refusedToCaller says whether a partial outcome left the caller without the

@@ -50,6 +50,13 @@ type setupSharing struct {
 	// them.
 	RefusedStarted         int               `json:"refused_started"`
 	RefusedStartedMeetings []recordingNotice `json:"refused_started_meetings"`
+	// DismissedRefused and DismissedRefusedStarted are the job ids of the
+	// same two kinds whose notices the caller dismissed. Browse's list says
+	// nothing more about them, but a meeting opened from a link (Talk's chat,
+	// a Nextcloud notification) still says why the caller cannot see it,
+	// instead of "not found".
+	DismissedRefused        []string `json:"dismissed_refused"`
+	DismissedRefusedStarted []string `json:"dismissed_refused_started"`
 }
 
 // recordingNotice is one meeting Browse tells the caller about by name, one
@@ -77,7 +84,10 @@ type pendingRecordingShare struct {
 }
 
 func emptySetupSharing() setupSharing {
-	return setupSharing{Pending: []pendingRecordingShare{}, RefusedMeetings: []recordingNotice{}, RefusedStartedMeetings: []recordingNotice{}}
+	return setupSharing{
+		Pending: []pendingRecordingShare{}, RefusedMeetings: []recordingNotice{}, RefusedStartedMeetings: []recordingNotice{},
+		DismissedRefused: []string{}, DismissedRefusedStarted: []string{},
+	}
 }
 
 // sharingReadTimeout bounds both reads as the caller together. /setup is
@@ -121,11 +131,13 @@ func (rt *Runtime) sharingForCaller(ctx context.Context, caller string) setupSha
 		rt.logger.Printf("sharing for %s: retired meetings: %v", caller, err)
 		return emptySetupSharing()
 	}
-	refused, refusedStarted, err := rt.store.refusedRecordings(ctx, caller, groups, retired)
+	refused, refusedStarted, dismissed, err := rt.store.refusedRecordings(ctx, caller, groups, retired)
 	if err != nil {
 		rt.logger.Printf("sharing for %s: refused shares: %v", caller, err)
 		return emptySetupSharing()
 	}
+	refused, dismissedRefused := splitDismissed(refused, dismissed)
+	refusedStarted, dismissedStarted := splitDismissed(refusedStarted, dismissed)
 	entries := groupPendingRecordingShares(pending, retired)
 	jobIDs := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -147,7 +159,22 @@ func (rt *Runtime) sharingForCaller(ctx context.Context, caller string) setupSha
 		Checked: true, Pending: entries,
 		Refused: len(refusedMeetings), RefusedMeetings: refusedMeetings,
 		RefusedStarted: len(started), RefusedStartedMeetings: started,
+		DismissedRefused: dismissedRefused, DismissedRefusedStarted: dismissedStarted,
 	}
+}
+
+// splitDismissed separates the job ids whose notice the caller dismissed
+// from the rest, keeping each side's order. Both are non-nil.
+func splitDismissed(jobIDs []string, dismissed map[string]bool) (kept, gone []string) {
+	kept, gone = []string{}, []string{}
+	for _, id := range jobIDs {
+		if dismissed[id] {
+			gone = append(gone, id)
+		} else {
+			kept = append(kept, id)
+		}
+	}
+	return kept, gone
 }
 
 // recordingNotices describes meetings for the caller's notices: the title the

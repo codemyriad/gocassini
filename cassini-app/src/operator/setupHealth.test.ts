@@ -46,14 +46,17 @@ describe("the caller's recording shares on /setup", () => {
       checked: true, pending: [pending], refused: 1, refused_started: 1,
       refused_meetings: [{ job_id: "J4", title: "Weekly sync", room_name: "Weekly sync", started_at: "2026-10-30T10:00:00Z" }],
       refused_started_meetings: [{ job_id: "J7", title: "", room_name: "Design review", started_at: "2026-10-31T15:00:00Z" }],
+      dismissed_refused: ["J3", " ", 5], dismissed_refused_started: [" J6 "],
     })).toEqual({
       checked: true,
       pending: [{ shareIds: ["34", "35"], jobId: "01K9QV7X3B2MA8ZC4D6N0RT5WE", title: "Weekly sync", startedAt: "2026-10-30T10:00:00Z", durationSeconds: 2520 }],
       refused: [{ jobId: "J4", title: "Weekly sync", roomName: "Weekly sync", startedAt: "2026-10-30T10:00:00Z" }],
       unpublished: [{ jobId: "J7", title: "", roomName: "Design review", startedAt: "2026-10-31T15:00:00Z" }],
+      dismissedRefused: ["J3"],
+      dismissedUnpublished: ["J6"],
     });
     expect(readSetupHealth({ ...health, sharing: { checked: true, pending: [], refused: 0, refused_started: 0 } })?.sharing)
-      .toEqual({ checked: true, pending: [], refused: [], unpublished: [] });
+      .toEqual({ checked: true, pending: [], refused: [], unpublished: [], dismissedRefused: [], dismissedUnpublished: [] });
   });
 
   it("is null for an operator that does not report it, or reports it malformed", () => {
@@ -68,7 +71,7 @@ describe("the caller's recording shares on /setup", () => {
     // Whatever else the object carries: the operator says it established
     // nothing, and a row shown from an unchecked answer would be a guess.
     expect(readSharing({ checked: false, pending: [pending], refused_meetings: [{ job_id: "J4" }], refused_started_meetings: [{ job_id: "J7" }] }))
-      .toEqual({ checked: false, pending: [], refused: [], unpublished: [] });
+      .toEqual({ checked: false, pending: [], refused: [], unpublished: [], dismissedRefused: [], dismissedUnpublished: [] });
   });
 
   it("drops a pending row it could not accept, and tolerates an unknown job", () => {

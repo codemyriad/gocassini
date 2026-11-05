@@ -7,6 +7,7 @@
   import Operator from "./Operator.svelte";
   import SetupNotice from "./SetupNotice.svelte";
   import SharingNotice from "./SharingNotice.svelte";
+  import MeetingAccessNotice from "./MeetingAccessNotice.svelte";
   import RetentionReminder from "./RetentionReminder.svelte";
   import { onRetentionChanged } from "./operator/retentionSignal";
   import { dismissRetentionReminder, retentionMutationBusy } from "./operator/retentionReminder";
@@ -27,7 +28,7 @@
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
   import { onSetupChanged } from "./operator/setupSignal";
-  import { acceptShares, dismissNotices, hasSharingNews, withoutDismissed, type AcceptSharesResult } from "./operator/sharingNotice";
+  import { acceptShares, dismissNotices, explainedMeetingIds, hasSharingNews, meetingAccess, withoutDismissed, type AcceptSharesResult } from "./operator/sharingNotice";
   import {
     applyPanel,
     applySurface,
@@ -225,6 +226,12 @@
   // whether the notice draws anything at all. A slot cannot be provided
   // conditionally, so the viewer is told.
   $: sharingNews = hasSharingNews(sharing);
+  // A meeting opened from a link (Talk's chat, a Nextcloud notification) that
+  // the list does not have says why, in place of "Meeting not found", when
+  // these shares explain it: waiting for the reader to accept, or refused.
+  // Read from /setup as it came, dismissed notices included — dismissing one
+  // quiets the list, not the meeting's own page.
+  $: explainedIds = explainedMeetingIds(setupHealth?.sharing);
   // The address handed on to an administrator, without the fragment.
   let appUrl = "";
 
@@ -674,7 +681,7 @@
          hidden while an admin surface is active; those mount only when active
          so the operator's SSE stream + polling don't run in the background. -->
     <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-      <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
+      <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
         <!-- Its opposite, driven by the same bit (D-700): the readiness card
              says a question cannot be asked here, this one asks it. The Prepare
@@ -700,6 +707,12 @@
         </svelte:fragment>
         <svelte:fragment slot="list-notice" let:refresh let:meetings>
           <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
+        </svelte:fragment>
+        <svelte:fragment slot="meeting-not-found" let:meetingId let:refresh>
+          {@const access = meetingAccess(setupHealth?.sharing, meetingId)}
+          {#if access}
+            <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+          {/if}
         </svelte:fragment>
       </ViewerApp>
     </div>
@@ -737,7 +750,7 @@
       </div>
     </div>
     <div class="cassini-shell-surface">
-      <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} on:prepareOpen={() => void refreshSetupFeatures()}>
+      <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} on:prepareOpen={() => void refreshSetupFeatures()}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
         <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
           {#if insightsReady}
@@ -759,11 +772,17 @@
         <svelte:fragment slot="list-notice" let:refresh let:meetings>
           <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
         </svelte:fragment>
+        <svelte:fragment slot="meeting-not-found" let:meetingId let:refresh>
+          {@const access = meetingAccess(setupHealth?.sharing, meetingId)}
+          {#if access}
+            <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+          {/if}
+        </svelte:fragment>
       </ViewerApp>
     </div>
   </div>
 {:else}
-  <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} on:prepareOpen={() => void refreshSetupFeatures()}>
+  <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} notFoundFilledFor={explainedIds} on:prepareOpen={() => void refreshSetupFeatures()}>
     <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
     <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
       {#if insightsReady}
@@ -784,6 +803,12 @@
     </svelte:fragment>
     <svelte:fragment slot="list-notice" let:refresh let:meetings>
       <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
+    </svelte:fragment>
+    <svelte:fragment slot="meeting-not-found" let:meetingId let:refresh>
+      {@const access = meetingAccess(setupHealth?.sharing, meetingId)}
+      {#if access}
+        <MeetingAccessNotice {access} {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+      {/if}
     </svelte:fragment>
   </ViewerApp>
 {/if}

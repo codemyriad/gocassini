@@ -174,6 +174,12 @@ describe("the list's host slots", () => {
     expect(appSource).toContain('<svelte:fragment slot="list-notice"><slot name="list-notice" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>');
   });
 
+  it("forwards the meeting's not-found card, for the meetings the shell can explain", () => {
+    expect(appSource).toContain("export let notFoundFilledFor: readonly string[] = [];");
+    expect(appSource).toContain("notFoundFilled={!!selectedMeetingId && notFoundFilledFor.includes(selectedMeetingId)}");
+    expect(appSource).toContain('{#snippet notFound()}<slot name="meeting-not-found" meetingId={selectedMeetingId} refresh={refreshCatalog} />{/snippet}');
+  });
+
   it("re-reads the list through the path an import uses", () => {
     expect(appSource).toContain("on:imported={() => void refreshCatalog()}");
   });

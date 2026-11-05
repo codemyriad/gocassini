@@ -45,7 +45,11 @@ export interface SharingStatus {
   // Recordings the caller started that were not published because Nextcloud
   // refused to share them with the caller, one per meeting, newest first.
   unpublished: RecordingNotice[];
-  // Neither list carries a meeting whose notice the caller dismissed.
+  // Neither list carries a meeting whose notice the caller dismissed. Those
+  // are these job ids, of each kind: the list says nothing more about them,
+  // but the meeting opened from a link still says why it is not there.
+  dismissedRefused: string[];
+  dismissedUnpublished: string[];
 }
 
 // One meeting Browse tells the reader about by name: a recording Nextcloud
@@ -115,7 +119,7 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
 // dropped too.
 export function readSharing(value: unknown): SharingStatus | null {
   if (!isRecord(value) || typeof value.checked !== "boolean") return null;
-  if (!value.checked) return { checked: false, pending: [], refused: [], unpublished: [] };
+  if (!value.checked) return { checked: false, pending: [], refused: [], unpublished: [], dismissedRefused: [], dismissedUnpublished: [] };
   const pending = Array.isArray(value.pending)
     ? value.pending.flatMap((entry) => {
         const recording = readPendingRecording(entry);
@@ -127,7 +131,16 @@ export function readSharing(value: unknown): SharingStatus | null {
     pending,
     refused: readRecordingNotices(value.refused_meetings),
     unpublished: readRecordingNotices(value.refused_started_meetings),
+    dismissedRefused: readJobIds(value.dismissed_refused),
+    dismissedUnpublished: readJobIds(value.dismissed_refused_started),
   };
+}
+
+// readJobIds keeps the non-empty strings; an operator that predates the
+// field sends none, and that is an empty list.
+function readJobIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === "string" && id.trim() !== "").map((id) => id.trim());
 }
 
 function readRecordingNotices(value: unknown): RecordingNotice[] {

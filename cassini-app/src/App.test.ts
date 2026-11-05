@@ -228,6 +228,17 @@ describe("the reader's own recording shares in Browse", () => {
     expect(appSource.match(/listEmptyFilled=\{sharingNews\}/g) ?? []).toHaveLength(3);
   });
 
+  it("explains a linked meeting the reader cannot open, wherever the browse surface is mounted", () => {
+    // Talk's chat and Nextcloud's notifications link to `#meeting=<job id>`.
+    // A waiting or refused share says so there instead of "Meeting not found",
+    // read from /setup as it came: a notice dismissed in the list still
+    // explains the meeting's own page.
+    expect(appSource.match(/slot="meeting-not-found" let:meetingId let:refresh/g) ?? []).toHaveLength(3);
+    expect(appSource.match(/notFoundFilledFor=\{explainedIds\}/g) ?? []).toHaveLength(3);
+    expect(appSource.match(/meetingAccess\(setupHealth\?\.sharing, meetingId\)/g) ?? []).toHaveLength(3);
+    expect(appSource).toContain("$: explainedIds = explainedMeetingIds(setupHealth?.sharing);");
+  });
+
   it("gates the empty state on the rule the notice renders by", () => {
     // A slot cannot be provided conditionally and one that renders nothing
     // still replaces the viewer's "No meetings yet", so the viewer is told —
@@ -256,9 +267,10 @@ describe("the reader's own recording shares in Browse", () => {
   it("re-reads the list through the viewer's own refresh after an acceptance", () => {
     // The refresh rides down as a slot prop from the viewer, so the accepted
     // recording appears through the path an import takes, with nothing
-    // remounted — in every mount, for both slots.
-    expect(appSource.match(/let:refresh/g) ?? []).toHaveLength(6);
-    expect(appSource.match(/on:accepted=\{\(event\) => handleSharesAccepted\(event\.detail, refresh\)\}/g) ?? []).toHaveLength(6);
+    // remounted — in every mount, for both list slots and the meeting's
+    // not-found card.
+    expect(appSource.match(/let:refresh/g) ?? []).toHaveLength(9);
+    expect(appSource.match(/on:accepted=\{\(event\) => handleSharesAccepted\(event\.detail, refresh\)\}/g) ?? []).toHaveLength(9);
     expect(appSource).toMatch(/function handleSharesAccepted[\s\S]{0,500}void refresh\(\);/);
   });
 
@@ -274,6 +286,6 @@ describe("the reader's own recording shares in Browse", () => {
 
   it("makes the request from the shell, with the operator's base path", () => {
     expect(appSource).toMatch(/function acceptRecordingShares[\s\S]{0,200}return acceptShares\(operatorBasePath, shareIds\);/);
-    expect(appSource.match(/accept=\{acceptRecordingShares\}/g) ?? []).toHaveLength(6);
+    expect(appSource.match(/accept=\{acceptRecordingShares\}/g) ?? []).toHaveLength(9);
   });
 });

@@ -24,7 +24,7 @@ const retro: PendingRecording = {
   startedAt: "2026-10-23T14:00:00Z", durationSeconds: 3900,
 };
 const checked = (over: Partial<SharingStatus> = {}): SharingStatus =>
-  ({ checked: true, pending: [], refused: [], unpublished: [], ...over });
+  ({ checked: true, pending: [], refused: [], unpublished: [], dismissedRefused: [], dismissedUnpublished: [], ...over });
 // Recordings the reader started that were not published.
 const design: RecordingNotice = { jobId: "J7", title: "", roomName: "Design review", startedAt: "2026-10-31T15:00:00Z" };
 const standup: RecordingNotice = { jobId: "J8", title: "", roomName: "Standup", startedAt: "2026-10-30T09:00:00Z" };
@@ -272,7 +272,7 @@ it("drops a refused or waiting recording once the reader's list shows it, withou
 });
 
 it("draws nothing when the operator could not check, or there is nothing to say", async () => {
-  show({ checked: false, pending: [weekly], refused: [allHands], unpublished: [design] });
+  show({ checked: false, pending: [weekly], refused: [allHands], unpublished: [design], dismissedRefused: [], dismissedUnpublished: [] });
   expect(host.textContent?.trim()).toBe("");
   await unmount(app!);
   app = undefined;
