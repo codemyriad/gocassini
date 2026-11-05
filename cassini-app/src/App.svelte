@@ -27,7 +27,7 @@
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
   import { onSetupChanged } from "./operator/setupSignal";
-  import { acceptShares, hasSharingNews, type AcceptSharesResult } from "./operator/sharingNotice";
+  import { acceptShares, dismissUnpublished, hasSharingNews, withoutDismissed, type AcceptSharesResult } from "./operator/sharingNotice";
   import {
     applyPanel,
     applySurface,
@@ -217,7 +217,10 @@
   // Nextcloud sharing setting kept from them. Browse says so in the list's
   // empty state or in a strip above it, through the viewer's two slots — the
   // viewer has no idea what a share is, and a standalone export has none.
-  $: sharing = setupHealth?.sharing ?? null;
+  // Notices the reader dismissed here leave at once; the operator keeps them
+  // out of every later /setup.
+  let dismissedUnpublished: ReadonlySet<string> = new Set();
+  $: sharing = withoutDismissed(setupHealth?.sharing ?? null, dismissedUnpublished);
   // One rule for both: whether the empty state is the shell's to fill, and
   // whether the notice draws anything at all. A slot cannot be provided
   // conditionally, so the viewer is told.
@@ -230,6 +233,15 @@
   function acceptRecordingShares(shareIds: string[]): Promise<AcceptSharesResult> {
     const { operatorBasePath } = loadConfig();
     return acceptShares(operatorBasePath, shareIds);
+  }
+
+  function dismissUnpublishedRecordings(jobIds: string[]): Promise<void> {
+    const { operatorBasePath } = loadConfig();
+    return dismissUnpublished(operatorBasePath, jobIds);
+  }
+
+  function handleUnpublishedDismissed(jobIds: string[]): void {
+    dismissedUnpublished = new Set([...dismissedUnpublished, ...jobIds]);
   }
 
   // After the operator answered an acceptance. The answer carries the
@@ -672,12 +684,12 @@
         <!-- The reader's own shares, in the list's empty state and above a list
              that has meetings (D-885). The same component in both, drawing
              nothing when there is no news; `refresh` is the viewer's catalog
-             re-read, handed down as a slot prop. -->
-        <svelte:fragment slot="list-empty" let:refresh>
-          <SharingNotice {sharing} variant="card" {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+             re-read and `meetings` what it lists, handed down as slot props. -->
+        <svelte:fragment slot="list-empty" let:refresh let:meetings>
+          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
         </svelte:fragment>
-        <svelte:fragment slot="list-notice" let:refresh>
-          <SharingNotice {sharing} variant="strip" {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+        <svelte:fragment slot="list-notice" let:refresh let:meetings>
+          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
         </svelte:fragment>
       </ViewerApp>
     </div>
@@ -730,12 +742,12 @@
         <!-- The reader's own shares, in the list's empty state and above a list
              that has meetings (D-885). The same component in both, drawing
              nothing when there is no news; `refresh` is the viewer's catalog
-             re-read, handed down as a slot prop. -->
-        <svelte:fragment slot="list-empty" let:refresh>
-          <SharingNotice {sharing} variant="card" {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+             re-read and `meetings` what it lists, handed down as slot props. -->
+        <svelte:fragment slot="list-empty" let:refresh let:meetings>
+          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
         </svelte:fragment>
-        <svelte:fragment slot="list-notice" let:refresh>
-          <SharingNotice {sharing} variant="strip" {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+        <svelte:fragment slot="list-notice" let:refresh let:meetings>
+          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
         </svelte:fragment>
       </ViewerApp>
     </div>
@@ -756,12 +768,12 @@
     <!-- The reader's own shares, in the list's empty state and above a list
          that has meetings (D-885). The same component in both, drawing
          nothing when there is no news; `refresh` is the viewer's catalog
-         re-read, handed down as a slot prop. -->
-    <svelte:fragment slot="list-empty" let:refresh>
-      <SharingNotice {sharing} variant="card" {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+         re-read and `meetings` what it lists, handed down as slot props. -->
+    <svelte:fragment slot="list-empty" let:refresh let:meetings>
+      <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
     </svelte:fragment>
-    <svelte:fragment slot="list-notice" let:refresh>
-      <SharingNotice {sharing} variant="strip" {appUrl} accept={acceptRecordingShares} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} />
+    <svelte:fragment slot="list-notice" let:refresh let:meetings>
+      <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissUnpublishedRecordings} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleUnpublishedDismissed(event.detail)} />
     </svelte:fragment>
   </ViewerApp>
 {/if}

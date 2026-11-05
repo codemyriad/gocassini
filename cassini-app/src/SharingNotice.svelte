@@ -1,13 +1,16 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { TriangleAlert } from "@lucide/svelte";
+  import { TriangleAlert, X } from "@lucide/svelte";
   import type { PendingRecording, SharingStatus } from "./operator/setupHealth";
   import {
     acceptAllLabel,
     ADMIN_FIX_LEAD,
     ADMIN_FIX_PLAIN,
+    DISMISS,
+    DISMISS_ALL,
     hasSharingNews,
     HIDE_THEM,
+    listedJobIds,
     PENDING_LINE,
     pendingRowKey,
     pendingRowMeta,
@@ -20,8 +23,12 @@
     SHOW_THEM,
     starterRefusedLine,
     starterRefusedTitle,
+    UNPUBLISHED_GROUP_AFTER,
+    unpublishedRowLabel,
+    unpublishedTitle,
     WHY_ACCEPT,
     type AcceptSharesResult,
+    type ListedMeeting,
   } from "./operator/sharingNotice";
 
   // What Browse tells a reader about their own recording shares (D-885): the
@@ -34,6 +41,11 @@
   // what to do about it, with the link to hand on inside the sentence. The
   // pending block keeps its rows behind a disclosure so a person can accept
   // one at a time, and the primary button on its first line accepts them all.
+  // A recording the reader started that could not be published has a notice
+  // of its own, naming its room and time, which they may dismiss for good;
+  // past two, they are one line with the count and the rows behind a
+  // disclosure. One that turns up in the reader's list was published since,
+  // and goes without a reload.
   //
   // Every sentence comes from sharingNotice.ts, where it is tested. What is
   // here is presentation, and the one piece of state that belongs beside the
@@ -49,17 +61,53 @@
   // and its failure reason are this component's, because they belong to the
   // row.
   export let accept: (shareIds: string[]) => Promise<AcceptSharesResult>;
+  // Dismissing an unpublished recording's notice, for good: the shell's
+  // request too. The button's spinner and its failure are this component's.
+  export let dismiss: (jobIds: string[]) => Promise<void>;
+  // The meetings the reader's list shows, as the viewer hands them down. An
+  // unpublished recording among them was published since and is not news.
+  export let meetings: readonly ListedMeeting[] = [];
 
-  // Fired whenever the operator answered: the detail carries what it accepted
-  // and the refreshed shares, and the shell re-reads the list from there.
-  const dispatch = createEventDispatcher<{ accepted: AcceptSharesResult }>();
+  // `accepted` whenever the operator answered an acceptance: the detail
+  // carries what it accepted and the refreshed shares, and the shell re-reads
+  // the list from there. `dismissed` once the operator recorded a dismissal:
+  // the shell stops passing those recordings down.
+  const dispatch = createEventDispatcher<{ accepted: AcceptSharesResult; dismissed: string[] }>();
 
   // Nothing is drawn unless there is news: an unchecked answer and zero counts
   // both render nothing, by the same rule the shell fills the empty state by.
   $: news = hasSharingNews(sharing) ? sharing : null;
   $: pending = news?.pending ?? [];
   $: refused = news?.refused ?? 0;
-  $: refusedStarted = news?.refusedStarted ?? 0;
+  $: listed = listedJobIds(meetings);
+  $: unpublished = (news?.unpublished ?? []).filter((entry) => !listed.has(entry.jobId));
+  $: grouped = unpublished.length > UNPUBLISHED_GROUP_AFTER;
+  $: shown = pending.length > 0 || refused > 0 || unpublished.length > 0;
+
+  // The unpublished recordings' disclosure, when they are grouped.
+  let unpublishedExpanded = false;
+  // Job ids whose dismissal is in flight, and why one failed, by job id.
+  let dismissing: ReadonlySet<string> = new Set();
+  let dismissFailures: ReadonlyMap<string, string> = new Map();
+
+  async function dismissRows(jobIds: string[]): Promise<void> {
+    if (dismissing.size > 0 || jobIds.length === 0) return;
+    dismissing = new Set(jobIds);
+    const cleared = new Map(dismissFailures);
+    for (const id of jobIds) cleared.delete(id);
+    dismissFailures = cleared;
+    try {
+      await dismiss(jobIds);
+      dispatch("dismissed", jobIds);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const next = new Map(dismissFailures);
+      for (const id of jobIds) next.set(id, message);
+      dismissFailures = next;
+    } finally {
+      dismissing = new Set();
+    }
+  }
 
   // The rows' disclosure, collapsed until "Show them".
   let expanded = false;
@@ -115,7 +163,7 @@
   }
 </script>
 
-{#if news}
+{#if news && shown}
   <div class="sharing-notice" class:sharing-card={variant === "card"} class:sharing-strip={variant === "strip"}>
     {#if pending.length > 0}
       <section class="sharing-block" role="status" aria-label="Recordings waiting for you">
@@ -182,17 +230,84 @@
       </section>
     {/if}
 
-    {#if refusedStarted > 0}
-      <section class="sharing-block sharing-refused" role="status">
-        <div class="sharing-line">
-          <TriangleAlert size={16} class="shrink-0 text-warning" aria-hidden="true" />
-          <p class="text-sm">
-            <strong class="font-semibold">{starterRefusedTitle(refusedStarted)}</strong>
-            {#if variant === "card"}{starterRefusedLine(refusedStarted)}{/if}
-            {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
-          </p>
-        </div>
+    {#if grouped}
+      <section class="sharing-block sharing-refused" role="status" aria-label="Recordings you started that could not be published">
+        <details class="sharing-details" bind:open={unpublishedExpanded}>
+          <summary class="sharing-summary sharing-line">
+            <TriangleAlert size={16} class="shrink-0 text-warning" aria-hidden="true" />
+            <p class="text-sm">
+              <strong class="font-semibold">{starterRefusedTitle(unpublished.length)}</strong>
+              {#if variant === "card"}{starterRefusedLine(unpublished.length)}{/if}
+            </p>
+            <span class="link link-primary text-xs">{unpublishedExpanded ? HIDE_THEM : SHOW_THEM}</span>
+          </summary>
+          <ul class="sharing-rows">
+            {#each unpublished as entry (entry.jobId)}
+              <li class="sharing-row">
+                <div class="min-w-0 flex-1">
+                  <p class="truncate text-sm">{unpublishedRowLabel(entry)}</p>
+                  {#if dismissFailures.get(entry.jobId)}
+                    <p class="text-xs text-error" role="alert">{dismissFailures.get(entry.jobId)}</p>
+                  {/if}
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  disabled={dismissing.size > 0}
+                  aria-label={`${DISMISS} ${unpublishedRowLabel(entry)}`}
+                  on:click={() => dismissRows([entry.jobId])}
+                >
+                  {#if dismissing.has(entry.jobId) && dismissing.size === 1}
+                    <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+                  {/if}
+                  {DISMISS}
+                </button>
+              </li>
+            {/each}
+          </ul>
+          <div class="sharing-line mt-2">
+            <p class="text-xs text-base-content/75">
+              {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
+            </p>
+            <button type="button" class="btn btn-sm btn-ghost" disabled={dismissing.size > 0} on:click={() => dismissRows(unpublished.map((entry) => entry.jobId))}>
+              {#if dismissing.size > 1}
+                <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              {/if}
+              {DISMISS_ALL}
+            </button>
+          </div>
+        </details>
       </section>
+    {:else}
+      {#each unpublished as entry (entry.jobId)}
+        <section class="sharing-block sharing-refused" role="status">
+          <div class="sharing-line">
+            <TriangleAlert size={16} class="shrink-0 text-warning" aria-hidden="true" />
+            <p class="text-sm">
+              <strong class="font-semibold">{unpublishedTitle(entry)}</strong>
+              {#if variant === "card"}{starterRefusedLine(1)}{/if}
+              {#if appUrl}{ADMIN_FIX_LEAD} <a class="link link-primary" href={appUrl} title={SEND_LINK_TITLE}>{SEND_LINK}</a>.{:else}{ADMIN_FIX_PLAIN}{/if}
+            </p>
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs btn-square"
+              title={DISMISS}
+              aria-label={`${DISMISS}: ${unpublishedTitle(entry)}`}
+              disabled={dismissing.size > 0}
+              on:click={() => dismissRows([entry.jobId])}
+            >
+              {#if dismissing.has(entry.jobId)}
+                <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              {:else}
+                <X size={14} aria-hidden="true" />
+              {/if}
+            </button>
+          </div>
+          {#if dismissFailures.get(entry.jobId)}
+            <p class="text-xs text-error" role="alert">{dismissFailures.get(entry.jobId)}</p>
+          {/if}
+        </section>
+      {/each}
     {/if}
   </div>
 {/if}

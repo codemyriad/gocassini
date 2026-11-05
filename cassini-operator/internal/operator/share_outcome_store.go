@@ -235,15 +235,20 @@ func (rt *Runtime) jobSharing(ctx context.Context, job *Job) *jobShareOutcome {
 
 // refusedShareCounts is how many published meetings Nextcloud would not share
 // with this caller: refused counts partial outcomes that left the caller
-// without the recording, as refusedToCaller judges it; refusedStarted counts
-// recordings the caller started that were not published because the caller
-// was refused — while that is still why the run failed, as jobSharing judges
-// it. Retired meetings are not counted: nobody has them.
+// without the recording, as refusedToCaller judges it; refusedStarted names
+// the jobs of recordings the caller started that were not published because
+// the caller was refused — while that is still why the run failed, as
+// jobSharing judges it, and unless the caller dismissed that notice. Retired
+// meetings are not counted: nobody has them.
 //
 // Teams are not matched. Whether the caller is in a Team takes the Teams
 // app's own API, which is not worth a call on every page open; a meeting
 // refused only to a Team the caller is in is not counted here.
-func (s *Store) refusedShareCounts(ctx context.Context, caller string, groups []string, retired map[string]bool) (refused, refusedStarted int, err error) {
+func (s *Store) refusedShareCounts(ctx context.Context, caller string, groups []string, retired map[string]bool) (refused int, refusedStarted []string, err error) {
+	dismissed, err := s.dismissedShareNotices(ctx, caller)
+	if err != nil {
+		return 0, nil, err
+	}
 	inGroup := map[string]bool{}
 	for _, group := range groups {
 		inGroup[group] = true
@@ -252,16 +257,17 @@ func (s *Store) refusedShareCounts(ctx context.Context, caller string, groups []
 SELECT o.job_id, o.status, o.skipped, COALESCE(j.state, ''), COALESCE(j.error, ''),
   j.talk_binding, j.room_audience, j.room_audience_at
 FROM job_share_outcomes o LEFT JOIN jobs j ON j.id = o.job_id
-WHERE o.status IN (?, ?)`, shareOutcomePartial, shareOutcomeStarterRefused)
+WHERE o.status IN (?, ?)
+ORDER BY o.job_id DESC`, shareOutcomePartial, shareOutcomeStarterRefused)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var jobID, status, raw, state, jobErr string
 		var binding, audience, audienceAt sql.NullString
 		if err := rows.Scan(&jobID, &status, &raw, &state, &jobErr, &binding, &audience, &audienceAt); err != nil {
-			return 0, 0, err
+			return 0, nil, err
 		}
 		if retired[jobID] {
 			continue
@@ -278,8 +284,8 @@ WHERE o.status IN (?, ?)`, shareOutcomePartial, shareOutcomeStarterRefused)
 			}
 		case shareOutcomeStarterRefused:
 			if state == "failed" && strings.Contains(jobErr, starterRefusedMarker) &&
-				len(skipped) > 0 && skipped[0].Type == "user" && skipped[0].ID == caller {
-				refusedStarted++
+				len(skipped) > 0 && skipped[0].Type == "user" && skipped[0].ID == caller && !dismissed[jobID] {
+				refusedStarted = append(refusedStarted, jobID)
 			}
 		}
 	}
@@ -322,4 +328,36 @@ func refusedToCaller(skipped []skippedShare, caller string, inGroup map[string]b
 		}
 	}
 	return true
+}
+
+// dismissedShareNotices is the jobs whose Browse notice this person dismissed.
+func (s *Store) dismissedShareNotices(ctx context.Context, user string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT job_id FROM share_notice_dismissals WHERE user_id = ?`, user)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// DismissShareNotices records that this person dismissed the Browse notices
+// of these jobs, for good. Ids of jobs the operator does not know are left
+// out: there is no notice to dismiss.
+func (s *Store) DismissShareNotices(ctx context.Context, user string, jobIDs []string) error {
+	at := nowUTCString()
+	for _, id := range jobIDs {
+		if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO share_notice_dismissals (user_id, job_id, dismissed_at)
+SELECT ?, id, ? FROM jobs WHERE id = ?`, user, at, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }

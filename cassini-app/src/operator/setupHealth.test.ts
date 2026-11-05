@@ -42,14 +42,17 @@ describe("the caller's recording shares on /setup", () => {
   };
 
   it("reads a checked answer with its pending rows and counts", () => {
-    expect(readSharing({ checked: true, pending: [pending], refused: 2, refused_started: 1 })).toEqual({
+    expect(readSharing({
+      checked: true, pending: [pending], refused: 2, refused_started: 1,
+      refused_started_meetings: [{ job_id: "J7", title: "", room_name: "Design review", started_at: "2026-10-31T15:00:00Z" }],
+    })).toEqual({
       checked: true,
       pending: [{ shareIds: ["34", "35"], jobId: "01K9QV7X3B2MA8ZC4D6N0RT5WE", title: "Weekly sync", startedAt: "2026-10-30T10:00:00Z", durationSeconds: 2520 }],
       refused: 2,
-      refusedStarted: 1,
+      unpublished: [{ jobId: "J7", title: "", roomName: "Design review", startedAt: "2026-10-31T15:00:00Z" }],
     });
     expect(readSetupHealth({ ...health, sharing: { checked: true, pending: [], refused: 0, refused_started: 0 } })?.sharing)
-      .toEqual({ checked: true, pending: [], refused: 0, refusedStarted: 0 });
+      .toEqual({ checked: true, pending: [], refused: 0, unpublished: [] });
   });
 
   it("is null for an operator that does not report it, or reports it malformed", () => {
@@ -63,8 +66,8 @@ describe("the caller's recording shares on /setup", () => {
   it("keeps every count at zero when the operator could not check", () => {
     // Whatever else the object carries: the operator says it established
     // nothing, and a row shown from an unchecked answer would be a guess.
-    expect(readSharing({ checked: false, pending: [pending], refused: 2, refused_started: 1 }))
-      .toEqual({ checked: false, pending: [], refused: 0, refusedStarted: 0 });
+    expect(readSharing({ checked: false, pending: [pending], refused: 2, refused_started_meetings: [{ job_id: "J7" }] }))
+      .toEqual({ checked: false, pending: [], refused: 0, unpublished: [] });
   });
 
   it("drops a pending row it could not accept, and tolerates an unknown job", () => {
@@ -76,12 +79,17 @@ describe("the caller's recording shares on /setup", () => {
       // title, no date and no duration, and the app shows what it has.
       { share_ids: ["37"] },
       { share_ids: ["38", ""], title: 7, started_at: null, duration_seconds: "long" },
-    ], refused: -3, refused_started: 1.9 });
+    ], refused: -3, refused_started_meetings: [
+      { job_id: "" }, "J8", { room_name: "No job" },
+      { job_id: "J9", title: 3, room_name: null },
+    ] });
     expect(read?.pending).toEqual([
       { shareIds: ["37"], jobId: "", title: "", startedAt: "", durationSeconds: 0 },
       { shareIds: ["38"], jobId: "", title: "", startedAt: "", durationSeconds: 0 },
     ]);
     expect(read?.refused).toBe(0);
-    expect(read?.refusedStarted).toBe(1);
+    // Without a job id an unpublished recording could be neither dismissed
+    // nor matched once published.
+    expect(read?.unpublished).toEqual([{ jobId: "J9", title: "", roomName: "", startedAt: "" }]);
   });
 });

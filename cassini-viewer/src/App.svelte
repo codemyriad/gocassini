@@ -1654,9 +1654,11 @@
            Cassini shell knows them and a standalone export has none. The
            refresh rides down as a slot prop so the shell can re-read the list
            after it changes what the reader can see, through the same path an
-           import takes, without remounting anything (D-885). -->
-      <svelte:fragment slot="list-empty"><slot name="list-empty" refresh={refreshCatalog} /></svelte:fragment>
-      <svelte:fragment slot="list-notice"><slot name="list-notice" refresh={refreshCatalog} /></svelte:fragment>
+           import takes, without remounting anything; the listed meetings ride
+           with it, so the shell can tell when one it was warning about has
+           arrived (D-885). -->
+      <svelte:fragment slot="list-empty"><slot name="list-empty" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>
+      <svelte:fragment slot="list-notice"><slot name="list-notice" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>
     </MeetingList>
     </div>
 

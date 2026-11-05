@@ -2,8 +2,9 @@ import { mount, unmount } from "svelte";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import SharingNotice from "./SharingNotice.svelte";
-import type { AcceptSharesResult } from "./operator/sharingNotice";
-import type { PendingRecording, SharingStatus } from "./operator/setupHealth";
+import { unpublishedRowLabel, unpublishedTitle, type AcceptSharesResult, type ListedMeeting } from "./operator/sharingNotice";
+import type { PendingRecording, SharingStatus, UnpublishedRecording } from "./operator/setupHealth";
+import { reactiveProps } from "./testing/reactiveProps.svelte";
 import "./app.css";
 
 // What a reader sees in Browse about their own recording shares (D-885):
@@ -23,7 +24,10 @@ const retro: PendingRecording = {
   startedAt: "2026-10-23T14:00:00Z", durationSeconds: 3900,
 };
 const checked = (over: Partial<SharingStatus> = {}): SharingStatus =>
-  ({ checked: true, pending: [], refused: 0, refusedStarted: 0, ...over });
+  ({ checked: true, pending: [], refused: 0, unpublished: [], ...over });
+const design: UnpublishedRecording = { jobId: "J7", title: "", roomName: "Design review", startedAt: "2026-10-31T15:00:00Z" };
+const standup: UnpublishedRecording = { jobId: "J8", title: "", roomName: "Standup", startedAt: "2026-10-30T09:00:00Z" };
+const planning: UnpublishedRecording = { jobId: "J9", title: "", roomName: "Planning", startedAt: "2026-10-29T11:00:00Z" };
 
 const answered = (result: Partial<AcceptSharesResult> = {}): AcceptSharesResult =>
   ({ accepted: [], failed: [], sharing: null, ...result });
@@ -31,23 +35,33 @@ const answered = (result: Partial<AcceptSharesResult> = {}): AcceptSharesResult 
 let app: ReturnType<typeof mount> | undefined;
 let host: HTMLDivElement;
 let accepted: AcceptSharesResult[];
+let dismissed: string[][];
 
 function show(
   sharing: SharingStatus | null,
   accept: (shareIds: string[]) => Promise<AcceptSharesResult> = async () => answered(),
   variant: "card" | "strip" = "card",
+  extra: { dismiss?: (jobIds: string[]) => Promise<void>; meetings?: ListedMeeting[] } = {},
 ) {
+  const props = reactiveProps({ sharing, variant, appUrl, accept, dismiss: extra.dismiss ?? (async () => {}), meetings: extra.meetings ?? [] });
   app = mount(SharingNotice, {
     target: host,
-    props: { sharing, variant, appUrl, accept },
-    events: { accepted: (event: CustomEvent<AcceptSharesResult>) => accepted.push(event.detail) },
+    props,
+    events: {
+      accepted: (event: CustomEvent<AcceptSharesResult>) => accepted.push(event.detail),
+      dismissed: (event: CustomEvent<string[]>) => dismissed.push(event.detail),
+    },
   });
+  return props;
 }
+
+const lineOf = (element: Element | null | undefined) => element?.textContent?.replace(/\s+/g, " ").trim() ?? "";
 
 const details = () => host.querySelector<HTMLDetailsElement>("details")!;
 
 beforeEach(() => {
   accepted = [];
+  dismissed = [];
   host = document.createElement("div");
   host.style.cssText = "width: 720px; margin: 0 auto;";
   document.body.append(host);
@@ -193,16 +207,16 @@ it("tells a reader a sharing setting kept recordings from them, with the link to
   // Above a list that has meetings, the line keeps to the fact and the fix.
   await unmount(app!);
   app = undefined;
-  show(checked({ refused: 2, refusedStarted: 1 }), undefined, "strip");
-  const lines = [...host.querySelectorAll("p")].map((line) => line.textContent?.replace(/\s+/g, " ").trim());
+  show(checked({ refused: 2, unpublished: [design] }), undefined, "strip");
+  const lines = [...host.querySelectorAll("p")].map(lineOf);
   expect(lines).toEqual([
     "2 recordings could not be shared with you. An administrator can fix that: send them this link.",
-    "1 recording you started could not be published. An administrator can fix that: send them this link.",
+    `${unpublishedTitle(design)} An administrator can fix that: send them this link.`,
   ]);
 });
 
 it("tells a starter their recording was not published, and both blocks in order", async () => {
-  show(checked({ pending: [weekly], refused: 1, refusedStarted: 1 }));
+  show(checked({ pending: [weekly], refused: 1, unpublished: [design] }));
   await expect.element(page.getByText("1 recording is waiting for you", { exact: true })).toBeVisible();
   // The one row carries its own Accept, so the line's button is not "all".
   await expect.element(page.getByRole("button", { name: "Accept", exact: true })).toBeVisible();
@@ -211,12 +225,12 @@ it("tells a starter their recording was not published, and both blocks in order"
   expect(blocks).toHaveLength(3);
   expect(blocks[0]).toContain("1 recording is waiting for you");
   expect(blocks[1]).toBe("1 recording could not be shared with you. A Nextcloud sharing setting stops it. An administrator can fix that: send them this link.");
-  expect(blocks[2]).toBe("1 recording you started could not be published. Nextcloud refused to share it with you. An administrator can fix that: send them this link.");
+  expect(blocks[2]).toBe(`${unpublishedTitle(design)} Nextcloud refused to share it with you. An administrator can fix that: send them this link.`);
   await page.screenshot({ element: host, path: `${SHOTS}/06-both.png` });
 });
 
 it("draws nothing when the operator could not check, or there is nothing to say", async () => {
-  show({ checked: false, pending: [weekly], refused: 2, refusedStarted: 1 });
+  show({ checked: false, pending: [weekly], refused: 2, unpublished: [design] });
   expect(host.textContent?.trim()).toBe("");
   await unmount(app!);
   app = undefined;
@@ -226,4 +240,75 @@ it("draws nothing when the operator could not check, or there is nothing to say"
   app = undefined;
   show(null);
   expect(host.textContent?.trim()).toBe("");
+});
+
+it("names each recording a starter could not publish, room and time, and dismisses it", async () => {
+  const dismiss = vi.fn(async () => {});
+  show(checked({ unpublished: [design, standup] }), undefined, "card", { dismiss });
+  const blocks = [...host.querySelectorAll(".sharing-block")].map(lineOf);
+  expect(blocks).toEqual([
+    `${unpublishedTitle(design)} Nextcloud refused to share it with you. An administrator can fix that: send them this link.`,
+    `${unpublishedTitle(standup)} Nextcloud refused to share it with you. An administrator can fix that: send them this link.`,
+  ]);
+  expect(blocks[0]).toContain("“Design review”");
+  // Two are two notices, not a disclosure.
+  expect(host.querySelector("details")).toBeNull();
+  await page.screenshot({ element: host, path: `${SHOTS}/07-unpublished-two.png` });
+
+  await userEvent.click(page.getByRole("button", { name: `Dismiss: ${unpublishedTitle(design)}` }));
+  await expect.poll(() => dismiss.mock.calls).toEqual([[["J7"]]]);
+  await expect.poll(() => dismissed).toEqual([["J7"]]);
+});
+
+it("keeps a notice the operator could not dismiss, and says why", async () => {
+  const dismiss = vi.fn(async (): Promise<void> => { throw new Error("Cassini could not dismiss the notice. Try again."); });
+  show(checked({ unpublished: [design] }), undefined, "strip", { dismiss });
+  await userEvent.click(page.getByRole("button", { name: `Dismiss: ${unpublishedTitle(design)}` }));
+  await expect.element(page.getByRole("alert").filter({ hasText: "Cassini could not dismiss the notice. Try again." })).toBeVisible();
+  expect(dismissed).toEqual([]);
+  // Trying again clears the reason first.
+  dismiss.mockImplementation(async () => {});
+  await userEvent.click(page.getByRole("button", { name: `Dismiss: ${unpublishedTitle(design)}` }));
+  await expect.poll(() => host.querySelectorAll("[role=alert]").length).toBe(0);
+  await expect.poll(() => dismissed).toEqual([["J7"]]);
+});
+
+it("groups three or more behind the count, each dismissable, and all at once", async () => {
+  const dismiss = vi.fn(async () => {});
+  show(checked({ unpublished: [design, standup, planning] }), undefined, "card", { dismiss });
+  const group = host.querySelector<HTMLDetailsElement>("details")!;
+  expect(group.open).toBe(false);
+  // The label is the count's sentence, without the link.
+  const summary = group.querySelector("summary")!;
+  expect(lineOf(summary.querySelector("p"))).toBe("3 recordings you started could not be published. Nextcloud refused to share them with you.");
+  expect(summary.querySelector("a")).toBeNull();
+  await page.screenshot({ element: host, path: `${SHOTS}/08-unpublished-grouped.png` });
+
+  await userEvent.click(page.getByText("Show them", { exact: true }));
+  expect([...group.querySelectorAll(".sharing-row p")].map(lineOf)).toEqual([design, standup, planning].map((entry) => unpublishedRowLabel(entry)));
+  // The link to hand on is said once, under the rows.
+  expect(group.querySelectorAll("a.link")).toHaveLength(1);
+  await page.screenshot({ element: host, path: `${SHOTS}/09-unpublished-grouped-open.png` });
+
+  await userEvent.click(page.getByRole("button", { name: `Dismiss ${unpublishedRowLabel(standup)}` }));
+  await expect.poll(() => dismiss.mock.calls).toEqual([[["J8"]]]);
+  await userEvent.click(page.getByRole("button", { name: "Dismiss all" }));
+  await expect.poll(() => dismiss.mock.calls.length).toBe(2);
+  expect(dismiss.mock.calls[1]).toEqual([["J7", "J8", "J9"]]);
+  await expect.poll(() => dismissed).toEqual([["J8"], ["J7", "J8", "J9"]]);
+});
+
+it("drops a recording once the reader's list shows it, without a reload", async () => {
+  const props = show(checked({ unpublished: [design, standup, planning] }), undefined, "strip");
+  expect(host.querySelector("details")).not.toBeNull();
+  // A rerun published Design review: the viewer's next listing carries its file.
+  props.meetings = [{ id: "m1", audioPath: "https://cloud.example/proxy/cassini/meetings/J7.opus" }];
+  // Two left: back to a notice each.
+  await expect.poll(() => host.querySelector("details")).toBeNull();
+  expect([...host.querySelectorAll(".sharing-block")].map(lineOf)).toEqual([
+    `${unpublishedTitle(standup)} An administrator can fix that: send them this link.`,
+    `${unpublishedTitle(planning)} An administrator can fix that: send them this link.`,
+  ]);
+  props.meetings = [...props.meetings, { id: "J8" }, { id: "m9", meetingPath: "./meetings/J9.json" }];
+  await expect.poll(() => host.textContent?.trim()).toBe("");
 });

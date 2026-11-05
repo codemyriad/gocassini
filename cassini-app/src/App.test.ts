@@ -232,8 +232,17 @@ describe("the reader's own recording shares in Browse", () => {
     // A slot cannot be provided conditionally and one that renders nothing
     // still replaces the viewer's "No meetings yet", so the viewer is told —
     // from the same bit the notice draws by, never a second condition.
-    expect(appSource).toContain("$: sharing = setupHealth?.sharing ?? null;");
+    expect(appSource).toContain("$: sharing = withoutDismissed(setupHealth?.sharing ?? null, dismissedUnpublished);");
     expect(appSource).toContain("$: sharingNews = hasSharingNews(sharing);");
+  });
+
+  it("hands the notice the listed meetings, and forgets what the reader dismissed", () => {
+    // A recording a rerun published shows up in the viewer's own listing,
+    // which rides down as a slot prop: the notice drops it with no reload.
+    expect(appSource.match(/let:refresh let:meetings/g) ?? []).toHaveLength(6);
+    expect(appSource.match(/\{meetings\} accept=\{acceptRecordingShares\} dismiss=\{dismissUnpublishedRecordings\}/g) ?? []).toHaveLength(6);
+    expect(appSource.match(/on:dismissed=\{\(event\) => handleUnpublishedDismissed\(event\.detail\)\}/g) ?? []).toHaveLength(6);
+    expect(appSource).toMatch(/function handleUnpublishedDismissed[\s\S]{0,200}dismissedUnpublished = new Set\(\[\.\.\.dismissedUnpublished, \.\.\.jobIds\]\);/);
   });
 
   it("re-reads the list through the viewer's own refresh after an acceptance", () => {

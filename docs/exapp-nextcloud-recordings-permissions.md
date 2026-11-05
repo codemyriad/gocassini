@@ -43,7 +43,11 @@ for one and **Accept all** for the lot. Accepting goes through `POST
 operator/shares/accept` (USER): the operator accepts as the person, through
 Nextcloud's own pending-share endpoint, and only shares that are in that
 person's own pending list and are Cassini's recordings. Nothing is accepted
-unasked, and never for anyone else. Every recording share carries a note
+unasked, and never for anyone else. A recording the person started that was
+not published, because Nextcloud refused them, is listed in `sharing` one
+meeting at a time (`refused_started_meetings`: job, room, start); `POST
+operator/shares/dismiss` (USER) records that the person dismissed one, by
+person and meeting, and hides it from nobody else. Every recording share carries a note
 naming the meeting, its date and its length ("Recording of Weekly sync,
 Friday 30 October 2026, 10:00 UTC (42 min). Open it in Cassini."), so the file is
 recognisable in Files; the notification itself does not show the note.

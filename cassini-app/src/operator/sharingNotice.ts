@@ -4,7 +4,7 @@
 // reason buildSetupNotice gives: the sentences are the part worth testing, and
 // SharingNotice.svelte renders what it is handed.
 import { readServedMessage } from "../servedMessage";
-import { isRecord, readSharing, type PendingRecording, type SharingStatus } from "./setupHealth";
+import { isRecord, readSharing, type PendingRecording, type SharingStatus, type UnpublishedRecording } from "./setupHealth";
 
 // hasSharingNews is the one rule for whether there is anything to say: the
 // shell uses it to fill the list's empty state, and the notice uses it to
@@ -12,7 +12,50 @@ import { isRecord, readSharing, type PendingRecording, type SharingStatus } from
 // zero because nothing was established, not because nothing is waiting.
 export function hasSharingNews(sharing: SharingStatus | null | undefined): boolean {
   if (!sharing || !sharing.checked) return false;
-  return sharing.pending.length > 0 || sharing.refused > 0 || sharing.refusedStarted > 0;
+  return sharing.pending.length > 0 || sharing.refused > 0 || sharing.unpublished.length > 0;
+}
+
+// withoutDismissed takes out the unpublished recordings the reader dismissed
+// in this page, before the operator's next /setup leaves them out itself.
+export function withoutDismissed(sharing: SharingStatus | null, dismissed: ReadonlySet<string>): SharingStatus | null {
+  if (!sharing || dismissed.size === 0) return sharing;
+  return { ...sharing, unpublished: sharing.unpublished.filter((entry) => !dismissed.has(entry.jobId)) };
+}
+
+// The paths a Browse list entry may carry its meeting by. A meeting's files
+// are named by its job id ("<job id>.opus"), so their stem is the job id.
+export interface ListedMeeting {
+  id: string;
+  audioPath?: string;
+  meetingPath?: string;
+  artifactPath?: string;
+}
+
+// listedJobIds is every job id the reader's list shows a meeting for. An
+// unpublished recording found here was published since — a rerun after the
+// sharing setting was fixed — and the reader can open it, so it is not news.
+export function listedJobIds(meetings: readonly ListedMeeting[]): Set<string> {
+  const ids = new Set<string>();
+  for (const meeting of meetings) {
+    if (meeting.id) ids.add(meeting.id);
+    for (const ref of [meeting.audioPath, meeting.meetingPath, meeting.artifactPath]) {
+      const stem = fileStem(ref);
+      if (stem) ids.add(stem);
+    }
+  }
+  return ids;
+}
+
+function fileStem(ref: string | undefined): string {
+  if (!ref) return "";
+  const path = ref.split(/[?#]/)[0].replace(/\/+$/, "");
+  let base = path.slice(path.lastIndexOf("/") + 1);
+  try {
+    base = decodeURIComponent(base);
+  } catch {
+    // Kept as written: a name that is not valid percent-encoding is its own.
+  }
+  return base.replace(/\.(opus|json)$/i, "");
 }
 
 function recordings(count: number): string {
@@ -54,6 +97,30 @@ export function starterRefusedTitle(count: number): string {
 export function starterRefusedLine(count: number): string {
   return `Nextcloud refused to share ${count === 1 ? "it" : "them"} with you.`;
 }
+
+// Past this many, the unpublished recordings are one line with the count,
+// and their rows behind a disclosure; up to it, each has its own notice.
+export const UNPUBLISHED_GROUP_AFTER = 2;
+
+// One unpublished recording's notice, in bold: "Your recording in “Weekly
+// sync” on Fri 30 Oct, 10:00 could not be published." The room is what the
+// person recognises it by; a title stands in for a room the operator does not
+// know, and each part is left out when it is unknown.
+export function unpublishedTitle(entry: UnpublishedRecording, options: DateFormatOptions = {}): string {
+  const name = entry.roomName || entry.title;
+  const date = formatShareDate(entry.startedAt, options);
+  if (!name && !date) return "A recording you started could not be published.";
+  return `Your recording${name ? ` in “${name}”` : ""}${date ? ` on ${date}` : ""} could not be published.`;
+}
+
+// A row in the grouped list: "Weekly sync · Fri 30 Oct, 10:00".
+export function unpublishedRowLabel(entry: UnpublishedRecording, options: DateFormatOptions = {}): string {
+  const parts = [entry.roomName || entry.title || "A recording", formatShareDate(entry.startedAt, options)];
+  return parts.filter((part) => part !== "").join(" · ");
+}
+
+export const DISMISS = "Dismiss";
+export const DISMISS_ALL = "Dismiss all";
 
 // "An administrator can fix that: send them this link." The link is the app's
 // own address, as SetupNotice hands it on; opened by an administrator, Doctor
@@ -158,4 +225,24 @@ export function readAcceptSharesResult(value: unknown): AcceptSharesResult {
       })
     : [];
   return { accepted, failed, sharing: readSharing(body.sharing) };
+}
+
+// --- POST operator/shares/dismiss ---
+
+// dismissUnpublished tells the operator the reader dismissed these notices,
+// for good and on every device. Throws the operator's own sentence on a
+// non-200 answer.
+export async function dismissUnpublished(
+  operatorBasePath: string,
+  jobIds: string[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const response = await fetchImpl(`${operatorBasePath.replace(/\/+$/, "")}/shares/dismiss`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ job_ids: jobIds }),
+  });
+  if (response.status !== 200) {
+    throw new Error((await readServedMessage(response)) || `Could not dismiss the notice (HTTP ${response.status}).`);
+  }
 }

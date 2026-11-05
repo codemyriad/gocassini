@@ -393,6 +393,14 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>POST</verb>
         <access_level>USER</access_level>
       </route>
+      <!-- USER: dismiss the caller's own Browse notices for recordings they
+           started that Nextcloud would not share with them (D-885). Keyed by
+           the caller; hides nothing from anyone else. -->
+      <route>
+        <url>^operator\/shares\/dismiss\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
 
       <!--
         USER: the AI endpoints a run may be pointed at, and what each one
