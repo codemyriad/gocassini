@@ -18,6 +18,7 @@
   import RecordingSetup from "./RecordingSetup.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
+  import SupportPanel from "./SupportPanel.svelte";
   import { applyJob, applyPanel, type OperatorPanel } from "./surfaceRouting";
 
   export let panel: OperatorPanel = "endpoints";
@@ -72,6 +73,8 @@
       {operatorClient}
       on:openProviders={() => dispatch("panel", "endpoints")}
     />
+  {:else if panel === "support"}
+    <SupportPanel />
   {:else}
     <!-- Unreachable: the operator surface renders the run console itself and
          only mounts this host for a Settings panel. Saying so beats a blank
