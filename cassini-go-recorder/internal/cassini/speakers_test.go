@@ -238,6 +238,30 @@ func snapshotDir(t *testing.T, dir string) map[string][]byte {
 	return out
 }
 
+// withoutApplyTime blanks manifest.json's generatedAt, which an apply stamps
+// with the current second. Two applies of the same edits, one step by step
+// and one fresh, are the same answer even when a second ticks between them.
+func withoutApplyTime(t *testing.T, snapshot map[string][]byte) {
+	t.Helper()
+	raw, ok := snapshot["manifest.json"]
+	if !ok {
+		return
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("manifest.json: %v", err)
+	}
+	if _, ok := manifest["generatedAt"]; !ok {
+		return
+	}
+	manifest["generatedAt"] = ""
+	normalized, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot["manifest.json"] = normalized
+}
+
 func diffSnapshots(before, after map[string][]byte) []string {
 	var diffs []string
 	for name, b := range before {
@@ -1724,6 +1748,7 @@ func TestSpeakersApplyMovesBetweenARenameAndASplit(t *testing.T) {
 		speakersApplyOK(t, other, edits, turnsDir)
 		snapshot := snapshotDir(t, other)
 		delete(snapshot, "cassini.json") // names the bundle's own path
+		withoutApplyTime(t, snapshot)
 		return snapshot
 	}
 	wantRenamed, wantSplit := fresh(rename), fresh(split)
@@ -1735,6 +1760,7 @@ func TestSpeakersApplyMovesBetweenARenameAndASplit(t *testing.T) {
 		speakersApplyOK(t, bundle, step.edits, turnsDir)
 		got := snapshotDir(t, bundle)
 		delete(got, "cassini.json")
+		withoutApplyTime(t, got)
 		if diffs := diffSnapshots(step.want, got); len(diffs) != 0 {
 			t.Errorf("step %d (%s): differs from a fresh apply: %v", i+1, filepath.Base(step.edits), diffs)
 		}
