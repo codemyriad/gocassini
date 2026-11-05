@@ -12,6 +12,7 @@ import (
 
 	"gocassini/internal/insight"
 	"gocassini/internal/insight/workflows"
+	"gocassini/internal/portable"
 )
 
 func useSummaryWarnings(t *testing.T) *bytes.Buffer {
@@ -87,9 +88,13 @@ func TestBuildMeetingSummaryReturnsItsTemplateAndWritesOnlyTheText(t *testing.T)
 	})
 	t.Setenv(SummaryTemplateEnv, "resumen")
 	srv := newChatStub(t, "# Resumen\n\nHola.")
-	body, ref, err := BuildMeetingSummary(LLMConfig{BaseURL: srv, Model: "m"}, sampleStreams(), sampleSegments())
+	written, err := BuildMeetingSummary(LLMConfig{BaseURL: srv, Model: "m"}, sampleStreams(), sampleSegments())
 	if err != nil {
 		t.Fatal(err)
+	}
+	body, ref := written.Body, written.Template
+	if written.Fallback != "" || written.Reason() != "" {
+		t.Errorf("the configured template ran, yet the summary reports a fallback: %q", written.Fallback)
 	}
 	if body != "# Resumen\n\nHola.\n" {
 		t.Errorf("summary = %q, want the model's text alone", body)
@@ -138,5 +143,21 @@ func TestResolveSummaryWorkflowWithAnUnreadableDirectory(t *testing.T) {
 				t.Errorf("fallback = %q, want it to say %q", fallback, tc.warn)
 			}
 		})
+	}
+}
+
+// A summary written outside the build's step (meetings summarize, a speaker
+// edit's rewrite) reports the fallback too, so its caller can record it.
+func TestBuildMeetingSummaryReportsTheFallback(t *testing.T) {
+	writeSummaryTemplates(t, map[string]string{"roto.md": "roto\n"})
+	t.Setenv(SummaryTemplateEnv, "roto")
+	useSummaryWarnings(t)
+	srv := newChatStub(t, "# Summary\n")
+	written, err := BuildMeetingSummary(LLMConfig{BaseURL: srv, Model: "m"}, sampleStreams(), sampleSegments())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written.Template.ID != workflows.SummariseID || written.Fallback == "" || written.Reason() != portable.SummaryReasonTemplateFallback {
+		t.Errorf("written = %+v, want the built-in with the template_fallback reason", written)
 	}
 }

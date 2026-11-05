@@ -219,6 +219,14 @@ func Load() (Set, error) {
 	return LoadDir(os.Getenv(TemplatesDirEnv))
 }
 
+// LoadFor is Load for a caller that will run one workflow, id: the built-ins
+// and, of the custom files, only <id>.md, so resolving one template does not
+// read, parse and hash every file in the directory. Its Entries list only
+// what it read.
+func LoadFor(id string) (Set, error) {
+	return loadDir(os.Getenv(TemplatesDirEnv), strings.TrimSpace(id))
+}
+
 // LoadDir builds the set from the shipped table and the custom templates in
 // dir ("" for built-ins only).
 //
@@ -230,6 +238,11 @@ func Load() (Set, error) {
 // one level up: the built-ins load, and Set.DirError says why no custom
 // template is there.
 func LoadDir(dir string) (Set, error) {
+	return loadDir(dir, "")
+}
+
+// loadDir is LoadDir reading only the custom file for only, when it is set.
+func loadDir(dir, only string) (Set, error) {
 	built := make([]insight.Workflow, 0, len(shipped))
 	entries := make([]Entry, 0, len(shipped))
 	for _, item := range shipped {
@@ -249,7 +262,7 @@ func LoadDir(dir string) (Set, error) {
 		})
 	}
 
-	custom, dirErr := readCustomDir(dir)
+	custom, dirErr := readCustomDir(dir, only)
 	var dirError string
 	if dirErr != nil {
 		dirError = dirErr.Error()

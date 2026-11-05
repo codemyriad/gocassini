@@ -7,6 +7,7 @@ import (
 
 	"gocassini/internal/insight"
 	"gocassini/internal/insight/workflows"
+	"gocassini/internal/portable"
 )
 
 // The summary step's prompt is the registry's `summarise` workflow, read from
@@ -50,19 +51,48 @@ const (
 func SummaryPromptV0() string   { return summaryV0Prompt }
 func SummaryTemplateV0() string { return summaryV0Template }
 
+// WrittenSummary is a summary the model wrote, with what the caller records
+// about it (D-819).
+type WrittenSummary struct {
+	// Body is the raw markdown for summary.md.
+	Body string
+	// Template is the workflow that wrote it, for the manifest.
+	Template insight.WorkflowRef
+	// Fallback says why the built-in wrote it in place of the configured
+	// template, or "" when the configured one ran. A caller that records the
+	// summary step's outcome records it as portable.SummaryReasonTemplateFallback.
+	Fallback string
+}
+
+// Reason is the summary step's outcome reason for this summary: the
+// template_fallback reason when the built-in stood in, else "".
+func (w WrittenSummary) Reason() string {
+	if w.Fallback != "" {
+		return portable.SummaryReasonTemplateFallback
+	}
+	return ""
+}
+
 // BuildMeetingSummary calls the LLM to produce a meeting summary with the
-// summary step's template (ResolveSummaryWorkflow). Speaker labels from
-// streams are used so the model can attribute action items by name. Returns
-// the raw markdown body to be written to summary.md next to other meeting
-// artifacts, and the template that wrote it, which the caller records in the
-// manifest (D-819).
-func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segment) (string, insight.WorkflowRef, error) {
-	workflow := ResolveSummaryWorkflow()
+// summary step's template. Speaker labels from streams are used so the model
+// can attribute action items by name. A configured template that cannot run
+// is warned about on summaryWarnings and reported in Fallback.
+func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segment) (WrittenSummary, error) {
+	return writeSummaryWith(cfg, streams, segments)
+}
+
+// writeSummaryWith resolves the summary step's template, warns when that is
+// the built-in standing in, and asks the model.
+func writeSummaryWith(cfg LLMConfig, streams []AudioStream, segments []Segment) (WrittenSummary, error) {
+	workflow, fallback := resolveSummaryWorkflow()
+	if fallback != "" {
+		fmt.Fprintf(summaryWarnings, "  warn: %s\n", fallback)
+	}
 	body, err := buildMeetingSummaryFn(cfg, workflow, streams, segments)
 	if err != nil {
-		return "", insight.WorkflowRef{}, err
+		return WrittenSummary{}, err
 	}
-	return body, workflow.Ref(), nil
+	return WrittenSummary{Body: body, Template: workflow.Ref(), Fallback: fallback}, nil
 }
 
 // buildMeetingSummaryWith is BuildMeetingSummary with the template already

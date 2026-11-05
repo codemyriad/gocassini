@@ -266,6 +266,10 @@ type speakersApplyReport struct {
 	// rewrite apart from the rest of the replay (D-899). Absent otherwise.
 	SummaryStartedAt  string `json:"summaryStartedAt,omitempty"`
 	SummaryFinishedAt string `json:"summaryFinishedAt,omitempty"`
+	// SummaryReason is "template_fallback" when this apply's rewrite was
+	// written by the built-in template because the configured one could not
+	// run, so the Operator can say so on the attempt (D-819). Absent otherwise.
+	SummaryReason string `json:"summaryReason,omitempty"`
 }
 
 type speakersSplitReport struct {
@@ -645,6 +649,7 @@ func applySpeakerEditsToBundle(meetingDir string, editsRaw []byte, turnsDir, rec
 		}
 		report.Summary = summary.status
 		report.SummaryStartedAt, report.SummaryFinishedAt = summary.startedAt, summary.finishedAt
+		report.SummaryReason = summary.reason
 		editsRecord.Summary = summary.record
 		if summary.record != nil {
 			report.SummarySHA256 = summary.record.SHA256
@@ -1057,13 +1062,13 @@ func restoreSpeakerBase(root string, manifest, files *orderedJSONObject, stash s
 // summarizeSpeakersFn writes a new summary for an edited transcript and names
 // the model and the template that wrote it; tests replace it so no LLM is
 // called.
-var summarizeSpeakersFn = func(t transcribe.TranscriptSpeakers) (body, model string, template insight.WorkflowRef, err error) {
+var summarizeSpeakersFn = func(t transcribe.TranscriptSpeakers) (written transcribe.WrittenSummary, model string, err error) {
 	cfg := transcribe.DefaultBuildConfig().SummaryLLM
 	if !cfg.IsConfigured() {
-		return "", "", insight.WorkflowRef{}, errSummaryModelUnavailable
+		return transcribe.WrittenSummary{}, "", errSummaryModelUnavailable
 	}
-	body, template, err = t.Summarize(cfg)
-	return body, cfg.Model, template, err
+	written, err = t.Summarize(cfg)
+	return written, cfg.Model, err
 }
 
 var errSummaryModelUnavailable = errors.New("no summary model configured")
@@ -1074,7 +1079,10 @@ type speakerSummaryPlan struct {
 	status   string // the report's summary value
 	body     []byte // the new summary.md, nil to leave it as it is
 	template insight.WorkflowRef
-	record   *speakerSummaryRecord
+	// reason is the summary outcome's reason for a regenerated summary:
+	// template_fallback when the built-in wrote it (D-819), else "".
+	reason string
+	record *speakerSummaryRecord
 	// When the rewrite's model call ran, for a regenerated summary.
 	startedAt, finishedAt string
 }
@@ -1120,7 +1128,7 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 		return speakerSummaryPlan{status: "stale", record: previous}, nil
 	}
 	started := time.Now()
-	body, model, template, err := summarizeSpeakersFn(edited)
+	written, model, err := summarizeSpeakersFn(edited)
 	finished := time.Now()
 	if err != nil {
 		// The transcript is still right; only the prose lags behind it.
@@ -1128,10 +1136,12 @@ func planSpeakerSummary(root string, previous *speakerSummaryRecord, edited tran
 		fmt.Fprintf(stderr, "cassini speakers apply: summary not rewritten, it still credits the earlier speakers: %v\n", err)
 		return speakerSummaryPlan{status: "stale", record: previous}, nil
 	}
+	body := written.Body
 	return speakerSummaryPlan{
 		status:     "regenerated",
 		body:       []byte(body),
-		template:   template,
+		template:   written.Template,
+		reason:     written.Reason(),
 		record:     &speakerSummaryRecord{Rewritten: true, Model: model, SHA256: sha256Hex([]byte(body)), EditsSHA256: editsSHA256, TranscriptSHA256: transcriptSHA256},
 		startedAt:  portable.FormatStepTime(started),
 		finishedAt: portable.FormatStepTime(finished),

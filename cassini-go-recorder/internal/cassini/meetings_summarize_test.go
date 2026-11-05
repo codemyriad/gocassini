@@ -493,3 +493,20 @@ func TestMeetingsSummarizeUsage(t *testing.T) {
 		}
 	})
 }
+
+// The portable file's summary outcome carries the template_fallback reason
+// when the built-in wrote the summary (D-819), and no reason otherwise.
+func TestApplySummaryToPortableDocumentRecordsTheReason(t *testing.T) {
+	for _, reason := range []string{"", portable.SummaryReasonTemplateFallback} {
+		document := map[string]any{"processing": map[string]any{}}
+		applySummaryToPortableDocument(document, "# S\n", "m", nil, reason)
+		outcome, _ := document["processing"].(map[string]any)["meetingSummary"].(map[string]any)
+		got, has := outcome["reason"]
+		if reason == "" && has {
+			t.Errorf("no fallback, yet reason = %v", got)
+		}
+		if reason != "" && got != reason {
+			t.Errorf("reason = %v, want %q", got, reason)
+		}
+	}
+}

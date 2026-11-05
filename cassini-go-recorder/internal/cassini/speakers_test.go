@@ -1202,10 +1202,10 @@ func stubSummarize(t *testing.T, fn func(transcribe.TranscriptSpeakers) (string,
 	t.Helper()
 	calls := 0
 	prev := summarizeSpeakersFn
-	summarizeSpeakersFn = func(tr transcribe.TranscriptSpeakers) (string, string, insight.WorkflowRef, error) {
+	summarizeSpeakersFn = func(tr transcribe.TranscriptSpeakers) (transcribe.WrittenSummary, string, error) {
 		calls++
 		body, model, err := fn(tr)
-		return body, model, stubSummaryTemplate, err
+		return transcribe.WrittenSummary{Body: body, Template: stubSummaryTemplate}, model, err
 	}
 	t.Cleanup(func() { summarizeSpeakersFn = prev })
 	return &calls
@@ -1907,5 +1907,31 @@ func TestSpeakersApplyRefusesAnUnknownSummaryMode(t *testing.T) {
 	code, _, stderr := runSpeakersForTest("apply", bundle, "--edits", named, "--turns-dir", turnsDir, "--summary", "maybe")
 	if code != speakersExitUsage || !strings.Contains(stderr, "--summary must be keep or rewrite") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+}
+
+// A rewrite the built-in wrote in place of the configured summary template
+// says so in the report, which the Operator puts on the attempt (D-819); one
+// the configured template wrote says nothing.
+func TestSpeakersApplyReportsASummaryTemplateFallback(t *testing.T) {
+	for _, fallback := range []string{"", "summary template \"roto\" cannot run"} {
+		tmp := t.TempDir()
+		bundle := writeSpeakersBundle(t, tmp, speakersBundleOptions{})
+		writeSpeakersSummary(t, bundle, []byte("## Action items\n- Meeting room: book the hall\n"))
+		prev := summarizeSpeakersFn
+		summarizeSpeakersFn = func(transcribe.TranscriptSpeakers) (transcribe.WrittenSummary, string, error) {
+			return transcribe.WrittenSummary{Body: "## Action items\n- Mira: book the hall\n", Template: stubSummaryTemplate, Fallback: fallback}, "test-model", nil
+		}
+		turnsDir := writeSpeakersTurns(t, tmp, false)
+		named := writeSpeakersEdits(t, tmp, "named.json", speakersSplitDoc(1, speakersNamedMira))
+		report := speakersApplyOK(t, bundle, named, turnsDir)
+		summarizeSpeakersFn = prev
+		want := ""
+		if fallback != "" {
+			want = portable.SummaryReasonTemplateFallback
+		}
+		if report.Summary != "regenerated" || report.SummaryReason != want {
+			t.Errorf("fallback %q: summary = %q, reason = %q, want regenerated with %q", fallback, report.Summary, report.SummaryReason, want)
+		}
 	}
 }

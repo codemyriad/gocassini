@@ -211,9 +211,9 @@ func TestTranscriptSpeakersSummarizeNamesTheEditedSpeakersAndDropsUncertainWords
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
-	body, _, err := transcript.Summarize(cfg)
-	if err != nil || body != "## Summary\n" {
-		t.Fatalf("Summarize = %q, %v", body, err)
+	written, err := transcript.Summarize(cfg)
+	if err != nil || written.Body != "## Summary\n" {
+		t.Fatalf("Summarize = %q, %v", written.Body, err)
 	}
 	if gotCfg != cfg {
 		t.Errorf("summary model config = %+v, want %+v", gotCfg, cfg)

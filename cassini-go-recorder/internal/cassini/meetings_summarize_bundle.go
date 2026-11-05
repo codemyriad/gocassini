@@ -114,18 +114,20 @@ func summarizeMeetingBundle(root string, cfg transcribe.LLMConfig, force, estima
 	}
 
 	started := time.Now()
-	body, template, err := transcript.Summarize(cfg)
+	written, err := transcript.Summarize(cfg)
 	finished := time.Now()
 	if err != nil {
 		report.Status = summarizeFailed
 		return report, fmt.Errorf("generate summary: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(root, speakersSummaryFile), []byte(body), 0o644); err != nil {
+	if err := writeFileAtomic(filepath.Join(root, speakersSummaryFile), []byte(written.Body), 0o644); err != nil {
 		report.Status = summarizeFailed
 		return report, fmt.Errorf("write summary: %w", err)
 	}
-	outcome := portable.SummaryStatus{Status: portable.SummaryCompleted, Model: report.Model}.Timed(started, finished)
-	if err := recordBundleSummary(manifestPath, manifest, files, processing, outcome, transcribe.SummaryTemplateRecordOf(template)); err != nil {
+	// Reason says when the built-in wrote it in place of the configured
+	// template, which the Operator shows on the attempt (D-819).
+	outcome := portable.SummaryStatus{Status: portable.SummaryCompleted, Reason: written.Reason(), Model: report.Model}.Timed(started, finished)
+	if err := recordBundleSummary(manifestPath, manifest, files, processing, outcome, transcribe.SummaryTemplateRecordOf(written.Template)); err != nil {
 		report.Status = summarizeFailed
 		return report, err
 	}

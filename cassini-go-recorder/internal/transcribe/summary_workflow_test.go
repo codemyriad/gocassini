@@ -101,7 +101,7 @@ func TestChatCompletionFailsAReplyCutOffAtTheOutputLimit(t *testing.T) {
 	}
 
 	// And the summary step, which is the other caller, does not write it down.
-	if _, _, err := BuildMeetingSummary(LLMConfig{BaseURL: srv.URL, Model: "m"}, sampleStreams(), sampleSegments()); !errors.As(err, &truncated) {
+	if _, err := BuildMeetingSummary(LLMConfig{BaseURL: srv.URL, Model: "m"}, sampleStreams(), sampleSegments()); !errors.As(err, &truncated) {
 		t.Fatalf("BuildMeetingSummary error = %v, want the truncation to fail the summary", err)
 	}
 }
