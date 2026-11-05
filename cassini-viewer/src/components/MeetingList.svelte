@@ -147,6 +147,8 @@
   // searchOffered is false for a build with no operator (a standalone export),
   // where the box narrows names and dates and claims nothing about transcripts.
   export let searchOffered = false;
+  // Whether the shell offers import: the empty state then points at it.
+  export let importOffered = false;
   // "idle" | "searching" | "ok" | "rateLimited" | "indexUnavailable" | "failed"
   //
   // Each failure is its own state ON PURPOSE. Folding any of them into an empty
@@ -189,6 +191,7 @@
     // in full — the words are fetched there as the caller, so Nextcloud still
     // re-checks the ACL on the bytes.
     openMoment: { entry: MeetingCatalogEntry; startMs: number; query: string };
+    openImport: void;
   }>();
 
   function toggleTagging(meeting: MeetingCatalogEntry, anchor: HTMLElement) {
@@ -240,9 +243,22 @@
     filter.trim() === "" ? meetings : meetings.filter((meeting) => localMatchIds.has(meeting.id));
   // Name/date matches keep the catalog's order and come first; meetings that
   // matched only on what was said follow, in the server's rank order.
-  $: visibleMeetings = filter.trim() === "" ? nameMatches : [...nameMatches, ...transcriptOnlyMeetings];
+  // Only meetings still inside the narrowing: when a room or tag changes, the
+  // previous answer stays on screen until the re-run lands, and a hit outside
+  // the new narrowing must not ride along with it (D-771).
+  $: narrowedIds = new Set(meetings.map((meeting) => meeting.id));
+  $: visibleMeetings =
+    filter.trim() === ""
+      ? nameMatches
+      : [...nameMatches, ...transcriptOnlyMeetings.filter((meeting) => narrowedIds.has(meeting.id))];
   // The shell owns the request; this only says what was typed.
-  $: dispatch("query", filter);
+  //
+  // Said after this pass, not during it. The shell answers synchronously
+  // (resetting the transcript results and moving to "searching"), and in
+  // legacy mode the reactive statements that already ran in this pass do not
+  // run again for prop changes made from inside it: visibleMeetings kept the
+  // previous query's transcript-only rows under the new query.
+  $: queueMicrotask(((query) => () => dispatch("query", query))(filter));
   $: isSearching = searchState === "searching";
   // A failure the reader has to be able to tell from "nothing matched".
   // True only when the last search saw everything the caller can read.
@@ -370,6 +386,9 @@
         {/if}
       </label>
 
+      <!-- The Import button, where the shell offers import. -->
+      <slot name="search-actions" />
+
       {#if !ncMode}
         <label class="theme-toggle">
           <Sun size={15} strokeWidth={2} class="text-base-content/70" aria-hidden="true" />
@@ -394,7 +413,7 @@
     <div class="resultline" role="status">
       {#if shown}
       {#if types.meetings}
-        <span>{narrowed ? `${visibleMeetings.length} of ${totalCount} meetings` : plural(totalCount, "meeting")}</span>
+        <span>{isSearching ? "Finding matching meetings…" : narrowed ? `${visibleMeetings.length} of ${totalCount} meetings` : plural(totalCount, "meeting")}</span>
       {/if}
       <!-- A count once a listing has come back and there is something to
            count, the fact that it did not when it failed, and nothing at all
@@ -510,7 +529,13 @@
       {:else}
       <div class="list-empty">
         <strong>No meetings yet</strong>
-        <span>Published recordings appear here.</span>
+        <span>Recordings you publish from Talk show up here.</span>
+        {#if importOffered}
+          <span>
+            Moving from another Cassini?
+            <button type="button" class="link link-primary" on:click={() => dispatch("openImport")}>Import meetings</button>
+          </span>
+        {/if}
       </div>
       {/if}
     <!-- "You have never made one" is a claim about the whole archive, so every
@@ -533,12 +558,27 @@
       <div class="list-empty">
         <strong>Loading insights…</strong>
       </div>
+      <!-- Only while there is nothing else to show. Name, date and tag matches
+           are already known, so they stay on screen while the transcript half
+           of the question is out; the result line says it is still going. -->
+    {:else if isSearching && types.meetings && feedItems.length === 0}
+      <div class="list-empty" role="status">
+        <strong>Searching meetings…</strong>
+        <span>Looking for “{trimmedFilter}” in what was said.</span>
+      </div>
     {:else if feedItems.length === 0}
       <div class="list-empty">
-        <strong>Nothing matches</strong>
+        <strong>{searchProblem && types.meetings ? "Search could not finish" : "Nothing matches"}</strong>
         <span>
           {#if tagFilterCount > 0 && insightsOnly}
             Insights carry no tags, so a tag filter hides them.
+          {:else if trimmedFilter && searchProblem && types.meetings}
+            <!-- NOT "nothing matches", whatever else is narrowing the list: the
+                 transcript half of the question was never answered, and saying
+                 nothing matched would be a claim the search never got to make. -->
+            Names and dates match no {matchNoun}{tagFilterCount > 0 || selectedRoomName !== null
+              ? " here"
+              : ""}, and what was said could not be searched.
           {:else if tagFilterCount > 0}
             No meeting here has {tagFilterCount === 1 ? "that tag" : "those tags"}{trimmedFilter
               ? " and matches that search"
@@ -547,12 +587,6 @@
             No {matchNoun} in {selectedRoomName} matches that search.
           {:else if selectedRoomName !== null}
             {selectedRoomName} has no {matchNounPlural}.
-          {:else if trimmedFilter && searchProblem}
-            <!-- NOT "nothing matches": the transcript half of the question was
-                 never answered, and saying nothing matched would be a claim the
-                 search never got to make. -->
-            Names and dates match no {matchNoun}, and what was said could not be
-            searched.
           {:else if trimmedFilter && !searchCoveredEverything}
             No {matchNoun} matches that search — but only {searchCoverage?.searched}
             of {searchCoverage?.visible} could be searched for what was said in them.
@@ -669,7 +703,7 @@
                       {/each}
                       {#if rowTags.length > 3}
                         <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}
-                          >+{rowTags.length - 3}</span
+                          ><span>+{rowTags.length - 3}</span></span
                         >
                       {/if}
                     </span>
@@ -1293,13 +1327,25 @@
   }
   .row-tags {
     display: inline-flex;
+    align-items: center;
     gap: 4px;
     min-width: 0;
     overflow: hidden;
   }
+  /* Sized and trimmed like a chip's label (TagChip), so the count sits on the
+     same line as the chips beside it. */
   .row-tags-more {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    font-size: 11.5px;
     font-weight: 600;
+    line-height: 1;
+  }
+  .row-tags-more span {
+    text-box: trim-both ex alphabetic;
+    translate: 0 0.5px;
   }
   /* Above the open action's hit area, like the checkbox. Hidden, not removed, so it stays in the tab order. */
   .row-tag {

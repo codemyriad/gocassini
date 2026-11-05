@@ -205,7 +205,7 @@ CI publishes to `ghcr.io/codemyriad/gocassini`:
 | `X.Y.Z-cuda` | CUDA release build for x86_64 (CUDA 12 / cuDNN 9 sherpa-onnx, optional separately installed fp32 Parakeet, `CASSINI_STT_DEVICE=cuda`) |
 | `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
 | `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit, for pinning a specific build |
-| `latest` / `latest-cuda` / `latest-rocm` | Convenience tags — fine for demos, **not** for production installs |
+| `latest` / `latest-cuda` / `latest-rocm` | Main's newest build: unreleased code, for testing only, **not** for production installs. Releases never move these; use `X.Y.Z` |
 
 `appinfo/info.xml` pins `<image-tag>` to the release version, so a default
 AppAPI install (and any later reinstall) pulls exactly the build the
@@ -643,8 +643,8 @@ For the signaling internal secret:
 
 ## GPU transcription (CUDA)
 
-`latest-cuda` is a real CUDA build: CUDA-enabled sherpa-onnx/onnxruntime
-libraries and `CASSINI_STT_DEVICE=cuda` baked in. Install the fp32 Parakeet model separately in Settings or through offline import.
+The `-cuda` images (`X.Y.Z-cuda`, and `latest-cuda` for main) are real CUDA
+builds: CUDA-enabled sherpa-onnx/onnxruntime libraries and `CASSINI_STT_DEVICE=cuda` baked in. Install the fp32 Parakeet model separately in Settings or through offline import.
 The GPU accelerates the **transcription (build) stage**; live call capture is
 CPU-bound either way.
 

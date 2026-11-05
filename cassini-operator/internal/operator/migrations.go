@@ -132,7 +132,7 @@ func (s *Store) migrateUp(migrations []migration) error {
 	if err := ensureSchemaMigrationsTable(tx); err != nil {
 		return err
 	}
-	applied, err := appliedMigrationVersions(tx)
+	applied, err := appliedMigrations(tx)
 	if err != nil {
 		return err
 	}
@@ -140,8 +140,8 @@ func (s *Store) migrateUp(migrations []migration) error {
 		return err
 	}
 	appliedSet := make(map[int]struct{}, len(applied))
-	for _, version := range applied {
-		appliedSet[version] = struct{}{}
+	for _, a := range applied {
+		appliedSet[a.Version] = struct{}{}
 	}
 	for _, m := range migrations {
 		if _, ok := appliedSet[m.Version]; ok {
@@ -172,7 +172,7 @@ func (s *Store) migrateDown(migrations []migration, targetVersion int) error {
 	if err := ensureSchemaMigrationsTable(tx); err != nil {
 		return err
 	}
-	applied, err := appliedMigrationVersions(tx)
+	applied, err := appliedMigrations(tx)
 	if err != nil {
 		return err
 	}
@@ -181,14 +181,14 @@ func (s *Store) migrateDown(migrations []migration, targetVersion int) error {
 	}
 	currentVersion := 0
 	if len(applied) > 0 {
-		currentVersion = applied[len(applied)-1]
+		currentVersion = applied[len(applied)-1].Version
 	}
 	if targetVersion > currentVersion {
 		return fmt.Errorf("target version %d is above current version %d", targetVersion, currentVersion)
 	}
 	appliedSet := make(map[int]struct{}, len(applied))
-	for _, version := range applied {
-		appliedSet[version] = struct{}{}
+	for _, a := range applied {
+		appliedSet[a.Version] = struct{}{}
 	}
 	for i := len(migrations) - 1; i >= 0; i-- {
 		m := migrations[i]
@@ -251,41 +251,55 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	return nil
 }
 
-func appliedMigrationVersions(tx *sql.Tx) ([]int, error) {
-	rows, err := tx.Query(`SELECT version FROM schema_migrations ORDER BY version ASC`)
+// appliedMigration is a row of schema_migrations.
+type appliedMigration struct {
+	Version int
+	Name    string
+}
+
+func appliedMigrations(tx *sql.Tx) ([]appliedMigration, error) {
+	rows, err := tx.Query(`SELECT version, name FROM schema_migrations ORDER BY version ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query schema_migrations: %w", err)
 	}
 	defer rows.Close()
 
-	var versions []int
+	var applied []appliedMigration
 	for rows.Next() {
-		var version int
-		if err := rows.Scan(&version); err != nil {
+		var a appliedMigration
+		if err := rows.Scan(&a.Version, &a.Name); err != nil {
 			return nil, fmt.Errorf("scan schema_migrations: %w", err)
 		}
-		versions = append(versions, version)
+		applied = append(applied, a)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate schema_migrations: %w", err)
 	}
-	return versions, nil
+	return applied, nil
 }
 
-func validateAppliedMigrationHistory(migrations []migration, applied []int) error {
-	known := make(map[int]struct{}, len(migrations))
+// validateAppliedMigrationHistory checks the database against this build's
+// migrations by version and name. A version applied under another name means
+// the database ran a branch's migration at a number since given to a different
+// one: taking it as applied would skip this build's migration.
+func validateAppliedMigrationHistory(migrations []migration, applied []appliedMigration) error {
+	known := make(map[int]string, len(migrations))
 	for _, m := range migrations {
-		known[m.Version] = struct{}{}
+		known[m.Version] = m.Name
 	}
-	for _, version := range applied {
-		if _, ok := known[version]; !ok {
-			return fmt.Errorf("unknown applied migration version %04d", version)
+	for _, a := range applied {
+		name, ok := known[a.Version]
+		if !ok {
+			return fmt.Errorf("unknown applied migration version %04d", a.Version)
+		}
+		if a.Name != name {
+			return fmt.Errorf("migration %04d was applied as %q but this build names it %q", a.Version, a.Name, name)
 		}
 	}
 	gapSeen := false
 	appliedSet := make(map[int]struct{}, len(applied))
-	for _, version := range applied {
-		appliedSet[version] = struct{}{}
+	for _, a := range applied {
+		appliedSet[a.Version] = struct{}{}
 	}
 	for _, m := range migrations {
 		_, ok := appliedSet[m.Version]

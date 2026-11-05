@@ -2,6 +2,8 @@ package operator
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,6 +32,56 @@ func migrationIndex(migrations []migration, name string) int {
 		}
 	}
 	return -1
+}
+
+// TestLatestNamesTheNewestMigration: two branches that each add a migration
+// take the same number without touching the same file, so git merges them
+// cleanly and only startup fails. migrations/LATEST names the newest one, so
+// both branches edit its one line and the clash is a merge conflict instead.
+func TestLatestNamesTheNewestMigration(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	latest, err := os.ReadFile(filepath.Join("migrations", "LATEST"))
+	if err != nil {
+		t.Fatalf("read migrations/LATEST: %v", err)
+	}
+	newest := migrations[len(migrations)-1]
+	if got, want := strings.TrimSpace(string(latest)), fmt.Sprintf("%04d_%s", newest.Version, newest.Name); got != want {
+		t.Fatalf("migrations/LATEST = %q, want %q; after a conflict here, number your migrations after main's and write the newest one here", got, want)
+	}
+}
+
+// TestEnsureSchemaRejectsAMigrationAppliedUnderAnotherName: a database that ran
+// a branch's migration under a number main later gave to another migration
+// must not take main's migration as applied and skip it.
+func TestEnsureSchemaRejectsAMigrationAppliedUnderAnotherName(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "import_jobs")
+	if at < 0 {
+		t.Fatal("no import_jobs migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	if _, err := store.db.Exec(`UPDATE schema_migrations SET name = 'attempt_models' WHERE version = ?`, migrations[at].Version); err != nil {
+		t.Fatalf("rename applied migration: %v", err)
+	}
+
+	want := fmt.Sprintf(`migration %04d was applied as "attempt_models" but this build names it "import_jobs"`, migrations[at].Version)
+	if err := store.ensureSchema(); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("ensureSchema() error = %v, want %q", err, want)
+	}
+	if err := store.migrateDownTo(0); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("migrateDownTo(0) error = %v, want %q", err, want)
+	}
 }
 
 // TestMigrateDownRemovesSpeakerEditsAndUpRestoresThem: a rollback to the last
@@ -344,6 +396,96 @@ func TestMigrateDownRemovesTheAttemptSummaryModeAndKeepsTheAttempt(t *testing.T)
 	}
 }
 
+func TestMigrateDownRemovesTheAttemptModelsAndKeepsTheAttempt(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "attempt_models")
+	if at < 0 {
+		t.Fatal("no attempt_models migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "job-models", nowUTCString())
+	if err := store.MarkBuildQueued(ctx, "job-models", "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	outcomes := stepOutcomes{TranscriptionStatus: "completed", TranscriptionModel: "parakeet-tdt-0.6b-v3", TranscriptionDevice: "cuda"}
+	if err := store.RecordAttemptStepOutcomes(ctx, "job-models", 1, outcomes); err != nil {
+		t.Fatalf("RecordAttemptStepOutcomes() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT transcription_model FROM job_attempts`); err == nil {
+		t.Fatal("job_attempts.transcription_model survived the down migration")
+	}
+	var status string
+	if err := store.db.QueryRow(`SELECT transcription_status FROM job_attempts WHERE job_id = ?`, "job-models").Scan(&status); err != nil || status != "completed" {
+		t.Fatalf("attempt after the down migration = %q, %v; want its outcome kept", status, err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	// Back up, the attempt is there and names no models until it is rebuilt.
+	attempt, err := store.GetJobAttempt(ctx, "job-models", 1)
+	if err != nil || attempt.TranscriptionModel != "" || attempt.TranscriptionStatus != "completed" {
+		t.Fatalf("GetJobAttempt() after re-upgrade = %+v, %v; want the attempt back without models", attempt, err)
+	}
+}
+
+func TestMigrateDownRemovesTheAttemptSummaryTimesAndKeepsTheAttempt(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	at := migrationIndex(migrations, "attempt_summary_times")
+	if at < 0 {
+		t.Fatal("no attempt_summary_times migration")
+	}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	insertJob(t, store.db, "job-times", nowUTCString())
+	if err := store.MarkBuildQueued(ctx, "job-times", "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	outcomes := stepOutcomes{SummaryStatus: "completed", SummaryModel: "gpt-4.1-mini", SummaryStartedAt: "2026-11-02T10:00:00.000Z", SummaryFinishedAt: "2026-11-02T10:00:20.000Z"}
+	if err := store.RecordAttemptStepOutcomes(ctx, "job-times", 1, outcomes); err != nil {
+		t.Fatalf("RecordAttemptStepOutcomes() error = %v", err)
+	}
+
+	if err := store.migrateDownTo(migrations[at].Version - 1); err != nil {
+		t.Fatalf("migrateDownTo(%d) error = %v", migrations[at].Version-1, err)
+	}
+	if _, err := store.db.Exec(`SELECT summary_started_at FROM job_attempts`); err == nil {
+		t.Fatal("job_attempts.summary_started_at survived the down migration")
+	}
+	var model string
+	if err := store.db.QueryRow(`SELECT summary_model FROM job_attempts WHERE job_id = ?`, "job-times").Scan(&model); err != nil || model != "gpt-4.1-mini" {
+		t.Fatalf("attempt after the down migration = %q, %v; want its model kept", model, err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema() error = %v", err)
+	}
+	// Back up, the attempt is there and has no summary times until rebuilt.
+	attempt, err := store.GetJobAttempt(ctx, "job-times", 1)
+	if err != nil || attempt.SummaryStartedAt != "" || attempt.SummaryModel != "gpt-4.1-mini" {
+		t.Fatalf("GetJobAttempt() after re-upgrade = %+v, %v; want the attempt back without times", attempt, err)
+	}
+}
+
 // TestNewestMigrationHasARollbackTest is the tripwire: a rollback to the last
 // release is only known to work for a migration that has a down-and-up test in
 // this file. Adding a migration means adding its test and naming it here, or
@@ -361,6 +503,8 @@ func TestNewestMigrationHasARollbackTest(t *testing.T) {
 		"attempt_summary_mode":     true,
 		"import_jobs":              true,
 		"import_staging":           true,
+		"attempt_models":           true,
+		"attempt_summary_times":    true,
 		"job_share_outcomes":       true,
 		"share_notice_dismissals":  true,
 	}
@@ -464,7 +608,7 @@ func TestMigrateDownImportStagingPreservesHistory(t *testing.T) {
 	}
 }
 
-// A rollback past 0023 forgets who published meetings could not be shared
+// A rollback past 0025 forgets who published meetings could not be shared
 // with: the runs stop saying so, and nothing else changes — the shares
 // themselves live in Nextcloud. The re-upgrade brings the table back empty,
 // and the next publish or re-share fills it again.
@@ -506,7 +650,7 @@ func TestMigrateDownDropsJobShareOutcomesAndKeepsTheJob(t *testing.T) {
 	}
 }
 
-// A rollback past 0024 forgets which Browse notices people dismissed: they
+// A rollback past 0026 forgets which Browse notices people dismissed: they
 // come back once, and nothing else changes. The re-upgrade brings the table
 // back empty.
 func TestMigrateDownDropsShareNoticeDismissalsAndKeepsTheJob(t *testing.T) {

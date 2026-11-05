@@ -1,0 +1,112 @@
+import { describe, expect, it } from "vitest";
+import { runStages, stepStatuses } from "./runStages";
+import type { Job, JobAttempt, JobDetailResponse } from "./types";
+
+const at = (minutes: number) => new Date(Date.UTC(2026, 9, 28, 9, 0) + minutes * 60_000).toISOString();
+
+// A 58 minute meeting, built 60→70, sealed 70→71, published 71→72.
+const job = { record_started_at: at(0), record_finished_at: at(58), record_queued_at: at(0), state: "succeeded", stage: "done" } as Job;
+const steps = (from: number, build: number) => ({
+  build_queued_at: at(from), build_started_at: at(from), build_finished_at: at(from + build),
+  seal_queued_at: at(from + build), seal_started_at: at(from + build), seal_finished_at: at(from + build + 1),
+  publish_queued_at: at(from + build + 1), publish_started_at: at(from + build + 1), publish_finished_at: at(from + build + 2),
+});
+const attempt = (n: number, kind: string, fields: Partial<JobAttempt>): JobAttempt =>
+  ({ attempt_number: n, trigger_kind: kind, state: "succeeded", stage: "done", ...fields }) as JobAttempt;
+const initial = attempt(1, "initial", { record_queued_at: at(0), record_started_at: at(0), record_finished_at: at(58), ...steps(60, 10), summary_status: "completed" });
+const run = (...attempts: JobAttempt[]) => runStages({ job, attempts } as JobDetailResponse);
+const view = (stages: ReturnType<typeof runStages>) =>
+  Object.fromEntries(stages.map((s) => [s.key, [s.status, s.ms === null ? s.note ?? null : s.ms / 60_000, s.attempt ?? null]]));
+
+describe("runStages", () => {
+  it("shows the five steps of a meeting built in one go, its summary inside the build", () => {
+    expect(run(initial).map((s) => s.label)).toEqual(["Record", "Build", "Summary", "Seal", "Publish"]);
+    expect(view(run(initial))).toEqual({
+      record: ["done", 58, null],
+      build: ["done", 10, 1],
+      summary: ["done", "In Build", 1],
+      seal: ["done", 1, 1],
+      publish: ["done", 1, 1],
+    });
+  });
+
+  it("times a summary written in the build apart from the transcription (D-899)", () => {
+    const timed = { ...initial, summary_started_at: at(68), summary_finished_at: at(70) };
+    expect(view(run(timed))).toMatchObject({
+      build: ["done", 8, 1],
+      summary: ["done", 2, 1],
+    });
+    expect(run(timed)[2].hint).toBe("Written during the build");
+    // A failed summary reads as failed, with how long the model was waited on.
+    const failed = { ...timed, summary_status: "failed", summary_reason: "llm_failed" };
+    expect(run(failed)[2]).toMatchObject({ status: "failed", note: "Failed", ms: 2 * 60_000, hint: "The summary model failed; the build log says why" });
+  });
+
+  it("keeps the summary out of a build still in progress or failed, as when published", () => {
+    const failedRerun = attempt(2, "rerun", { ...steps(100, 10), state: "failed", stage: "publish", summary_status: "completed", summary_started_at: at(108), summary_finished_at: at(110) });
+    expect(view(run(initial, failedRerun)).build).toEqual(["done", 8, 2]);
+  });
+
+  it("times a later summary by its own model call, when it has one", () => {
+    const refine = attempt(2, "refine", { ...steps(100, 0.5), summary_status: "completed", summary_mode: "rewrite", summary_started_at: at(100.1), summary_finished_at: at(100.4) });
+    expect(view(run(initial, refine)).summary).toEqual(["done", expect.closeTo(0.3), 2]);
+  });
+
+  it("keeps the build that transcribed the meeting past a summary written later", () => {
+    const summarize = attempt(2, "summarize", { ...steps(100, 0.5), summary_status: "completed" });
+    expect(view(run(initial, summarize))).toMatchObject({
+      build: ["done", 10, 1],
+      summary: ["done", 0.5, 2],
+      seal: ["done", 1, 2],
+    });
+  });
+
+  it("says a summary was skipped, and times one rewritten after a speaker rename", () => {
+    const skipped = { ...initial, summary_status: "skipped" };
+    expect(view(run(skipped)).summary).toEqual(["skipped", "Skipped", 1]);
+    expect(run({ ...skipped, summary_reason: "disabled" })[2].hint).toBe("Summaries are turned off");
+    const refine = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed", summary_mode: "rewrite", summary_started_at: at(100), summary_finished_at: at(100.2) });
+    expect(view(run(skipped, refine))).toMatchObject({ build: ["done", 10, 1], summary: ["done", 0.2, 2] });
+    expect(run(skipped, refine)[2].hint).toBe("Rewritten after speakers were renamed");
+    // A save that kept the summary did not write it, though its meeting still has one.
+    const kept = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed" });
+    expect(view(run(initial, kept))).toMatchObject({ summary: ["done", "In Build", 1], seal: ["done", 1, 2] });
+    // Asked to rewrite it, but the rewrite did not happen: kept too.
+    const failedRewrite = attempt(2, "refine", { ...steps(100, 0.2), summary_status: "completed", summary_mode: "rewrite" });
+    expect(view(run(initial, failedRewrite)).summary).toEqual(["done", "In Build", 1]);
+  });
+
+  it("shows a rerun in progress over the build and keeps the live publish", () => {
+    const rerun = attempt(2, "rerun", { state: "running", stage: "build", build_queued_at: at(100), build_started_at: at(100) });
+    expect(view(run(initial, rerun))).toMatchObject({
+      build: ["active", null, 2],
+      summary: ["done", "In Build", 1],
+      publish: ["done", 1, 1],
+    });
+  });
+
+  it("marks where a later attempt failed, with how long it ran", () => {
+    const summarize = attempt(2, "summarize", { state: "failed", stage: "build", build_queued_at: at(100), build_started_at: at(100), build_finished_at: at(101) });
+    expect(view(run(initial, summarize))).toMatchObject({ build: ["done", 10, 1], summary: ["failed", 1, 2], seal: ["done", 1, 1] });
+    // A speaker-edit replay that failed shows where: its build.
+    const refine = attempt(2, "refine", { state: "failed", stage: "build", build_queued_at: at(100), build_started_at: at(100), build_finished_at: at(100.5) });
+    expect(view(run(initial, refine))).toMatchObject({ build: ["failed", 0.5, 2], seal: ["done", 1, 1] });
+  });
+
+  it("follows a first recording through its steps", () => {
+    const recording = attempt(1, "initial", { state: "running", stage: "record", record_queued_at: at(0), record_started_at: at(0) });
+    const live = runStages({ job: { ...job, record_finished_at: null, state: "running", stage: "record" }, attempts: [recording] } as JobDetailResponse);
+    expect(view(live)).toMatchObject({ record: ["active", null, 1], build: ["pending", null, null], summary: ["pending", null, null] });
+  });
+
+  it("greys out a deleted recording", () => {
+    expect(runStages({ job, attempts: [initial] } as JobDetailResponse, true)[0]).toMatchObject({ label: "Record (deleted)", status: "pending" });
+  });
+});
+
+describe("stepStatuses", () => {
+  it("puts a halted attempt's failure on the furthest step it reached", () => {
+    const blocked = attempt(1, "initial", { state: "blocked", stage: "build", record_finished_at: at(58), build_queued_at: at(60) });
+    expect(stepStatuses(blocked)).toEqual({ record: "done", build: "blocked", seal: "pending", publish: "pending" });
+  });
+});

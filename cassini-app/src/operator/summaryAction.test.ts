@@ -6,7 +6,7 @@ import {
   summaryCostText,
   summaryEndpointText,
   summaryReplaceText,
-  summaryStepCostText,
+  summaryStepLead,
   summaryUnavailableText,
 } from "./summaryAction";
 import type { SummaryPlan } from "./types";
@@ -67,8 +67,10 @@ describe("isLocalEndpoint", () => {
     }
   });
 
-  it("says what the summary step costs per recording", () => {
-    expect(summaryStepCostText("Open Router", "https://openrouter.ai/api/v1")).toBe("Open Router is an external service, which may bill for each call.");
-    expect(summaryStepCostText("Ollama", "http://ollama:11434/v1")).toBe("Ollama runs on your own network.");
+  it("says where each transcript goes and what the summary step costs", () => {
+    // The step's title and fields already say that each meeting gets a summary
+    // from this provider; the line carries what cannot be inferred from them.
+    expect(summaryStepLead("Open Router", "https://openrouter.ai/api/v1")).toBe("Sends each transcript to Open Router. One request per meeting, which it may bill.");
+    expect(summaryStepLead("Ollama", "http://ollama:11434/v1")).toBe("Sends each transcript to Ollama on your own network. One request per meeting.");
   });
 });

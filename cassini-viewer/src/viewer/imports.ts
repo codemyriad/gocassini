@@ -145,6 +145,17 @@ function stripUTF8BOM(text: string): string {
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
+// "2026-10-14" as "14 Oct 2026". Anything that is not a plain date passes
+// through unchanged.
+export function formatImportDate(dateLabel: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateLabel);
+  if (!match) {
+    return dateLabel;
+  }
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
 export function formatImportDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs <= 0) {
     return "";
@@ -165,7 +176,7 @@ export function formatImportDuration(durationMs: number): string {
 // list is always the caller's own, so "you" is the importer.
 export function describeImportSharing(job: Pick<ImportJobRecord, "sharing">): { line: string; title: string } {
   if (!job.sharing.share) {
-    return { line: "Visible only to you", title: "Only you can open this meeting." };
+    return { line: "Only you", title: "Only you can open this meeting." };
   }
   const audience = job.sharing.audience ?? [];
   const names = audience.map((sharee) => {

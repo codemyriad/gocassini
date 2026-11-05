@@ -2,7 +2,10 @@ import type { MeetingCatalogEntry } from "./catalog";
 import { safeMeetingStem } from "./meetingExport";
 
 export function saveBlob(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
+  // Saved as plain bytes so the browser keeps the name we chose. Firefox sniffs
+  // any typed Blob and renames to match: a meeting `.opus` lands as `.ogx`,
+  // which then reads as a different kind of file to the person importing it.
+  const url = URL.createObjectURL(new Blob([blob], { type: "application/octet-stream" }));
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = name;
