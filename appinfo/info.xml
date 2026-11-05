@@ -384,6 +384,23 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>GET</verb>
         <access_level>USER</access_level>
       </route>
+      <!-- USER: accept the recording shares waiting for the caller (D-885).
+           The operator accepts each share AS the caller, through Nextcloud's
+           own pending-share endpoint, and only shares in the caller's own
+           pending list. Nothing is ever accepted for anyone else. -->
+      <route>
+        <url>^operator\/shares\/accept\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- USER: dismiss the caller's own Browse notices for recordings they
+           started that Nextcloud would not share with them (D-885). Keyed by
+           the caller; hides nothing from anyone else. -->
+      <route>
+        <url>^operator\/shares\/dismiss\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
 
       <!--
         USER: the AI endpoints a run may be pointed at, and what each one

@@ -36,12 +36,15 @@ it("names the setting and the way out when Cassini can share with nobody", async
   await expect.element(page.getByText(/^Recording sharing/)).toBeVisible();
   const row = sharingRow();
   expect(row.textContent).toContain("Needs action");
-  expect(row.textContent).toContain("Restrict users to only share with users in their groups");
+  // Verdict, the setting by its Nextcloud name, the account, the consequence.
+  expect(row.textContent).toContain("Nobody can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is in no group. Every share is refused, so no new meetings can be published.");
   // Re-checked by the storage probe, like the row above it.
   expect([...row.querySelectorAll("button")].some(button => button.textContent?.trim() === "Check")).toBe(true);
   await userEvent.click(page.getByText("What to do about it").first());
-  await expect.element(page.getByText(/turn off “Restrict users to only share with users in their groups”/)).toBeVisible();
-  await expect.element(page.getByText(/does not need to be an administrator/)).toBeVisible();
+  await expect.element(page.getByText(/Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing\./)).toBeVisible();
+  await expect.element(page.getByText(/It does not need to be an administrator\./)).toBeVisible();
+  // Nothing is unshared yet: no count, no way to the runs.
+  expect(row.textContent).not.toContain("Open the runs");
   // Nobody can open a test recording either, so the panel does not offer one.
   const test = document.querySelector<HTMLElement>('[data-check-id="test"]');
   expect(test?.textContent).toContain("depends on Recording sharing");
@@ -49,11 +52,22 @@ it("names the setting and the way out when Cassini can share with nobody", async
 });
 
 it("warns, naming the groups it can reach, when sharing is limited to group members", async () => {
-  app = mount(RecordingSetup, { target: host, props: { operatorClient: createPreviewClient("sharing-restricted"), provisioningBase } });
+  let openedRuns = 0;
+  app = mount(RecordingSetup, {
+    target: host,
+    props: { operatorClient: createPreviewClient("sharing-restricted"), provisioningBase },
+    events: { openRuns: () => { openedRuns += 1; } },
+  });
   await expect.element(page.getByText(/^Recording sharing/)).toBeVisible();
   const row = sharingRow();
   expect(row.textContent).toContain("Needs attention");
-  expect(row.textContent).toContain("only with members of “admin”");
+  expect(row.textContent).toContain("Only administrators can receive recordings.");
+  expect(row.textContent).toContain("which is only in “admin”, the administrators' group. Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all.");
+  // What the setting has already cost, under the message, and the way to
+  // the runs where each meeting is re-shared.
+  expect(row.textContent).toContain("7 recordings since 12 Oct were not shared with 3 people and 1 group.");
+  await userEvent.click(page.getByRole("button", { name: "Open the runs" }));
+  expect(openedRuns).toBe(1);
   // A warning leaves the test's own starter reachable.
   const test = document.querySelector<HTMLElement>('[data-check-id="test"]');
   expect(test?.textContent).not.toContain("depends on Recording sharing");
@@ -65,5 +79,7 @@ it("passes quietly with default sharing settings", async () => {
   await expect.element(page.getByText(/^Recording sharing/)).toBeVisible();
   const row = sharingRow();
   expect(row.textContent).toContain("Passed");
+  expect(row.textContent).toContain("anyone with recordings waiting sees them in Browse.");
   expect(row.textContent).not.toContain("What to do about it");
+  expect(row.textContent).not.toContain("Open the runs");
 });

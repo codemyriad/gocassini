@@ -49,7 +49,7 @@ func TestEvaluateSharingPolicyVerdicts(t *testing.T) {
 		}, groups: []string{"staff"}, state: "needs_action", code: "sharing_disabled_for_account", mentions: []string{"`sharers`"}},
 		{name: "allowlist naming nobody blocks everyone", edit: func(s *sharingPolicySettings) {
 			s.ExcludeGroupsMode = excludeGroupsAllowlist
-		}, groups: []string{"staff"}, state: "needs_action", code: "sharing_disabled_for_account", mentions: []string{"none is chosen"}},
+		}, groups: []string{"staff"}, state: "needs_action", code: "sharing_disabled_for_account", mentions: []string{"allows no group at all"}},
 		{name: "group-members restriction with no groups shares with nobody", edit: func(s *sharingPolicySettings) {
 			s.OnlyGroupMembers = true
 		}, state: "needs_action", code: "sharing_no_common_group", mentions: []string{"Restrict users to only share with users in their groups", "in no group"}},
@@ -63,7 +63,7 @@ func TestEvaluateSharingPolicyVerdicts(t *testing.T) {
 		{name: "the customer's configuration: cassini only in admin", edit: func(s *sharingPolicySettings) {
 			s.OnlyGroupMembers = true
 		}, groups: []string{"admin"}, state: "warn", code: "sharing_limited_to_groups",
-			shareable: []string{"admin"}, mentions: []string{"only Nextcloud's administrators", "does not need to be an administrator"}},
+			shareable: []string{"admin"}, mentions: []string{"Only administrators can receive recordings", "the administrators' group", "does not need to be an administrator"}},
 		{name: "group sharing off is a warning", edit: func(s *sharingPolicySettings) { s.AllowGroupSharing = false },
 			state: "warn", code: "group_sharing_disabled", mentions: []string{"Allow sharing with groups"}},
 		{name: "the worst finding wins and every finding is said", edit: func(s *sharingPolicySettings) {
@@ -101,10 +101,20 @@ func TestEvaluateSharingPolicyVerdicts(t *testing.T) {
 			}
 			// Remedies are instructions for Nextcloud's own settings: Cassini
 			// never changes sharing permissions or group memberships itself.
+			// Each is a full sentence.
 			for _, step := range got.Steps {
-				if !strings.Contains(step.Label, "Administration settings → Sharing") && !strings.Contains(step.Label, "Users page") {
+				if !strings.HasSuffix(step.Label, ".") {
+					t.Errorf("step is not a full sentence: %q", step.Label)
+				}
+				if !strings.Contains(step.Label, "Administration settings › Sharing") && !strings.Contains(step.Label, "Users page") &&
+					!strings.Contains(step.Label, "“Ignore the following groups") && !strings.Contains(step.Label, "add `cassini` to") {
 					t.Errorf("step does not send the reader to Nextcloud's settings: %q", step.Label)
 				}
+			}
+			// VERDICT, CAUSE, CONSEQUENCE: a failing verdict says nobody
+			// receives recordings and that nothing new is published.
+			if got.State == "needs_action" && (!strings.HasPrefix(got.Message, "Nobody can receive recordings. ") || !strings.Contains(got.Message, "no new meetings can be published.")) {
+				t.Errorf("failing verdict does not read verdict/cause/consequence: %s", got.Message)
 			}
 		})
 	}
@@ -529,5 +539,129 @@ func TestSharingPolicyReadThatTimesOutSaysSo(t *testing.T) {
 	refused := unreadableSharingPolicy(fmt.Errorf("read %s: HTTP 403", ncExcludeGroupsKey))
 	if refused.Code != "sharing_policy_unreadable" {
 		t.Fatalf("refused read = %+v", refused)
+	}
+}
+
+// The exact texts the Recording sharing row shows (D-885). The app's Doctor
+// preview repeats them, so a change here is a change there.
+func TestSharingPolicyWordingIsExact(t *testing.T) {
+	const (
+		lift    = "Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing."
+		joinOne = "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator."
+		joinAll = "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator."
+	)
+	for name, tc := range map[string]struct {
+		edit    func(*sharingPolicySettings)
+		groups  []string
+		message string
+		steps   []string
+	}{
+		"share API off": {edit: func(s *sharingPolicySettings) { s.APIEnabled = false },
+			message: "Nobody can receive recordings. Nextcloud's “Allow apps to use the Share API” is off, so every share Cassini makes is refused and no new meetings can be published.",
+			steps:   []string{"Turn on “Allow apps to use the Share API” under Administration settings › Sharing."}},
+		"excluded group": {edit: func(s *sharingPolicySettings) {
+			s.ExcludeGroupsMode, s.ExcludeGroupsList = excludeGroupsBlocklist, []string{"robots"}
+		}, groups: []string{"robots"},
+			message: "Nobody can receive recordings. Nextcloud's “Exclude some groups from sharing” lists “robots”, and Cassini shares from its cassini account, which is in that group. Every share is refused, so no new meetings can be published.",
+			steps:   []string{"Remove `robots` from the excluded groups under Administration settings › Sharing.", "Or take `cassini` out of `robots` on Nextcloud's Users page."}},
+		"several excluded groups": {edit: func(s *sharingPolicySettings) {
+			s.ExcludeGroupsMode, s.ExcludeGroupsList = excludeGroupsBlocklist, []string{"robots", "guests"}
+		}, groups: []string{"robots", "guests"},
+			message: "Nobody can receive recordings. Nextcloud's “Exclude some groups from sharing” lists “robots”, “guests”, and Cassini shares from its cassini account, which is in those groups. Every share is refused, so no new meetings can be published.",
+			steps:   []string{"Remove `robots`, `guests` from the excluded groups under Administration settings › Sharing.", "Or take `cassini` out of `robots`, `guests` on Nextcloud's Users page."}},
+		"allow list without cassini": {edit: func(s *sharingPolicySettings) {
+			s.ExcludeGroupsMode, s.ExcludeGroupsList = excludeGroupsAllowlist, []string{"sharers", "staff"}
+		}, groups: []string{"robots"},
+			message: "Nobody can receive recordings. Nextcloud's “Limit sharing to some groups” allows only “sharers”, “staff”, and Cassini shares from its cassini account, which is in none of them. Every share is refused, so no new meetings can be published.",
+			steps:   []string{"Add `cassini` to one of `sharers`, `staff` on Nextcloud's Users page.", "Or allow sharing for everyone under Administration settings › Sharing."}},
+		"empty allow list": {edit: func(s *sharingPolicySettings) { s.ExcludeGroupsMode = excludeGroupsAllowlist }, groups: []string{"staff"},
+			message: "Nobody can receive recordings. Nextcloud's “Limit sharing to some groups” allows no group at all, so no account may share. Every share is refused, so no new meetings can be published.",
+			steps:   []string{"Choose the groups allowed to share under Administration settings › Sharing, including one `cassini` is in."}},
+		"restricted, cassini in no group": {edit: func(s *sharingPolicySettings) { s.OnlyGroupMembers = true },
+			message: "Nobody can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is in no group. Every share is refused, so no new meetings can be published.",
+			steps:   []string{lift, joinOne}},
+		"restricted, every group ignored": {edit: func(s *sharingPolicySettings) { s.OnlyGroupMembers, s.IgnoredGroups = true, []string{"everyone"} }, groups: []string{"everyone"},
+			message: "Nobody can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and every group the cassini account is in (“everyone”) is ignored when Nextcloud checks membership. Every share is refused, so no new meetings can be published.",
+			steps:   []string{lift, joinOne, "Or stop ignoring `everyone` under “Ignore the following groups when checking group membership”."}},
+		"restricted to some groups": {edit: func(s *sharingPolicySettings) { s.OnlyGroupMembers = true }, groups: []string{"staff", "engineering"},
+			message: "Only members of “staff”, “engineering” can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is only in “staff”, “engineering”. Anyone outside these groups cannot open the recordings of their meetings, and a recording they start is not published at all.",
+			steps:   []string{lift, joinAll}},
+		"restricted to administrators": {edit: func(s *sharingPolicySettings) { s.OnlyGroupMembers = true }, groups: []string{"admin"},
+			message: "Only administrators can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is only in “admin”, the administrators' group. Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all.",
+			steps:   []string{lift, joinAll}},
+		"group sharing off": {edit: func(s *sharingPolicySettings) { s.AllowGroupSharing = false },
+			message: "Groups in a room do not receive recordings. Nextcloud's “Allow sharing with groups” is off, so a meeting whose room includes a group is published without access for that group's members, unless they are in the room themselves.",
+			steps:   []string{"Turn on “Allow sharing with groups” under Administration settings › Sharing."}},
+		"passed": {
+			message: "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting. Whether each person has accepted the share is theirs to decide; anyone with recordings waiting sees them in Browse."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			settings := defaultSharingPolicy()
+			if tc.edit != nil {
+				tc.edit(&settings)
+			}
+			got := evaluateSharingPolicy(settings, tc.groups)
+			if got.Message != tc.message {
+				t.Errorf("message\n got: %s\nwant: %s", got.Message, tc.message)
+			}
+			labels := make([]string, len(got.Steps))
+			for i, step := range got.Steps {
+				labels[i] = step.Label
+			}
+			if (len(labels) != 0 || len(tc.steps) != 0) && !reflect.DeepEqual(labels, tc.steps) {
+				t.Errorf("steps\n got: %q\nwant: %q", labels, tc.steps)
+			}
+		})
+	}
+}
+
+// The row says what is currently unshared, in every state: a setting fixed
+// today leaves yesterday's meetings unshared until they are re-shared.
+func TestRecordingSharingRowCountsWhatIsUnshared(t *testing.T) {
+	resetDirectSubstrate(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	ncAccessSubstrate.record(ncSubstrateProvisioned, "test preflight", nil)
+	if row, _ := sharingRow(t, rt); row.Unshared != nil {
+		t.Fatalf("nothing unshared yet, row carries %+v", row.Unshared)
+	}
+	record := func(id, status string, skipped ...skippedShare) {
+		t.Helper()
+		if err := rt.store.RecordJobShareOutcome(ctx, id, status, skipped); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// J1 was recorded on 12 October and re-shared today: since is the
+	// meeting's day, not the re-share's.
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "J1", Stage: "done", State: "succeeded", CreatedAt: "2026-10-12T09:00:00Z"})
+	setJobTimes(t, rt, "J1", "2026-10-12T09:14:00.000000000Z", "2026-10-12T10:00:00.000000000Z")
+	record("J1", shareOutcomePartial, skippedShare{Type: "user", ID: "bob"}, skippedShare{Type: "group", ID: "staff"})
+	record("J2", shareOutcomePartial, skippedShare{Type: "user", ID: "bob"}, skippedShare{Type: "user", ID: "carol"}, skippedShare{Type: "circle", ID: "sales"})
+	record("J3", shareOutcomeComplete)
+	record("J4", shareOutcomeStarterRefused, skippedShare{Type: "user", ID: "dave"})
+	// An expired meeting is nobody's any more.
+	record("J5", shareOutcomePartial, skippedShare{Type: "user", ID: "erin"})
+	retireMeeting(t, rt, "J5.opus")
+	want := &unsharedSummary{Jobs: 2, Users: 2, Groups: 1, Since: "2026-10-12T09:14:00Z"}
+
+	// Not checked yet.
+	row, _ := sharingRow(t, rt)
+	if row.Code != "sharing_not_checked" || !reflect.DeepEqual(row.Unshared, want) {
+		t.Fatalf("unchecked row = %+v unshared %+v", row, row.Unshared)
+	}
+	// Passing, warning and failing alike.
+	for _, groups := range [][]string{nil, {"admin"}, {}} {
+		settings := defaultSharingPolicy()
+		settings.OnlyGroupMembers = groups != nil
+		ncAccessSubstrate.setSharingPolicy(evaluateSharingPolicy(settings, groups))
+		if row, _ := sharingRow(t, rt); !reflect.DeepEqual(row.Unshared, want) {
+			t.Fatalf("%s row carries %+v, want %+v", row.State, row.Unshared, want)
+		}
+	}
+	// Even blocked behind a failing storage row.
+	ncAccessSubstrate.record(ncSubstrateUnavailable, "owner_account", nil)
+	if row, _ := sharingRow(t, rt); row.Code != "check_blocked" || !reflect.DeepEqual(row.Unshared, want) {
+		t.Fatalf("blocked row = %+v unshared %+v", row, row.Unshared)
 	}
 }

@@ -259,7 +259,11 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	// recording gets: recipients may pass the meeting along (D-828 decision D1),
 	// and reconcileRecordingShares already falls back to read-only where
 	// instance policy refuses the reshare bit.
-	skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, true, shareImport)
+	// Imports share through the same path, so their shares carry a note too,
+	// worded for an import; its facts come from the entry indexed and the
+	// lifecycle adopted above.
+	note := s.rt.meetingFactsFor(ctx, req.ImportID).shareNote(true)
+	skipped, err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, true, shareImport, note)
 	var refused *starterShareRefusedError
 	if errors.As(err, &refused) {
 		return result, fmt.Errorf("the meeting could not be shared with you, the importer (%s): %w", refused.Starter, refused.Err)

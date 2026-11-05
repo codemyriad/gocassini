@@ -19,6 +19,7 @@
 // part worth testing. The card renders decisions it did not make.
 
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
+import { readServedMessage } from "../servedMessage";
 
 // The status vocabulary is fixed by internal/insight's package doc, and this is
 // a reading of it rather than a second copy: a build that invented a fifth
@@ -497,34 +498,6 @@ export function describeRequestFailure(
     default:
       return `Could not ${VERBS[action]} (HTTP ${status}).`;
   }
-}
-
-// readServedMessage reads the operator's own explanation out of its JSON error
-// envelope, or out of the plain-text line Go's http.Error writes. Anything
-// longer or multi-line is a page, not a message, and is discarded rather than
-// pasted into the panel.
-async function readServedMessage(response: Response): Promise<string> {
-  let body: string;
-  try {
-    body = (await response.text()).trim();
-  } catch {
-    return "";
-  }
-  if (body === "") {
-    return "";
-  }
-  try {
-    const payload = JSON.parse(body) as { error?: unknown };
-    if (typeof payload.error === "string" && payload.error.trim() !== "") {
-      return payload.error.trim();
-    }
-  } catch {
-    // Not JSON; fall through to the plain-text form.
-  }
-  if (body.length <= 200 && !body.includes("\n") && !body.startsWith("<")) {
-    return body;
-  }
-  return "";
 }
 
 function asString(value: unknown): string {

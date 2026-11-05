@@ -78,11 +78,33 @@ it("flags a partly shared run and lists who it was not shared with", async () =>
   // The flag on the run card, before anyone opens the run.
   const card = document.querySelector(".run-card")!;
   expect(card.textContent).toContain("Not shared with everyone");
-  await expect.element(page.getByText("Published, but not shared with everyone: Nextcloud refused 2 recipients", { exact: true })).toBeVisible();
-  await userEvent.click(page.getByText("Not shared with 2 recipients", { exact: true }));
-  await expect.element(page.getByText("bob: Sharing is only allowed with group members", { exact: true })).toBeVisible();
-  await expect.element(page.getByText("marketing (group): Sharing is only allowed with group members", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Published, but not shared with 2 recipients", { exact: true })).toBeVisible();
+  // Closed by default, the count in its summary.
+  const disclosure = document.querySelector<HTMLDetailsElement>(".op-detail-pane details")!;
+  expect(disclosure.open).toBe(false);
+  await userEvent.click(page.getByText("Who was refused (2)", { exact: true }));
+  const rows = [...disclosure.querySelectorAll("li")].map((row) => row.textContent?.replace(/\s+/g, " ").trim());
+  expect(rows).toEqual([
+    "bob person · Sharing is only allowed with group members",
+    "marketing group · Sharing is only allowed with group members",
+  ]);
+  expect(disclosure.querySelector("li strong")?.textContent).toBe("bob");
+  expect(document.querySelector(".op-detail-pane")?.textContent).toContain("Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.");
+  expect(document.querySelector(".op-detail-pane")?.textContent).toContain("Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.");
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/01-partial.png` });
+});
+
+it("counts the refused against the room when the operator says how big it was", async () => {
+  serve(job("Standup", "succeeded", { unshared_count: 2 }), {
+    status: "partial",
+    audience_count: 8,
+    skipped: [{ type: "user", id: "bob" }, { type: "circle", id: "design", reason: "Team sharing is off" }],
+  });
+  await open("Standup");
+  await expect.element(page.getByText("Published, but not shared with 2 of 8 recipients", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByText("Who was refused (2)", { exact: true }));
+  const rows = [...document.querySelectorAll(".op-detail-pane details li")].map((row) => row.textContent?.replace(/\s+/g, " ").trim());
+  expect(rows).toEqual(["bob person", "design Team · Team sharing is off"]);
 });
 
 it("says a failed run was refused for the person who started it", async () => {
@@ -91,8 +113,9 @@ it("says a failed run was refused for the person who started it", async () => {
     skipped: [{ type: "user", id: "mallory", reason: "Sharing is only allowed with group members" }],
   });
   await open("Retro");
-  await expect.element(page.getByText("Not published: Nextcloud refused to share it with the person who started the recording", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Not published: Nextcloud refused to share it with mallory, who started the recording.", { exact: true })).toBeVisible();
   await expect.element(page.getByText("mallory: Sharing is only allowed with group members", { exact: true })).toBeVisible();
+  expect(document.querySelector(".op-detail-pane")?.textContent).toContain("Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room.");
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/02-starter-refused.png` });
 });
 
@@ -133,20 +156,61 @@ function serveReshare(recording: ReturnType<typeof job>, answer: "fixed" | "fail
 it("re-shares a partly shared meeting once the policy is fixed", async () => {
   const posts = serveReshare(job("Standup", "succeeded", { unshared_count: 1 }), "fixed");
   await open("Standup");
-  await expect.element(page.getByText("Published, but not shared with everyone: Nextcloud refused 1 recipient", { exact: true })).toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: "Re-share with room audience" }));
+  await expect.element(page.getByText("Published, but not shared with 1 recipient", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
   await expect.poll(() => posts).toEqual(["/operator/jobs/Standup/reshare"]);
-  await expect.poll(() => document.body.textContent?.includes("not shared with everyone")).toBe(false);
-  expect(document.querySelector(".run-card")!.textContent).not.toContain("Not shared with everyone");
+  // The notice goes with the next read of the run; the answer stays.
+  await expect.element(page.getByText("Shared with everyone.", { exact: true })).toBeVisible();
+  await expect.poll(() => document.body.textContent?.includes("Published, but not shared with")).toBe(false);
+  await expect.poll(() => document.querySelector(".run-card")!.textContent).not.toContain("Not shared with everyone");
+  await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/03-reshared.png` });
+});
+
+it("drops a re-share's answer once the person leaves the run", async () => {
+  const standup = job("Standup", "succeeded", { unshared_count: 1 });
+  const planning = job("Planning", "succeeded", { created_at: "2026-11-01T09:00:00Z" });
+  const partial = { status: "partial", skipped: [{ type: "user", id: "bob", reason: "Sharing is only allowed with group members" }] };
+  let reshared = false;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (init?.method === "POST") {
+      reshared = true;
+      return Response.json({ sharing: { status: "complete", skipped: [] } });
+    }
+    const current = reshared ? { ...standup, unshared_count: 0 } : standup;
+    if (path === "/operator/jobs") return Response.json([current, planning]);
+    const id = path.split("/").pop()!;
+    const recording = id === "Standup" ? current : planning;
+    return Response.json({
+      job: recording,
+      attempts: [{ job_id: id, attempt_number: 1, trigger_kind: "initial", request_json: "{}", stage: "done", state: "succeeded", created_at: stamp, updated_at: stamp, build_deferral_count: 0 }],
+      availability: { source: "present", output: "present", published_attempt: 1 },
+      sharing: id === "Standup" && !reshared ? partial : { status: "complete", skipped: [] },
+    });
+  }));
+  app = mount(Operator, { target: host });
+  await expect.element(page.getByText("Standup", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByText("Standup", { exact: true }).element().closest(".run-card")!);
+  await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
+  await expect.element(page.getByText("Shared with everyone.", { exact: true })).toBeVisible();
+  // Read there; gone with the run. Coming back finds the run as it now is,
+  // not the answer again.
+  await userEvent.click(page.getByText("Planning", { exact: true }).element().closest(".run-card")!);
+  await expect.element(page.getByRole("heading", { name: "Planning" })).toBeVisible();
+  expect(document.querySelector(".op-detail-pane")?.textContent).not.toContain("Shared with everyone.");
+  await userEvent.click(page.getByText("Standup", { exact: true }).element().closest(".run-card")!);
+  await expect.element(page.getByRole("heading", { name: "Standup" })).toBeVisible();
+  expect(document.querySelector(".op-detail-pane")?.textContent).not.toContain("Shared with everyone.");
+  expect(document.querySelector(".op-detail-pane")?.textContent).not.toContain("Published, but not shared with");
 });
 
 it("says beside the button why a re-share failed", async () => {
   serveReshare(job("Standup", "succeeded", { unshared_count: 1 }), "fails");
   await open("Standup");
-  await userEvent.click(page.getByRole("button", { name: "Re-share with room audience" }));
+  await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
   await expect.element(page.getByRole("alert").filter({ hasText: "could not share the meeting again" })).toBeVisible();
   // The warning stays: nothing changed.
-  await expect.element(page.getByText("Published, but not shared with everyone: Nextcloud refused 1 recipient", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Published, but not shared with 1 recipient", { exact: true })).toBeVisible();
 });
 
 it("acknowledges a re-share that Nextcloud still partly refused", async () => {
@@ -167,8 +231,8 @@ it("acknowledges a re-share that Nextcloud still partly refused", async () => {
     return Response.json({});
   }));
   await open("Standup");
-  await userEvent.click(page.getByRole("button", { name: "Re-share with room audience" }));
-  await expect.element(page.getByText("Shared again. Nextcloud still refused 1 recipient: check Doctor → Recording sharing.", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
+  await expect.element(page.getByText("Shared again. Nextcloud still refused 1 recipient (bob). Check Doctor › Recording sharing.", { exact: true })).toBeVisible();
 });
 
 it("keeps a pending re-share's answer with the run it was made for", async () => {
@@ -192,7 +256,7 @@ it("keeps a pending re-share's answer with the run it was made for", async () =>
   app = mount(Operator, { target: host });
   await expect.element(page.getByText("Alpha", { exact: true })).toBeVisible();
   await userEvent.click(page.getByText("Alpha", { exact: true }).element().closest(".run-card")!);
-  await userEvent.click(page.getByRole("button", { name: "Re-share with room audience" }));
+  await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
   // Open Beta while Alpha's re-share is still pending.
   await userEvent.click(page.getByText("Beta", { exact: true }).element().closest(".run-card")!);
   await expect.element(page.getByRole("heading", { name: "Beta" })).toBeVisible();

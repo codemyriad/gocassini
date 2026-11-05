@@ -73,6 +73,8 @@ type directPublishFixture struct {
 	shares  map[string]bool
 	refuse  map[string]bool
 	fail    map[string]bool
+	// notes is the note each share was created with, by the same key.
+	notes map[string]string
 }
 
 const directPublishJob = "SHARE1"
@@ -89,7 +91,7 @@ func newDirectPublishFixture(t *testing.T, audience []sharePrincipal, refuse ...
 	if err := rt.store.MergeJobRoomAudience(ctx, directPublishJob, audience, nowUTCString()); err != nil {
 		t.Fatal(err)
 	}
-	f := &directPublishFixture{rt: rt, attempt: t.TempDir(), shares: map[string]bool{}, refuse: map[string]bool{}, fail: map[string]bool{}}
+	f := &directPublishFixture{rt: rt, attempt: t.TempDir(), shares: map[string]bool{}, refuse: map[string]bool{}, fail: map[string]bool{}, notes: map[string]string{}}
 	for _, id := range refuse {
 		f.refuse[id] = true
 	}
@@ -126,6 +128,7 @@ func newDirectPublishFixture(t *testing.T, audience []sharePrincipal, refuse ...
 				return
 			}
 			f.shares[r.FormValue("shareType")+"/"+who] = true
+			f.notes[r.FormValue("shareType")+"/"+who] = r.FormValue("note")
 			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"id":"11"}}}`)
 			return
 		}
@@ -278,8 +281,21 @@ func TestShareOutcomeReachesTheRunListDetailAndEvents(t *testing.T) {
 	defer cleanup()
 	insertJob(t, rt.store.db, "J1", nowUTCString())
 	insertJob(t, rt.store.db, "J2", nowUTCString())
+	insertJob(t, rt.store.db, "J3", nowUTCString())
 	skipped := []skippedShare{{Type: "user", ID: "bob", Reason: "Sharing is only allowed with group members"}}
 	if err := rt.store.RecordJobShareOutcome(ctx, "J1", shareOutcomePartial, skipped); err != nil {
+		t.Fatal(err)
+	}
+	// J1's publish used its starter plus the captured room: alice (who is
+	// also in the roster), bob and the staff group — three recipients.
+	if err := rt.store.SetJobTalkBinding(ctx, "J1", `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":false}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.MergeJobRoomAudience(ctx, "J1", []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}, {Type: "group", ID: "staff"}}, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	// J3 has an outcome but no captured audience: no count to report.
+	if err := rt.store.RecordJobShareOutcome(ctx, "J3", shareOutcomeComplete, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -303,13 +319,18 @@ func TestShareOutcomeReachesTheRunListDetailAndEvents(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("detail: %v %s", err, rec.Body.String())
 	}
-	if detail.Sharing == nil || detail.Sharing.Status != shareOutcomePartial || !reflect.DeepEqual(detail.Sharing.Skipped, skipped) || detail.Job.UnsharedCount != 1 {
+	if detail.Sharing == nil || detail.Sharing.Status != shareOutcomePartial || !reflect.DeepEqual(detail.Sharing.Skipped, skipped) || detail.Job.UnsharedCount != 1 || detail.Sharing.AudienceCount != 3 {
 		t.Fatalf("detail sharing = %+v, job count %d", detail.Sharing, detail.Job.UnsharedCount)
 	}
 	rec = httptest.NewRecorder()
 	rt.jobDetailHandler(rec, httptest.NewRequest(http.MethodGet, "/jobs/J2", nil))
 	if strings.Contains(rec.Body.String(), `"sharing"`) {
 		t.Fatalf("a job with no recorded outcome reports one: %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	rt.jobDetailHandler(rec, httptest.NewRequest(http.MethodGet, "/jobs/J3", nil))
+	if !strings.Contains(rec.Body.String(), `"sharing"`) || strings.Contains(rec.Body.String(), `"audience_count"`) {
+		t.Fatalf("a job with no captured audience reports a count: %s", rec.Body.String())
 	}
 
 	hub := newEventHub()
@@ -323,7 +344,7 @@ func TestShareOutcomeReachesTheRunListDetailAndEvents(t *testing.T) {
 	rt.publishStateChangeEvent(StateChangeEvent{Type: "job.updated", JobID: "J1", Job: job})
 	select {
 	case event := <-events:
-		if event.Sharing == nil || event.Sharing.Status != shareOutcomePartial || event.Job.UnsharedCount != 1 {
+		if event.Sharing == nil || event.Sharing.Status != shareOutcomePartial || event.Job.UnsharedCount != 1 || event.Sharing.AudienceCount != 3 {
 			t.Fatalf("event sharing = %+v, job count %d", event.Sharing, event.Job.UnsharedCount)
 		}
 	case <-time.After(2 * time.Second):
@@ -414,5 +435,63 @@ func TestADeletedMeetingCarriesNoShareOutcome(t *testing.T) {
 	job := Job{ID: "J1", State: "succeeded", MeetingDeleted: true}
 	if got := rt.jobSharing(ctx, &job); got != nil || job.UnsharedCount != 0 {
 		t.Fatalf("deleted meeting sharing = %+v, count %d", got, job.UnsharedCount)
+	}
+}
+
+// The count a run reports is the list its publish shared with: the starter
+// and the captured room, without the recordings owner and without repeats.
+// No capture, no count: the live roster a publish fell back to is not kept.
+func TestCapturedAudienceCountIsThePublishedList(t *testing.T) {
+	binding := `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":false}`
+	at := nowUTCString()
+	audience := `[{"type":"user","id":"alice"},{"type":"user","id":"bob"},{"type":"group","id":"staff"},{"type":"user","id":"cassini"},{"type":"user","id":"bob"}]`
+	if got := capturedAudienceCount(Job{TalkBinding: &binding, RoomAudience: &audience, RoomAudienceAt: &at}); got != 3 {
+		t.Fatalf("count = %d, want alice, bob and staff", got)
+	}
+	empty := "[]"
+	if got := capturedAudienceCount(Job{TalkBinding: &binding, RoomAudience: &empty, RoomAudienceAt: &at}); got != 1 {
+		t.Fatalf("count with an empty room = %d, want the starter alone", got)
+	}
+	if got := capturedAudienceCount(Job{TalkBinding: &binding, RoomAudience: &audience}); got != 0 {
+		t.Fatalf("count without a capture = %d, want none", got)
+	}
+}
+
+// A refused group costs the caller the recording only when the group was
+// their only way to it. Someone who was in the room holds their own share:
+// with "Allow sharing with groups" off, every group in the room is refused,
+// and that must not read as "could not be shared with you" to each person
+// who can open it.
+func TestARefusedGroupCountsOnlyWhenItWasTheCallersOnlyWay(t *testing.T) {
+	binding := `{"backend_url":"https://talk.example","room_token":"room1","owner":"bob","room_public":false}`
+	at := nowUTCString()
+	withAlice := `[{"type":"user","id":"alice"},{"type":"group","id":"staff"}]`
+	withoutAlice := `[{"type":"user","id":"carol"},{"type":"group","id":"staff"}]`
+	staff := map[string]bool{"staff": true}
+	groupRefused := []skippedShare{{Type: "group", ID: "staff"}}
+	for name, tc := range map[string]struct {
+		skipped []skippedShare
+		job     Job
+		want    bool
+	}{
+		"refused by name":                    {[]skippedShare{{Type: "user", ID: "alice"}}, Job{TalkBinding: &binding, RoomAudience: &withAlice, RoomAudienceAt: &at}, true},
+		"reached through the group alone":    {groupRefused, Job{TalkBinding: &binding, RoomAudience: &withoutAlice, RoomAudienceAt: &at}, true},
+		"in the room, own share succeeded":   {groupRefused, Job{TalkBinding: &binding, RoomAudience: &withAlice, RoomAudienceAt: &at}, false},
+		"in the room, own share refused too": {append(groupRefused, skippedShare{Type: "user", ID: "alice"}), Job{TalkBinding: &binding, RoomAudience: &withAlice, RoomAudienceAt: &at}, true},
+		"the starter, in a re-share":         {groupRefused, Job{TalkBinding: &binding, RoomAudience: &withoutAlice, RoomAudienceAt: &at}, true},
+		"no audience captured":               {groupRefused, Job{TalkBinding: &binding, RoomAudience: &withAlice}, true},
+		"a group the caller is not in":       {[]skippedShare{{Type: "group", ID: "sales"}}, Job{TalkBinding: &binding, RoomAudience: &withoutAlice, RoomAudienceAt: &at}, false},
+		"somebody else, and a Team":          {[]skippedShare{{Type: "user", ID: "bob"}, {Type: "circle", ID: "team"}}, Job{TalkBinding: &binding, RoomAudience: &withoutAlice, RoomAudienceAt: &at}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			caller := "alice"
+			if name == "the starter, in a re-share" {
+				caller = "bob"
+				tc.want = false // bob started it: the starter is in the list by name.
+			}
+			if got := refusedToCaller(tc.skipped, caller, staff, tc.job); got != tc.want {
+				t.Fatalf("refusedToCaller = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

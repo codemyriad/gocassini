@@ -286,7 +286,7 @@
   import type { Job, JobAttempt, JobDetailResponse, SummaryPlan } from "./operator/types";
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
-  import { outcomeAttempt, shareNotice, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
+  import { outcomeAttempt, reshareOutcome, shareNotice, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
   import {
     summaryActionLabel,
     summaryConfirmTitle,
@@ -438,6 +438,7 @@
         await refreshJobs();
       }
     }
+    if (jobId !== selectedJobId) dropReshareAnswer(selectedJobId);
     selectedJobId = jobId;
     detailError = "";
     loadingDetail = true;
@@ -478,6 +479,7 @@
 
   function handleBackToList() {
     pushJobUrl("");
+    dropReshareAnswer(selectedJobId);
     selectedJobId = "";
     selectedJob = null;
     detailError = "";
@@ -489,6 +491,7 @@
       return;
     }
     if (urlJobId === "") {
+      dropReshareAnswer(selectedJobId);
       selectedJobId = "";
       selectedJob = null;
       detailError = "";
@@ -643,7 +646,23 @@
   // the page's own action error sits in the new-recording form.
   let reshareJobId = "";
   let reshareError: { jobId: string; message: string } | null = null;
-  let reshareResult: { jobId: string; refused: number } | null = null;
+  // Who is still refused after a re-share, by id, for the sentence beside
+  // the button; empty is "Shared with everyone." — said on its own line,
+  // because a re-share that reached everyone takes the notice, and the
+  // button under it, away with the next read of the run.
+  let reshareResult: { jobId: string; refused: string[] } | null = null;
+  $: reshareLine = reshareResult && reshareResult.jobId === selectedJob?.job.id ? reshareOutcome(reshareResult.refused) : "";
+  // The answer is dropped when the person leaves the run it was made for:
+  // they have read it there, and the run's next read says what is true now.
+  // Otherwise "Shared with everyone." would come back with every reselection
+  // for the rest of the session, beside a new warning if the run turned
+  // partial again. An answer that arrives while another run is open is kept
+  // for its run until that one is opened and left.
+  function dropReshareAnswer(jobId: string) {
+    if (reshareResult?.jobId === jobId) reshareResult = null;
+    if (reshareError?.jobId === jobId) reshareError = null;
+  }
+  $: shareNoticeShown = outcomeNotices.some((notice) => notice.action?.kind === "reshare");
   async function handleReshare() {
     if (!operatorClient || !selectedJob?.job || reshareJobId) return;
     const jobId = selectedJob.job.id;
@@ -652,7 +671,7 @@
     reshareResult = null;
     try {
       const answer = await operatorClient.reshareJob(jobId);
-      reshareResult = { jobId, refused: answer.sharing?.status === "partial" ? (answer.sharing.skipped ?? []).length : 0 };
+      reshareResult = { jobId, refused: answer.sharing?.status === "partial" ? (answer.sharing.skipped ?? []).map((entry) => entry.id) : [] };
       await refreshJobs();
       if (selectedJobId === jobId) await selectJob(jobId, { allowJobsRefresh: false });
     } catch (error) { reshareError = { jobId, message: asMessage(error) }; }
@@ -1512,10 +1531,14 @@
                         <p class="font-medium">{notice.title}</p>
                         {#if notice.detail}<p class="font-mono text-xs break-words text-base-content/75">{notice.detail}</p>{/if}
                         {#if notice.items}
+                          <!-- Closed by default; the summary carries the count. Each
+                               row: the id, its kind as a small label, the reason muted. -->
                           <details class="text-xs">
                             <summary class="cursor-pointer text-base-content/75">{notice.items.summary}</summary>
                             <ul class="mt-1 grid gap-0.5 border-l-2 border-base-300 pl-2">
-                              {#each notice.items.entries as entry}<li class="break-words text-base-content/75">{entry}</li>{/each}
+                              {#each notice.items.entries as entry}
+                                <li class="break-words"><strong class="font-semibold text-base-content">{entry.id}</strong> <span class="text-[0.7rem] uppercase tracking-wide text-base-content/60">{entry.kind}</span>{#if entry.reason}<span class="text-base-content/60">{" · "}{entry.reason}</span>{/if}</li>
+                              {/each}
                             </ul>
                           </details>
                         {/if}
@@ -1526,15 +1549,22 @@
                               {#if reshareJobId && reshareJobId === selectedJob.job.id}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>{/if}
                               {notice.action.label}
                             </button>
+                            <p class="mt-1 text-xs text-base-content/60">{notice.action.note}</p>
                             {#if reshareError && reshareError.jobId === selectedJob.job.id}<p class="mt-1 text-xs text-error" role="alert">{reshareError.message}</p>{/if}
-                            {#if reshareResult && reshareResult.jobId === selectedJob.job.id && reshareResult.refused > 0}
-                              <p class="mt-1 text-xs text-base-content/75" role="status">Shared again. Nextcloud still refused {reshareResult.refused === 1 ? "1 recipient" : `${reshareResult.refused} recipients`}: check Doctor → Recording sharing.</p>
+                            {#if reshareLine}
+                              <p class="mt-1 text-xs text-base-content/75" role="status">{reshareLine}</p>
                             {/if}
                           </div>
                         {/if}
                       </div>
                     </div>
                   {/each}
+                  {#if reshareLine && !shareNoticeShown}
+                    <div class="flex items-start gap-2 rounded-box border p-3 text-sm {outcomeToneClasses.info}" role="status">
+                      <Info size={16} class="mt-0.5 shrink-0 {outcomeIconClasses.info}" aria-hidden="true" />
+                      <p class="font-medium">{reshareLine}</p>
+                    </div>
+                  {/if}
                   {#if summaryPlan}
                     {#if confirmingSummary}
                       <div

@@ -31,7 +31,7 @@ describe("development operator proxy", () => {
         const response = await fetch(origin + path);
         expect(await response.json()).toEqual({ path, method: "GET" });
       }
-      for (const [route, method] of [["/readiness/check", "POST"], ["/talk/setup", "PUT"]]) {
+      for (const [route, method] of [["/readiness/check", "POST"], ["/talk/setup", "PUT"], ["/shares/accept", "POST"]]) {
         const path = prefix + route;
         const response = await fetch(origin + path, { method, body: "{}" });
         expect(await response.json()).toEqual({ path, method });
@@ -41,7 +41,7 @@ describe("development operator proxy", () => {
         const response = await fetch(origin + path, { method: "POST" });
         expect(await response.json()).toEqual({ path, method: "POST" });
       }
-      for (const path of ["/settings-panel-missing.js", "/insights-panel-missing.js", "/annotations-panel-missing.js", "/operator-panel-missing.js", "/operator.v1-panel-missing.js", "/operatorXv1/status"]) {
+      for (const path of ["/settings-panel-missing.js", "/insights-panel-missing.js", "/annotations-panel-missing.js", "/shares-panel-missing.js", "/operator-panel-missing.js", "/operator.v1-panel-missing.js", "/operatorXv1/status"]) {
         const asset = await fetch(origin + path);
         expect(asset.status, path).toBe(404);
       }

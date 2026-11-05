@@ -63,6 +63,21 @@ sign in as `cassini`, open the recording's `.opus` in Files, and use the sharing
 panel. Removing a share removes access in Cassini straight away, because Cassini
 checks the caller's current shares on every request.
 
+## A recording waiting for your acceptance
+
+Nextcloud can hold a file shared with you until you accept it. That is a
+setting on your own account (**Personal settings › Sharing**), and an
+administrator can make it the rule for everyone. Until you accept, the
+recording is not in your list.
+
+Browse tells you. It says how many recordings are waiting for you, lists them
+with their date and length, and offers **Accept** for one or **Accept all**.
+Nextcloud's own notification shows the same share, with Accept and Decline.
+Cassini never accepts for you: it accepts only when you ask, and only shares
+that are waiting for you and are its own recordings. Each share carries a
+note naming the meeting, its date and its length, so you can tell it apart in
+Files.
+
 ## A recording you may not read looks like one that does not exist
 
 This is deliberate, and it is the same everywhere:
@@ -86,6 +101,14 @@ and annotation goes through Nextcloud as the person asking.
   and everybody else keeps access. The run says "Published, but not shared with
   everyone" and lists who was left out and why; the run list flags it. Once the
   cause is fixed, an administrator can re-share the meeting with its room.
+- The person left out is told as well, in Browse, one notice per meeting
+  naming its room and when it was recorded: a recording that could not be
+  shared with them, or one they started that was not published. Each carries
+  a link to hand to an administrator; past two of a kind, they are grouped
+  under one line. Each can be dismissed, and a dismissed notice does not come
+  back. Once the recording reaches them (a rerun or a re-share after the
+  setting is fixed), its notice goes by itself as the meeting appears in the
+  list.
 - A refusal almost always comes from one of Nextcloud's sharing settings, which
   apply to Cassini's account like to anyone else. **Doctor › Recording sharing**
   checks them before anyone records and names the setting to change.

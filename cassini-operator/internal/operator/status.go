@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"cassini-operator/internal/operator/appapi"
 )
 
 // GET /status is the admin doctor endpoint (D-363): it answers "is this
@@ -409,6 +411,11 @@ type setupResponse struct {
 	// (docs/exapp-update-constraints.md §5a) — a field on an already-declared
 	// route costs nothing.
 	Features setupFeatures `json:"features"`
+	// Sharing is the caller's own view of recording shares (D-885): what is
+	// waiting for their acceptance and what could not be shared with them.
+	// Computed for the caller alone, by reads that run as them; see
+	// pending_shares.go. It rides here for the same reason Features does.
+	Sharing setupSharing `json:"sharing"`
 }
 
 // setupFeatures answers the two questions every unconfigured state reduces to:
@@ -481,6 +488,7 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 			Summaries: llm.Effective.Summary != nil,
 			Insights:  llm.Effective.Insight != nil,
 		},
+		Sharing: rt.sharingForCaller(r.Context(), appapi.UserID(r.Context())),
 	})
 }
 

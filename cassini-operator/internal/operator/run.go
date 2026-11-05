@@ -1010,6 +1010,11 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/events", http.HandlerFunc(rt.eventsHandler)},
 		{"/status", http.HandlerFunc(rt.statusHandler)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
+		// USER: accept the recording shares waiting for the caller (D-885).
+		{"/shares/accept", http.HandlerFunc(rt.sharesAcceptHandler)},
+		// USER: dismiss the caller's own Browse notices for recordings they
+		// started that could not be published (D-885).
+		{"/shares/dismiss", http.HandlerFunc(rt.sharesDismissHandler)},
 		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
 		{"/ai/providers/", http.HandlerFunc(rt.aiProviderModelsHandler)},
 		{"/settings", http.HandlerFunc(rt.settingsHandler)},

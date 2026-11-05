@@ -190,6 +190,38 @@ func (s *meetingMetadataStore) FileIDFor(ctx context.Context, opusName string) (
 	return fileID, err
 }
 
+// entriesByName is the indexed entry of each delivered meeting named, by its
+// file name — for many meetings at once, where FileIDFor and EntriesFor would
+// be two queries each. As in FileIDFor, the most recently indexed row for a
+// name wins. Names the index does not know are absent.
+func (s *meetingMetadataStore) entriesByName(ctx context.Context, names []string) (map[string]json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(names))
+	if s == nil || len(names) == 0 {
+		return out, nil
+	}
+	err := forEachSQLBatch(names, func(marks string, args []any) error {
+		rows, err := s.db.QueryContext(ctx, `SELECT opus_name, entry_json FROM meeting_metadata WHERE opus_name IN (`+marks+`) ORDER BY indexed_at DESC, file_id DESC`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name, raw string
+			if err := rows.Scan(&name, &raw); err != nil {
+				return err
+			}
+			if _, have := out[name]; !have {
+				out[name] = json.RawMessage(raw)
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *meetingMetadataStore) Forget(ctx context.Context, fileID int64) error {
 	if s == nil {
 		return nil

@@ -112,6 +112,10 @@
   // renders nothing.
   export let audience: "" | "participants" = "";
 
+  // Whether the shell fills the list's `list-empty` slot (D-885): see the prop
+  // of the same name on MeetingList. Forwarded, not decided, like the slot.
+  export let listEmptyFilled = false;
+
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
   let bundledMode = false;
@@ -1591,6 +1595,7 @@
       {insightsLoaded}
       {insightsError}
       {insightSourceCounts}
+      {listEmptyFilled}
       insightsRetryable={canRetryInsight}
       {retryingInsightId}
       {insightRetryError}
@@ -1642,7 +1647,19 @@
       on:clearTags={() => (selectedTagIds = [])}
       on:dismissTagNotice={() => annotationNotice ? meetingMarks.dismiss(annotationNotice.meetingId) : listTagSession.dismissNotice()}
       on:retryTag={() => annotationNotice ? meetingMarks.retry(annotationNotice.meetingId) : listTagSession.retry()}
-    />
+    >
+      <!-- Forwarded, not decided, like Prepare's readiness slot (D-722): what
+           a reader with an empty list should be told, and what sits above a
+           full one, are facts about the deployment around this viewer — the
+           Cassini shell knows them and a standalone export has none. The
+           refresh rides down as a slot prop so the shell can re-read the list
+           after it changes what the reader can see, through the same path an
+           import takes, without remounting anything; the listed meetings ride
+           with it, so the shell can tell when one it was warning about has
+           arrived (D-885). -->
+      <svelte:fragment slot="list-empty"><slot name="list-empty" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>
+      <svelte:fragment slot="list-notice"><slot name="list-notice" refresh={refreshCatalog} meetings={catalogMeetings} /></svelte:fragment>
+    </MeetingList>
     </div>
 
     {#if importsOffered}

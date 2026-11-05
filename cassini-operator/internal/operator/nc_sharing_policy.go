@@ -330,40 +330,60 @@ type sharingPolicyIssue struct {
 // fails only where the settings prove that no share can be made; where shares
 // work for part of an audience it warns, naming what it knows, because whether
 // a set of groups covers every participant is not something it can establish.
+//
+// Every message reads the same way: the VERDICT (who can receive recordings),
+// then the CAUSE (the setting by its Nextcloud name, and that Cassini shares
+// from its own account), then the CONSEQUENCE. Steps are the ways out, one
+// full sentence each. The app's Doctor preview and its browser tests pin
+// these texts too.
 func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPolicyFinding {
 	groups = cleanGroupList(groups)
 	var issues []sharingPolicyIssue
 	var shareable []string
 
+	const (
+		nobody          = "Nobody can receive recordings. "
+		refusedAll      = " Every share is refused, so no new meetings can be published."
+		sharingSettings = "Administration settings › Sharing"
+		restrictSetting = "“Restrict users to only share with users in their groups”"
+	)
+	notAdmin := func(step string) string {
+		return step + " It does not need to be an administrator."
+	}
+
 	if !s.APIEnabled {
 		issues = append(issues, sharingPolicyIssue{
 			state: "needs_action", code: "sharing_api_disabled",
-			sentence: "Nextcloud does not let apps share (“Allow apps to use the Share API” is off), so it refuses every recording share and nobody can open new meetings.",
-			steps:    []readinessStep{{Label: "In Nextcloud, open Administration settings → Sharing and turn on “Allow apps to use the Share API”"}},
+			sentence: nobody + "Nextcloud's “Allow apps to use the Share API” is off, so every share Cassini makes is refused and no new meetings can be published.",
+			steps:    []readinessStep{{Label: "Turn on “Allow apps to use the Share API” under " + sharingSettings + "."}},
 		})
 	}
 
 	switch s.ExcludeGroupsMode {
 	case excludeGroupsBlocklist:
 		if hit := intersectGroups(groups, s.ExcludeGroupsList); len(hit) > 0 {
+			membership := "that group"
+			if len(hit) > 1 {
+				membership = "those groups"
+			}
 			issues = append(issues, sharingPolicyIssue{
 				state: "needs_action", code: "sharing_disabled_for_account",
-				sentence: fmt.Sprintf("Nextcloud excludes the “%s” account from sharing: it is in %s, which “Exclude some groups from sharing” lists. Every recording share is refused, so nobody can open new meetings.", ncRecordingsOwner, namedGroups(hit)),
+				sentence: fmt.Sprintf("%sNextcloud's “Exclude some groups from sharing” lists %s, and Cassini shares from its %s account, which is in %s.%s", nobody, namedGroups(hit), ncRecordingsOwner, membership, refusedAll),
 				steps: []readinessStep{
-					{Label: fmt.Sprintf("In Nextcloud, open Administration settings → Sharing and remove %s from the groups excluded from sharing", quotedGroups(hit))},
-					{Label: fmt.Sprintf("Or take `%s` out of %s in Nextcloud's Users page", ncRecordingsOwner, quotedGroups(hit))},
+					{Label: fmt.Sprintf("Remove %s from the excluded groups under %s.", quotedGroups(hit), sharingSettings)},
+					{Label: fmt.Sprintf("Or take `%s` out of %s on Nextcloud's Users page.", ncRecordingsOwner, quotedGroups(hit))},
 				},
 			})
 		}
 	case excludeGroupsAllowlist:
 		if len(intersectGroups(groups, s.ExcludeGroupsList)) == 0 {
-			sentence := fmt.Sprintf("Nextcloud limits sharing to some groups, and none is chosen, so no account — “%s” included — may share. Every recording share is refused, so nobody can open new meetings.", ncRecordingsOwner)
-			steps := []readinessStep{{Label: "In Nextcloud, open Administration settings → Sharing and choose the groups allowed to share, including one `" + ncRecordingsOwner + "` is in"}}
+			sentence := nobody + "Nextcloud's “Limit sharing to some groups” allows no group at all, so no account may share." + refusedAll
+			steps := []readinessStep{{Label: fmt.Sprintf("Choose the groups allowed to share under %s, including one `%s` is in.", sharingSettings, ncRecordingsOwner)}}
 			if len(s.ExcludeGroupsList) > 0 {
-				sentence = fmt.Sprintf("Nextcloud limits sharing to members of %s, and the “%s” account is in none of them. Every recording share is refused, so nobody can open new meetings.", namedGroups(s.ExcludeGroupsList), ncRecordingsOwner)
+				sentence = fmt.Sprintf("%sNextcloud's “Limit sharing to some groups” allows only %s, and Cassini shares from its %s account, which is in none of them.%s", nobody, namedGroups(s.ExcludeGroupsList), ncRecordingsOwner, refusedAll)
 				steps = []readinessStep{
-					{Label: fmt.Sprintf("Add `%s` to one of %s in Nextcloud's Users page", ncRecordingsOwner, quotedGroups(s.ExcludeGroupsList))},
-					{Label: "Or, in Nextcloud's Administration settings → Sharing, allow sharing for everyone"},
+					{Label: fmt.Sprintf("Add `%s` to one of %s on Nextcloud's Users page.", ncRecordingsOwner, quotedGroups(s.ExcludeGroupsList))},
+					{Label: "Or allow sharing for everyone under " + sharingSettings + "."},
 				}
 			}
 			issues = append(issues, sharingPolicyIssue{state: "needs_action", code: "sharing_disabled_for_account", sentence: sentence, steps: steps})
@@ -372,43 +392,49 @@ func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPoli
 
 	if s.OnlyGroupMembers {
 		shareable = subtractGroups(groups, s.IgnoredGroups)
-		lift := readinessStep{Label: "To let Cassini share with everyone, open Administration settings → Sharing in Nextcloud and turn off “Restrict users to only share with users in their groups”"}
-		join := readinessStep{Label: fmt.Sprintf("To keep the restriction, add `%s` in Nextcloud's Users page to every group whose members should receive their recordings. A group everyone belongs to covers everybody; `%s` does not need to be an administrator", ncRecordingsOwner, ncRecordingsOwner)}
+		lift := readinessStep{Label: "Turn off " + restrictSetting + " under " + sharingSettings + "."}
+		joinOne := readinessStep{Label: notAdmin(fmt.Sprintf("Or add `%s` to a group everyone who records is in.", ncRecordingsOwner))}
 		switch {
 		case len(shareable) == 0 && len(groups) == 0:
 			issues = append(issues, sharingPolicyIssue{
 				state: "needs_action", code: "sharing_no_common_group",
-				sentence: fmt.Sprintf("Nextcloud only lets accounts share with members of their own groups (“Restrict users to only share with users in their groups”), and the “%s” account is in no group. Every share to a person or a group is refused — including to whoever starts a recording — so new meetings cannot be published.", ncRecordingsOwner),
-				steps:    []readinessStep{lift, join},
+				sentence: fmt.Sprintf("%sNextcloud's %s is on, and Cassini shares from its %s account, which is in no group.%s", nobody, restrictSetting, ncRecordingsOwner, refusedAll),
+				steps:    []readinessStep{lift, joinOne},
 			})
 		case len(shareable) == 0:
 			issues = append(issues, sharingPolicyIssue{
 				state: "needs_action", code: "sharing_no_common_group",
-				sentence: fmt.Sprintf("Nextcloud only lets accounts share with members of their own groups (“Restrict users to only share with users in their groups”), and it ignores every group the “%s” account is in (%s) when checking membership. Every share to a person or a group is refused — including to whoever starts a recording — so new meetings cannot be published.", ncRecordingsOwner, namedGroups(groups)),
-				steps: []readinessStep{lift, join,
-					{Label: fmt.Sprintf("Or, in Nextcloud's Administration settings → Sharing, stop ignoring %s under “Ignore the following groups when checking group membership”", quotedGroups(groups))},
+				sentence: fmt.Sprintf("%sNextcloud's %s is on, and every group the %s account is in (%s) is ignored when Nextcloud checks membership.%s", nobody, restrictSetting, ncRecordingsOwner, namedGroups(groups), refusedAll),
+				steps: []readinessStep{lift, joinOne,
+					{Label: fmt.Sprintf("Or stop ignoring %s under “Ignore the following groups when checking group membership”.", quotedGroups(groups))},
 				},
 			})
 		default:
-			sentence := fmt.Sprintf("Nextcloud only lets accounts share with members of their own groups (“Restrict users to only share with users in their groups”), so Cassini can share recordings only with members of %s, and with those groups as a whole. Anyone else in a meeting is left without access to it unless a Team the room includes gives it to them, and a recording started by someone outside these groups is not published.", namedGroups(shareable))
+			verdict := fmt.Sprintf("Only members of %s can receive recordings.", namedGroups(shareable))
+			membership := fmt.Sprintf("which is only in %s", namedGroups(shareable))
+			consequence := "Anyone outside these groups cannot open the recordings of their meetings, and a recording they start is not published at all."
 			if len(shareable) == 1 && shareable[0] == "admin" {
-				sentence += " “admin” holds only Nextcloud's administrators."
+				verdict = "Only administrators can receive recordings."
+				membership += ", the administrators' group"
+				consequence = "Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all."
 			}
-			issues = append(issues, sharingPolicyIssue{state: "warn", code: "sharing_limited_to_groups", sentence: sentence, steps: []readinessStep{lift, join}})
+			sentence := fmt.Sprintf("%s Nextcloud's %s is on, and Cassini shares from its %s account, %s. %s", verdict, restrictSetting, ncRecordingsOwner, membership, consequence)
+			joinAll := readinessStep{Label: fmt.Sprintf("Or add `%s` to every group whose members should receive recordings. A group everyone is in covers everybody; `%s` does not need to be an administrator.", ncRecordingsOwner, ncRecordingsOwner)}
+			issues = append(issues, sharingPolicyIssue{state: "warn", code: "sharing_limited_to_groups", sentence: sentence, steps: []readinessStep{lift, joinAll}})
 		}
 	}
 
 	if !s.AllowGroupSharing {
 		issues = append(issues, sharingPolicyIssue{
 			state: "warn", code: "group_sharing_disabled",
-			sentence: "Nextcloud does not allow sharing with groups (“Allow sharing with groups” is off), so a meeting whose room includes a Nextcloud group is published without access for that group.",
-			steps:    []readinessStep{{Label: "In Nextcloud, open Administration settings → Sharing and turn on “Allow sharing with groups”"}},
+			sentence: "Groups in a room do not receive recordings. Nextcloud's “Allow sharing with groups” is off, so a meeting whose room includes a group is published without access for that group's members, unless they are in the room themselves.",
+			steps:    []readinessStep{{Label: "Turn on “Allow sharing with groups” under " + sharingSettings + "."}},
 		})
 	}
 
 	if len(issues) == 0 {
 		finding := sharingPolicyFinding{State: "passed", Code: "sharing_permitted",
-			Message: "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting."}
+			Message: "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting. Whether each person has accepted the share is theirs to decide; anyone with recordings waiting sees them in Browse."}
 		if s.OnlyGroupMembers {
 			finding.ShareableGroups = shareable
 		}

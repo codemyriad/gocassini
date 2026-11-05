@@ -65,8 +65,10 @@ export function createOperatorProxy(operatorBasePath: string, operatorProxyTarge
       ...insights,
       // Keep the root-mounted API in sync with operatorAPIRoutes in run.go.
       // In particular /status decides whether the shell shows Operator at all.
+      // /shares is the USER route Browse accepts pending recording shares
+      // through (D-885).
       // Match path boundaries so API names cannot swallow Vite source assets.
-      "^/(jobs|events|status|setup|readiness|ai|settings|storage|talk)(?:/|\\?|$)":
+      "^/(jobs|events|status|setup|readiness|ai|settings|storage|talk|shares)(?:/|\\?|$)":
         directOperatorProxy(operatorProxyTarget),
     };
   }

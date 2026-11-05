@@ -6,6 +6,7 @@
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
   import SetupNotice from "./SetupNotice.svelte";
+  import SharingNotice from "./SharingNotice.svelte";
   import RetentionReminder from "./RetentionReminder.svelte";
   import { onRetentionChanged } from "./operator/retentionSignal";
   import { dismissRetentionReminder, retentionMutationBusy } from "./operator/retentionReminder";
@@ -26,6 +27,7 @@
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
   import { onSetupChanged } from "./operator/setupSignal";
+  import { acceptShares, dismissNotices, hasSharingNews, withoutDismissed, type AcceptSharesResult } from "./operator/sharingNotice";
   import {
     applyPanel,
     applySurface,
@@ -209,6 +211,64 @@
   // standalone export, or an operator too old to report the mode) and the chip
   // renders nothing.
   $: audience = recordingAudience(setupHealth);
+
+  // This reader's own recording shares (D-885), from the same USER-level
+  // /setup call: the recordings waiting for their acceptance, and the ones a
+  // Nextcloud sharing setting kept from them. Browse says so in the list's
+  // empty state or in a strip above it, through the viewer's two slots — the
+  // viewer has no idea what a share is, and a standalone export has none.
+  // Notices the reader dismissed here leave at once; the operator keeps them
+  // out of every later /setup.
+  let dismissedNotices: ReadonlySet<string> = new Set();
+  $: sharing = withoutDismissed(setupHealth?.sharing ?? null, dismissedNotices);
+  // One rule for both: whether the empty state is the shell's to fill, and
+  // whether the notice draws anything at all. A slot cannot be provided
+  // conditionally, so the viewer is told.
+  $: sharingNews = hasSharingNews(sharing);
+  // The address handed on to an administrator, without the fragment.
+  let appUrl = "";
+
+  // The request is the shell's, like every other operator call: it knows the
+  // operator's base path. The notice keeps the row's spinner and its reason.
+  function acceptRecordingShares(shareIds: string[]): Promise<AcceptSharesResult> {
+    const { operatorBasePath } = loadConfig();
+    return acceptShares(operatorBasePath, shareIds);
+  }
+
+  function dismissRecordingNotices(jobIds: string[]): Promise<void> {
+    const { operatorBasePath } = loadConfig();
+    return dismissNotices(operatorBasePath, jobIds);
+  }
+
+  // The reader's shares change while the page is away: an administrator
+  // re-shares a meeting, and for someone who accepts shares by hand it moves
+  // from refused to waiting without ever reaching their list. So /setup is
+  // asked again on the way back, as the viewer re-reads its list.
+  function refreshSharingOnReturn(): void {
+    if (document.visibilityState === "visible") void refreshSetupFeatures();
+  }
+
+  function handleNoticesDismissed(jobIds: string[]): void {
+    dismissedNotices = new Set([...dismissedNotices, ...jobIds]);
+  }
+
+  // After the operator answered an acceptance. The answer carries the
+  // refreshed shares, so they replace what /setup said at mount without a
+  // second round trip; an answer without them is followed by a re-read. So is
+  // one the operator could not establish (`checked: false`: its re-read as
+  // the caller failed or timed out) — taking that would hide every row still
+  // waiting, and the refused lines, until the next /setup. Then the list is
+  // re-read through the viewer's own refresh — the slot prop it handed down,
+  // the same path an import takes — so the recording appears without
+  // remounting anything.
+  function handleSharesAccepted(result: AcceptSharesResult, refresh: () => void | Promise<void>): void {
+    if (result.sharing?.checked && setupHealth) {
+      setupHealth = { ...setupHealth, sharing: result.sharing };
+    } else {
+      void refreshSetupFeatures();
+    }
+    void refresh();
+  }
 
   // The operator API client the Generate card lists templates with, or null for
   // anyone the probe denied. `operator/settings/workflows` is ADMIN at the
@@ -455,11 +515,12 @@
       // /status IS being an administrator, so there is no second notion of admin
       // here to drift from the first. The diagnosis comes from that same
       // response; a non-admin never had it and never will.
+      appUrl = shareableAppUrl(window.location.href);
       setupNotice = buildSetupNotice({
         health,
         access: readRecordingsAccess(probe.body),
         isAdmin: probe.available,
-        appUrl: shareableAppUrl(window.location.href),
+        appUrl,
       });
       // A non-admin is expected to be denied — AppAPI answers 403, or 404 when
       // it hides the operator routes entirely — so stay quiet on those. Anything
@@ -511,6 +572,7 @@
     });
     stopListeningForRetentionChanges = onRetentionChanged(acceptRetention);
     window.addEventListener("focus", refreshRetention);
+    document.addEventListener("visibilitychange", refreshSharingOnReturn);
 
     await readInstanceState();
     // Advisory only: Operator never waits for this request.
@@ -522,6 +584,7 @@
     retentionGeneration++;
     stopListeningForRetentionChanges?.();
     window.removeEventListener("focus", refreshRetention);
+    document.removeEventListener("visibilitychange", refreshSharingOnReturn);
     stopListeningForSetupChanges?.();
     stopListeningForSetupChanges = null;
     if (typeof window !== "undefined") {
@@ -611,7 +674,7 @@
          hidden while an admin surface is active; those mount only when active
          so the operator's SSE stream + polling don't run in the background. -->
     <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-      <ViewerApp {ncMode} {dataProvider} {audience} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
+      <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} bind:this={viewerApp} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
         <!-- Its opposite, driven by the same bit (D-700): the readiness card
              says a question cannot be asked here, this one asks it. The Prepare
@@ -627,6 +690,16 @@
               on:created={(event) => onInsightCreated(event.detail)}
             />
           {/if}
+        </svelte:fragment>
+        <!-- The reader's own shares, in the list's empty state and above a list
+             that has meetings (D-885). The same component in both, drawing
+             nothing when there is no news; `refresh` is the viewer's catalog
+             re-read and `meetings` what it lists, handed down as slot props. -->
+        <svelte:fragment slot="list-empty" let:refresh let:meetings>
+          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
+        </svelte:fragment>
+        <svelte:fragment slot="list-notice" let:refresh let:meetings>
+          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
         </svelte:fragment>
       </ViewerApp>
     </div>
@@ -664,7 +737,7 @@
       </div>
     </div>
     <div class="cassini-shell-surface">
-      <ViewerApp {ncMode} {dataProvider} {audience} on:prepareOpen={() => void refreshSetupFeatures()}>
+      <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} on:prepareOpen={() => void refreshSetupFeatures()}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
         <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
           {#if insightsReady}
@@ -676,11 +749,21 @@
             />
           {/if}
         </svelte:fragment>
+        <!-- The reader's own shares, in the list's empty state and above a list
+             that has meetings (D-885). The same component in both, drawing
+             nothing when there is no news; `refresh` is the viewer's catalog
+             re-read and `meetings` what it lists, handed down as slot props. -->
+        <svelte:fragment slot="list-empty" let:refresh let:meetings>
+          <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
+        </svelte:fragment>
+        <svelte:fragment slot="list-notice" let:refresh let:meetings>
+          <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
+        </svelte:fragment>
       </ViewerApp>
     </div>
   </div>
 {:else}
-  <ViewerApp {ncMode} {dataProvider} {audience} on:prepareOpen={() => void refreshSetupFeatures()}>
+  <ViewerApp {ncMode} {dataProvider} {audience} listEmptyFilled={sharingNews} on:prepareOpen={() => void refreshSetupFeatures()}>
     <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
     <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
       {#if insightsReady}
@@ -691,6 +774,16 @@
           on:created={(event) => onInsightCreated(event.detail)}
         />
       {/if}
+    </svelte:fragment>
+    <!-- The reader's own shares, in the list's empty state and above a list
+         that has meetings (D-885). The same component in both, drawing
+         nothing when there is no news; `refresh` is the viewer's catalog
+         re-read and `meetings` what it lists, handed down as slot props. -->
+    <svelte:fragment slot="list-empty" let:refresh let:meetings>
+      <SharingNotice {sharing} variant="card" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
+    </svelte:fragment>
+    <svelte:fragment slot="list-notice" let:refresh let:meetings>
+      <SharingNotice {sharing} variant="strip" {appUrl} {meetings} accept={acceptRecordingShares} dismiss={dismissRecordingNotices} on:accepted={(event) => handleSharesAccepted(event.detail, refresh)} on:dismissed={(event) => handleNoticesDismissed(event.detail)} />
     </svelte:fragment>
   </ViewerApp>
 {/if}

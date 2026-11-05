@@ -35,6 +35,9 @@ func TestRecordingSharesUseCallerAndOCSEnvelope(t *testing.T) {
 			if got := r.FormValue("path"); got != "/CassiniRecordings/meetings/a.opus" {
 				t.Errorf("path = %q", got)
 			}
+			if got := r.FormValue("note"); got != "Recording of a. Open it in Cassini." {
+				t.Errorf("note = %q", got)
+			}
 			_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":{"id":"10","share_type":0,"permissions":17}}}`)
 		default:
 			http.Error(w, "unexpected", http.StatusMethodNotAllowed)
@@ -52,7 +55,7 @@ func TestRecordingSharesUseCallerAndOCSEnvelope(t *testing.T) {
 	if _, err := cfg.ownerSharesForPath(context.Background(), server.Client(), "CassiniRecordings/meetings/a.opus"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cfg.createRecordingShare(context.Background(), server.Client(), "CassiniRecordings/meetings/a.opus", sharePrincipal{Type: "user", ID: "alice"}, ncShareRead|ncShareReshare); err != nil {
+	if _, err := cfg.createRecordingShare(context.Background(), server.Client(), "CassiniRecordings/meetings/a.opus", sharePrincipal{Type: "user", ID: "alice"}, ncShareRead|ncShareReshare, "Recording of a. Open it in Cassini."); err != nil {
 		t.Fatal(err)
 	}
 	if len(calls) != 3 || !strings.Contains(calls[0], "shared_with_me=true") || !strings.Contains(calls[1], "path=") {
@@ -105,7 +108,7 @@ func TestPublicShareFallsBackToReadWhenInstanceRefusesResharing(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
-	if _, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", []sharePrincipal{{Type: "user", ID: "alice"}}, true, sharePublish); err != nil {
+	if _, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", []sharePrincipal{{Type: "user", ID: "alice"}}, true, sharePublish, ""); err != nil {
 		t.Fatal(err)
 	}
 	if permissions != ncShareRead || posts != 2 {
@@ -138,7 +141,7 @@ func TestRecordingSharesKeepValidRecipientsWhenOneIsRefused(t *testing.T) {
 	ncAccessSubstrate.reset()
 	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
 	audience := []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}, {Type: "user", ID: "carol"}}
-	skipped, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, sharePublish)
+	skipped, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, sharePublish, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +159,7 @@ func TestRecordingSharesKeepValidRecipientsWhenOneIsRefused(t *testing.T) {
 func TestRecordingShareRequiresValidStarter(t *testing.T) {
 	cfg := ExAppConfig{}
 	for _, audience := range [][]sharePrincipal{nil, {{Type: "user", ID: ncRecordingsOwner}}, {{Type: "group", ID: "staff"}}} {
-		if _, err := cfg.reconcileRecordingShares(context.Background(), nil, "recording.opus", audience, false, sharePublish); err == nil {
+		if _, err := cfg.reconcileRecordingShares(context.Background(), nil, "recording.opus", audience, false, sharePublish, ""); err == nil {
 			t.Fatalf("accepted audience %v", audience)
 		}
 	}
@@ -207,7 +210,7 @@ func TestRecordingShareSkipsARefusedGroupAudience(t *testing.T) {
 	server, shared := refusingShareServer(t, "staff", "design-team")
 	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
 	audience := []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "group", ID: "staff"}, {Type: "circle", ID: "design-team"}, {Type: "user", ID: "carol"}}
-	skipped, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, sharePublish)
+	skipped, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, sharePublish, "")
 	if err != nil {
 		t.Fatalf("a refused group failed publication: %v", err)
 	}
@@ -230,7 +233,7 @@ func TestRecordingShareFailsWhenTheStarterIsRefused(t *testing.T) {
 	server, shared := refusingShareServer(t, "alice")
 	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
 	audience := []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}, {Type: "user", ID: "carol"}}
-	skipped, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, sharePublish)
+	skipped, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, sharePublish, "")
 	var refused *starterShareRefusedError
 	if !errors.As(err, &refused) || refused.Starter != "alice" || !strings.Contains(err.Error(), "starter") {
 		t.Fatalf("starter refusal = %v", err)
@@ -244,7 +247,7 @@ func TestRecordingShareFailsWhenTheStarterIsRefused(t *testing.T) {
 
 	// Re-applying an audience to a meeting that is already published has
 	// nothing to refuse: the starter is reported like anyone else.
-	skipped, err = cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, shareReapply)
+	skipped, err = cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, shareReapply, "")
 	if err != nil {
 		t.Fatalf("re-share failed on the starter: %v", err)
 	}
@@ -273,7 +276,7 @@ func TestRecordingShareStillFailsOnAnOutage(t *testing.T) {
 	audience := []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "group", ID: "staff"}}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := cfg.reconcileRecordingShares(ctx, server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, sharePublish); err == nil || !strings.Contains(err.Error(), "staff") {
+	if _, err := cfg.reconcileRecordingShares(ctx, server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false, sharePublish, ""); err == nil || !strings.Contains(err.Error(), "staff") {
 		t.Fatalf("an outage was treated as a refusal: %v", err)
 	}
 }
@@ -287,10 +290,10 @@ func TestImportStillFailsOnARefusedGroup(t *testing.T) {
 	server, _ := refusingShareServer(t, "staff", "bob")
 	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
 	audience := []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}, {Type: "group", ID: "staff"}}
-	if _, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, true, shareImport); err == nil || !strings.Contains(err.Error(), "staff") {
+	if _, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, true, shareImport, ""); err == nil || !strings.Contains(err.Error(), "staff") {
 		t.Fatalf("a refused group did not fail the import: %v", err)
 	}
-	skipped, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience[:2], true, shareImport)
+	skipped, err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience[:2], true, shareImport, "")
 	if err != nil || len(skipped) != 1 || skipped[0].ID != "bob" {
 		t.Fatalf("individual refusal on import: skipped=%+v err=%v", skipped, err)
 	}
