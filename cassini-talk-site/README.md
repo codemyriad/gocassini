@@ -23,7 +23,7 @@ URLs instead. The Mac download is
 `https://cassini.talk/download/mac/Cassini-talk.dmg`.
 
 Installer buttons and package links stay on `cassini.talk`. Android uses
-`/download/android/cassini-android.apk`; Linux uses the Flatpak and distribution
+`/download/android/cassini-android.apk`; Linux uses the native distribution
 package aliases under `/download/linux/`. The app release mirror publishes
 `release.json` alongside each platform's installers, so the download cards can
 show current versions, dates and sizes without rebuilding the website. GitHub
@@ -33,3 +33,9 @@ The host serves ordinary files and directory indexes from object storage.
 Astro's generated `index.html` files provide page routes. Static Assets-specific
 `_headers` and `_redirects` files are unsupported; discuss routing or HTTP header
 changes with the administrators.
+
+Mac, Android and Linux version/date/size information is read from the published
+appcast or mirror metadata during the build, so it is present without JavaScript.
+Browser refreshes use the same parser to keep open deployments current. A build
+fails if published release metadata is unavailable instead of shipping a stale
+version. Linux offers native packages only; Flatpak and Flathub are not offered.

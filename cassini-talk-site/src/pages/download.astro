@@ -4,6 +4,9 @@ import Glyph from "../components/Glyph.astro";
 import DownloadIcon from "../components/DownloadIcon.astro";
 import NextcloudLogo from "../components/NextcloudLogo.astro";
 import { apps, metaLine, PLACEHOLDER } from "../data/apps";
+import { loadReleases } from "../lib/release-metadata.mjs";
+
+const releaseLines = await loadReleases(apps);
 
 const link = "text-sm text-base-content hover:text-primary transition-colors";
 ---
@@ -59,7 +62,7 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
               </>
             )}
           </div>
-          <p data-release-note={app.note} class="text-xs font-mono text-base-content/60 pg-meta">{metaLine(app)}</p>
+          <p data-release-note={app.note} class="text-xs font-mono text-base-content/60 pg-meta">{releaseLines.get(app.id) ?? metaLine(app)}</p>
         </div>
       ))}
     </div>
@@ -82,51 +85,22 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
 </BaseLayout>
 
 <script>
-  // The Mac release pipeline owns this feed; keep the card current independently
-  // of website deployments. Static text remains available if the request fails.
-  async function updateMacRelease() {
-    const meta = document.querySelector("#mac .pg-meta");
-    if (!meta) return;
-    try {
-      const response = await fetch("/download/mac/appcast.xml");
-      if (!response.ok) return;
-      const xml = new DOMParser().parseFromString(await response.text(), "application/xml");
-      const item = xml.querySelector("channel > item");
-      const version = item?.getElementsByTagNameNS("http://www.andymatuschak.org/xml-namespaces/sparkle", "shortVersionString")[0]?.textContent;
-      if (!version) return;
-      const date = new Date(item?.querySelector("pubDate")?.textContent ?? "");
-      const bytes = Number(item?.querySelector("enclosure")?.getAttribute("length"));
-      meta.textContent = [
-        `Version ${version}`,
-        Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
-        bytes > 0 ? `${(bytes / 1_000_000).toFixed(1)} MB` : "",
-        "Whistle speech model included",
-      ].filter(Boolean).join(" · ");
-    } catch { /* Keep the static release details when offline. */ }
-  }
-  async function updateMirroredReleases() {
-    await Promise.all(["android", "linux"].map(async platform => {
+  import { parseMacRelease, parseMirroredRelease, releaseLine } from "../lib/release-metadata.mjs";
+
+  async function updateReleases() {
+    await Promise.all(["mac", "android", "linux"].map(async platform => {
       const meta = document.querySelector<HTMLElement>(`#${platform} .pg-meta`);
       if (!meta) return;
       try {
-        const response = await fetch(`/download/${platform}/release.json`);
+        const endpoint = platform === "mac" ? "appcast.xml" : "release.json";
+        const response = await fetch(`/download/${platform}/${endpoint}`, { cache: "no-cache" });
         if (!response.ok) return;
-        const release = await response.json();
-        if (release.schema !== 1 || release.platform !== platform || !/^\d+\.\d+\.\d+$/.test(release.version)) return;
-        const primary = release.assets?.find((asset: { kind: string }) => asset.kind === release.primary);
-        const date = new Date(release.published_at);
-        meta.textContent = [
-          `Version ${release.version}`,
-          Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
-          primary?.size > 0 ? `${(primary.size / 1_000_000).toFixed(1)} MB` : "",
-          meta.dataset.releaseNote,
-        ].filter(Boolean).join(" · ");
-      } catch { /* Keep static release details if the metadata is unavailable. */ }
+        const release = platform === "mac"
+          ? parseMacRelease(await response.text())
+          : parseMirroredRelease(await response.json(), platform);
+        meta.textContent = releaseLine(release, meta.dataset.releaseNote);
+      } catch { /* The static build already contains verified release metadata. */ }
     }));
-  }
-  function updateReleases() {
-    updateMacRelease();
-    updateMirroredReleases();
   }
   updateReleases();
   document.addEventListener("astro:page-load", updateReleases);

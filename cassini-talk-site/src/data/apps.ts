@@ -81,7 +81,7 @@ export const apps: App[] = [
     requirement: "macOS 15 or later · Apple silicon and Intel",
     blurb: "A timer in the menu bar while you record, and Quick Look for any .opus file in Finder.",
     button: { label: "Download for Mac", href: "https://cassini.talk/download/mac/Cassini-talk.dmg", icon: "download" },
-    version: "0.1.0",
+    version: "",
     note: "Whistle speech model included",
     links: [{ label: "Latest release details →", href: "https://cassini.talk/download/mac/" }],
     width: "third",
@@ -110,10 +110,9 @@ export const apps: App[] = [
     glyph: "linux",
     glyphSize: 22,
     requirement: "GNOME · 64-bit Intel and AMD",
-    blurb: "Native packages need GTK 4.18 and libadwaita 1.8. On older distributions, use the Flatpak.",
-    button: { label: "Download Flatpak", href: "https://cassini.talk/download/linux/cassini-viewer.flatpak", icon: "download" },
+    blurb: "Native packages for Ubuntu, Debian, Fedora, openSUSE and Arch. Requires GTK 4.18 and libadwaita 1.8.",
+    button: { label: "Download for Ubuntu", href: "https://cassini.talk/download/linux/cassini-viewer-ubuntu-amd64.deb", icon: "download" },
     links: [
-      { label: "Ubuntu 26.04 (.deb)", href: "https://cassini.talk/download/linux/cassini-viewer-ubuntu-amd64.deb" },
       { label: "Debian testing (.deb)", href: "https://cassini.talk/download/linux/cassini-viewer-debian-amd64.deb" },
       { label: "Fedora 44 (.rpm)", href: "https://cassini.talk/download/linux/cassini-viewer-fedora-x86_64.rpm" },
       { label: "openSUSE Tumbleweed (.rpm)", href: "https://cassini.talk/download/linux/cassini-viewer-opensuse-x86_64.rpm" },
@@ -124,7 +123,7 @@ export const apps: App[] = [
     date: "29 Oct 2026",
     width: "third",
     source: "https://github.com/codemyriad/cassini-gnome",
-    tileCaption: "Flatpak, .deb, .rpm",
+    tileCaption: ".deb, .rpm, Arch",
   },
 ];
 

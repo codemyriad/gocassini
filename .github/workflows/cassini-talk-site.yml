@@ -43,6 +43,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test release metadata
+        run: npm test
+
       - name: Build
         run: npm run build
 
