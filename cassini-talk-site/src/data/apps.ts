@@ -49,7 +49,7 @@ export const apps: App[] = [
     glyphSize: 22,
     requirement: "iOS 26 or iPadOS 26 or later",
     blurb: "Pause and finish from the Lock Screen, read beside your library in split view on iPad, and keep recording with the screen off.",
-    button: { label: "Download on the App Store", href: PLACEHOLDER, icon: "apple", badgePending: true },
+    button: { label: "App Store (coming soon)", href: PLACEHOLDER, icon: "apple", badgePending: true },
     version: "0.1.0",
     note: "speech model about 531 MB",
     width: "half",
@@ -63,8 +63,8 @@ export const apps: App[] = [
     glyphSize: 22,
     requirement: "Android 8.0 or later · 64-bit ARM",
     blurb: "Read a live draft while it transcribes, with the speakers shown as they appear. Stop at any point and pick up from the last checkpoint.",
-    button: { label: "Get it on Google Play", href: PLACEHOLDER, icon: "googlePlay", badgePending: true },
-    links: [{ label: "Or download the APK →", href: "https://github.com/codemyriad/cassini-android/releases/latest" }],
+    button: { label: "Download the APK", href: "https://github.com/codemyriad/cassini-android/releases/latest", icon: "download" },
+    links: [{ label: "Google Play (coming soon)", href: PLACEHOLDER }],
     linksStyle: "inline",
     version: "0.3.0",
     date: "17 Oct 2026",
@@ -80,10 +80,10 @@ export const apps: App[] = [
     glyphSize: 22,
     requirement: "macOS 15 or later · Apple silicon and Intel",
     blurb: "A timer in the menu bar while you record, and Quick Look for any .opus file in Finder.",
-    button: { label: "Download for Mac", href: PLACEHOLDER, icon: "download" },
+    button: { label: "Download for Mac", href: "https://cassini.talk/download/mac/Cassini-talk.dmg", icon: "download" },
     version: "0.1.0",
-    date: "15 Oct 2026",
     note: "Whistle speech model included",
+    links: [{ label: "Latest release details →", href: "https://cassini.talk/download/mac/" }],
     width: "third",
     source: "https://github.com/codemyriad/cassini-mac",
     tileCaption: "Download",
@@ -95,11 +95,10 @@ export const apps: App[] = [
     glyphSize: 18,
     // PLACEHOLDER: requirement, version, date, download and source are not known yet,
     // nor whether Windows ships at launch.
-    requirement: "[Windows version] or later",
+    requirement: "Coming soon",
     blurb: "Record your microphone and the others, and calls in Chrome, Edge and Brave with each person kept apart.",
-    button: { label: "Download for Windows", href: PLACEHOLDER, icon: "download" },
-    version: "[0.0.0]",
-    date: "[release date]",
+    button: { label: "Coming soon", href: PLACEHOLDER, icon: "download" },
+    version: "",
     width: "third",
     placeholder: true,
     source: PLACEHOLDER,
@@ -112,7 +111,7 @@ export const apps: App[] = [
     glyphSize: 22,
     requirement: "GNOME · 64-bit Intel and AMD",
     blurb: "Native packages need GTK 4.18 and libadwaita 1.8. On older distributions, use the Flatpak.",
-    button: { label: "Get it on Flathub", href: PLACEHOLDER, icon: "flathub", badgePending: true },
+    button: { label: "Download for Linux", href: "https://github.com/codemyriad/cassini-gnome/releases/latest", icon: "download" },
     links: [
       { label: ".deb", href: "https://github.com/codemyriad/cassini-gnome/releases/latest" },
       { label: ".rpm", href: "https://github.com/codemyriad/cassini-gnome/releases/latest" },
@@ -127,4 +126,4 @@ export const apps: App[] = [
   },
 ];
 
-export const metaLine = (app: App) => ["Version " + app.version, app.date, app.note].filter(Boolean).join(" · ");
+export const metaLine = (app: App) => [app.version && "Version " + app.version, app.date, app.note].filter(Boolean).join(" · ");

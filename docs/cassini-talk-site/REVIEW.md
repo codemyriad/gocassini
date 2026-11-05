@@ -1,5 +1,7 @@
 # cassini.talk site: review notes
 
+> Deployment preparation update (5 November 2026): the source now uses the existing R2 file host. Public CI only validates and saves the build; deployment and rollback are managed separately by administrators. The static-assets Worker config and public deploy job described below have been removed. The Mac card links to the existing download and reads release details from its feed; the privacy overview links to the independently maintained app policies. See [the site README](../../cassini-talk-site/README.md). The phase-by-phase account below describes the original PR.
+
 Branch `feat/cassini-talk-site`, local only (not pushed, no PR). The plan was built in one pass, with one commit per phase:
 
 | Commit | What |

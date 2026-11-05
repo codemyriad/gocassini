@@ -41,19 +41,19 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
           <div class="flex flex-col gap-3" style="align-self: start">
             {app.linksStyle === "inline" ? (
               <div class="flex flex-wrap items-center gap-4">
-                <a href={app.button.href} class="ink-btn" data-placeholder={app.button.href === PLACEHOLDER ? "true" : undefined}>
+                <a href={app.button.href === PLACEHOLDER ? undefined : app.button.href} class="ink-btn" aria-disabled={app.button.href === PLACEHOLDER ? "true" : undefined}>
                   {app.button.icon === "download" ? <DownloadIcon /> : <Glyph name={app.button.icon} size={16} />}{app.button.label}
                 </a>
-                {app.links?.map(l => <a href={l.href} class={link}>{l.label}</a>)}
+                {app.links?.map(l => <a href={l.href === PLACEHOLDER ? undefined : l.href} class={link} aria-disabled={l.href === PLACEHOLDER ? "true" : undefined}>{l.label}</a>)}
               </div>
             ) : (
               <>
-                <a href={app.button.href} class="ink-btn" data-placeholder={app.button.href === PLACEHOLDER ? "true" : undefined}>
+                <a href={app.button.href === PLACEHOLDER ? undefined : app.button.href} class="ink-btn" aria-disabled={app.button.href === PLACEHOLDER ? "true" : undefined}>
                   {app.button.icon === "download" ? <DownloadIcon /> : <Glyph name={app.button.icon} size={16} />}{app.button.label}
                 </a>
                 {app.links && (
                   <div class="flex flex-wrap items-center gap-x-3 gap-y-3">
-                    {app.links.map(l => <a href={l.href} class={link}>{l.label}</a>)}
+                    {app.links.map(l => <a href={l.href === PLACEHOLDER ? undefined : l.href} class={link} aria-disabled={l.href === PLACEHOLDER ? "true" : undefined}>{l.label}</a>)}
                   </div>
                 )}
               </>
@@ -70,7 +70,7 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
       <h2 class="text-3xl md:text-4xl font-bold text-base-content">Build it yourself</h2>
       <p class="text-base text-base-content/60 leading-relaxed">Every app is free software under the GPLv3. The source, build steps and release notes are on GitHub.</p>
       <div class="flex flex-wrap items-center gap-x-6 gap-y-3 pt-1">
-        {apps.map(app => <a href={app.source} class={link}>{app.name} ↗</a>)}
+        {apps.filter(app => app.source !== PLACEHOLDER).map(app => <a href={app.source} class={link}>{app.name} ↗</a>)}
       </div>
     </div>
     <div class="rounded-2xl border border-base-300 px-5 py-4 flex flex-wrap items-center gap-4 mt-4" data-reveal>
@@ -80,3 +80,30 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
     </div>
   </section>
 </BaseLayout>
+
+<script>
+  // The Mac release pipeline owns this feed; keep the card current independently
+  // of website deployments. Static text remains available if the request fails.
+  async function updateMacRelease() {
+    const meta = document.querySelector("#mac .pg-meta");
+    if (!meta) return;
+    try {
+      const response = await fetch("/download/mac/appcast.xml");
+      if (!response.ok) return;
+      const xml = new DOMParser().parseFromString(await response.text(), "application/xml");
+      const item = xml.querySelector("channel > item");
+      const version = item?.getElementsByTagNameNS("http://www.andymatuschak.org/xml-namespaces/sparkle", "shortVersionString")[0]?.textContent;
+      if (!version) return;
+      const date = new Date(item?.querySelector("pubDate")?.textContent ?? "");
+      const bytes = Number(item?.querySelector("enclosure")?.getAttribute("length"));
+      meta.textContent = [
+        `Version ${version}`,
+        Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
+        bytes > 0 ? `${(bytes / 1_000_000).toFixed(1)} MB` : "",
+        "Whistle speech model included",
+      ].filter(Boolean).join(" · ");
+    } catch { /* Keep the static release details when offline. */ }
+  }
+  updateMacRelease();
+  document.addEventListener("astro:page-load", updateMacRelease);
+</script>

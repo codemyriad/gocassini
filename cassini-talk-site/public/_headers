@@ -1,8 +1,0 @@
-# Response headers for the static assets this site serves.
-#
-# Cloudflare Workers Static Assets reads this file from the assets directory
-# (Astro copies public/ into dist/ verbatim). The site has no Worker code, so
-# every rule here takes effect.
-
-/_astro/*
-  Cache-Control: public, max-age=31536000, immutable
