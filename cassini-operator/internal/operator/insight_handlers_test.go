@@ -582,6 +582,29 @@ func TestRetryStartsAnotherAttemptOnAFailedRun(t *testing.T) {
 	}
 }
 
+// A run refused because its template changed carries the old template's hash,
+// and a retry re-runs exactly that, so it is refused rather than started to fail
+// the same way again.
+func TestRetryIsRefusedForARunWhoseTemplateChanged(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusFailed,
+			MeetingIDs: []string{"MEETING1"}, AttemptNumber: 1,
+			Error: insightReasonTemplateChanged, Reason: insightReasonTemplateChanged,
+		},
+	)
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/retry", "alice", "")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("code = %d, want 409 (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Generate it again") {
+		t.Errorf("the refusal does not say what to do: %s", w.Body.String())
+	}
+	if len(harness.launched) != 0 {
+		t.Errorf("a refused retry still started a run: %v", harness.launched)
+	}
+}
+
 func TestInsightRoutesRefuseTheWrongMethod(t *testing.T) {
 	harness := newInsightHandlerHarness(t,
 		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusFailed, MeetingIDs: []string{"MEETING1"}},

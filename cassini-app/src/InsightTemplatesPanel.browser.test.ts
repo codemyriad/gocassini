@@ -263,6 +263,31 @@ describe("insight templates panel in the browser", () => {
     expect(puts[0]).toEqual({ id: "weekly", body: { name: "Weekly", description: "The weekly one", instruction: "Write the weekly summary." } });
   });
 
+  it("says so above the list when a repaired copy is saved but the broken file cannot be removed", async () => {
+    rows = [
+      ...BUILT_INS,
+      { ...custom("Team notes", "Team notes", "Notes", "Write the notes."), sha256: "", error: "the file name is not a usable template id" },
+    ];
+    deleteRefusal = "the disk is read-only";
+    mountPanel();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => puts.length).toBe(1);
+    expect(puts[0].id).not.toBe("Team notes");
+    await expect
+      .element(page.getByText("Saved as a new template, but Team notes.md could not be removed: the disk is read-only", { exact: false }))
+      .toBeVisible();
+
+    // Deleting it by hand from its row settles the banner.
+    deleteRefusal = "";
+    // The repaired copy keeps the name; the broken file is the card that says it cannot run.
+    const brokenCard = [...document.querySelectorAll("article")].find((card) => card.textContent?.includes("cannot run")) as HTMLElement;
+    (brokenCard.querySelector(".tpl-row-actions button:last-child") as HTMLButtonElement).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+    await expect.poll(() => deleted).toEqual(["Team notes"]);
+    await expect.element(page.getByText("could not be removed", { exact: false })).not.toBeInTheDocument();
+  });
+
   it("asks in a dialog before deleting, focused on Cancel, and deletes on Delete", async () => {
     rows = [...BUILT_INS, RESUMEN()];
     mountPanel();

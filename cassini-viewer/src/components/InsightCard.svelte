@@ -4,6 +4,7 @@
     formatInsightCreated,
     formatInsightStatus,
     insightHeadline,
+    insightRetryable,
     type InsightRecord,
   } from "../viewer/insights";
 
@@ -79,7 +80,7 @@
     <!-- A failed run is recoverable from the list it is seen in, not only from
          the panel that started it (D-749). Only for a failed run, and only
          where the provider can retry. -->
-    {#if failed && canRetry}
+    {#if failed && canRetry && insightRetryable(insight)}
       <button
         type="button"
         class="insight-retry"

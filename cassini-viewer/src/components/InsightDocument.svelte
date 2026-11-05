@@ -15,6 +15,7 @@
     formatInsightCreated,
     formatInsightStatus,
     insightHeadline,
+    insightRetryable,
     sameHeadlineText,
     stripInsightFrontMatter,
     stripLeadingHeading,
@@ -460,7 +461,7 @@
       <div class="ins-note ins-note-error" role="status">
         <p class="ins-failure-title">{failure.title}</p>
         <p>{failure.line}</p>
-        {#if canRetry}
+        {#if canRetry && insightRetryable(insight)}
           <!-- Retry from where the failure is seen, not only from the panel
                that started the run — which is gone by the time most people
                notice (D-749). A retry re-runs the request: the endpoint this

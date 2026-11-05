@@ -133,10 +133,12 @@ SELECT trigger_kind, summary_started_at, summary_finished_at, summary_reason FRO
 	}
 	started, finished := attemptSummaryTimes(kind, o.SummaryStartedAt, o.SummaryFinishedAt, replayStarted, replayFinished)
 	// A speaker-edit replay rewrote summary.md after the bundle's step ran, so
-	// its template fallback (SetAttemptSummaryReplayReason, written before
-	// this) describes the summary the meeting now has; the bundle's
-	// processing block still describes the build's own.
-	if replayReason == summaryReasonTemplateFallback && o.SummaryStatus == "completed" && o.SummaryReason == "" {
+	// its reason (SetAttemptSummaryReplayReason, written before this)
+	// describes the summary the meeting now has; the bundle's processing
+	// block still describes the build's own, or, for a refine, an earlier
+	// attempt's. A rewrite with the configured template therefore clears a
+	// template fallback the bundle carries over.
+	if o.SummaryStatus == "completed" && (replayFinished != "" || replayReason == summaryReasonTemplateFallback) {
 		o.SummaryReason = replayReason
 	}
 	if _, err := tx.ExecContext(ctx, `

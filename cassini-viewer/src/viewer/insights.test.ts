@@ -6,6 +6,7 @@ import {
   ALL_BROWSE_TYPES,
   buildBrowseFeed,
   describeInsightFailure,
+  insightRetryable,
   INSIGHT_FAILURE_COPY,
   insightReasonOf,
   filterInsights,
@@ -541,5 +542,19 @@ describe("stripLeadingHeading", () => {
       "Drawn from 3 meetings.\n\n# What did we decide?\n",
     );
     expect(stripLeadingHeading("", "What did we decide?")).toBe("");
+  });
+});
+
+describe("insightRetryable", () => {
+  it("offers Retry on a failed run", () => {
+    expect(insightRetryable({ status: "failed", reason: "model-failed", error: "" })).toBe(true);
+  });
+
+  it("does not offer Retry when the template changed: the retry would be refused again", () => {
+    expect(insightRetryable({ status: "failed", reason: "template-changed", error: "" })).toBe(false);
+  });
+
+  it("does not offer Retry on a run that has not failed", () => {
+    expect(insightRetryable({ status: "succeeded", reason: "", error: "" })).toBe(false);
   });
 });

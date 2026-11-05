@@ -354,7 +354,9 @@ Valid only for a run in `failed`. The id is stable across attempts; each retry
 increments `attemptNumber`. A retry replays the request as it was made — the
 same workflow, meetings, question and the endpoint the caller picked — and
 falls back to the deployment's configured endpoint only when the request named
-none, or named one that has since been removed.
+none, or named one that has since been removed. A run that failed with
+`template-changed` is a `409`: the retry would run the same template version
+and be refused again, so it has to be asked anew.
 
 ### The run object
 
@@ -410,7 +412,7 @@ prefixed with one of the first four tokens.
 |---|---|
 | `400` | A request that cannot be run: no meetings, too many, an unknown workflow, a malformed id. Refused before any Nextcloud call |
 | `404` | A meeting, or a run, the caller may not read — indistinguishable from one that does not exist |
-| `409` | A retry against a run that is not `failed` — `queued` or `running` (it is already moving), or `succeeded` (it already has an answer) |
+| `409` | A retry against a run that is not `failed` — `queued` or `running` (it is already moving), or `succeeded` (it already has an answer) — or one that failed with `template-changed` |
 | `502` | A scan that failed, or a request with no caller identity |
 
 A failure is never an empty `200`.
@@ -457,7 +459,8 @@ DELETE /operator/settings/workflows/<id>         (ADMIN)
   file with the previous version plus one (the listed version, which a broken
   file still carries when its `version` line parses),
   never lower than the version a deleted template of that id reached (kept in
-  `.versions.json` in the templates directory). The file is checked alone in a
+  `.versions.json` in the templates directory; one that does not decode is
+  logged and read as empty). The file is checked alone in a
   staging directory first; one the recorder will not run never reaches the
   templates directory, and the save is a `400` with the recorder's reason.
   Otherwise it is renamed into place and the answer is the saved entry.
@@ -470,7 +473,9 @@ DELETE /operator/settings/workflows/<id>         (ADMIN)
   deleting it is allowed. The `409` body carries `step` (`summary` or
   `insight`) beside `error`. A file whose stem is not a usable id
   (`Team notes.md`) is listed broken under that stem and can be deleted by it,
-  but never saved under it
+  but never saved under it. A delete goes ahead when the registry cannot be
+  listed (the id is then treated as no built-in's, and its version is not
+  recorded), so a directory whose templates break the listing can be put right
 - `PUT /operator/settings/llm` refuses (`400`) a summary or insight `template`
   changed to one that does not exist or cannot run. It is serialised with
   template saves and deletes, so a template cannot be deleted while a step is

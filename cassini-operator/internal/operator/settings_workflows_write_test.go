@@ -681,3 +681,30 @@ func TestPutLLMSettingsRefusesAStepTemplateThatCannotRun(t *testing.T) {
 		}
 	}
 }
+
+// A staging directory left by a save that was killed mid-check is removed by
+// the next save, rather than staying on the volume for good. A recent one may
+// be another process's check in progress, so it is left alone.
+func TestPutWorkflowSweepsStagingLeftByAKilledSave(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	leftover := filepath.Join(dir, ".check-123456")
+	recent := filepath.Join(dir, ".check-654321")
+	for _, d := range []string{leftover, recent} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * staleStagingAge)
+	if err := os.Chtimes(leftover, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("save = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+		t.Errorf("the hour-old staging directory is still there: %v", err)
+	}
+	if _, err := os.Stat(recent); err != nil {
+		t.Errorf("a recent staging directory was removed: %v", err)
+	}
+}

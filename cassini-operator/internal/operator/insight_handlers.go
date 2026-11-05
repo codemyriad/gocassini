@@ -603,6 +603,13 @@ func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, i
 		writeJSONError(w, http.StatusConflict, message)
 		return
 	}
+	if existing.Reason == insightReasonTemplateChanged {
+		// A retry re-runs the stored request, template hash included, so it
+		// would be refused for the same reason every time. Running today's
+		// template instead would put it under the provenance of the old one.
+		writeJSONError(w, http.StatusConflict, "The template changed before this insight ran. Generate it again to use the template as it is now.")
+		return
+	}
 	run, err := s.store.BeginAttempt(r.Context(), id)
 	switch {
 	case err == nil:

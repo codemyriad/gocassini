@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -196,6 +197,20 @@ func (rt *Runtime) checkTemplateFile(r *http.Request, dir, id string, data []byt
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return workflowView{}, fmt.Errorf("create the templates directory: %w", err)
 	}
+	// A staging directory an hour old was left by a save that never reached
+	// its deferred cleanup (the operator was killed mid-check) and would
+	// otherwise stay on the volume for good. A younger one may be another
+	// process's check in progress, which templatesMu does not cover.
+	if stale, err := filepath.Glob(filepath.Join(dir, ".check-*")); err == nil {
+		for _, leftover := range stale {
+			if info, err := os.Stat(leftover); err != nil || time.Since(info.ModTime()) < staleStagingAge {
+				continue
+			}
+			if err := os.RemoveAll(leftover); err != nil {
+				rt.logger.Printf("settings workflows: remove %s: %v", leftover, err)
+			}
+		}
+	}
 	staging, err := os.MkdirTemp(dir, ".check-")
 	if err != nil {
 		return workflowView{}, fmt.Errorf("create a staging directory: %w", err)
@@ -242,6 +257,10 @@ func listedVersion(entry workflowView) int {
 // file that is present carries its own version in the listing — and a file
 // removed by hand from a shell bypasses it.
 const templateVersionLedger = ".versions.json"
+
+// staleStagingAge is how old a .check-* directory must be before a save
+// removes it as a leftover. A check is one recorder listing, far shorter.
+const staleStagingAge = time.Hour
 
 func readTemplateVersionLedger(dir string) (map[string]int, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, templateVersionLedger))
