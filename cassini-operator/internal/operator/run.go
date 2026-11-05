@@ -82,8 +82,11 @@ type Config struct {
 }
 
 type Runtime struct {
-	supportJournal    *supportJournal
-	supportGate       supportGate
+	supportJournal *supportJournal
+	supportGate    supportGate
+	// requestLog is the operator logger without the support journal tee.
+	// Per-request lines carry no diagnostic signal and would dominate it.
+	requestLog        *log.Logger
 	remoteRetentionMu sync.RWMutex
 	remoteRetention   *annotationService
 	retention         *retentionConfig
@@ -813,6 +816,7 @@ func normalizeBasePath(value string) (string, error) {
 func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
 	cleanupSupportTemps(os.TempDir(), time.Now())
 	journal := newSupportJournal(cfg.WorkRoot)
+	requestLog := logger
 	logger = log.New(io.MultiWriter(logger.Writer(), journal), logger.Prefix(), logger.Flags())
 	queueCapacity := cfg.MaxBuildWorkers * 16
 	if queueCapacity < 16 {
@@ -821,6 +825,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	ctx, cancel := context.WithCancel(ctx)
 	rt := &Runtime{
 		supportJournal: journal,
+		requestLog:     requestLog,
 		retention:      newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
 		ctx:            ctx,
 		cancel:         cancel,
@@ -1140,7 +1145,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	outer.HandleFunc("/api/v1/room/", rt.talkRoomHandler)
 	outer.Handle("/", exappCfg.wrap(root, logger))
 
-	return requestLogger(logger, outer)
+	// Keep request lines out of the support journal. A caller-supplied logger
+	// that is not the runtime's own (tests) is used as given.
+	requestLog := logger
+	if rt.requestLog != nil && logger == rt.logger {
+		requestLog = rt.requestLog
+	}
+	return requestLogger(requestLog, outer)
 }
 
 // mountBasePathOnto registers the operator api mux under basePath on the given

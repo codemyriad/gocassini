@@ -63,9 +63,13 @@ export is in progress; at most two exports run at once.
 ## Diagnostic storage and retention
 
 Starting with this feature, Cassini keeps a private structured diagnostic journal
-in `<work-root>/diagnostics/`. The active and previous generations together use at
-most 2 MiB, appear under **Logs** in storage accounting and follow the Logs age
-policy. Rotation can discard older events sooner. Diagnostic write failures are
+in `<work-root>/diagnostics/`, as two streams. `events.jsonl` holds job state,
+delivery and share events. `operator.jsonl` holds operator log text, without the
+per-request access lines, which still go to the container log. Each stream keeps an
+active and a previous generation of at most 1 MiB each, so busy operator output can
+never rotate share evidence away. Together they use at most 4 MiB, appear under
+**Logs** in storage accounting and follow the Logs age policy. Rotation can
+discard older events in a stream sooner. Diagnostic write failures are
 reported in the bundle and do not fail recording jobs. The journal retains
 original operator log text and share error/recipient details locally so users can
 choose original or scrubbed exports later. Original detail

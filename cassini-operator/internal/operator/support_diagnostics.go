@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,7 +22,40 @@ import (
 	"unicode/utf8"
 )
 
-const supportJournalLimit = 1 << 20 // two generations, at most 2 MiB on disk
+const supportJournalLimit = 1 << 20 // per generation: two per stream, at most 4 MiB on disk
+
+// Structured job, delivery and share events are the evidence a support bundle
+// exists for, and they are rare. Free-text operator output is frequent. Each
+// gets its own pair of generations so log volume can never rotate the
+// structured evidence away.
+const (
+	supportStreamEvents   = "events"
+	supportStreamOperator = "operator"
+)
+
+var supportStreams = []string{supportStreamEvents, supportStreamOperator}
+
+func supportStreamFor(event string) string {
+	if event == "operator_log" || event == "operator_failure" {
+		return supportStreamOperator
+	}
+	return supportStreamEvents
+}
+
+func supportJournalFiles(stream string) (active, previous string) {
+	return "diagnostics/" + stream + ".jsonl", "diagnostics/" + stream + ".previous.jsonl"
+}
+
+// supportJournalPaths lists every journal file, oldest generation first within
+// each stream, relative to the work root.
+func supportJournalPaths() []string {
+	paths := make([]string, 0, 2*len(supportStreams))
+	for _, stream := range supportStreams {
+		active, previous := supportJournalFiles(stream)
+		paths = append(paths, previous, active)
+	}
+	return paths
+}
 
 type supportEvent struct {
 	At              string `json:"at"`
@@ -115,7 +149,7 @@ func (j *supportJournal) append(e supportEvent) error {
 	if int64(len(raw)) > j.limit {
 		return errors.New("diagnostic event exceeds journal limit")
 	}
-	const name = "diagnostics/operator.jsonl"
+	name, previousName := supportJournalFiles(supportStreamFor(e.Event))
 	f, err := supportOpen(root, name, os.O_CREATE|os.O_APPEND|os.O_WRONLY)
 	if err != nil {
 		return err
@@ -133,7 +167,7 @@ func (j *supportJournal) append(e supportEvent) error {
 			f.Close()
 			return openErr
 		}
-		previous, openErr := supportOpen(root, "diagnostics/operator.previous.jsonl", os.O_CREATE|os.O_TRUNC|os.O_WRONLY)
+		previous, openErr := supportOpen(root, previousName, os.O_CREATE|os.O_TRUNC|os.O_WRONLY)
 		if openErr != nil {
 			old.Close()
 			f.Close()
@@ -285,7 +319,7 @@ func (j *supportJournal) readSnapshot(cutoff time.Time, failed bool) ([]supportE
 	}
 	defer root.Close()
 	var events []supportEvent
-	for _, name := range []string{"diagnostics/operator.previous.jsonl", "diagnostics/operator.jsonl"} {
+	for _, name := range supportJournalPaths() {
 		f, err := supportOpen(root, name, os.O_RDONLY)
 		if os.IsNotExist(err) {
 			continue
@@ -312,6 +346,12 @@ func (j *supportJournal) readSnapshot(cutoff time.Time, failed bool) ([]supportE
 		}
 		f.Close()
 	}
+	// Streams are stored separately; present one timeline.
+	sort.SliceStable(events, func(a, b int) bool {
+		ta, _ := time.Parse(time.RFC3339Nano, events[a].At)
+		tb, _ := time.Parse(time.RFC3339Nano, events[b].At)
+		return ta.Before(tb)
+	})
 	return events, failed
 }
 
@@ -334,7 +374,7 @@ func (j *supportJournal) expire(policy retentionPolicy, now time.Time) error {
 	defer root.Close()
 	// Delete only known files. Filtering also applies to the active generation,
 	// so a busy installation cannot retain old events indefinitely.
-	for _, name := range []string{"diagnostics/operator.previous.jsonl", "diagnostics/operator.jsonl"} {
+	for _, name := range supportJournalPaths() {
 		if err := root.Remove(name); err != nil && !os.IsNotExist(err) {
 			return err
 		}
