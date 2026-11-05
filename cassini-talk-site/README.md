@@ -39,3 +39,8 @@ appcast or mirror metadata during the build, so it is present without JavaScript
 Browser refreshes use the same parser to keep open deployments current. A build
 fails if published release metadata is unavailable instead of shipping a stale
 version. Linux offers native packages only; Flatpak and Flathub are not offered.
+
+Linux stable installer URLs use the `cassini-talk-<distribution>` name. The
+mirror retains original versioned filenames for provenance; starting with Linux
+0.4.0, upstream packages are also named `cassini-talk`. Linux 0.4.0 is published
+only after its release assets and `SHA256SUMS` are available and verified.
