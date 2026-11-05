@@ -73,3 +73,60 @@ it("distinguishes pending, answered and failed searches and ignores superseded a
     window.__CASSINI_VIEWER_BASE__ = previousBase;
   }
 });
+
+function searchHarness(viewerBase: string | undefined) {
+  history.replaceState(null, "", location.pathname + location.search);
+  const previousBase = window.__CASSINI_VIEWER_BASE__;
+  window.__CASSINI_VIEWER_BASE__ = viewerBase;
+  const requests: { query: string; resolve: (value: MeetingSearchOutcome) => void }[] = [];
+  const unused = async (): Promise<never> => { throw new Error("Unexpected artifact load"); };
+  const provider: DataProvider = {
+    loadCatalog: async () => ({ version: "cassini.viewer.catalog.v1", meetings: [
+      { id: "m1", title: "Weekly meeting", dateLabel: "2026-09-28" },
+      { id: "m2", title: "Other meeting", dateLabel: "2026-09-29" },
+    ] }),
+    loadMeetingForEntry: unused, loadBundledArtifact: unused, switchTranscript: unused,
+    loadMeetingSummary: async () => null,
+    searchMeetings: (query) => new Promise(resolve => requests.push({ query, resolve })),
+  };
+  const host = document.createElement("div"); document.body.append(host);
+  const app = mount(App, { target: host, props: { dataProvider: provider } });
+  const list = () => host.querySelector('[aria-label="Meeting list"]')!.textContent!;
+  const cleanup = async () => {
+    await unmount(app); host.remove();
+    window.__CASSINI_VIEWER_BASE__ = previousBase;
+  };
+  return { requests, list, cleanup };
+}
+
+it("keeps name matches on screen while the transcript half of a search is out", async () => {
+  const { requests, list, cleanup } = searchHarness(location.origin + "/");
+  try {
+    await expect.poll(list).toContain("2 meetings");
+    await page.getByRole("searchbox").fill("weekly");
+    await expect.poll(list).toContain("Finding matching meetings…");
+    expect(list()).toContain("Weekly meeting");
+    expect(list()).not.toContain("Searching meetings…");
+    await expect.poll(() => requests.length).toBe(1);
+    requests[0].resolve({ status: "failed", message: "Search unavailable" });
+    await expect.poll(list).toContain("1 of 2 meetings");
+    expect(list()).toContain("Weekly meeting");
+  } finally {
+    await cleanup();
+  }
+});
+
+it("does not promise a transcript search where none is offered", async () => {
+  const { requests, list, cleanup } = searchHarness(undefined);
+  try {
+    await expect.poll(list).toContain("2 meetings");
+    await page.getByRole("searchbox").fill("cassini");
+    await expect.poll(list).toContain("Nothing matches");
+    expect(list()).not.toContain("Searching meetings…");
+    expect(list()).not.toContain("Finding matching meetings…");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(requests.length).toBe(0);
+  } finally {
+    await cleanup();
+  }
+});

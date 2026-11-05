@@ -236,11 +236,22 @@
     filter.trim() === "" ? meetings : meetings.filter((meeting) => localMatchIds.has(meeting.id));
   // Name/date matches keep the catalog's order and come first; meetings that
   // matched only on what was said follow, in the server's rank order.
-  $: visibleMeetings = filter.trim() === "" || searchState === "searching"
-    ? nameMatches
-    : [...nameMatches, ...transcriptOnlyMeetings];
+  // Only meetings still inside the narrowing: when a room or tag changes, the
+  // previous answer stays on screen until the re-run lands, and a hit outside
+  // the new narrowing must not ride along with it (D-771).
+  $: narrowedIds = new Set(meetings.map((meeting) => meeting.id));
+  $: visibleMeetings =
+    filter.trim() === ""
+      ? nameMatches
+      : [...nameMatches, ...transcriptOnlyMeetings.filter((meeting) => narrowedIds.has(meeting.id))];
   // The shell owns the request; this only says what was typed.
-  $: dispatch("query", filter);
+  //
+  // Said after this pass, not during it. The shell answers synchronously
+  // (resetting the transcript results and moving to "searching"), and in
+  // legacy mode the reactive statements that already ran in this pass do not
+  // run again for prop changes made from inside it: visibleMeetings kept the
+  // previous query's transcript-only rows under the new query.
+  $: queueMicrotask(((query) => () => dispatch("query", query))(filter));
   $: isSearching = searchState === "searching";
   // A failure the reader has to be able to tell from "nothing matched".
   // True only when the last search saw everything the caller can read.
@@ -529,7 +540,10 @@
       <div class="list-empty">
         <strong>Loading insights…</strong>
       </div>
-    {:else if isSearching && types.meetings}
+      <!-- Only while there is nothing else to show. Name, date and tag matches
+           are already known, so they stay on screen while the transcript half
+           of the question is out; the result line says it is still going. -->
+    {:else if isSearching && types.meetings && feedItems.length === 0}
       <div class="list-empty" role="status">
         <strong>Searching meetings…</strong>
         <span>Looking for “{trimmedFilter}” in what was said.</span>
@@ -540,6 +554,13 @@
         <span>
           {#if tagFilterCount > 0 && insightsOnly}
             Insights carry no tags, so a tag filter hides them.
+          {:else if trimmedFilter && searchProblem && types.meetings}
+            <!-- NOT "nothing matches", whatever else is narrowing the list: the
+                 transcript half of the question was never answered, and saying
+                 nothing matched would be a claim the search never got to make. -->
+            Names and dates match no {matchNoun}{tagFilterCount > 0 || selectedRoomName !== null
+              ? " here"
+              : ""}, and what was said could not be searched.
           {:else if tagFilterCount > 0}
             No meeting here has {tagFilterCount === 1 ? "that tag" : "those tags"}{trimmedFilter
               ? " and matches that search"
@@ -548,12 +569,6 @@
             No {matchNoun} in {selectedRoomName} matches that search.
           {:else if selectedRoomName !== null}
             {selectedRoomName} has no {matchNounPlural}.
-          {:else if trimmedFilter && searchProblem}
-            <!-- NOT "nothing matches": the transcript half of the question was
-                 never answered, and saying nothing matched would be a claim the
-                 search never got to make. -->
-            Names and dates match no {matchNoun}, and what was said could not be
-            searched.
           {:else if trimmedFilter && !searchCoveredEverything}
             No {matchNoun} matches that search — but only {searchCoverage?.searched}
             of {searchCoverage?.visible} could be searched for what was said in them.

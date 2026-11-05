@@ -673,13 +673,17 @@
     isMeetingSearchAvailable() &&
     searchRouteServed;
 
-  function resetSearch() {
+  // Stops whatever search is pending or in flight from ever landing. Bumping
+  // the run matters on its own: a provider may still resolve a request after
+  // its signal has been aborted, and the debounce window has no request yet.
+  function cancelSearch() {
     clearTimeout(searchDebounce);
     searchAbort?.abort();
     searchAbort = undefined;
-    // Invalidate immediately, including the debounce window. A provider may
-    // still resolve a request after its signal has been aborted.
     searchRun += 1;
+  }
+
+  function clearSearchResults() {
     searchMessage = "";
     transcriptHits = new Map();
     transcriptOnlyMeetings = [];
@@ -688,8 +692,13 @@
 
   function handleSearchQuery(query: string) {
     searchQuery = query;
-    resetSearch();
-    if (query.trim() === "" || !dataProvider.searchMeetings) {
+    cancelSearch();
+    // A new question: the moments on screen answered the previous one.
+    clearSearchResults();
+    // Not "searching" where there is nothing to ask (a standalone export, or a
+    // route that answered 404): the list would promise a search of what was
+    // said that is never going to run.
+    if (query.trim() === "" || !searchOffered) {
       searchState = "idle";
       return;
     }
@@ -702,9 +711,12 @@
     if (!search) {
       return;
     }
-    // Room/tag changes also start a new search, without going through typing.
-    resetSearch();
+    // Room/tag changes re-run the same query without going through typing. The
+    // moments already on screen stay: they still answer this query, and the
+    // list drops the ones outside the new narrowing on its own.
+    cancelSearch();
     searchState = "searching";
+    searchMessage = "";
     const run = searchRun;
     const controller = new AbortController();
     searchAbort = controller;
@@ -739,12 +751,13 @@
       // having offered it. The box still narrows names and dates.
       searchRouteServed = false;
       searchState = "idle";
-      searchMessage = "";
-      transcriptHits = new Map();
-      transcriptOnlyMeetings = [];
+      clearSearchResults();
       return;
     }
     if (outcome.status !== "ok") {
+      // Keep whatever moments are on screen: they were true for this query a
+      // moment ago, and blanking them would look like "nothing matched" —
+      // which is the one thing this state must not be confused with.
       searchState = outcome.status;
       searchMessage = outcome.message;
       return;
