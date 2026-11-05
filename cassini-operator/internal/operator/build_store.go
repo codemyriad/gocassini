@@ -73,12 +73,13 @@ WHERE id = ?
 	if claimed == 0 {
 		return false, nil
 	}
-	// The summary times describe this build's summary (D-899), so a build
-	// that starts again starts without an earlier pass's.
+	// The summary times and reason describe this build's summary (D-899,
+	// D-819), so a build that starts again starts without an earlier pass's:
+	// a replay's rewrite is judged by what this pass records.
 	attemptResult, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET stage = ?, state = ?, updated_at = ?, build_started_at = ?, build_retry_not_before = NULL, error = NULL,
-    summary_started_at = '', summary_finished_at = ''
+    summary_started_at = '', summary_finished_at = '', summary_reason = ''
 WHERE job_id = ? AND attempt_number = ? AND stage = ? AND state = ?
   AND build_deferral_count = ?`,
 		"build", "running", startedAt, startedAt,

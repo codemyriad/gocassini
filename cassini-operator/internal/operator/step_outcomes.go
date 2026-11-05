@@ -138,11 +138,7 @@ SELECT trigger_kind, summary_started_at, summary_finished_at, summary_reason FRO
 	// block still describes the build's own, or, for a refine, an earlier
 	// attempt's. A rewrite with the configured template therefore clears a
 	// template fallback the bundle carries over.
-	switch {
-	case o.SummaryStatus != "completed":
-	case replayFinished != "":
-		o.SummaryReason = replayReason
-	case replayReason == summaryReasonTemplateFallback:
+	if o.SummaryStatus == "completed" && (replayFinished != "" || replayReason == summaryReasonTemplateFallback) {
 		o.SummaryReason = replayReason
 	}
 	if _, err := tx.ExecContext(ctx, `

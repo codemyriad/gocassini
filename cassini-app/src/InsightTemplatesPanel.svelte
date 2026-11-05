@@ -384,6 +384,9 @@
       if (editor?.id === workflow.id) {
         editor = null;
       }
+      // Deleting by hand the file a repair could not remove settles the
+      // banner that said so.
+      replaceError = "";
       await load();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

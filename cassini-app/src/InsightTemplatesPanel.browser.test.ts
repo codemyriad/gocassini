@@ -277,6 +277,15 @@ describe("insight templates panel in the browser", () => {
     await expect
       .element(page.getByText("Saved as a new template, but Team notes.md could not be removed: the disk is read-only", { exact: false }))
       .toBeVisible();
+
+    // Deleting it by hand from its row settles the banner.
+    deleteRefusal = "";
+    // The repaired copy keeps the name; the broken file is the card that says it cannot run.
+    const brokenCard = [...document.querySelectorAll("article")].find((card) => card.textContent?.includes("cannot run")) as HTMLElement;
+    (brokenCard.querySelector(".tpl-row-actions button:last-child") as HTMLButtonElement).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+    await expect.poll(() => deleted).toEqual(["Team notes"]);
+    await expect.element(page.getByText("could not be removed", { exact: false })).not.toBeInTheDocument();
   });
 
   it("asks in a dialog before deleting, focused on Cancel, and deletes on Delete", async () => {
