@@ -523,6 +523,13 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 	documentPath = filepath.Join(staging, "insight.md")
 	recordPath = filepath.Join(staging, "record.json")
 	args := []string{"insight", "run", "--context", bundlePath, "--workflow", run.WorkflowID, "--record", recordPath}
+	// The row recorded this hash at create time. A custom template can be
+	// edited or deleted while the run waits, so the child is held to these
+	// bytes and refuses (exit 6, template-changed) rather than run others
+	// under this provenance.
+	if sha := strings.TrimSpace(run.WorkflowSHA256); sha != "" {
+		args = append(args, "--workflow-sha256", sha)
+	}
 	if question := strings.TrimSpace(run.Question); question != "" {
 		args = append(args, "--question", question)
 	}

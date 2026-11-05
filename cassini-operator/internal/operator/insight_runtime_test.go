@@ -647,6 +647,7 @@ func TestInsightExitReasonGivesEachCodeItsOwnToken(t *testing.T) {
 		3:  insightReasonNoProvider,
 		4:  insightReasonProviderRefused,
 		5:  insightReasonModelFailed,
+		6:  insightReasonTemplateChanged,
 		-1: insightReasonUnknown,
 		9:  insightReasonUnknown,
 	}
@@ -766,6 +767,31 @@ func TestPerformDeliversTheDocumentIntoTheRequestersOwnHome(t *testing.T) {
 	}
 	if strings.Contains(string(argv), "--out") {
 		t.Error("the document must come back on stdout so it can be capped as it is written")
+	}
+}
+
+// The child is held to the hash the row recorded at create time, so a custom
+// template edited or deleted while the run waited is refused, not run under
+// the old provenance (D-819).
+func TestPerformHoldsTheChildToTheRecordedTemplateHash(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, argvPath := fakeInsightCassini(t, "---\n---\n\n# x\n", 0)
+	service, _ := insightTestService(t, dav.server.URL, bin, nil)
+	run := insightTestRun()
+	run.WorkflowSHA256 = "abc123"
+	service.perform(context.Background(), run)
+	argv, err := os.ReadFile(argvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(argv), "--workflow-sha256\nabc123\n") {
+		t.Errorf("the child was not held to the recorded hash; argv:\n%s", argv)
+	}
+
+	bin, _ = fakeInsightCassini(t, "", 6)
+	service, _ = insightTestService(t, dav.server.URL, bin, nil)
+	if outcome := service.perform(context.Background(), run); outcome.Status != insightStatusFailed || outcome.Error != insightReasonTemplateChanged {
+		t.Errorf("exit 6 = %+v, want failed with %q", outcome, insightReasonTemplateChanged)
 	}
 }
 

@@ -388,6 +388,7 @@ never on the run.
 | `no-provider` | no AI endpoint is configured (exit 3) |
 | `provider-refused` | the endpoint refused the call: key, quota, model name (exit 4) |
 | `model-failed` | the model did not answer (exit 5) |
+| `template-changed` | the template was edited or deleted after the run was requested, so the version its record names is no longer there to run (exit 6) |
 | `write-failed` | the answer was produced but could not be written (exit 1) |
 | `deliver-failed` | the document could not be PUT into the caller's Nextcloud files |
 | `timeout` | the attempt hit the run timeout |
@@ -455,16 +456,25 @@ DELETE /operator/settings/workflows/<id>         (ADMIN)
   empty), writes the
   file with the previous version plus one (the listed version, which a broken
   file still carries when its `version` line parses),
-  and asks the recorder to list it
-  again. A file the recorder will not run is put back as it was and the save is
-  a `400` with the recorder's reason; otherwise the answer is the saved entry.
+  never lower than the version a deleted template of that id reached (kept in
+  `.versions.json` in the templates directory). The file is checked alone in a
+  staging directory first; one the recorder will not run never reaches the
+  templates directory, and the save is a `400` with the recorder's reason.
+  Otherwise it is renamed into place and the answer is the saved entry.
   A built-in id is a `400`: start a custom template from it instead. With
   `If-None-Match: *` the `PUT` only creates: a template already there under
   that id is a `412`, and the panel sends it for every new template
 - `DELETE` removes a custom template. A built-in is a `400`, a missing one a
   `404`, and one that is the configured summary or insight template a `409` —
   unless the file shares a built-in's id, which it never runs in place of, so
-  deleting it is allowed
+  deleting it is allowed. The `409` body carries `step` (`summary` or
+  `insight`) beside `error`. A file whose stem is not a usable id
+  (`Team notes.md`) is listed broken under that stem and can be deleted by it,
+  but never saved under it
+- `PUT /operator/settings/llm` refuses (`400`) a summary or insight `template`
+  changed to one that does not exist or cannot run. It is serialised with
+  template saves and deletes, so a template cannot be deleted while a step is
+  being pointed at it
 
 ## What the API does not try to be
 

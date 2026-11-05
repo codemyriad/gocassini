@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import insightTemplatesPanelSource from "./InsightTemplatesPanel.svelte?raw";
-import { promptProblem, shortHash, templateIdFromName } from "./InsightTemplatesPanel.svelte";
-import { OperatorClient, runnableWorkflows } from "./operator/client";
+import { promptProblem, shortHash, templateIdFromName, usableTemplateId } from "./InsightTemplatesPanel.svelte";
+import { OperatorClient, OperatorHttpError, runnableWorkflows } from "./operator/client";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -267,6 +267,26 @@ describe("insight template writes", () => {
     await client.saveInsightTemplate("resumen", draft);
     expect(new Headers(calls[0]?.headers).get("If-None-Match")).toBe("*");
     expect(new Headers(calls[1]?.headers).get("If-None-Match")).toBeNull();
+  });
+
+  it("keeps a refusal's other fields, such as the step a 409 names", async () => {
+    stubWorkflowsResponse({ error: '"weekly-summary" is the template for insights', step: "insight" }, 409);
+    const refusal = await new OperatorClient("https://operator.test").deleteInsightTemplate("weekly-summary").catch((e) => e);
+    expect(refusal).toBeInstanceOf(OperatorHttpError);
+    expect(refusal.status).toBe(409);
+    expect(refusal.details.step).toBe("insight");
+  });
+
+  it("tells a usable template id from a file stem that can only be removed", () => {
+    expect(usableTemplateId("weekly-summary")).toBe(true);
+    expect(usableTemplateId("Team notes")).toBe(false);
+    expect(usableTemplateId("résumé")).toBe(false);
+    expect(usableTemplateId(".hidden")).toBe(false);
+    // A broken file it cannot save under its own id is saved as a new one,
+    // and the old file removed; the step a 409 names is read from its field.
+    expect(insightTemplatesPanelSource).toContain("replaces: workflow.id");
+    expect(insightTemplatesPanelSource).toContain("client.deleteInsightTemplate(current.replaces)");
+    expect(insightTemplatesPanelSource).toContain("error.details.step");
   });
 
   it("raises a refused save with the operator's reason", async () => {

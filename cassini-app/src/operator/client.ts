@@ -64,11 +64,15 @@ interface RerunJobResponse {
 
 export class OperatorHttpError extends Error {
   status: number;
+  // The error body's other fields, for a refusal that names more than its
+  // sentence (a 409 on a template delete names the step that uses it).
+  details: Record<string, unknown>;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, details: Record<string, unknown> = {}) {
     super(message);
     this.name = "OperatorHttpError";
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -363,15 +367,19 @@ export class OperatorClient {
     });
     if (!response.ok) {
       let message = `${response.status} ${response.statusText}`;
+      let details: Record<string, unknown> = {};
       try {
-        const payload = (await response.json()) as { error?: string };
+        const payload = (await response.json()) as { error?: string } & Record<string, unknown>;
         if (typeof payload.error === "string" && payload.error.trim() !== "") {
           message = payload.error;
+        }
+        if (payload && typeof payload === "object") {
+          details = payload;
         }
       } catch {
         // ignore JSON parse failures and keep status text
       }
-      throw new OperatorHttpError(response.status, message);
+      throw new OperatorHttpError(response.status, message, details);
     }
     return (await response.json()) as T;
   }

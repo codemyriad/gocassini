@@ -777,6 +777,12 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Held with the template saves and deletes: a delete checks that no step
+	// names the template, and a step set to it at the same moment would
+	// otherwise land after that check and name a file that is gone (D-819).
+	rt.templatesMu.Lock()
+	defer rt.templatesMu.Unlock()
+
 	updated := rt.currentLLMSettings()
 	if in.Providers != nil {
 		stored := make(map[string]LLMProvider, len(updated.Providers))
@@ -809,6 +815,15 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 	updated, err = normalizeLLMSettings(updated)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if status, err := rt.checkStepTemplates(r, rt.currentLLMSettings(), updated); err != nil {
+		if status >= http.StatusInternalServerError {
+			rt.logger.Printf("llm settings: %v", err)
+			writeJSONError(w, status, "the templates could not be listed to check the step templates")
+			return
+		}
+		writeJSONError(w, status, err.Error())
 		return
 	}
 	if err := SaveLLMSettings(rt.llmSettingsPath, updated); err != nil {
@@ -1047,4 +1062,49 @@ func (rt *Runtime) aiProviderModelsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, llmModelsResponse{Provider: id, Models: models})
+}
+
+// checkStepTemplates refuses a step template that was changed to one that
+// cannot run: one that does not exist (deleted a moment ago, or never there)
+// or is listed broken. A template that was already set is not re-checked, so
+// a settings save never fails over a value the administrator did not touch.
+// The caller holds templatesMu. It returns the HTTP status to answer with.
+func (rt *Runtime) checkStepTemplates(r *http.Request, before, after LLMSettings) (int, error) {
+	var changed []string
+	for _, pair := range [][2]string{
+		{before.Summary.Template, after.Summary.Template},
+		{before.Insight.Template, after.Insight.Template},
+	} {
+		if next := strings.TrimSpace(pair[1]); next != "" && next != strings.TrimSpace(pair[0]) {
+			changed = append(changed, next)
+		}
+	}
+	if len(changed) == 0 || strings.TrimSpace(rt.cfg.CassiniBin) == "" {
+		return 0, nil
+	}
+	entries, err := rt.readWorkflowRegistry(r.Context())
+	if err != nil {
+		return http.StatusBadGateway, err
+	}
+	for _, id := range changed {
+		runnable, problem := false, ""
+		for _, entry := range entries {
+			if entry.ID != id {
+				continue
+			}
+			if entry.runnable() {
+				runnable = true
+			} else if problem == "" {
+				problem = entry.Error
+			}
+		}
+		switch {
+		case runnable:
+		case problem != "":
+			return http.StatusBadRequest, fmt.Errorf("the template %q cannot run: %s", id, problem)
+		default:
+			return http.StatusBadRequest, fmt.Errorf("there is no template %q", id)
+		}
+	}
+	return 0, nil
 }

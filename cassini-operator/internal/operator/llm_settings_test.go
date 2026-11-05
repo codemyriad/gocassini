@@ -758,7 +758,7 @@ func TestPutLLMSettingsStoresTheInsightStepAndItsTemplate(t *testing.T) {
 	    {"id": "hosted", "name": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "api_key": "sk-or-secret"}
 	  ],
 	  "summary": {"enabled": true, "provider": "default", "model": "qwen3-8b", "template": "summarise"},
-	  "insight": {"enabled": true, "provider": "hosted", "model": "big", "template": "decisions"}
+	  "insight": {"enabled": true, "provider": "hosted", "model": "big", "template": "todos"}
 	}`
 	req := httptest.NewRequest(http.MethodPut, "/settings/llm", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -768,8 +768,8 @@ func TestPutLLMSettingsStoresTheInsightStepAndItsTemplate(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "sk-or-secret") {
 		t.Fatalf("PUT echoed the key: %s", rec.Body.String())
 	}
-	if out.Summary.Template != "summarise" || out.Insight.Template != "decisions" {
-		t.Fatalf("templates = %q / %q, want summarise / decisions", out.Summary.Template, out.Insight.Template)
+	if out.Summary.Template != "summarise" || out.Insight.Template != "todos" {
+		t.Fatalf("templates = %q / %q, want summarise / todos", out.Summary.Template, out.Insight.Template)
 	}
 	if out.Effective.Insight == nil || out.Effective.Insight.BaseURL != openRouterBaseURL || out.Effective.Insight.Inherited {
 		t.Fatalf("effective insight = %+v, want its own hosted endpoint", out.Effective.Insight)
