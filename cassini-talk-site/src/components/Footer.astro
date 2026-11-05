@@ -34,7 +34,7 @@ const chip = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-base-200/8
       </div>
       <div class="max-md:order-3 max-md:pt-7 max-md:border-t max-md:border-base-300/50 flex items-center gap-2">
         <a href="https://codemyriad.io" target="_blank" rel="noopener noreferrer" class={chip}><Fragment set:html={cmIcon} />codemyriad.io</a>
-        <a href="https://github.com/codemyriad" target="_blank" rel="noopener noreferrer" class={chip}><Fragment set:html={globeIcon} />Open source</a>
+        <a href={href("download#source")} class={chip}><Fragment set:html={globeIcon} />Open source</a>
       </div>
     </div>
     <div class="max-md:contents flex flex-wrap items-baseline justify-between gap-x-6 gap-y-3">

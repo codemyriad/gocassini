@@ -59,14 +59,14 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
               </>
             )}
           </div>
-          <p class="text-xs font-mono text-base-content/60 pg-meta">{metaLine(app)}</p>
+          <p data-release-note={app.note} class="text-xs font-mono text-base-content/60 pg-meta">{metaLine(app)}</p>
         </div>
       ))}
     </div>
   </section>
 
   <section class="w-full max-w-7xl mx-auto px-5 md:px-10 lg:px-20 pg-last flex flex-col gap-6">
-    <div class="flex flex-col gap-3 pg-rule border-t border-base-300" data-reveal>
+    <div id="source" class="flex flex-col gap-3 pg-rule border-t border-base-300" data-reveal>
       <h2 class="text-3xl md:text-4xl font-bold text-base-content">Build it yourself</h2>
       <p class="text-base text-base-content/60 leading-relaxed">Every app is free software under the GPLv3. The source, build steps and release notes are on GitHub.</p>
       <div class="flex flex-wrap items-center gap-x-6 gap-y-3 pt-1">
@@ -104,6 +104,30 @@ const link = "text-sm text-base-content hover:text-primary transition-colors";
       ].filter(Boolean).join(" · ");
     } catch { /* Keep the static release details when offline. */ }
   }
-  updateMacRelease();
-  document.addEventListener("astro:page-load", updateMacRelease);
+  async function updateMirroredReleases() {
+    await Promise.all(["android", "linux"].map(async platform => {
+      const meta = document.querySelector<HTMLElement>(`#${platform} .pg-meta`);
+      if (!meta) return;
+      try {
+        const response = await fetch(`/download/${platform}/release.json`);
+        if (!response.ok) return;
+        const release = await response.json();
+        if (release.schema !== 1 || release.platform !== platform || !/^\d+\.\d+\.\d+$/.test(release.version)) return;
+        const primary = release.assets?.find((asset: { kind: string }) => asset.kind === release.primary);
+        const date = new Date(release.published_at);
+        meta.textContent = [
+          `Version ${release.version}`,
+          Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
+          primary?.size > 0 ? `${(primary.size / 1_000_000).toFixed(1)} MB` : "",
+          meta.dataset.releaseNote,
+        ].filter(Boolean).join(" · ");
+      } catch { /* Keep static release details if the metadata is unavailable. */ }
+    }));
+  }
+  function updateReleases() {
+    updateMacRelease();
+    updateMirroredReleases();
+  }
+  updateReleases();
+  document.addEventListener("astro:page-load", updateReleases);
 </script>

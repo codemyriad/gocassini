@@ -22,6 +22,13 @@ those files in `public/`: the deployment checks reject them. Link to their stabl
 URLs instead. The Mac download is
 `https://cassini.talk/download/mac/Cassini-talk.dmg`.
 
+Installer buttons and package links stay on `cassini.talk`. Android uses
+`/download/android/cassini-android.apk`; Linux uses the Flatpak and distribution
+package aliases under `/download/linux/`. The app release mirror publishes
+`release.json` alongside each platform's installers, so the download cards can
+show current versions, dates and sizes without rebuilding the website. GitHub
+links are reserved for the explicitly labelled source-code section.
+
 The host serves ordinary files and directory indexes from object storage.
 Astro's generated `index.html` files provide page routes. Static Assets-specific
 `_headers` and `_redirects` files are unsupported; discuss routing or HTTP header
