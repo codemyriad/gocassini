@@ -681,3 +681,78 @@ func TestPutLLMSettingsRefusesAStepTemplateThatCannotRun(t *testing.T) {
 		}
 	}
 }
+
+// A directory whose templates break the listing is put right by deleting one,
+// so a delete goes ahead without the listing. A step that names the id still
+// stops it: with no listing the id is taken to be no built-in's.
+func TestDeleteWorkflowGoesAheadWhenTheListingFails(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("save = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := doTemplateRequest(rt, http.MethodPut, "otro", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("save = %d %s", rec.Code, rec.Body.String())
+	}
+	rt.cfg.CassiniBin = writeFakeCassini(t, `echo "listing too large" >&2; exit 1`)
+	rt.workflowListing.invalidate()
+
+	settings := rt.currentLLMSettings()
+	settings.Insight.Template = "otro"
+	rt.setLLMSettings(settings)
+	if rec := doTemplateRequest(rt, http.MethodDelete, "otro", ""); rec.Code != http.StatusConflict {
+		t.Errorf("delete of the insight step's template = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if rec := doTemplateRequest(rt, http.MethodDelete, "resumen", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "resumen.md")); !os.IsNotExist(err) {
+		t.Errorf("the file is still there: %v", err)
+	}
+}
+
+// The ledger only keeps versions from going back. One that does not decode is
+// read as empty, so saves and deletes keep working, and the next delete
+// rewrites it.
+func TestADamagedVersionLedgerDoesNotStopSavesOrDeletes(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ledger := filepath.Join(dir, ".versions.json")
+	if err := os.WriteFile(ledger, []byte(`{"resumen": 4`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("save = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := doTemplateRequest(rt, http.MethodDelete, "resumen", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", rec.Code, rec.Body.String())
+	}
+	raw, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]int
+	if err := json.Unmarshal(raw, &got); err != nil || got["resumen"] != 1 {
+		t.Errorf("ledger = %s (%v), want it rewritten with resumen: 1", raw, err)
+	}
+}
+
+// A staging directory left by a save that was killed mid-check is removed by
+// the next save, rather than staying on the volume for good.
+func TestPutWorkflowSweepsStagingLeftByAKilledSave(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	leftover := filepath.Join(dir, ".check-123456")
+	if err := os.MkdirAll(leftover, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(leftover, "resumen.md"), []byte("half"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("save = %d %s", rec.Code, rec.Body.String())
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, ".check-*")); len(leftovers) != 0 {
+		t.Errorf("staging directories left behind: %v", leftovers)
+	}
+}

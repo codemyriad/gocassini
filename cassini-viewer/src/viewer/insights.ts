@@ -160,6 +160,13 @@ export function insightReasonOf(record: Pick<InsightRecord, "reason" | "error">)
   return "unknown";
 }
 
+// insightRetryable says whether Retry can help a failed run. A retry re-runs
+// the stored request, template hash included, so a run refused because its
+// template changed would be refused again: that one has to be generated anew.
+export function insightRetryable(record: Pick<InsightRecord, "status" | "reason" | "error">): boolean {
+  return record.status === "failed" && insightReasonOf(record) !== "template-changed";
+}
+
 // describeInsightFailure is what a failed run's sheet renders: a title and one
 // line, from the table above and from nowhere else.
 export function describeInsightFailure(

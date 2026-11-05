@@ -134,7 +134,7 @@ func (rt *Runtime) putWorkflow(w http.ResponseWriter, r *http.Request, id string
 			version = n + 1
 		}
 	}
-	ledger, err := readTemplateVersionLedger(dir)
+	ledger, err := rt.readTemplateVersionLedger(dir)
 	if err != nil {
 		rt.logger.Printf("settings workflows: %v", err)
 		writeJSONError(w, http.StatusInternalServerError, "the template versions could not be read")
@@ -196,6 +196,16 @@ func (rt *Runtime) checkTemplateFile(r *http.Request, dir, id string, data []byt
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return workflowView{}, fmt.Errorf("create the templates directory: %w", err)
 	}
+	// Saves hold templatesMu, so a staging directory already here was left by
+	// one that never reached its deferred cleanup (the operator was killed
+	// mid-check). It would otherwise stay on the volume for good.
+	if stale, err := filepath.Glob(filepath.Join(dir, ".check-*")); err == nil {
+		for _, leftover := range stale {
+			if err := os.RemoveAll(leftover); err != nil {
+				rt.logger.Printf("settings workflows: remove %s: %v", leftover, err)
+			}
+		}
+	}
 	staging, err := os.MkdirTemp(dir, ".check-")
 	if err != nil {
 		return workflowView{}, fmt.Errorf("create a staging directory: %w", err)
@@ -243,7 +253,11 @@ func listedVersion(entry workflowView) int {
 // removed by hand from a shell bypasses it.
 const templateVersionLedger = ".versions.json"
 
-func readTemplateVersionLedger(dir string) (map[string]int, error) {
+// A ledger that does not decode (edited by hand, say) is logged and read as
+// empty: it only keeps version numbers from going back, and refusing every
+// save over it would leave the panel with no way to recover. The next delete
+// rewrites it whole.
+func (rt *Runtime) readTemplateVersionLedger(dir string) (map[string]int, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, templateVersionLedger))
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]int{}, nil
@@ -253,7 +267,8 @@ func readTemplateVersionLedger(dir string) (map[string]int, error) {
 	}
 	ledger := map[string]int{}
 	if err := json.Unmarshal(raw, &ledger); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", templateVersionLedger, err)
+		rt.logger.Printf("settings workflows: %s does not decode, so versions of deleted templates are not known: %v", templateVersionLedger, err)
+		return map[string]int{}, nil
 	}
 	return ledger, nil
 }
@@ -283,12 +298,15 @@ func (rt *Runtime) deleteWorkflow(w http.ResponseWriter, r *http.Request, id str
 
 	path := filepath.Join(dir, id+".md")
 	// The listing says whether a built-in answers to the id and which version
-	// the file being removed reached; without it neither is known.
+	// the file being removed reached. Without it the delete still goes ahead:
+	// a directory whose templates break the listing (too many, too large) is
+	// put right by removing one, and this is the only way the panel has to.
+	// The id is then treated as no built-in's, so a step that names it still
+	// stops the delete, and its version goes unrecorded.
 	entries, err := rt.readWorkflowRegistry(r.Context())
 	if err != nil {
-		rt.logger.Printf("settings workflows: %v", err)
-		writeJSONError(w, http.StatusBadGateway, "the template was not deleted: the workflow registry could not be read")
-		return
+		rt.logger.Printf("settings workflows: deleting %s without the listing, so its version is not recorded: %v", id, err)
+		entries = nil
 	}
 	builtIn, removed := false, 0
 	for _, entry := range entries {
@@ -331,7 +349,7 @@ func (rt *Runtime) deleteWorkflow(w http.ResponseWriter, r *http.Request, id str
 	// Remembered before the file goes, so the id never reuses a version a
 	// document may already carry.
 	if removed > 0 {
-		ledger, err := readTemplateVersionLedger(dir)
+		ledger, err := rt.readTemplateVersionLedger(dir)
 		if err == nil && removed > ledger[id] {
 			ledger[id] = removed
 			err = writeTemplateVersionLedger(dir, ledger)

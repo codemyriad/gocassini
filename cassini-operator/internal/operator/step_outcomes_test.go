@@ -392,3 +392,34 @@ func TestRecordAttemptStepOutcomesKeepsAReplaysTemplateFallback(t *testing.T) {
 		t.Errorf("summary = %q/%q, want completed/%s", a.SummaryStatus, a.SummaryReason, summaryReasonTemplateFallback)
 	}
 }
+
+// A refine copies an earlier bundle whose processing block may still say the
+// built-in wrote its summary. When the refine rewrote the summary with the
+// configured template, that stale fallback is not the meeting's any more.
+func TestRecordAttemptStepOutcomesClearsAFallbackTheRewriteDidNotHave(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	const jobID = "job-summary-fallback-cleared"
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(ctx, jobID, "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	if _, err := rt.store.db.Exec(`UPDATE job_attempts SET trigger_kind = ? WHERE job_id = ?`, triggerKindRefine, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.SetAttemptSummaryTimes(ctx, jobID, 1, "2026-11-05T10:00:00Z", "2026-11-05T10:00:05Z"); err != nil {
+		t.Fatal(err)
+	}
+	outcomes := stepOutcomes{SummaryStatus: "completed", SummaryReason: summaryReasonTemplateFallback}
+	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, outcomes); err != nil {
+		t.Fatal(err)
+	}
+	a, err := rt.store.GetJobAttempt(ctx, jobID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SummaryStatus != "completed" || a.SummaryReason != "" {
+		t.Errorf("summary = %q/%q, want completed with no reason", a.SummaryStatus, a.SummaryReason)
+	}
+}

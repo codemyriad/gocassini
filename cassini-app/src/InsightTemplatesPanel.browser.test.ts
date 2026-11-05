@@ -263,6 +263,22 @@ describe("insight templates panel in the browser", () => {
     expect(puts[0]).toEqual({ id: "weekly", body: { name: "Weekly", description: "The weekly one", instruction: "Write the weekly summary." } });
   });
 
+  it("says so above the list when a repaired copy is saved but the broken file cannot be removed", async () => {
+    rows = [
+      ...BUILT_INS,
+      { ...custom("Team notes", "Team notes", "Notes", "Write the notes."), sha256: "", error: "the file name is not a usable template id" },
+    ];
+    deleteRefusal = "the disk is read-only";
+    mountPanel();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => puts.length).toBe(1);
+    expect(puts[0].id).not.toBe("Team notes");
+    await expect
+      .element(page.getByText("Saved as a new template, but Team notes.md could not be removed: the disk is read-only", { exact: false }))
+      .toBeVisible();
+  });
+
   it("asks in a dialog before deleting, focused on Cancel, and deletes on Delete", async () => {
     rows = [...BUILT_INS, RESUMEN()];
     mountPanel();

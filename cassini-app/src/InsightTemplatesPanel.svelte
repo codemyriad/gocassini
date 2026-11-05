@@ -136,6 +136,10 @@
   let editorEl: HTMLFormElement | null = null;
   let saving = false;
   let saveError = "";
+  // Set when a repaired copy was saved but the broken file it replaces could
+  // not be removed. The editor has closed by then, so it is shown above the
+  // list rather than in the editor's own error box.
+  let replaceError = "";
 
   // The one template being deleted, asked about in a modal dialog. `inUse`
   // names the step configured to run it: the operator refuses to delete such
@@ -239,6 +243,7 @@
   async function openEditor(next: Editor) {
     editor = next;
     saveError = "";
+    replaceError = "";
     await tick();
     editorEl?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
     editorEl?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
@@ -289,7 +294,8 @@
           await client.deleteInsightTemplate(current.replaces);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          saveError = `Saved as a new template, but ${current.replaces}.md could not be removed: ${message}`;
+          console.warn(`insight templates: ${current.replaces}.md was not removed after its repaired copy was saved`, error);
+          replaceError = `Saved as a new template, but ${current.replaces}.md could not be removed: ${message}`;
         }
       }
       await load();
@@ -597,6 +603,9 @@
     title="Add a provider to use these templates"
     on:open={() => dispatch("openProviders")}
   />
+{/if}
+{#if replaceError}
+  <div class="err-box" role="alert">{replaceError}</div>
 {/if}
 {#if loadError}
   <div class="err-box" role="alert">Templates could not be listed.</div>
