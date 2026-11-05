@@ -173,21 +173,28 @@ step to change first.
 
 A save is checked before it is kept: a template that would not run is refused
 with the reason, and the file is left as it was. Every save is a new version, so
-an insight still records exactly which template bytes wrote it.
+an insight still records exactly which template bytes wrote it. A template that
+is deleted and later created again under the same file name carries on from the
+version it had reached. An insight waiting to run when its template is edited or
+deleted does not run the new version: it fails with "The template changed before
+this insight ran", and generating it again uses the template as it is now.
 
 To summarise every new meeting with your own template, choose it as the
 template in **Operator › Publish pipeline › Summary**. Templates that take the
 reader's own question are not offered there, because a summary has nobody to ask.
 The meeting file records the id, version and hash of the template that wrote its summary, beside the summary rather than inside it.
-If the chosen template cannot run when a meeting is published, the built-in
+If the chosen template cannot run when a summary is written (when a meeting is
+published, summarised again, or rewritten after a speaker edit), the built-in
 summary template writes the summary instead, the run says so with a warning,
-and its build log gives the reason.
+and its log gives the reason. A step can only be set to a template that runs.
 
 Custom templates are files on the app's persistent volume
 (`operator/templates/<id>.md`), so they survive app updates. A file dropped
 there by hand appears in the panel as **Custom**; one that cannot run is listed
 with the reason instead of disappearing, and **Edit** opens it with its text so
-it can be fixed and saved.
+it can be fixed and saved. A file whose name cannot be a template's (spaces,
+accents) or that is named after a built-in template is saved as a new template
+when fixed, and the old file is removed; it can also just be deleted.
 
 ## Related
 

@@ -225,6 +225,13 @@ func splitFrontMatter(raw []byte) (header, body string, err error) {
 		return "", text, errNoFrontMatter
 	}
 	rest := text[len("---\n"):]
+	// An empty front matter: the closing line follows the opening one.
+	if strings.HasPrefix(rest, "---\n") {
+		return "", rest[len("---\n"):], nil
+	}
+	if rest == "---" {
+		return "", "", nil
+	}
 	if end := strings.Index(rest, "\n---\n"); end >= 0 {
 		return rest[:end], rest[end+len("\n---\n"):], nil
 	}
@@ -284,7 +291,10 @@ type customFile struct {
 // directory is no templates; an unreadable one is an error, because an empty
 // list would then be a lie about what the administrator put there. LoadDir
 // keeps that error beside the built-ins (Set.DirError) rather than failing.
-func readCustomDir(dir string) ([]customFile, error) {
+//
+// only, when set, reads just the file whose id it is: the directory is still
+// listed, so an unreadable one is still an error, but no other file is read.
+func readCustomDir(dir, only string) ([]customFile, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return nil, nil
@@ -308,6 +318,9 @@ func readCustomDir(dir string) ([]customFile, error) {
 			continue
 		}
 		id := strings.TrimSuffix(name, customTemplateExt)
+		if only != "" && id != only {
+			continue
+		}
 		file := customFile{template: CustomTemplate{ID: id}}
 		raw, err := readTemplateFile(filepath.Join(dir, name))
 		if err == nil {

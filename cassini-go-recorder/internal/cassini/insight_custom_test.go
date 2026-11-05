@@ -102,3 +102,52 @@ func TestInsightRunsACustomTemplateFromTheTemplatesDirectory(t *testing.T) {
 		t.Errorf("record names %+v, want resumen/v2/%s", record.Workflow, byID["resumen"].SHA256)
 	}
 }
+
+// A run asked for by hash refuses to run other bytes: the template edited
+// (or deleted) after the run was requested is exit 6, never a document whose
+// record names a prompt that did not write it.
+func TestInsightRunRefusesAWorkflowWhoseHashChanged(t *testing.T) {
+	dir := t.TempDir()
+	templates := filepath.Join(dir, "templates")
+	if err := os.Mkdir(templates, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(templates, "resumen.md")
+	if err := os.WriteFile(path, []byte(customResumen), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(workflows.TemplatesDirEnv, templates)
+	set, err := workflows.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked, ok := set.Registry.Lookup("resumen")
+	if !ok {
+		t.Fatal("resumen does not resolve")
+	}
+	bundle := writeContextBundle(t, filepath.Join(dir, "a.json"), insightMeeting("mtg_a", "Lunes", "", ""))
+	summaryLLMEnv(t, "http://model.invalid/v1")
+	run := func() (int, string) {
+		var stderr bytes.Buffer
+		code := Run(context.Background(), []string{"insight", "run", "--context", bundle, "--workflow", "resumen", "--workflow-sha256", asked.SHA256}, &bytes.Buffer{}, &stderr)
+		return code, stderr.String()
+	}
+
+	// Unchanged: the hash check passes, and the run goes on to the (absent)
+	// model, which is a different failure.
+	if code, stderr := run(); code == exitInsightWorkflowChanged {
+		t.Fatalf("an unchanged template was refused: %s", stderr)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(customResumen, "version: 2", "version: 3", 1)+"Y algo más.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, stderr := run(); code != exitInsightWorkflowChanged || !strings.Contains(stderr, "it is now") {
+		t.Errorf("edited: exit %d, want %d\n%s", code, exitInsightWorkflowChanged, stderr)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if code, stderr := run(); code != exitInsightWorkflowChanged || !strings.Contains(stderr, "gone") {
+		t.Errorf("deleted: exit %d, want %d\n%s", code, exitInsightWorkflowChanged, stderr)
+	}
+}

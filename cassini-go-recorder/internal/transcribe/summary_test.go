@@ -171,7 +171,7 @@ func untimed(t *testing.T, status portable.SummaryStatus) portable.SummaryStatus
 }
 
 func TestBuildMeetingSummaryRejectsUnconfiguredLLM(t *testing.T) {
-	_, _, err := BuildMeetingSummary(LLMConfig{}, sampleStreams(), sampleSegments())
+	_, err := BuildMeetingSummary(LLMConfig{}, sampleStreams(), sampleSegments())
 	if err == nil || !strings.Contains(err.Error(), "LLM not configured") {
 		t.Fatalf("expected LLM-not-configured error, got %v", err)
 	}
@@ -179,7 +179,7 @@ func TestBuildMeetingSummaryRejectsUnconfiguredLLM(t *testing.T) {
 
 func TestBuildMeetingSummaryRejectsEmptyTranscript(t *testing.T) {
 	cfg := LLMConfig{APIKey: "test", BaseURL: "https://example.test/api/v1", Model: "m"}
-	_, _, err := BuildMeetingSummary(cfg, sampleStreams(), nil)
+	_, err := BuildMeetingSummary(cfg, sampleStreams(), nil)
 	if err == nil || !strings.Contains(err.Error(), "no transcript segments") {
 		t.Fatalf("expected empty-transcript error, got %v", err)
 	}

@@ -365,3 +365,30 @@ func TestFillPublishedStepOutcomesAddsModels(t *testing.T) {
 		t.Fatalf("recorded outcome replaced by the bundle's: %+v", got)
 	}
 }
+
+// A speaker-edit replay whose rewrite the built-in template wrote marks the
+// attempt's summary as a template fallback, and recording the bundle's own
+// outcomes afterwards keeps it: summary.md is the rewrite (D-819).
+func TestRecordAttemptStepOutcomesKeepsAReplaysTemplateFallback(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	const jobID = "job-summary-fallback"
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(ctx, jobID, "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	if err := rt.store.SetAttemptSummaryReplayReason(ctx, jobID, 1, summaryReasonTemplateFallback); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, stepOutcomes{SummaryStatus: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := rt.store.GetJobAttempt(ctx, jobID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SummaryStatus != "completed" || a.SummaryReason != summaryReasonTemplateFallback {
+		t.Errorf("summary = %q/%q, want completed/%s", a.SummaryStatus, a.SummaryReason, summaryReasonTemplateFallback)
+	}
+}

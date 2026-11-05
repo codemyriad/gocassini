@@ -394,7 +394,8 @@ func getTemplateChoices(t *testing.T, rt *Runtime) []string {
 }
 
 // A GET reads the cached listing while nothing it was read from changed; a
-// save lists once, and that listing is what the next GET serves.
+// save lists twice — the candidate alone in staging, then the templates root
+// once it is in place — and that second listing is what the next GET serves.
 func TestWorkflowListingIsCachedUntilATemplateChanges(t *testing.T) {
 	rt, _, spawns := countingTemplateRuntime(t)
 	getTemplateChoices(t, rt)
@@ -406,13 +407,13 @@ func TestWorkflowListingIsCachedUntilATemplateChanges(t *testing.T) {
 	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
 		t.Fatalf("save = %d %s", rec.Code, rec.Body.String())
 	}
-	if n := spawns(); n != 2 {
-		t.Errorf("a save spawned the recorder %d times, want once (the check after writing)", n-1)
+	if n := spawns(); n != 3 {
+		t.Errorf("a save spawned the recorder %d times, want twice (the staged check, then the listing kept)", n-1)
 	}
 	if ids := getTemplateChoices(t, rt); strings.Join(ids, ",") != "summarise,resumen" {
 		t.Errorf("after the save = %v", ids)
 	}
-	if n := spawns(); n != 2 {
+	if n := spawns(); n != 3 {
 		t.Errorf("the GET after a save spawned the recorder again (%d)", n)
 	}
 
@@ -550,5 +551,133 @@ func TestWorkflowListingRefreshesWhenTheBinaryChanges(t *testing.T) {
 	getTemplateChoices(t, rt)
 	if n := spawns(); n != 2 {
 		t.Errorf("spawns = %d, want 2: the replaced binary was not listed again", n)
+	}
+}
+
+// A candidate is checked alone in a staging directory and only a file the
+// recorder will run reaches the templates root: a refused save is never
+// where a summary build or an insight run could read it.
+func TestPutWorkflowChecksTheCandidateBeforeItIsLive(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	listed := filepath.Join(t.TempDir(), "listed")
+	// Log the directory each listing was asked for, and whether the live
+	// root held the candidate at that moment.
+	rt.cfg.CassiniBin = writeFakeCassini(t, `echo "$CASSINI_TEMPLATES_DIR $(cat '`+dir+`/resumen.md' 2>/dev/null | grep -c BROKEN)" >> '`+listed+`'
+`+fakeTemplateRecorder)
+	broken := `{"name":"Resumen","instruction":"BROKEN"}`
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", broken); rec.Code != http.StatusBadRequest {
+		t.Fatalf("broken save = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "resumen.md")); !os.IsNotExist(err) {
+		t.Errorf("the refused file reached the templates root: %v", err)
+	}
+	raw, err := os.ReadFile(listed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := false
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] != "0" {
+			t.Errorf("a listing saw the candidate in the live root: %s", line)
+		}
+		if strings.HasPrefix(fields[0], filepath.Join(dir, ".check-")) {
+			staged = true
+		}
+	}
+	if !staged {
+		t.Errorf("no listing was made from a staging directory:\n%s", raw)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, ".check-*")); len(leftovers) != 0 {
+		t.Errorf("staging directories left behind: %v", leftovers)
+	}
+}
+
+// An id that is deleted and created again continues its versions: earlier
+// documents recorded v1 and v2 with other bytes.
+func TestPutWorkflowDoesNotReuseTheVersionsOfADeletedTemplate(t *testing.T) {
+	rt, _ := templateWriteRuntime(t)
+	for i := 0; i < 2; i++ {
+		if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+			t.Fatalf("save %d = %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := doTemplateRequest(rt, http.MethodDelete, "resumen", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"version":"v3"`) {
+		t.Errorf("recreated = %d %s, want v3", rec.Code, rec.Body.String())
+	}
+}
+
+// A file whose stem is not a usable id is listed broken under that stem; it
+// cannot be saved under it, but it can be deleted. A path is never accepted.
+func TestDeleteWorkflowRemovesAFileWithAnUnusableName(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Team notes.md"), []byte("BROKEN"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doTemplateRequest(rt, http.MethodPut, "Team%20notes", spanishTemplate); rec.Code != http.StatusBadRequest {
+		t.Errorf("PUT to an unusable id = %d, want 400", rec.Code)
+	}
+	if rec := doTemplateRequest(rt, http.MethodDelete, "Team%20notes", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Team notes.md")); !os.IsNotExist(err) {
+		t.Errorf("the file is still there: %v", err)
+	}
+	for _, id := range []string{".versions", "..%2Fx", "a%2Fb"} {
+		if rec := doTemplateRequest(rt, http.MethodDelete, id, ""); rec.Code != http.StatusBadRequest {
+			t.Errorf("DELETE %s = %d, want 400", id, rec.Code)
+		}
+	}
+}
+
+// The 409 names the step that uses the template in a field of its own, so
+// the panel never reads it out of a sentence that also quotes the id.
+func TestDeleteWorkflowInUseNamesTheStep(t *testing.T) {
+	rt, _ := templateWriteRuntime(t)
+	if rec := doTemplateRequest(rt, http.MethodPut, "weekly-summary", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("seed = %d %s", rec.Code, rec.Body.String())
+	}
+	settings := rt.currentLLMSettings()
+	settings.Insight.Template = "weekly-summary"
+	rt.setLLMSettings(settings)
+	rec := doTemplateRequest(rt, http.MethodDelete, "weekly-summary", "")
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusConflict || body["step"] != "insight" {
+		t.Errorf("delete in use = %d %v, want 409 naming the insight step", rec.Code, body)
+	}
+}
+
+// A step can only be pointed at a template that runs: one deleted a moment
+// ago is refused, so the delete's in-use check cannot be raced.
+func TestPutLLMSettingsRefusesAStepTemplateThatCannotRun(t *testing.T) {
+	rt, dir := templateWriteRuntime(t)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "roto.md"), []byte("BROKEN"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doTemplateRequest(rt, http.MethodPut, "resumen", spanishTemplate); rec.Code != http.StatusOK {
+		t.Fatalf("seed = %d %s", rec.Code, rec.Body.String())
+	}
+	put := func(template string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodPut, "/settings/llm", strings.NewReader(`{"summary":{"template":"`+template+`"}}`)))
+		return rec
+	}
+	for template, want := range map[string]int{"missing": http.StatusBadRequest, "roto": http.StatusBadRequest, "resumen": http.StatusOK} {
+		if rec := put(template); rec.Code != want {
+			t.Errorf("summary template %q = %d %s, want %d", template, rec.Code, rec.Body.String(), want)
+		}
 	}
 }

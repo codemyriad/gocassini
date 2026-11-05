@@ -78,6 +78,7 @@ export type InsightReason =
   | "no-provider"
   | "provider-refused"
   | "model-failed"
+  | "template-changed"
   | "write-failed"
   | "deliver-failed"
   | "timeout"
@@ -100,6 +101,10 @@ export const INSIGHT_FAILURE_COPY: Record<InsightReason, { title: string; line: 
     line: "Check its key, quota or model name under Operator › AI providers.",
   },
   "model-failed": { title: "The model did not answer", line: "Retry, or pick fewer meetings." },
+  "template-changed": {
+    title: "The template changed before this insight ran",
+    line: "Generate it again to use the template as it is now.",
+  },
   "write-failed": {
     title: "The insight could not be written to disk",
     line: "Check the app's storage.",

@@ -55,7 +55,9 @@ func resolveSummaryWorkflow() (insight.Workflow, string) {
 	if id == "" {
 		id = workflows.SummariseID
 	}
-	set, err := workflows.Load()
+	// Only the configured template's file is read: an estimate per meeting
+	// would otherwise read and hash every custom template each time.
+	set, err := workflows.LoadFor(id)
 	if err != nil {
 		// Load fails only when a built-in does not resolve: a broken build.
 		panic(fmt.Sprintf("the built-in workflows do not resolve: %v", err))

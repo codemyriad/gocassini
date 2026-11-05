@@ -42,6 +42,12 @@ const (
 	// exitInsightModelFailed: the call did not produce a usable answer. The
 	// only one of these worth retrying unchanged.
 	exitInsightModelFailed = 5
+	// exitInsightWorkflowChanged: --workflow-sha256 named bytes the workflow
+	// no longer has, or the workflow is gone. A custom template can be edited
+	// or deleted between the moment a run is requested (and its provenance
+	// recorded) and the moment it runs; running whatever is there now would
+	// produce a document whose record names a prompt that did not write it.
+	exitInsightWorkflowChanged = 6
 )
 
 // insightProviderFor builds the model provider for a run. Package-level so a
@@ -259,6 +265,7 @@ func runInsightRun(ctx context.Context, args []string, stdout, stderr io.Writer)
 	// withheld from a workflow that needs it would send the placeholder to the
 	// model. So the flag exists but decides nothing: the workflow's own bytes do.
 	question := fs.String("question", "", "the question to ask, for a workflow that takes one; `cassini insight workflows` shows which do")
+	wantSHA := fs.String("workflow-sha256", "", "refuse to run (exit 6) unless the workflow's content hash is this one, as `cassini insight workflows` printed it")
 	model := fs.String("model", "", "override the model the configured endpoint is asked for")
 	outPath := fs.String("out", "", "write the insight to this .md file instead of stdout")
 	recordPath := fs.String("record", "", "also write the run record to this .json file")
@@ -300,6 +307,7 @@ is not a warning:
   3  no model endpoint is configured
   4  the endpoint refused the request (credential, quota, unknown model)
   5  the model failed or timed out
+  6  --workflow-sha256 was given and the workflow's bytes are not those (or it is gone)
 
 `+"\n")
 		fs.PrintDefaults()
@@ -328,6 +336,16 @@ is not a warning:
 	}
 	registry := set.Registry
 	workflow, known := registry.Lookup(*workflowID)
+	if expected := strings.TrimSpace(*wantSHA); expected != "" && (!known || workflow.SHA256 != expected) {
+		now := "it is gone"
+		if known {
+			now = "it is now " + workflow.SHA256
+		} else if problem := set.Problem(*workflowID); problem != "" {
+			now = "it cannot run: " + problem
+		}
+		fmt.Fprintf(stderr, "insight run refused: the workflow %q is not the one this run was asked for (sha256 %s; %s)\n", *workflowID, expected, now)
+		return exitInsightWorkflowChanged
+	}
 	if !known {
 		// A custom template that is listed and broken is the caller's to fix,
 		// so it is a bad request, and the reason is the one the panel shows.

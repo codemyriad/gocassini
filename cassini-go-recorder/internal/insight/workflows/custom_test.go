@@ -353,3 +353,45 @@ func TestLoadDirListsAnOversizedFileWithItsVersion(t *testing.T) {
 	}
 	t.Error("huge.md is not listed")
 }
+
+// Resolving one template reads only its file: the others are not parsed,
+// hashed or listed.
+func TestLoadForReadsOnlyTheNamedTemplate(t *testing.T) {
+	dir := t.TempDir()
+	writeTemplateFile(t, dir, "resumen.md", goodTemplate)
+	writeTemplateFile(t, dir, "otro.md", goodTemplate)
+	writeTemplateFile(t, dir, "roto.md", "roto")
+	t.Setenv(TemplatesDirEnv, dir)
+	set, err := LoadFor("resumen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := set.Registry.Lookup("resumen"); !ok {
+		t.Error("resumen is not in the registry")
+	}
+	for _, entry := range set.Entries {
+		if entry.ID == "otro" || entry.ID == "roto" {
+			t.Errorf("%s was read for a set that only needed resumen", entry.ID)
+		}
+	}
+	if len(set.Entries) != len(shipped)+1 {
+		t.Errorf("entries = %d, want the built-ins and resumen", len(set.Entries))
+	}
+}
+
+// An empty front matter closes: the file is refused for what it lacks, and
+// salvage offers the body without the delimiters.
+func TestAnEmptyFrontMatterIsClosed(t *testing.T) {
+	for _, raw := range []string{"---\n---\nYou summarise.\n", "---\r\n---\r\nYou summarise.\r\n"} {
+		_, err := ParseCustomTemplate("vacio", []byte(raw))
+		if err == nil || strings.Contains(err.Error(), "closing") || !strings.Contains(err.Error(), "needs a name") {
+			t.Errorf("%q: err = %v, want the missing name", raw, err)
+		}
+		if got := salvageCustomTemplate("vacio", []byte(raw)); got.Instruction != "You summarise." {
+			t.Errorf("%q: salvaged instruction = %q", raw, got.Instruction)
+		}
+	}
+	if _, err := ParseCustomTemplate("vacio", []byte("---\n---")); err == nil || strings.Contains(err.Error(), "closing") {
+		t.Errorf("a file that is only an empty front matter: err = %v", err)
+	}
+}

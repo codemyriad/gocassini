@@ -51,6 +51,14 @@
     return hash.toString(16).padStart(8, "0");
   }
 
+  // The operator's rule for a template id (llmTemplateIDPattern): a file
+  // whose stem breaks it is listed broken under that stem, and can be removed
+  // but never saved under it.
+  const USABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+  export function usableTemplateId(id: string): boolean {
+    return USABLE_ID.test(id) && Array.from(id).length <= 200;
+  }
+
   export const TEMPLATE_PLACEHOLDER = "{{TEMPLATE}}";
 
   // The recorder's rule, said before Save rather than after: a custom template
@@ -119,7 +127,10 @@
     description: string;
     prompt: string;
   };
-  type Editor = { key: string; id: string | null; from: string; draft: Draft };
+  // `replaces` is a broken file being repaired under a new id, because it
+  // cannot be saved under its own: its stem is not a usable id, or it shares a
+  // built-in's. Saved as a new template, after which that file is removed.
+  type Editor = { key: string; id: string | null; from: string; draft: Draft; replaces?: string };
   const NEW_KEY = "new";
   let editor: Editor | null = null;
   let editorEl: HTMLFormElement | null = null;
@@ -177,9 +188,10 @@
       const settings = await client.getLLMSettings();
       hasProvider = settings.providers.length > 0;
       stepTemplates = { summary: settings.summary.template.trim(), insight: settings.insight.template.trim() };
-    } catch {
-      // Swallowed: the templates are the page, and an unreadable AI setting
-      // costs the locked notice and nothing else.
+    } catch (error) {
+      // Not fatal: the templates are the page, and an unreadable AI setting
+      // costs the locked notice and nothing else. Logged so it can be found.
+      console.warn("Insight templates: the AI settings could not be read", error);
       hasProvider = null;
     }
   }
@@ -212,8 +224,16 @@
     return { key: NEW_KEY, id: null, from: workflow.name, draft: draftOf(workflow, `${workflow.name} (copy)`) };
   }
 
+  function shadowsBuiltIn(workflow: InsightWorkflow): boolean {
+    return isCustom(workflow) && builtIns.some((builtIn) => builtIn.id === workflow.id);
+  }
+
   function editExisting(workflow: InsightWorkflow): Editor {
-    return { key: rowKey(workflow), id: workflow.id, from: "", draft: draftOf(workflow, workflow.name) };
+    const draft = draftOf(workflow, workflow.name);
+    if (!usableTemplateId(workflow.id) || shadowsBuiltIn(workflow)) {
+      return { key: rowKey(workflow), id: null, from: "", draft, replaces: workflow.id };
+    }
+    return { key: rowKey(workflow), id: workflow.id, from: "", draft };
   }
 
   async function openEditor(next: Editor) {
@@ -263,6 +283,15 @@
         }
       }
       editor = null;
+      if (current.replaces !== undefined) {
+        // The repaired copy is saved; the broken file it came from goes.
+        try {
+          await client.deleteInsightTemplate(current.replaces);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          saveError = `Saved as a new template, but ${current.replaces}.md could not be removed: ${message}`;
+        }
+      }
       await load();
     } catch (error) {
       saveError = error instanceof Error ? error.message : String(error);
@@ -274,8 +303,7 @@
   async function askDelete(workflow: InsightWorkflow) {
     // A custom file sharing a built-in's id never runs; the built-in answers
     // to the id whether or not the file is there, so no step uses the file.
-    const shadowsBuiltIn = isCustom(workflow) && builtIns.some((builtIn) => builtIn.id === workflow.id);
-    deletion = { workflow, error: "", inUse: shadowsBuiltIn ? "" : await stepUsing(workflow.id) };
+    deletion = { workflow, error: "", inUse: shadowsBuiltIn(workflow) ? "" : await stepUsing(workflow.id) };
     await tick();
     // showModal is absent only where there is no real browser (jsdom).
     if (deleteDialog && !deleteDialog.open) {
@@ -291,8 +319,9 @@
     try {
       const settings = await client!.getLLMSettings();
       stepTemplates = { summary: settings.summary.template.trim(), insight: settings.insight.template.trim() };
-    } catch {
+    } catch (error) {
       // Keep the last reading; the operator still refuses, and says why.
+      console.warn("Insight templates: the AI settings could not be read; using the last reading", error);
     }
     return stepTemplates.summary === id ? "summary" : stepTemplates.insight === id ? "insight" : "";
   }
@@ -354,9 +383,12 @@
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof OperatorHttpError && error.status === 409) {
         // A step was set to it after the dialog opened: the same in-use
-        // state, with the step read from the settings, or from the
-        // operator's reason when they cannot be read.
-        const step = (await stepUsing(workflow.id)) || (/summar/i.test(message) ? "summary" : "insight");
+        // state. The operator names the step in a field of its own, never
+        // read out of its sentence, which quotes the id; the settings are
+        // the fallback for an operator that does not name it.
+        const named = error.details.step;
+        const step: Step =
+          named === "summary" || named === "insight" ? named : (await stepUsing(workflow.id)) || "insight";
         deletion = { workflow, error: "", inUse: step };
         await tick();
         deleteCancel?.focus();
@@ -453,6 +485,11 @@
         <!-- Not editable: the file name is what `cassini insight run
              --workflow` and every recorded insight name it by. -->
         <p class="tpl-file">File: <code>{editor.id}.md</code></p>
+      {:else if editor.replaces !== undefined}
+        <p class="tpl-file">
+          <code>{editor.replaces}.md</code> cannot be saved under its own name. Saving keeps this as a new template and
+          removes that file.
+        </p>
       {/if}
       {#if saveError}
         <div class="err-box" role="alert">{saveError}</div>

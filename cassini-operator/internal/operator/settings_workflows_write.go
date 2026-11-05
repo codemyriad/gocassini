@@ -26,15 +26,18 @@ import (
 // overwrite of somebody else's.
 //
 // A template is a file, <id>.md, in the templates root on the app's volume.
-// The recorder owns the format and the registry; the operator writes the file
-// and then asks the recorder whether it resolves, by listing the registry
-// again. A file the recorder will not run is put back the way it was and the
-// save is answered 400 with the recorder's own reason, so a template that
-// would fail at Generate is refused at Save instead.
+// The recorder owns the format and the registry. A save writes the candidate
+// into a private staging directory first and asks the recorder whether it
+// resolves there; only a file the recorder will run is then renamed into the
+// templates root. A refused file is answered 400 with the recorder's own
+// reason and was never where a summary build or an insight run could read it.
 //
 // The version is the operator's to keep: every save writes the previous
 // version plus one, so two different instructions are never recorded under the
-// same id and version by this editor.
+// same id and version by this editor. A delete records the version it removes
+// in a ledger (templateVersionLedger), so an id that is deleted and created
+// again continues from there rather than reusing numbers earlier documents
+// already carry.
 
 const (
 	maxTemplateInstructionBytes = 200 << 10
@@ -54,6 +57,13 @@ func (rt *Runtime) settingsWorkflowHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !llmTemplateIDPattern.MatchString(id) || utf8.RuneCountInString(id) > maxLLMFieldRunes {
+		// A file whose stem is not a usable id ("Team notes.md") is listed
+		// broken under that stem. It can never be saved under it, but it can
+		// be deleted, or the panel could show it and offer no way to remove it.
+		if r.Method == http.MethodDelete && safeTemplateStem(id) {
+			rt.deleteWorkflow(w, r, id)
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("%q is not a template id: use letters, digits, '.', '_' or '-', starting with a letter or digit", id))
 		return
 	}
@@ -117,69 +127,149 @@ func (rt *Runtime) putWorkflow(w http.ResponseWriter, r *http.Request, id string
 			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("%q is a built-in template and cannot be changed; start a custom template from it instead", id))
 			return
 		}
-		if n, err := strconv.Atoi(strings.TrimPrefix(entry.Version, "v")); err == nil && n >= version {
+		// A file the recorder cannot parse is listed with the version its
+		// front matter still gives (salvageCustomTemplate), so saving over it
+		// does not go back to 1.
+		if n := listedVersion(entry); n >= version {
 			version = n + 1
 		}
 	}
+	ledger, err := readTemplateVersionLedger(dir)
+	if err != nil {
+		rt.logger.Printf("settings workflows: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "the template versions could not be read")
+		return
+	}
+	if n := ledger[id]; n >= version {
+		version = n + 1
+	}
 
 	path := filepath.Join(dir, id+".md")
-	previous, readErr := os.ReadFile(path)
-	existed := readErr == nil
-	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-		rt.logger.Printf("settings workflows: read %s: %v", path, readErr)
+	if _, err := os.Stat(path); err == nil && createOnly(r) {
+		writeJSONError(w, http.StatusPreconditionFailed, fmt.Sprintf("a custom template %q already exists", id))
+		return
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		rt.logger.Printf("settings workflows: stat %s: %v", path, err)
 		writeJSONError(w, http.StatusInternalServerError, "the existing template could not be read")
 		return
 	}
-	if existed && createOnly(r) {
-		writeJSONError(w, http.StatusPreconditionFailed, fmt.Sprintf("a custom template %q already exists", id))
-		return
-	}
-	// The version comes from the listing above. A file the recorder cannot
-	// parse is listed with the version its front matter still gives
-	// (salvageCustomTemplate), so saving over it does not go back to 1, and
-	// the operator keeps no second reader of the format.
-	if err := writeTemplateFile(dir, path, []byte(request.file(version))); err != nil {
-		rt.logger.Printf("settings workflows: write %s: %v", path, err)
-		writeJSONError(w, http.StatusInternalServerError, "the template could not be written")
-		return
-	}
-	revert := func() {
-		var err error
-		if existed {
-			err = writeTemplateFile(dir, path, previous)
-		} else {
-			err = os.Remove(path)
-		}
-		if err != nil {
-			rt.logger.Printf("settings workflows: revert %s: %v", path, err)
-		}
-	}
 
-	// The one fresh listing a save needs, which the cache then keeps.
-	after, err := rt.refreshWorkflowRegistry(r.Context())
+	data := []byte(request.file(version))
+	checked, err := rt.checkTemplateFile(r, dir, id, data)
 	if err != nil {
-		revert()
-		rt.workflowListing.invalidate()
+		var refused *templateRefusedError
+		if errors.As(err, &refused) {
+			writeJSONError(w, http.StatusBadRequest, "the template was not saved: "+refused.reason)
+			return
+		}
 		rt.logger.Printf("settings workflows: %v", err)
 		writeJSONError(w, http.StatusBadGateway, "the template was not saved: the workflow registry could not be read to check it")
 		return
 	}
-	for _, entry := range after {
+	if err := writeTemplateFile(dir, path, data); err != nil {
+		rt.logger.Printf("settings workflows: write %s: %v", path, err)
+		writeJSONError(w, http.StatusInternalServerError, "the template could not be written")
+		return
+	}
+	// The listing the next GET serves. The file is saved whether or not this
+	// works; the entry checked in staging is the same bytes, so the same hash.
+	if _, err := rt.refreshWorkflowRegistry(r.Context()); err != nil {
+		rt.workflowListing.invalidate()
+		rt.logger.Printf("settings workflows: list after saving %s: %v", id, err)
+	}
+	writeJSON(w, http.StatusOK, checked)
+}
+
+// templateRefusedError is a candidate file the recorder will not run, with
+// the recorder's reason.
+type templateRefusedError struct{ reason string }
+
+func (e *templateRefusedError) Error() string { return e.reason }
+
+// checkTemplateFile asks the recorder whether data, saved as <id>.md, would
+// run, without putting it where anything else reads templates: the file is
+// written alone into a dot-named staging directory inside the templates root
+// (which the recorder and the listing cache both skip) and listed from there.
+// The built-ins are still in that listing, so a file shadowing one is refused
+// as it would be in place.
+func (rt *Runtime) checkTemplateFile(r *http.Request, dir, id string, data []byte) (workflowView, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return workflowView{}, fmt.Errorf("create the templates directory: %w", err)
+	}
+	staging, err := os.MkdirTemp(dir, ".check-")
+	if err != nil {
+		return workflowView{}, fmt.Errorf("create a staging directory: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(staging); err != nil {
+			rt.logger.Printf("settings workflows: remove %s: %v", staging, err)
+		}
+	}()
+	if err := os.WriteFile(filepath.Join(staging, id+".md"), data, 0o644); err != nil {
+		return workflowView{}, fmt.Errorf("write the candidate template: %w", err)
+	}
+	entries, warning, err := readWorkflowRegistry(r.Context(), strings.TrimSpace(rt.cfg.CassiniBin), staging)
+	if err != nil {
+		return workflowView{}, err
+	}
+	if warning != "" {
+		rt.logger.Printf("settings workflows: checking %s: %s", id, warning)
+	}
+	for _, entry := range entries {
 		if entry.ID != id || entry.Origin == originBuiltIn {
 			continue
 		}
 		if !entry.runnable() {
-			revert()
-			rt.workflowListing.invalidate()
-			writeJSONError(w, http.StatusBadRequest, "the template was not saved: "+entry.Error)
-			return
+			return workflowView{}, &templateRefusedError{reason: entry.Error}
 		}
-		writeJSON(w, http.StatusOK, entry)
-		return
+		return entry, nil
 	}
-	revert()
-	rt.workflowListing.invalidate()
-	writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("the template was not saved: %q did not appear in the registry after it was written", id))
+	return workflowView{}, &templateRefusedError{reason: fmt.Sprintf("%q did not appear in the registry when it was checked", id)}
+}
+
+// listedVersion is the integer of a listed "vN" version, or 0.
+func listedVersion(entry workflowView) int {
+	n, err := strconv.Atoi(strings.TrimPrefix(entry.Version, "v"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// templateVersionLedger is the file, in the templates root, that remembers
+// the highest version each deleted id reached: {"<id>": N}. It is dot-named,
+// so the recorder never reads it as a template. Only a delete writes it — a
+// file that is present carries its own version in the listing — and a file
+// removed by hand from a shell bypasses it.
+const templateVersionLedger = ".versions.json"
+
+func readTemplateVersionLedger(dir string) (map[string]int, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, templateVersionLedger))
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]int{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", templateVersionLedger, err)
+	}
+	ledger := map[string]int{}
+	if err := json.Unmarshal(raw, &ledger); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", templateVersionLedger, err)
+	}
+	return ledger, nil
+}
+
+func writeTemplateVersionLedger(dir string, ledger map[string]int) error {
+	raw, err := json.MarshalIndent(ledger, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeTemplateFile(dir, filepath.Join(dir, templateVersionLedger), append(raw, '\n'))
+}
+
+// safeTemplateStem reports whether a listed file stem can be turned back into
+// a path inside the templates root: one path element, not a dot file.
+func safeTemplateStem(stem string) bool {
+	return stem != "" && !strings.HasPrefix(stem, ".") && !strings.ContainsAny(stem, "/\\\x00") && len(stem) <= 255
 }
 
 func (rt *Runtime) deleteWorkflow(w http.ResponseWriter, r *http.Request, id string) {
@@ -192,14 +282,23 @@ func (rt *Runtime) deleteWorkflow(w http.ResponseWriter, r *http.Request, id str
 	defer rt.templatesMu.Unlock()
 
 	path := filepath.Join(dir, id+".md")
-	entries, listErr := rt.readWorkflowRegistry(r.Context())
-	if listErr != nil {
-		rt.logger.Printf("settings workflows: %v", listErr)
+	// The listing says whether a built-in answers to the id and which version
+	// the file being removed reached; without it neither is known.
+	entries, err := rt.readWorkflowRegistry(r.Context())
+	if err != nil {
+		rt.logger.Printf("settings workflows: %v", err)
+		writeJSONError(w, http.StatusBadGateway, "the template was not deleted: the workflow registry could not be read")
+		return
 	}
-	builtIn := false
+	builtIn, removed := false, 0
 	for _, entry := range entries {
-		if entry.ID == id && entry.Origin == originBuiltIn {
+		if entry.ID != id {
+			continue
+		}
+		if entry.Origin == originBuiltIn {
 			builtIn = true
+		} else {
+			removed = listedVersion(entry)
 		}
 	}
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
@@ -215,12 +314,31 @@ func (rt *Runtime) deleteWorkflow(w http.ResponseWriter, r *http.Request, id str
 	// recorder lists it broken), the built-in answers to the id before and
 	// after, so deleting it changes nothing a step runs.
 	settings := rt.currentLLMSettings()
-	for _, use := range []struct{ step, template string }{
-		{"meeting summaries", settings.Summary.Template},
-		{"insights", settings.Insight.Template},
+	for _, use := range []struct{ step, label, template string }{
+		{"summary", "meeting summaries", settings.Summary.Template},
+		{"insight", "insights", settings.Insight.Template},
 	} {
 		if !builtIn && strings.TrimSpace(use.template) == id {
-			writeJSONError(w, http.StatusConflict, fmt.Sprintf("%q is the template for %s; choose another one there before deleting it", id, use.step))
+			// step names the setting for the panel, which must not have to
+			// read it out of a sentence that also quotes the id.
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": fmt.Sprintf("%q is the template for %s; choose another one there before deleting it", id, use.label),
+				"step":  use.step,
+			})
+			return
+		}
+	}
+	// Remembered before the file goes, so the id never reuses a version a
+	// document may already carry.
+	if removed > 0 {
+		ledger, err := readTemplateVersionLedger(dir)
+		if err == nil && removed > ledger[id] {
+			ledger[id] = removed
+			err = writeTemplateVersionLedger(dir, ledger)
+		}
+		if err != nil {
+			rt.logger.Printf("settings workflows: record the version of %s: %v", id, err)
+			writeJSONError(w, http.StatusInternalServerError, "the template was not deleted: its version could not be recorded")
 			return
 		}
 	}
