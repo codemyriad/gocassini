@@ -16,6 +16,154 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.3.0] - 2026-11-06
+
+### Added
+- Select a stretch of transcript and copy a link that opens it highlighted, with playback positioned at its start. Sharing works without tagging the selection and keeps the recording’s existing access restrictions.
+- Connect an AI agent to your meetings: Cassini now runs an MCP server, so
+  Claude Code or any MCP client can list, search and read the meetings you can
+  read, signed in with a Nextcloud app password. It sees exactly what you see
+  and can only read. **Connect an agent**, at the foot of the rooms list in
+  Browse, shows the address and the three steps to connect.
+- `cassini meetings context --from/--to` (and `fromMs`/`toMs` on
+  `published/meetings-context`) read just a stretch of a meeting, so an agent
+  can read around a search hit instead of the whole transcript. The document
+  says which stretch it holds.
+- `published/meetings-rooms` serves the room list `cassini meetings rooms`
+  prints.
+- Meeting files now record what happened to their summary: written, switched off, not configured, no transcript, or failed. A missing summary can be told apart from one that failed.
+- `cassini meetings summarize` also summarizes a meeting bundle, so a summary added afterwards survives later speaker edits and republishes. `--estimate` reports the words and estimated input tokens a summary would use without calling the model, and `--json` prints machine-readable reports.
+- Anyone who can read a meeting can ask for its missing summary to be written, after seeing what it costs. Replacing an existing summary is for Nextcloud administrators and the owners and moderators of the meeting's Talk room, the people Talk lets record it. A person can ask for up to 10 summaries an hour (`CASSINI_SUMMARY_WRITES_PER_HOUR`).
+- A meeting without a summary now says why when its file knows: summaries were off, no language model was set up, or the summary could not be generated. In the app, a **Write summary** button appears there for anyone who can read the meeting. Before anything is sent, it shows the number of model calls, the model and the estimated size, and whether the transcript leaves your network. The summary appears once it has been written.
+- Administrators and the moderators of a meeting's Talk room can **Regenerate** an existing summary from under it, with the same confirmation.
+- When they save speaker changes on a meeting with a summary, administrators and room moderators can tick **Also rewrite the summary for these names**, shown with its cost. It's off by default. Everyone else's changes keep the summary, and the People panel says who can rewrite it.
+- Administrators can write a missing summary, or regenerate an existing one, for a published meeting from its run in the Operator, without transcribing it again, even after retention has deleted the original recording. The run shows that step as "Summary" rather than "Build". Before anything is sent, a confirmation shows the number of model calls, the model and provider, the estimated input tokens and words, and whether the transcript leaves your network.
+- Settings says that summaries cost one model call per recording, and whether the chosen provider is an external service that may bill for it.
+- The operator API can list the published meetings that have no summary, with the estimated cost of writing them all (`GET /operator/summaries/missing`), for backfilling older meetings.
+- A run's detail in the Operator names the models that made the meeting — the speech model and whether it ran on the GPU or the CPU, and the summary model — for the run and for each attempt. Attempts processed before this update show them once their meeting is published.
+- Each attempt's record, build, seal and publish logs open in place from the run detail, showing the end of the log, with a download of the whole file. A log that retention has removed says so instead.
+- A run and each of its attempts always show the same fields in the same places, with "Not available" where there is nothing to show, and every attempt offers all four logs, greyed out when one cannot be opened.
+- Each attempt says why it ran under "Reason" (the recording ending and why it stopped, a rerun, a summary requested, or speakers renamed with the summary rewritten or kept) and describes its steps by what that kind of attempt does: a summary-only or speaker-edit attempt says its transcript was reused and from which attempt, and the summary field says when a summary was skipped and why, failed, or was kept as it was, instead of "Not available". An attempt that transcribed the meeting shows its processing time against the meeting's length, as the run does; Queued, Processing and Completed share one line.
+- A run's detail now says how long the meeting took to process against its length, as in "12m · 4.8× real time", so you can tell whether your server keeps up. Each attempt shows how long each of its steps took.
+- The run's own progress bar describes the meeting as it stands: Record, Build, Summary, Seal and Publish, each taken from the attempt that produced it, with its time. A summary written later no longer hides the build that transcribed the meeting, a summary written during the build says so, and one skipped (for example with summaries turned off) says "Skipped". A step still running says "In progress", "Queued" or "Blocked". An attempt in progress, or one that failed, shows on the steps it reached.
+- Administrators can write their own insight templates in Operator › Insight templates: write one from scratch or duplicate a built-in one, give it a name, a one-line description and a prompt (for example, to write in Spanish), and save. Put `{{QUESTION}}` in the prompt and people are asked for a question when they pick it; there is no other input yet. A template that would not run is refused with the reason. Custom templates are kept on the app's volume, so they survive updates.
+- Meeting summaries can use a custom template: choose it in Publish pipeline › Summary. The meeting file records which template, and which version of it, wrote the summary. If the chosen template cannot run, the built-in one writes the summary and the run shows a warning.
+- Everyone, not only administrators, can now choose the insight template when generating an insight, and sees what each one does.
+- An administrator viewing a run in the Operator gets an **Open in Files** link to its recording. The link opens Files with the recording's sharing details, and appears only when Nextcloud finds the recording among that administrator's own files.
+- You can now import meetings downloaded from Cassini: the Import button
+  beside search opens a side panel that takes `.opus` recordings and
+  transcript-only `.json` files, shows what each file holds before uploading,
+  and lets you choose per meeting whether to keep it to yourself or share it
+  with selected people, groups and Teams (recipients may pass it along). Imported meetings sit in
+  one **Imported meetings** room — yours and the ones shared with you — and
+  list, play, search and tag like any recording; retention manages them from
+  the meeting's own dates.
+- Operators can import from the server with `cassini-operator import-meeting`,
+  which replaces the manual move-and-share runbook for old archives and backup
+  restores.
+- Production frontend builds include JavaScript source maps, available to every signed-in Nextcloud UI user, for profiling and debugging installed releases.
+- A run in the Operator now says when its meeting was published without a transcript or without a summary, and why: the transcription crashed (with the line that names the cause, such as a GPU out-of-memory error), there was not enough memory or GPU to transcribe, no speech model could run, summaries are off or not set up, or the summary could not be generated. When rerunning can fix it, the run says so. Meetings published before this show it too.
+- A meeting can now be deleted from the viewer — from the meeting itself, a
+  list row, or a selection of meetings. Anyone who can open a meeting can
+  delete it; after a confirmation, the recording leaves the archive, the list,
+  search, tags and the agent CLI for everyone, and the operator reclaims the
+  job's local working files. The file moves into the service account's
+  Nextcloud trash bin, which Nextcloud empties on its own schedule; restoring
+  it from there does not bring the meeting back. Insights that read a deleted
+  meeting keep their answer and say the source is no longer available.
+- You can now rename a meeting: a pencil on the meeting's title in the viewer,
+  or `cassini meetings rename` from the CLI. Anyone with access to the meeting
+  can rename it, everyone sees the new name, and the name travels inside the
+  meeting's portable file — it survives republishes, index rebuilds and
+  downloads. Clearing the title restores the default.
+- Add a shared, editable room-name lookup in the existing meetings database, preserving original Talk names and portable recordings.
+- Default private room labels to both conversation members and recover older local defaults where retained Talk lineage permits it.
+- Rename or reset a room from the Rooms rail pencil, with keyboard/touch access, fresh recording authorization, and conflict handling.
+- Use local names across browsing, search, context, CLI, and operator labels; preserve them through database migrations and index resets while keeping meeting-pack imports local to their destination.
+- `scripts/sync-release-to-main.sh --version X.Y.Z` brings a release cut on `release/X.Y` back to main: it adds the release's changelog section to main's `CHANGELOG.md` in version order and deletes the fragments that release consumed, so cherry-picked fixes aren't released twice, and moves main's `info.xml` version above the release (to the next minor's untagged `X.Y.0-alpha.0`), so main builds never report a version below what has shipped. `prepare-release.sh` prints the step after a cut on a release branch.
+- Doctor has a **Recording sharing** check. Cassini shares every recording from its own `cassini` account, so Nextcloud's sharing settings apply to it like to anyone: "Allow apps to use the Share API", "Exclude some groups from sharing" / "Limit sharing to some groups", "Restrict users to only share with users in their groups" (with the groups it ignores) and "Allow sharing with groups". The check reads them, and the groups `cassini` is in, before anyone records. It fails when no recording could be shared at all, warns and names the groups Cassini can reach when only some people would get recordings, and says which Nextcloud setting to change. It never stops recording. `/status` reports it as `recordings_access.sharing_policy`.
+- A run whose meeting Nextcloud would not share with everyone says so: the run list flags it "Not shared with everyone", and the run detail lists who was refused and why. Once the cause is fixed, **Re-share with room audience** shares it with whoever is missing. It only adds shares, so it also brings back anyone removed by hand.
+- Browse tells you about recordings Nextcloud is holding for you. When your account accepts shared files by hand (or the server asks everyone to), a recording shared with you is not in your list until you accept it. Browse now says how many are waiting, lists them with their date and length, and offers **Accept** and **Accept all**. Cassini accepts as you, and only what is waiting for you; it never accepts on its own. Nextcloud's own notification works as before.
+- Browse also tells you, one notice per meeting naming its room and when it was recorded, when a recording could not be shared with you, or when a recording you started was not published because Nextcloud refused to share it with you, with a link to hand to an administrator. More than two of a kind are grouped under one line. You can dismiss each notice, and it does not come back; once the recording reaches you, its notice goes by itself.
+- A link to a meeting you cannot open yet — from Talk's chat or a Nextcloud notification — no longer says "Meeting not found". When the share is waiting for you, the meeting asks you to accept it, and opens once you do. When a sharing setting refused it, the meeting says so in the words the list uses, with the link to hand to an administrator, even after you dismissed that notice in the list.
+- Every recording share carries a note naming the meeting, its date and its length, so the file is recognisable in Files.
+- Doctor's **Recording sharing** check says how many published recordings are currently not shared with everyone, how many people and groups are missing one, and since when.
+- `GET operator/setup` reports the caller's waiting recording shares and refusals as `sharing` (with `dismissed_refused` and `dismissed_refused_started`, the job ids whose notices the caller dismissed); `POST operator/shares/accept` accepts them, and `POST operator/shares/dismiss` dismisses a recording's notice. A run's `sharing` carries `audience_count`, how many recipients its publication used.
+- Download a support bundle from the meeting browser or Operator → Doctor.
+  Signed-in users receive their own access diagnostics; administrators also
+  receive bounded job history, logs and health findings. Original diagnostics
+  are the default, with optional scrubbing; users can review/edit the ZIP or
+  share it as downloaded. Nothing is uploaded automatically.
+- Preserve bounded operator and sharing diagnostics across restarts, including
+  share refusals outside stage logs. Diagnostic storage follows Logs retention.
+- Transcripts record the url and comment of the encoder that ran.
+- A Support Cassini page in the Operator area, for administrators only. It links to a payment page where you choose any amount from €2, and to a setup call for organisations. Paying unlocks nothing: every feature stays free.
+- The App Store listing and the GitHub repository show a Support Cassini button.
+
+### Changed
+- The native speech runtime is now built from upstream sherpa-onnx's development branch (2.0.1 plus 16 later commits) instead of the 2.0.1 release. The version stays 2.0.1. Transcripts with the default greedy decoding are unchanged. The later commits include an upstream fix to beam search for Parakeet models, which affects only setups that turn name hints back on.
+- Editing speakers no longer rewrites a meeting's summary automatically, which cost a model call each time. The summary is kept and marked as written before the edits; `cassini speakers apply --summary rewrite` asks for a new one.
+- Saving speaker edits no longer rewrites the meeting's summary unless the save asks for it, and only administrators and the room's moderators can ask. Otherwise the summary is kept and marked as written before the edits. A rerun still rewrites it for the edited names.
+- A run's detail in the Operator shows what you check a run for — when it was recorded and for how long, how long processing took, the capture mode, why the recording stopped, and links to the conversation in Talk and the recording in Files. The run id, bookkeeping timestamps and each attempt's artifact and log paths are folded under "Technical details", and the provider and the attempt and rerun counts are gone. Each attempt now says how long it took to process,, the run list says when each meeting was recorded rather than when its run last changed, and a run whose files are gone says so once, in its rerun warning.
+- Talk publication notifications now use named Cassini viewer links prefixed with “Meeting recording available: ” and containing the room name, date, duration and available speaker names, also listed under Shared items → Other without granting additional file access.
+- A meeting published audio-only because memory or GPU was still short when the build stopped waiting is now reported as a failed transcription, not as a missing speech model.
+- A 1:1 call is no longer titled after just the other person: new recordings
+  of one-to-one conversations default to both participants' names, such as
+  "Alex & Chris". Group and public rooms keep the room name.
+- Speech is now decoded with greedy search on every quality tier, on CPU and GPU, and participant names and the transcript vocabulary no longer bias decoding: the beam search that hints need dropped whole passages of speech, and keeping speech matters more than spelling names. `CASSINI_STT_HINTS_DISABLED` now keeps hints off unless it is set to `0`, `false`, `no` or `off`, which brings hints and beam search back for research. A deployment that already sets one of those values explicitly keeps hints after upgrading; remove it to get the new default. Search spellings work as before, and each transcript's provenance records that hints were not applied and why.
+- A GPU build now starts only when 7 GiB of video memory is free instead of 5.5 GiB (`CASSINI_GPU_MIN_FREE_MB`, default 7168): greedy decoding of Parakeet Ultra peaks at 6.9 GiB. An 8 GiB card that nothing else uses still qualifies; on a GPU shared with other workloads, builds wait for the memory and are retried.
+- `scripts/prepare-release.sh` cuts each version on its own branch: the next release's alphas on main, everything else in an X.Y line on `release/X.Y`. It fetches origin's tags first, refuses a branch that is behind origin, and checks the version only against tags in the same X.Y line, so a patch can ship after the next minor's alpha. `--bump patch` now goes straight to stable instead of starting at `-alpha.1`.
+- The `:latest`, `:latest-rocm`, `:latest-cuda` and `:cuda` image tags now track main's newest build only. Release tags no longer move them, so a patch on an older release line can't point them back at that line. Pull `:X.Y.Z` (or `:X.Y.Z-cuda`) for a release; AppAPI installs already do.
+- Release branches (`release/X.Y`) get the same push CI and branch images as main, and a release tag is refused unless its commit is on the branch its version is cut on. A tag build on a release branch pins FFmpeg to the version the line's previous release shipped (falling back to main's image, then upstream), so a patch doesn't change FFmpeg. A `backport release/X.Y` label on a merged PR opens the cherry-pick PR to that branch.
+- Doctor's advice to add `cassini` to a group now says to keep it there: with "Restrict users to only share with users in their groups" on, Nextcloud removes people's access to the recordings shared through a group when `cassini` leaves it.
+- A refused group or Team share no longer stops a recording's publication: the meeting is published for everyone Nextcloud allows, and the refused group is listed on the run. A refused share for the person who started the recording still stops publication, and the run now says that was why. Imported meetings keep the previous rule.
+- Recording storage's passing message no longer says Cassini can share recordings; the Recording sharing check says whether it can.
+- The Recording sharing check's messages read the same way in every state: who can receive recordings, which Nextcloud setting causes it, and what follows. Each step is one sentence naming where to change it.
+- A run's Summary step now shows how long the summary took, even when it was written during the build, and the Build step no longer includes that time. The run's processing figure ("10m · 5.8× real time") leaves the summary out too, so a slow summary model no longer looks like a server that can't keep up; hover it to see how long the summary model was waited on. A summary that failed now shows as failed on the run's bar. Meetings processed before this update show the run as they did.
+- The meeting file records when its summary was written (`processing.meetingSummary.startedAt` and `finishedAt`).
+- Release branches take no operator migrations, and lint fails on a change to one that adds, edits or removes a migration, including a backport PR. A fix that needs a schema change ships in the next minor release, so an installation on a patch release can always upgrade to the next minor.
+- Raised the minimum Go version to 1.25 and updated container builds and CI to match.
+- Parakeet Ultra replaces Parakeet v3; installs download it on upgrade. Moondream's Parakeet Ultra 0.6B (CC-BY-4.0), a post-training of NVIDIA Parakeet 0.6B v3, is now the model of every quality tier on a GPU (fp32) and of Balanced (int8) and Best (fp32) on a CPU; Fast stays the 110M model. An install set to a v3 model moves to the Ultra model of its tier on its device, downloads it (Settings shows the progress), and v3's files are deleted once Ultra has passed its check. Until then, recordings are transcribed with the v3 model still on disk, the Publishing status strip in Settings says so, and the transcript records that v3 stood in for Ultra and why; no v3 download is ever started, and an install without v3's files waits for Ultra as before. A recording under "delete audio after processing", made before the upgrade or after it, is transcribed with the v3 files when they are still installed, and otherwise keeps its audio until Ultra is installed, also when its download failed (retry it in Settings) or downloads are disabled (import it with `cassini models import`). If the download could not be queued, or the operator stopped before it was, the next start queues it again. Existing transcripts are unchanged.
+- The App Store listing rates speech-to-text with Parakeet Ultra 🟠, because Moondream has not published its post-training code or data; the CPU's Fast tier (NVIDIA Parakeet 110M) stays 🟡.
+- A CPU build of the balanced tier now waits for 3 GiB of free memory instead of 2.75 GiB, after new measurements of its peak.
+- The native speech runtime loads Moondream Parakeet Ultra exports that keep their own model URL, including the plain Ultra URL, instead of exiting. Nemotron diarization is unchanged.
+- macOS builds (Apple silicon and Intel) now use Cassini's own sherpa-onnx libraries, built and tested on GitHub runners, instead of the stock ones, so Parakeet Ultra and Nemotron diarization work there too; before, only the fast tier's 110M model transcribed. The Windows libraries are pinned to the matching Cassini release as well. Linux arm32 still uses the stock library.
+- The Publish pipeline's "After each meeting" card reads as four numbered steps, each in its own panel, with the status strip's chips numbered after them.
+- The Transcript step is one list: Off, or a quality tier. Each tier shows its model, its size and whether it is installed, with the Download button on the tier itself; a tier whose model is not ready is greyed. Picking a tier turns transcription on, and so does a download started from the page once the model is ready. The transcription switch and the separate model row are gone.
+- The Summary step greys out while there is no transcript, with an amber "needs a transcript" note instead of a switch that could not be used. Its description now says where each transcript goes and that the provider may bill one request per meeting.
+- What participants receive is a dropdown that describes each option; "Transcript only" says in place that it needs transcription on. The step, and "What media stays on the server" (formerly "What stays on this server"; its chip reads "Media retention"), stay editable while transcription is off.
+- Each release now has notes written for the people who run Cassini, published on gocassini.com/changelog: what is new, what got better, and what to do before upgrading. The GitHub release shows them first, with every change folded underneath. The App Store's changelog shows them instead of the developer changelog. `prepare-release.sh` refuses a stable version until its notes are merged (`--no-user-notes` overrides). For a release cut on a release branch, `sync-release-to-main.sh` brings its published notes back to main, which puts them on the site. `scripts/user-release-notes.sh --sources` gathers what the next notes must cover. See `docs/release-notes.md`.
+- The native speech runtime moves to sherpa-onnx 2.0.1 (Cassini's `v2.0.1-cassini` libraries on Linux, macOS and Windows, and the matching CUDA build). Quiet speech is now handled by upstream's own fix instead of Cassini's patched frontend. New transcripts change slightly: about 5% of words differ from the same recording transcribed before, with the same accuracy overall (meeting test set, word error rate: Parakeet Ultra int8 on CPU 9.24% against 9.18%, Ultra fp32 on GPU 7.92% against 7.31%; neither difference is significant, and the GPU one comes from a single passage of one meeting). Existing transcripts are not re-transcribed, and no model is downloaded again. "Separate voices" gives the same speaker turns as before.
+- Transcript provenance now records the speech frontend as `nativeFrontend: "nemo-log-guard"` instead of `referenceFrontend`, doctor names that frontend, and the operator's `/status` reports `stt.runtime_supports_model` instead of `stt.reference_frontend`. A recorder that finds an older (1.13.7) sherpa library on its library path refuses to transcribe and says so, instead of running it with mismatched structures.
+- The GPU (`-cuda`) image moves from CUDA 12.4 to CUDA 12.9, which the new runtime needs to use the GPU. The host's NVIDIA driver must support CUDA 12.9: 575 or newer for a GeForce card; data-centre, professional and virtual GPUs also work with the 535, 550, 560, 565 and 570 drivers, the exceptions NVIDIA's `nvidia/cuda:12.9.1` image declares in `NVIDIA_REQUIRE_CUDA`. With an older driver the container toolkit refuses to start the image. Check with `docker run --rm --gpus all nvidia/cuda:12.9.1-base-ubuntu22.04 nvidia-smi`.
+
+### Removed
+- Removed the transcript hints vocabulary editor from Settings ahead of retiring hint support. Search spellings remain available in their own card.
+
+### Fixed
+- Bulk meeting tags now appear immediately, and you can continue tagging while changes save in the background.
+- GPU (`-cuda`) builds are back to their earlier speed. The move to the sherpa-onnx 2.0.1 runtime had made them 22-42% slower, because its ONNX Runtime asks CUDA for the GPU's properties (about 1 ms each) 77 times for every speech segment of a new length. Cassini's CUDA runtime now answers those repeat calls from a cache, which brings a 21-minute meeting from 35 s back to 28 s on an RTX 5060. Transcripts are byte-identical to before.
+- You can now rename a meeting participant from the People list without separating voices first, and the list shows the new name. Before, only separated voices could be named, so a participant recorded under a placeholder such as `participant-IOv3iaL_` kept it.
+- Meeting search now clears outdated transcript results and shows pending feedback instead of premature result counts or “Nothing matches” while a query is running.
+- Interrupted meeting deletion no longer loses the obligation to clean up
+  local recordings, transcripts and logs if the cleanup handoff fails.
+- Deletion confirmations stay above the meeting sheet on desktop and mobile.
+- A failed bulk deletion restores each meeting only once, even if the catalog
+  refreshes during the operation, and preserves refreshed meeting details.
+- Room-name editing opens immediately with the listed name and preserves drafts
+  while the latest room details load in the background.
+- The room-name editor now inherits the embedded app's theme, closes with
+  Escape or an outside click, and returns focus to its pencil button.
+- Adding a tag immediately after renaming or resetting a meeting's title now
+  succeeds in the same open meeting view, without closing or reloading it.
+- Default 1:1 titles use both conversation members' names captured when recording
+  starts, even if only one sends media. Account names such as `admin` are valid
+  display names; the saved names survive operator restarts and rebuilds.
+- A meeting with more than 20 recipients is now published. Nextcloud lets one account create only 20 shares every 10 minutes, and Cassini shares every recording from its `cassini` account, so the 21st share used to fail the whole publication after the first people already had it. Cassini now publishes, the run names who the limit held back, and **Re-share with the room** shares with them once the window has passed. Doctor counts those meetings and shows how an administrator can raise the limit.
+- With "Allow apps to use the Share API" off, Doctor's **Recording storage** check names that setting and how to turn it on, instead of a general storage failure.
+- The Operator refuses to start, naming the migration, when its database applied a schema migration under a different name than this version has, instead of taking the migration as applied and skipping it. This can only happen to a database that ran an unreleased development build.
+- The `<unk>` placeholder a speech model emits for an unrecognised sound no longer appears in transcripts.
+
 ## [0.2.0] - 2026-10-13
 
 ### Added
