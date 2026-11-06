@@ -50,7 +50,15 @@ func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logg
 	if _, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodGet, c.shareAPIURL(), nil); err != nil {
 		c.supportShare(ctx, "share_list", "", "", err, 0)
 		ncAccessSubstrate.unavailable("sharing_api", err)
+		// The most common reason the share API refuses is that it is turned
+		// off, and only the sharing settings say so. Read them here too, so the
+		// storage row can name the setting instead of a generic failure.
+		c.checkSharingPolicy(ctx, client, probe.AdminUser, logger)
 		return
 	}
 	ncAccessSubstrate.succeed()
+	// The share API answering proves nothing about whether a share will be
+	// accepted; the instance's sharing policy decides that (D-885). Recorded
+	// beside the storage verdict, after it, so storage never waits on it.
+	c.checkSharingPolicy(ctx, client, probe.AdminUser, logger)
 }

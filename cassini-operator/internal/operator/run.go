@@ -319,6 +319,9 @@ type jobDetailResponse struct {
 	// It is not a grant: the operator page asks Nextcloud, as the signed-in
 	// admin, whether they can open it, and links to Files only if they can.
 	RecordingFileID int64 `json:"recording_file_id,omitempty"`
+	// Sharing is who the published meeting could not be shared with (D-885);
+	// absent when no reconciliation was recorded for it.
+	Sharing *jobShareOutcome `json:"sharing,omitempty"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -1037,6 +1040,11 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/status", http.HandlerFunc(rt.statusHandler)},
 		{supportAdminPath, rt.supportBundleHandler(exappCfg, true)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
+		// USER: accept the recording shares waiting for the caller (D-885).
+		{"/shares/accept", http.HandlerFunc(rt.sharesAcceptHandler)},
+		// USER: dismiss the caller's own Browse notices for recordings they
+		// started that could not be published (D-885).
+		{"/shares/dismiss", http.HandlerFunc(rt.sharesDismissHandler)},
 		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
 		// The template names every caller may pick from (D-819), USER at the
 		// proxy; the instruction bytes stay on /settings/workflows (ADMIN).
@@ -1269,9 +1277,22 @@ func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "load meeting lifecycle")
 			return
 		}
+		unshared, err := rt.store.partiallySharedJobs(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load share outcomes")
+			return
+		}
+		retired, err := rt.store.retiredMeetingJobs(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "load meeting lifecycle")
+			return
+		}
 		for i := range jobs {
 			jobs[i].SourceExpired = expired[jobs[i].ID]
 			jobs[i].MeetingDeleted = deleted[jobs[i].ID]
+			if !retired[jobs[i].ID] {
+				jobs[i].UnsharedCount = unshared[jobs[i].ID]
+			}
 			jobs[i].MediaCleanup = rt.mediaCleanupStatus(jobs[i], jobs[i].MeetingDeleted)
 		}
 		rt.projectJobRoomNames(r.Context(), jobs)
@@ -1595,15 +1616,19 @@ func (s *Store) Close() error {
 }
 
 type Job struct {
-	MediaCleanup         *mediaCleanupStatus `json:"media_cleanup,omitempty"`
-	SourceExpired        bool                `json:"source_expired,omitempty"`
-	MeetingDeleted       bool                `json:"meeting_deleted,omitempty"`
-	ID                   string              `json:"id"`
-	Provider             string              `json:"provider"`
-	RequestJSON          string              `json:"request_json"`
-	Stage                string              `json:"stage"`
-	State                string              `json:"state"`
-	CurrentAttemptNumber int                 `json:"current_attempt_number"`
+	MediaCleanup   *mediaCleanupStatus `json:"media_cleanup,omitempty"`
+	SourceExpired  bool                `json:"source_expired,omitempty"`
+	MeetingDeleted bool                `json:"meeting_deleted,omitempty"`
+	// UnsharedCount is how many of the room's audience a published meeting
+	// could not be shared with (D-885), for the run list's flag. Who they are
+	// is in the job detail.
+	UnsharedCount        int    `json:"unshared_count,omitempty"`
+	ID                   string `json:"id"`
+	Provider             string `json:"provider"`
+	RequestJSON          string `json:"request_json"`
+	Stage                string `json:"stage"`
+	State                string `json:"state"`
+	CurrentAttemptNumber int    `json:"current_attempt_number"`
 	// CurrentTriggerKind is what the current attempt does (record, rerun,
 	// refine, summarize), so a reader can name its stages: a summarize's
 	// build stage writes a summary and transcribes nothing.
@@ -2182,6 +2207,14 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		rt.handleRerunJob(w, r, id)
 		return
 	}
+	if action == "reshare" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleReshareJob(w, r, id)
+		return
+	}
 	if action == "summary" {
 		rt.handleJobSummary(w, r, id)
 		return
@@ -2218,9 +2251,10 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 	rt.projectJobRoomNames(r.Context(), projectedJobs)
 	job = projectedJobs[0]
 	job.MeetingDeleted = rt.store.meetingDeleted(r.Context(), job.ID)
+	sharing := rt.jobSharing(r.Context(), &job)
 	availability := rt.artifactAvailability(job)
 	rt.fillPublishedStepOutcomes(id, availability.PublishedAttempt, attempts)
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: availability, RecordingFileID: rt.recordingFileID(r.Context(), id)})
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, Availability: availability, RecordingFileID: rt.recordingFileID(r.Context(), id), Sharing: sharing})
 }
 
 // fillPublishedStepOutcomes reads the outcomes of a published attempt built

@@ -323,3 +323,26 @@ describe("MeetingList tag filter over insights", () => {
     expect(meetingListSource).toContain("by name, date or tag");
   });
 });
+
+// D-885: the shell can put something in place of "No meetings yet", and above
+// a list that has meetings. A slot cannot be provided conditionally and one
+// that renders nothing still replaces the fallback, so the empty state is
+// gated on a bit the host sets, not on the slot's presence.
+describe("MeetingList's host slots", () => {
+  const empty = { meetings: [], totalCount: 0, insightsOffered: false, totalInsightCount: 0 };
+
+  it("keeps its own empty state unless the host says it fills the slot", () => {
+    expect(render(MeetingList, { props: { ...empty } } as never).body).toContain("No meetings yet");
+    expect(render(MeetingList, { props: { ...empty, listEmptyFilled: false } } as never).body).toContain("No meetings yet");
+    expect(render(MeetingList, { props: { ...empty, listEmptyFilled: true } } as never).body).not.toContain("No meetings yet");
+  });
+
+  it("puts the host's notice above the list only where there is a list", () => {
+    expect(meetingListSource).toMatch(
+      /\{#if totalCount > 0 \|\| totalInsightCount > 0\}[\s\S]{0,400}<slot name="list-notice" \/>[\s\S]{0,40}\{\/if\}/,
+    );
+    expect(meetingListSource).toMatch(
+      /\{#if totalCount === 0 && totalInsightCount === 0\}\s*\{#if listEmptyFilled\}\s*<slot name="list-empty" \/>\s*\{:else\}/,
+    );
+  });
+});

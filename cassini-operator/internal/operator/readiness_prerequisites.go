@@ -26,18 +26,25 @@ var readinessPrerequisites = map[string][]string{
 	// them all is what keeps the tool from appearing while it cannot succeed —
 	// the old version offered itself regardless and failed for a reason that
 	// was always already on screen, one row up.
-	"test": {"storage", "talk.hpb", "talk.discovery", "talk.handoff"},
+	// Recording sharing too: where it needs action, no share can be made at
+	// all — not even to the administrator running the test — so the test could
+	// only fail. A warning does not block it: the test's own starter may well
+	// be reachable.
+	"test": {"storage", "talk.hpb", "talk.discovery", "talk.handoff", "storage.sharing"},
+	// Sharing settings only matter once Cassini can store recordings at all.
+	"storage.sharing": {"storage"},
 }
 
 // readinessRowNames are the labels used when naming a blocker in a message.
 // They match the panel's own labels: a message that calls a row something the
 // reader cannot see on screen sends them hunting.
 var readinessRowNames = map[string]string{
-	"talk.hpb":       "High Performance Backend",
-	"talk.discovery": "Talk connection",
-	"talk.handoff":   "Recording credential",
-	"storage":        "Recording storage",
-	"test":           "Test recording",
+	"talk.hpb":        "High Performance Backend",
+	"talk.discovery":  "Talk connection",
+	"talk.handoff":    "Recording credential",
+	"storage":         "Recording storage",
+	"storage.sharing": "Recording sharing",
+	"test":            "Test recording",
 }
 
 // readinessProvenPrerequisites are prerequisites that must have been CHECKED

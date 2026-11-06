@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { createEventDispatcher, onDestroy, onMount, tick, type Snippet } from "svelte";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { marked } from "marked";
@@ -137,6 +137,15 @@
   // Shell-level "meeting id not in catalog" error (deep-link to a removed
   // meeting). Rendered in the same not-found card as an internal load failure.
   export let notFoundMessage = "";
+  // Whether the shell fills the `not-found` slot for this meeting (D-885):
+  // it knows why the reader cannot open it — a share waiting for them to
+  // accept, or one a sharing setting refused — and says that instead of
+  // "Meeting not found". A slot cannot be provided conditionally, so the
+  // shell says when it has something to put there. A snippet rather than a
+  // slot: this component already renders snippets, and Svelte allows one or
+  // the other.
+  export let notFoundFilled = false;
+  export let notFound: Snippet | undefined = undefined;
 
   // Which insights drew on this meeting, resolved by the shell against the
   // WHOLE catalog and handed down. Empty in every build with no operator to
@@ -1757,7 +1766,11 @@
       <div class="flex-none" style:height="{tabsHeight}px" aria-hidden="true"></div>
     {/if}
 
-  {#if !transcriptIndex && (errorMessage || notFoundMessage)}
+  {#if !transcriptIndex && !errorMessage && notFoundMessage && notFoundFilled && notFound}
+    <div class="grid place-items-center flex-1 p-4">
+      {@render notFound?.()}
+    </div>
+  {:else if !transcriptIndex && (errorMessage || notFoundMessage)}
     <div class="grid place-items-center flex-1 p-4">
       <div class="card bg-base-100 w-full max-w-md border border-base-300">
         <div class="card-body items-center text-center">

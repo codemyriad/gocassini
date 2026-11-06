@@ -41,6 +41,7 @@ export interface OperatorStateChangeEvent {
   at: string;
   job: Job;
   attempt?: JobAttempt;
+  sharing?: JobDetailResponse["sharing"];
 }
 
 interface OperatorStreamHandlers {
@@ -187,6 +188,14 @@ export class OperatorClient {
 
   async rerunJob(jobId: string): Promise<RerunJobResponse> {
     return this.#request<RerunJobResponse>(`/jobs/${encodeURIComponent(jobId)}/rerun`, {
+      method: "POST",
+    });
+  }
+
+  /** Shares a published meeting with its room's audience again, adding only
+   * who is missing (D-885). Answers with the new share outcome. */
+  async reshareJob(jobId: string): Promise<{ sharing?: JobDetailResponse["sharing"] }> {
+    return this.#request<{ sharing?: JobDetailResponse["sharing"] }>(`/jobs/${encodeURIComponent(jobId)}/reshare`, {
       method: "POST",
     });
   }

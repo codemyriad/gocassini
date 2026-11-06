@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { outcomeAttempt, summaryNotice, transcriptionNotice } from "./stepOutcomes";
+import { describeRefused, listRefusedIds, outcomeAttempt, reshareOutcome, shareNotice, summaryNotice, transcriptionNotice } from "./stepOutcomes";
 import type { JobAttempt, JobDetailResponse } from "./types";
 
 const attempt = (n: number, outcomes: Partial<JobAttempt> = {}): JobAttempt =>
@@ -75,5 +75,111 @@ describe("summaryNotice", () => {
     const notice = summaryNotice(attempt(1, { summary_status: "completed", summary_reason: "template_fallback" }));
     expect(notice?.tone).toBe("warning");
     expect(notice?.title).toContain("could not run");
+  });
+});
+
+describe("shareNotice", () => {
+  it("says nothing where everyone was given the meeting, or nothing was recorded", () => {
+    expect(shareNotice(undefined)).toBeNull();
+    expect(shareNotice({ status: "complete" })).toBeNull();
+    expect(shareNotice({ status: "partial", skipped: [] })).toBeNull();
+  });
+
+  it("names who a published meeting could not be shared with, behind a disclosure", () => {
+    const notice = shareNotice({
+      status: "partial",
+      skipped: [
+        { type: "user", id: "bob", reason: "Sharing is only allowed with group members" },
+        { type: "group", id: "marketing", reason: "Sharing is only allowed with group members" },
+        { type: "circle", id: "design" },
+      ],
+    });
+    expect(notice?.tone).toBe("warning");
+    expect(notice?.title).toBe("Published, but not shared with 3 recipients");
+    expect(notice?.items).toEqual({
+      summary: "Who was refused (3)",
+      entries: [
+        { id: "bob", kind: "person", reason: "Sharing is only allowed with group members" },
+        { id: "marketing", kind: "group", reason: "Sharing is only allowed with group members" },
+        { id: "design", kind: "Team", reason: "" },
+      ],
+    });
+    expect(notice?.hint).toBe("Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.");
+    expect(notice?.action).toEqual({
+      kind: "reshare",
+      label: "Re-share with the room",
+      note: "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
+    });
+    // Not while the meeting is being processed again.
+    expect(shareNotice({ status: "partial", skipped: [{ type: "user", id: "bob" }] }, true, false)?.action).toBeUndefined();
+  });
+
+  it("counts against the room's audience when the operator had it at hand", () => {
+    const skipped = [{ type: "user", id: "bob" }, { type: "user", id: "carol" }, { type: "group", id: "sales" }, { type: "user", id: "dave" }];
+    expect(shareNotice({ status: "partial", skipped, audience_count: 8 })?.title).toBe("Published, but not shared with 4 of 8 recipients");
+    expect(shareNotice({ status: "partial", skipped: skipped.slice(0, 1), audience_count: 8 })?.title).toBe("Published, but not shared with 1 of 8 recipients");
+    expect(shareNotice({ status: "partial", skipped: skipped.slice(0, 1) })?.title).toBe("Published, but not shared with 1 recipient");
+    // A count the operator could not vouch for is no count.
+    expect(shareNotice({ status: "partial", skipped, audience_count: 0 })?.title).toBe("Published, but not shared with 4 recipients");
+  });
+
+  it("says who Nextcloud's share limit held back, apart from the refused, with the re-share", () => {
+    const held = [{ type: "user", id: "dave" }, { type: "group", id: "marketing" }];
+    const alone = shareNotice({ status: "deferred", deferred: held });
+    expect(alone?.tone).toBe("warning");
+    expect(alone?.title).toBe("Published, but Nextcloud's share limit held back 2 recipients. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).");
+    expect(alone?.items).toBeUndefined();
+    expect(alone?.action?.label).toBe("Re-share with the room");
+    expect(shareNotice({ status: "deferred", deferred: held.slice(0, 1) })?.title).toBe(
+      "Published, but Nextcloud's share limit held back 1 recipient. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
+    );
+    expect(shareNotice({ status: "deferred", deferred: held }, true, false)?.action).toBeUndefined();
+    // With refusals too: the refused notice, the held-back sentence under it.
+    const both = shareNotice({ status: "partial", skipped: [{ type: "user", id: "bob" }], deferred: held });
+    expect(both?.title).toBe("Published, but not shared with 1 recipient");
+    expect(both?.items?.summary).toBe("Who was refused (1)");
+    expect(both?.heldBack).toBe("Nextcloud's share limit also held back 2.");
+    expect(both?.action?.kind).toBe("reshare");
+    expect(shareNotice({ status: "partial", skipped: [{ type: "user", id: "bob" }] })?.heldBack).toBeUndefined();
+  });
+
+  it("says a run was not published because its starter was refused, by name", () => {
+    const notice = shareNotice({ status: "starter_refused", skipped: [{ type: "user", id: "mallory", reason: "Sharing is only allowed with group members" }] });
+    expect(notice?.tone).toBe("error");
+    expect(notice?.title).toBe("Not published: Nextcloud refused to share it with mallory, who started the recording.");
+    expect(notice?.detail).toBe("mallory: Sharing is only allowed with group members");
+    expect(notice?.hint).toBe("Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room.");
+    // A run that cannot be rerun is not promised one, and a starter the
+    // operator did not record is not invented.
+    const unnamed = shareNotice({ status: "starter_refused", skipped: [] }, false);
+    expect(unnamed?.title).toBe("Not published: Nextcloud refused to share it with the person who started the recording.");
+    expect(unnamed?.hint).toBe("Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.");
+    expect(unnamed?.detail).toBeUndefined();
+  });
+});
+
+describe("after a re-share", () => {
+  it("says everyone, or who is still refused, naming up to three", () => {
+    expect(reshareOutcome([])).toBe("Shared with everyone.");
+    expect(reshareOutcome(["bob"])).toBe("Shared again. Nextcloud still refused 1 recipient (bob). Check Doctor › Recording sharing.");
+    expect(reshareOutcome(["bob", "carol"])).toBe("Shared again. Nextcloud still refused 2 recipients (bob and carol). Check Doctor › Recording sharing.");
+    expect(reshareOutcome(["bob", "carol", "dave"])).toBe("Shared again. Nextcloud still refused 3 recipients (bob, carol and dave). Check Doctor › Recording sharing.");
+    expect(reshareOutcome(["bob", "carol", "dave", "erin", "frank"])).toBe("Shared again. Nextcloud still refused 5 recipients (bob, carol, dave and 2 more). Check Doctor › Recording sharing.");
+    expect(listRefusedIds([])).toBe("");
+  });
+
+  it("says who the limit on new shares held back for later", () => {
+    expect(reshareOutcome([], 0)).toBe("Shared with everyone.");
+    expect(reshareOutcome([], 12)).toBe("Shared again. Nextcloud's share limit still held back 12 recipients; re-share in 10 minutes.");
+    expect(reshareOutcome([], 1)).toBe("Shared again. Nextcloud's share limit still held back 1 recipient; re-share in 10 minutes.");
+    expect(reshareOutcome(["bob"], 3)).toBe(
+      "Shared again. Nextcloud still refused 1 recipient (bob). Check Doctor › Recording sharing. Nextcloud's share limit still held back 3 recipients; re-share in 10 minutes.",
+    );
+  });
+
+  it("writes a refused entry as one line", () => {
+    expect(describeRefused({ id: "bob", kind: "person", reason: "" })).toBe("bob");
+    expect(describeRefused({ id: "marketing", kind: "group", reason: "Sharing is only allowed with group members" })).toBe("marketing (group): Sharing is only allowed with group members");
+    expect(describeRefused({ id: "design", kind: "Team", reason: "" })).toBe("design (Team)");
   });
 });
