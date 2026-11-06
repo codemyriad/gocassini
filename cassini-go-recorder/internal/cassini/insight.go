@@ -42,6 +42,12 @@ const (
 	// exitInsightModelFailed: the call did not produce a usable answer. The
 	// only one of these worth retrying unchanged.
 	exitInsightModelFailed = 5
+	// exitInsightWorkflowChanged: --workflow-sha256 named bytes the workflow
+	// no longer has, or the workflow is gone. A custom template can be edited
+	// or deleted between the moment a run is requested (and its provenance
+	// recorded) and the moment it runs; running whatever is there now would
+	// produce a document whose record names a prompt that did not write it.
+	exitInsightWorkflowChanged = 6
 )
 
 // insightProviderFor builds the model provider for a run. Package-level so a
@@ -155,7 +161,7 @@ Usage:
 
 Commands:
   run        Run one workflow over one or more context bundles
-  workflows  List the workflows this build ships, with their versions and hashes
+  workflows  List the workflows this deployment can run, with their versions and hashes
 `+"\n")
 }
 
@@ -176,17 +182,22 @@ func runInsightWorkflows(args []string, stdout, stderr io.Writer) int {
   cassini insight workflows
   cassini insight workflows --json
 
-List the workflows this build ships. Each one is a prompt compiled into this
-binary, identified by id, version and the SHA-256 of the exact bytes it sends —
-which is what an insight document records, so a document and this listing can be
-compared rather than assumed to match.
+List the workflows this deployment can run, each identified by id, version
+and the SHA-256 of the exact bytes it sends — which is what an insight
+document records, so a document and this listing can be compared rather than
+assumed to match.
 
 --json adds each workflow's instruction verbatim: the system prompt with its
 template already spliced in, byte for byte as the model receives it.
 
-Naming one on `+"`cassini insight run --workflow <id>`"+` runs it. A workflow
-whose bytes do not resolve is not listed and cannot be named, which is the
-point: an id you can select is an id that will run.
+Naming one on `+"`cassini insight run --workflow <id>`"+` runs it.
+
+Custom templates are read from the directory `+workflows.TemplatesDirEnv+`
+names, one <id>.md file each (front matter: name, description, version; the body
+is the instruction). They are listed with origin "Custom". A template whose
+instruction carries {{QUESTION}} takes a question, built in or custom, and
+then needs --question on insight run. A custom file that cannot run is still listed, with its "error", and naming it is refused, so a
+template someone added never disappears without a reason.
 
 `+"\n")
 		fs.PrintDefaults()
@@ -202,10 +213,17 @@ point: an id you can select is an id that will run.
 		return 2
 	}
 
-	entries, err := workflows.Catalog()
+	set, err := workflows.Load()
 	if err != nil {
 		fmt.Fprintf(stderr, "insight workflows failed: %v\n", err)
 		return 1
+	}
+	entries := set.Entries
+	// An unreadable templates directory leaves the built-ins listed: the
+	// listing still succeeds, and says on stderr why no custom template is in
+	// it (the operator logs what it reads there).
+	if set.DirError != "" {
+		fmt.Fprintf(stderr, "warn: custom templates are left out: %s\n", set.DirError)
 	}
 
 	if *asJSON {
@@ -225,8 +243,11 @@ point: an id you can select is an id that will run.
 	for _, entry := range entries {
 		fmt.Fprintf(stdout, "\nworkflow=%s version=%s sha256=%s origin=%q\n", entry.ID, entry.Version, entry.SHA256, entry.Origin)
 		fmt.Fprintf(stdout, "name=%s\n", entry.Name)
-		fmt.Fprintf(stdout, "asks=%s\n", entry.Question)
+		fmt.Fprintf(stdout, "takes_question=%t\n", strings.Contains(entry.Instruction, insight.QuestionPlaceholder))
 		fmt.Fprintf(stdout, "about=%s\n", entry.Description)
+		if entry.Error != "" {
+			fmt.Fprintf(stdout, "broken=%s\n", entry.Error)
+		}
 	}
 	fmt.Fprintf(stdout, "\nnote=--json adds each workflow's instruction, the exact bytes this build sends to the model\n")
 	return 0
@@ -244,6 +265,7 @@ func runInsightRun(ctx context.Context, args []string, stdout, stderr io.Writer)
 	// withheld from a workflow that needs it would send the placeholder to the
 	// model. So the flag exists but decides nothing: the workflow's own bytes do.
 	question := fs.String("question", "", "the question to ask, for a workflow that takes one; `cassini insight workflows` shows which do")
+	wantSHA := fs.String("workflow-sha256", "", "refuse to run (exit 6) unless the workflow's content hash is this one, as `cassini insight workflows` printed it")
 	model := fs.String("model", "", "override the model the configured endpoint is asked for")
 	outPath := fs.String("out", "", "write the insight to this .md file instead of stdout")
 	recordPath := fs.String("record", "", "also write the run record to this .json file")
@@ -285,6 +307,7 @@ is not a warning:
   3  no model endpoint is configured
   4  the endpoint refused the request (credential, quota, unknown model)
   5  the model failed or timed out
+  6  --workflow-sha256 was given and the workflow's bytes are not those (or it is gone)
 
 `+"\n")
 		fs.PrintDefaults()
@@ -306,13 +329,30 @@ is not a warning:
 		return 2
 	}
 
-	registry, err := insightWorkflows()
+	set, err := workflows.Load()
 	if err != nil {
 		fmt.Fprintf(stderr, "insight run failed: build the workflow registry: %v\n", err)
 		return 1
 	}
+	registry := set.Registry
 	workflow, known := registry.Lookup(*workflowID)
+	if expected := strings.TrimSpace(*wantSHA); expected != "" && (!known || workflow.SHA256 != expected) {
+		now := "it is gone"
+		if known {
+			now = "it is now " + workflow.SHA256
+		} else if problem := set.Problem(*workflowID); problem != "" {
+			now = "it cannot run: " + problem
+		}
+		fmt.Fprintf(stderr, "insight run refused: the workflow %q is not the one this run was asked for (sha256 %s; %s)\n", *workflowID, expected, now)
+		return exitInsightWorkflowChanged
+	}
 	if !known {
+		// A custom template that is listed and broken is the caller's to fix,
+		// so it is a bad request, and the reason is the one the panel shows.
+		if problem := set.Problem(*workflowID); problem != "" {
+			fmt.Fprintf(stderr, "insight run configuration error: the custom template %q cannot run: %s\n", *workflowID, problem)
+			return 2
+		}
 		fmt.Fprintf(stderr, "insight run configuration error: unknown workflow %q, expected one of: %s\n", *workflowID, strings.Join(registry.IDs(), ", "))
 		return 2
 	}

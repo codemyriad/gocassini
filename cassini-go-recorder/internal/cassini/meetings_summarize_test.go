@@ -210,7 +210,7 @@ func TestMeetingsSummarizeSealsASummaryInPlace(t *testing.T) {
 		t.Fatalf("re-read summarized meeting: %v", err)
 	}
 	// BuildMeetingSummary normalises the model output to end in one newline.
-	if got := string(meeting.SummaryMarkdown); got != returned+"\n" {
+	if got := summaryBody(t, meeting.SummaryMarkdown); got != returned+"\n" {
 		t.Errorf("sealed summary = %q, want %q", got, returned+"\n")
 	}
 
@@ -309,7 +309,7 @@ func TestMeetingsSummarizeForceReplacesAnExistingSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-read summarized meeting: %v", err)
 	}
-	if got := string(meeting.SummaryMarkdown); got != regenerated+"\n" {
+	if got := summaryBody(t, meeting.SummaryMarkdown); got != regenerated+"\n" {
 		t.Errorf("sealed summary = %q, want the regenerated %q", got, regenerated+"\n")
 	}
 	// Replaced, not duplicated: exactly one summary.md attachment survives.
@@ -380,7 +380,7 @@ func TestMeetingsSummarizeProcessesEveryFileWhenOneFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-read the good meeting: %v", err)
 	}
-	if got := string(meeting.SummaryMarkdown); got != returned+"\n" {
+	if got := summaryBody(t, meeting.SummaryMarkdown); got != returned+"\n" {
 		t.Errorf("sealed summary = %q, want %q", got, returned+"\n")
 	}
 }
@@ -410,7 +410,7 @@ func TestMeetingsSummarizeOutWritesACopyAndKeepsTheInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read --out file: %v", err)
 	}
-	if got := string(meeting.SummaryMarkdown); got != returned+"\n" {
+	if got := summaryBody(t, meeting.SummaryMarkdown); got != returned+"\n" {
 		t.Errorf("--out summary = %q, want %q", got, returned+"\n")
 	}
 }
@@ -492,4 +492,21 @@ func TestMeetingsSummarizeUsage(t *testing.T) {
 			t.Errorf("stderr = %q, want the summarize usage", stderr.String())
 		}
 	})
+}
+
+// The portable file's summary outcome carries the template_fallback reason
+// when the built-in wrote the summary (D-819), and no reason otherwise.
+func TestApplySummaryToPortableDocumentRecordsTheReason(t *testing.T) {
+	for _, reason := range []string{"", portable.SummaryReasonTemplateFallback} {
+		document := map[string]any{"processing": map[string]any{}}
+		applySummaryToPortableDocument(document, "# S\n", "m", nil, reason)
+		outcome, _ := document["processing"].(map[string]any)["meetingSummary"].(map[string]any)
+		got, has := outcome["reason"]
+		if reason == "" && has {
+			t.Errorf("no fallback, yet reason = %v", got)
+		}
+		if reason != "" && got != reason {
+			t.Errorf("reason = %v, want %q", got, reason)
+		}
+	}
 }

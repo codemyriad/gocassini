@@ -64,6 +64,15 @@ export function summaryNotice(attempt: JobAttempt): OutcomeNotice | null {
   const reason = attempt.summary_reason ?? "";
   // No transcript means nothing to summarize; the transcription notice says
   // why, and a second notice would only repeat it.
+  if (status === "completed" && reason === "template_fallback") {
+    // Written, but not by the template the summary step is set to run: that
+    // one could not run, and the built-in wrote it instead (D-819).
+    return {
+      tone: "warning",
+      title: "Summarised with the built-in template: the configured summary template could not run",
+      hint: "The build log says why. Fix the template in Insight templates, or choose another one for summaries in Settings.",
+    };
+  }
   if (status === "" || status === "completed" || reason === "no_transcript") return null;
   if (status === "failed") {
     return {

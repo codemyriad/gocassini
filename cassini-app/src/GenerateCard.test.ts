@@ -32,11 +32,33 @@ describe("GenerateCard", () => {
 
   it("has no second notion of admin", () => {
     // The client is null for exactly the people the operator boundary probe
-    // denied, and `operator/settings/workflows` is ADMIN at the proxy — so the
-    // template picker exists precisely where it would not 403.
+    // denied; it decides whether "Edit templates" is offered, and nothing else.
     expect(generateCardSource).toContain("$: isAdmin = operatorClient !== null;");
     expect(generateCardSource).toContain("{#if isAdmin}");
     expect(generateCardSource).toContain("This runs the template your administrator configured");
+  });
+
+  it("offers every user the template picker, from the names-only list (D-819)", () => {
+    expect(generateCardSource).toContain("const listing = await listInsightTemplates(operatorBasePath);");
+    // Opens on the deployment's default, which the operator names (D-819).
+    expect(generateCardSource).toContain("chosenWorkflow = listing.defaultId || workflows[0].id;");
+    expect(generateCardSource).not.toContain("SHIPPED_DEFAULT_WORKFLOW");
+    expect(generateCardSource).toContain('$: if (operatorBasePath !== "" && !workflowsAsked) {');
+    expect(generateCardSource).toContain("{#if workflows.length > 0}");
+    // The ADMIN registry, with its instruction bytes, is not read here.
+    expect(generateCardSource).not.toContain("listInsightWorkflows");
+  });
+
+  it("links an administrator to the templates panel from the picker's label line", () => {
+    // On the label's line, not between the picker and the description: the
+    // two are read together and nothing else sits between them.
+    expect(generateCardSource).toMatch(
+      /<div class="tpl-field-head">\s*<label for=\{templatePickerId\}>Insight template<\/label>\s*\{#if isAdmin\}\s*<a [^>]*>.*Edit templates<\/a>/,
+    );
+    expect(generateCardSource).toMatch(/<\/select>[\s\S]*?<\/div>\s*\{#if chosenWorkflowEntry\?\.description\}/);
+    expect(generateCardSource).toContain('dispatch("open", { panel: "templates", href: templatesUrl() });');
+    // The href follows the fragment too, rebuilt before it can be followed.
+    expect(generateCardSource).toContain("on:pointerenter={refreshTemplatesHref} on:focus={refreshTemplatesHref}");
   });
 
   it("lists no runs, its own included", () => {
@@ -51,16 +73,17 @@ describe("GenerateCard", () => {
     // "This deployment's default" named no template and disclosed no question,
     // and the template it stood for was in the list beside it.
     expect(generateCardSource).not.toContain("This deployment's default");
-    expect(generateCardSource).toContain('const SHIPPED_DEFAULT_WORKFLOW = "summarise";');
+    expect(generateCardSource).toContain("listing.defaultId");
     expect(generateCardSource).toContain("workflows[0].id");
   });
 
-  it("shows what the chosen template will ask, and nothing about it twice", () => {
-    // The name says nothing about what the model is asked to do, so the
-    // question is the affordance. The registry's description restated it in
-    // other words, which is a second sentence about one thing.
-    expect(generateCardSource).toContain("chosenWorkflowEntry.question");
-    expect(generateCardSource).not.toContain("chosenWorkflowEntry.description");
+  it("shows what the chosen template does, in its one description", () => {
+    // The name says nothing about what the model is asked to do; the
+    // description does, for a built-in and a custom template alike. There is
+    // no separate "what it asks" line any more.
+    expect(generateCardSource).toContain("{#if chosenWorkflowEntry?.description}");
+    expect(generateCardSource).toContain("{chosenWorkflowEntry.description}");
+    expect(generateCardSource).not.toContain("chosenWorkflowEntry.question");
   });
 
   it("folds the provider and model away, under what they are set to", () => {
@@ -124,11 +147,8 @@ describe("GenerateCard", () => {
   });
 
   it("never puts a raw workflow id in front of somebody who has no names", () => {
-    // The registry is ADMIN at the proxy, so a non-admin can look nothing up —
-    // and they have no picker either, so the only run this card ever shows them
-    // is one they started against the deployment's configured template. It is
-    // named by the question asked, or by the template's display name where this
-    // reader has one, never by the raw id.
+    // A run is named by the question asked, or by the template's display name
+    // where this reader has one, never by the raw id.
     expect(generateCardSource).not.toContain("run.workflowId");
   });
 
