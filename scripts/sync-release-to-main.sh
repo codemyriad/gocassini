@@ -158,22 +158,26 @@ main() {
   [[ "$removed" -eq 0 ]] || echo "Removed $removed released fragment(s)."
 
   # Release notes: the tagged entries for this version replace main's.
-  local notes_rel="cassini-microsite/src/content/changelog" entry notes=0
-  while IFS= read -r entry; do
-    [[ "$entry" == *.md ]] || continue
-    if [[ "$(notes_version <"$root/$entry")" == "$version" ]]; then
-      git -C "$root" rm -q -- "$entry"
-    fi
-  done < <(git -C "$root" ls-files -- "$notes_rel/")
+  # Without tagged entries, main's own (a draft that missed the release) stay.
+  local notes_rel="cassini-microsite/src/content/changelog" entry tagged=() mine=()
   while IFS= read -r entry; do
     [[ "$entry" == *.md ]] || continue
     if [[ "$(git -C "$root" show "$tag:$entry" | notes_version)" == "$version" ]]; then
-      git -C "$root" checkout -q "$tag" -- "$entry"
-      notes=$((notes + 1))
+      tagged+=("$entry")
     fi
   done < <(git -C "$root" ls-tree -r --name-only "$tag" -- "$notes_rel/")
-  if [[ "$notes" -gt 0 ]]; then
-    echo "Brought $notes release notes entr$([[ $notes -eq 1 ]] && echo y || echo ies) for $version."
+  while IFS= read -r entry; do
+    [[ "$entry" == *.md ]] || continue
+    if [[ "$(notes_version <"$root/$entry")" == "$version" ]]; then
+      mine+=("$entry")
+    fi
+  done < <(git -C "$root" ls-files -- "$notes_rel/")
+  if [[ "${#tagged[@]}" -gt 0 ]]; then
+    [[ "${#mine[@]}" -eq 0 ]] || git -C "$root" rm -q -- "${mine[@]}"
+    git -C "$root" checkout -q "$tag" -- "${tagged[@]}"
+    echo "Brought ${#tagged[@]} release notes entr$([[ ${#tagged[@]} -eq 1 ]] && echo y || echo ies) for $version."
+  elif [[ "${#mine[@]}" -gt 0 ]]; then
+    echo "note: $tag has no release notes for $version; main's (${mine[*]}) stay as they are"
   elif [[ "$version" != *-* ]]; then
     echo "note: $tag has no release notes for $version (docs/release-notes.md)"
   fi

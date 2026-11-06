@@ -582,6 +582,19 @@ if grep -qF "cut on main" <<<"$out"; then ok "sync refuses a release cut on main
 git -C "$SY" switch -q release/0.2
 out="$(sync_cl --version 0.2.1 || true)"
 if grep -qF "not release/0.2" <<<"$out"; then ok "sync refuses to run on a release branch"; else bad "sync should refuse release/0.2 (got: $out)"; fi
+# 0.2.3 ships without notes while main has a draft for it: the draft stays.
+printf '### Fixed\n- Yet another.\n' > "$SY/changelog.d/67.more.md"
+git -C "$SY" add -A; git -C "$SY" commit -qm more
+( cd "$SY" && ./scripts/prepare-release.sh --version 0.2.3 --no-user-notes ) >/dev/null 2>&1
+git -C "$SY" switch -q main
+printf -- '---\ntitle: Draft\ndate: 2026-11-20\nversion: 0.2.3\ndraft: true\n---\n\nNotes for 0.2.3.\n' >"$SY/$SYN/2026-11-20-v0-2-3.md"
+git -C "$SY" add -A; git -C "$SY" commit -qm "notes for 0.2.3"
+out="$(sync_cl --version 0.2.3 2>&1 || true)"
+if [[ -f "$SY/$SYN/2026-11-20-v0-2-3.md" ]] && grep -qF "main's (" <<<"$out"; then
+  ok "sync keeps main's notes when the release has none"
+else
+  bad "sync should keep main's draft when the tag has no notes (got: $out)"
+fi
 rm -rf "$SY"
 
 echo "user-release-notes.sh — curated notes"
