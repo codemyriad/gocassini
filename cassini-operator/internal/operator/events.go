@@ -99,6 +99,15 @@ func (s *Store) emitStateChange(ctx context.Context, eventType, jobID string, at
 }
 
 func (rt *Runtime) publishStateChangeEvent(event StateChangeEvent) {
+	failure := ""
+	if event.Job.Error != nil {
+		failure = *event.Job.Error
+	}
+	// The bundle's jobs.json already exports each attempt's full error. Keep a
+	// short copy here so frequent state changes cannot rotate share evidence
+	// out of the shared events stream.
+	detail, truncated := supportTextPrefix(failure, supportJobStateDetailMax)
+	rt.supportJournal.record(supportEvent{Event: "job_state", Job: event.JobID, Attempt: event.AttemptNumber, Stage: supportStage(event.Job.Stage), State: supportState(event.Job.State), Reason: supportFailure(failure), Detail: detail, DetailTruncated: truncated})
 	if rt.events == nil {
 		return
 	}
