@@ -66,16 +66,16 @@ export type { SpeakerEditsDoc, SpeakerEditsErrorCode, SpeakerEditsState } from "
 // How a meeting is (re)loaded. `fresh` skips every cache between the viewer and
 // the published file: the recording at that path was republished, and the copy
 // already read is the old one.
+export interface LoadMeetingOptions {
+  fresh?: boolean;
+}
+
 // AgentConnection is what a person needs to connect an agent: the MCP
 // endpoint, and where Nextcloud makes the app password it authenticates with
 // (null when the page cannot tell).
 export interface AgentConnection {
   endpoint: string;
   appPasswordsUrl: string | null;
-}
-
-export interface LoadMeetingOptions {
-  fresh?: boolean;
 }
 
 // DataProvider mirrors ONLY what App.svelte actually calls. Every method is
@@ -264,9 +264,9 @@ export interface DataProvider {
   startImports?(files: ImportFileRequest[]): Promise<ImportJobRecord[]>;
   listImports?(): Promise<ImportJobRecord[]>;
   // Where an agent outside Cassini connects to read meetings as this person
-  // (D-813), for the "Connect an agent" tab. Optional like every capability
+  // (D-813), for the "Connect an agent" panel. Optional like every capability
   // here: only an operator behind Nextcloud serves the MCP endpoint, so a
-  // standalone export, the public view and a bundled artifact have no tab
+  // standalone export, the public view and a bundled artifact offer no way in
   // rather than instructions that cannot work.
   agentConnection?(): AgentConnection;
   cancelImport?(id: string): Promise<void>;

@@ -161,6 +161,8 @@
   // next click — and a selection is a thing you are doing, not a place you are.
   let selection: MeetingSelection = EMPTY_SELECTION;
   let prepareOpen = false;
+  // The Connect an agent panel (D-813), opened from the rooms rail's footer.
+  let agentOpen = false;
   // The floating bar's real height, so the list can leave exactly that much
   // room under its last row.
   let selectionDockHeight = 0;
@@ -179,10 +181,12 @@
   // into view, not a thing over it, and the tabs stay usable while it is open.
   $: overlayOpen = prepareOpen || tagManagerOpen || Boolean(selectedInsight || selectedMeetingId);
   // Which layer is on top, in the order they stack: the meeting sheet, then
-  // Prepare, then the rooms drawer (only ever open on a phone), then Manage
-  // tags. Everything under it is inert, so neither Tab nor a screen reader
-  // wanders into a page the reader cannot see for the drawer over it.
-  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  // Prepare or Connect an agent, then the rooms drawer (only ever open on a
+  // phone), then Manage tags. Everything under it is inert, so neither Tab nor
+  // a screen reader wanders into a page the reader cannot see for the drawer
+  // over it. Prepare and Connect an agent share a level: each is opened from a
+  // control the other makes inert, so they are never open together.
+  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen || agentOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
   $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
@@ -554,6 +558,10 @@
       prepareOpen = false;
       return;
     }
+    if (agentOpen) {
+      agentOpen = false;
+      return;
+    }
     if (importOpen) {
       importOpen = false;
       return;
@@ -577,6 +585,10 @@
     }
     if (prepareOpen) {
       prepareOpen = false;
+      return;
+    }
+    if (agentOpen) {
+      agentOpen = false;
       return;
     }
     if (importOpen) {
@@ -1351,15 +1363,11 @@
   }
   $: catalogIds = new Set(catalogMeetings.map((meeting) => meeting.id));
   // "Connect an agent" (D-813) exists only where a provider knows the MCP
-  // endpoint: the in-Nextcloud build. Same rule as Import — no tab at all
-  // rather than instructions that cannot work. It is a second-level tab beside
-  // Meetings, the only one now that Import is a button and a sheet (D-828); a
-  // persistent reference, not an overlay, so Escape and the layer bookkeeping
-  // are untouched by it.
+  // endpoint: the in-Nextcloud build. Same rule as Import — no way in at all
+  // rather than instructions that cannot work.
   $: agentConnection = typeof dataProvider.agentConnection === "function" ? dataProvider.agentConnection() : null;
-  let browseTab: "meetings" | "agent" = "meetings";
   $: if (!agentConnection) {
-    browseTab = "meetings";
+    agentOpen = false;
   }
   // Which kinds the browse list is showing. Owned here rather than in the list
   // because the control that changes it is in the rail: two components reading
@@ -1577,30 +1585,8 @@
     />
   </div>
 {:else}
-  <div class="browse-shell" class:with-tabs={agentConnection !== null}>
-    {#if agentConnection}
-      <!-- Second-level tabs, visually subordinate to the shell's Browse/Operator
-           nav above. A segmented control rather than another nav bar. -->
-      <div class="browse-tabs" inert={topLayer > 0} role="tablist" aria-label="Browse sections">
-        <button
-          type="button"
-          role="tab"
-          class="browse-tab"
-          class:active={browseTab === "meetings"}
-          aria-selected={browseTab === "meetings"}
-          on:click={() => (browseTab = "meetings")}
-        >Meetings</button>
-        <button
-          type="button"
-          role="tab"
-          class="browse-tab"
-          class:active={browseTab === "agent"}
-          aria-selected={browseTab === "agent"}
-          on:click={() => (browseTab = "agent")}
-        >Connect an agent</button>
-      </div>
-    {/if}
-    <div class="contents" class:tab-hidden={browseTab !== "meetings"} inert={topLayer > 0 && topLayer !== 3}>
+  <div class="browse-shell">
+    <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
       editable={!!dataProvider.loadRoomName && !!dataProvider.saveRoomName}
@@ -1627,10 +1613,13 @@
       on:toggleTag={(event) => toggleTagFilter(event.detail)}
       on:tagMatch={(event) => (tagMatch = event.detail)}
       on:manageTags={() => (tagManagerOpen = true)}
+      agentOffered={agentConnection !== null}
+      {agentOpen}
+      on:connectAgent={() => (agentOpen = true)}
     />
     </div>
 
-    <div class="contents" class:tab-hidden={browseTab !== "meetings"} inert={topLayer > 0}>
+    <div class="contents" inert={topLayer > 0}>
     <MeetingList
       meetings={roomMeetings}
       types={browseTypes}
@@ -1703,12 +1692,8 @@
     </MeetingList>
     </div>
 
-    {#if agentConnection}
-      <ConnectAgentPanel connection={agentConnection} active={browseTab === "agent"} />
-    {/if}
-
     {#if importsOffered}
-      <aside class="import-sheet" class:import-sheet-closed={!importOpen} class:tab-hidden={browseTab !== "meetings"} aria-label="Import meetings" inert={topLayer > 0}>
+      <aside class="import-sheet" class:import-sheet-closed={!importOpen} aria-label="Import meetings" inert={topLayer > 0}>
         <ImportPanel
           {dataProvider}
           open={importOpen}
@@ -1725,7 +1710,7 @@
     {/if}
 
     {#if selectionBarUp}
-      <div class="selection-dock" class:tab-hidden={browseTab !== "meetings"} bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
+      <div class="selection-dock" bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
         <SelectionBar
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
@@ -1884,6 +1869,23 @@
       </aside>
     {/if}
 
+    <!-- Opened from the rail's footer (D-813). Its scrim is clear rather than
+         dimmed: the panel is a reference card read beside the list, not a step
+         that takes the page over, but a click beside it still closes it. -->
+    {#if agentOpen && agentConnection}
+      <button
+        type="button"
+        class="shell-scrim agent-scrim"
+        tabindex="-1"
+        inert={topLayer > 2}
+        aria-label="Close Connect an agent"
+        on:click={() => (agentOpen = false)}
+      ></button>
+      <aside class="agent-sheet" inert={topLayer > 2} use:focusLayer transition:sheetSlide={{}}>
+        <ConnectAgentPanel connection={agentConnection} on:close={() => (agentOpen = false)} />
+      </aside>
+    {/if}
+
     <!-- Kept mounted while closed, so a job started before closing still reports. -->
     {#if dataProvider.updateTag}
       <TagManager
@@ -1952,44 +1954,6 @@
   }
   .import-sheet-closed {
     display: none;
-  }
-
-  /* With the Connect an agent tab offered, a tabs row spans both columns above
-     the rail and the list. Only then: without it the single implicit row keeps
-     the layout every other build has. */
-  .browse-shell.with-tabs {
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-  .browse-tabs {
-    grid-column: 1 / -1;
-    display: flex;
-    gap: 2px;
-    width: max-content;
-    margin: 8px 12px 0;
-    padding: 2px;
-    border: 1px solid var(--color-base-300);
-    border-radius: calc(var(--radius-box, 12px) - 2px);
-    background: var(--color-base-200);
-  }
-  .browse-tab {
-    position: relative;
-    padding: 4px 16px;
-    border-radius: calc(var(--radius-box, 12px) - 4px);
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: var(--color-base-content);
-    opacity: 0.65;
-    cursor: pointer;
-  }
-  .browse-tab.active {
-    background: var(--color-base-100);
-    opacity: 1;
-    box-shadow: 0 1px 2px oklch(0% 0 0 / 0.12);
-  }
-  /* Hides a pane the inactive tab owns. !important because the wrappers carry
-     Tailwind's `.contents` (display: contents), which would otherwise win. */
-  .tab-hidden {
-    display: none !important;
   }
 
   .shell-scrim {
@@ -2068,6 +2032,24 @@
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
   }
 
+  /* Same level as Prepare (see topLayer), and narrower still: three steps and
+     an address. The scrim catches the click beside it without dimming. */
+  .agent-scrim {
+    z-index: 34;
+    background-color: transparent;
+  }
+  .agent-sheet {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 35;
+    width: min(400px, 100%);
+    background-color: var(--color-base-100);
+    border-left: 1px solid var(--color-base-300);
+    box-shadow: -8px 0 24px oklch(0% 0 0 / 0.12);
+  }
+
   @media (max-width: 720px) {
     /* The rail is out of flow down here (it is the drawer), so the list gets
        the whole shell rather than being squeezed beside an empty track. */
@@ -2079,7 +2061,8 @@
       left: 8px;
       right: 8px;
     }
-    .prepare-sheet {
+    .prepare-sheet,
+    .agent-sheet {
       top: auto;
       left: 0;
       right: 0;
