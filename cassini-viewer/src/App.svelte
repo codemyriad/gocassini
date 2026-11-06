@@ -71,6 +71,7 @@
   import ImportButton from "./components/import/ImportButton.svelte";
   import ImportPanel from "./components/import/ImportPanel.svelte";
   import type { ImportStatus } from "./components/import/importStatus";
+  import ConnectAgentPanel from "./components/ConnectAgentPanel.svelte";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
@@ -1349,6 +1350,17 @@
     importOpen = false;
   }
   $: catalogIds = new Set(catalogMeetings.map((meeting) => meeting.id));
+  // "Connect an agent" (D-813) exists only where a provider knows the MCP
+  // endpoint: the in-Nextcloud build. Same rule as Import — no tab at all
+  // rather than instructions that cannot work. It is a second-level tab beside
+  // Meetings, the only one now that Import is a button and a sheet (D-828); a
+  // persistent reference, not an overlay, so Escape and the layer bookkeeping
+  // are untouched by it.
+  $: agentConnection = typeof dataProvider.agentConnection === "function" ? dataProvider.agentConnection() : null;
+  let browseTab: "meetings" | "agent" = "meetings";
+  $: if (!agentConnection) {
+    browseTab = "meetings";
+  }
   // Which kinds the browse list is showing. Owned here rather than in the list
   // because the control that changes it is in the rail: two components reading
   // one filter cannot each keep their own copy of it.
@@ -1565,8 +1577,30 @@
     />
   </div>
 {:else}
-  <div class="browse-shell">
-    <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
+  <div class="browse-shell" class:with-tabs={agentConnection !== null}>
+    {#if agentConnection}
+      <!-- Second-level tabs, visually subordinate to the shell's Browse/Operator
+           nav above. A segmented control rather than another nav bar. -->
+      <div class="browse-tabs" inert={topLayer > 0} role="tablist" aria-label="Browse sections">
+        <button
+          type="button"
+          role="tab"
+          class="browse-tab"
+          class:active={browseTab === "meetings"}
+          aria-selected={browseTab === "meetings"}
+          on:click={() => (browseTab = "meetings")}
+        >Meetings</button>
+        <button
+          type="button"
+          role="tab"
+          class="browse-tab"
+          class:active={browseTab === "agent"}
+          aria-selected={browseTab === "agent"}
+          on:click={() => (browseTab = "agent")}
+        >Connect an agent</button>
+      </div>
+    {/if}
+    <div class="contents" class:tab-hidden={browseTab !== "meetings"} inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
       editable={!!dataProvider.loadRoomName && !!dataProvider.saveRoomName}
@@ -1596,7 +1630,7 @@
     />
     </div>
 
-    <div class="contents" inert={topLayer > 0}>
+    <div class="contents" class:tab-hidden={browseTab !== "meetings"} inert={topLayer > 0}>
     <MeetingList
       meetings={roomMeetings}
       types={browseTypes}
@@ -1669,8 +1703,12 @@
     </MeetingList>
     </div>
 
+    {#if agentConnection}
+      <ConnectAgentPanel connection={agentConnection} active={browseTab === "agent"} />
+    {/if}
+
     {#if importsOffered}
-      <aside class="import-sheet" class:import-sheet-closed={!importOpen} aria-label="Import meetings" inert={topLayer > 0}>
+      <aside class="import-sheet" class:import-sheet-closed={!importOpen} class:tab-hidden={browseTab !== "meetings"} aria-label="Import meetings" inert={topLayer > 0}>
         <ImportPanel
           {dataProvider}
           open={importOpen}
@@ -1687,7 +1725,7 @@
     {/if}
 
     {#if selectionBarUp}
-      <div class="selection-dock" bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
+      <div class="selection-dock" class:tab-hidden={browseTab !== "meetings"} bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
         <SelectionBar
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
@@ -1914,6 +1952,44 @@
   }
   .import-sheet-closed {
     display: none;
+  }
+
+  /* With the Connect an agent tab offered, a tabs row spans both columns above
+     the rail and the list. Only then: without it the single implicit row keeps
+     the layout every other build has. */
+  .browse-shell.with-tabs {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .browse-tabs {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 2px;
+    width: max-content;
+    margin: 8px 12px 0;
+    padding: 2px;
+    border: 1px solid var(--color-base-300);
+    border-radius: calc(var(--radius-box, 12px) - 2px);
+    background: var(--color-base-200);
+  }
+  .browse-tab {
+    position: relative;
+    padding: 4px 16px;
+    border-radius: calc(var(--radius-box, 12px) - 4px);
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--color-base-content);
+    opacity: 0.65;
+    cursor: pointer;
+  }
+  .browse-tab.active {
+    background: var(--color-base-100);
+    opacity: 1;
+    box-shadow: 0 1px 2px oklch(0% 0 0 / 0.12);
+  }
+  /* Hides a pane the inactive tab owns. !important because the wrappers carry
+     Tailwind's `.contents` (display: contents), which would otherwise win. */
+  .tab-hidden {
+    display: none !important;
   }
 
   .shell-scrim {
