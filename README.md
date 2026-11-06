@@ -114,6 +114,13 @@ You need Go 1.25. From a checkout, `./bin/cassini` builds the CLI and runs it in
 - [harness/README.md](harness/README.md): a local Nextcloud Talk lab, driven by `cassini dev`
 - [deployment/README.md](deployment/README.md): a Docker Compose bundle for development and staging. To run Cassini on a Nextcloud, use the app install above.
 
+## Support Cassini
+
+Cassini is free software, and every feature will stay free. If it's useful to
+you, you can [support its development](https://donate.stripe.com/7sY7sE5fu5C2d3d4Vz7IY00)
+with any amount from €2. Running it for an organisation?
+[Book a setup call](https://cal.eu/chris-de-sousa-fxpsnh/cassini-setup-call).
+
 ## Contributing
 
 Issues and pull requests are welcome. Read
