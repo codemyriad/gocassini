@@ -263,7 +263,7 @@ func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cf
 	if len(segments) == 0 {
 		return fmt.Errorf("meeting has no transcript text to summarize")
 	}
-	body, err := transcribe.BuildMeetingSummary(cfg, streams, segments)
+	written, err := transcribe.BuildMeetingSummary(cfg, streams, segments)
 	if err != nil {
 		return fmt.Errorf("generate summary: %w", err)
 	}
@@ -284,7 +284,8 @@ func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cf
 	if err != nil {
 		return err
 	}
-	applySummaryToPortableDocument(document, body, cfg.Model)
+	body := written.Body
+	applySummaryToPortableDocument(document, body, cfg.Model, transcribe.SummaryTemplateRecordOf(written.Template), written.Reason())
 
 	return commitPortableManifestRewrite(ctx, inputPath, resolvedOut, document, tags,
 		func(_, written portable.Manifest, _ map[string]string) error {
@@ -350,13 +351,12 @@ func summaryInputFromMeeting(meeting inspectpkg.ExtractedMeeting) ([]transcribe.
 // The document is edited as generic JSON, not through portable.Manifest, for
 // the same reason retag edits it that way: re-marshalling the struct would
 // silently drop every key this build has never heard of.
-func applySummaryToPortableDocument(document map[string]any, body string, model string) {
+// reason is the summary step's outcome reason ("" or template_fallback, when
+// the built-in wrote it in place of the configured template).
+func applySummaryToPortableDocument(document map[string]any, body string, model string, template *transcribe.SummaryTemplateRecord, reason string) {
 	trimmedModel := strings.TrimSpace(model)
 
-	meta := map[string]any{
-		"format":          "markdown",
-		"templateVersion": "v0",
-	}
+	meta := summaryTemplateMetadata(template)
 	if trimmedModel != "" {
 		meta["model"] = trimmedModel
 	}
@@ -382,6 +382,9 @@ func applySummaryToPortableDocument(document map[string]any, body string, model 
 	// would put a summary status beside a transcription status nobody wrote.
 	if processing, ok := document["processing"].(map[string]any); ok {
 		outcome := map[string]any{"status": portable.SummaryCompleted}
+		if reason != "" {
+			outcome["reason"] = reason
+		}
 		if trimmedModel != "" {
 			outcome["model"] = trimmedModel
 		}

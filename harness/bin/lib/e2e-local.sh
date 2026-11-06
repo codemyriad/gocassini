@@ -36,3 +36,10 @@ harness_e2e_local_stack_env() {
       ;;
   esac
 }
+
+# curl against the operator's ADMIN routes (OPERATOR_URL is the AppAPI proxy
+# URL ending in /operator) as the harness admin; fails on HTTP errors but
+# keeps the body on stdout so a caller can show it.
+operator_request() {
+  curl --fail-with-body --silent --show-error --max-time 60 -u admin:admin "$@"
+}

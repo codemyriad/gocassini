@@ -141,6 +141,70 @@ export async function listAIProviderModels(
   return readChoices(payload);
 }
 
+// InsightTemplateChoice is one template as somebody choosing between them sees
+// it: `GET operator/insights/workflows`, USER-readable (D-819). A name, what it
+// does, whether it asks for a question, and never the instruction it sends:
+// those bytes stay on the ADMIN settings route.
+export interface InsightTemplateChoice {
+  id: string;
+  name: string;
+  description: string;
+  takesQuestion: boolean;
+  origin: string;
+}
+
+// InsightTemplateListing is the templates and the deployment's default: the
+// configured insight template when it can run, else the built-in summary. The
+// picker opens on the default, so a run started without touching it runs what
+// it ran before there was a picker.
+export interface InsightTemplateListing {
+  defaultId: string;
+  templates: InsightTemplateChoice[];
+}
+
+// listInsightTemplates is the Prepare picker's data, for everyone.
+export async function listInsightTemplates(
+  operatorBasePath: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<InsightTemplateListing> {
+  const base = operatorBasePath.replace(/\/+$/, "");
+  // no-store, as for the endpoint list: AppAPI caches a proxied GET for an
+  // hour, and this list changes the moment an administrator saves a template.
+  const response = await fetchImpl(`${base}/insights/workflows`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const served = await readServedMessage(response);
+    throw new InsightRequestError(
+      response.status,
+      served !== ""
+        ? `The insight templates could not be listed: ${served}`
+        : `The insight templates could not be listed (HTTP ${response.status}).`,
+    );
+  }
+  const payload: unknown = await response.json();
+  const listed = isRecord(payload) ? payload.templates : null;
+  if (!isRecord(payload) || !Array.isArray(listed)) {
+    return { defaultId: "", templates: [] };
+  }
+  const choices: InsightTemplateChoice[] = [];
+  for (const entry of listed) {
+    if (isRecord(entry) && typeof entry.id === "string" && entry.id !== "") {
+      choices.push({
+        id: entry.id,
+        name: typeof entry.name === "string" && entry.name !== "" ? entry.name : entry.id,
+        description: typeof entry.description === "string" ? entry.description : "",
+        takesQuestion: entry.takesQuestion === true,
+        origin: typeof entry.origin === "string" ? entry.origin : "",
+      });
+    }
+  }
+  const named = typeof payload.default === "string" ? payload.default : "";
+  return { defaultId: choices.some((choice) => choice.id === named) ? named : "", templates: choices };
+}
+
 function readChoices(payload: unknown): AIProviderChoice[] {
   if (!Array.isArray(payload)) {
     return [];
@@ -206,7 +270,7 @@ export function isTerminalStatus(status: InsightStatus): boolean {
 
 // QUESTION_PLACEHOLDER is the token a workflow carries where the caller's own
 // text is spliced in (insight.QuestionPlaceholder in the recorder).
-const QUESTION_PLACEHOLDER = "{{QUESTION}}";
+export const QUESTION_PLACEHOLDER = "{{QUESTION}}";
 
 // workflowTakesQuestion reports whether a workflow has somewhere to put a
 // freeform question.
@@ -220,10 +284,18 @@ const QUESTION_PLACEHOLDER = "{{QUESTION}}";
 // asks this before it offers the box (D-700).
 //
 // One shipped workflow carries the placeholder — `ask`, "Ask your own question",
-// registered in internal/insight/workflows/workflows.go — so the box appears for
-// it and for nothing else. A workflow added later that takes a question shows
-// the box on its own rather than waiting for this file to be edited.
-export function workflowTakesQuestion(workflow: { instruction?: string } | null): boolean {
+// registered in internal/insight/workflows/workflows.go — and so does any
+// custom template whose prompt has it (D-819), so the box appears for exactly
+// those, without this file being edited.
+//
+// The names-only list everybody reads (D-819) carries no instruction, so it
+// carries the operator's answer to the same question, read off the same bytes.
+export function workflowTakesQuestion(
+  workflow: { instruction?: string; takesQuestion?: boolean } | null,
+): boolean {
+  if (typeof workflow?.takesQuestion === "boolean") {
+    return workflow.takesQuestion;
+  }
   return (workflow?.instruction ?? "").includes(QUESTION_PLACEHOLDER);
 }
 

@@ -65,6 +65,11 @@ type Config struct {
 	// ModelCacheRoot is independent from image layers and persists in the
 	// AppAPI volume (or the operator data root for standalone deployments).
 	ModelCacheRoot string
+	// TemplatesRoot is the directory custom insight templates live in, one
+	// <id>.md file each (D-819). It sits beside the model cache on the AppAPI
+	// volume, so a template survives an app update; every child that resolves
+	// a workflow receives it as CASSINI_TEMPLATES_DIR.
+	TemplatesRoot string
 	// DisallowModelDownload forbids model-network acquisition. Local import,
 	// runtime checks, activation, and audio-only operation remain available.
 	DisallowModelDownload bool
@@ -254,6 +259,13 @@ type Runtime struct {
 	llmMu           sync.RWMutex
 	llm             LLMSettings
 	llmSettingsPath string
+	// templatesMu serialises custom template saves and deletes (D-819): each
+	// one writes a file and then re-reads the registry to check it, and two
+	// interleaved would check each other's file.
+	templatesMu sync.Mutex
+	// workflowListing keeps the last parsed `cassini insight workflows --json`
+	// so a GET does not spawn the recorder each time (D-819).
+	workflowListing workflowListingCache
 	// storageUsage is an explicitly refreshed, process-local index. GET reads it
 	// in constant time; only POST /storage/usage performs filesystem and WebDAV
 	// traversal. storageUsageRefreshMu keeps two administrator-triggered scans
@@ -624,6 +636,10 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 		envOrDefaultAny([]string{"CASSINI_CACHE_ROOT"}, ""),
 		imageDefaultCacheRoot, "operator/models",
 		filepath.Join(defaultDataRoot, "models")), "persistent root for installed model revisions and partial downloads")
+	fs.StringVar(&cfg.TemplatesRoot, "templates-root", exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{envTemplatesDir}, ""),
+		"", "operator/templates",
+		filepath.Join(defaultDataRoot, "templates")), "persistent directory of custom insight templates (<id>.md files)")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
@@ -1016,6 +1032,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// started that could not be published (D-885).
 		{"/shares/dismiss", http.HandlerFunc(rt.sharesDismissHandler)},
 		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
+		// The template names every caller may pick from (D-819), USER at the
+		// proxy; the instruction bytes stay on /settings/workflows (ADMIN).
+		{"/insights/workflows", http.HandlerFunc(rt.insightWorkflowsHandler)},
 		{"/ai/providers/", http.HandlerFunc(rt.aiProviderModelsHandler)},
 		{"/settings", http.HandlerFunc(rt.settingsHandler)},
 		{"/settings/models", http.HandlerFunc(rt.modelsHandler)},
@@ -1025,6 +1044,8 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// is what the recorder ships, and an exact pattern wins over the prefix
 		// (D-718).
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
+		// One custom template, written or removed from the panel (D-819).
+		{"/settings/workflows/", http.HandlerFunc(rt.settingsWorkflowHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/details", exappCfg.detailedStorageUsageHandler(rt)},

@@ -70,6 +70,12 @@ describe("summaryNotice", () => {
     });
     expect(summaryNotice(attempt(1, { summary_status: "skipped", summary_reason: "not_configured" }))?.hint).toBe("Add one in Settings.");
   });
+
+  it("warns when the built-in wrote the summary in place of the configured template (D-819)", () => {
+    const notice = summaryNotice(attempt(1, { summary_status: "completed", summary_reason: "template_fallback" }));
+    expect(notice?.tone).toBe("warning");
+    expect(notice?.title).toContain("could not run");
+  });
 });
 
 describe("shareNotice", () => {

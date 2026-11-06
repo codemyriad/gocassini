@@ -74,7 +74,7 @@ describe("InsightCard surface", () => {
     expect(insightCardSource).not.toMatch(/<button[^>]*class="insight-card"/);
     const open = insightCardSource.indexOf('class="insight-open"');
     const openEnd = insightCardSource.indexOf("</button>", open);
-    const retry = insightCardSource.indexOf("{#if failed && canRetry}");
+    const retry = insightCardSource.indexOf("{#if failed && canRetry && insightRetryable(insight)}");
     const cardEnd = insightCardSource.indexOf("</div>", retry);
     expect(retry).toBeGreaterThan(openEnd);
     expect(cardEnd).toBeGreaterThan(retry);

@@ -50,6 +50,12 @@
         { id: "storage", label: "Storage" },
       ],
     },
+    {
+      // Last and on its own: asking for support is not a setting, and it sits
+      // where an administrator finds it without it ever getting in the way.
+      label: "Support",
+      items: [{ id: "support", label: "Support Cassini" }],
+    },
   ];
 
   // A job names its current attempt's kind, an attempt its own.

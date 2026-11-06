@@ -305,14 +305,19 @@ Content-Type: application/json
 Behavior:
 
 - requires at least one `meetingIds` entry
-- `workflow` is optional — it falls back to the configured insight template, then
-  to the shipped default. `cassini insight workflows --json` lists the registry
+- `workflow` is optional — it falls back to the configured insight template
+  when that can run, else to `summarise`: the same `default` that
+  `GET /operator/insights/workflows` advertises. A configured template that
+  cannot run is logged, not refused. A `workflow` that is named and cannot run
+  is a `400`. `cassini insight workflows --json` lists the registry
 - `question` belongs only to a workflow that has somewhere to put one, and is
   refused **both ways**: sent to a workflow that takes none it would be dropped
   without being asked, and withheld from one that needs it the prompt would go
   out with its placeholder still in it. Either mistake is a `400`. The shipped
   `ask` workflow ("Ask your own question") takes one and requires it; every
-  other shipped workflow asks its own
+  other shipped workflow asks its own. A custom template takes one exactly
+  when its instruction contains `{{QUESTION}}` (see
+  [Insight templates](#insight-templates))
 - `provider` is optional — the id of one of the configured AI endpoints
   (`GET /operator/ai/providers` lists them). Absent, the deployment's
   configured insight endpoint answers; an unknown id is a `400`
@@ -349,7 +354,9 @@ Valid only for a run in `failed`. The id is stable across attempts; each retry
 increments `attemptNumber`. A retry replays the request as it was made — the
 same workflow, meetings, question and the endpoint the caller picked — and
 falls back to the deployment's configured endpoint only when the request named
-none, or named one that has since been removed.
+none, or named one that has since been removed. A run that failed with
+`template-changed` is a `409`: the retry would run the same template version
+and be refused again, so it has to be asked anew.
 
 ### The run object
 
@@ -383,6 +390,7 @@ never on the run.
 | `no-provider` | no AI endpoint is configured (exit 3) |
 | `provider-refused` | the endpoint refused the call: key, quota, model name (exit 4) |
 | `model-failed` | the model did not answer (exit 5) |
+| `template-changed` | the template was edited or deleted after the run was requested, so the version its record names is no longer there to run (exit 6) |
 | `write-failed` | the answer was produced but could not be written (exit 1) |
 | `deliver-failed` | the document could not be PUT into the caller's Nextcloud files |
 | `timeout` | the attempt hit the run timeout |
@@ -404,10 +412,74 @@ prefixed with one of the first four tokens.
 |---|---|
 | `400` | A request that cannot be run: no meetings, too many, an unknown workflow, a malformed id. Refused before any Nextcloud call |
 | `404` | A meeting, or a run, the caller may not read — indistinguishable from one that does not exist |
-| `409` | A retry against a run that is not `failed` — `queued` or `running` (it is already moving), or `succeeded` (it already has an answer) |
+| `409` | A retry against a run that is not `failed` — `queued` or `running` (it is already moving), or `succeeded` (it already has an answer) — or one that failed with `template-changed` |
 | `502` | A scan that failed, or a request with no caller identity |
 
 A failure is never an empty `200`.
+
+### Insight templates
+
+The templates a run can name. Built-in ones are compiled into the recorder;
+custom ones are `<id>.md` files in the templates directory on the app's volume
+(`operator/templates` under `APP_PERSISTENT_STORAGE`, or `--templates-root` /
+`CASSINI_TEMPLATES_DIR`). Each file is front matter (`name`, `description`,
+`version`) between two `---` lines, and the instruction as the body. The front
+matter is not YAML: each value sits on one line, plain or quoted (`"..."` with
+Go/JSON escapes, or `'...'` with `''` for a quote), and a `#` in a value is
+part of it, never a comment (only a line that starts with `#` is skipped). A template takes the caller's
+question when its instruction carries `{{QUESTION}}`, built in or custom, and
+only then; there is no other input yet. A custom file with any `question` key,
+or with `{{TEMPLATE}}` in its body, is listed as broken.
+
+```http
+GET /operator/insights/workflows                 (USER)
+GET /operator/settings/workflows                 (ADMIN)
+PUT /operator/settings/workflows/<id>            (ADMIN)
+DELETE /operator/settings/workflows/<id>         (ADMIN)
+```
+
+- `GET /operator/insights/workflows` is what anybody generating an insight
+  picks from: `{"default": "<id>", "templates": [...]}`, with `id`, `name`,
+  `description`, `takesQuestion` and `origin` for each template that can run,
+  and never the instruction. `default` is the configured insight template when
+  it can run, else `summarise`; the Generate card opens on it. It is sent
+  `Cache-Control: no-store`
+
+- `GET` mirrors `cassini insight workflows --json`: `id`, `version`, `sha256`,
+  `name`, `description`, `origin` (`Built in` or `Custom`) and the
+  `instruction` the model receives. A custom file that cannot run is listed
+  with an `error` and no `sha256`, and a run that names it is a `400` carrying
+  that reason. It still carries what could be read from the file — its body
+  as `instruction` (the whole file when no front matter closes), and the
+  `name` and `version` when those lines parse — so it can be opened and fixed.
+  A templates directory that cannot be read leaves the built-ins listed; the
+  operator logs the recorder's warning saying why no custom template is there
+- `PUT` takes `{"name", "description", "instruction"}` (`description` may be
+  empty), writes the
+  file with the previous version plus one (the listed version, which a broken
+  file still carries when its `version` line parses),
+  never lower than the version a deleted template of that id reached (kept in
+  `.versions.json` in the templates directory; one that does not decode is
+  logged and read as empty). The file is checked alone in a
+  staging directory first; one the recorder will not run never reaches the
+  templates directory, and the save is a `400` with the recorder's reason.
+  Otherwise it is renamed into place and the answer is the saved entry.
+  A built-in id is a `400`: start a custom template from it instead. With
+  `If-None-Match: *` the `PUT` only creates: a template already there under
+  that id is a `412`, and the panel sends it for every new template
+- `DELETE` removes a custom template. A built-in is a `400`, a missing one a
+  `404`, and one that is the configured summary or insight template a `409` —
+  unless the file shares a built-in's id, which it never runs in place of, so
+  deleting it is allowed. The `409` body carries `step` (`summary` or
+  `insight`) beside `error`. A file whose stem is not a usable id
+  (`Team notes.md`) is listed broken under that stem and can be deleted by it,
+  but never saved under it. A delete goes ahead when the registry cannot be
+  listed (the id is then treated as no built-in's, and its version is not
+  recorded), so a directory whose templates break the listing can be put right
+- `PUT /operator/settings/llm` refuses (`400`) a summary or insight `template`
+  changed to one that does not exist or cannot run. It is serialised with
+  template saves and deletes, so a template cannot be deleted while a step is
+  being pointed at it
 
 ## What the API does not try to be
 
