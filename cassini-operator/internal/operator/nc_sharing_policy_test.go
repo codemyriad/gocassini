@@ -358,6 +358,14 @@ func directPreflightServer(t *testing.T, policy *sharingPolicyServer) *httptest.
 			w.WriteHeader(http.StatusMultiStatus)
 			_, _ = io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns"><d:response><d:href>/</d:href><d:propstat><d:prop><oc:owner-id>cassini</oc:owner-id><nc:mount-type></nc:mount-type></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`)
 		case r.URL.Path == "/ocs/v2.php/apps/files_sharing/api/v1/shares":
+			policy.mu.Lock()
+			off := policy.values[ncShareAPIEnabledKey] == `"no"`
+			policy.mu.Unlock()
+			if off {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":404,"message":"Share API is disabled"},"data":[]}}`)
+				return
+			}
 			_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":200},"data":[]}}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -406,6 +414,56 @@ func TestPreflightReportsSharingPolicyWithoutGatingStorage(t *testing.T) {
 	testExAppConfig(srv.URL).preflightDirectShares(context.Background(), log.New(io.Discard, "", 0))
 	if finding, _ := ncAccessSubstrate.sharingPolicyFinding(); finding.State != "passed" {
 		t.Fatalf("a repaired policy still reports %+v", finding)
+	}
+}
+
+// With the Share API off, storage itself stops at the share API, and the
+// Recording sharing row waits on storage. The storage row is then the one
+// that names the setting; a generic "cannot share" sent administrators
+// looking in the wrong place (found in the 6 November live run).
+func TestTheStorageRowNamesTheShareAPIWhenItIsOff(t *testing.T) {
+	resetDirectSubstrate(t)
+	resetProvisioningUser(t)
+	t.Setenv(envNCAdminUser, "")
+	policy := &sharingPolicyServer{values: map[string]string{ncShareAPIEnabledKey: `"no"`, ncAllowGroupSharingKey: `"no"`}, groups: []string{}}
+	srv := directPreflightServer(t, policy)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+
+	testExAppConfig(srv.URL).preflightDirectShares(context.Background(), log.New(io.Discard, "", 0))
+
+	report := rt.readiness(context.Background())
+	var storage, sharing readinessCheck
+	for _, c := range report.Checks {
+		switch c.ID {
+		case "storage":
+			storage = c
+		case sharingRowID:
+			sharing = c
+		}
+	}
+	if storage.State != "needs_action" || storage.Code != "sharing_api_disabled" {
+		t.Fatalf("storage row = %+v", storage)
+	}
+	if !strings.Contains(storage.Message, "“Allow apps to use the Share API” is off") || strings.Contains(storage.Message, "Allow sharing with groups") {
+		t.Fatalf("storage row should name only the Share API: %q", storage.Message)
+	}
+	if len(storage.Steps) != 1 || !strings.Contains(storage.Steps[0].Label, "Turn on “Allow apps to use the Share API”") {
+		t.Fatalf("storage steps = %+v", storage.Steps)
+	}
+	if sharing.Code != "check_blocked" {
+		t.Fatalf("the sharing row should still wait on storage: %+v", sharing)
+	}
+
+	// Turned back on: storage passes and the row returns to its usual words.
+	policy.mu.Lock()
+	policy.values[ncShareAPIEnabledKey] = `"yes"`
+	policy.mu.Unlock()
+	testExAppConfig(srv.URL).preflightDirectShares(context.Background(), log.New(io.Discard, "", 0))
+	for _, c := range rt.readiness(context.Background()).Checks {
+		if c.ID == "storage" && c.Code != "storage_ready" {
+			t.Fatalf("storage after the fix = %+v", c)
+		}
 	}
 }
 
@@ -547,8 +605,8 @@ func TestSharingPolicyReadThatTimesOutSaysSo(t *testing.T) {
 func TestSharingPolicyWordingIsExact(t *testing.T) {
 	const (
 		lift    = "Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing."
-		joinOne = "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator."
-		joinAll = "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator."
+		joinOne = "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group."
+		joinAll = "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group."
 	)
 	for name, tc := range map[string]struct {
 		edit    func(*sharingPolicySettings)

@@ -674,7 +674,13 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	// Parsed only to tell "a check has run" from "none has". How OLD it is rides
 	// on CheckedAt in the response, not on a branch here.
 	_, storageTimeErr := time.Parse(time.RFC3339, access.CheckedAt)
-	if !access.Applicable {
+	if apiOff, ok := shareAPIDisabledFinding(access); ok {
+		// Storage stopped at the share API and the sharing settings say why.
+		// The Recording sharing row waits on this one, so this row carries
+		// the setting's name and the way out.
+		addWithSteps("storage", "needs_action", apiOff.Code, apiOff.Message, "recheck", apiOff.Steps...)
+		resp.Checks[len(resp.Checks)-1].CheckedAt = access.CheckedAt
+	} else if !access.Applicable {
 		add("storage", "not_verified", "storage_not_probed", "The Nextcloud storage check does not apply to this publish destination. Verify storage with a test recording.", "test_recording")
 	} else if ncAccessSubstrate.recordingRefusal() != "" {
 		add("storage", "needs_action", "storage_admission_blocked", "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", "setup_storage")

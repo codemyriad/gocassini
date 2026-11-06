@@ -348,7 +348,11 @@ func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPoli
 		restrictSetting = "“Restrict users to only share with users in their groups”"
 	)
 	notAdmin := func(step string) string {
-		return step + " It does not need to be an administrator."
+		// Nextcloud deletes person-to-person shares between accounts that no
+		// longer share a group when one leaves it under the restriction
+		// (DefaultShareProvider::userDeletedFromGroup), so the advice to join
+		// a group carries the warning to stay in it.
+		return step + " It does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group."
 	}
 
 	if !s.APIEnabled {
@@ -419,7 +423,7 @@ func evaluateSharingPolicy(s sharingPolicySettings, groups []string) sharingPoli
 				consequence = "Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all."
 			}
 			sentence := fmt.Sprintf("%s Nextcloud's %s is on, and Cassini shares from its %s account, %s. %s", verdict, restrictSetting, ncRecordingsOwner, membership, consequence)
-			joinAll := readinessStep{Label: fmt.Sprintf("Or add `%s` to every group whose members should receive recordings. A group everyone is in covers everybody; `%s` does not need to be an administrator.", ncRecordingsOwner, ncRecordingsOwner)}
+			joinAll := readinessStep{Label: fmt.Sprintf("Or add `%s` to every group whose members should receive recordings. A group everyone is in covers everybody; `%s` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group.", ncRecordingsOwner, ncRecordingsOwner)}
 			issues = append(issues, sharingPolicyIssue{state: "warn", code: "sharing_limited_to_groups", sentence: sentence, steps: []readinessStep{lift, joinAll}})
 		}
 	}
@@ -502,6 +506,23 @@ func (c ExAppConfig) checkSharingPolicy(ctx context.Context, client *http.Client
 		logger.Printf("nc sharing policy: %s: %s", finding.Code, finding.Message)
 	}
 	ncAccessSubstrate.setSharingPolicy(finding)
+}
+
+// shareAPIDisabledFinding is the storage row's verdict when the storage check
+// stopped at the share API and the sharing settings show that API is off.
+// Only that one cause: other settings belong to the Recording sharing row,
+// which speaks once storage passes.
+func shareAPIDisabledFinding(access statusRecordingsAccess) (sharingPolicyFinding, bool) {
+	if !access.Applicable || access.OK || access.Step != "sharing_api" {
+		return sharingPolicyFinding{}, false
+	}
+	finding, checked := ncAccessSubstrate.sharingPolicyFinding()
+	// The Share API is evaluated first and never outranked, so its code is the
+	// finding's whenever it is off, whatever else is wrong.
+	if !checked || finding.Code != "sharing_api_disabled" {
+		return sharingPolicyFinding{}, false
+	}
+	return evaluateSharingPolicy(sharingPolicySettings{AllowGroupSharing: true}, nil), true
 }
 
 const sharingRowID = "storage.sharing"

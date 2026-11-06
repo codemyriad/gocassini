@@ -108,11 +108,11 @@ const sharingPermitted = "Nextcloud's sharing settings let Cassini share recordi
 const restrictOff = { label: "Turn off “Restrict users to only share with users in their groups” under Administration settings › Sharing." };
 const sharingRestrictedSteps = [
   restrictOff,
-  { label: "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator." },
+  { label: "Or add `cassini` to every group whose members should receive recordings. A group everyone is in covers everybody; `cassini` does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group." },
 ];
 const sharingBlockedSteps = [
   restrictOff,
-  { label: "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator." },
+  { label: "Or add `cassini` to a group everyone who records is in. It does not need to be an administrator. Keep it there: removing it later makes Nextcloud remove people's access to recordings already shared through that group." },
 ];
 
 export function scenarioReport(id: string, now = new Date()): RecordingReadiness {
