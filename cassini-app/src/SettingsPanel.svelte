@@ -16,7 +16,7 @@
   import { fly } from "svelte/transition";
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
   import { ChevronDown, TriangleAlert } from "@lucide/svelte";
-  import { OperatorClient, OperatorHttpError } from "./operator/client";
+  import { OperatorClient, OperatorHttpError, runnableWorkflows } from "./operator/client";
   import SpeechModelCell from "./SpeechModelCell.svelte";
   import PublishedFormatSelect from "./PublishedFormatSelect.svelte";
   import VoiceSeparationModel from "./VoiceSeparationModel.svelte";
@@ -58,6 +58,9 @@
   } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
+  // A step to land on rather than the panel's top: another panel's link to the
+  // summary step (a template refused deletion because it runs there).
+  export let focus: "" | "summary" = "";
 
   const dispatch = createEventDispatcher<{ openProviders: void; openTemplates: void; openStorage: void }>();
 
@@ -280,6 +283,10 @@
       loading = false;
     }
     await Promise.all([loadLLM(), loadWorkflows()]);
+    if (focus === "summary") {
+      await tick();
+      focusSection(summarySettings);
+    }
   }
 
   async function loadLLM() {
@@ -456,10 +463,9 @@
   // id the registry resolves, so a build that stopped shipping this one opens
   // on a different template instead of on an error.
   const SHIPPED_SUMMARY_TEMPLATE = "summarise";
-  // Off until the publish pipeline reads the chosen template back (D-719):
-  // internal/transcribe/summary.go still runs the shipped prompt, so the
-  // choice would be saved and ignored. The policy still resolves and saves it.
-  const SUMMARY_TEMPLATE_CHOICE = false;
+  // The publish pipeline reads the chosen template back (D-819): the operator
+  // hands it to the build as CASSINI_SUMMARY_TEMPLATE, and the summary records
+  // the id, version and hash of the template that wrote it.
 
   // The templates this step can actually run: every one EXCEPT a freeform one.
   //
@@ -476,10 +482,24 @@
   // — a `$:` has not recomputed by then, and reading one there resolved the
   // step's template against an empty list.
   function summaryCandidates(list: InsightWorkflow[]): InsightWorkflow[] {
-    return list.filter((workflow) => !workflowTakesQuestion(workflow));
+    return runnableWorkflows(list).filter((workflow) => !workflowTakesQuestion(workflow));
   }
 
   $: summaryTemplates = summaryCandidates(workflows);
+
+  // What the picker says of a configured template it cannot offer. A template
+  // the registry lists but cannot run says why, in the registry's words; only
+  // one it does not list at all is from another build.
+  function unrunnableSummaryTemplateLabel(id: string, list: InsightWorkflow[]): string {
+    const broken = list.find((workflow) => workflow.id === id && workflow.error);
+    if (broken) {
+      return `${id} cannot run: ${broken.error}`;
+    }
+    if (list.some((workflow) => workflow.id === id && workflowTakesQuestion(workflow))) {
+      return `${id} cannot run: it asks for a question, and a summary has nobody to ask`;
+    }
+    return `${id} — not in this build`;
+  }
 
   function shippedSummaryTemplate(list: InsightWorkflow[]): string {
     const candidates = summaryCandidates(list);
@@ -963,7 +983,6 @@
                        template it runs rather than hiding a prompt of its own. A
                        free-text "workflow" field asked an administrator to know an
                        id the registry could have told them. -->
-                  {#if SUMMARY_TEMPLATE_CHOICE}
                   <label class="op-field">
                     <span class="op-field-label">Insight template</span>
                     <select
@@ -989,7 +1008,7 @@
                            never heard of it. -->
                       {#if summary.template !== "" && !summaryTemplates.some((w) => w.id === summary.template)}
                         <option value={summary.template}>
-                          {summary.template} (not in this build)
+                          {unrunnableSummaryTemplateLabel(summary.template, workflows)}
                         </option>
                       {/if}
                     </select>
@@ -998,19 +1017,13 @@
                         Templates could not be listed.
                       </span>
                     {/if}
-                    <!-- The field is saved and served; the publish pipeline does not
-                         resolve it yet (internal/transcribe/summary.go splices the
-                         shipped prompt directly). Saying so beats a control that
-                         silently does nothing. Delete this line when the pipeline
-                         reads it back (D-719). -->
                     <span class="pipe-help">
-                      Your choice is saved, but summaries still use the built-in template for now.
+                      Meetings published from now on are summarised with this template.
                     </span>
                     <button type="button" class="link-btn pipe-link" on:click={() => dispatch("openTemplates")}>
-                      View insight templates
+                      Edit templates
                     </button>
                   </label>
-                  {/if}
                 </fieldset>
                 {/if}
               {/if}

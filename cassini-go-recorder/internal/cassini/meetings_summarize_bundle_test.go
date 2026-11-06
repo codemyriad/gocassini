@@ -79,7 +79,7 @@ func TestMeetingsSummarizeWritesASummaryIntoABundle(t *testing.T) {
 		t.Errorf("LLM requests = %d, want 1", requests)
 	}
 	const want = "# Meeting Summary\n\nRecovered for the bundle.\n"
-	if got := string(readFileBytes(t, filepath.Join(bundleDir, "summary.md"))); got != want {
+	if got := summaryBody(t, readFileBytes(t, filepath.Join(bundleDir, "summary.md"))); got != want {
 		t.Errorf("summary.md = %q, want %q", got, want)
 	}
 
@@ -124,10 +124,21 @@ func TestMeetingsSummarizeWritesASummaryIntoABundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read packed meeting: %v", err)
 	}
-	if string(meeting.SummaryMarkdown) != want || meeting.SummaryModel() != "test-summary-model" {
+	if summaryBody(t, meeting.SummaryMarkdown) != want || meeting.SummaryModel() != "test-summary-model" {
 		t.Errorf("packed summary = %q by %q", meeting.SummaryMarkdown, meeting.SummaryModel())
 	}
 	sealed := decodePortableManifestFromOpus(t, opusPath)
+	// The template that wrote it (D-819): written into the bundle manifest by
+	// summarize, carried into the meeting file by pack.
+	shipped := shippedSummariseRef(t)
+	if block, _ := manifest["summary"].(map[string]any); block["templateId"] != shipped.ID ||
+		block["templateVersion"] != shipped.Version || block["templateSha256"] != shipped.SHA256 {
+		t.Errorf("bundle manifest summary = %v, want %+v", manifest["summary"], shipped)
+	}
+	if sealed.Summary["templateId"] != shipped.ID || sealed.Summary["templateVersion"] != shipped.Version ||
+		sealed.Summary["templateSha256"] != shipped.SHA256 {
+		t.Errorf("packed summary block = %v, want %+v", sealed.Summary, shipped)
+	}
 	if sealed.Processing == nil || sealed.Processing.MeetingSummary == nil ||
 		*sealed.Processing.MeetingSummary != (portable.SummaryStatus{Status: "completed", Model: "test-summary-model", StartedAt: startedAt, FinishedAt: finishedAt}) {
 		t.Errorf("packed processing = %+v", sealed.Processing)
@@ -255,5 +266,38 @@ func TestMeetingsSummarizeRefusesOutForABundle(t *testing.T) {
 	code, _, stderr := runSummarize(t, "--out", filepath.Join(t.TempDir(), "x.opus"), bundleDir)
 	if code != 2 || !strings.Contains(stderr, "a meeting bundle is summarized in place") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+}
+
+// A summary the built-in wrote in place of a configured template that cannot
+// run is recorded as such, as the build's own summary step records it, so the
+// Operator can say so on the attempt (D-819).
+func TestMeetingsSummarizeRecordsATemplateFallbackInABundle(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := summarizableBundle(t, tmp, map[string]any{
+		"transcription": map[string]any{"status": "completed", "model": "test-stt"},
+	})
+	templates := filepath.Join(tmp, "templates")
+	if err := os.Mkdir(templates, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(templates, "roto.md"), []byte("roto\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CASSINI_TEMPLATES_DIR", templates)
+	t.Setenv("CASSINI_SUMMARY_TEMPLATE", "roto")
+	stub := &stubSummaryLLM{}
+	server := httptest.NewServer(stub.handler("# Meeting Summary\n\nBy the built-in."))
+	defer server.Close()
+	summaryLLMEnv(t, server.URL)
+
+	if code, _, stderr := runSummarize(t, bundleDir); code != 0 {
+		t.Fatalf("summarize failed code=%d stderr=%q", code, stderr)
+	}
+	processing, _ := readArtifactManifest(t, bundleDir)["processing"].(map[string]any)
+	summary, _ := processing["meetingSummary"].(map[string]any)
+	if summary["status"] != portable.SummaryCompleted || summary["reason"] != portable.SummaryReasonTemplateFallback {
+		t.Errorf("meetingSummary = %v, want completed with %s", summary, portable.SummaryReasonTemplateFallback)
 	}
 }

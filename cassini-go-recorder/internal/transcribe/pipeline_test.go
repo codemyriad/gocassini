@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"gocassini/internal/insight"
 	"gocassini/internal/portable"
 )
 
@@ -218,7 +219,7 @@ func TestBuildMeetingArtifactPipelineWiring(t *testing.T) {
 
 	var summaryInput []Segment
 	prevSummary := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(_ LLMConfig, _ []AudioStream, segs []Segment) (string, error) {
+	buildMeetingSummaryFn = func(_ LLMConfig, _ insight.Workflow, _ []AudioStream, segs []Segment) (string, error) {
 		summaryInput = segs
 		return "# Summary\n", nil
 	}

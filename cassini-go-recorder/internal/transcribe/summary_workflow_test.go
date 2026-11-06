@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"gocassini/internal/insight/workflows"
 )
 
 // The insight seam splices these two halves itself and hashes the result. If
@@ -19,8 +21,10 @@ func TestExportedSummaryPromptIsThePipelinesOwn(t *testing.T) {
 	if strings.TrimSpace(SummaryTemplateV0()) == "" {
 		t.Fatal("the exported template is empty")
 	}
+	t.Setenv(SummaryTemplateEnv, "")
+	t.Setenv(workflows.TemplatesDirEnv, "")
 	spliced := strings.Replace(SummaryPromptV0(), summaryTemplatePlaceholder, SummaryTemplateV0(), 1)
-	if spliced != summarySystemPrompt(summaryV0Template) {
+	if spliced != ResolveSummaryWorkflow().SystemPrompt() {
 		t.Error("splicing the exported halves does not reproduce the prompt BuildMeetingSummary sends")
 	}
 	if SummaryWorkflowID == "" || SummaryWorkflowVersion == "" {

@@ -49,7 +49,8 @@ type Processing struct {
 }
 
 // SummaryStatus is the summary step's outcome: "completed" (Model says which
-// model wrote it), "skipped" (Reason: disabled, not_configured, no_transcript)
+// model wrote it; Reason template_fallback when the configured template could
+// not run and the built-in wrote it instead), "skipped" (Reason: disabled, not_configured, no_transcript)
 // or "failed" (Reason: llm_failed). The failure itself stays in the build log;
 // the file only says that it happened.
 //
@@ -88,6 +89,10 @@ const (
 	SummaryReasonNotConfigured = "not_configured"
 	SummaryReasonNoTranscript  = "no_transcript"
 	SummaryReasonLLMFailed     = "llm_failed"
+	// SummaryReasonTemplateFallback goes with completed: the built-in
+	// template wrote the summary because the configured one could not run.
+	// Why is in the build log.
+	SummaryReasonTemplateFallback = "template_fallback"
 )
 
 type TranscriptionStatus struct {

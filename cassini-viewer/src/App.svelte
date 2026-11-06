@@ -673,20 +673,33 @@
     isMeetingSearchAvailable() &&
     searchRouteServed;
 
-  function handleSearchQuery(query: string) {
-    searchQuery = query;
+  // Stops whatever search is pending or in flight from ever landing. Bumping
+  // the run matters on its own: a provider may still resolve a request after
+  // its signal has been aborted, and the debounce window has no request yet.
+  function cancelSearch() {
     clearTimeout(searchDebounce);
-    // Abort whatever is in flight: its answer is about the previous question.
     searchAbort?.abort();
     searchAbort = undefined;
+    searchRun += 1;
+  }
 
-    if (query.trim() === "" || !dataProvider.searchMeetings) {
-      searchRun += 1;
+  function clearSearchResults() {
+    searchMessage = "";
+    transcriptHits = new Map();
+    transcriptOnlyMeetings = [];
+    searchCoverage = null;
+  }
+
+  function handleSearchQuery(query: string) {
+    searchQuery = query;
+    cancelSearch();
+    // A new question: the moments on screen answered the previous one.
+    clearSearchResults();
+    // Not "searching" where there is nothing to ask (a standalone export, or a
+    // route that answered 404): the list would promise a search of what was
+    // said that is never going to run.
+    if (query.trim() === "" || !searchOffered) {
       searchState = "idle";
-      searchMessage = "";
-      transcriptHits = new Map();
-      transcriptOnlyMeetings = [];
-      searchCoverage = null;
       return;
     }
     searchState = "searching";
@@ -698,7 +711,13 @@
     if (!search) {
       return;
     }
-    const run = ++searchRun;
+    // Room/tag changes re-run the same query without going through typing. The
+    // moments already on screen stay: they still answer this query, and the
+    // list drops the ones outside the new narrowing on its own.
+    cancelSearch();
+    searchState = "searching";
+    searchMessage = "";
+    const run = searchRun;
     const controller = new AbortController();
     searchAbort = controller;
 
@@ -732,9 +751,7 @@
       // having offered it. The box still narrows names and dates.
       searchRouteServed = false;
       searchState = "idle";
-      searchMessage = "";
-      transcriptHits = new Map();
-      transcriptOnlyMeetings = [];
+      clearSearchResults();
       return;
     }
     if (outcome.status !== "ok") {

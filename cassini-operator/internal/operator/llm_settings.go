@@ -96,6 +96,10 @@ const (
 	envReadableDisabled = "CASSINI_READABLE_DISABLED"
 	envLLMTimeoutSec    = "CASSINI_LLM_TIMEOUT_SEC"
 	envLLMMaxTokens     = "CASSINI_LLM_MAX_TOKENS"
+	// envSummaryTemplate is the workflow the publish pipeline's summary step
+	// runs (internal/transcribe: SummaryTemplateEnv). Unset means the shipped
+	// summarise (D-819).
+	envSummaryTemplate = "CASSINI_SUMMARY_TEMPLATE"
 
 	llmStepSummary = "SUMMARY"
 	llmStepInsight = "INSIGHT"
@@ -140,6 +144,7 @@ func inheritedLLMEnv() map[string]bool {
 		// Retired names an older deploy may still carry: the readable-cleanup
 		// kill switch and its per-step wire (the cleanup step was removed).
 		envReadableDisabled: true, "READABLE_BASE_URL": true, "READABLE_API_KEY": true, "READABLE_MODEL": true,
+		envSummaryTemplate: true,
 	}
 	for _, step := range []string{llmStepSummary, llmStepInsight} {
 		b, k, m, t, n := llmStepEnv(step)
@@ -508,6 +513,9 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 	}
 	summaryProvider, summaryOK := s.provider(s.Summary)
 	out = s.appendStepEnv(out, llmStepSummary, summaryProvider, modelFor(summaryProvider, s.Summary.Model), summaryOK)
+	if template := strings.TrimSpace(s.Summary.Template); template != "" {
+		out = append(out, envSummaryTemplate+"="+template)
+	}
 	insightProvider, insightModel, insightOK := s.insightEndpoint()
 	out = s.appendStepEnv(out, llmStepInsight, insightProvider, insightModel, insightOK)
 	return out
@@ -596,6 +604,16 @@ func (rt *Runtime) childEnv() []string {
 	// so a doctor run from here would report an installed model as missing.
 	if root := strings.TrimSpace(rt.cfg.ModelCacheRoot); root != "" {
 		env = setEnvKey(env, envCacheRoot, root)
+	}
+	return rt.withTemplatesDir(env)
+}
+
+// withTemplatesDir names the custom templates directory to a child, so every
+// command that resolves a workflow id — the listing, an insight run, the
+// publish pipeline's summary step — reads the same set (D-819).
+func (rt *Runtime) withTemplatesDir(env []string) []string {
+	if dir := strings.TrimSpace(rt.cfg.TemplatesRoot); dir != "" {
+		return setEnvKey(env, envTemplatesDir, dir)
 	}
 	return env
 }
@@ -759,6 +777,12 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Held with the template saves and deletes: a delete checks that no step
+	// names the template, and a step set to it at the same moment would
+	// otherwise land after that check and name a file that is gone (D-819).
+	rt.templatesMu.Lock()
+	defer rt.templatesMu.Unlock()
+
 	updated := rt.currentLLMSettings()
 	if in.Providers != nil {
 		stored := make(map[string]LLMProvider, len(updated.Providers))
@@ -791,6 +815,15 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 	updated, err = normalizeLLMSettings(updated)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if status, err := rt.checkStepTemplates(r, rt.currentLLMSettings(), updated); err != nil {
+		if status >= http.StatusInternalServerError {
+			rt.logger.Printf("llm settings: %v", err)
+			writeJSONError(w, status, "the templates could not be listed to check the step templates")
+			return
+		}
+		writeJSONError(w, status, err.Error())
 		return
 	}
 	if err := SaveLLMSettings(rt.llmSettingsPath, updated); err != nil {
@@ -1029,4 +1062,49 @@ func (rt *Runtime) aiProviderModelsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, llmModelsResponse{Provider: id, Models: models})
+}
+
+// checkStepTemplates refuses a step template that was changed to one that
+// cannot run: one that does not exist (deleted a moment ago, or never there)
+// or is listed broken. A template that was already set is not re-checked, so
+// a settings save never fails over a value the administrator did not touch.
+// The caller holds templatesMu. It returns the HTTP status to answer with.
+func (rt *Runtime) checkStepTemplates(r *http.Request, before, after LLMSettings) (int, error) {
+	var changed []string
+	for _, pair := range [][2]string{
+		{before.Summary.Template, after.Summary.Template},
+		{before.Insight.Template, after.Insight.Template},
+	} {
+		if next := strings.TrimSpace(pair[1]); next != "" && next != strings.TrimSpace(pair[0]) {
+			changed = append(changed, next)
+		}
+	}
+	if len(changed) == 0 || strings.TrimSpace(rt.cfg.CassiniBin) == "" {
+		return 0, nil
+	}
+	entries, err := rt.readWorkflowRegistry(r.Context())
+	if err != nil {
+		return http.StatusBadGateway, err
+	}
+	for _, id := range changed {
+		runnable, problem := false, ""
+		for _, entry := range entries {
+			if entry.ID != id {
+				continue
+			}
+			if entry.runnable() {
+				runnable = true
+			} else if problem == "" {
+				problem = entry.Error
+			}
+		}
+		switch {
+		case runnable:
+		case problem != "":
+			return http.StatusBadRequest, fmt.Errorf("the template %q cannot run: %s", id, problem)
+		default:
+			return http.StatusBadRequest, fmt.Errorf("there is no template %q", id)
+		}
+	}
+	return 0, nil
 }

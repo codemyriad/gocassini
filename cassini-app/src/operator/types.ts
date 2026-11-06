@@ -301,8 +301,17 @@ export interface StorageStatus {
 }
 
 // --- Insight templates (D-718): mirror GET <basePath>/settings/workflows.
-// Read-only. The workflows are prompts compiled into the recorder image, so
-// there is nothing to write back and no PUT to write it with.
+// Built-ins are compiled into the recorder image and cannot be written; custom
+// templates are files on the app's volume, written with
+// PUT/DELETE <basePath>/settings/workflows/<id> (D-819).
+
+// What the panel sends to save a custom template. The version is the
+// operator's to bump, so it is not part of the request.
+export interface InsightTemplateDraft {
+  name: string;
+  description: string;
+  instruction: string;
+}
 
 export interface InsightWorkflow {
   id: string;
@@ -313,18 +322,21 @@ export interface InsightWorkflow {
   // document a month old can be traced to the prompt that made it.
   sha256: string;
   name: string;
-  // What this workflow asks of a set of meetings, in a person's words. The
-  // name says nothing about what the model is asked to do, so this is what a
-  // row discloses under it.
-  question: string;
+  // One sentence for the person choosing it: what it does and what comes
+  // back. Built-ins and custom templates have the same three visible parts,
+  // name, description and prompt; whether one asks for a question is read off
+  // the instruction's {{QUESTION}} slot, never declared.
   description: string;
   // Where the bytes came from — "Built in" for everything shipped in the
-  // image. Derived by the recorder, so a second resolver would say something
-  // else here without any row being edited to admit it.
+  // image, "Custom" for a template file on the app's volume (D-819). Derived
+  // by the recorder, never written on a row.
   origin: string;
   // The system prompt with its template already spliced in: the exact bytes
   // sent to the model, not a description of them.
   instruction: string;
+  // Set on a custom template that cannot run, saying why. Such a row has no
+  // hash, cannot be chosen, and is listed so an administrator can fix it.
+  error: string;
 }
 
 export interface SpeechModel {

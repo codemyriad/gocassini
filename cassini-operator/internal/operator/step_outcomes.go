@@ -123,15 +123,24 @@ func (s *Store) RecordAttemptStepOutcomes(ctx context.Context, jobID string, att
 		return fmt.Errorf("begin step outcomes: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	var kind, replayStarted, replayFinished string
+	var kind, replayStarted, replayFinished, replayReason string
 	if err := tx.QueryRowContext(ctx, `
-SELECT trigger_kind, summary_started_at, summary_finished_at FROM job_attempts WHERE job_id = ? AND attempt_number = ?`,
-		jobID, attemptNumber).Scan(&kind, &replayStarted, &replayFinished); errors.Is(err, sql.ErrNoRows) {
+SELECT trigger_kind, summary_started_at, summary_finished_at, summary_reason FROM job_attempts WHERE job_id = ? AND attempt_number = ?`,
+		jobID, attemptNumber).Scan(&kind, &replayStarted, &replayFinished, &replayReason); errors.Is(err, sql.ErrNoRows) {
 		return nil // no attempt to record them on, as before
 	} else if err != nil {
 		return fmt.Errorf("read attempt for step outcomes: %w", err)
 	}
 	started, finished := attemptSummaryTimes(kind, o.SummaryStartedAt, o.SummaryFinishedAt, replayStarted, replayFinished)
+	// A speaker-edit replay rewrote summary.md after the bundle's step ran, so
+	// its reason (SetAttemptSummaryReplayReason, written before this)
+	// describes the summary the meeting now has; the bundle's processing
+	// block still describes the build's own, or, for a refine, an earlier
+	// attempt's. A rewrite with the configured template therefore clears a
+	// template fallback the bundle carries over.
+	if o.SummaryStatus == "completed" && (replayFinished != "" || replayReason == summaryReasonTemplateFallback) {
+		o.SummaryReason = replayReason
+	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET transcription_status = ?, transcription_reason = ?, summary_status = ?, summary_reason = ?,
@@ -166,6 +175,23 @@ func attemptSummaryTimes(kind, bundleStarted, bundleFinished, replayStarted, rep
 	default:
 		return bundleStarted, replayFinished
 	}
+}
+
+// summaryReasonTemplateFallback is the recorder's reason for a summary the
+// built-in template wrote because the configured one could not run
+// (internal/portable: SummaryReasonTemplateFallback, D-819).
+const summaryReasonTemplateFallback = "template_fallback"
+
+// SetAttemptSummaryReplayReason records that a speaker-edit replay's rewrite
+// of the summary was written by the built-in template (D-819). The summary is
+// then completed: the rewrite succeeded, with another template.
+func (s *Store) SetAttemptSummaryReplayReason(ctx context.Context, jobID string, attemptNumber int, reason string) error {
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE job_attempts SET summary_status = 'completed', summary_reason = ? WHERE job_id = ? AND attempt_number = ?`,
+		reason, jobID, attemptNumber); err != nil {
+		return fmt.Errorf("record summary reason: %w", err)
+	}
+	return nil
 }
 
 // SetAttemptSummaryTimes records when a speaker-edit replay rewrote the

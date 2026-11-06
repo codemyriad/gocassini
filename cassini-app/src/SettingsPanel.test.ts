@@ -200,24 +200,17 @@ describe("SettingsPanel template picker", () => {
     // registry's bytes, the same way the Prepare panel decides whether to show
     // a question box.
     expect(settingsPanelSource).toContain(
-      "return list.filter((workflow) => !workflowTakesQuestion(workflow));",
+      "return runnableWorkflows(list).filter((workflow) => !workflowTakesQuestion(workflow));",
     );
     expect(settingsPanelSource).toContain("{#each summaryTemplates as workflow (workflow.id)}");
   });
 
-  it("hides the template choice until the pipeline reads it back", () => {
-    // D-719: the summary step still runs the shipped prompt, so a choice here
-    // would be saved and ignored. The field stays in the source behind one flag.
-    expect(settingsPanelSource).toContain("const SUMMARY_TEMPLATE_CHOICE = false;");
-    expect(settingsPanelSource).toContain("{#if SUMMARY_TEMPLATE_CHOICE}");
-  });
-
-  it("still says the pipeline does not read the template back", () => {
-    // internal/transcribe/summary.go splices the shipped prompt directly. A
-    // control that silently does nothing is worse than one that admits it.
-    expect(settingsPanelSource).toContain(
-      "summaries still use the built-in template for now",
-    );
+  it("offers the template choice now the pipeline reads it back", () => {
+    // D-819: the summary step runs the chosen template, so the choice is shown.
+    expect(settingsPanelSource).not.toContain("SUMMARY_TEMPLATE_CHOICE");
+    expect(settingsPanelSource).not.toContain("summaries still use the built-in template for now");
+    expect(settingsPanelSource).toContain("Meetings published from now on are summarised with this template.");
+    expect(settingsPanelSource).toContain("Edit templates");
   });
 
   it("names the provider's default model as what an empty summary model means", () => {
