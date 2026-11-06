@@ -59,6 +59,38 @@ Nextcloud's sharing settings apply to the `cassini` account like to anyone:
 their groups" (with its ignored groups) and "Allow sharing with groups". The
 **Recording sharing** check in Doctor reads them, and `cassini`'s groups, and
 names the setting and the remedy when they stop Cassini sharing recordings.
+With the Share API off, the storage check itself stops at the share API, so
+the **Recording storage** row names that setting instead.
+
+Nextcloud limits how many shares one account may create: 20 in any 10
+minutes, for every account, refused attempts included. Cassini creates every
+recording share as `cassini`, so a meeting with more than 20 recipients, or
+several meetings ending together, reach that limit. Cassini then publishes
+anyway and records who the limit held back; the run says so and Doctor
+counts those meetings. Nobody in that list is told they were refused,
+because they were not. **Re-share with the room** on the run shares with them
+once the window has passed. An administrator can raise the limit with Nextcloud's `ratelimit_overwrite`
+system setting for `files_sharing.shareapi.createshare` (it applies to every
+account's share creation):
+
+```sh
+occ config:system:set ratelimit_overwrite files_sharing.shareapi.createshare user limit --value=1000 --type=integer
+occ config:system:set ratelimit_overwrite files_sharing.shareapi.createshare user period --value=600 --type=integer
+```
+
+Imports are not covered yet: an import that reaches the limit fails, with
+the limit named in the error.
+
+Under "Restrict users to only share with users in their groups", Nextcloud
+also removes shares on its own. When an account leaves a group, Nextcloud
+deletes every person-to-person share between that account and anyone it no
+longer shares a group with, both directions, at once and without a
+notification. If `cassini` leaves a group, every recording shared with
+people reachable only through that group disappears from their lists; the
+run still records the meeting as shared. **Re-share with the room** puts the
+shares back where Nextcloud still allows them. Group shares themselves are
+not removed. Doctor's advice to add `cassini` to a group says to keep it
+there, because removing it later removes people's access this way.
 
 The installed app creates no remote `catalog.json` and needs neither Team
 folders nor the Everyone Group app. The local static exporter still uses
