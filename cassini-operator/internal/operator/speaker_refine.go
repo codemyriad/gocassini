@@ -263,10 +263,19 @@ func (rt *Runtime) applySpeakerEdits(ctx context.Context, task buildTask, meetin
 	var times struct {
 		StartedAt  string `json:"summaryStartedAt"`
 		FinishedAt string `json:"summaryFinishedAt"`
+		// Reason is template_fallback when the rewrite was written by the
+		// built-in because the configured summary template could not run
+		// (D-819), so the attempt says so as a build's summary step does.
+		Reason string `json:"summaryReason"`
 	}
 	if err := json.Unmarshal(report, &times); err != nil {
 		rt.logger.Printf("summary times unreadable id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return nil
+	}
+	if reason := strings.TrimSpace(times.Reason); reason != "" {
+		if err := rt.store.SetAttemptSummaryReplayReason(context.Background(), task.JobID, task.AttemptNumber, reason); err != nil {
+			rt.logger.Printf("summary reason update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+		}
 	}
 	if times.StartedAt == "" || times.FinishedAt == "" {
 		return nil

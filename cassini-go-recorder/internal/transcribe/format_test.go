@@ -511,3 +511,32 @@ func TestWriteManifestWritesWordTimingsOnlyWhenTheCallerEarnedIt(t *testing.T) {
 		t.Errorf("provenance.speechToText went missing:\n%s", rawAbsent)
 	}
 }
+
+// D-819: the build names the template that wrote summary.md in the bundle
+// manifest's summary block, which pack carries into the portable file.
+func TestWriteManifestRecordsTheSummaryTemplate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
+	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
+	template := &SummaryTemplateRecord{TemplateID: "resumen", TemplateVersion: "v2", TemplateSHA256: "abc"}
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, Segments: segments, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), SummaryModel: "m", HasSummary: true, SummaryTemplate: template}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"summary": {`) || !strings.Contains(string(raw), `"templateId": "resumen"`) ||
+		!strings.Contains(string(raw), `"templateVersion": "v2"`) || !strings.Contains(string(raw), `"templateSha256": "abc"`) {
+		t.Errorf("manifest has no summary template block:\n%s", raw)
+	}
+
+	// No summary, no block.
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, Segments: segments, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), SummaryTemplate: template}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = os.ReadFile(path)
+	if strings.Contains(string(raw), "templateId") {
+		t.Errorf("a manifest with no summary names a template:\n%s", raw)
+	}
+}

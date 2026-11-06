@@ -365,3 +365,96 @@ func TestFillPublishedStepOutcomesAddsModels(t *testing.T) {
 		t.Fatalf("recorded outcome replaced by the bundle's: %+v", got)
 	}
 }
+
+// A speaker-edit replay whose rewrite the built-in template wrote marks the
+// attempt's summary as a template fallback, and recording the bundle's own
+// outcomes afterwards keeps it: summary.md is the rewrite (D-819).
+func TestRecordAttemptStepOutcomesKeepsAReplaysTemplateFallback(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	const jobID = "job-summary-fallback"
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(ctx, jobID, "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	if err := rt.store.SetAttemptSummaryReplayReason(ctx, jobID, 1, summaryReasonTemplateFallback); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, stepOutcomes{SummaryStatus: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := rt.store.GetJobAttempt(ctx, jobID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SummaryStatus != "completed" || a.SummaryReason != summaryReasonTemplateFallback {
+		t.Errorf("summary = %q/%q, want completed/%s", a.SummaryStatus, a.SummaryReason, summaryReasonTemplateFallback)
+	}
+}
+
+// A refine copies an earlier bundle whose processing block may still say the
+// built-in wrote its summary. When the refine rewrote the summary with the
+// configured template, that stale fallback is not the meeting's any more.
+func TestRecordAttemptStepOutcomesClearsAFallbackTheRewriteDidNotHave(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	const jobID = "job-summary-fallback-cleared"
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(ctx, jobID, "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	if _, err := rt.store.db.Exec(`UPDATE job_attempts SET trigger_kind = ? WHERE job_id = ?`, triggerKindRefine, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.SetAttemptSummaryTimes(ctx, jobID, 1, "2026-11-05T10:00:00Z", "2026-11-05T10:00:05Z"); err != nil {
+		t.Fatal(err)
+	}
+	outcomes := stepOutcomes{SummaryStatus: "completed", SummaryReason: summaryReasonTemplateFallback}
+	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, outcomes); err != nil {
+		t.Fatal(err)
+	}
+	a, err := rt.store.GetJobAttempt(ctx, jobID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SummaryStatus != "completed" || a.SummaryReason != "" {
+		t.Errorf("summary = %q/%q, want completed with no reason", a.SummaryStatus, a.SummaryReason)
+	}
+}
+
+// A build that is claimed again for the same attempt starts without the
+// earlier pass's summary reason, as it does without its times: a replay in
+// this pass that rewrote the summary with the configured template must not
+// inherit the earlier pass's template_fallback.
+func TestABuildClaimedAgainForgetsTheEarlierPassesSummaryReason(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	const jobID = "job-summary-reclaimed"
+	insertJob(t, rt.store.db, jobID, nowUTCString())
+	if err := rt.store.MarkBuildQueued(ctx, jobID, "/runs/job.run", "/runs/job.run", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	if err := rt.store.SetAttemptSummaryReplayReason(ctx, jobID, 1, summaryReasonTemplateFallback); err != nil {
+		t.Fatal(err)
+	}
+	task := buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: "/runs/job.run"}
+	if claimed, err := rt.store.ClaimBuildRunning(ctx, task, nowUTCString()); err != nil || !claimed {
+		t.Fatalf("ClaimBuildRunning() = (%v, %v), want (true, nil)", claimed, err)
+	}
+	if err := rt.store.SetAttemptSummaryTimes(ctx, jobID, 1, "2026-11-05T10:00:00Z", "2026-11-05T10:00:05Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.RecordAttemptStepOutcomes(ctx, jobID, 1, stepOutcomes{SummaryStatus: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := rt.store.GetJobAttempt(ctx, jobID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SummaryReason != "" {
+		t.Errorf("summary reason = %q, want the earlier pass's fallback forgotten", a.SummaryReason)
+	}
+}

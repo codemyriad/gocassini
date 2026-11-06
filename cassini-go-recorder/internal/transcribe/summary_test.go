@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"gocassini/internal/insight"
+	"gocassini/internal/insight/workflows"
 	"gocassini/internal/portable"
 )
 
@@ -16,7 +18,7 @@ import (
 // summary.md, and neither may be read as a failure.
 func TestWriteSummaryArtifactSaysWhyItSkipped(t *testing.T) {
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
+	buildMeetingSummaryFn = func(LLMConfig, insight.Workflow, []AudioStream, []Segment) (string, error) {
 		t.Fatal("buildMeetingSummaryFn should not be called when the step is skipped")
 		return "", nil
 	}
@@ -37,7 +39,7 @@ func TestWriteSummaryArtifactSaysWhyItSkipped(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
-			status, err := writeSummaryArtifact(tmp, sampleStreams(), tc.segments, BuildConfig{SummaryLLM: tc.llm}, &bytes.Buffer{})
+			status, _, err := writeSummaryArtifact(tmp, sampleStreams(), tc.segments, BuildConfig{SummaryLLM: tc.llm}, &bytes.Buffer{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -56,14 +58,14 @@ func TestWriteSummaryArtifactSkipsWhenLLMNotConfigured(t *testing.T) {
 	cfg := BuildConfig{} // SummaryLLM zero value, IsConfigured() == false
 
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
+	buildMeetingSummaryFn = func(LLMConfig, insight.Workflow, []AudioStream, []Segment) (string, error) {
 		t.Fatal("buildMeetingSummaryFn should not be called when SummaryLLM is unconfigured")
 		return "", nil
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	status, err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout)
+	status, _, err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout)
 	if err != nil {
 		t.Fatalf("expected no error when summary disabled, got %v", err)
 	}
@@ -89,13 +91,13 @@ func TestWriteSummaryArtifactWarnsAndSkipsOnError(t *testing.T) {
 	}
 
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
+	buildMeetingSummaryFn = func(LLMConfig, insight.Workflow, []AudioStream, []Segment) (string, error) {
 		return "", errors.New("boom")
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	status, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout)
+	status, _, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout)
 	if err != nil {
 		t.Fatalf("expected summary failure to be swallowed, got %v", err)
 	}
@@ -122,14 +124,20 @@ func TestWriteSummaryArtifactWritesSummaryMd(t *testing.T) {
 
 	const expected = "# Meeting Summary\n\n## Overview\n\nDemo overview.\n"
 	prev := buildMeetingSummaryFn
-	buildMeetingSummaryFn = func(LLMConfig, []AudioStream, []Segment) (string, error) {
+	var ran insight.WorkflowRef
+	buildMeetingSummaryFn = func(_ LLMConfig, workflow insight.Workflow, _ []AudioStream, _ []Segment) (string, error) {
+		ran = workflow.Ref()
 		return expected, nil
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
+	t.Setenv(SummaryTemplateEnv, "")
 
-	status, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{})
+	status, template, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
+	}
+	if template.ID != "summarise" || template.SHA256 == "" || template != ran {
+		t.Errorf("template = %+v, want the one the summary step ran (%+v)", template, ran)
 	}
 	if want := (portable.SummaryStatus{Status: "completed", Model: "test-model"}); untimed(t, status) != want {
 		t.Fatalf("status = %+v, want %+v", status, want)
@@ -178,7 +186,11 @@ func TestBuildMeetingSummaryRejectsEmptyTranscript(t *testing.T) {
 }
 
 func TestSummarySystemPromptPinsTemplateAndRules(t *testing.T) {
-	prompt := summarySystemPrompt(summaryV0Template)
+	// The prompt the step actually sends: the resolved workflow's, with no
+	// template configured.
+	t.Setenv(SummaryTemplateEnv, "")
+	t.Setenv(workflows.TemplatesDirEnv, "")
+	prompt := ResolveSummaryWorkflow().SystemPrompt()
 	mustContain := []string{
 		"# Meeting Summary",
 		"## Overview",
@@ -277,4 +289,55 @@ func sampleSegments() []Segment {
 			{Text: "world", StartMS: 500, EndMS: 1000},
 		},
 	}}
+}
+
+// A configured template that cannot run still gets the meeting a summary, by
+// the built-in, and says so where a person reading the attempt looks: the
+// step's log and its reason (D-819).
+func TestWriteSummaryArtifactRecordsATemplateFallback(t *testing.T) {
+	writeSummaryTemplates(t, map[string]string{"roto.md": "roto\n"})
+	t.Setenv(SummaryTemplateEnv, "roto")
+	warnings := useSummaryWarnings(t)
+	prev := buildMeetingSummaryFn
+	buildMeetingSummaryFn = func(_ LLMConfig, workflow insight.Workflow, _ []AudioStream, _ []Segment) (string, error) {
+		return "# Summary\n", nil
+	}
+	t.Cleanup(func() { buildMeetingSummaryFn = prev })
+
+	cfg := BuildConfig{SummaryLLM: LLMConfig{APIKey: "k", BaseURL: "https://example.test/api/v1", Model: "m"}}
+	var stdout bytes.Buffer
+	status, template, err := writeSummaryArtifact(t.TempDir(), sampleStreams(), sampleSegments(), cfg, &stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (portable.SummaryStatus{Status: "completed", Reason: "template_fallback", Model: "m"}); untimed(t, status) != want {
+		t.Errorf("status = %+v, want %+v", status, want)
+	}
+	if template.ID != "summarise" {
+		t.Errorf("template = %+v, want the built-in", template)
+	}
+	if !strings.Contains(stdout.String(), `warn: summary template "roto" cannot run`) {
+		t.Errorf("step log = %q, want the reason", stdout.String())
+	}
+	if warnings.Len() != 0 {
+		t.Errorf("stderr warning %q, want it in the step log only", warnings)
+	}
+}
+
+// The estimate reads the prompt of the template the step would run, not the
+// built-in's (D-819).
+func TestEstimateSummaryInputTokensUsesTheConfiguredTemplate(t *testing.T) {
+	long := strings.Repeat("Resume en español con mucho detalle. ", 400)
+	writeSummaryTemplates(t, map[string]string{
+		"resumen.md": "---\nname: Resumen\nversion: 1\n---\n" + long + "\n",
+	})
+	t.Setenv(SummaryTemplateEnv, "")
+	builtIn := EstimateSummaryInputTokens(sampleStreams(), sampleSegments())
+	t.Setenv(SummaryTemplateEnv, "resumen")
+	custom := EstimateSummaryInputTokens(sampleStreams(), sampleSegments())
+	workflow, _ := resolveSummaryWorkflow()
+	want := (len(workflow.SystemPrompt()) + len(formatTranscriptForSummary(sampleStreams(), sampleSegments())) + 3) / 4
+	if workflow.ID != "resumen" || custom != want || custom == builtIn {
+		t.Errorf("estimate = %d (built-in %d), want %d from %q's prompt", custom, builtIn, want, workflow.ID)
+	}
 }

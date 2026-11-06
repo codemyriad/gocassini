@@ -1,3 +1,9 @@
+<script module lang="ts">
+  // Each card's template picker needs an id its label can name, since the
+  // label shares its line with a link and so cannot wrap the select.
+  let pickerCount = 0;
+</script>
+
 <script lang="ts">
   // Create an insight: ask these meetings a question (D-700, D-720, D-749).
   //
@@ -22,8 +28,10 @@
   //
   // # Who chooses what
   //
-  // The TEMPLATE picker is admin-only, because the registry is ADMIN at the
-  // proxy and a control that 403s when opened is worse than none.
+  // The TEMPLATE picker is for everybody too (D-819). It reads
+  // `operator/insights/workflows`, a USER route carrying each template's name,
+  // description and whether it takes a question — never the instruction, which stays on
+  // the ADMIN settings route. Only an administrator is offered "Edit templates".
   //
   // The PROVIDER picker is for everybody. Choosing which of the configured
   // endpoints answers your question is the asker's decision — it is where
@@ -48,21 +56,22 @@
   // so no run is created unnamed. Renaming later happens in the insight's own
   // sheet.
   import { createEventDispatcher } from "svelte";
-  import { ChevronDown } from "@lucide/svelte";
+  import { ChevronDown, Pencil } from "@lucide/svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
   import { defaultInsightName, INSIGHT_NAME_MAX } from "cassini-viewer/insightName";
 
   import ModelCombobox from "./ModelCombobox.svelte";
   import { loadConfig } from "./operator/config";
   import type { OperatorClient } from "./operator/client";
-  import type { InsightWorkflow } from "./operator/types";
-  import type { OperatorPanel } from "./surfaceRouting";
+  import { applyPanel, applySurface, type OperatorPanel } from "./surfaceRouting";
   import {
     createInsight,
     listAIProviders,
     listAIProviderModels,
+    listInsightTemplates,
     workflowTakesQuestion,
     type AIProviderChoice,
+    type InsightTemplateChoice,
     type InsightRun,
   } from "./insights/client";
 
@@ -72,11 +81,9 @@
   // surface, and a second reading of it would be a second answer.
   export let entries: readonly MeetingCatalogEntry[] = [];
 
-  // The operator API client, or null for anyone the admin probe denied.
-  // `operator/settings/workflows` is ADMIN at the proxy, so a non-admin cannot
-  // list templates at all — null is that fact, and the card offers no template
-  // control rather than one that 403s when opened. Their run carries no
-  // workflow, which the operator reads as "this deployment's configured one".
+  // The operator API client, or null for anyone the admin probe denied. It
+  // decides only whether "Edit templates" is offered: the picker itself reads
+  // the USER template list, so it is the same for everybody.
   export let operatorClient: OperatorClient | null = null;
 
   // `created` carries the run the operator answered with — a record that
@@ -87,14 +94,8 @@
     created: InsightRun;
   }>();
 
-  // The id the publish pipeline's summary step runs when nothing names one
-  // (internal/insight/workflows: SummariseID). Named here only to pick the
-  // picker's OPENING selection: the operator accepts any id the registry
-  // resolves, so a build that ever stopped shipping this one degrades to "the
-  // first template listed" rather than to an error.
-  const SHIPPED_DEFAULT_WORKFLOW = "summarise";
 
-  let workflows: InsightWorkflow[] = [];
+  let workflows: InsightTemplateChoice[] = [];
   // A registry that could not be read is not a registry with nothing in it.
   // Either way Generate still works — an insight with no template named runs
   // whatever the deployment configured — so this narrows the picker rather than
@@ -155,7 +156,7 @@
   // same one that produced this client. There is no second notion of admin here
   // to drift from the first.
   $: isAdmin = operatorClient !== null;
-  $: if (operatorClient && !workflowsAsked) {
+  $: if (operatorBasePath !== "" && !workflowsAsked) {
     void loadWorkflows();
   }
   // Not gated on operatorClient: this route is USER, and the whole point is
@@ -178,9 +179,10 @@
   // waits for it rather than sending a request the operator will refuse.
   $: questionMissing = questionAccepted && question.trim() === "";
 
-  // A non-admin cannot read the registry, so their default says "Insight"
-  // rather than guessing which template the deployment runs. The question is
-  // not part of it: it is quoted in the insight instead (see insightName.ts).
+  // With no template list (an operator older than this build), the default
+  // says "Insight" rather than guessing which template the deployment runs.
+  // The question is not part of it: it is quoted in the insight instead (see
+  // insightName.ts).
   $: suggestedName = defaultInsightName({
     templateName: chosenWorkflowEntry?.name ?? null,
     entries,
@@ -189,22 +191,47 @@
     name = suggestedName;
   }
 
-  async function loadWorkflows() {
-    if (!operatorClient) {
+  const templatePickerId = `gc-template-${++pickerCount}`;
+
+  // "Edit templates": the panel that writes them, reached the way the setup
+  // card reaches its panels — a real link whose ordinary click becomes an
+  // in-page surface switch, rebuilt from the fragment at the moment it is
+  // followed, because the viewer rewrites the fragment as it navigates. The
+  // viewer moves by history.pushState, which fires no event to recompute the
+  // href on, so it is rebuilt as the pointer or the focus reaches the link:
+  // before any middle-click, "copy link address" or keyboard activation.
+  function templatesUrl(): string {
+    const url = new URL(window.location.href);
+    url.hash = applyPanel(applySurface(window.location.hash, "operator"), "templates").replace(/^#/, "");
+    return url.toString();
+  }
+
+  function refreshTemplatesHref(event: Event) {
+    (event.currentTarget as HTMLAnchorElement).href = templatesUrl();
+  }
+
+  function openTemplates(event: MouseEvent) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       return;
     }
+    event.preventDefault();
+    dispatch("open", { panel: "templates", href: templatesUrl() });
+  }
+
+  async function loadWorkflows() {
     workflowsAsked = true;
     workflowsError = "";
     try {
-      workflows = await operatorClient.listInsightWorkflows();
+      const listing = await listInsightTemplates(operatorBasePath);
+      workflows = listing.templates;
       // Opened on a real template rather than on a synthetic "this deployment's
       // default" row. That row named no template, disclosed no question, and
       // read as a setting rather than a choice — and the thing it stood for is
-      // in the list beside it.
+      // in the list beside it: the operator names it (the configured insight
+      // template, else the built-in summary), so a run started without
+      // touching the picker runs what the deployment is set to run.
       if (chosenWorkflow === "" && workflows.length > 0) {
-        chosenWorkflow =
-          workflows.find((workflow) => workflow.id === SHIPPED_DEFAULT_WORKFLOW)?.id ??
-          workflows[0].id;
+        chosenWorkflow = listing.defaultId || workflows[0].id;
       }
     } catch (error) {
       workflowsError = describe(error);
@@ -334,26 +361,39 @@
       </p>
     </div>
 
-    {#if isAdmin}
+    {#if workflows.length > 0}
       <!-- One box: the template you pick and what it will ask are the same
            decision, so they are not two controls with a gap between them. -->
       <div class="tpl-box">
-        <label class="tpl-field tpl-field-row">
-          <span>Insight template</span>
+        <!-- The picker and what it does are read together, so nothing sits
+             between them: "Edit templates" rides on the label's line instead,
+             small, where an administrator looks for it and nobody else
+             trips over it. -->
+        <div class="tpl-field">
+          <div class="tpl-field-head">
+            <label for={templatePickerId}>Insight template</label>
+            {#if isAdmin}
+              <a class="tpl-edit-link" href={templatesUrl()} on:pointerenter={refreshTemplatesHref} on:focus={refreshTemplatesHref} on:click={openTemplates}><Pencil size={11} aria-hidden="true" />Edit templates</a>
+            {/if}
+          </div>
           <span class="gc-select">
-            <select class="gc-input" bind:value={chosenWorkflow}>
+            <select id={templatePickerId} class="gc-input" bind:value={chosenWorkflow}>
               {#each workflows as workflow (workflow.id)}
                 <option value={workflow.id}>{workflow.name}</option>
               {/each}
             </select>
             <ChevronDown size={14} class="gc-select-chevron" aria-hidden="true" />
           </span>
-        </label>
-
+        </div>
+        {#if chosenWorkflowEntry?.description}
+          <!-- What the template does and what comes back, in one sentence:
+               the name alone says nothing about what the model is asked. -->
+          <p class="tpl-description">{chosenWorkflowEntry.description}</p>
+        {/if}
         {#if questionAccepted}
-          <!-- The template whose question is yours. Offered only by one with
-               somewhere to put it, so a box that appears is a box the operator
-               will accept. -->
+          <!-- A template whose prompt has a {{QUESTION}} slot takes yours.
+               Offered only by one with somewhere to put it, so a box that
+               appears is a box the operator will accept. -->
           <label class="tpl-field">
             <span>Question</span>
             <textarea
@@ -363,31 +403,21 @@
               bind:value={question}
             ></textarea>
           </label>
-        {:else if chosenWorkflowEntry}
-          <!-- What this template asks, and what comes back. The question is the
-               affordance — the name says nothing about what the model is asked
-               to do — so it carries the weight, and the shape of the document
-               reads under it. -->
-          <!-- Quoted and inset: it is what the template will actually ask,
-               not a note about it. The registry's own description said the
-               same thing a second time, so it is gone. -->
-          <p class="tpl-question">{chosenWorkflowEntry.question}</p>
         {/if}
 
         {@render nameField()}
       </div>
 
-      {#if workflowsError}
-        <p class="text-xs text-warning">Templates could not be listed. The configured one runs.</p>
-      {/if}
     {:else}
-      <!-- The template registry is ADMIN at the proxy, so there is no picker to
-           offer. Saying which template runs is the honest substitute for a
-           control that would 403 when opened. -->
+      <!-- No list to pick from: still loading, or an operator that does not
+           serve one. Saying which template runs is the honest substitute. -->
       <p class="ins-card-sub">
         This runs the template your administrator configured for insights.
       </p>
       {@render nameField()}
+      {#if workflowsError}
+        <p class="text-xs text-warning">Templates could not be listed. The configured one runs.</p>
+      {/if}
     {/if}
 
     <!-- Where this question goes. Offered to EVERYBODY, not only
@@ -516,6 +546,29 @@
     display: grid;
     gap: 5px;
   }
+  /* The template picker's label line, with the administrator's way to the
+     templates panel at its far end. */
+  .tpl-field-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .tpl-edit-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+    text-decoration: none;
+  }
+  .tpl-edit-link:hover,
+  .tpl-edit-link:focus-visible {
+    color: var(--color-base-content);
+    text-decoration: underline;
+  }
   /* The label and the control are one line while there is room for both: a
      picker under its own name reads as a form where this is one choice. */
   .tpl-field-row {
@@ -586,9 +639,12 @@
     line-height: 1.5;
   }
 
-  /* The question carries the weight: it is what the template will actually
-     ask, so it is set as the quotation it is. */
-  .tpl-question {
+  /* Inset under the picker: it says what the chosen template does, close
+     enough to read as part of the choice. */
+  .tpl-field + .tpl-description {
+    margin-top: -6px;
+  }
+  .tpl-description {
     padding: 8px 12px 8px 11px;
     background-color: var(--color-base-200);
     border-left: 2px solid color-mix(in oklch, var(--color-base-content) 30%, transparent);

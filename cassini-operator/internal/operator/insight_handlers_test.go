@@ -180,10 +180,12 @@ func (f *fakeInsightStore) FinishAttempt(_ context.Context, id string, outcome I
 // workflows: one that asks its own question and one that needs the caller's, so
 // both halves of the question rule can be exercised.
 const insightRegistryJSON = `[` +
-	`{"id":"summarise","version":"v0","sha256":"aaaa","name":"Meeting summary","question":"Summarise what happened.",` +
+	`{"id":"summarise","version":"v0","sha256":"aaaa","name":"Meeting summary",` +
 	`"description":"One document per meeting.","origin":"Built in","instruction":"Summarise these meetings."},` +
-	`{"id":"ask","version":"v0","sha256":"bbbb","name":"Ask your own","question":"Whatever you want to know.",` +
-	`"description":"An answer to your question.","origin":"Built in","instruction":"Answer this: {{QUESTION}}"}` +
+	`{"id":"ask","version":"v0","sha256":"bbbb","name":"Ask your own",` +
+	`"description":"An answer to your question.","origin":"Built in","instruction":"Answer this: {{QUESTION}}"},` +
+	`{"id":"roto","version":"","sha256":"","name":"roto","description":"","origin":"Custom","instruction":"",` +
+	`"error":"the front matter needs a version"}` +
 	`]`
 
 func insightRegistryCassini(t *testing.T) string {
@@ -242,6 +244,7 @@ func TestCreateInsightRefusesABadRequestBeforeTouchingNextcloud(t *testing.T) {
 		{"the same meeting twice", `{"meetingIds":["MEETING1","MEETING1"]}`, "more than once"},
 		{"an unknown workflow", `{"meetingIds":["MEETING1"],"workflow":"decisions"}`, "no workflow called"},
 		{"an unknown workflow says what there is", `{"meetingIds":["MEETING1"],"workflow":"decisions"}`, "this deployment ships summarise, ask"},
+		{"a custom template that cannot run", `{"meetingIds":["MEETING1"],"workflow":"roto"}`, "cannot run: the front matter needs a version"},
 		{"a workflow id of the wrong shape", `{"meetingIds":["MEETING1"],"workflow":"a b/c"}`, "not a workflow id"},
 		{"a question no workflow slot holds", `{"meetingIds":["MEETING1"],"question":"why?"}`, "takes none of yours"},
 		{"a workflow with no question", `{"meetingIds":["MEETING1"],"workflow":"ask"}`, "needs a question"},
@@ -393,6 +396,28 @@ func TestCreateInsightFallsBackToTheConfiguredTemplate(t *testing.T) {
 	}
 	if run.Question != "what changed?" {
 		t.Errorf("question = %q", run.Question)
+	}
+}
+
+// A configured insight template that cannot run does not refuse an
+// unqualified create: the run gets the default the Generate card is shown
+// (defaultInsightWorkflow), the built-in summary.
+func TestCreateInsightWithAConfiguredTemplateThatCannotRunUsesTheAdvertisedDefault(t *testing.T) {
+	harness := newInsightHandlerHarness(t)
+	llm := harness.service.rt.currentLLMSettings()
+	llm.Insight = LLMStep{Enabled: true, Provider: "local", Template: "missing"}
+	harness.service.rt.setLLMSettings(llm)
+
+	w := harness.do(t, http.MethodPost, "/insights", "alice", `{"meetingIds":["MEETING1"]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("code = %d, want 201 (%s)", w.Code, w.Body.String())
+	}
+	var run InsightRun
+	if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if run.WorkflowID != defaultInsightWorkflowID {
+		t.Errorf("workflowId = %q, want %q", run.WorkflowID, defaultInsightWorkflowID)
 	}
 }
 
@@ -554,6 +579,29 @@ func TestRetryStartsAnotherAttemptOnAFailedRun(t *testing.T) {
 	other := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/retry", "bob", "")
 	if other.Code != http.StatusNotFound {
 		t.Errorf("another caller's retry = %d, want 404", other.Code)
+	}
+}
+
+// A run refused because its template changed carries the old template's hash,
+// and a retry re-runs exactly that, so it is refused rather than started to fail
+// the same way again.
+func TestRetryIsRefusedForARunWhoseTemplateChanged(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusFailed,
+			MeetingIDs: []string{"MEETING1"}, AttemptNumber: 1,
+			Error: insightReasonTemplateChanged, Reason: insightReasonTemplateChanged,
+		},
+	)
+	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/retry", "alice", "")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("code = %d, want 409 (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Generate it again") {
+		t.Errorf("the refusal does not say what to do: %s", w.Body.String())
+	}
+	if len(harness.launched) != 0 {
+		t.Errorf("a refused retry still started a run: %v", harness.launched)
 	}
 }
 

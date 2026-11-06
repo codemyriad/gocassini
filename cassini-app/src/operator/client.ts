@@ -2,6 +2,7 @@ import type { RecordingReadiness, RecordingSetupUpdate } from "./readiness";
 import type { LogStage } from "./attemptModels";
 import type { RetentionSettings } from "./retention";
 import type {
+  InsightTemplateDraft,
   InsightWorkflow,
   Job,
   JobAttempt,
@@ -63,11 +64,15 @@ interface RerunJobResponse {
 
 export class OperatorHttpError extends Error {
   status: number;
+  // The error body's other fields, for a refusal that names more than its
+  // sentence (a 409 on a template delete names the step that uses it).
+  details: Record<string, unknown>;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, details: Record<string, unknown> = {}) {
     super(message);
     this.name = "OperatorHttpError";
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -303,6 +308,36 @@ export class OperatorClient {
     return normalizeInsightWorkflows(await this.#request<unknown>("/settings/workflows"));
   }
 
+  // Writes one custom template. The operator checks it against the recorder's
+  // registry and refuses (400, with the recorder's reason) one that would not
+  // run, so a rejection here is the message to show. createOnly sends
+  // `If-None-Match: *`: the operator answers 412 rather than replace a
+  // template that is already there under this id.
+  async saveInsightTemplate(
+    id: string,
+    draft: InsightTemplateDraft,
+    options: { createOnly?: boolean } = {},
+  ): Promise<InsightWorkflow> {
+    const saved = normalizeInsightWorkflows([
+      await this.#request<unknown>(`/settings/workflows/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.createOnly ? { "If-None-Match": "*" } : {}),
+        },
+        body: JSON.stringify(draft),
+      }),
+    ]);
+    if (saved.length !== 1) {
+      throw new Error("the saved template came back in a shape this app does not understand");
+    }
+    return saved[0];
+  }
+
+  async deleteInsightTemplate(id: string): Promise<void> {
+    await this.#request<unknown>(`/settings/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
   openEventStream(handlers: OperatorStreamHandlers): EventSource {
     const eventSource = new EventSource(`${this.#baseUrl}/events`);
     const handleMessage = (event: MessageEvent<string>) => {
@@ -332,15 +367,19 @@ export class OperatorClient {
     });
     if (!response.ok) {
       let message = `${response.status} ${response.statusText}`;
+      let details: Record<string, unknown> = {};
       try {
-        const payload = (await response.json()) as { error?: string };
+        const payload = (await response.json()) as { error?: string } & Record<string, unknown>;
         if (typeof payload.error === "string" && payload.error.trim() !== "") {
           message = payload.error;
+        }
+        if (payload && typeof payload === "object") {
+          details = payload;
         }
       } catch {
         // ignore JSON parse failures and keep status text
       }
-      throw new OperatorHttpError(response.status, message);
+      throw new OperatorHttpError(response.status, message, details);
     }
     return (await response.json()) as T;
   }
@@ -616,10 +655,16 @@ function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {
       version: asString(item.version),
       sha256: asString(item.sha256),
       name: asString(item.name),
-      question: asString(item.question),
       description: asString(item.description),
       origin: asString(item.origin),
       instruction: asString(item.instruction),
+      error: asString(item.error),
     }))
-    .filter((item) => item.id !== "" && item.sha256 !== "");
+    .filter((item) => item.id !== "" && (item.sha256 !== "" || item.error !== ""));
+}
+
+// runnableWorkflows drops the broken custom templates the registry lists for
+// the panel's sake: they cannot be chosen anywhere a template runs (D-819).
+export function runnableWorkflows<T extends { error?: string }>(list: readonly T[]): T[] {
+  return list.filter((workflow) => !workflow.error);
 }

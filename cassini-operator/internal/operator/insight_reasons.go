@@ -20,11 +20,14 @@ import (
 // (internal/insight classifies the failure; the operator only maps the code).
 // The rest name the operator's own failures around the child.
 const (
-	// The child's own exit codes, 2 to 5.
+	// The child's own exit codes, 2 to 6.
 	insightReasonBadRequest      = "bad-request"
 	insightReasonNoProvider      = "no-provider"
 	insightReasonProviderRefused = "provider-refused"
 	insightReasonModelFailed     = "model-failed"
+	// Exit 6: the template was edited or deleted after the run was requested,
+	// so the bytes its record names are no longer there to run (D-819).
+	insightReasonTemplateChanged = "template-changed"
 	// Exit 1: the answer was produced but could not be written.
 	insightReasonWriteFailed = "write-failed"
 	// The WebDAV PUT into the requester's files failed.
@@ -57,6 +60,7 @@ var insightReasons = []string{
 	insightReasonNoProvider,
 	insightReasonProviderRefused,
 	insightReasonModelFailed,
+	insightReasonTemplateChanged,
 	insightReasonWriteFailed,
 	insightReasonDeliverFailed,
 	insightReasonTimeout,
@@ -105,6 +109,8 @@ func insightExitReason(ctx context.Context, code int) string {
 		return insightReasonProviderRefused
 	case 5:
 		return insightReasonModelFailed
+	case 6:
+		return insightReasonTemplateChanged
 	default:
 		return insightReasonUnknown
 	}

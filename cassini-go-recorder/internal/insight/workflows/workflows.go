@@ -53,7 +53,9 @@ package workflows
 import (
 	"embed"
 	"fmt"
+	"os"
 	"path"
+	"strings"
 
 	"gocassini/internal/insight"
 )
@@ -120,13 +122,11 @@ type spec struct {
 
 	// Name is what the panel and the pipeline's step select show.
 	Name string
-	// Question is what this workflow asks of a set of meetings, in the words a
-	// person would use. It is the affordance: the name says nothing about what
-	// the model is asked to do.
-	Question string
-	// Description says what document comes back. It is deliberately about the
-	// shape of the output and not a paraphrase of the prompt — a paraphrase
-	// drifts from the bytes it summarises, and the panel shows the bytes.
+	// Description is one sentence, shown to the person choosing the template,
+	// saying what it does and what comes back. Built-ins and custom templates
+	// have the same three visible parts: name, description, prompt. It stays
+	// about the job and the shape of the output rather than paraphrasing the
+	// prompt, which drifts from the bytes; the panel shows the bytes.
 	Description string
 }
 
@@ -139,8 +139,7 @@ var shipped = []spec{
 		TemplateFile: "summarise-template.v0.md",
 		SkillDir:     "cassini-meeting-summary",
 		Name:         "Meeting summary",
-		Question:     "Summarise what happened, what was decided, and what follows.",
-		Description:  "Overview, key points, decisions, actions, open questions and next steps.",
+		Description:  "Summarises what happened, what was decided and what follows: overview, key points, decisions, actions, open questions and next steps.",
 	},
 	{
 		ID:           TodosID,
@@ -149,8 +148,7 @@ var shipped = []spec{
 		TemplateFile: "todos-template.v0.md",
 		SkillDir:     "cassini-meeting-todos",
 		Name:         "Commitments and owners",
-		Question:     "List the commitments and who owns them.",
-		Description:  "What each person committed to and by when, plus anything unassigned.",
+		Description:  "Lists what each person committed to and by when, plus anything unassigned.",
 	},
 	{
 		ID:           AskID,
@@ -159,12 +157,9 @@ var shipped = []spec{
 		TemplateFile: "ask-template.v0.md",
 		SkillDir:     "cassini-meeting-ask",
 		Name:         "Ask your own question",
-		// Empty on purpose, and the one entry for which that is right: this
-		// workflow has no question of its own, because the question is the
-		// caller's. The panel reads an empty Question as "write it yourself"
-		// and shows the box; every other entry shows the question it asks.
-		Question:    "",
-		Description: "A short answer to your question, with who said what and any gaps.",
+		// Whether the app shows a question box comes from the {{QUESTION}} slot
+		// in this entry's bytes (Workflow.TakesQuestion), not from this table.
+		Description: "Answers a question of your own about the meetings you picked, with who said what and what they leave unanswered.",
 	},
 }
 
@@ -181,49 +176,153 @@ type Entry struct {
 	Version     string `json:"version"`
 	SHA256      string `json:"sha256"`
 	Name        string `json:"name"`
-	Question    string `json:"question"`
 	Description string `json:"description"`
 	Origin      string `json:"origin"`
 	Instruction string `json:"instruction"`
+	// Error is set on a custom template that cannot run, and says why. Such an
+	// entry carries no hash and is not in the registry; it is listed so the
+	// panel can show the administrator what is wrong with the file.
+	Error string `json:"error,omitempty"`
 }
 
-// Registry builds the workflows a run may name.
-//
-// It fails rather than degrading: a prompt file that will not resolve is a
-// workflow that would be offered and could not run, and finding that out at
-// the moment somebody asks for a document is finding out too late.
-func Registry() (insight.Registry, error) {
-	built := make([]insight.Workflow, 0, len(shipped))
-	for _, entry := range shipped {
-		workflow, err := entry.workflow()
-		if err != nil {
-			return insight.Registry{}, err
+// Set is everything a deployment can run, and everything it was asked to run
+// and cannot: the registry, the catalogue that lists it, and the reason each
+// broken custom template is broken.
+type Set struct {
+	Registry insight.Registry
+	Entries  []Entry
+	// DirError says why the templates directory could not be read, or "" when
+	// it was read or none is configured. The built-ins are still in the set:
+	// custom templates are then unknown, not every template.
+	DirError string
+}
+
+// Problem says why the custom template id cannot run, or "" when nothing is
+// known to be wrong with it: the reason a listed broken file gives, or, for
+// an id the set does not hold, that the templates directory could not be read.
+func (s Set) Problem(id string) string {
+	id = strings.TrimSpace(id)
+	for _, entry := range s.Entries {
+		if entry.ID == id && entry.Error != "" {
+			return entry.Error
 		}
-		built = append(built, workflow)
 	}
-	return insight.NewRegistry(built...)
+	if _, ok := s.Registry.Lookup(id); !ok && s.DirError != "" {
+		return "the custom templates could not be read: " + s.DirError
+	}
+	return ""
 }
 
-// Catalog is the registry as it is served and displayed, in listing order.
-func Catalog() ([]Entry, error) {
+// Load builds the set from the shipped table and the directory TemplatesDirEnv
+// names.
+func Load() (Set, error) {
+	return LoadDir(os.Getenv(TemplatesDirEnv))
+}
+
+// LoadFor is Load for a caller that will run one workflow, id: the built-ins
+// and, of the custom files, only <id>.md, so resolving one template does not
+// read, parse and hash every file in the directory. Its Entries list only
+// what it read.
+func LoadFor(id string) (Set, error) {
+	return loadDir(os.Getenv(TemplatesDirEnv), strings.TrimSpace(id))
+}
+
+// LoadDir builds the set from the shipped table and the custom templates in
+// dir ("" for built-ins only).
+//
+// A built-in that will not resolve fails the whole set, as it always has: that
+// is a broken build. A custom file that will not resolve is listed with its
+// error and left out of the registry, because one bad file an administrator
+// dropped in must not stop every other template, the summary step included,
+// from running. A templates directory that cannot be read is the same rule
+// one level up: the built-ins load, and Set.DirError says why no custom
+// template is there.
+func LoadDir(dir string) (Set, error) {
+	return loadDir(dir, "")
+}
+
+// loadDir is LoadDir reading only the custom file for only, when it is set.
+func loadDir(dir, only string) (Set, error) {
+	built := make([]insight.Workflow, 0, len(shipped))
 	entries := make([]Entry, 0, len(shipped))
 	for _, item := range shipped {
 		workflow, err := item.workflow()
 		if err != nil {
-			return nil, err
+			return Set{}, err
 		}
+		built = append(built, workflow)
 		entries = append(entries, Entry{
 			ID:          workflow.ID,
 			Version:     workflow.Version,
 			SHA256:      workflow.SHA256,
 			Name:        item.Name,
-			Question:    item.Question,
 			Description: item.Description,
 			Origin:      OriginBuiltIn,
 			Instruction: workflow.SystemPrompt(),
 		})
 	}
-	return entries, nil
+
+	custom, dirErr := readCustomDir(dir, only)
+	var dirError string
+	if dirErr != nil {
+		dirError = dirErr.Error()
+	}
+	for _, file := range custom {
+		entry := Entry{
+			ID:          file.template.ID,
+			Name:        file.template.Name,
+			Description: file.template.Description,
+			Origin:      OriginCustom,
+			Instruction: file.template.Instruction,
+		}
+		if file.err != nil {
+			if strings.TrimSpace(entry.Name) == "" {
+				entry.Name = entry.ID
+			}
+			if file.template.Version > 0 {
+				entry.Version = file.template.VersionLabel()
+			}
+			entry.Error = file.err.Error()
+			entries = append(entries, entry)
+			continue
+		}
+		entry.Version = file.workflow.Version
+		entry.SHA256 = file.workflow.SHA256
+		entry.Instruction = file.workflow.SystemPrompt()
+		built = append(built, file.workflow)
+		entries = append(entries, entry)
+	}
+
+	registry, err := insight.NewRegistry(built...)
+	if err != nil {
+		return Set{}, err
+	}
+	return Set{Registry: registry, Entries: entries, DirError: dirError}, nil
+}
+
+// Registry builds the workflows a run may name: the shipped ones, and the
+// custom templates in TemplatesDirEnv that resolve.
+//
+// It fails rather than degrading on a built-in: a prompt file that will not
+// resolve is a workflow that would be offered and could not run, and finding
+// that out at the moment somebody asks for a document is finding out too late.
+func Registry() (insight.Registry, error) {
+	set, err := Load()
+	if err != nil {
+		return insight.Registry{}, err
+	}
+	return set.Registry, nil
+}
+
+// Catalog is the registry as it is served and displayed, in listing order:
+// built-ins first, then custom templates by id, broken ones included with
+// their Error.
+func Catalog() ([]Entry, error) {
+	set, err := Load()
+	if err != nil {
+		return nil, err
+	}
+	return set.Entries, nil
 }
 
 // SummarisePromptV0 and SummariseTemplateV0 hand the pipeline's summary step
