@@ -160,10 +160,15 @@ export interface SkippedShare {
 
 /** The last share reconciliation of a published meeting (D-885).
  * `starter_refused`: the person who started the recording could not be given
- * it, so it was not published. `partial`: published, with `skipped` refused. */
+ * it, so it was not published. `partial`: published, with `skipped` refused.
+ * `deferred`: published, nobody refused, but Nextcloud's limit on new shares
+ * held some back; `deferred` names them, with a partial outcome too. */
 export interface JobShareOutcome {
-  status: "complete" | "partial" | "starter_refused" | string;
+  status: "complete" | "partial" | "starter_refused" | "deferred" | string;
   skipped?: SkippedShare[];
+  /** Who Nextcloud's limit on new shares held back. Not refused: a re-share
+   * once the limit allows reaches them. */
+  deferred?: SkippedShare[];
   updated_at?: string;
   /** The size of the room audience the publish used — the list a re-share
    * re-applies. Absent when the operator did not have it at hand. */

@@ -56,6 +56,18 @@ func (e *ncShareError) Error() string {
 	return fmt.Sprintf("Nextcloud share API: HTTP %d, OCS %d: %s", e.HTTPStatus, e.OCSStatus, oneLineListField(e.Message))
 }
 
+// errShareRateLimited is Nextcloud refusing a new share because the account
+// making it reached its limit: the share API allows each account 20 new
+// shares in any 10 minutes, and Cassini makes every recording share as its
+// own account. It says nothing about who may receive the recording, so it is
+// neither a refusal nor an outage: those recipients are shared with later.
+// Nextcloud answers it with HTTP 429 and an empty body.
+var errShareRateLimited = errors.New("Nextcloud's limit on new shares was reached: it allows 20 new shares every 10 minutes for each account")
+
+func shareRateLimited(err error) bool {
+	return errors.Is(err, errShareRateLimited)
+}
+
 func recipientShareRefusal(err error) bool {
 	var refusal *ncShareError
 	return errors.As(err, &refusal) &&
@@ -145,6 +157,11 @@ func (c ExAppConfig) shareCall(ctx context.Context, client *http.Client, actor, 
 	}
 	if len(raw) > ncShareReplyMax {
 		return nil, fmt.Errorf("Nextcloud share response exceeds %d bytes", ncShareReplyMax)
+	}
+	// Checked before decoding: the reply has no body to decode, and a decode
+	// error would pass for an outage.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("Nextcloud share API %s: HTTP 429: %w", method, errShareRateLimited)
 	}
 	var envelope struct {
 		OCS struct {
@@ -337,6 +354,14 @@ const (
 // else (the server unreachable, a share that did not land) fails, as it says
 // nothing about who may receive the recording.
 //
+// Nextcloud's limit on new shares (errShareRateLimited) stops the creates for
+// this run, outside an import: the recipient it refused and everyone after
+// them not yet covered are returned as deferred entries (shareLimitDeferred),
+// neither refused nor an error, the starter included, for an administrator's
+// re-share to reach later. Nothing is retried after it, since every attempt,
+// a refused one too, counts against the same limit. An import fails on it,
+// as on any other error it does not name a recipient for.
+//
 // note goes on every share made here; see meetingFacts.shareNote.
 func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool, mode shareMode, note string) ([]skippedShare, error) {
 	if len(audience) == 0 || audience[0].Type != "user" || audience[0].ID == "" || audience[0].ID == ncRecordingsOwner {
@@ -348,6 +373,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 		return nil, fmt.Errorf("list recording shares: %w", err)
 	}
 	skipped := []skippedShare{}
+	limited := false
 	seen := map[string]bool{}
 	required := []sharePrincipal{}
 	permissions := ncShareRead
@@ -372,6 +398,10 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			required = append(required, principal)
 			continue
 		}
+		if limited {
+			skipped = append(skipped, skippedShare{Type: principal.Type, ID: principal.ID, ShareLimit: shareLimitDeferred})
+			continue
+		}
 		var createErr error
 		for attempt := 0; attempt < 3; attempt++ {
 			var share ncShare
@@ -385,6 +415,11 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			}
 			if createErr == nil {
 				existing = append(existing, share)
+				break
+			}
+			// Nextcloud made no share, so there is nothing to re-list, and a
+			// retry would only spend the limit again.
+			if shareRateLimited(createErr) {
 				break
 			}
 			// The server may have committed a share before the reply was lost.
@@ -409,6 +444,14 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 				case <-time.After(time.Duration(attempt+1) * time.Second):
 				}
 			}
+		}
+		if createErr != nil && shareRateLimited(createErr) && mode != shareImport {
+			// Not a share warning for the storage details: nothing is wrong
+			// with the storage, and the outcome records who is waiting.
+			limited = true
+			c.supportShare(ctx, "share_skipped", principal.Type, principal.ID, createErr, 1)
+			skipped = append(skipped, skippedShare{Type: principal.Type, ID: principal.ID, ShareLimit: shareLimitDeferred})
+			continue
 		}
 		if createErr != nil {
 			if !recipientShareRefusal(createErr) {

@@ -113,6 +113,9 @@ func (e *meetingRetiredError) message() string {
 // reshare reconciles the delivered meeting's shares with the room audience
 // captured for it, and records what Nextcloud refused — the starter included:
 // the meeting is published already, so nobody's refusal can unpublish it.
+// It is also how recipients Nextcloud's limit on new shares held back are
+// reached: it walks everyone again, so a re-share that gets through clears
+// them, and one that meets the limit again leaves the rest deferred.
 func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*jobShareOutcome, error) {
 	for _, name := range []string{jobID + ".opus", jobID + ".json"} {
 		if reason := s.cfg.retiredMeetingReason(ctx, name); reason != "" {
@@ -157,11 +160,7 @@ func (s *directSharesPublishSink) reshare(ctx context.Context, jobID string) (*j
 	if err != nil {
 		return nil, err
 	}
-	status := shareOutcomeComplete
-	if len(skipped) > 0 {
-		status = shareOutcomePartial
-	}
-	if err := s.rt.store.RecordJobShareOutcome(ctx, jobID, status, skipped); err != nil {
+	if err := s.rt.store.RecordJobShareOutcome(ctx, jobID, shareOutcomeStatus(skipped), skipped); err != nil {
 		return nil, err
 	}
 	return s.rt.store.JobShareOutcome(ctx, jobID)

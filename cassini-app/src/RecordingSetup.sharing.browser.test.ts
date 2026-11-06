@@ -83,3 +83,21 @@ it("passes quietly with default sharing settings", async () => {
   expect(row.textContent).not.toContain("What to do about it");
   expect(row.textContent).not.toContain("Open the runs");
 });
+
+it("says what Nextcloud's share limit is holding back, where to re-share, and how to raise it", async () => {
+  let openedRuns = 0;
+  app = mount(RecordingSetup, {
+    target: host,
+    props: { operatorClient: createPreviewClient("sharing-share-limit"), provisioningBase },
+    events: { openRuns: () => { openedRuns += 1; } },
+  });
+  await expect.element(page.getByText(/^Recording sharing/)).toBeVisible();
+  const row = sharingRow();
+  expect(row.textContent).toContain("Nextcloud's share limit held back recipients of 2 recordings since 6 Nov. Re-share each from its run, or raise the limit.");
+  // Each is re-shared from its run.
+  await userEvent.click(page.getByRole("button", { name: "Open the runs" }));
+  expect(openedRuns).toBe(1);
+  await userEvent.click(page.getByText("Raise the limit", { exact: true }));
+  await expect.element(page.getByText(/files_sharing\.shareapi\.createshare user limit/)).toBeVisible();
+  expect(row.textContent).toContain("raise the limit for every account's share creation");
+});

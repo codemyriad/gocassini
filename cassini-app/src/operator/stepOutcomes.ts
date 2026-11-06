@@ -14,6 +14,9 @@ export interface OutcomeNotice {
   detail?: string;
   /** What can be done about it, when something can. */
   hint?: string;
+  /** A sentence under the rest: who Nextcloud's share limit also held
+   *  back, beside the refused. */
+  heldBack?: string;
   /** Who it concerns, behind a disclosure closed by default: the list can be
    *  long, and the summary says how many. */
   items?: { summary: string; entries: RefusedEntry[] };
@@ -129,10 +132,13 @@ export function listRefusedIds(ids: string[], shown = 3): string {
 }
 
 // What a re-share's answer says beside the button: everyone, or who is still
-// refused and where the setting is named.
-export function reshareOutcome(refusedIds: string[]): string {
-  if (refusedIds.length === 0) return "Shared with everyone.";
-  return `Shared again. Nextcloud still refused ${recipients(refusedIds.length)} (${listRefusedIds(refusedIds)}). Check Doctor › Recording sharing.`;
+// refused and where the setting is named, and how many Nextcloud's share
+// limit (20 new shares per account every 10 minutes) held back again.
+export function reshareOutcome(refusedIds: string[], deferredCount = 0): string {
+  const heldBack = `Nextcloud's share limit still held back ${recipients(deferredCount)}; re-share in 10 minutes.`;
+  if (refusedIds.length === 0) return deferredCount > 0 ? `Shared again. ${heldBack}` : "Shared with everyone.";
+  const refused = `Shared again. Nextcloud still refused ${recipients(refusedIds.length)} (${listRefusedIds(refusedIds)}). Check Doctor › Recording sharing.`;
+  return deferredCount > 0 ? `${refused} ${heldBack}` : refused;
 }
 
 // Who a meeting could not be shared with (D-885). The person who started the
@@ -154,7 +160,23 @@ export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAv
         : "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
     };
   }
-  if (sharing.status !== "partial" || skipped.length === 0) return null;
+  // Who Nextcloud's share limit held back: not refused, but not shared with
+  // either until the administrator re-shares once the limit allows.
+  const deferred = sharing.deferred ?? [];
+  if (sharing.status !== "partial" || skipped.length === 0) {
+    if (deferred.length === 0) return null;
+    return {
+      tone: "warning",
+      title: `Published, but Nextcloud's share limit held back ${recipients(deferred.length)}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).`,
+      action: reshareAvailable
+      ? {
+          kind: "reshare",
+          label: "Re-share with the room",
+          note: "Adds whoever is missing, including anyone removed by hand. People who accept shares by hand will find it waiting in Browse.",
+        }
+      : undefined,
+    };
+  }
   const audience = typeof sharing.audience_count === "number" && sharing.audience_count > 0 ? sharing.audience_count : 0;
   return {
     tone: "warning",
@@ -163,6 +185,7 @@ export function shareNotice(sharing: JobShareOutcome | null | undefined, rerunAv
       : `Published, but not shared with ${recipients(skipped.length)}`,
     items: { summary: `Who was refused (${skipped.length})`, entries: skipped.map(refusedEntry) },
     hint: "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
+    heldBack: deferred.length > 0 ? `Nextcloud's share limit also held back ${deferred.length}.` : undefined,
     // Offered only where the operator would do it: not while the meeting is
     // being processed again.
     action: reshareAvailable

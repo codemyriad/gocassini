@@ -48,6 +48,32 @@ export interface ReadinessCheck {
   // Nextcloud refused to share with someone in their room. The setting may be
   // fixed and these still unshared — each one is re-shared from its run.
   unshared?: UnsharedCount;
+  // Meetings with recipients Nextcloud's limit on new shares held back
+  // (D-885): 20 per account every 10 minutes. Each is reached by re-sharing it
+  // from its run; absent once nobody is waiting.
+  share_limited?: ShareLimitedCount;
+}
+
+export interface ShareLimitedCount {
+  jobs: number;
+  // ISO 8601: the oldest such meeting.
+  since?: string;
+}
+
+// The commands that raise Nextcloud's share-creation limit, as verified on
+// Nextcloud 35. They apply to every account's share creation, not only
+// cassini's, which the sentence beside them says.
+export const shareLimitCommands = [
+  "occ config:system:set ratelimit_overwrite files_sharing.shareapi.createshare user limit --value=1000 --type=integer",
+  "occ config:system:set ratelimit_overwrite files_sharing.shareapi.createshare user period --value=600 --type=integer",
+];
+
+// "Nextcloud's share limit held back recipients of 2 recordings since 6 Nov.
+// Re-share each from its run, or raise the limit."
+export function shareLimitedSummary(limited: ShareLimitedCount, now: Date = new Date()): string {
+  const count = limited.jobs === 1 ? "1 recording" : `${limited.jobs} recordings`;
+  const since = formatSince(limited.since, now);
+  return `Nextcloud's share limit held back recipients of ${count}${since ? ` since ${since}` : ""}. Re-share each from its run, or raise the limit.`;
 }
 
 export interface UnsharedCount {

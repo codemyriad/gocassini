@@ -21,12 +21,25 @@ import (
 // rerun keeps and does not re-share (audience edits stick). An attempt-level
 // record would lose the warning on the next rerun while the people it names
 // still have no access.
+//
+// Nextcloud's limit on new shares (errShareRateLimited) is neither: the
+// recipients it held back are deferred, kept in the same list with
+// share_limit "deferred", until an administrator's re-share reaches them.
+// Refusals carry no share_limit, the shape they had before; skipped_count
+// counts both, for the run list's flag.
 
 const (
 	shareOutcomeComplete       = "complete"
 	shareOutcomePartial        = "partial"
 	shareOutcomeStarterRefused = "starter_refused"
+	// shareOutcomeDeferred: nobody was refused, but Nextcloud's limit on new
+	// shares held some recipients back. With refusals too it is partial.
+	shareOutcomeDeferred = "deferred"
 )
+
+// shareLimitDeferred is the share_limit of a recipient Nextcloud's limit on
+// new shares held back, not shared with yet.
+const shareLimitDeferred = "deferred"
 
 // skippedShare is one audience member Nextcloud refused a share for.
 type skippedShare struct {
@@ -36,16 +49,62 @@ type skippedShare struct {
 	// Reason is Nextcloud's own refusal, e.g. "Sharing is only allowed with
 	// group members".
 	Reason string `json:"reason,omitempty"`
+	// ShareLimit is empty for a refusal; otherwise Nextcloud's limit on new
+	// shares held this recipient back (shareLimitDeferred).
+	ShareLimit string `json:"share_limit,omitempty"`
+}
+
+// refusedShares is the entries Nextcloud refused, without those its limit on
+// new shares held back.
+func refusedShares(entries []skippedShare) []skippedShare {
+	out := []skippedShare{}
+	for _, entry := range entries {
+		if entry.ShareLimit == "" {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// deferredShares is the entries still waiting on Nextcloud's limit.
+func deferredShares(entries []skippedShare) []skippedShare {
+	out := []skippedShare{}
+	for _, entry := range entries {
+		if entry.ShareLimit == shareLimitDeferred {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// shareOutcomeStatus is the status a reconciliation that ended without an
+// error records for these entries.
+func shareOutcomeStatus(entries []skippedShare) string {
+	switch {
+	case len(refusedShares(entries)) > 0:
+		return shareOutcomePartial
+	case len(deferredShares(entries)) > 0:
+		return shareOutcomeDeferred
+	default:
+		return shareOutcomeComplete
+	}
 }
 
 type jobShareOutcome struct {
-	Status    string         `json:"status"`
-	Skipped   []skippedShare `json:"skipped,omitempty"`
+	Status string `json:"status"`
+	// Skipped is who Nextcloud refused.
+	Skipped []skippedShare `json:"skipped,omitempty"`
+	// Deferred is who Nextcloud's limit on new shares held back and Cassini
+	// has not shared with yet; a re-share reaches them.
+	Deferred  []skippedShare `json:"deferred,omitempty"`
 	UpdatedAt string         `json:"updated_at,omitempty"`
 	// AudienceCount is how many recipients the publish shared with: the
 	// recording's starter plus the room audience captured for it, the same
 	// list a re-share re-applies. Absent when no audience was captured.
 	AudienceCount int `json:"audience_count,omitempty"`
+	// entries is the stored list, refusals and the limit's entries together,
+	// for a reconciliation that carries it forward.
+	entries []skippedShare
 }
 
 // capturedAudience is the list a publish shared with, from the job row
@@ -153,8 +212,18 @@ func (s *Store) JobShareOutcome(ctx context.Context, jobID string) (*jobShareOut
 	if err != nil {
 		return nil, fmt.Errorf("read share outcome: %w", err)
 	}
-	if err := json.Unmarshal([]byte(raw), &out.Skipped); err != nil {
+	if err := json.Unmarshal([]byte(raw), &out.entries); err != nil {
 		return nil, fmt.Errorf("decode share outcome: %w", err)
+	}
+	if refused := refusedShares(out.entries); len(refused) > 0 {
+		out.Skipped = refused
+	}
+	if deferred := deferredShares(out.entries); len(deferred) > 0 {
+		out.Deferred = make([]skippedShare, len(deferred))
+		for i, entry := range deferred {
+			entry.ShareLimit = ""
+			out.Deferred[i] = entry
+		}
 	}
 	return &out, nil
 }
@@ -185,9 +254,11 @@ func (s *Store) meetingRetired(ctx context.Context, jobID string) bool {
 }
 
 // partiallySharedJobs counts, per published job, the audience members it was
-// not shared with — for the run list's flag.
+// not shared with — for the run list's flag. Those Nextcloud's limit held
+// back count too: they wait for a re-share, and the flag is how an
+// administrator finds the meeting.
 func (s *Store) partiallySharedJobs(ctx context.Context) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT job_id, skipped_count FROM job_share_outcomes WHERE status = ?`, shareOutcomePartial)
+	rows, err := s.db.QueryContext(ctx, `SELECT job_id, skipped_count FROM job_share_outcomes WHERE status IN (?, ?)`, shareOutcomePartial, shareOutcomeDeferred)
 	if err != nil {
 		return nil, err
 	}
@@ -224,8 +295,8 @@ func (rt *Runtime) jobSharing(ctx context.Context, job *Job) *jobShareOutcome {
 		(job.State != "failed" || job.Error == nil || !strings.Contains(*job.Error, starterRefusedMarker)) {
 		return nil
 	}
-	if outcome != nil && outcome.Status == shareOutcomePartial {
-		job.UnsharedCount = len(outcome.Skipped)
+	if outcome != nil && (outcome.Status == shareOutcomePartial || outcome.Status == shareOutcomeDeferred) {
+		job.UnsharedCount = len(outcome.Skipped) + len(outcome.Deferred)
 	}
 	if outcome != nil {
 		outcome.AudienceCount = capturedAudienceCount(*job)
@@ -275,10 +346,13 @@ ORDER BY o.job_id DESC`, shareOutcomePartial, shareOutcomeStarterRefused)
 		if retired[jobID] {
 			continue
 		}
-		var skipped []skippedShare
-		if err := json.Unmarshal([]byte(raw), &skipped); err != nil {
+		var entries []skippedShare
+		if err := json.Unmarshal([]byte(raw), &entries); err != nil {
 			continue
 		}
+		// Someone the limit held back is not refused: they are still being
+		// shared with.
+		skipped := refusedShares(entries)
 		switch status {
 		case shareOutcomePartial:
 			job := Job{TalkBinding: nullableStringPtr(binding), RoomAudience: nullableStringPtr(audience), RoomAudienceAt: nullableStringPtr(audienceAt)}

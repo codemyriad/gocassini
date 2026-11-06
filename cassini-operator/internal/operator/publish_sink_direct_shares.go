@@ -154,10 +154,11 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 			return "", err
 		case err != nil:
 			return "", err
-		case len(skipped) > 0:
-			s.recordShareOutcome(ctx, d.JobID, shareOutcomePartial, skipped)
 		default:
-			s.recordShareOutcome(ctx, d.JobID, shareOutcomeComplete, nil)
+			// Recipients Nextcloud's limit on new shares held back, the
+			// starter included, do not stop the publish: the run names them,
+			// and a re-share reaches them once the limit allows.
+			s.recordShareOutcome(ctx, d.JobID, shareOutcomeStatus(skipped), skipped)
 		}
 	}
 	carriedMap := map[string]annotateResult{}

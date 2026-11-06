@@ -75,6 +75,11 @@ type directPublishFixture struct {
 	fail    map[string]bool
 	// notes is the note each share was created with, by the same key.
 	notes map[string]string
+	// allow is how many more creates Nextcloud's limit on new shares lets
+	// through, refused ones included; negative is no limit. posted is every
+	// create asked for, in order, the ones the limit refused included.
+	allow  int
+	posted []string
 }
 
 const directPublishJob = "SHARE1"
@@ -91,7 +96,7 @@ func newDirectPublishFixture(t *testing.T, audience []sharePrincipal, refuse ...
 	if err := rt.store.MergeJobRoomAudience(ctx, directPublishJob, audience, nowUTCString()); err != nil {
 		t.Fatal(err)
 	}
-	f := &directPublishFixture{rt: rt, attempt: t.TempDir(), shares: map[string]bool{}, refuse: map[string]bool{}, fail: map[string]bool{}, notes: map[string]string{}}
+	f := &directPublishFixture{rt: rt, attempt: t.TempDir(), shares: map[string]bool{}, refuse: map[string]bool{}, fail: map[string]bool{}, notes: map[string]string{}, allow: -1}
 	for _, id := range refuse {
 		f.refuse[id] = true
 	}
@@ -117,6 +122,15 @@ func newDirectPublishFixture(t *testing.T, audience []sharePrincipal, refuse ...
 		defer f.mu.Unlock()
 		if r.Method == http.MethodPost {
 			who := r.FormValue("shareWith")
+			f.posted = append(f.posted, who)
+			if f.allow == 0 {
+				// Nextcloud's rate limiter answers with no body at all.
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			if f.allow > 0 {
+				f.allow--
+			}
 			if f.fail[who] {
 				w.WriteHeader(http.StatusBadGateway)
 				_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":996,"message":"bad gateway"},"data":[]}}`)

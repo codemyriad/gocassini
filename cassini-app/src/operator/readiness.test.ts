@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, describeRefreshFailure, formatAge, hpbGuideURL, labelParts, repairLabel, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, unsharedSummary, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, describeRefreshFailure, formatAge, hpbGuideURL, labelParts, repairLabel, rowActions, rowGuide, sharedCheckTime, testFollowUp, talkRoomURL, talkSettingsURL, testInFlight, toneClasses, reportTone, unsharedSummary, shareLimitedSummary, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -527,5 +527,21 @@ describe("what is currently unshared", () => {
   it("names the year only when it is not this one", () => {
     expect(unsharedSummary({ jobs: 3, users: 1, groups: 0, since: "2025-12-30T12:00:00Z" }, now))
       .toBe("3 recordings since 30 Dec 2025 were not shared with 1 person.");
+  });
+});
+
+// Nextcloud's limit on new shares (D-885): the meetings with someone still
+// waiting, each reached by a re-share from its run.
+describe("what Nextcloud's share limit held back", () => {
+  const now = new Date("2026-11-06T15:00:00Z");
+  it("counts the recordings still waiting, with its singular and since when", () => {
+    expect(shareLimitedSummary({ jobs: 2, since: "2026-11-06T13:33:00Z" }, now))
+      .toBe("Nextcloud's share limit held back recipients of 2 recordings since 6 Nov. Re-share each from its run, or raise the limit.");
+    expect(shareLimitedSummary({ jobs: 1, since: "2025-12-30T12:00:00Z" }, now))
+      .toBe("Nextcloud's share limit held back recipients of 1 recording since 30 Dec 2025. Re-share each from its run, or raise the limit.");
+  });
+  it("leaves since out when the operator did not know it", () => {
+    expect(shareLimitedSummary({ jobs: 1 }, now))
+      .toBe("Nextcloud's share limit held back recipients of 1 recording. Re-share each from its run, or raise the limit.");
   });
 });

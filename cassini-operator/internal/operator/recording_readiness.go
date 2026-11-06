@@ -65,6 +65,10 @@ type readinessCheck struct {
 	// Carried in every state of that row, because a setting fixed today
 	// leaves yesterday's meetings unshared until they are re-shared.
 	Unshared *unsharedSummary `json:"unshared,omitempty"`
+	// ShareLimited is, on the same row and over the same meetings, how many
+	// still have recipients held back by Nextcloud's limit on new shares.
+	// Those are not counted as unshared: a re-share reaches them.
+	ShareLimited *shareLimitedSummary `json:"share_limited,omitempty"`
 }
 
 // readinessStep mirrors SetupNoticeStep, deliberately: the app already renders
@@ -720,6 +724,7 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// (D-885). Waits on the storage row while that one needs attention.
 		row := sharingPolicyRow(ncAccessSubstrate.sharingPolicyFinding())
 		row.Unshared = rt.unsharedSummaryForRow(ctx)
+		row.ShareLimited = rt.shareLimitedSummaryForRow(ctx)
 		resp.Checks = append(resp.Checks, row)
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {

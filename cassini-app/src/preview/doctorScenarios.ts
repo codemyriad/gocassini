@@ -25,6 +25,7 @@ export const doctorScenarios = [
   { id: "test-failed", title: "Test recording failed", description: "The one check whose failure is a finding rather than a missing verdict." },
   { id: "storage-blocked", title: "Recording storage is blocked", description: "Recording cannot start. The storage action explains its destination." },
   { id: "sharing-restricted", title: "Sharing limited to group members", description: "Nextcloud only lets accounts share within their groups and Cassini is only in admin: a warning naming the groups it can reach, with the two ways out and what is unshared meanwhile." },
+  { id: "sharing-share-limit", title: "Nextcloud's share limit held some back", description: "Sharing settings pass, but large meetings reached Nextcloud's 20-shares-per-10-minutes limit: one recording is still being finished, with the way to raise the limit behind a disclosure." },
   { id: "sharing-blocked", title: "Cassini can share with nobody", description: "Sharing is limited to group members and Cassini is in no group, so every recording share would be refused." },
   { id: "setup-unreadable", title: "Saved configuration is unreadable", description: "Persistent setup needs repair; credentials cannot be confirmed." },
   { id: "search-partial", title: "Archive search is incomplete", description: "Audio is ready. Re-index now simulates progress and completion in this tab." },
@@ -231,6 +232,11 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
         message: "Only administrators can receive recordings. Nextcloud's “Restrict users to only share with users in their groups” is on, and Cassini shares from its cassini account, which is only in “admin”, the administrators' group. Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all.",
         // What the setting has already cost, from job_share_outcomes.
         unshared: { jobs: 7, users: 3, groups: 1, since: "2026-10-12T09:14:00Z" } });
+      break;
+    case "sharing-share-limit":
+      set({ id: "storage.sharing", state: "passed", code: "sharing_permitted", checked_at,
+        message: "Nextcloud's sharing settings let Cassini share recordings with everyone in a meeting. Whether each person has accepted the share is theirs to decide; anyone with recordings waiting sees them in Browse.",
+        share_limited: { jobs: 2, since: "2026-11-06T13:33:00Z" } });
       break;
     case "sharing-blocked":
       set({ id: "storage.sharing", state: "needs_action", code: "sharing_no_common_group", checked_at, steps: sharingBlockedSteps,

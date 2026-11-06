@@ -673,8 +673,8 @@
   // the button; empty is "Shared with everyone." — said on its own line,
   // because a re-share that reached everyone takes the notice, and the
   // button under it, away with the next read of the run.
-  let reshareResult: { jobId: string; refused: string[] } | null = null;
-  $: reshareLine = reshareResult && reshareResult.jobId === selectedJob?.job.id ? reshareOutcome(reshareResult.refused) : "";
+  let reshareResult: { jobId: string; refused: string[]; deferred: number } | null = null;
+  $: reshareLine = reshareResult && reshareResult.jobId === selectedJob?.job.id ? reshareOutcome(reshareResult.refused, reshareResult.deferred) : "";
   // The answer is dropped when the person leaves the run it was made for:
   // they have read it there, and the run's next read says what is true now.
   // Otherwise "Shared with everyone." would come back with every reselection
@@ -694,7 +694,11 @@
     reshareResult = null;
     try {
       const answer = await operatorClient.reshareJob(jobId);
-      reshareResult = { jobId, refused: answer.sharing?.status === "partial" ? (answer.sharing.skipped ?? []).map((entry) => entry.id) : [] };
+      reshareResult = {
+        jobId,
+        refused: answer.sharing?.status === "partial" ? (answer.sharing.skipped ?? []).map((entry) => entry.id) : [],
+        deferred: answer.sharing?.deferred?.length ?? 0,
+      };
       await refreshJobs();
       if (selectedJobId === jobId) await selectJob(jobId, { allowJobsRefresh: false });
     } catch (error) { reshareError = { jobId, message: asMessage(error) }; }
@@ -1483,7 +1487,7 @@
                           <span class="badge badge-outline badge-warning badge-sm mt-1" title="The published meeting was deleted by a user. Its local artifacts are reclaimed and this job can no longer be rerun.">Meeting deleted</span>
                         {/if}
                         {#if job.unshared_count}
-                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={`Nextcloud refused to share this meeting with ${job.unshared_count === 1 ? "1 recipient" : `${job.unshared_count} recipients`}. Open the run to see who.`}>Not shared with everyone</span>
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={`Not shared with ${job.unshared_count === 1 ? "1 recipient" : `${job.unshared_count} recipients`}: Nextcloud refused them or its share limit held them back. Open the run to see who.`}>Not shared with everyone</span>
                         {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
@@ -1631,6 +1635,7 @@
                           </details>
                         {/if}
                         {#if notice.hint}<p class="text-xs text-base-content/70">{notice.hint}</p>{/if}
+                        {#if notice.heldBack}<p class="font-medium">{notice.heldBack}</p>{/if}
                         {#if notice.action?.kind === "reshare"}
                           <div class="mt-1">
                             <button class="btn btn-sm btn-outline btn-outline-hover" type="button" disabled={reshareJobId !== ""} on:click={handleReshare}>

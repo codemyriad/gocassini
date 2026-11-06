@@ -127,6 +127,56 @@ it("says nothing for a run shared with everyone", async () => {
   expect(document.body.textContent).not.toContain("Not shared with everyone");
 });
 
+it("flags a run Nextcloud's share limit held back, and offers the re-share", async () => {
+  serve(job("All hands", "succeeded", { unshared_count: 3 }), {
+    status: "deferred",
+    audience_count: 30,
+    deferred: [{ type: "user", id: "dave" }, { type: "user", id: "erin" }, { type: "group", id: "marketing" }],
+  });
+  await open("All hands");
+  await expect.element(page.getByText("Published, but Nextcloud's share limit held back 3 recipients. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).", { exact: true })).toBeVisible();
+  // The flag is how an administrator finds it.
+  expect(document.querySelector(".run-card")!.textContent).toContain("Not shared with everyone");
+  expect(document.querySelector(".op-detail-pane")!.textContent).not.toContain("refused");
+  await expect.element(page.getByRole("button", { name: "Re-share with the room" })).toBeVisible();
+  await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/04-deferred.png` });
+});
+
+it("adds the held-back sentence under the refused notice when both happened", async () => {
+  serve(job("All hands", "succeeded", { unshared_count: 1 }), {
+    status: "partial",
+    skipped: [{ type: "user", id: "bob", reason: "Sharing is only allowed with group members" }],
+    deferred: [{ type: "user", id: "dave" }],
+  });
+  await open("All hands");
+  await expect.element(page.getByText("Published, but not shared with 1 recipient", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Nextcloud's share limit also held back 1.", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Who was refused (1)", { exact: true })).toBeVisible();
+  expect(document.querySelector(".run-card")!.textContent).toContain("Not shared with everyone");
+});
+
+it("answers a re-share the limit held back again with how many and when to try", async () => {
+  const recording = job("Standup", "succeeded", { unshared_count: 1 });
+  const partial = { status: "partial", skipped: [{ type: "user", id: "bob", reason: "Sharing is only allowed with group members" }] };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = decodeURIComponent(new URL(String(input), location.href).pathname);
+    if (init?.method === "POST") return Response.json({ sharing: { status: "deferred", skipped: [], deferred: [{ type: "user", id: "bob" }, { type: "user", id: "carol" }] } });
+    if (path === "/operator/jobs") return Response.json([recording]);
+    if (path === "/operator/jobs/Standup") {
+      return Response.json({
+        job: recording,
+        attempts: [{ job_id: "Standup", attempt_number: 1, trigger_kind: "initial", request_json: "{}", stage: "done", state: "succeeded", created_at: stamp, updated_at: stamp, build_deferral_count: 0 }],
+        availability: { source: "present", output: "present", published_attempt: 1 },
+        sharing: partial,
+      });
+    }
+    return Response.json({});
+  }));
+  await open("Standup");
+  await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
+  await expect.element(page.getByText("Shared again. Nextcloud's share limit still held back 2 recipients; re-share in 10 minutes.", { exact: true })).toBeVisible();
+});
+
 function serveReshare(recording: ReturnType<typeof job>, answer: "fixed" | "fails") {
   let reshared = false;
   const posts: string[] = [];
