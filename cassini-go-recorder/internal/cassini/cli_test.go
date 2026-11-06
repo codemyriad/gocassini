@@ -306,6 +306,54 @@ func TestRecordAbnormalStopWithoutRecordingStaysFailed(t *testing.T) {
 	}
 }
 
+func TestRecordNoAudioFinalizesEmptyRun(t *testing.T) {
+	// A call where everyone was muted captures no audio. Its recorder run
+	// returns ErrNoAudio after finalizing nothing; `cassini record` must
+	// finish the bundle as an empty run (state "empty", no_audio) and exit 0
+	// so the operator does not report "exit status 1" as a failure.
+	prevRecorder := runRecorderApp
+	runRecorderApp = func(_ context.Context, _ config.Config) error {
+		return talk.ErrNoAudio
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	outDir := filepath.Join(t.TempDir(), "muted.run")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/muted", "--out", outDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 for an empty run, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "no audio captured") || !strings.Contains(stdout.String(), "(empty)") {
+		t.Fatalf("expected empty-run notice on stdout, got %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "record failed:") {
+		t.Fatalf("empty run reported as a failure: %q", stderr.String())
+	}
+
+	loaded, ok, err := LoadRunBundle(outDir)
+	if err != nil || !ok {
+		t.Fatalf("load run bundle: ok=%t err=%v", ok, err)
+	}
+	if loaded.Manifest.State != bundleStateEmpty {
+		t.Fatalf("expected bundle state %q, got %q", bundleStateEmpty, loaded.Manifest.State)
+	}
+	if !loaded.Manifest.NoAudio {
+		t.Fatal("expected no_audio marker in the empty run manifest")
+	}
+	if loaded.Manifest.Recording.Path != "" {
+		t.Fatalf("empty run claims a recording: %#v", loaded.Manifest.Recording)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "recording.mkv")); !os.IsNotExist(err) {
+		t.Fatalf("empty run wrote a recording: %v", err)
+	}
+	if loaded.Manifest.EmptyReason == "" {
+		t.Fatal("expected the empty run to say why it has no audio")
+	}
+}
+
 func TestDoctorHelpExitsZero(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

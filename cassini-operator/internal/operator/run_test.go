@@ -2341,6 +2341,69 @@ func TestRecordFailureRetainsAttemptRunWithoutCanonicalRun(t *testing.T) {
 	}
 }
 
+func TestRecordWithoutAudioFinishesEmptyRun(t *testing.T) {
+	// A call whose participants were all muted captures zero audio. The
+	// recorder finalizes the run as "empty" (no_audio) and exits 0; the
+	// operator must finish the job as succeeded — not "failed, exit status 1"
+	// — with no build, transcription or publish, and say "No audio captured".
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+	t.Setenv("FAKE_RECORD_NO_AUDIO", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/muted-call"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	if job.Stage != "done" {
+		t.Fatalf("stage = %q, want done", job.Stage)
+	}
+	if job.StopReason == nil || *job.StopReason != stopReasonNoAudio {
+		t.Fatalf("stop_reason = %#v, want %q", job.StopReason, stopReasonNoAudio)
+	}
+	if job.Error != nil {
+		t.Fatalf("empty run carries an error: %#v", job.Error)
+	}
+	if job.BuildQueuedAt != nil || job.BuildStartedAt != nil || job.BuildFinishedAt != nil {
+		t.Fatalf("empty run must not queue a build, got build stamps %#v", job)
+	}
+	if job.ArtifactMeetingPath != nil || job.ArtifactOpusPath != nil || job.ArtifactSitePath != nil {
+		t.Fatalf("empty run must not publish artifacts, got %#v", job)
+	}
+	if job.ArtifactRunPath == nil || !strings.Contains(*job.ArtifactRunPath, filepath.Join("current", resp.ID+".run")) {
+		t.Fatalf("expected the canonical empty run to be retained, got %#v", job.ArtifactRunPath)
+	}
+
+	manifest, err := readRunManifest(filepath.Join(*job.ArtifactRunPath, "cassini.json"))
+	if err != nil {
+		t.Fatalf("read empty run manifest: %v", err)
+	}
+	if !manifest.NoAudio || manifest.State != "empty" || manifest.Recording.Path != "" {
+		t.Fatalf("empty run manifest = %#v", manifest)
+	}
+
+	attempts, err := rt.store.ListJobAttempts(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	}
+	if attempts[0].State != "succeeded" || attempts[0].Stage != "done" {
+		t.Fatalf("attempt = %q/%q, want done/succeeded", attempts[0].Stage, attempts[0].State)
+	}
+	if attempts[0].ArtifactRunPath == nil {
+		t.Fatal("attempt lost its run path")
+	}
+}
+
 func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -2587,6 +2650,13 @@ write_run() {
 {"kind":"run","version":"cassini.run.v1","state":"ready","stage":"ready","source_mode":"talk","recording":{"path":"recording.mkv","format":"mkv"}}
 EOF
 }
+write_empty_run() {
+  out="$1"
+  mkdir -p "$out"
+  cat > "$out/cassini.json" <<'EOF'
+{"kind":"run","version":"cassini.run.v1","state":"empty","stage":"done","source_mode":"talk","no_audio":true,"empty_reason":"no audio captured: every participant was muted or silent","recording":{"path":"","format":""}}
+EOF
+}
 finalize_run() {
   out="$1"
   printf '%s\n' "talk recorder stopping: stop requested"
@@ -2631,6 +2701,10 @@ case "$cmd" in
     if [ "${FAKE_RECORD_WAIT_FOR_SIGNAL:-0}" = "1" ]; then
       trap 'finalize_run "$out"' TERM
       while :; do sleep 0.1; done
+    fi
+    if [ "${FAKE_RECORD_NO_AUDIO:-0}" = "1" ]; then
+      write_empty_run "$out"
+      exit 0
     fi
     write_run "$out"
     exit 0

@@ -34,6 +34,13 @@ type RunManifest struct {
 	RecorderName string           `json:"recorder_name,omitempty"`
 	Recording    RunRecordingFile `json:"recording"`
 	Session      *RunSessionDir   `json:"session,omitempty"`
+	// NoAudio marks a run that captured no audio because every participant
+	// was muted or silent. The record stage succeeded but has no media, so
+	// the operator finishes the job as an empty run instead of queueing a
+	// build that would fail on a missing recording. EmptyReason is the
+	// account shown in the run detail.
+	NoAudio     bool   `json:"no_audio,omitempty"`
+	EmptyReason string `json:"empty_reason,omitempty"`
 }
 
 type RunRecordingFile struct {

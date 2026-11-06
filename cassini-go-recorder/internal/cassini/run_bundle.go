@@ -31,6 +31,12 @@ type RunManifest struct {
 	RecorderName string           `json:"recorder_name,omitempty"`
 	Recording    RunRecordingFile `json:"recording"`
 	Session      *RunSessionDir   `json:"session,omitempty"`
+	// NoAudio marks a run that captured no audio because every participant
+	// was muted or silent. The bundle has no recording; the operator reads
+	// this to finish the job as a succeeded empty run instead of handing it
+	// to the build. EmptyReason is the human-readable account shown there.
+	NoAudio     bool   `json:"no_audio,omitempty"`
+	EmptyReason string `json:"empty_reason,omitempty"`
 	// StopReason records why a ready recording stopped abnormally (e.g. a
 	// signaling drop mid-call). The bundle is still finalized as ready —
 	// the composed recording is valid — but the early stop stays visible.
@@ -99,6 +105,37 @@ func FinalizeRunBundle(bundle RunBundle, meta RunManifest) error {
 		}
 	}
 
+	return writeRunManifest(bundle, meta)
+}
+
+// FinalizeEmptyRunBundle finalizes a run the recorder completed without any
+// audio. No final output was composed, so Recording stays empty and the
+// manifest carries no_audio/empty_reason; the state is "empty" rather than
+// "ready" so nothing downstream mistakes it for a recording to build from.
+// The session artifact and attempt logs stay in place for diagnostics.
+func FinalizeEmptyRunBundle(bundle RunBundle, sourceMode, reason string) error {
+	meta, err := readRunManifest(bundle.ManifestPath)
+	if err != nil {
+		return err
+	}
+	meta.State = bundleStateEmpty
+	meta.Stage = "done"
+	meta.Error = ""
+	if strings.TrimSpace(sourceMode) != "" {
+		meta.SourceMode = strings.TrimSpace(sourceMode)
+	}
+	meta.NoAudio = true
+	meta.EmptyReason = strings.TrimSpace(reason)
+	meta.Recording = RunRecordingFile{}
+	if !bundle.Simulate {
+		sessionPath, err := normalizeSessionDir(bundle.RootDir)
+		if err != nil {
+			return err
+		}
+		if sessionPath != "" {
+			meta.Session = &RunSessionDir{Path: filepath.Base(sessionPath)}
+		}
+	}
 	return writeRunManifest(bundle, meta)
 }
 
