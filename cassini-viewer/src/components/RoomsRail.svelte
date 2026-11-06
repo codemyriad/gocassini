@@ -2,7 +2,7 @@
   import { Pencil } from "@lucide/svelte";
   import { createEventDispatcher } from "svelte";
   import { fade } from "svelte/transition";
-  import { Lock, Settings } from "@lucide/svelte";
+  import { Lock, Plug, Settings } from "@lucide/svelte";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
   import { matchTags, type VocabularyTag } from "../viewer/annotations";
@@ -52,6 +52,12 @@
   export let selectedTagIds: readonly string[] = [];
   export let tagMatch: TagMatch = "any";
 
+  // Whether this build serves an MCP endpoint (D-813), and whether its panel is
+  // open. The footer is the way in: setting up an agent is done once, so it
+  // sits under the narrowings rather than beside them.
+  export let agentOffered = false;
+  export let agentOpen = false;
+
   const dispatch = createEventDispatcher<{
     select: string | null;
     rename: string;
@@ -60,6 +66,7 @@
     toggleTag: string;
     tagMatch: TagMatch;
     manageTags: void;
+    connectAgent: void;
   }>();
 
   const TAG_MATCHES: TagMatch[] = ["any", "all"];
@@ -311,6 +318,24 @@
       </label>
     </div>
   {/if}
+
+  {#if agentOffered}
+    <div class="rail-foot">
+      <button
+        type="button"
+        class="rail-foot-link"
+        aria-haspopup="dialog"
+        aria-expanded={agentOpen}
+        on:click={() => {
+          dispatch("connectAgent");
+          dispatch("close");
+        }}
+      >
+        <Plug size={14} aria-hidden="true" />
+        Connect an agent
+      </button>
+    </div>
+  {/if}
 </nav>
 
 <style>
@@ -542,6 +567,35 @@
   .manage-tags:hover {
     color: var(--color-base-content);
     background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+  }
+  /* Pinned to the rail's bottom edge whatever the lists above it hold: pushed
+     there by the auto margin when they are short, held there by sticky when
+     they scroll. */
+  .rail-foot {
+    position: sticky;
+    bottom: 0;
+    margin-top: auto;
+    display: flex;
+    justify-content: flex-end;
+    padding: 6px 10px 0;
+    background-color: var(--color-base-200);
+  }
+  .rail-foot-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .rail-foot-link:hover,
+  .rail-foot-link[aria-expanded="true"] {
+    background-color: color-mix(in oklch, var(--color-primary) 18%, transparent);
+    color: var(--color-base-content);
   }
   .rail-note {
     padding: 4px 16px;

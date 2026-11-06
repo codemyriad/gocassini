@@ -21,8 +21,9 @@ Give an agent what it needs to reason about your meetings:
 | `cassini meetings rename <id> <title>` | Rename that meeting for everyone with access (`--clear` restores the default). |
 
 An agent that speaks MCP can read the same meetings without the CLI: see
-[Connect an agent over MCP](#7-connect-an-agent-over-mcp). The Cassini app's
-**Connect an agent** tab shows the address and the steps.
+[Connect an agent over MCP](#7-connect-an-agent-over-mcp). In the Cassini app,
+**Connect an agent** at the foot of the rooms list shows the address and the
+steps.
 
 ## How it works
 
@@ -509,8 +510,8 @@ stderr as `warning=` lines.
 
 Cassini serves the same reads as an [MCP](https://modelcontextprotocol.io)
 server, so an agent can use them as tools without the CLI installed. In the
-Cassini app, the **Connect an agent** tab (beside *Meetings*) shows this
-instance's address and the three steps below.
+Cassini app, **Connect an agent** at the foot of the rooms list opens a panel
+with this instance's address and the three steps below.
 
 ```text
 https://<your-nextcloud>/index.php/apps/app_api/proxy/gocassini/mcp
