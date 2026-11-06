@@ -429,7 +429,7 @@ func (rt *Runtime) collectSupport(ctx context.Context, c ExAppConfig, caller str
 			_ = enc.Encode(e)
 		}
 		b.addBytes("logs/operator.jsonl", out.Bytes(), failed)
-		capture := map[string]any{"events": len(events), "rotation_bytes": 2 * supportJournalLimit, "io_failed": failed, "older_history": "unavailable_before_support_release_or_after_rotation_and_retention"}
+		capture := map[string]any{"events": len(events), "rotation_bytes": 2 * len(supportStreams) * supportJournalLimit, "streams": supportStreams, "io_failed": failed, "older_history": "unavailable_before_support_release_or_after_rotation_and_retention"}
 		if len(events) > 0 {
 			capture["oldest_event_at"] = supportTime(events[0].At)
 			capture["newest_event_at"] = supportTime(events[len(events)-1].At)

@@ -658,7 +658,7 @@ func TestSupportTemporaryFilesFromACrashAreRemovedConservatively(t *testing.T) {
 
 func TestSupportRetentionDiscardsCrashFragmentAndExpiresValidEntries(t *testing.T) {
 	j := newSupportJournal(t.TempDir())
-	f, err := os.OpenFile(filepath.Join(j.workRoot, "diagnostics", "operator.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(filepath.Join(j.workRoot, "diagnostics", "events.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -685,14 +685,26 @@ func TestSupportDiagnosticStorageIsCountedAsLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := ExAppConfig{}.scanDetailedStorageUsage(context.Background(), rt.cfg.WorkRoot, index.add)
-	info, err := os.Stat(filepath.Join(rt.cfg.WorkRoot, "diagnostics", "operator.jsonl"))
-	if err != nil {
-		t.Fatal(err)
+	var size int64
+	files := 0
+	for _, name := range supportJournalPaths() {
+		info, err := os.Stat(filepath.Join(rt.cfg.WorkRoot, filepath.FromSlash(name)))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		size += info.Size()
+		files++
 	}
-	assertArtifactRoot(t, response, "diagnostics", info.Size(), 1)
+	if files == 0 {
+		t.Fatal("no journal file written")
+	}
+	assertArtifactRoot(t, response, "diagnostics", size, files)
 	for _, category := range index.result() {
 		if category.ID == "logs" {
-			if category.Bytes != info.Size() {
+			if category.Bytes != size {
 				t.Fatalf("journal missing from logs: %d", category.Bytes)
 			}
 			return
@@ -714,5 +726,103 @@ func TestSupportOversizedNextcloudResponseIsExplicit(t *testing.T) {
 	e := safeSupportEvent(supportEvent{Reason: "response_too_large"}, func(s string) string { return s })
 	if e.Reason != "response_too_large" {
 		t.Fatal("journal projection lost response-size failure")
+	}
+}
+
+// Free-text operator output is frequent; share and delivery events are rare
+// and are what a support bundle is for. Log volume must not rotate them away.
+func TestSupportJournalLogVolumeKeepsShareEvidence(t *testing.T) {
+	j := newSupportJournal(t.TempDir())
+	j.limit = 4096
+	j.record(supportEvent{Event: "share_create", Job: "job-1", Recipient: "user", Reason: "sharing_group_restriction", OCS: 403})
+	logger := log.New(j, "", log.LstdFlags)
+	for i := 0; i < 500; i++ { // ~25 rotations of the operator stream
+		logger.Printf("publish deliver failed id=job-%d: upstream timeout", i)
+	}
+	events, failed := j.read(time.Time{})
+	if failed {
+		t.Fatal("journal I/O failed")
+	}
+	var share, newest bool
+	for i, e := range events {
+		if e.Event == "share_create" && e.Job == "job-1" && e.OCS == 403 {
+			share = true
+		}
+		if i > 0 && e.At < events[i-1].At {
+			t.Fatalf("events not in time order at %d", i)
+		}
+		newest = newest || strings.Contains(e.Detail, "id=job-499:")
+	}
+	if !share {
+		t.Fatal("operator log volume rotated the share evidence away")
+	}
+	if !newest {
+		t.Fatal("latest operator line missing")
+	}
+	for _, name := range supportJournalPaths() {
+		info, err := os.Stat(filepath.Join(j.workRoot, filepath.FromSlash(name)))
+		if err == nil && info.Size() > j.limit {
+			t.Fatalf("%s exceeds its generation limit: %d", name, info.Size())
+		}
+	}
+}
+
+// Every request is logged (heartbeats, the Operator page's 2-second poll).
+// Those lines still reach stderr but must not fill the support journal.
+func TestSupportJournalExcludesRequestLines(t *testing.T) {
+	stderr := &syncBuffer{}
+	rt, cleanup := newTestRuntimeWithLogger(t, log.New(stderr, "", 0))
+	defer cleanup()
+	handler := newHTTPHandler(rt.logger, rt, ExAppConfig{})
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz?probe=support-journal", nil))
+	rt.logger.Printf("publish deliver failed id=job-1: boom")
+	if !strings.Contains(stderr.String(), "/healthz?probe=support-journal") {
+		t.Fatalf("request line missing from stderr: %q", stderr.String())
+	}
+	events, _ := rt.supportJournal.read(time.Time{})
+	var operatorLine bool
+	for _, e := range events {
+		if strings.Contains(e.Detail, "support-journal") {
+			t.Fatalf("request line journaled: %+v", e)
+		}
+		operatorLine = operatorLine || strings.Contains(e.Detail, "id=job-1: boom")
+	}
+	if !operatorLine {
+		t.Fatal("operator output no longer journaled")
+	}
+}
+
+func TestSupportJobStateDetailIsBounded(t *testing.T) {
+	rt := supportTestRuntime(t)
+	long := strings.Repeat("x", 16<<10)
+	rt.publishStateChangeEvent(StateChangeEvent{JobID: "job-1", Job: Job{Error: &long}})
+	events, _ := rt.supportJournal.read(time.Time{})
+	for _, e := range events {
+		if e.Event == "job_state" {
+			if len(e.Detail) > supportJobStateDetailMax || !e.DetailTruncated {
+				t.Fatalf("job_state detail not bounded: %d bytes, truncated=%v", len(e.Detail), e.DetailTruncated)
+			}
+			return
+		}
+	}
+	t.Fatal("job_state not recorded")
+}
+
+// A journal file that exists but cannot be opened must not be deleted by the
+// rewrite: its events were never read.
+func TestSupportRetentionSkipsWhenAFileIsUnreadable(t *testing.T) {
+	j := newSupportJournal(t.TempDir())
+	j.record(supportEvent{Event: "share_create", Job: "job-1", OCS: 403})
+	_, previous := supportJournalFiles(supportStreamOperator)
+	if err := os.Mkdir(filepath.Join(j.workRoot, filepath.FromSlash(previous)), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.expire(retentionPolicy{Count: 1, Unit: "days"}, time.Now().AddDate(0, 0, 2)); err == nil {
+		t.Fatal("unreadable journal not reported")
+	}
+	active, _ := supportJournalFiles(supportStreamEvents)
+	raw, err := os.ReadFile(filepath.Join(j.workRoot, filepath.FromSlash(active)))
+	if err != nil || !strings.Contains(string(raw), `"share_create"`) {
+		t.Fatalf("retention deleted unread history: %v", err)
 	}
 }
