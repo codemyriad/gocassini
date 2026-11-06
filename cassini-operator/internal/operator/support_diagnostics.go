@@ -24,6 +24,9 @@ import (
 
 const supportJournalLimit = 1 << 20 // per generation: two per stream, at most 4 MiB on disk
 
+// supportJobStateDetailMax bounds the error copied into each job_state event.
+const supportJobStateDetailMax = 512
+
 // Structured job, delivery and share events are the evidence a support bundle
 // exists for, and they are rare. Free-text operator output is frequent. Each
 // gets its own pair of generations so log volume can never rotate the
@@ -309,23 +312,25 @@ func (j *supportJournal) read(cutoff time.Time) ([]supportEvent, bool) {
 	j.mu.Lock()
 	failed := j.failed
 	j.mu.Unlock()
-	return j.readSnapshot(cutoff, failed)
+	events, failed, _ := j.readSnapshot(cutoff, failed)
+	return events, failed
 }
 
-func (j *supportJournal) readSnapshot(cutoff time.Time, failed bool) ([]supportEvent, bool) {
+// unreadable reports a journal file that exists but could not be opened, as
+// distinct from a corrupt line inside a file that was read.
+func (j *supportJournal) readSnapshot(cutoff time.Time, failed bool) (events []supportEvent, _ bool, unreadable bool) {
 	root, err := os.OpenRoot(j.workRoot)
 	if err != nil {
-		return nil, true
+		return nil, true, true
 	}
 	defer root.Close()
-	var events []supportEvent
 	for _, name := range supportJournalPaths() {
 		f, err := supportOpen(root, name, os.O_RDONLY)
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
-			failed = true
+			failed, unreadable = true, true
 			continue
 		}
 		scanner := bufio.NewScanner(io.LimitReader(f, 2*supportJournalLimit))
@@ -352,7 +357,7 @@ func (j *supportJournal) readSnapshot(cutoff time.Time, failed bool) ([]supportE
 		tb, _ := time.Parse(time.RFC3339Nano, events[b].At)
 		return ta.Before(tb)
 	})
-	return events, failed
+	return events, failed, unreadable
 }
 
 func (j *supportJournal) expire(policy retentionPolicy, now time.Time) error {
@@ -361,7 +366,12 @@ func (j *supportJournal) expire(policy retentionPolicy, now time.Time) error {
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	events, failed := j.readSnapshot(time.Time{}, false)
+	events, failed, unreadable := j.readSnapshot(time.Time{}, false)
+	if unreadable {
+		// Rewriting would delete the events that could not be read.
+		j.failed = true
+		return errors.New("diagnostic journal unreadable; retention skipped")
+	}
 	if failed {
 		j.failed = true
 		// A crash may leave one incomplete line. Expire valid events and drop

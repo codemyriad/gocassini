@@ -791,3 +791,38 @@ func TestSupportJournalExcludesRequestLines(t *testing.T) {
 		t.Fatal("operator output no longer journaled")
 	}
 }
+
+func TestSupportJobStateDetailIsBounded(t *testing.T) {
+	rt := supportTestRuntime(t)
+	long := strings.Repeat("x", 16<<10)
+	rt.publishStateChangeEvent(StateChangeEvent{JobID: "job-1", Job: Job{Error: &long}})
+	events, _ := rt.supportJournal.read(time.Time{})
+	for _, e := range events {
+		if e.Event == "job_state" {
+			if len(e.Detail) > supportJobStateDetailMax || !e.DetailTruncated {
+				t.Fatalf("job_state detail not bounded: %d bytes, truncated=%v", len(e.Detail), e.DetailTruncated)
+			}
+			return
+		}
+	}
+	t.Fatal("job_state not recorded")
+}
+
+// A journal file that exists but cannot be opened must not be deleted by the
+// rewrite: its events were never read.
+func TestSupportRetentionSkipsWhenAFileIsUnreadable(t *testing.T) {
+	j := newSupportJournal(t.TempDir())
+	j.record(supportEvent{Event: "share_create", Job: "job-1", OCS: 403})
+	_, previous := supportJournalFiles(supportStreamOperator)
+	if err := os.Mkdir(filepath.Join(j.workRoot, filepath.FromSlash(previous)), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.expire(retentionPolicy{Count: 1, Unit: "days"}, time.Now().AddDate(0, 0, 2)); err == nil {
+		t.Fatal("unreadable journal not reported")
+	}
+	active, _ := supportJournalFiles(supportStreamEvents)
+	raw, err := os.ReadFile(filepath.Join(j.workRoot, filepath.FromSlash(active)))
+	if err != nil || !strings.Contains(string(raw), `"share_create"`) {
+		t.Fatalf("retention deleted unread history: %v", err)
+	}
+}
