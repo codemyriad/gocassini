@@ -5,6 +5,7 @@
   import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
+  import SupportBundle from "./SupportBundle.svelte";
   import SetupNotice from "./SetupNotice.svelte";
   import SharingNotice from "./SharingNotice.svelte";
   import MeetingAccessNotice from "./MeetingAccessNotice.svelte";
@@ -602,6 +603,11 @@
 
 <div class="cassini-app-frame" bind:this={appFrame}>
 <div class="cassini-app-content">
+{#if surface === "browse"}
+  <div class="cassini-support-bar" inert={overlayOpen} data-theme={themeMode}>
+    <SupportBundle administrator={operatorClient !== null} {surface} />
+  </div>
+{/if}
 <!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab is
      gone (D-751) and `setup` is no longer a surface (D-756), so the checks now
      live in Operator › Publish pipeline, above the recording-access section.
@@ -820,6 +826,7 @@
 <style>
   .cassini-app-frame { position: relative; height: 100%; min-height: 0; overflow: hidden; }
   .cassini-app-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .cassini-support-bar { flex-shrink: 0; padding: 0.125rem 0.5rem; background: var(--color-main-background, var(--color-base-100)); }
   /* Plain CSS (not Tailwind utilities) so the nav renders regardless of content
      scanning; theme tokens come from app.css (:root / :host). */
   .cassini-shell {

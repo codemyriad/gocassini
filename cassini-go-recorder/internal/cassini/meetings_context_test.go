@@ -1201,3 +1201,89 @@ func TestMeetingContextListsSeparatedVoicesNotTheirParticipant(t *testing.T) {
 		t.Errorf("speakers = %v, want %v", labels, want)
 	}
 }
+
+func TestParseMeetingPosition(t *testing.T) {
+	for value, want := range map[string]int64{
+		"754000": 754_000, "0": 0, "12:34": 754_000, "1:02:03": 3_723_000, "00:05": 5_000,
+	} {
+		got, err := parseMeetingPosition(value)
+		if err != nil || got != want {
+			t.Errorf("parseMeetingPosition(%q) = %d, %v; want %d", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"", "-5", "12:60", "1:2:3", "noon", "1:02:03:04", "12:3"} {
+		if _, err := parseMeetingPosition(value); err == nil {
+			t.Errorf("parseMeetingPosition(%q) was accepted", value)
+		}
+	}
+	if _, _, err := parseMeetingContextWindow("2:00", "1:00"); err == nil {
+		t.Error("a window ending before it starts was accepted")
+	}
+	if _, set, err := parseMeetingContextWindow("", ""); set || err != nil {
+		t.Errorf("no flags made a window: set=%v err=%v", set, err)
+	}
+}
+
+// The window is a field of the published format, so the schema must declare
+// it like every other key a produced bundle can carry.
+func TestContextWindowIsDeclaredBySchema(t *testing.T) {
+	schemaPath := "../../../spec/cassini-meetings-context-v1.schema.json"
+	raw, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schemaPath, err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("parse %s: %v", schemaPath, err)
+	}
+	to := int64(90_000)
+	var out bytes.Buffer
+	bundle := goldenContextBundle().WithWindow(meetingcontext.Window{FromMS: 30_000, ToMS: &to})
+	if err := writeMeetingContext(&out, bundle, true, meetingcontext.RenderOpts{}); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	var container struct {
+		Meetings []map[string]json.RawMessage `json:"meetings"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &container); err != nil || len(container.Meetings) == 0 {
+		t.Fatalf("parse the produced bundle: %v", err)
+	}
+	for _, meeting := range container.Meetings {
+		if _, ok := meeting["window"]; !ok {
+			t.Fatal("a windowed bundle does not say it is one")
+		}
+		assertSchemaDeclares(t, schema, schemaPath, "meetingContext", meeting)
+		assertNestedSchemaDeclares(t, schema, schemaPath, "window", meeting["window"])
+	}
+}
+
+// --from and --to narrow a real run, and refuse a window that holds nothing
+// before reading any file.
+func TestMeetingsContextLocalWindow(t *testing.T) {
+	requireFFMediaTools(t)
+	published := packedOpusForContext(t)
+	paths := stageLocalMeetingFiles(t, t.TempDir(), published, "MEETING1")
+
+	code, stdout, stderr := runMeetingsCLIRaw(t, "meetings", "context", "--local", "--json", "--from", "0", "--to", "0:01", paths[0])
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	bundle, err := meetingcontext.DecodeJSON([]byte(stdout))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := bundle.Meetings[0]
+	if got.Window == nil || got.Window.ToMS == nil || *got.Window.ToMS != 1_000 {
+		t.Fatalf("window = %+v", got.Window)
+	}
+	for _, segment := range got.Segments {
+		if segment.StartMS >= 1_000 {
+			t.Errorf("a passage starting at %d ms is outside the window", segment.StartMS)
+		}
+	}
+
+	code, _, stderr = runMeetingsCLIRaw(t, "meetings", "context", "--local", "--from", "2:00", "--to", "1:00", paths[0])
+	if code != 2 || !strings.Contains(stderr, "must end after it starts") {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+}

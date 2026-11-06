@@ -87,6 +87,11 @@ type Config struct {
 }
 
 type Runtime struct {
+	supportJournal *supportJournal
+	supportGate    supportGate
+	// requestLog is the operator logger without the support journal tee.
+	// Per-request lines carry no diagnostic signal and would dominate it.
+	requestLog        *log.Logger
 	remoteRetentionMu sync.RWMutex
 	remoteRetention   *annotationService
 	retention         *retentionConfig
@@ -391,6 +396,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	logger = runtime.logger
+	exappCfg.supportJournal = runtime.supportJournal
 	exappCfg.meetingMetadata = runtime.meetingMetadata
 	exappCfg.lifecycle = store
 	// Conditional, so a missing store stays a nil interface rather than a
@@ -826,28 +833,34 @@ func normalizeBasePath(value string) (string, error) {
 }
 
 func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
+	cleanupSupportTemps(os.TempDir(), time.Now())
+	journal := newSupportJournal(cfg.WorkRoot)
+	requestLog := logger
+	logger = log.New(io.MultiWriter(logger.Writer(), journal), logger.Prefix(), logger.Flags())
 	queueCapacity := cfg.MaxBuildWorkers * 16
 	if queueCapacity < 16 {
 		queueCapacity = 16
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	rt := &Runtime{
-		retention:    newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
-		ctx:          ctx,
-		cancel:       cancel,
-		store:        store,
-		cfg:          cfg,
-		logger:       logger,
-		stdout:       stdout,
-		stderr:       stderr,
-		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
-		buildQueue:   make(chan buildTask, queueCapacity),
-		sealQueue:    make(chan sealTask, queueCapacity),
-		publishQueue: make(chan publishTask, 16),
-		events:       newEventHub(),
-		recordJobs:   map[string]*recordProcessState{},
-		talkRooms:    map[string]*talkRoomState{},
-		talkJobs:     map[string]*talkRoomState{},
+		supportJournal: journal,
+		requestLog:     requestLog,
+		retention:      newRetentionConfig(filepath.Join(filepath.Dir(cfg.DBPath), "retention_settings.json")),
+		ctx:            ctx,
+		cancel:         cancel,
+		store:          store,
+		cfg:            cfg,
+		logger:         logger,
+		stdout:         stdout,
+		stderr:         stderr,
+		recordSlots:    make(chan struct{}, cfg.MaxRecordWorkers),
+		buildQueue:     make(chan buildTask, queueCapacity),
+		sealQueue:      make(chan sealTask, queueCapacity),
+		publishQueue:   make(chan publishTask, 16),
+		events:         newEventHub(),
+		recordJobs:     map[string]*recordProcessState{},
+		talkRooms:      map[string]*talkRoomState{},
+		talkJobs:       map[string]*talkRoomState{},
 
 		recordStopAckGrace:      recordStopAckGrace,
 		recordStopFinalizeGrace: recordStopFinalizeGrace,
@@ -1025,6 +1038,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/summaries/missing", http.HandlerFunc(rt.missingSummariesHandler)},
 		{"/events", http.HandlerFunc(rt.eventsHandler)},
 		{"/status", http.HandlerFunc(rt.statusHandler)},
+		{supportAdminPath, rt.supportBundleHandler(exappCfg, true)},
 		{"/setup", http.HandlerFunc(rt.setupHandler)},
 		// USER: accept the recording shares waiting for the caller (D-885).
 		{"/shares/accept", http.HandlerFunc(rt.sharesAcceptHandler)},
@@ -1091,6 +1105,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	root.Handle(supportUserPath, rt.supportBundleHandler(exappCfg, false))
 	exappCfg.lifecycle = rt.store
 	exappCfg.meetingMetadata = rt.meetingMetadata
 	if exappCfg.appAPIActive() && exappCfg.PublishSink == publishSinkNextcloudFiles {
@@ -1145,6 +1160,15 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 			}()
 		}
 	}
+	// The MCP server (D-813): agents outside Cassini read meetings as the
+	// person who connected them. A sibling of insights on the ROOT mux —
+	// appinfo/info.xml declares `^mcp\/?$`, POST, USER — so it sits inside the
+	// AppAPI middleware that names the caller. Nil, and unmounted, wherever no
+	// caller could be named (see newMCPHandler).
+	if mcp := newMCPHandler(exappCfg, search, annotations, logger); mcp != nil {
+		root.Handle(mcpURLPath, mcp)
+		root.Handle(mcpURLPath+"/{$}", mcp)
+	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)
 
@@ -1159,7 +1183,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	outer.HandleFunc("/api/v1/room/", rt.talkRoomHandler)
 	outer.Handle("/", exappCfg.wrap(root, logger))
 
-	return requestLogger(logger, outer)
+	// Keep request lines out of the support journal. A caller-supplied logger
+	// that is not the runtime's own (tests) is used as given.
+	requestLog := logger
+	if rt.requestLog != nil && logger == rt.logger {
+		requestLog = rt.requestLog
+	}
+	return requestLogger(requestLog, outer)
 }
 
 // mountBasePathOnto registers the operator api mux under basePath on the given

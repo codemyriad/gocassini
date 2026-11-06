@@ -344,6 +344,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 	}
 	existing, err := c.ownerSharesForPath(ctx, client, relPath)
 	if err != nil {
+		c.supportShare(ctx, "share_list", "", "", err, 0)
 		return nil, fmt.Errorf("list recording shares: %w", err)
 	}
 	skipped := []skippedShare{}
@@ -375,10 +376,12 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 		for attempt := 0; attempt < 3; attempt++ {
 			var share ncShare
 			share, createErr = c.createRecordingShare(ctx, client, relPath, principal, permissions, note)
+			c.supportShare(ctx, "share_create", principal.Type, principal.ID, createErr, attempt+1)
 			if createErr != nil && public && resharePermissionRefusal(createErr) {
 				// Respect instance policy: read access can still work when
 				// resharing is disabled for this recipient.
 				share, createErr = c.createRecordingShare(ctx, client, relPath, principal, ncShareRead, note)
+				c.supportShare(ctx, "share_create", principal.Type, principal.ID, createErr, attempt+1)
 			}
 			if createErr == nil {
 				existing = append(existing, share)
@@ -388,6 +391,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			// Re-list before retrying so we never intentionally duplicate it.
 			refreshed, listErr := c.ownerSharesForPath(ctx, client, relPath)
 			if listErr != nil {
+				c.supportShare(ctx, "share_list", principal.Type, principal.ID, listErr, attempt+1)
 				return nil, fmt.Errorf("share %s %s: %w (and re-list failed: %v)", principal.Type, principal.ID, createErr, listErr)
 			}
 			existing = refreshed
@@ -420,6 +424,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			// Anyone else is skipped and named, a group or a Team included:
 			// the meeting still reaches everyone Nextcloud does allow, and the
 			// run says who it does not (D-885).
+			c.supportShare(ctx, "share_skipped", principal.Type, principal.ID, createErr, 1)
 			ncAccessSubstrate.warnShare(fmt.Sprintf("recording %s: share skipped for %s %s: %v", path.Base(relPath), principal.Type, principal.ID, createErr))
 			skipped = append(skipped, skip)
 			continue
@@ -430,12 +435,15 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 	// that every expected share actually landed.
 	verified, err := c.ownerSharesForPath(ctx, client, relPath)
 	if err != nil {
+		c.supportShare(ctx, "share_list", "", "", err, 0)
 		return nil, fmt.Errorf("verify recording shares: %w", err)
 	}
 	for _, principal := range required {
 		if !shareCoversPrincipal(verified, principal) {
+			c.supportShare(ctx, "share_verify", principal.Type, principal.ID, fmt.Errorf("missing after publication"), len(required))
 			return nil, fmt.Errorf("recording share for %s %s is missing after publication", principal.Type, principal.ID)
 		}
 	}
+	c.supportShare(ctx, "share_verify", "", "", nil, len(required))
 	return skipped, nil
 }

@@ -1,8 +1,9 @@
 <script lang="ts">
+  import SupportBundle from "./SupportBundle.svelte";
   import { createEventDispatcher, onMount } from "svelte";
   import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, RefreshCw, Settings, TextSearch, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
-  import CommandBlock from "./CommandBlock.svelte";
+  import CommandBlock from "cassini-viewer/ui/CommandBlock.svelte";
   import { checkLabels, checkStateLabel, checkTone, describeRefreshFailure, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, repairLabel, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, unsharedSummary, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
@@ -236,6 +237,7 @@
     <p>What Cassini needs to record and search meetings, and what to do when something needs attention.</p>
   </div>
 </header>
+<SupportBundle administrator={true} surface="operator" />
 {#if stale}
   <div class="alert alert-soft alert-warning alert-tinted items-start gap-2 px-3 py-2 text-sm" role="alert">
     <TriangleAlert size={16} class="mt-0.5 shrink-0 {toneClasses.warning}" aria-hidden="true" />

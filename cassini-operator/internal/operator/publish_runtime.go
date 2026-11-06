@@ -100,7 +100,9 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// instead of being frozen into an artifact that cannot be rewritten cheaply.
 	// Refreshing it from Talk is a separate thing nothing does yet.
 	_, roomName := rt.talkRoomForJob(task.JobID)
-	location, err := rt.sink().Deliver(rt.ctx, publishDelivery{
+	deliveryCtx := context.WithValue(rt.ctx, supportDeliveryKey{}, supportDeliveryContext{job: task.JobID, attempt: task.AttemptNumber})
+	rt.supportJournal.record(supportEvent{Event: "delivery_started", Job: task.JobID, Attempt: task.AttemptNumber})
+	location, err := rt.sink().Deliver(deliveryCtx, publishDelivery{
 		AttemptSitePath: attemptArtifactSitePath,
 		JobID:           task.JobID,
 		AttemptNumber:   task.AttemptNumber,
@@ -110,11 +112,14 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	})
 	if err != nil {
 		rt.logger.Printf("publish deliver failed id=%s attempt=%d sink=%s attempt_site=%s: %v", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, err)
+		reason, httpStatus, ocsStatus := supportError(err)
+		rt.supportJournal.record(supportEvent{Event: "delivery_failed", Job: task.JobID, Attempt: task.AttemptNumber, Reason: reason, HTTP: httpStatus, OCS: ocsStatus, Detail: supportOriginalError(err)})
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", attemptArtifactSitePath, err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish deliver failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 		}
 		return
 	}
+	rt.supportJournal.record(supportEvent{Event: "delivery_succeeded", Job: task.JobID, Attempt: task.AttemptNumber})
 	var notification *talkNotification
 	var notificationClient *talkNotificationClient
 	if sink, ok := rt.sink().(interface {

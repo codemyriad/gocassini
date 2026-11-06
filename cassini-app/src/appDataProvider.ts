@@ -1,4 +1,5 @@
 import { requestRoomName } from "./roomNames";
+import { recordCatalogDiagnostic } from "./support/client";
 import {
   StaticCatalogProvider,
   OperatorListProvider,
@@ -47,7 +48,7 @@ import {
 } from "./imports/client";
 import { nextcloudRootPath } from "./operator/ncSetup";
 import { readServedMessage } from "./servedMessage";
-import type { ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/dataProvider";
+import type { AgentConnection, ImportFileRequest, ImportJobRecord, ImportSharee, ImportSharingRequest } from "cassini-viewer/dataProvider";
 
 // The in-Nextcloud shell's data provider (D-626).
 //
@@ -67,8 +68,16 @@ export class AppDataProvider extends StaticCatalogProvider {
   // Keep static asset loading/search, and the list's older-operator fallback.
   private readonly listing = new OperatorListProvider();
 
-  override loadCatalog() {
-    return this.listing.loadCatalog();
+  override async loadCatalog() {
+    recordCatalogDiagnostic("loading");
+    try {
+      const catalog = await this.listing.loadCatalog();
+      recordCatalogDiagnostic("loaded");
+      return catalog;
+    } catch (error) {
+      recordCatalogDiagnostic("failed", error instanceof TypeError, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 
   // GET published/meetings-context?ids=…,… — the same document
@@ -108,6 +117,18 @@ export class AppDataProvider extends StaticCatalogProvider {
       throw new Error(await describeBundleFailure(response));
     }
     return response.text();
+  }
+
+  // The MCP endpoint (D-813) is a sibling of the published archive, like the
+  // insight routes, so its address is derived from the archive's: one rule for
+  // "where is the server" on a proxied deployment. App passwords are made in
+  // Nextcloud's own security settings, at the instance's root.
+  agentConnection(): AgentConnection {
+    const endpoint = new URL("../mcp", resolvePublishedUrl("")).toString();
+    const root = nextcloudRootPath();
+    const appPasswordsUrl =
+      root === null ? null : new URL(`${root}/index.php/settings/user/security`, window.location.href).toString();
+    return { endpoint, appPasswordsUrl };
   }
 
   // GET insights — this caller's own runs, newest first (D-721/D-700).

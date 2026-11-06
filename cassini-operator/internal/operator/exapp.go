@@ -163,15 +163,16 @@ const (
 
 // ExAppConfig holds the AppAPI-derived runtime values resolved from env vars.
 type ExAppConfig struct {
-	Active       bool
-	BindAddr     string
-	AppID        string
-	AppVersion   string
-	AAVersion    string
-	AppSecret    string
-	NextcloudURL string // optional; if set, /init reports progress=100 back via OCS
-	ViewerDist   string
-	PublishedDir string // operator SiteRoot, served read-only at /published
+	supportJournal *supportJournal
+	Active         bool
+	BindAddr       string
+	AppID          string
+	AppVersion     string
+	AAVersion      string
+	AppSecret      string
+	NextcloudURL   string // optional; if set, /init reports progress=100 back via OCS
+	ViewerDist     string
+	PublishedDir   string // operator SiteRoot, served read-only at /published
 	// PublishSink is the resolved publish destination (publish_sink.go). It
 	// decides whether a local published archive exists to serve at all: under
 	// the nextcloud-files sink nothing is ever written to PublishedDir, so
@@ -670,6 +671,7 @@ func spaHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 func isPublishedArchivePath(relPath string) bool {
 	return relPath == "catalog.json" ||
 		relPath == meetingsListPath ||
+		relPath == meetingsRoomsPath ||
 		relPath == searchURLPath ||
 		strings.HasPrefix(relPath, "meetings/")
 }

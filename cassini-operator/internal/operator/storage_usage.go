@@ -106,6 +106,7 @@ func (c ExAppConfig) scanStorageUsage(ctx context.Context, rt *Runtime) storageU
 	}
 	addLocal("current", "Current working archive", currentRoot(rt.cfg.WorkRoot))
 	addLocal("runs", "Build history", runsRoot(rt.cfg.WorkRoot))
+	addLocal("diagnostics", "Diagnostic logs", filepath.Join(rt.cfg.WorkRoot, "diagnostics"))
 
 	// A current ExApp publishes to Nextcloud Files, but an upgrade can retain a
 	// pre-migration local archive. Do not add a distracting all-zero row on a

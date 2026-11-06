@@ -58,6 +58,7 @@ export function createOperatorProxy(operatorBasePath: string, operatorProxyTarge
   const insights = {
     "^/insights(?:/|\\?|$)": directOperatorProxy(operatorProxyTarget),
     "^/annotations(?:/|\\?|$)": directOperatorProxy(operatorProxyTarget),
+    "^/support/bundle(?:\\?|$)": directOperatorProxy(operatorProxyTarget),
   };
 
   if (operatorBasePath === "/") {
@@ -68,7 +69,7 @@ export function createOperatorProxy(operatorBasePath: string, operatorProxyTarge
       // /shares is the USER route Browse accepts pending recording shares
       // through (D-885).
       // Match path boundaries so API names cannot swallow Vite source assets.
-      "^/(jobs|events|status|setup|readiness|ai|settings|storage|talk|shares)(?:/|\\?|$)":
+      "^/(jobs|events|status|setup|readiness|ai|settings|storage|talk|shares|support-bundle)(?:/|\\?|$)":
         directOperatorProxy(operatorProxyTarget),
     };
   }

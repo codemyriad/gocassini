@@ -102,7 +102,7 @@ Setup and worked examples are in [docs/agent-meeting-access.md](docs/agent-meeti
 
 ## Development
 
-You need Go 1.24. From a checkout, `./bin/cassini` builds the CLI and runs it in your current directory:
+You need Go 1.25. From a checkout, `./bin/cassini` builds the CLI and runs it in your current directory:
 
 ```bash
 ./bin/cassini --help

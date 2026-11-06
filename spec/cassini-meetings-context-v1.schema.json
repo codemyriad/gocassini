@@ -44,7 +44,12 @@
         },
         "sourceTranscriptFormat": { "type": "string" },
         "language": { "type": "string" },
-        "wordCount": { "type": "integer", "minimum": 0 },
+        "wordCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Words in the whole meeting, window or not."
+        },
+        "window": { "$ref": "#/$defs/window" },
         "segments": {
           "type": "array",
           "description": "The transcript as speaker-attributed paragraphs, in chronological order. Always present: a meeting with no transcribed speech carries an empty array, which is a different fact from the field being absent.",
@@ -86,6 +91,16 @@
           "type": "string",
           "description": "The speaker's display label, falling back to the raw id so an unlabelled speaker is still attributed rather than dropped."
         }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fromMs"],
+      "description": "Present only when the caller asked for a stretch of the meeting (`--from`/`--to`): segments then holds only the passages overlapping it, and everything else — the meeting, its speakers, its summary, its word count — still describes the whole meeting. Its presence is what tells a reader the transcript is partial on purpose.",
+      "properties": {
+        "fromMs": { "type": "integer", "minimum": 0, "description": "Start of the stretch, in milliseconds from the start of the recording." },
+        "toMs": { "type": "integer", "minimum": 0, "description": "End of the stretch; absent means to the end of the meeting." }
       }
     },
     "segment": {

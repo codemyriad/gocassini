@@ -31,13 +31,13 @@ describe("development operator proxy", () => {
         const response = await fetch(origin + path);
         expect(await response.json()).toEqual({ path, method: "GET" });
       }
-      for (const [route, method] of [["/readiness/check", "POST"], ["/talk/setup", "PUT"], ["/shares/accept", "POST"]]) {
+      for (const [route, method] of [["/readiness/check", "POST"], ["/talk/setup", "PUT"], ["/shares/accept", "POST"], ["/support-bundle", "POST"]]) {
         const path = prefix + route;
         const response = await fetch(origin + path, { method, body: "{}" });
         expect(await response.json()).toEqual({ path, method });
       }
       // These APIs are siblings of the operator prefix in both deployments.
-      for (const path of ["/insights", "/insights?limit=1", "/annotations/batch"]) {
+      for (const path of ["/insights", "/insights?limit=1", "/annotations/batch", "/support/bundle"]) {
         const response = await fetch(origin + path, { method: "POST" });
         expect(await response.json()).toEqual({ path, method: "POST" });
       }
