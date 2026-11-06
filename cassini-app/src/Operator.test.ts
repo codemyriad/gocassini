@@ -300,11 +300,11 @@ describe("Operator left nav (D-723)", () => {
   const navGroups: { label: string; items: { id: string; label: string }[] }[] = OPERATOR_NAV;
   const navPanels = navGroups.flatMap((group) => group.items.map((item) => item.id));
 
-  it("groups the rows as Console, Diagnostics, then Settings", () => {
+  it("groups the rows as Console, Diagnostics, Settings, then Support", () => {
     // Doctor is its own group rather than a Settings row: it answers "is this
     // working", which is not something you configure.
-    expect(navGroups.map((group) => group.label)).toEqual(["Console", "Diagnostics", "Settings"]);
-    expect(navPanels).toEqual(["recordings", "doctor", "endpoints", "pipeline", "templates", "storage"]);
+    expect(navGroups.map((group) => group.label)).toEqual(["Console", "Diagnostics", "Settings", "Support"]);
+    expect(navPanels).toEqual(["recordings", "doctor", "endpoints", "pipeline", "templates", "storage", "support"]);
     expect(navGroups[1].items.map((item) => item.label)).toEqual(["Doctor"]);
     expect(navGroups[2].items.map((item) => item.label)).toEqual([
       "AI providers",
@@ -312,6 +312,7 @@ describe("Operator left nav (D-723)", () => {
       "Insight templates",
       "Storage",
     ]);
+    expect(navGroups[3].items.map((item) => item.label)).toEqual(["Support Cassini"]);
   });
 
   it("offers every routable panel exactly once", () => {
