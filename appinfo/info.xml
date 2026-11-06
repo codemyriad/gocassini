@@ -109,6 +109,7 @@ Summaries and questions use whichever language model you connect, so their ratin
   <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/04-insight.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/05-publish.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/06-doctor.png</screenshot>
+  <donation title="Support Cassini" type="stripe">https://donate.stripe.com/7sY7sE5fu5C2d3d4Vz7IY00</donation>
 
   <dependencies>
     <!-- Support bounds are enforced by ci/nextcloud-compatibility.json. -->
@@ -245,6 +246,17 @@ Summaries and questions use whichever language model you connect, so their ratin
       -->
 
       <!-- ADMIN: operator JSON API -->
+      <!-- Support downloads have separate permission boundaries (D-897). -->
+      <route>
+        <url>^operator\/support-bundle$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^support\/bundle$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
       <route>
         <url>^operator\/jobs\/?$</url>
         <verb>GET,POST</verb>

@@ -1,4 +1,5 @@
 import { requestRoomName } from "./roomNames";
+import { recordCatalogDiagnostic } from "./support/client";
 import {
   StaticCatalogProvider,
   OperatorListProvider,
@@ -66,8 +67,16 @@ export class AppDataProvider extends StaticCatalogProvider {
   // Keep static asset loading/search, and the list's older-operator fallback.
   private readonly listing = new OperatorListProvider();
 
-  override loadCatalog() {
-    return this.listing.loadCatalog();
+  override async loadCatalog() {
+    recordCatalogDiagnostic("loading");
+    try {
+      const catalog = await this.listing.loadCatalog();
+      recordCatalogDiagnostic("loaded");
+      return catalog;
+    } catch (error) {
+      recordCatalogDiagnostic("failed", error instanceof TypeError, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 
   // GET published/meetings-context?ids=…,… — the same document

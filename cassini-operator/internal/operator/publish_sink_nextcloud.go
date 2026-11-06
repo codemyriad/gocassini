@@ -237,6 +237,9 @@ func defaultPublishSinkFor(exapp ExAppConfig) string {
 }
 
 func newPublishSinkFor(name string, cfg Config, exapp ExAppConfig, rt *Runtime, logger *log.Logger) (publishSink, error) {
+	if rt != nil {
+		exapp.supportJournal = rt.supportJournal
+	}
 	switch name {
 	case publishSinkNextcloudFiles:
 		if !exapp.appAPIActive() {
