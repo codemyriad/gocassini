@@ -110,78 +110,131 @@ type searchResponseCoverage struct {
 	Searched int `json:"searched"`
 }
 
+// searchParams is one query, however it arrived: the search route's query
+// string or an MCP tool's arguments.
+type searchParams struct {
+	// Query is the words to look for. Required.
+	Query string
+	// Limit caps the hits; zero means the store's default.
+	Limit int
+	// PerMeeting caps how many hits one meeting may contribute. Zero means no
+	// cap, which is what the CLI's flat list wants; the meeting list asks for
+	// one, because there a meeting crowded out of the page is a meeting the
+	// caller is told does not match.
+	PerMeeting int
+	// Room narrows the same way tag does, and for the same reason: a viewer or
+	// an agent that has narrowed to one room is asking a question about that
+	// room, and answering it from a page ranked over every room can return
+	// nothing while matches sit just below the cut. Narrowing the visible set
+	// first makes Limit mean what it says.
+	Room string
+	// Tag is a label, any case, or a tag id. Validated by validateTagParam.
+	Tag     string
+	Speaker string
+	// NoAliases turns off searching for the spellings transcription produces
+	// for a word.
+	NoAliases bool
+}
+
 // serveSearch answers one query for one caller.
 func (c ExAppConfig) serveSearch(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	client *http.Client, caller string, search searchDeps, logger *log.Logger,
 ) {
-	index := search.index
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if query == "" {
+	params := searchParams{
+		Query:     r.URL.Query().Get("q"),
+		Room:      strings.TrimSpace(r.URL.Query().Get("room")),
+		Speaker:   strings.TrimSpace(r.URL.Query().Get("speaker")),
+		NoAliases: r.URL.Query().Get("aliases") == "off",
+	}
+	if strings.TrimSpace(params.Query) == "" {
 		writeJSONError(w, http.StatusBadRequest, "give something to search for in the q parameter")
 		return
 	}
-	limit := 0
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 {
 			writeJSONError(w, http.StatusBadRequest, "limit must be a positive whole number")
 			return
 		}
-		limit = parsed
+		params.Limit = parsed
 	}
-	// room narrows the same way tag does, and for the same reason: a viewer or
-	// an agent that has narrowed to one room is asking a question about that
-	// room, and answering it from a page ranked over every room can return
-	// nothing while matches sit just below the cut. Narrowing the visible set
-	// first makes LIMIT mean what it says.
-	room := strings.TrimSpace(r.URL.Query().Get("room"))
 	tag, err := parseTagParam(r.URL.Query())
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// perMeeting caps how many hits one meeting may contribute. Unset means no
-	// cap, which is what the CLI's flat list wants; the meeting list asks for
-	// one, because there a meeting crowded out of the page is a meeting the
-	// caller is told does not match.
-	perMeeting := 0
+	params.Tag = tag
 	if raw := strings.TrimSpace(r.URL.Query().Get("perMeeting")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 {
 			writeJSONError(w, http.StatusBadRequest, "perMeeting must be a positive whole number")
 			return
 		}
-		perMeeting = parsed
+		params.PerMeeting = parsed
 	}
+
+	response, err := c.searchMeetings(ctx, client, caller, params, search, logger)
+	if err != nil {
+		writeReadFailure(w, r, err)
+		return
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("search: encode response caller=%s: %v", caller, err)
+		}
+		writeJSONError(w, http.StatusInternalServerError, "could not encode the search results")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// searchMeetings runs one query for one caller. Every failure is a
+// *readFailure; nothing the caller typed is logged.
+func (c ExAppConfig) searchMeetings(
+	ctx context.Context, client *http.Client, caller string, params searchParams, search searchDeps, logger *log.Logger,
+) (searchResponse, error) {
+	index := search.index
+	query := strings.TrimSpace(params.Query)
+	if query == "" {
+		return searchResponse{}, readFail(http.StatusBadRequest, "give something to search for")
+	}
+	if params.Limit < 0 {
+		return searchResponse{}, readFail(http.StatusBadRequest, "limit must be a positive whole number")
+	}
+	if params.PerMeeting < 0 {
+		return searchResponse{}, readFail(http.StatusBadRequest, "perMeeting must be a positive whole number")
+	}
+	tag, err := validateTagParam(params.Tag)
+	if err != nil {
+		return searchResponse{}, readFail(http.StatusBadRequest, err.Error())
+	}
+	room := strings.TrimSpace(params.Room)
 	// Before the expensive part, which is the point: a refused request must not
 	// have already cost a PROPFIND and a catalog GET against Nextcloud.
 	if allowed, wait := search.limiter.allow(caller); !allowed {
-		seconds := int(wait.Seconds())
-		if seconds < 1 {
-			seconds = 1
-		}
-		w.Header().Set("Retry-After", strconv.Itoa(seconds))
-		writeJSONError(w, http.StatusTooManyRequests,
+		return searchResponse{}, readRateLimited(wait,
 			"too many searches; each one asks Nextcloud what you may read, so they are rate limited — retry shortly")
-		return
 	}
 	if index == nil {
 		// Not an empty result: the index is unavailable, and an agent must be
 		// able to tell "ask again later" from "there is nothing".
-		writeJSONError(w, http.StatusServiceUnavailable,
+		return searchResponse{}, readFail(http.StatusServiceUnavailable,
 			"the search index is not available on this deployment; this is not an empty result")
-		return
 	}
 	if tag != "" && search.annotations == nil {
 		// Silently unnarrowed would be a false answer.
-		writeJSONError(w, http.StatusServiceUnavailable, tagIndexUnavailableMessage)
-		return
+		return searchResponse{}, readFail(http.StatusServiceUnavailable, tagIndexUnavailableMessage)
 	}
 
-	entries, ok := c.resolveVisibleMeetings(ctx, w, client, caller, logger, "search")
-	if !ok {
-		return
+	entries, err := c.visibleMeetings(ctx, client, caller, logger, "search")
+	if err != nil {
+		return searchResponse{}, err
 	}
 
 	visible := make([]string, 0, len(entries))
@@ -208,8 +261,7 @@ func (c ExAppConfig) serveSearch(
 			if logger != nil {
 				logger.Printf("search: tag narrowing failed caller=%s: %v", caller, err)
 			}
-			writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
-			return
+			return searchResponse{}, readFail(http.StatusBadGateway, tagIndexUnreadableMessage)
 		}
 		bound = make([]string, 0, len(tagged))
 		for _, name := range visible {
@@ -222,10 +274,10 @@ func (c ExAppConfig) serveSearch(
 	results, err := index.Search(ctx, searchRequest{
 		Text:       query,
 		Visible:    bound,
-		SpeakerID:  strings.TrimSpace(r.URL.Query().Get("speaker")),
-		Limit:      limit,
-		PerMeeting: perMeeting,
-		UseAliases: r.URL.Query().Get("aliases") != "off",
+		SpeakerID:  strings.TrimSpace(params.Speaker),
+		Limit:      params.Limit,
+		PerMeeting: params.PerMeeting,
+		UseAliases: !params.NoAliases,
 		AliasIndex: search.aliasIndex(),
 	})
 	if err != nil {
@@ -234,14 +286,12 @@ func (c ExAppConfig) serveSearch(
 		// is an outage, and answering 400 for it would tell an agent to rewrite
 		// a query that was never the problem, so it would never retry.
 		if errors.Is(err, errSearchNoWords) {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
+			return searchResponse{}, readFail(http.StatusBadRequest, err.Error())
 		}
 		if logger != nil {
 			logger.Printf("search: query failed caller=%s: %v", caller, err)
 		}
-		writeJSONError(w, http.StatusBadGateway, "the search index could not be queried; this is not an empty result")
-		return
+		return searchResponse{}, readFail(http.StatusBadGateway, "the search index could not be queried; this is not an empty result")
 	}
 
 	coverage, err := index.CoverageFor(ctx, visible)
@@ -249,8 +299,7 @@ func (c ExAppConfig) serveSearch(
 		if logger != nil {
 			logger.Printf("search: coverage caller=%s: %v", caller, err)
 		}
-		writeJSONError(w, http.StatusBadGateway, "the search index could not be read; this is not an empty result")
-		return
+		return searchResponse{}, readFail(http.StatusBadGateway, "the search index could not be read; this is not an empty result")
 	}
 
 	// Every hit's meeting is in the caller's visible set: the statement was
@@ -266,8 +315,7 @@ func (c ExAppConfig) serveSearch(
 			if logger != nil {
 				logger.Printf("search: marks for hits caller=%s: %v", caller, err)
 			}
-			writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
-			return
+			return searchResponse{}, readFail(http.StatusBadGateway, tagIndexUnreadableMessage)
 		}
 	}
 
@@ -299,38 +347,37 @@ func (c ExAppConfig) serveSearch(
 			Snippet:         snippetAround(hit.Text, flattenSearchGroups(results.Groups)),
 		})
 	}
-
-	body, err := json.Marshal(response)
-	if err != nil {
-		if logger != nil {
-			logger.Printf("search: encode response caller=%s: %v", caller, err)
-		}
-		writeJSONError(w, http.StatusInternalServerError, "could not encode the search results")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	return response, nil
 }
 
-// resolveVisibleMeetings is the caller's readable meetings, resolved the way
-// search has always resolved them: resolveCatalogForCaller, the one
-// access-control path, then the caller's own catalog entries. Shared by search
-// and the tag vocabulary (D-737) so the two cannot disagree about what a caller
-// may read.
-//
-// On any outcome that is not an answer it has already written the loud error
-// and returns false. route names the caller in the log; nothing the caller
-// typed is logged.
+// resolveVisibleMeetings is visibleMeetings for a handler that answers its own
+// failures: on any outcome that is not an answer it has already written the
+// loud error and returns false.
 func (c ExAppConfig) resolveVisibleMeetings(
 	ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger, route string,
 ) ([]catalogHydration, bool) {
+	entries, err := c.visibleMeetings(ctx, client, caller, logger, route)
+	if err != nil {
+		writeReadFailure(w, nil, err)
+		return nil, false
+	}
+	return entries, true
+}
+
+// visibleMeetings is the caller's readable meetings, resolved the way search
+// has always resolved them: resolveCatalogForCaller, the one access-control
+// path, then the caller's own catalog entries. Shared by search, the tag
+// vocabulary (D-737) and the MCP tools so they cannot disagree about what a
+// caller may read.
+//
+// Every failure is a *readFailure. route names the caller in the log; nothing
+// the caller typed is logged.
+func (c ExAppConfig) visibleMeetings(
+	ctx context.Context, client *http.Client, caller string, logger *log.Logger, route string,
+) ([]catalogHydration, error) {
 	resolved, err := c.resolveCatalogForCaller(ctx, client, caller, logger)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
-		return nil, false
+		return nil, readFail(http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
 	}
 
 	entries, err := decodeCatalogEntries(resolved)
@@ -338,10 +385,9 @@ func (c ExAppConfig) resolveVisibleMeetings(
 		if logger != nil {
 			logger.Printf("%s: parse resolved catalog caller=%s: %v", route, caller, err)
 		}
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
-		return nil, false
+		return nil, readFail(http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
 	}
-	return entries, true
+	return entries, nil
 }
 
 // visibleOpusNames is the join keys of a caller's entries, skipping any that

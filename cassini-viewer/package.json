@@ -12,6 +12,7 @@
     "./annotations": "./src/viewer/annotations.ts",
     "./tagPalette": "./src/viewer/tagPalette.ts",
     "./tags/*": "./src/components/tags/*",
+    "./ui/*": "./src/components/ui/*",
     "./insights": "./src/viewer/insights.ts",
     "./insightName": "./src/viewer/insightName.ts",
     "./imports": "./src/viewer/imports.ts",

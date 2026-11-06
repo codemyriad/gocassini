@@ -610,6 +610,7 @@ func TestMeetingsContextBytesMatchTheCLIOverTheSameIDs(t *testing.T) {
 		{"markdown", "", nil},
 		{"json", "&format=json", []string{"--json"}},
 		{"markdown with timestamps", "&timestamps=true", []string{"--timestamps"}},
+		{"json over a window", "&format=json&fromMs=0&toMs=1000", []string{"--json", "--from", "0", "--to", "1000"}},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
