@@ -10,6 +10,9 @@ export interface Job {
 	source_expired?: boolean;
 	/** True when a user deleted the published meeting (D-861). */
 	meeting_deleted?: boolean;
+	/** How many of the room's audience a published meeting could not be shared
+	 * with (D-885). Who they are is in the job detail's `sharing`. */
+	unshared_count?: number;
   id: string;
   provider: string;
   request_json: string;
@@ -142,6 +145,34 @@ export interface JobDetailResponse {
   // The Nextcloud file id of the run's delivered recording; absent when the
   // operator has none indexed (D-825).
   recording_file_id?: number;
+  // Who the published meeting could not be shared with (D-885); absent when
+  // the operator recorded no share reconciliation for it.
+  sharing?: JobShareOutcome;
+}
+
+/** One audience member Nextcloud refused a share for. `type` is user, group
+ * or circle (a Nextcloud Team); `reason` is Nextcloud's own refusal. */
+export interface SkippedShare {
+  type: string;
+  id: string;
+  reason?: string;
+}
+
+/** The last share reconciliation of a published meeting (D-885).
+ * `starter_refused`: the person who started the recording could not be given
+ * it, so it was not published. `partial`: published, with `skipped` refused.
+ * `deferred`: published, nobody refused, but Nextcloud's limit on new shares
+ * held some back; `deferred` names them, with a partial outcome too. */
+export interface JobShareOutcome {
+  status: "complete" | "partial" | "starter_refused" | "deferred" | string;
+  skipped?: SkippedShare[];
+  /** Who Nextcloud's limit on new shares held back. Not refused: a re-share
+   * once the limit allows reaches them. */
+  deferred?: SkippedShare[];
+  updated_at?: string;
+  /** The size of the room audience the publish used — the list a re-share
+   * re-applies. Absent when the operator did not have it at hand. */
+  audience_count?: number;
 }
 
 export type SettingsQuality = "fast" | "balanced" | "best";

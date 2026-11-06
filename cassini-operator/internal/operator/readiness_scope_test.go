@@ -877,6 +877,7 @@ func TestRowsNameTheProbeThatEstablishesThem(t *testing.T) {
 		"talk.hpb":             "talk",
 		"talk.discovery":       "talk",
 		"storage":              "storage",
+		"storage.sharing":      "storage",
 		"host.workdir":         "host",
 		"host.tmpdir.writable": "host",
 		"archive.search":       "archive",

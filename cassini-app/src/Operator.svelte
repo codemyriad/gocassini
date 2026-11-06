@@ -300,7 +300,7 @@
   import type { Job, JobAttempt, JobDetailResponse, SummaryPlan } from "./operator/types";
   import { findRecordingInFiles, recordingFilesUrl } from "./operator/recordingFiles";
   import { shouldShowDetailLoading } from "./operator/viewState";
-  import { outcomeAttempt, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
+  import { outcomeAttempt, reshareOutcome, shareNotice, summaryNotice, transcriptionNotice, type OutcomeNotice } from "./operator/stepOutcomes";
   import {
     attemptLogs,
     attemptReason,
@@ -461,6 +461,7 @@
         await refreshJobs();
       }
     }
+    if (jobId !== selectedJobId) dropReshareAnswer(selectedJobId);
     selectedJobId = jobId;
     detailError = "";
     loadingDetail = true;
@@ -501,6 +502,7 @@
 
   function handleBackToList() {
     pushJobUrl("");
+    dropReshareAnswer(selectedJobId);
     selectedJobId = "";
     selectedJob = null;
     detailError = "";
@@ -512,6 +514,7 @@
       return;
     }
     if (urlJobId === "") {
+      dropReshareAnswer(selectedJobId);
       selectedJobId = "";
       selectedJob = null;
       detailError = "";
@@ -657,6 +660,49 @@
       submittingStop = false;
       updatePolling();
     }
+  }
+
+  // Re-sharing a published meeting with its room's audience (D-885), once
+  // whatever refused some of it is fixed.
+  // Kept per run: the request outlives a click on another run, and its
+  // answer belongs to the run it was made for. Said beside the button, since
+  // the page's own action error sits in the new-recording form.
+  let reshareJobId = "";
+  let reshareError: { jobId: string; message: string } | null = null;
+  // Who is still refused after a re-share, by id, for the sentence beside
+  // the button; empty is "Shared with everyone." — said on its own line,
+  // because a re-share that reached everyone takes the notice, and the
+  // button under it, away with the next read of the run.
+  let reshareResult: { jobId: string; refused: string[]; deferred: number } | null = null;
+  $: reshareLine = reshareResult && reshareResult.jobId === selectedJob?.job.id ? reshareOutcome(reshareResult.refused, reshareResult.deferred) : "";
+  // The answer is dropped when the person leaves the run it was made for:
+  // they have read it there, and the run's next read says what is true now.
+  // Otherwise "Shared with everyone." would come back with every reselection
+  // for the rest of the session, beside a new warning if the run turned
+  // partial again. An answer that arrives while another run is open is kept
+  // for its run until that one is opened and left.
+  function dropReshareAnswer(jobId: string) {
+    if (reshareResult?.jobId === jobId) reshareResult = null;
+    if (reshareError?.jobId === jobId) reshareError = null;
+  }
+  $: shareNoticeShown = outcomeNotices.some((notice) => notice.action?.kind === "reshare");
+  async function handleReshare() {
+    if (!operatorClient || !selectedJob?.job || reshareJobId) return;
+    const jobId = selectedJob.job.id;
+    reshareJobId = jobId;
+    reshareError = null;
+    reshareResult = null;
+    try {
+      const answer = await operatorClient.reshareJob(jobId);
+      reshareResult = {
+        jobId,
+        refused: answer.sharing?.status === "partial" ? (answer.sharing.skipped ?? []).map((entry) => entry.id) : [],
+        deferred: answer.sharing?.deferred?.length ?? 0,
+      };
+      await refreshJobs();
+      if (selectedJobId === jobId) await selectJob(jobId, { allowJobsRefresh: false });
+    } catch (error) { reshareError = { jobId, message: asMessage(error) }; }
+    finally { reshareJobId = ""; }
   }
 
   let submittingCleanup = false;
@@ -810,10 +856,19 @@
       void selectJob(event.job_id, { allowJobsRefresh: false });
       return;
     }
+    // The detail on screen is still the previous run's while this one loads:
+    // merging into it would show that run's sharing and Files link under this
+    // one's name. The load brings this run's own detail.
+    if (selectedJob.job.id !== event.job_id) {
+      return;
+    }
+    // Fields only the detail carries are kept until the event says otherwise.
     selectedJob = {
+      ...selectedJob,
       job: event.job,
       availability: event.availability ?? selectedJob.availability,
       attempts: upsertAttempt(selectedJob.attempts, event.attempt),
+      sharing: event.sharing ?? selectedJob.sharing,
     };
     updatePolling();
   }
@@ -1091,11 +1146,18 @@
   $: outcomeSource = selectedJob ? outcomeAttempt(selectedJob) : null;
   $: runSpeed = selectedJob ? runProcessing(selectedJob) : null;
   $: meetingMs = selectedJob ? meetingLengthMs(selectedJob.job) : null;
-  $: outcomeNotices = outcomeSource
-    ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)].filter(
-        (notice): notice is OutcomeNotice => notice !== null,
-      )
-    : [];
+  // Who it could not be shared with (D-885): the meeting's, not an attempt's,
+  // because a rerun keeps the file and its shares.
+  $: outcomeNotices = [
+    shareNotice(
+      selectedJob?.sharing,
+      rerunApplies && !rerunBlockedReason,
+      !!selectedJob && (!isJobActive(selectedJob.job) || selectedJob.job.state === "interrupted"),
+    ),
+    ...(outcomeSource
+      ? [transcriptionNotice(outcomeSource, rerunApplies && !rerunBlockedReason), summaryNotice(outcomeSource)]
+      : []),
+  ].filter((notice): notice is OutcomeNotice => notice !== null);
   $: {
     // One plan per finished run and state: a new attempt or an update reloads
     // it, and leaves any open confirmation, which priced the old one.
@@ -1424,6 +1486,9 @@
                         {#if job.meeting_deleted}
                           <span class="badge badge-outline badge-warning badge-sm mt-1" title="The published meeting was deleted by a user. Its local artifacts are reclaimed and this job can no longer be rerun.">Meeting deleted</span>
                         {/if}
+                        {#if job.unshared_count}
+                          <span class="badge badge-outline badge-warning badge-sm mt-1" title={`Not shared with ${job.unshared_count === 1 ? "1 recipient" : `${job.unshared_count} recipients`}: Nextcloud refused them or its share limit held them back. Open the run to see who.`}>Not shared with everyone</span>
+                        {/if}
                         {#if job.error}
                           <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
                             {job.error}
@@ -1557,10 +1622,42 @@
                       <div class="grid min-w-0 gap-1">
                         <p class="font-medium">{notice.title}</p>
                         {#if notice.detail}<p class="font-mono text-xs break-words text-base-content/75">{notice.detail}</p>{/if}
+                        {#if notice.items}
+                          <!-- Closed by default; the summary carries the count. Each
+                               row: the id, its kind as a small label, the reason muted. -->
+                          <details class="text-xs">
+                            <summary class="cursor-pointer text-base-content/75">{notice.items.summary}</summary>
+                            <ul class="mt-1 grid gap-0.5 border-l-2 border-base-300 pl-2">
+                              {#each notice.items.entries as entry}
+                                <li class="break-words"><strong class="font-semibold text-base-content">{entry.id}</strong> <span class="text-[0.7rem] uppercase tracking-wide text-base-content/60">{entry.kind}</span>{#if entry.reason}<span class="text-base-content/60">{" · "}{entry.reason}</span>{/if}</li>
+                              {/each}
+                            </ul>
+                          </details>
+                        {/if}
                         {#if notice.hint}<p class="text-xs text-base-content/70">{notice.hint}</p>{/if}
+                        {#if notice.heldBack}<p class="font-medium">{notice.heldBack}</p>{/if}
+                        {#if notice.action?.kind === "reshare"}
+                          <div class="mt-1">
+                            <button class="btn btn-sm btn-outline btn-outline-hover" type="button" disabled={reshareJobId !== ""} on:click={handleReshare}>
+                              {#if reshareJobId && reshareJobId === selectedJob.job.id}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>{/if}
+                              {notice.action.label}
+                            </button>
+                            <p class="mt-1 text-xs text-base-content/60">{notice.action.note}</p>
+                            {#if reshareError && reshareError.jobId === selectedJob.job.id}<p class="mt-1 text-xs text-error" role="alert">{reshareError.message}</p>{/if}
+                            {#if reshareLine}
+                              <p class="mt-1 text-xs text-base-content/75" role="status">{reshareLine}</p>
+                            {/if}
+                          </div>
+                        {/if}
                       </div>
                     </div>
                   {/each}
+                  {#if reshareLine && !shareNoticeShown}
+                    <div class="flex items-start gap-2 rounded-box border p-3 text-sm {outcomeToneClasses.info}" role="status">
+                      <Info size={16} class="mt-0.5 shrink-0 {outcomeIconClasses.info}" aria-hidden="true" />
+                      <p class="font-medium">{reshareLine}</p>
+                    </div>
+                  {/if}
                   {#if summaryPlan}
                     {#if confirmingSummary}
                       <div

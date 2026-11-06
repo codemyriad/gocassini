@@ -93,10 +93,33 @@ These come from `recordings_access` on `/operator/status`.
 | Publishes fail with "Nextcloud recording shares are not ready" | Deliberate: a recording that cannot be shared would be one nobody can open | Fix the state above |
 | `recordings_access.warning` names a person | One recipient's share was refused. Everyone else still has access | Share the file with that person from Files, signed in as `cassini` |
 | Someone who was in the room sees an empty list | They were a guest, email or federated participant, or the room was captured before they were added | Share the recording with them from Files, signed in as `cassini` |
+| The run says "Nextcloud's share limit held back N recipients" | Nextcloud lets one account create 20 shares every 10 minutes, and Cassini shares every recording as `cassini`. Large meetings, or several ending together, reach that | Press **Re-share with the room** on the run after 10 minutes. To stop it happening, raise Nextcloud's `ratelimit_overwrite` for `files_sharing.shareapi.createshare` (see below) |
+| Recordings vanished from people's lists after a group change | With "Restrict users to only share with users in their groups" on, Nextcloud deletes shares between accounts that no longer share a group when someone leaves one, including `cassini` | Put `cassini` back in the group, then **Re-share with the room** on the affected runs |
 | The viewer returns 502 | Nextcloud Files is unreachable from the container | Check container-to-Nextcloud connectivity and the service account |
 
 Listings fail closed: a misconfigured instance degrades to "no meetings",
 never to "everyone's meetings".
+
+**Raising Nextcloud's share limit.** Nextcloud allows each account 20 new
+shares in any 10 minutes. On an instance with large meetings, raise it for
+share creation (this applies to every account):
+
+```sh
+occ config:system:set ratelimit_overwrite files_sharing.shareapi.createshare user limit --value=1000 --type=integer
+occ config:system:set ratelimit_overwrite files_sharing.shareapi.createshare user period --value=600 --type=integer
+```
+
+**Someone sees no meetings, or misses one they were in.** Two causes, each
+told where the person concerned looks. Either Nextcloud is holding the share
+until they accept it (their account accepts shared files by hand, or the
+server asks everyone to): Browse tells them how many recordings are waiting
+and offers **Accept**; Nextcloud's notification offers the same. Or a sharing
+setting stopped Cassini sharing with them at all: Browse tells them that too,
+with a link to hand to an administrator, and **Doctor › Recording sharing**
+names the setting and the fix for the administrator, with a count of what is
+currently unshared. Once the setting is fixed, **Re-share with the room** on
+the run reaches whoever was refused; a recording that was not published
+because the person who started it was refused is published by **Rerun**.
 
 ## Transcription
 

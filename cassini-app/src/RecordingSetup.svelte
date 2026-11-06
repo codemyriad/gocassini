@@ -4,7 +4,7 @@
   import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, RefreshCw, Settings, TextSearch, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import CommandBlock from "cassini-viewer/ui/CommandBlock.svelte";
-  import { checkLabels, checkStateLabel, checkTone, describeRefreshFailure, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, repairLabel, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, describeRefreshFailure, formatAge, labelParts, readinessTitle, testFollowUp, readinessHealthKey, readinessRows, repairLabels, repairLabel, reportTone, rowActions, rowGuide, sharedCheckTime, talkRoomURL, talkSettingsURL as buildTalkSettingsURL, testInFlight, toneClasses, unsharedSummary, shareLimitedSummary, shareLimitCommands, type CheckTone, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
   // Review fixtures use an inert origin for generated host instructions.
@@ -13,7 +13,9 @@
   // own Doctor panel — so this action has to move the reader there. It used to
   // scrollIntoView an id that was on the same page; from here that id is not
   // mounted at all, and the button would silently do nothing.
-  const dispatch = createEventDispatcher<{ openStorage: void; openRun: string }>();
+  // openRuns: the Recording sharing row's count of what is unshared leads to
+  // the run console, where each meeting is re-shared (D-885).
+  const dispatch = createEventDispatcher<{ openStorage: void; openRun: string; openRuns: void }>();
   let report: RecordingReadiness | null = null;
   let secret = "";
   let busy = false;
@@ -276,6 +278,34 @@
             </div>
           </div>
           <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
+          {#if check.unshared}
+            <!-- In any state: the setting may be fixed and the meetings it
+                 refused still unshared. Each is re-shared from its run, which
+                 is where the button goes. -->
+            <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <p class="text-sm text-base-content/70">{unsharedSummary(check.unshared)}</p>
+              <button type="button" class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" on:click={() => dispatch("openRuns")}>Open the runs</button>
+            </div>
+          {/if}
+          {#if check.share_limited}
+            <!-- Nextcloud allows 20 new shares per account every 10 minutes.
+                 Each held-back meeting is re-shared from its run, which is
+                 where the button goes. The way to lift the limit sits behind
+                 a disclosure because it changes a Nextcloud-wide setting. -->
+            <div class="mt-2">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <p class="text-sm text-base-content/70">{shareLimitedSummary(check.share_limited)}</p>
+                <button type="button" class="btn btn-sm btn-outline btn-outline-quiet btn-outline-hover" on:click={() => dispatch("openRuns")}>Open the runs</button>
+              </div>
+              <details class="group mt-1">
+                <summary class="tpl-toggle text-sm! group-open:text-base-content!"><span class="tpl-chev" aria-hidden="true"></span>Raise the limit</summary>
+                <div class="mt-2 ml-px space-y-2 border-l-2 border-base-300 pl-3">
+                  <p class="text-sm text-base-content/70">Nextcloud lets each account create 20 shares every 10 minutes, and Cassini shares every recording from its <code class="rounded bg-base-200 px-1 py-0.5 font-mono text-[0.85em] text-base-content">cassini</code> account. These commands raise the limit for every account's share creation:</p>
+                  {#each shareLimitCommands as command}<CommandBlock {command} />{/each}
+                </div>
+              </details>
+            </div>
+          {/if}
           {#if (check.steps ?? []).length > 0}
             <!-- Behind a disclosure, as SetupNotice does it: an
                  administrator who wants to press a button never has to read

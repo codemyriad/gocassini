@@ -65,7 +65,7 @@
          pipeline because that is where recording setup was configured, which
          made the one screen that answers "is this working" the hardest one to
          find. -->
-    <RecordingSetup {operatorClient} on:openStorage={() => dispatch("panel", "pipeline")} on:openRun={(event) => openRun(event.detail)} />
+    <RecordingSetup {operatorClient} on:openStorage={() => dispatch("panel", "pipeline")} on:openRun={(event) => openRun(event.detail)} on:openRuns={() => dispatch("panel", "recordings")} />
   {:else if panel === "endpoints"}
     <LLMSettingsPanel {operatorClient} />
   {:else if panel === "pipeline"}

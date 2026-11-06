@@ -54,6 +54,13 @@
   // The whole catalog's size, for "12 of 47 meetings" — the denominator is the
   // archive, not the current room, so a narrowed list says so.
   export let totalCount = 0;
+  // Whether the host fills the `list-empty` slot (D-885). A slot cannot be
+  // provided conditionally, and one that renders nothing still replaces the
+  // fallback, so the host has to say when it has something better than "No
+  // meetings yet" to show — the Cassini shell does when the reader has
+  // recordings waiting for their acceptance, or kept from them by a sharing
+  // setting, which is the actual answer to why their list is empty.
+  export let listEmptyFilled = false;
   // Non-null only when a room is selected; drives the clearable chip and the
   // narrow-viewport rooms button's label.
   export let selectedRoomName: string | null = null;
@@ -509,7 +516,17 @@
       </p>
     {/if}
     {#if shown}
+    {#if totalCount > 0 || totalInsightCount > 0}
+      <!-- Above the list, for a host with something to say about the listing
+           as a whole — the Cassini shell puts the recordings still waiting for
+           the reader's acceptance here (D-885). Only where there IS a list:
+           the empty state below has a slot of its own. -->
+      <slot name="list-notice" />
+    {/if}
     {#if totalCount === 0 && totalInsightCount === 0}
+      {#if listEmptyFilled}
+        <slot name="list-empty" />
+      {:else}
       <div class="list-empty">
         <strong>No meetings yet</strong>
         <span>Recordings you publish from Talk show up here.</span>
@@ -520,6 +537,7 @@
           </span>
         {/if}
       </div>
+      {/if}
     <!-- "You have never made one" is a claim about the whole archive, so every
          narrowing has to be off and the listing has to have come back before it
          can be made. A room selected, a search typed, a listing still in flight

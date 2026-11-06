@@ -38,7 +38,7 @@ func readinessScopeFor(ids []string) readinessScope {
 	var scope readinessScope
 	for _, id := range ids {
 		switch id := strings.TrimSpace(id); {
-		case id == "storage":
+		case id == "storage" || strings.HasPrefix(id, "storage."):
 			scope.storage = true
 		case id == "host" || strings.HasPrefix(id, "host."):
 			scope.host = true
@@ -61,7 +61,7 @@ func readinessScopeFor(ids []string) readinessScope {
 // happening. Reported as "why does pressing this run the other check?".
 func probeNameFor(id string) string {
 	switch id = strings.TrimSpace(id); {
-	case id == "storage":
+	case id == "storage" || strings.HasPrefix(id, "storage."):
 		return "storage"
 	case id == "host" || strings.HasPrefix(id, "host."):
 		return "host"

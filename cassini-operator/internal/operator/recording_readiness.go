@@ -59,6 +59,16 @@ type readinessCheck struct {
 	// by a single check, whichever of them asked for it.
 	Probe     string `json:"probe,omitempty"`
 	CheckedAt string `json:"checked_at,omitempty"`
+	// Unshared is, on the Recording sharing row, what is currently unshared
+	// across the archive (D-885): published meetings Nextcloud would not
+	// share with everyone, as a count the panel renders under the message.
+	// Carried in every state of that row, because a setting fixed today
+	// leaves yesterday's meetings unshared until they are re-shared.
+	Unshared *unsharedSummary `json:"unshared,omitempty"`
+	// ShareLimited is, on the same row and over the same meetings, how many
+	// still have recipients held back by Nextcloud's limit on new shares.
+	// Those are not counted as unshared: a re-share reaches them.
+	ShareLimited *shareLimitedSummary `json:"share_limited,omitempty"`
 }
 
 // readinessStep mirrors SetupNoticeStep, deliberately: the app already renders
@@ -668,7 +678,13 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 	// Parsed only to tell "a check has run" from "none has". How OLD it is rides
 	// on CheckedAt in the response, not on a branch here.
 	_, storageTimeErr := time.Parse(time.RFC3339, access.CheckedAt)
-	if !access.Applicable {
+	if apiOff, ok := shareAPIDisabledFinding(access); ok {
+		// Storage stopped at the share API and the sharing settings say why.
+		// The Recording sharing row waits on this one, so this row carries
+		// the setting's name and the way out.
+		addWithSteps("storage", "needs_action", apiOff.Code, apiOff.Message, "recheck", apiOff.Steps...)
+		resp.Checks[len(resp.Checks)-1].CheckedAt = access.CheckedAt
+	} else if !access.Applicable {
 		add("storage", "not_verified", "storage_not_probed", "The Nextcloud storage check does not apply to this publish destination. Verify storage with a test recording.", "test_recording")
 	} else if ncAccessSubstrate.recordingRefusal() != "" {
 		add("storage", "needs_action", "storage_admission_blocked", "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", "setup_storage")
@@ -697,11 +713,19 @@ func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bo
 		// playback" either. That sentence was this row apologising for what it
 		// could not establish, back when no test recording could be run at all.
 		// The Test recording row says it now, where a reader can act on it.
-		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "Cassini can store and share recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers.", CheckedAt: access.CheckedAt})
+		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "Cassini can store recordings in Nextcloud: its own account exists, its recordings folder is writable, and Nextcloud's sharing API answers. Whether its shares are accepted is the Recording sharing check.", CheckedAt: access.CheckedAt})
 	} else {
 		// Not "below": the button leaves this panel for the Storage section, so
 		// a reader told to look down the page looks in the wrong place.
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "Cassini cannot store or share recordings in Nextcloud yet. The storage details name the step that failed.", Action: "setup_storage", CheckedAt: access.CheckedAt})
+	}
+	if access.Applicable {
+		// Whether Nextcloud's sharing settings let those shares be made at all
+		// (D-885). Waits on the storage row while that one needs attention.
+		row := sharingPolicyRow(ncAccessSubstrate.sharingPolicyFinding())
+		row.Unshared = rt.unsharedSummaryForRow(ctx)
+		row.ShareLimited = rt.shareLimitedSummaryForRow(ctx)
+		resp.Checks = append(resp.Checks, row)
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		addWithSteps("talk.handoff", "needs_action", "recording_secret_missing",
@@ -866,6 +890,7 @@ var readinessRowOrder = []string{
 	"configuration",
 	"host", "host.workdir", "host.tmpdir.writable",
 	"storage",
+	"storage.sharing",
 	"talk.hpb",
 	"talk.discovery",
 	"talk.handoff",

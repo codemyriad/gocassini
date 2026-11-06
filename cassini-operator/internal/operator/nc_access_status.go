@@ -27,6 +27,11 @@ type ncAccessSubstrateStatus struct {
 	hasProbe     bool
 	checkedAtUTC string
 	shareWarning string
+	// sharingPolicy is the Recording sharing finding (D-885). It sits beside
+	// the state ladder, never in it: a policy that limits sharing does not make
+	// storage unusable, and must not block recording admission.
+	sharingPolicy    sharingPolicyFinding
+	hasSharingPolicy bool
 }
 
 var ncAccessSubstrate ncAccessSubstrateStatus
@@ -102,6 +107,23 @@ func (s *ncAccessSubstrateStatus) warnShare(message string) {
 	s.shareWarning = strings.Join(lines, "\n")
 }
 
+func (s *ncAccessSubstrateStatus) setSharingPolicy(finding sharingPolicyFinding) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	finding.CheckedAt = time.Now().UTC().Format(time.RFC3339)
+	s.sharingPolicy = finding
+	s.hasSharingPolicy = true
+}
+
+func (s *ncAccessSubstrateStatus) sharingPolicyFinding() (sharingPolicyFinding, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	finding := s.sharingPolicy
+	finding.Steps = append([]readinessStep(nil), finding.Steps...)
+	finding.ShareableGroups = append([]string(nil), finding.ShareableGroups...)
+	return finding, s.hasSharingPolicy
+}
+
 func (s *ncAccessSubstrateStatus) lastProbe() (ncStorageProbe, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,6 +160,8 @@ func (s *ncAccessSubstrateStatus) reset() {
 	s.hasProbe = false
 	s.checkedAtUTC = ""
 	s.shareWarning = ""
+	s.sharingPolicy = sharingPolicyFinding{}
+	s.hasSharingPolicy = false
 }
 
 func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsAccess {
@@ -148,6 +172,13 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		Step: s.step, Detail: s.detail, Cause: storageCauseFor(s.step),
 		AdminUser: s.adminUser, CheckedAt: s.checkedAtUTC, Warning: s.shareWarning,
 		Mode: "direct_shares", Root: ncRecordingsRoot,
+	}
+	if s.applicable && s.hasSharingPolicy {
+		out.SharingPolicy = &statusSharingPolicy{
+			State: s.sharingPolicy.State, Code: s.sharingPolicy.Code, Message: s.sharingPolicy.Message,
+			ShareableGroups: append([]string(nil), s.sharingPolicy.ShareableGroups...),
+			CheckedAt:       s.sharingPolicy.CheckedAt,
+		}
 	}
 	if !s.applicable {
 		out.State = string(ncSubstrateNotApplicable)

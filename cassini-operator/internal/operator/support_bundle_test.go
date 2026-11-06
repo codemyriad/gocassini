@@ -337,7 +337,7 @@ func TestSupportSharingDiagnosticsPersistAcrossRestart(t *testing.T) {
 	defer server.Close()
 	c := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppSecret: "secret", supportJournal: journal}
 	ctx := context.WithValue(context.Background(), supportDeliveryKey{}, supportDeliveryContext{job: "job1", attempt: 2})
-	err := c.reconcileRecordingShares(ctx, server.Client(), ncRecordingsRoot+"/meetings/job1.opus", []sharePrincipal{{Type: "user", ID: "alice"}}, false)
+	_, err := c.reconcileRecordingShares(ctx, server.Client(), ncRecordingsRoot+"/meetings/job1.opus", []sharePrincipal{{Type: "user", ID: "alice"}}, false, sharePublish, "")
 	if err == nil {
 		t.Fatal("expected a sharing refusal")
 	}
@@ -484,7 +484,7 @@ func TestSupportOriginalShareListFailureKeepsFullMessage(t *testing.T) {
 	defer server.Close()
 	journal := newSupportJournal(t.TempDir())
 	c := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppSecret: "secret", supportJournal: journal}
-	_ = c.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/job.opus", []sharePrincipal{{Type: "user", ID: "alice"}}, false)
+	_, _ = c.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/job.opus", []sharePrincipal{{Type: "user", ID: "alice"}}, false, sharePublish, "")
 	events, _ := journal.read(time.Time{})
 	for _, event := range events {
 		if event.Event == "share_list" && strings.Contains(event.Detail, message) {
