@@ -110,10 +110,11 @@ func (t TranscriptSpeakers) LogicalSpeakerCount() int {
 
 // Summarize asks the summary LLM for a new meeting summary of this transcript,
 // labelled from its roster, with low-confidence words left out exactly as the
-// build leaves them out.
-func (t TranscriptSpeakers) Summarize(cfg LLMConfig) (string, error) {
+// build leaves them out. It also says which template wrote it, and whether
+// that was the built-in standing in for the configured one.
+func (t TranscriptSpeakers) Summarize(cfg LLMConfig) (WrittenSummary, error) {
 	streams, segments := t.summaryInput()
-	return buildMeetingSummaryFn(cfg, streams, segments)
+	return writeSummaryWith(cfg, streams, segments)
 }
 
 // SummaryEstimate says what Summarize would send, without sending it: the

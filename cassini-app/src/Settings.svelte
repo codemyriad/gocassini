@@ -36,6 +36,16 @@
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
+  // The Publish pipeline step a link asked for, scrolled to once the panel
+  // has loaded. Forgotten on leaving the panel, so the nav opens it at its top.
+  let pipelineFocus: "" | "summary" = "";
+  $: if (panel !== "pipeline") pipelineFocus = "";
+
+  function openPipeline(step: "summary"): void {
+    pipelineFocus = step;
+    dispatch("panel", "pipeline");
+  }
+
   let operatorClient: OperatorClient | null = null;
   let configError = "";
   try {
@@ -60,6 +70,7 @@
   {:else if panel === "pipeline"}
     <SettingsPanel
       {operatorClient}
+      focus={pipelineFocus}
       on:openProviders={() => dispatch("panel", "endpoints")}
       on:openTemplates={() => dispatch("panel", "templates")}
       on:openStorage={() => dispatch("panel", "storage")}
@@ -71,6 +82,7 @@
     <InsightTemplatesPanel
       {operatorClient}
       on:openProviders={() => dispatch("panel", "endpoints")}
+      on:openPipeline={(event) => openPipeline(event.detail)}
     />
   {:else}
     <!-- Unreachable: the operator surface renders the run console itself and

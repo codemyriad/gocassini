@@ -59,6 +59,7 @@ CI is partitioned into distinct workflows in `.github/workflows/` to balance fas
    - Container e2e (`ci-e2e-exapp.sh`) and published entrypoint validation (`ci-e2e-entrypoint-exapp.sh`).
    - Manual-install checks (`ci-e2e-install-exapp.sh`) and faithful AppAPI/HaRP installation and Talk verification (`ci-e2e-installed-exapp-talk.sh`).
    - Talk recording roundtrip (`ci-e2e-talk-record-roundtrip.sh`) and GPU transcription smoke with transcript-quality verification (`ci-transcribe-smoke-exapp.sh`).
+   - Summary-template scenario (`ci-e2e-summary-template.sh`, D-895): reuses the roundtrip's phases 1-7 from `harness/bin/lib/talk-roundtrip.sh` and records against the fake OpenAI-compatible endpoint (`harness/fake-llm/`, compose profile `fake-llm`). New scenarios that need a recorded, published meeting should source that lib rather than copy the roundtrip.
 
 3. **`.github/workflows/deploy-preview.yml` (Branch Previews & GPU Processing)**:
    - Deploys UI previews or runs full GPU transcription pipelines.

@@ -7,6 +7,7 @@ import {
   listAIProviderModels,
   listAIProviders,
   listInsights,
+  listInsightTemplates,
   pollDelayMs,
   readInsight,
   readRun,
@@ -354,6 +355,61 @@ describe("which workflows can be asked a question", () => {
     // the box back in front of the people least able to recover from a 400.
     expect(workflowTakesQuestion(null)).toBe(false);
     expect(workflowTakesQuestion({})).toBe(false);
+  });
+});
+
+describe("the template list everybody reads (D-819)", () => {
+  it("takes the operator's takesQuestion when there are no bytes to read", () => {
+    expect(workflowTakesQuestion({ takesQuestion: true })).toBe(true);
+    expect(workflowTakesQuestion({ takesQuestion: false, instruction: "{{QUESTION}}" })).toBe(false);
+  });
+
+  it("reads GET operator/insights/workflows uncached, names only", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            default: "pregunta",
+            templates: [
+              { id: "summarise", name: "Meeting summary", description: "d", takesQuestion: false, origin: "Built in" },
+              { id: "pregunta", name: "Pregunta", description: "", takesQuestion: true, origin: "Custom" },
+              { id: "", name: "no id" },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    const { defaultId, templates: choices } = await listInsightTemplates(
+      "/apps/app_api/proxy/gocassini/operator/",
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/apps/app_api/proxy/gocassini/operator/insights/workflows",
+      expect.objectContaining({ method: "GET", cache: "no-store" }),
+    );
+    expect(choices.map((c) => c.id)).toEqual(["summarise", "pregunta"]);
+    expect(choices[1]).toEqual({ id: "pregunta", name: "Pregunta", description: "", takesQuestion: true, origin: "Custom" });
+    expect(defaultId).toBe("pregunta");
+  });
+
+  it("names no default the list does not hold", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ default: "gone", templates: [{ id: "summarise", name: "Meeting summary", takesQuestion: false }] }),
+          { status: 200 },
+        ),
+    );
+    const listing = await listInsightTemplates("/op", fetchImpl as unknown as typeof fetch);
+    expect(listing.defaultId).toBe("");
+    expect(listing.templates.map((c) => c.id)).toEqual(["summarise"]);
+  });
+
+  it("raises a failed listing with what the operator said", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: "the templates could not be listed" }), { status: 502 }));
+    await expect(listInsightTemplates("/op", fetchImpl as unknown as typeof fetch)).rejects.toThrow(
+      "The insight templates could not be listed: the templates could not be listed",
+    );
   });
 });
 

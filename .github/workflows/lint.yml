@@ -270,3 +270,7 @@ jobs:
           # recomputed after sliding, and every track shares that extent.
           # ffmpeg/ffprobe stubbed, mock TTS only — no rendering coverage.
           ./harness/bin/test-prepare-synthetic-meeting.sh
+          # The fake OpenAI-compatible endpoint ci-e2e-summary-template.sh
+          # records against (D-895): canned reply, prompt-hash echo, request
+          # log. Plain python3 on a loopback port it picks itself.
+          ./harness/bin/test-fake-llm.sh

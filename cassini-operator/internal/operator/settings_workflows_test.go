@@ -2,8 +2,11 @@ package operator
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,7 +20,6 @@ const oneWorkflowJSON = `[
     "version": "v0",
     "sha256": "eba6bd6674d35522dddbd774d3fc6a1fbcdab025aa30a5993d49216d0c13f59f",
     "name": "Meeting summary",
-    "question": "Summarise what happened, what was decided, and what follows.",
     "description": "One document per meeting in a fixed shape.",
     "origin": "Built in",
     "instruction": "You are a meeting-summary editor.\n"
@@ -53,7 +55,7 @@ func TestSettingsWorkflowsServesTheRecordersRegistry(t *testing.T) {
 	if entry.Instruction != "You are a meeting-summary editor.\n" {
 		t.Errorf("instruction = %q, want the bytes the CLI printed", entry.Instruction)
 	}
-	if entry.Question == "" || entry.Name == "" || entry.Origin == "" {
+	if entry.Description == "" || entry.Name == "" || entry.Origin == "" {
 		t.Errorf("entry = %+v, want everything the panel renders", entry)
 	}
 }
@@ -173,17 +175,15 @@ func TestSettingsWorkflowsIsRoutedAheadOfTheLLMSettingsPrefix(t *testing.T) {
 	}
 }
 
-// A freeform workflow declares no question of its own — the question is the
-// caller's — so the field the panel usually renders is empty on purpose. What
-// makes that legible rather than a half-printed row is the placeholder in the
-// instruction, which is the same byte the create handler decides on.
-func TestWorkflowListingAcceptsAFreeformWorkflowWithNoQuestionOfItsOwn(t *testing.T) {
+// A workflow that takes the caller's question says so only through the
+// {{QUESTION}} slot in its instruction, the same byte the create handler
+// decides on.
+func TestWorkflowListingAcceptsAWorkflowThatTakesAQuestion(t *testing.T) {
 	entries := []workflowView{{
 		ID:          "ask",
 		Version:     "v0",
 		SHA256:      "a0ff18109e752c2539dc99f3577349c7f81f251521d87c92beaf05be6366d1e3",
 		Name:        "Ask your own question",
-		Question:    "",
 		Description: "Answers a question you type.",
 		Origin:      "Built in",
 		Instruction: "You are a meeting analyst.\n\n" + insightQuestionPlaceholder + "\n",
@@ -193,25 +193,83 @@ func TestWorkflowListingAcceptsAFreeformWorkflowWithNoQuestionOfItsOwn(t *testin
 	}
 }
 
-// The other half of the same rule: no question and nowhere to put one is a
-// workflow nothing could ever be asked of, and a row the panel cannot render
-// honestly.
-func TestWorkflowListingRefusesAQuestionlessWorkflowWithNoSlotForOne(t *testing.T) {
+// A custom template takes no question and may have no description (D-819):
+// it runs on the transcripts alone, and the listing must carry it.
+func TestWorkflowListingAcceptsACustomTemplateWithNoDescription(t *testing.T) {
 	entries := []workflowView{{
-		ID:          "mute",
-		Version:     "v0",
+		ID:          "resumen",
+		Version:     "v1",
 		SHA256:      "deadbeef",
-		Name:        "Says nothing",
-		Question:    "",
-		Description: "…",
-		Origin:      "Built in",
-		Instruction: "You are a meeting analyst.",
+		Name:        "Resumen",
+		Description: "",
+		Origin:      "Custom",
+		Instruction: "Resume la reunión en español.",
 	}}
-	err := validateWorkflowListing(entries)
-	if err == nil {
-		t.Fatal("a workflow with no question and no placeholder was accepted")
+	if err := validateWorkflowListing(entries); err != nil {
+		t.Fatalf("a custom template with no description was refused: %v", err)
 	}
-	if !strings.Contains(err.Error(), "mute") {
-		t.Fatalf("the refusal does not name the workflow: %v", err)
+}
+
+// D-819: the listing reads the templates directory the operator resolved, so
+// the panel and every run see the same custom set, and a broken custom file is
+// relayed with its reason rather than failing the whole listing.
+func TestSettingsWorkflowsListsCustomTemplatesFromTheTemplatesRoot(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	seen := filepath.Join(t.TempDir(), "env")
+	rt.cfg.TemplatesRoot = filepath.Join(t.TempDir(), "templates")
+	listing := `[` + strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(oneWorkflowJSON), "["), "]") +
+		`,{"id":"roto","version":"v2","sha256":"","name":"Roto","description":"","origin":"Custom","instruction":"Resume.","error":"the front matter has an unknown field"}]`
+	rt.cfg.CassiniBin = writeFakeCassini(t, "printf '%s' \"$CASSINI_TEMPLATES_DIR\" > "+seen+"\nprintf '%s' '"+listing+"'\n")
+
+	rec := httptest.NewRecorder()
+	rt.settingsWorkflowsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings/workflows", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var entries []workflowView
+	if err := json.Unmarshal(rec.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Origin != "Custom" || entries[1].Error == "" {
+		t.Fatalf("entries = %+v, want the built-in and the broken custom one with its reason", entries)
+	}
+	// What the recorder could still read from the broken file, so the panel
+	// opens it to be repaired.
+	if entries[1].Instruction != "Resume." || entries[1].Name != "Roto" || entries[1].Version != "v2" {
+		t.Errorf("broken entry = %+v, want its text, name and version relayed", entries[1])
+	}
+	got, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != rt.cfg.TemplatesRoot {
+		t.Errorf("the CLI read templates from %q, want %q", got, rt.cfg.TemplatesRoot)
+	}
+}
+
+func TestChildEnvNamesTheTemplatesRoot(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TemplatesRoot = "/data/operator/templates"
+	if got := childEnvValue(rt.childEnv(), envTemplatesDir); got != rt.cfg.TemplatesRoot {
+		t.Errorf("%s = %q, want %q", envTemplatesDir, got, rt.cfg.TemplatesRoot)
+	}
+}
+
+func TestTemplatesRootDefaultsBesideTheModelCacheOnTheVolume(t *testing.T) {
+	persist := t.TempDir()
+	t.Setenv(envAppPersistentStorage, persist)
+	t.Setenv(envTemplatesDir, "")
+	t.Setenv("CASSINI_CACHE_ROOT", "")
+	cfg, _, err := loadConfig(nil, io.Discard)
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if want := filepath.Join(persist, "operator", "templates"); cfg.TemplatesRoot != want {
+		t.Errorf("TemplatesRoot = %q, want %q", cfg.TemplatesRoot, want)
+	}
+	if filepath.Dir(cfg.TemplatesRoot) != filepath.Dir(cfg.ModelCacheRoot) {
+		t.Errorf("templates %q are not beside the model cache %q", cfg.TemplatesRoot, cfg.ModelCacheRoot)
 	}
 }

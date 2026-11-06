@@ -106,17 +106,16 @@ An insight asks one question of several meetings and keeps the answer.
    the app says how many to unpick if you go over.
 2. **Open Prepare context**, and pick the Generate card.
 3. **Choose a template**, and the provider and model that will answer. Choosing a
-   template shows the question it puts to the meetings and the shape of the
-   document that comes back. One shipped template, **Ask your own question**,
-   takes a question you type: the answer in at most three sentences, the
-   evidence with who said what, and what these meetings do not answer.
+   template shows its description: what it does and what comes back. A template
+   whose prompt has a place for a question, such as the shipped **Ask your own
+   question**, also shows a question box for you to type into.
 
-   Picking the provider is offered to everyone, not only administrators: which
-   of the configured endpoints sees your transcripts is the asker's decision.
-   The list carries each endpoint's name and nothing more. A person who is not
-   an administrator sees no template picker, because the template registry is
-   admin-only; their run uses the template the administrator configured, and the
-   card says so.
+   Picking the template and the provider is offered to everyone, not only
+   administrators: what to ask and which of the configured endpoints sees your
+   transcripts are the asker's decisions. The template list carries each
+   template's name and description, not its instruction, and the provider list
+   carries each endpoint's name and nothing more. Administrators also get an
+   **Edit templates** link to change them.
 4. **Press Generate.** The run appears at the top of the Browse list as
    `queued`, then `running`, then a result or a failure. Two runs are performed
    at a time; the rest wait, and say they are queued.
@@ -145,6 +144,57 @@ Outside the app, `cassini insight run` asks the same question of a context
 bundle — the document `cassini meetings context` prints. See
 [Agent access via the CLI](/docs/guides/agent-access) for how that bundle is
 assembled, and under whose permissions.
+
+
+## Your own templates
+
+An administrator can write templates of their own in **Operator › Insight
+templates**. **Your templates** comes first: **New template** starts an empty
+one, and **Duplicate** on any template, built-in or your own, starts a copy of
+it there (for example, to write the summary in Spanish). Each template has:
+
+- **Name**: what people pick it by.
+- **Description**: one line shown to the person choosing it, so they know what
+  it does. It can be left empty.
+- **Prompt**: the instruction the model receives, together with the transcripts.
+
+Built-in templates have the same three parts. A template takes a question when
+its prompt contains `{{QUESTION}}`: put it where the question should go, and
+people are asked for one when they pick the template. That is the only input a
+template can ask for so far.
+
+The file name is made from the name when the template is first saved and stays
+the same after that; the editor shows it as **File**. It is what
+`cassini insight run --workflow <id>` and each insight's record call the
+template. **Edit** and **Delete** work on your own templates only, and
+**Built in** templates stay as shipped. Delete asks first; a template that the
+summary or insight step is set to run is not deleted, and the dialog says which
+step to change first.
+
+A save is checked before it is kept: a template that would not run is refused
+with the reason, and the file is left as it was. Every save is a new version, so
+an insight still records exactly which template bytes wrote it. A template that
+is deleted and later created again under the same file name carries on from the
+version it had reached. An insight waiting to run when its template is edited or
+deleted does not run the new version: it fails with "The template changed before
+this insight ran", and generating it again uses the template as it is now.
+
+To summarise every new meeting with your own template, choose it as the
+template in **Operator › Publish pipeline › Summary**. Templates that take the
+reader's own question are not offered there, because a summary has nobody to ask.
+The meeting file records the id, version and hash of the template that wrote its summary, beside the summary rather than inside it.
+If the chosen template cannot run when a summary is written (when a meeting is
+published, summarised again, or rewritten after a speaker edit), the built-in
+summary template writes the summary instead, the run says so with a warning,
+and its log gives the reason. A step can only be set to a template that runs.
+
+Custom templates are files on the app's persistent volume
+(`operator/templates/<id>.md`), so they survive app updates. A file dropped
+there by hand appears in the panel as **Custom**; one that cannot run is listed
+with the reason instead of disappearing, and **Edit** opens it with its text so
+it can be fixed and saved. A file whose name cannot be a template's (spaces,
+accents) or that is named after a built-in template is saved as a new template
+when fixed, and the old file is removed; it can also just be deleted.
 
 ## Related
 

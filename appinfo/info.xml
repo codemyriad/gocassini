@@ -307,6 +307,16 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: write or remove one custom insight template (D-819). The
+           operator writes <id>.md on the app's volume and checks it against
+           the recorder's registry before answering. Declared ahead of the
+           settings route so DELETE, which that route does not carry, is
+           matched here whichever way the proxy reads the list. -->
+      <route>
+        <url>^operator\/settings\/workflows\/[^\/]+\/?$</url>
+        <verb>PUT,DELETE</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: STT quality settings (read + update) driven by the operator
            surface's Settings panel (D-420 V3). Kept ADMIN like the rest of the
            operator API — a non-admin's PUT/GET 403s at the proxy boundary. -->
@@ -421,6 +431,18 @@ Summaries and questions use whichever language model you connect, so their ratin
       -->
       <route>
         <url>^operator\/ai(\/.*)?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!--
+        USER: the insight templates anybody may pick when generating an
+        insight (D-819), and the default a run that names none gets. Id,
+        name, description, whether it takes a question, and origin: never
+        the instruction, which stays on the ADMIN
+        operator/settings/workflows route.
+      -->
+      <route>
+        <url>^operator\/insights\/workflows\/?$</url>
         <verb>GET</verb>
         <access_level>USER</access_level>
       </route>

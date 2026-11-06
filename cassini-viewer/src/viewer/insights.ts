@@ -78,6 +78,7 @@ export type InsightReason =
   | "no-provider"
   | "provider-refused"
   | "model-failed"
+  | "template-changed"
   | "write-failed"
   | "deliver-failed"
   | "timeout"
@@ -100,6 +101,10 @@ export const INSIGHT_FAILURE_COPY: Record<InsightReason, { title: string; line: 
     line: "Check its key, quota or model name under Operator › AI providers.",
   },
   "model-failed": { title: "The model did not answer", line: "Retry, or pick fewer meetings." },
+  "template-changed": {
+    title: "The template changed before this insight ran",
+    line: "Generate it again to use the template as it is now.",
+  },
   "write-failed": {
     title: "The insight could not be written to disk",
     line: "Check the app's storage.",
@@ -153,6 +158,13 @@ export function insightReasonOf(record: Pick<InsightRecord, "reason" | "error">)
     return legacy[1].toLowerCase() as InsightReason;
   }
   return "unknown";
+}
+
+// insightRetryable says whether Retry can help a failed run. A retry re-runs
+// the stored request, template hash included, so a run refused because its
+// template changed would be refused again: that one has to be generated anew.
+export function insightRetryable(record: Pick<InsightRecord, "status" | "reason" | "error">): boolean {
+  return record.status === "failed" && insightReasonOf(record) !== "template-changed";
 }
 
 // describeInsightFailure is what a failed run's sheet renders: a title and one

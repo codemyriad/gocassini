@@ -114,18 +114,20 @@ func summarizeMeetingBundle(root string, cfg transcribe.LLMConfig, force, estima
 	}
 
 	started := time.Now()
-	body, err := transcript.Summarize(cfg)
+	written, err := transcript.Summarize(cfg)
 	finished := time.Now()
 	if err != nil {
 		report.Status = summarizeFailed
 		return report, fmt.Errorf("generate summary: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(root, speakersSummaryFile), []byte(body), 0o644); err != nil {
+	if err := writeFileAtomic(filepath.Join(root, speakersSummaryFile), []byte(written.Body), 0o644); err != nil {
 		report.Status = summarizeFailed
 		return report, fmt.Errorf("write summary: %w", err)
 	}
-	outcome := portable.SummaryStatus{Status: portable.SummaryCompleted, Model: report.Model}.Timed(started, finished)
-	if err := recordBundleSummary(manifestPath, manifest, files, processing, outcome); err != nil {
+	// Reason says when the built-in wrote it in place of the configured
+	// template, which the Operator shows on the attempt (D-819).
+	outcome := portable.SummaryStatus{Status: portable.SummaryCompleted, Reason: written.Reason(), Model: report.Model}.Timed(started, finished)
+	if err := recordBundleSummary(manifestPath, manifest, files, processing, outcome, transcribe.SummaryTemplateRecordOf(written.Template)); err != nil {
 		report.Status = summarizeFailed
 		return report, err
 	}
@@ -149,7 +151,7 @@ func bundleTranscriptionCompleted(processing *orderedJSONObject) bool {
 
 // recordBundleSummary names summary.md in the manifest, written last so the
 // manifest never lists a summary that is not on disk.
-func recordBundleSummary(manifestPath string, manifest, files, processing *orderedJSONObject, outcome portable.SummaryStatus) error {
+func recordBundleSummary(manifestPath string, manifest, files, processing *orderedJSONObject, outcome portable.SummaryStatus, template *transcribe.SummaryTemplateRecord) error {
 	model := outcome.Model
 	if files == nil {
 		files = &orderedJSONObject{}
@@ -171,6 +173,13 @@ func recordBundleSummary(manifestPath string, manifest, files, processing *order
 		step["model"] = model
 	}
 	provenance.set("meetingSummary", mustJSON(step))
+	// The template that wrote it, which pack carries into the portable file's
+	// summary block (D-819). Cleared rather than left naming an older one.
+	if template != nil {
+		manifest.set("summary", mustJSON(template))
+	} else {
+		manifest.delete("summary")
+	}
 	if err := manifest.setObject("provenance", provenance); err != nil {
 		return err
 	}

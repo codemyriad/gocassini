@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"gocassini/internal/insight"
 	"gocassini/internal/insight/workflows"
+	"gocassini/internal/portable"
 )
 
 // The summary step's prompt is the registry's `summarise` workflow, read from
@@ -25,10 +27,10 @@ var (
 )
 
 // summaryTemplatePlaceholder is the literal token in the summarise prompt
-// where the V0 structure template is spliced in at runtime. If the prompt
-// file ever stops containing this token, summarySystemPrompt becomes a no-op
-// for the template and the existing TestSummarySystemPromptPinsTemplateAndRules
-// test will fail because the headings disappear from the prompt.
+// where the V0 structure template is spliced in. If the prompt file ever stops
+// containing this token, the splice becomes a no-op and
+// TestSummarySystemPromptPinsTemplateAndRules fails because the headings
+// disappear from the prompt the step sends.
 const summaryTemplatePlaceholder = "{{TEMPLATE}}"
 
 // The workflow the pipeline's summary step runs, named and versioned so that a
@@ -49,11 +51,54 @@ const (
 func SummaryPromptV0() string   { return summaryV0Prompt }
 func SummaryTemplateV0() string { return summaryV0Template }
 
-// BuildMeetingSummary calls the LLM to produce a meeting summary that follows
-// the V0 markdown template. Speaker labels from streams are used so the model
-// can attribute action items by name. Returns the raw markdown body to be
-// written to summary.md next to other meeting artifacts.
-func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segment) (string, error) {
+// WrittenSummary is a summary the model wrote, with what the caller records
+// about it (D-819).
+type WrittenSummary struct {
+	// Body is the raw markdown for summary.md.
+	Body string
+	// Template is the workflow that wrote it, for the manifest.
+	Template insight.WorkflowRef
+	// Fallback says why the built-in wrote it in place of the configured
+	// template, or "" when the configured one ran. A caller that records the
+	// summary step's outcome records it as portable.SummaryReasonTemplateFallback.
+	Fallback string
+}
+
+// Reason is the summary step's outcome reason for this summary: the
+// template_fallback reason when the built-in stood in, else "".
+func (w WrittenSummary) Reason() string {
+	if w.Fallback != "" {
+		return portable.SummaryReasonTemplateFallback
+	}
+	return ""
+}
+
+// BuildMeetingSummary calls the LLM to produce a meeting summary with the
+// summary step's template. Speaker labels from streams are used so the model
+// can attribute action items by name. A configured template that cannot run
+// is warned about on summaryWarnings and reported in Fallback.
+func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segment) (WrittenSummary, error) {
+	return writeSummaryWith(cfg, streams, segments)
+}
+
+// writeSummaryWith resolves the summary step's template, warns when that is
+// the built-in standing in, and asks the model.
+func writeSummaryWith(cfg LLMConfig, streams []AudioStream, segments []Segment) (WrittenSummary, error) {
+	workflow, fallback := resolveSummaryWorkflow()
+	if fallback != "" {
+		fmt.Fprintf(summaryWarnings, "  warn: %s\n", fallback)
+	}
+	body, err := buildMeetingSummaryFn(cfg, workflow, streams, segments)
+	if err != nil {
+		return WrittenSummary{}, err
+	}
+	return WrittenSummary{Body: body, Template: workflow.Ref(), Fallback: fallback}, nil
+}
+
+// buildMeetingSummaryWith is BuildMeetingSummary with the template already
+// resolved, so the pipeline can say in its own log when that is the
+// built-in in place of the configured one.
+func buildMeetingSummaryWith(cfg LLMConfig, workflow insight.Workflow, streams []AudioStream, segments []Segment) (string, error) {
 	if !cfg.IsConfigured() {
 		return "", fmt.Errorf("LLM not configured")
 	}
@@ -61,7 +106,7 @@ func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segmen
 		return "", fmt.Errorf("no transcript segments to summarize")
 	}
 
-	systemPrompt := summarySystemPrompt(summaryV0Template)
+	systemPrompt := workflow.SystemPrompt()
 	userPrompt := formatTranscriptForSummary(streams, segments)
 
 	body, err := ChatCompletion(context.Background(), cfg, systemPrompt, userPrompt)
@@ -77,17 +122,15 @@ func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segmen
 }
 
 // EstimateSummaryInputTokens says roughly how many input tokens the summary
-// step would send for this transcript: the system prompt plus the transcript
-// prose, at about four characters a token. It is for telling a person what a
+// step would send for this transcript: the system prompt of the template it
+// would run (the configured one, or the built-in it falls back to) plus the
+// transcript prose, at about four characters a token. It is for telling a person what a
 // summary will cost before anything is sent, not for billing: providers count
 // with their own tokenizers.
 func EstimateSummaryInputTokens(streams []AudioStream, segments []Segment) int {
-	chars := len(summarySystemPrompt(summaryV0Template)) + len(formatTranscriptForSummary(streams, segments))
+	workflow, _ := resolveSummaryWorkflow()
+	chars := len(workflow.SystemPrompt()) + len(formatTranscriptForSummary(streams, segments))
 	return (chars + 3) / 4
-}
-
-func summarySystemPrompt(template string) string {
-	return strings.Replace(summaryV0Prompt, summaryTemplatePlaceholder, template, 1)
 }
 
 func formatTranscriptForSummary(streams []AudioStream, segments []Segment) string {

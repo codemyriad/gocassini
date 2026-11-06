@@ -21,6 +21,23 @@ PORTABLE_TAGS = {
 }
 
 
+def probe_tags(probe):
+    """An ffprobe format_tags:stream_tags JSON document's tags, upper-cased."""
+    tags = dict(probe.get('format', {}).get('tags', {}))
+    for stream in probe.get('streams', []):
+        tags.update(stream.get('tags', {}))
+    return {k.upper(): v for k, v in tags.items()}
+
+
+def decode_payload(tags, name):
+    """The CASSINI_PAYLOAD_* manifest (base64url + gzip JSON), checksummed."""
+    encoded = ''.join(tags[f'CASSINI_PAYLOAD_{n:03d}'] for n in range(int(tags['CASSINI_PAYLOAD_CHUNK_COUNT'])))
+    raw = gzip.decompress(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+    if hashlib.sha256(raw).hexdigest() != tags.get('CASSINI_PAYLOAD_SHA256'):
+        raise ValueError(f'{name}: portable payload checksum mismatch')
+    return json.loads(raw)
+
+
 def validate(published, operator):
     if published:
         root = pathlib.Path(published)
@@ -74,19 +91,11 @@ def validate(published, operator):
             result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
                                      'format_tags:stream_tags', '-of', 'json', str(asset)],
                                     capture_output=True, text=True, timeout=60, check=True)
-            probe = json.loads(result.stdout)
-            tags = dict(probe.get('format', {}).get('tags', {}))
-            for stream in probe.get('streams', []):
-                tags.update(stream.get('tags', {}))
-            tags = {k.upper(): v for k, v in tags.items()}
+            tags = probe_tags(json.loads(result.stdout))
             for key, expected_value in PORTABLE_TAGS.items():
                 if tags.get(key) != expected_value:
                     raise ValueError(f'{asset.name}: unsupported {key}')
-            encoded = ''.join(tags[f'CASSINI_PAYLOAD_{n:03d}'] for n in range(int(tags['CASSINI_PAYLOAD_CHUNK_COUNT'])))
-            raw = gzip.decompress(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
-            if hashlib.sha256(raw).hexdigest() != tags.get('CASSINI_PAYLOAD_SHA256'):
-                raise ValueError(f'{asset.name}: portable payload checksum mismatch')
-            payload = json.loads(raw)
+            payload = decode_payload(tags, asset.name)
             if payload.get('version') != 1 or payload.get('kind') != 'cassini-portable-meeting':
                 raise ValueError(f'{asset.name}: unsupported portable payload')
         print(f'[seed-preflight] {len(catalog["meetings"])} portable recordings readable', flush=True)
