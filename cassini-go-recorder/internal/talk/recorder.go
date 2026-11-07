@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gocassini/internal/config"
@@ -103,6 +104,15 @@ var ErrUnjoinable = errors.New("talk room unjoinable")
 // stranding an hour of valid footage over a last-minute disconnect.
 var ErrAbnormalStop = errors.New("talk recorder stopped abnormally")
 
+// ErrNoAudio marks a run that captured no audio at all although the recorder
+// held a live, audio-bearing subscription for the participants in the call:
+// they were muted, or silent for the whole call. There is nothing to compose,
+// transcribe or publish, but this is not a pipeline failure — it is a
+// recording of a call nobody spoke into. Callers finalize the run as an empty
+// recording instead of failing it, so a moderator who muted everything does
+// not see a red "exit status 1".
+var ErrNoAudio = errors.New("no audio captured: every participant was muted or silent")
+
 type roomEmptyTimerAction uint8
 
 const (
@@ -159,6 +169,15 @@ type Recorder struct {
 	// callbacks (see addTrackReader) so cleanup() can join them before
 	// tearing shared state down.
 	trackWG sync.WaitGroup
+
+	// audioSubscribed records that at least one subscriber answered a remote
+	// offer that carried sendable audio — i.e. the recorder was actually
+	// listening for audio, not merely connected to the signaling room. A run
+	// that captured nothing then means the participants sent nothing (muted
+	// or silent), which composeFinalOutputFromSessionArtifact reports as
+	// ErrNoAudio instead of a hard failure. Without this, "no audio" is
+	// indistinguishable from a broken subscription and stays an error.
+	audioSubscribed atomic.Bool
 
 	subscriberUpdates chan struct{}
 }
@@ -529,6 +548,12 @@ func (r *Recorder) bootstrapInternalHPB(ctx context.Context) error {
 // both errors surface and the run stays failed.
 func fatalRunError(loopErr, cleanupErr error) error {
 	if cleanupErr != nil {
+		// The run-loop error is the real failure; ErrNoAudio only says the
+		// capture had nothing to compose. Keep it out of the joined error so
+		// a signaling drop is never mistaken for a benign empty run.
+		if errors.Is(cleanupErr, ErrNoAudio) {
+			return loopErr
+		}
 		return errors.Join(loopErr, cleanupErr)
 	}
 	return fmt.Errorf("%w: %w", ErrAbnormalStop, loopErr)
@@ -687,7 +712,14 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		if firstErr == nil {
 			firstErr = err
 		}
-		log.Printf("compose final output failed: %v", err)
+		if errors.Is(err, ErrNoAudio) {
+			// Not a failure: the call was silent. The CLI turns this into an
+			// empty (state "empty") run bundle so the operator finishes the
+			// job without build, transcription or publish.
+			log.Printf("no audio captured: %v (nothing to compose)", err)
+		} else {
+			log.Printf("compose final output failed: %v", err)
+		}
 	} else {
 		composeOK = true
 		log.Printf("composed final multi-track output: %s", r.finalOutputPath)
@@ -2265,6 +2297,17 @@ func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
 	}
 
 	if r.sessionArtifact != nil && !r.sessionArtifact.hasAudio() {
+		// Zero packets is only conclusive when the recorder was really
+		// listening: at least one subscription was answered with sendable
+		// audio and the capture itself did not lose media. Then nobody sent
+		// audio — every participant was muted or silent — and the run is an
+		// empty recording, not a failure. A run with no audio-bearing
+		// subscription, with capture damage, or with captured video stays a
+		// hard error so a genuinely broken capture — or real media — is not
+		// passed off as a quiet meeting.
+		if r.sessionArtifact.captureFailure() == nil && r.audioSubscribed.Load() && !r.sessionArtifact.hasVideo() {
+			return ErrNoAudio
+		}
 		return errors.New("no captured audio: no usable audio packets received")
 	}
 	workDir := filepath.Join(r.segmentsDir, "artifact-remux-work")
@@ -2679,6 +2722,13 @@ func (p *subscriberPeer) markAnswerSentLocked() bool {
 	p.pendingAnswerSID = ""
 	p.pendingAnswerSince = time.Time{}
 	p.answerRetransmits = 0
+	// We now hold an answered subscription for this participant. If the offer
+	// carried sendable audio, the recorder is genuinely listening: a later
+	// zero-packet run means they sent nothing (muted/silent) and should be
+	// finalized empty rather than failed. See ErrNoAudio.
+	if !p.noEligibleAudio && p.owner != nil {
+		p.owner.audioSubscribed.Store(true)
+	}
 	startFlush := len(p.pendingLocalICESignals) != 0 && !p.localICEFlushing
 	if startFlush {
 		p.localICEFlushing = true

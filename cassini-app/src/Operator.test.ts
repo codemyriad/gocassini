@@ -363,3 +363,28 @@ describe("Operator left nav (D-723)", () => {
     expect(operatorSource).toContain("scroller.scrollTop = 0;");
   });
 });
+
+describe("Operator no-audio runs", () => {
+  // A call whose participants were all muted records nothing. The operator
+  // finishes it as succeeded with the no_audio_captured stop reason, and the
+  // app must read that as a completed empty run, not an error.
+  const empty = {
+    stage: "done", state: "succeeded", stop_reason: "no_audio_captured",
+    artifact_run_path: "/var/lib/cassini-operator/jobs/current/J.run",
+    build_retry_not_before: null, error: null, record_exit_code: 0,
+  };
+
+  it("presents a muted call as captured-with-no-audio, not a failure", () => {
+    expect(hasJobError(empty)).toBe(false);
+    expect(jobStatusLabel(empty)).toBe("No audio captured");
+    expect(jobStatusToneClass(empty)).toBe("text-warning");
+    expect(formatStopReason("no_audio_captured")).toBe("No audio captured");
+    // Nothing was recorded, so there is nothing to rerun.
+    expect(isRerunnableJob(empty)).toBe(false);
+  });
+
+  it("still presents a real record failure as an error", () => {
+    expect(hasJobError({ ...empty, state: "failed", stop_reason: "record_process_exit_nonzero", error: "boom", record_exit_code: 1 })).toBe(true);
+    expect(jobStatusLabel({ ...empty, state: "failed", stop_reason: "record_process_exit_nonzero" })).toBe("Failed");
+  });
+});

@@ -1409,6 +1409,28 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
+	if result.NoAudio {
+		// A call nobody spoke into is a completed run, not a failure: there
+		// is no recording to build, transcribe or publish, so finish the job
+		// here (stage done, state succeeded) and keep the attempt's run bundle
+		// and logs. The stop reason tells the app to say "No audio captured"
+		// and to offer no rerun.
+		if err := rt.store.MarkRecordSucceededTerminal(context.Background(), job.ID, canonicalRunPath, result.ArtifactRunPath, result, finishedAt); err != nil {
+			rt.logger.Printf("record empty-run update failed id=%s: %v", job.ID, err)
+			if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); failErr != nil {
+				rt.logger.Printf("record empty-run failure update failed id=%s: %v", job.ID, failErr)
+			}
+			return
+		}
+		// spreed still needs the stopped callback so the room stops showing a
+		// live recording; nothing is published, so there is no audience to
+		// capture.
+		if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
+			rt.reportTalkRecordingStopped(job.ID, talkState)
+		}
+		rt.logger.Printf("record succeeded with no audio id=%s attempt_run=%s canonical_run=%s stop_reason=%s", job.ID, result.ArtifactRunPath, canonicalRunPath, result.StopReason)
+		return
+	}
 	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, canonicalRunPath, finishedAt); updateErr != nil {
 		rt.logger.Printf("record outcome update failed id=%s: %v", job.ID, updateErr)
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, updateErr.Error(), result, finishedAt); failErr != nil {

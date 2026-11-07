@@ -182,7 +182,32 @@ func TestCapturePolicyRecoveryMatrix(t *testing.T) {
 	}
 }
 
-func TestNoAudioFailsBeforePublishing(t *testing.T) {
+// A muted call captures nothing. When the recorder held a live, audio-bearing
+// subscription, zero packets is conclusive: nobody sent audio, so the run is
+// an empty recording (ErrNoAudio), not a failure. The CLI finalizes it as an
+// empty run bundle and the operator finishes the job as succeeded.
+func TestNoAudioWithLiveSubscriptionConcludesEmpty(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "empty.mkv")
+	artifact, err := newSessionCaptureArtifact(output, "", "room", "recorder", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer artifact.close()
+	r := &Recorder{sessionArtifact: artifact, sessionPath: artifact.sessionPath, finalOutputPath: output}
+	r.audioSubscribed.Store(true)
+	err = r.composeFinalOutputFromSessionArtifact()
+	if !errors.Is(err, ErrNoAudio) {
+		t.Fatalf("muted call should complete empty, got %v", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("empty recording published: %v", err)
+	}
+}
+
+// Without an answered audio-bearing subscription there is no evidence the
+// recorder was ever listening, so zero audio stays a hard failure: a broken
+// capture must not be passed off as a quiet meeting.
+func TestNoAudioWithoutLiveSubscriptionStaysFailed(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "empty.mkv")
 	artifact, err := newSessionCaptureArtifact(output, "", "room", "recorder", false)
 	if err != nil {
@@ -191,11 +216,68 @@ func TestNoAudioFailsBeforePublishing(t *testing.T) {
 	defer artifact.close()
 	r := &Recorder{sessionArtifact: artifact, sessionPath: artifact.sessionPath, finalOutputPath: output}
 	err = r.composeFinalOutputFromSessionArtifact()
-	if err == nil || !strings.Contains(err.Error(), "no captured audio") {
-		t.Fatalf("unclear no-audio result: %v", err)
+	if err == nil || errors.Is(err, ErrNoAudio) || !strings.Contains(err.Error(), "no captured audio") {
+		t.Fatalf("broken subscription should stay a failure, got %v", err)
 	}
-	if _, err := os.Stat(output); !os.IsNotExist(err) {
-		t.Fatalf("empty recording published: %v", err)
+}
+
+// Capture damage is still a failure even when the subscription was live: the
+// packets may have been lost, not absent.
+func TestNoAudioWithCaptureDamageStaysFailed(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "empty.mkv")
+	artifact, err := newSessionCaptureArtifact(output, "", "room", "recorder", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer artifact.close()
+	artifact.mu.Lock()
+	artifact.firstCaptureErr = errors.New("stream write failed")
+	artifact.mu.Unlock()
+	r := &Recorder{sessionArtifact: artifact, sessionPath: artifact.sessionPath, finalOutputPath: output}
+	r.audioSubscribed.Store(true)
+	err = r.composeFinalOutputFromSessionArtifact()
+	if err == nil || errors.Is(err, ErrNoAudio) || !strings.Contains(err.Error(), "no captured audio") {
+		t.Fatalf("damaged capture should stay a failure, got %v", err)
+	}
+}
+
+// An audio-video run that captured video but no audio is not an empty
+// recording: the video is real media, so it must not be discarded as
+// "no audio captured".
+func TestVideoOnlyCaptureIsNotEmptyRun(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "video-only.mkv")
+	artifact, err := newSessionCaptureArtifact(output, "", "room", "recorder", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer artifact.close()
+	artifact.mu.Lock()
+	artifact.streams["video"] = &sessionCaptureStream{kind: "video", rtpCount: 1}
+	artifact.mu.Unlock()
+	r := &Recorder{sessionArtifact: artifact, sessionPath: artifact.sessionPath, finalOutputPath: output}
+	r.audioSubscribed.Store(true)
+	err = r.composeFinalOutputFromSessionArtifact()
+	if err == nil || errors.Is(err, ErrNoAudio) {
+		t.Fatalf("video-only capture must not complete as an empty run, got %v", err)
+	}
+}
+
+// The live-subscription flag is set only when an answer is sent for an offer
+// that carried sendable audio. That is what makes a later zero-packet run
+// conclusive.
+func TestMarkAnswerSentNotesLiveAudioSubscription(t *testing.T) {
+	r := &Recorder{}
+	p := &subscriberPeer{owner: r, noEligibleAudio: false}
+	p.markAnswerSentLocked()
+	if !r.audioSubscribed.Load() {
+		t.Fatal("answered audio subscription not recorded")
+	}
+
+	other := &Recorder{}
+	q := &subscriberPeer{owner: other, noEligibleAudio: true}
+	q.markAnswerSentLocked()
+	if other.audioSubscribed.Load() {
+		t.Fatal("an offer with no sendable audio counted as listening")
 	}
 }
 

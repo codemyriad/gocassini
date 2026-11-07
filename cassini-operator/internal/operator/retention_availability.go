@@ -61,6 +61,11 @@ func (rt *Runtime) artifactAvailability(job Job) artifactAvailability {
 	if a.Source != "present" {
 		a.RerunBlockedReason = "Source recording is " + a.Source + "; this job can no longer be rerun."
 	}
+	if job.StopReason != nil && *job.StopReason == stopReasonNoAudio {
+		// There was never a recording to expire: the call captured no audio.
+		a.Source = "empty"
+		a.RerunBlockedReason = "No audio was captured; this run has nothing to rerun."
+	}
 	if rt.pendingArtifactOperation(job.ID) {
 		a.RerunBlockedReason = "Archive operation awaiting recovery"
 		a.Output = "pending"
