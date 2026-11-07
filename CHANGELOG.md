@@ -16,6 +16,11 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.3.1] - 2026-11-07
+
+### Fixed
+- Releases publish again with GitHub's immutable releases turned on. The release workflow published the GitHub release before attaching the signed package and evidence, which an immutable release refuses, so v0.3.0 was published without them and never reached the App Store. It now attaches them to a draft and publishes last, and stops with a clear error on a release that is already published and immutable.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added
