@@ -251,19 +251,27 @@ jobs:
           # (docs/release-notes.md); the developer section alone when a
           # prerelease has no notes.
           ./scripts/user-release-notes.sh --release-body "$VERSION" > notes.md
-          # Published (not draft) when we will push to the store, so the store
-          # can fetch the asset from the public release URL; draft otherwise.
-          if [[ "$PUBLISH" == "true" ]]; then draft="false"; else draft="true"; fi
-          args=(--notes-file notes.md --draft="$draft")
+          # Immutable releases (repo setting) lock a release's assets and tag
+          # once it is published, so attach everything to a draft and publish
+          # last. Published is what the store needs: it fetches the asset
+          # from the public release URL. Without publication it stays a draft.
+          args=(--notes-file notes.md)
           [[ "$VERSION" == *-* ]] && args+=(--prerelease)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [[ "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .immutable)" == "true" ]]; then
+              echo "::error::$TAG is a published immutable release: its assets and tag are locked. Cut the next patch instead."
+              exit 1
+            fi
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${args[@]}"
           else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" "${args[@]}"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --draft "${args[@]}"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             build/artifacts/appstore/gocassini.tar.gz build/artifacts/appstore/gocassini.tar.gz.sha256 \
             qualified/release-evidence.json qualified/release-evidence.md qualified/release-package.json
+          if [[ "$PUBLISH" == "true" ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          fi
 
       - name: Publish to apps.nextcloud.com
         if: ${{ needs.validate.outputs.publish == 'true' }}

@@ -143,6 +143,12 @@ main as a draft and backported to `release/X.Y`.
 Then approve the `release` deployment in **Actions** (one click) — that signs the
 package, creates the GitHub release, and publishes to the App Store.
 
+The repo has GitHub's immutable releases on: once a release is published, its
+files and tag are locked, and the tag name can never be reused. The workflow
+therefore attaches the files to a draft and publishes it last; a failure before
+that leaves a draft you can re-run. A published release missing its files
+cannot be repaired: cut the next patch.
+
 **After a release cut on `release/X.Y`, bring it back to main.** The cut folded
 the branch's fragments, deleted them and bumped `info.xml`, all on the release
 branch. The fixes were cherry-picked from main, so main still holds the same
