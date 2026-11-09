@@ -742,7 +742,7 @@ func writeAnnotateDocument(ctx context.Context, source annotateSource, resolvedO
 		if !reflect.DeepEqual(writtenMember, any(intended)) {
 			return errors.New("verify annotated file: the written annotations are not the intended document")
 		}
-		if err := verifyAnnotateTagsPreserved(source.tags, writtenTags); err != nil {
+		if err := verifyAnnotateTagsPreserved(source.tags, writtenTags, written.Meeting.RecordedAtUTC); err != nil {
 			return err
 		}
 		writtenAnnotations = append(json.RawMessage(nil), written.Annotations...)
@@ -756,16 +756,20 @@ func writeAnnotateDocument(ctx context.Context, source annotateSource, resolvedO
 
 // annotateTagMayMove names the tags a manifest rewrite legitimately changes:
 // the main payload's chunk set and counters, the plain mirrors retagOpusTags
-// re-derives, and ffmpeg's own `encoder` stamp.
-func annotateTagMayMove(key string) bool {
+// re-derives, and ffmpeg's own `encoder` stamp. DATE moves only when the
+// manifest knows the recording start: retagOpusTags then rewrites it to
+// recordedAtUtc, and otherwise leaves it as the producer wrote it.
+func annotateTagMayMove(key, recordedAtUTC string) bool {
 	if isPayloadChunkTag(key) {
 		return true
 	}
 	switch strings.ToUpper(key) {
 	case "CASSINI_PAYLOAD_CHUNK_COUNT", "CASSINI_PAYLOAD_SHA256", "CASSINI_PAYLOAD_RAW_BYTES", "CASSINI_PAYLOAD_GZIP_BYTES",
-		"CASSINI_ROOM_ID", "CASSINI_JOB_ID", "CASSINI_ATTEMPT_NUMBER",
+		"CASSINI_ROOM_ID", "CASSINI_JOB_ID", "CASSINI_ATTEMPT_NUMBER", "CASSINI_RECORDED_AT_UTC",
 		"ENCODER":
 		return true
+	case "DATE":
+		return recordedAtUTC != ""
 	}
 	return false
 }
@@ -773,10 +777,11 @@ func annotateTagMayMove(key string) bool {
 // verifyAnnotateTagsPreserved checks that every tag outside the main payload
 // survived the rewrite unchanged and that no CASSINI_* tag appeared. ffmpeg runs
 // with -map_metadata -1, so a tag not carried forward is deleted — and the
-// per-transcript chunk sets are tags.
-func verifyAnnotateTagsPreserved(before, after map[string]string) error {
+// per-transcript chunk sets are tags. The recording-start tags that may move
+// must land on the written manifest's recordedAtUtc.
+func verifyAnnotateTagsPreserved(before, after map[string]string, recordedAtUTC string) error {
 	for key, value := range before {
-		if annotateTagMayMove(key) {
+		if annotateTagMayMove(key, recordedAtUTC) {
 			continue
 		}
 		if got := portableTagValue(after, key); got != strings.TrimSpace(value) {
@@ -784,11 +789,19 @@ func verifyAnnotateTagsPreserved(before, after map[string]string) error {
 		}
 	}
 	for key := range after {
-		if !strings.HasPrefix(strings.ToUpper(key), "CASSINI_") || annotateTagMayMove(key) {
+		if !strings.HasPrefix(strings.ToUpper(key), "CASSINI_") || annotateTagMayMove(key, recordedAtUTC) {
 			continue
 		}
 		if portableTagValue(before, key) == "" {
 			return fmt.Errorf("verify annotated file: tag %s appeared in the rewrite", key)
+		}
+	}
+	if got := portableTagValue(after, "CASSINI_RECORDED_AT_UTC"); got != recordedAtUTC {
+		return fmt.Errorf("verify annotated file: CASSINI_RECORDED_AT_UTC is %q, manifest says %q", got, recordedAtUTC)
+	}
+	if recordedAtUTC != "" {
+		if got := portableTagValue(after, "DATE"); got != recordedAtUTC {
+			return fmt.Errorf("verify annotated file: DATE is %q, manifest recordedAtUtc says %q", got, recordedAtUTC)
 		}
 	}
 	return nil
