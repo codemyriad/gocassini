@@ -5,6 +5,11 @@ import { gunzipSync } from "node:zlib";
 import { dirname, join, resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { portableRecordedAtUtc, recordedAtUtcInstantMs } from "./meeting-start.mjs";
+
+// When the meeting happened, by the format's rule; see meeting-start.mjs.
+export { portableMeetingStart, portableRecordedAtUtc } from "./meeting-start.mjs";
+
 const CATALOG_VERSION = "cassini.viewer.catalog.v1";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -1403,13 +1408,14 @@ export function preferredPortableTitle(portable, meetingId) {
 // (D-685).
 //
 // dateLabel is the LEGACY, zone-less form of that answer. A file that states
-// its start as an instant (meeting.recordedAtUtc) has its entry carry that
-// instant as recordedAtUtc, and readers that know the field use it and ignore
-// the label. The label is still written for older readers, as the UTC digits
+// its start as an instant (meeting.recordedAtUtc, or a qualifying DATE tag;
+// see meeting-start.mjs) has its entry carry that instant as recordedAtUtc,
+// and readers that know the field use it and ignore the label. The label is still written for older readers, as the UTC digits
 // of the instant — the same shape ULID-derived labels have always had.
 // Sources, best first:
 //
-//   0. recordedAtUtc — the instant playback position 0 was recorded.
+//   0. recordedAtUtc — the instant playback position 0 was recorded, as
+//      portableRecordedAtUtc reads it.
 //   1. recordedAtLocal — the recording's own wall clock, the only field that
 //      states when people were actually in the room.
 //   2. the meeting id — filename stamps and ULID job ids both encode the
@@ -1424,7 +1430,7 @@ export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = 
   const described = describeMeetingFromId(meetingId);
   const { dateFromId, ...describedFields } = described;
 
-  const instantMs = recordedAtUtcMs(recordedAtUtc);
+  const instantMs = recordedAtUtcInstantMs(recordedAtUtc);
   if (instantMs !== null) {
     return { title: described.title, dateLabel: formatUtcDateLabel(new Date(instantMs)) };
   }
@@ -1443,41 +1449,11 @@ export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = 
   return describedFields;
 }
 
-// The shared shape of recordedAtUtc: RFC 3339, UTC, a literal Z, optional
-// fractional seconds. Mirrors parseRecordedAtUtc in src/viewer/meetingTime.ts.
-const RECORDED_AT_UTC_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?Z$/;
-
 // validRecordedAtUtc returns the value when it is a well-formed recordedAtUtc
-// naming a real calendar instant, else "".
+// naming a real calendar instant, else "". The shape and the check live in
+// meeting-start.mjs, shared with the viewer.
 export function validRecordedAtUtc(value) {
-  if (typeof value !== "string") {
-    return "";
-  }
-  const match = RECORDED_AT_UTC_PATTERN.exec(value);
-  if (!match) {
-    return "";
-  }
-  const [, year, month, day, hour, minute, second] = match;
-  if (!isValidCalendarDate(year, month, day) || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) {
-    return "";
-  }
-  return value;
-}
-
-function recordedAtUtcMs(value) {
-  const valid = validRecordedAtUtc(value);
-  if (valid === "") {
-    return null;
-  }
-  const ms = Date.parse(valid);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-// portableRecordedAtUtc reads a file's recording start: the manifest's
-// meeting.recordedAtUtc, else its mirror in the CASSINI_RECORDED_AT_UTC tag.
-// "" when neither holds a valid value.
-export function portableRecordedAtUtc(manifest, tags = {}) {
-  return validRecordedAtUtc(manifest?.meeting?.recordedAtUtc) || validRecordedAtUtc(safeToString(tags?.CASSINI_RECORDED_AT_UTC).trim());
+  return recordedAtUtcInstantMs(value) === null ? "" : value;
 }
 
 // describeMeetingFromId also reports `dateFromId`: false means the dateLabel is

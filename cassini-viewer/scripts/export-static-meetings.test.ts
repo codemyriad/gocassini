@@ -311,13 +311,22 @@ describe("portableRecordedAtUtc", () => {
     ).toBe("2026-03-09T21:11:24Z");
   });
 
-  it("falls back to the CASSINI_RECORDED_AT_UTC tag", () => {
-    expect(portableRecordedAtUtc({ meeting: {} }, { CASSINI_RECORDED_AT_UTC: "2026-03-09T21:11:24.5Z" })).toBe(
-      "2026-03-09T21:11:24.5Z",
-    );
+  // The manifest is the record; the tag is a copy for tag-only tools. A
+  // manifest without the member has no recordedAtUtc, whatever the tag says.
+  it("never takes the CASSINI_RECORDED_AT_UTC mirror tag in place of the manifest", () => {
+    expect(portableRecordedAtUtc({ meeting: {} }, { CASSINI_RECORDED_AT_UTC: "2026-03-09T21:11:24.5Z" })).toBe("");
     expect(
       portableRecordedAtUtc({ meeting: { recordedAtUtc: "garbage" } }, { CASSINI_RECORDED_AT_UTC: "2026-03-09T21:11:24Z" }),
-    ).toBe("2026-03-09T21:11:24Z");
+    ).toBe("");
+  });
+
+  it("takes a DATE with an offset that is not createdAtUtc, as UTC", () => {
+    expect(
+      portableRecordedAtUtc(
+        { meeting: { createdAtUtc: "2026-11-09T10:47:02Z", recordedAtLocal: "2026-11-09T09:31:48" } },
+        { DATE: "2026-11-09T10:31:48+01:00" },
+      ),
+    ).toBe("2026-11-09T09:31:48.000Z");
   });
 
   it("is empty when neither holds a valid instant", () => {
@@ -1554,8 +1563,10 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
   });
 
   // A file that states its recording start carries it into the catalog entry,
-  // from the manifest or, failing that, its tag mirror; the zone-less
-  // dateLabel stays for old readers. A file without one is exported as before.
+  // from the manifest's meeting.recordedAtUtc or, failing that, a DATE tag that
+  // is not the pack stamp; the zone-less dateLabel stays for old readers. The
+  // CASSINI_RECORDED_AT_UTC mirror is never read in place of the manifest. A
+  // file without a start is exported as before.
   it("carries recordedAtUtc from the .opus into the catalog entry", () => {
     const root = mkdtempSync(join(tmpdir(), "cassini-export-recorded-"));
     try {
@@ -1581,6 +1592,21 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
         title: "Tag only",
         createdAtUtc: "2026-03-09T23:40:00Z",
       }, { extraTags: { CASSINI_RECORDED_AT_UTC: "2026-03-09T23:30:00Z" } });
+      // Shaped like conformance vector 029: no recordedAtUtc, DATE is the start
+      // with a +01:00 offset, recordedAtLocal carries other digits.
+      writePublishedPortableProbeFixture(sourceDir, "date-with-offset", {
+        id: "date-with-offset",
+        title: "Date with offset",
+        createdAtUtc: "2026-11-09T10:47:02Z",
+        recordedAtLocal: "2026-11-09T09:31:48",
+      }, { extraTags: { DATE: "2026-11-09T10:31:48+01:00", CASSINI_RECORDED_AT_LOCAL: "2026-11-09T09:31:48" } });
+      // Shaped like vector 028: DATE is createdAtUtc, the pack stamp.
+      writePublishedPortableProbeFixture(sourceDir, "date-is-created-at", {
+        id: "date-is-created-at",
+        title: "Date is created at",
+        createdAtUtc: "2026-11-09T10:47:02Z",
+        recordedAtLocal: "2026-11-09T09:31:48",
+      }, { extraTags: { DATE: "2026-11-09T10:47:02Z" } });
       writePublishedPortableProbeFixture(sourceDir, "daily-meeting-2026-03-10--12:30", {
         id: "daily-meeting-2026-03-10--12:30",
         title: "Cassini Meeting",
@@ -1605,10 +1631,14 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
         recordedAtUtc: "2026-03-09T21:11:24.5Z",
         dateLabel: "2026-03-09 21:11",
       });
-      expect(byId.get("01KKA70QN0ABCDEFGHJKMNPQRT")).toMatchObject({
-        recordedAtUtc: "2026-03-09T23:30:00Z",
-        dateLabel: "2026-03-09 23:30",
+      expect("recordedAtUtc" in (byId.get("01KKA70QN0ABCDEFGHJKMNPQRT") as Record<string, unknown>)).toBe(false);
+      expect(byId.get("date-with-offset")).toMatchObject({
+        recordedAtUtc: "2026-11-09T09:31:48.000Z",
+        dateLabel: "2026-11-09 09:31",
       });
+      const packStamp = byId.get("date-is-created-at") as Record<string, unknown>;
+      expect(packStamp).toMatchObject({ dateLabel: "2026-11-09 09:31", recordedAtLocal: "2026-11-09T09:31:48" });
+      expect("recordedAtUtc" in packStamp).toBe(false);
       const legacy = byId.get("daily-meeting-2026-03-10--12:30") as Record<string, unknown>;
       expect(legacy).toMatchObject({ dateLabel: "2026-03-10 12:30", recordedAtLocal: "2026-03-10T12:30:00" });
       expect("recordedAtUtc" in legacy).toBe(false);

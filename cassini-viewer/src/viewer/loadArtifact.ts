@@ -33,6 +33,7 @@ import {
 } from "./portable";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import { formatMeetingStartWithDay, parseRecordedAtUtc } from "./meetingTime";
+import { portableRecordedAtUtc } from "../../scripts/meeting-start.mjs";
 import { withoutSplitDevices } from "../core/speakers";
 import { readSummaryStatus, type SummaryStatus } from "./meetingSummary";
 
@@ -117,8 +118,9 @@ export interface ArtifactMetadataSection {
 }
 
 export interface ArtifactRecordingFacts {
-  // The file's own record of when the recording started (manifest
-  // meeting.recordedAtUtc), or null when it carries none or a malformed one.
+  // The file's own record of when the recording started, as a UTC instant:
+  // manifest meeting.recordedAtUtc, else a DATE tag that is not the pack stamp
+  // (scripts/meeting-start.mjs). Null when it states neither.
   recordedAtUtc: string | null;
   processedAtUtc: string | null;
   model: string | null;
@@ -271,12 +273,13 @@ export async function loadPortableArtifactFromAudioPath(
   options: { fresh?: boolean } = {},
 ): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const { manifest } = await store.loadManifest(resolvedAudioPath, options);
+  const { manifest, tags } = await store.loadManifest(resolvedAudioPath, options);
   const availableTranscripts = listAvailableTranscripts(manifest);
   const currentTranscriptId = getDefaultTranscriptId(manifest);
   store.primeBodies(resolvedAudioPath, manifest, currentTranscriptId);
   return buildPortableLoadedArtifact({
     manifest,
+    tags,
     audioSrc: manifest.transcriptionOnly ? "" : resolvedAudioPath,
     availableTranscripts,
     currentTranscriptId,
@@ -360,6 +363,7 @@ export async function switchPortableTranscript(
   const availableTranscripts = listAvailableTranscripts(manifest);
   return buildPortableLoadedArtifact({
     manifest: swappedManifest,
+    tags,
     audioSrc: manifest.transcriptionOnly ? "" : resolvedAudioPath,
     availableTranscripts,
     currentTranscriptId: transcriptId,
@@ -368,11 +372,13 @@ export async function switchPortableTranscript(
 
 function buildPortableLoadedArtifact({
   manifest,
+  tags,
   audioSrc,
   availableTranscripts,
   currentTranscriptId,
 }: {
   manifest: PortableMeetingManifest;
+  tags: Record<string, string>;
   audioSrc: string;
   availableTranscripts: PortableTranscriptDescriptor[];
   currentTranscriptId: string;
@@ -408,6 +414,9 @@ function buildPortableLoadedArtifact({
         readableTranscript,
         currentTranscriptId,
       ),
+      // When the meeting happened by the format's rule: meeting.recordedAtUtc,
+      // else a DATE tag that is not the pack stamp (meeting-start.mjs).
+      portableRecordedAtUtc(manifest, tags) || null,
     ),
     transcriptionStatus: readTranscriptionStatus(manifest.processing),
     summaryStatus: readSummaryStatus(manifest.processing),
@@ -767,15 +776,23 @@ function buildDirectoryMetadataRaw(
   };
 }
 
+// `recordedAtUtc` is the start the caller already resolved from the file (a
+// portable meeting reads it with its tags); left out, it is read from
+// raw.meeting.recordedAtUtc.
 function buildArtifactMetadata(
   sourceKind: string,
   raw: Record<string, unknown>,
+  recordedAtUtc?: string | null,
 ): ArtifactMetadata | null {
   const normalized = {
     sourceKind,
     ...raw,
   };
-  const sections = buildMetadataSections(normalized);
+  const start =
+    parseRecordedAtUtc(
+      recordedAtUtc === undefined ? asMaybeObject(raw.meeting)?.recordedAtUtc : recordedAtUtc,
+    ) ?? null;
+  const sections = buildMetadataSections(normalized, start);
   if (sections.length === 0) {
     return null;
   }
@@ -783,16 +800,16 @@ function buildArtifactMetadata(
     sourceKind,
     sections,
     rawJson: JSON.stringify(normalized, null, 2),
-    recording: buildRecordingFacts(normalized),
+    recording: buildRecordingFacts(normalized, start),
   };
 }
 
-function buildRecordingFacts(raw: Record<string, unknown>): ArtifactRecordingFacts {
+function buildRecordingFacts(raw: Record<string, unknown>, recordedAtUtc: string | null): ArtifactRecordingFacts {
   const meeting = asMaybeObject(raw.meeting);
   const stats = asMaybeObject(raw.stats);
   const speechToText = asMaybeObject(asMaybeObject(raw.provenance)?.speechToText);
   return {
-    recordedAtUtc: parseRecordedAtUtc(meeting?.recordedAtUtc) ?? null,
+    recordedAtUtc,
     processedAtUtc:
       asNonEmptyString(meeting?.processedAtUtc) ??
       asNonEmptyString(meeting?.processedAtUTC) ??
@@ -804,9 +821,9 @@ function buildRecordingFacts(raw: Record<string, unknown>): ArtifactRecordingFac
   };
 }
 
-function buildMetadataSections(raw: Record<string, unknown>): ArtifactMetadataSection[] {
+function buildMetadataSections(raw: Record<string, unknown>, recordedAtUtc: string | null): ArtifactMetadataSection[] {
   const sections: ArtifactMetadataSection[] = [];
-  const meetingRows = buildMeetingMetadataRows(raw);
+  const meetingRows = buildMeetingMetadataRows(raw, recordedAtUtc);
   if (meetingRows.length > 0) {
     sections.push({ title: "Meeting", rows: meetingRows });
   }
@@ -827,12 +844,11 @@ function buildMetadataSections(raw: Record<string, unknown>): ArtifactMetadataSe
   return sections;
 }
 
-function buildMeetingMetadataRows(raw: Record<string, unknown>): ArtifactMetadataRow[] {
+function buildMeetingMetadataRows(raw: Record<string, unknown>, recordedAtUtc: string | null): ArtifactMetadataRow[] {
   const rows: ArtifactMetadataRow[] = [];
   const meeting = asMaybeObject(raw.meeting);
   const source = asMaybeObject(raw.source);
   const stats = asMaybeObject(raw.stats);
-  const recordedAtUtc = parseRecordedAtUtc(meeting?.recordedAtUtc);
   const recordedAtLocal =
     asNonEmptyString(meeting?.recordedAtLocal) ??
     asNonEmptyString(source?.recordedAtLocal);

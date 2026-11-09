@@ -113,11 +113,18 @@ export interface ExtractedPortableManifest {
 }
 
 export async function extractTranscriptionDocument(value: unknown): Promise<ExtractedPortableManifest> {
-  const doc = value as {kind?: string; version?: number; source?: PortableMeetingManifest; bodies?: Record<string, unknown>};
+  const doc = value as {kind?: string; version?: number; source?: PortableMeetingManifest; bodies?: Record<string, unknown>; tags?: unknown};
   if (doc?.kind !== "cassini-transcription" || doc.version !== 1 || !doc.source || !doc.bodies) throw new Error("Unsupported transcription document");
   const manifest = doc.source;
   validatePortableIndexManifest(manifest);
+  // The tags the source file carried (DATE among them), so this document is
+  // read like the .opus it came from. Bodies below come from doc.bodies.
   const tags: Record<string, string> = {};
+  if (doc.tags && typeof doc.tags === "object") {
+    for (const [key, tagValue] of Object.entries(doc.tags as Record<string, unknown>)) {
+      if (typeof tagValue === "string") tags[key.toUpperCase()] = tagValue;
+    }
+  }
   for (const entry of [...manifest.transcripts!, ...(manifest.readableTranscripts ?? [])]) {
     if (!Object.hasOwn(doc.bodies, entry.id)) throw new Error(`Missing transcript ${entry.id}`);
     const raw = JSON.stringify(doc.bodies[entry.id]).replace(/[<>&\u2028\u2029]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
