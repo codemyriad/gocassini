@@ -1,0 +1,4 @@
+### Changed
+- The meeting list, meeting header, search, insight names and exported transcripts now show a recording's start in your own time zone when the recording says exactly when it started (the new `recordedAtUtc` field in the file and the meeting catalog). Sorting, the month headings and the list filter follow the time shown, so a call at 23:30 UTC on the last day of a month appears in the next month for a reader in Rome. Meetings that carry only the older date label are shown as before.
+- A recording opened on its own by URL (the public embed) reads its start from the file once it loads, and a Talk recording named by its job id shows that time in the reader's zone instead of in UTC.
+- Static and portable exports write `recordedAtUtc` into `catalog.json` for files that carry it, and keep writing the zone-less `dateLabel` for older viewers.
