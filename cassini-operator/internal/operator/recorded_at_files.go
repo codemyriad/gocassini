@@ -47,6 +47,12 @@ const (
 	recordedAtFileRetryBase    = time.Minute
 	recordedAtFileRetryCap     = 6 * time.Hour
 	recordedAtFileScanInterval = 5 * time.Minute
+	// recordedAtFilePace is the pause a worker takes between two files. Each
+	// file is a download, an upload and a verifying download, and each upload
+	// is a new Nextcloud file version (and a change in recipients' activity);
+	// the backfill of a whole archive runs at this pace, in the background,
+	// rather than as fast as Nextcloud answers.
+	recordedAtFilePace = 30 * time.Second
 )
 
 type recordedAtFileWorker struct {
@@ -59,6 +65,8 @@ type recordedAtFileWorker struct {
 	claimed sync.Map
 	start   sync.Once
 	now     func() time.Time
+	// pause waits between two files of one drain; false means stop.
+	pause func(ctx context.Context) bool
 	// afterAttempt, when set (tests only), runs between an attempt and the
 	// write of its outcome, with the per-recording lock still held.
 	afterAttempt func(name string)
@@ -71,6 +79,19 @@ func newRecordedAtFileWorker(rt *Runtime, exapp ExAppConfig, client *http.Client
 	return &recordedAtFileWorker{
 		rt: rt, exapp: exapp, client: client, bin: rt.cfg.CassiniBin, logger: logger,
 		wake: make(chan struct{}, recordedAtFileWorkers), now: time.Now,
+		pause: func(ctx context.Context) bool { return sleepCtx(ctx, recordedAtFilePace) },
+	}
+}
+
+// sleepCtx waits d, or less if ctx ends; it answers whether it waited out d.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -148,8 +169,8 @@ func (w *recordedAtFileWorker) loop() {
 	}
 }
 
-// drain processes every due file, one at a time per worker; it answers how
-// many it attempted.
+// drain processes every due file, one at a time per worker and paced
+// (recordedAtFilePace); it answers how many it attempted.
 func (w *recordedAtFileWorker) drain(ctx context.Context) int {
 	processed := 0
 	for ctx.Err() == nil {
@@ -159,6 +180,10 @@ func (w *recordedAtFileWorker) drain(ctx context.Context) int {
 			return processed
 		}
 		if name == "" {
+			return processed
+		}
+		if processed > 0 && w.pause != nil && !w.pause(ctx) {
+			w.claimed.Delete(name)
 			return processed
 		}
 		w.processOne(ctx, name)

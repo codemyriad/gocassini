@@ -439,3 +439,32 @@ func TestRecordedAtFileWorkerRequeuesBlockedOnStart(t *testing.T) {
 		t.Fatalf("done row = %q %v", done, err)
 	}
 }
+
+// A drain pauses between two files, never before the first, and stops when
+// its pause is cut short: the backfill of an archive is paced, not a burst.
+func TestRecordedAtFileWorkerPacesBetweenFiles(t *testing.T) {
+	f := newFileWorkerFixture(t, 2)
+	ctx := context.Background()
+	db := f.w.rt.meetingMetadata.db
+	for _, name := range []string{"OTHER1.opus", "OTHER2.opus"} {
+		if _, err := db.Exec(`INSERT INTO recorded_at_file_backfill(opus_name, recorded_at_utc, state, updated_at) VALUES(?, ?, 'pending', 'now')`, name, testRecordedAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pauses := 0
+	f.w.pause = func(context.Context) bool { pauses++; return true }
+	if n := f.w.drain(ctx); n != 3 || pauses != 2 {
+		t.Fatalf("processed %d with %d pauses, want 3 with 2", n, pauses)
+	}
+
+	if _, err := db.Exec(`UPDATE recorded_at_file_backfill SET state='pending', retry_at=0`); err != nil {
+		t.Fatal(err)
+	}
+	f.w.pause = func(context.Context) bool { return false }
+	if n := f.w.drain(ctx); n != 1 {
+		t.Fatalf("processed %d after a cut-short pause, want 1", n)
+	}
+	if name, err := f.w.next(ctx); err != nil || name == "" {
+		t.Fatalf("the file left by the stopped drain is not claimable again: %q %v", name, err)
+	}
+}
