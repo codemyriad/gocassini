@@ -516,10 +516,14 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		// recordedAtUtc is when the recording started (the instant at audio
+		// position 0); createdAtUtc is when the file was built. Readers that
+		// want "when" prefer recordedAtUtc and fall back to the label.
 		if err := json.NewEncoder(stdout).Encode(struct {
 			CreatedAtUTC    string `json:"createdAtUtc"`
+			RecordedAtUTC   string `json:"recordedAtUtc"`
 			RecordedAtLocal string `json:"recordedAtLocal"`
-		}{meeting.Manifest.Meeting.CreatedAtUTC, meeting.Manifest.Meeting.RecordedAtLocal}); err != nil {
+		}{meeting.Manifest.Meeting.CreatedAtUTC, meeting.Manifest.Meeting.RecordedAtUTC, meeting.Manifest.Meeting.RecordedAtLocal}); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
