@@ -199,7 +199,7 @@ cassini operator   Launch the separate cassini-operator binary
 cassini pack       Pack a built .meeting bundle into a portable .opus file
 cassini publish    Publish one or more meeting bundles as a static site
 cassini record     Record a meeting into one portable artifact
-cassini retag      Rewrite a packed .opus file's room and job fields without re-encoding it
+cassini retag      Rewrite a packed .opus file's room, job and recording-start fields without re-encoding it
 cassini serve      Serve a static Cassini site locally
 cassini speakers   Separate the voices of people who shared one device
 ```

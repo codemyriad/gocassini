@@ -447,7 +447,7 @@ Commands:
   pack     Pack a built .meeting bundle into a portable .opus file
   publish  Publish one or more meeting bundles as a static site
   record   Record a meeting into one portable artifact
-  retag    Rewrite a packed .opus file's room and job fields without re-encoding it
+  retag    Rewrite a packed .opus file's room, job and recording-start fields without re-encoding it
   serve    Serve a static Cassini site locally
   speakers Separate the voices of people who shared one device
 

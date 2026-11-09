@@ -120,6 +120,22 @@ The optional top-level members are `readableTranscripts`, `provenance`,
 `summary`, `attachments`, and `annotations` (see
 [Annotations](#annotations-tags-and-marks)).
 
+### Meeting times
+
+- **`meeting.recordedAtUtc`** (optional): the instant at playback position 0
+  of the audio, RFC 3339 UTC ending in `Z`, fractional seconds allowed. A
+  word's wall-clock time is `recordedAtUtc + startMs`. Mirrored as the
+  `CASSINI_RECORDED_AT_UTC` tag, and `DATE` carries the same value. Talk
+  recordings take it from the recorder's per-track wall-clock anchors. Readers
+  use it for "when did this meeting happen" and show it in the reader's own
+  time zone.
+- **`meeting.createdAtUtc`**: when the file was built, not when the meeting
+  happened. Mirrored as `CASSINI_CREATED_AT`. `DATE` falls back to it when the
+  producer does not know the start.
+- **`meeting.recordedAtLocal`** (optional): a wall-clock label with no zone.
+  Producers write it only when they know the recording site's zone; Talk
+  recordings do not. Readers never convert it to an instant.
+
 Transcript bodies are not stored inline. `transcripts` indexes word transcripts;
 `readableTranscripts` optionally indexes display bodies. Word entries have no
 origin role or derivation link. Older `role` and `sourceTranscriptId` members
@@ -417,6 +433,18 @@ Retag identity metadata without re-encoding audio:
 cassini retag ./meeting.opus --out ./meeting-retagged.opus \
   --room-id rm_9f2a1c3d4e5b6a70
 ```
+
+Add when the recording started, from a trustworthy record, without changing the
+meeting id:
+
+```bash
+cassini retag ./meeting.opus --out ./meeting-retagged.opus \
+  --recorded-at-utc 2026-11-09T11:31:48.250Z
+```
+
+This sets `meeting.recordedAtUtc`, its `CASSINI_RECORDED_AT_UTC` mirror and
+`DATE` together. The value must be RFC 3339 UTC ending in `Z`. Setting the
+value a file already has is reported as `unchanged`.
 
 Retagging must validate the input contract, preserve every transcript chunk
 set and extension field, rebuild the main-payload digest and descriptors, copy
