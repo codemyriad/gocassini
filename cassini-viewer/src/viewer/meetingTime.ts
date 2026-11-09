@@ -148,6 +148,35 @@ export function instantSortKey(ms: number, timeZone?: string): number {
   return wallClockKey(instantWallClock(ms, timeZone));
 }
 
+// StartOrder places a start for ordering: the wall-clock key every start has,
+// and the instant when there is one. Two instants compare by instant, since
+// wall-clock order is not instant order across a DST fall-back (02:30 CEST is
+// before 02:10 CET); anything involving a label compares wall-clock keys.
+export interface StartOrder {
+  key: number;
+  ms: number | null;
+}
+
+export function meetingStartOrder(entry: MeetingTimeSource | null | undefined, timeZone?: string): StartOrder | null {
+  const start = meetingStart(entry, timeZone);
+  if (start.kind === "none") {
+    return null;
+  }
+  return { key: wallClockKey(start.wall), ms: start.kind === "instant" ? start.ms : null };
+}
+
+export function instantStartOrder(ms: number, timeZone?: string): StartOrder {
+  return { key: instantSortKey(ms, timeZone), ms };
+}
+
+// Positive when a is later than b, negative when earlier, 0 when level.
+export function compareStartOrder(a: StartOrder, b: StartOrder): number {
+  if (a.ms !== null && b.ms !== null) {
+    return a.ms - b.ms;
+  }
+  return a.key - b.key;
+}
+
 export function wallClockKey(wall: WallClock): number {
   return Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour ?? 0, wall.minute ?? 0, wall.second ?? 0);
 }

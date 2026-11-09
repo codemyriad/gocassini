@@ -1,5 +1,13 @@
 import type { MeetingCatalogEntry } from "./catalog";
-import { instantSortKey, instantWallClock, meetingStartMonth, meetingStartSortKey, wallClockMonth } from "./meetingTime";
+import {
+  compareStartOrder,
+  instantStartOrder,
+  instantWallClock,
+  meetingStartMonth,
+  meetingStartOrder,
+  type StartOrder,
+  wallClockMonth,
+} from "./meetingTime";
 import { NO_ROOM_KEY, UNDATED_MONTH_KEY, UNDATED_MONTH_LABEL } from "./rooms";
 
 // Insights in the browse catalogue (D-721). Pure, for the same reason rooms.ts
@@ -513,10 +521,10 @@ export interface BrowseFeedGroup {
 // An insight sorts above a meeting at the same instant: it was drawn FROM
 // meetings, so it is never older than the ones it read.
 //
-// Both sides are compared on the wall clock the reader is shown
-// (meetingTime.meetingStartSortKey / instantSortKey): local time for an insight
-// and for a meeting with recordedAtUtc, the label's digits for a meeting
-// without. That is the scale the meetings were sorted on and the one the month
+// Both sides are compared as the meetings were sorted (meetingTime.StartOrder):
+// by instant against a meeting with recordedAtUtc, otherwise on the wall
+// clock the reader is shown — the insight's local time against the label's
+// digits. That is the scale the meetings were sorted on and the one the month
 // headings are cut from, so the merge cannot put a row under the wrong heading.
 export function buildBrowseFeed(input: {
   meetings: readonly MeetingCatalogEntry[];
@@ -534,7 +542,7 @@ export function buildBrowseFeed(input: {
   while (meetingIndex < meetings.length && insightIndex < insights.length) {
     const meeting = meetings[meetingIndex];
     const insight = insights[insightIndex];
-    if (insightGoesFirst(insightSortKey(insight), meetingStartSortKey(meeting))) {
+    if (insightGoesFirst(insightStartOrder(insight), meetingStartOrder(meeting))) {
       items.push(insightItem(insight));
       insightIndex += 1;
     } else {
@@ -551,9 +559,9 @@ export function buildBrowseFeed(input: {
   return items;
 }
 
-function insightSortKey(insight: InsightRecord): number | null {
+function insightStartOrder(insight: InsightRecord): StartOrder | null {
   const ms = insightTimestampMs(insight);
-  return ms === null ? null : instantSortKey(ms);
+  return ms === null ? null : instantStartOrder(ms);
 }
 
 function meetingItem(meeting: MeetingCatalogEntry): BrowseFeedItem {
@@ -568,14 +576,14 @@ function insightItem(insight: InsightRecord): BrowseFeedItem {
 
 // Undated sorts last, whichever kind it is: a row whose date could not be read
 // is the one row nobody is looking for at the top of the list.
-function insightGoesFirst(insightMs: number | null, meetingMs: number | null): boolean {
-  if (insightMs === null) {
+function insightGoesFirst(insight: StartOrder | null, meeting: StartOrder | null): boolean {
+  if (insight === null) {
     return false;
   }
-  if (meetingMs === null) {
+  if (meeting === null) {
     return true;
   }
-  return insightMs >= meetingMs;
+  return compareStartOrder(insight, meeting) >= 0;
 }
 
 function compareInsightsNewestFirst(left: InsightRecord, right: InsightRecord): number {
@@ -604,8 +612,10 @@ function compareInsightsNewestFirst(left: InsightRecord, right: InsightRecord): 
 // newest-first rendered an older heading above a newer one. So an insight, and
 // a meeting with recordedAtUtc, are filed by the reader's local month — the one
 // their rows print — and a meeting known only by its label by the label's
-// digits, which are what its row prints. All three are the scale
-// meetingTime.meetingStartSortKey sorts on.
+// digits, which are what its row prints. All three are the wall-clock scale
+// buildBrowseFeed merges on (meetingTime.StartOrder); it compares two instants
+// by instant instead, which can only differ inside a DST fall-back hour, never
+// across a month boundary.
 export function groupBrowseFeedByMonth(
   items: readonly BrowseFeedItem[],
 ): BrowseFeedGroup[] {

@@ -2,8 +2,9 @@ import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import {
   formatMeetingStartShort,
   formatMeetingStartWithDay,
+  compareStartOrder,
   meetingStartDayKey,
-  meetingStartSortKey,
+  meetingStartOrder,
   parseRecordedAtUtc,
 } from "./meetingTime";
 
@@ -358,24 +359,27 @@ function optionalRoomString(value: unknown): string | undefined {
   return trimmed === "" ? undefined : trimmed;
 }
 
-// Newest first, by the start the reader is shown (meetingTime.ts): the
-// instant's local wall clock when the entry has recordedAtUtc, the label's
-// digits otherwise. Entries with neither (e.g. legacy catalogs that shipped a
-// raw id as the label) sort after every dated entry instead of wherever plain
-// string comparison happens to land them.
+// Newest first, by the start the reader is shown (meetingTime.ts): two
+// entries with recordedAtUtc by instant, otherwise the instant's local wall
+// clock against the label's digits. Entries with neither (e.g. legacy catalogs
+// that shipped a raw id as the label) sort after every dated entry instead of
+// wherever plain string comparison happens to land them.
 export function sortMeetingCatalogEntries(
   meetings: MeetingCatalogEntry[],
 ): MeetingCatalogEntry[] {
   return [...meetings].sort((left, right) => {
-    const leftMs = meetingStartSortKey(left);
-    const rightMs = meetingStartSortKey(right);
-    if (leftMs !== null && rightMs !== null && leftMs !== rightMs) {
-      return rightMs - leftMs;
+    const leftStart = meetingStartOrder(left);
+    const rightStart = meetingStartOrder(right);
+    if (leftStart !== null && rightStart !== null) {
+      const order = compareStartOrder(rightStart, leftStart);
+      if (order !== 0) {
+        return order;
+      }
     }
-    if (leftMs !== null && rightMs === null) {
+    if (leftStart !== null && rightStart === null) {
       return -1;
     }
-    if (leftMs === null && rightMs !== null) {
+    if (leftStart === null && rightStart !== null) {
       return 1;
     }
     return compareDescending(right.id, left.id);

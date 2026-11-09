@@ -461,6 +461,16 @@ describe("sortMeetingCatalogEntries", () => {
     ]);
   });
 
+  it("sorts two instants by instant across a DST fall-back", () => {
+    // Rome, 25 Oct 2026: 00:30Z reads 02:30 CEST, 01:10Z reads 02:10 CET forty
+    // minutes later. By wall clock the later one would sort as older.
+    const sorted = sortMeetingCatalogEntries([
+      { id: "first", audioPath: "./x.opus", title: "X", dateLabel: "2026-10-25 00:30", recordedAtUtc: "2026-10-25T00:30:00Z" },
+      { id: "second", audioPath: "./y.opus", title: "Y", dateLabel: "2026-10-25 01:10", recordedAtUtc: "2026-10-25T01:10:00Z" },
+    ]);
+    expect(sorted.map((meeting) => meeting.id)).toEqual(["second", "first"]);
+  });
+
   it("sorts instants and labels together by the time each row shows", () => {
     // In Rome (the suite's zone) 11:31Z reads 12:31: between a label reading
     // 12:00 and one reading 13:00. An undated entry still goes last, and an

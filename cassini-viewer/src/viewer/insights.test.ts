@@ -392,6 +392,17 @@ describe("groupBrowseFeedByMonth", () => {
     }
   });
 
+  it("places an insight against an instant meeting by instant across a DST fall-back", () => {
+    // Rome, 25 Oct 2026: the meeting at 00:50Z reads 02:50 CEST; the insight at
+    // 01:05Z reads 02:05 CET, fifteen minutes later, so it goes above.
+    const feed = buildBrowseFeed({
+      meetings: [meeting({ id: "m", dateLabel: "2026-10-25 00:50", recordedAtUtc: "2026-10-25T00:50:00Z" })],
+      insights: [insight({ id: "i", createdAt: "2026-10-25T01:05:00Z" })],
+      types: ALL_BROWSE_TYPES,
+    });
+    expect(feed.map((item) => item.key)).toEqual(["insight:i", "meeting:m"]);
+  });
+
   it("orders and files an instant meeting by the reader's clock, with the insights", () => {
     // A meeting at 23:30Z on 31 Jan prints 00:30 on 1 Feb in Rome. An insight
     // created at 23:45Z prints 00:45 on 1 Feb: newer, so above it, and both
