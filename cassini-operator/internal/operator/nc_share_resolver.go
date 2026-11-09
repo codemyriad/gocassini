@@ -95,9 +95,9 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 	}
 	result := directShareSnapshot{entries: []json.RawMessage{}, paths: map[string]string{}}
 	type datedEntry struct {
-		name      string
-		entry     json.RawMessage
-		dateLabel string
+		name    string
+		entry   json.RawMessage
+		sortKey string
 	}
 	dated := make([]datedEntry, 0, len(shares))
 	for _, share := range shares {
@@ -110,18 +110,19 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 		}
 		entry := known[share.FileSource]
 		name := ""
-		dateLabel := ""
+		sortKey := ""
 		if entry != nil {
 			var probe struct {
-				AudioPath   string `json:"audioPath"`
-				MeetingPath string `json:"meetingPath"`
-				DateLabel   string `json:"dateLabel"`
+				AudioPath     string `json:"audioPath"`
+				MeetingPath   string `json:"meetingPath"`
+				DateLabel     string `json:"dateLabel"`
+				RecordedAtUTC string `json:"recordedAtUtc"`
 			}
 			if json.Unmarshal(entry, &probe) != nil {
 				continue
 			}
 			name = catalogEntryOpusName(meetingPath(probe.AudioPath, probe.MeetingPath), "")
-			dateLabel = probe.DateLabel
+			sortKey = meetingSortKey(probe.DateLabel, probe.RecordedAtUTC)
 		} else {
 			// The owner's current archive inventory gives the original name
 			// even if the recipient renamed their share mount. It also keeps
@@ -157,12 +158,13 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 			continue
 		}
 		result.paths[name] = recipientPath
-		dated = append(dated, datedEntry{name: name, entry: entry, dateLabel: dateLabel})
+		dated = append(dated, datedEntry{name: name, entry: entry, sortKey: sortKey})
 	}
 	// Stable newest-first presentation even though OCS can return user, group
-	// and Team shares in separate buckets.
+	// and Team shares in separate buckets. An entry with recordedAtUtc sorts
+	// by its instant, one without by its dateLabel (meetingSortKey).
 	sort.SliceStable(dated, func(i, j int) bool {
-		return dated[i].dateLabel > dated[j].dateLabel
+		return dated[i].sortKey > dated[j].sortKey
 	})
 	// A rename lives in the annotations document; its projection is current the
 	// moment a rename commits, while the stored entry only catches up when the

@@ -77,6 +77,7 @@ type searchResponseHit struct {
 	MeetingID       string `json:"meetingId"`
 	Title           string `json:"title,omitempty"`
 	DateLabel       string `json:"dateLabel,omitempty"`
+	RecordedAtUTC   string `json:"recordedAtUtc,omitempty"`
 	RoomID          string `json:"roomId,omitempty"`
 	RoomName        string `json:"roomName,omitempty"`
 	RoomDisplayName string `json:"roomDisplayName,omitempty"`
@@ -335,6 +336,7 @@ func (c ExAppConfig) searchMeetings(
 			MeetingID:       entry.id,
 			Title:           entry.title,
 			DateLabel:       entry.dateLabel,
+			RecordedAtUTC:   entry.recordedAtUTC,
 			RoomID:          entry.roomID,
 			RoomName:        entry.roomName,
 			RoomDisplayName: entry.roomDisplayName,
@@ -425,6 +427,7 @@ type catalogHydration struct {
 	opusName        string
 	title           string
 	dateLabel       string
+	recordedAtUTC   string
 	roomID          string
 	roomName        string
 	roomDisplayName string
@@ -438,6 +441,7 @@ func decodeCatalogEntries(raw []byte) ([]catalogHydration, error) {
 			ID              string `json:"id"`
 			Title           string `json:"title"`
 			DateLabel       string `json:"dateLabel"`
+			RecordedAtUTC   string `json:"recordedAtUtc"`
 			RoomID          string `json:"roomId"`
 			RoomName        string `json:"roomName"`
 			RoomDisplayName string `json:"roomDisplayName"`
@@ -453,7 +457,7 @@ func decodeCatalogEntries(raw []byte) ([]catalogHydration, error) {
 	for _, meeting := range catalog.Meetings {
 		entries = append(entries, catalogHydration{
 			id: strings.TrimSpace(meeting.ID), opusName: catalogEntryOpusName(meetingPath(meeting.AudioPath, meeting.MeetingPath), meeting.ArtifactPath),
-			title: meeting.Title, dateLabel: meeting.DateLabel,
+			title: meeting.Title, dateLabel: meeting.DateLabel, recordedAtUTC: normalizedRecordedAtUTC(meeting.RecordedAtUTC),
 			roomID: meeting.RoomID, roomName: meeting.RoomName, roomDisplayName: meeting.RoomDisplayName,
 		})
 	}
