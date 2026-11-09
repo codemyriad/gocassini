@@ -25,9 +25,11 @@ import (
 // two ADMIN routes start and pause the rewrite:
 //
 //	POST <base>/migrations/recorded-at/start — every needed (and blocked)
-//	     file becomes pending, the pause is lifted, the workers wake
-//	POST <base>/migrations/recorded-at/pause — no new file is started; the
-//	     files being rewritten finish (drain)
+//	     file becomes pending, the pause is lifted, the workers wake; 409
+//	     until the first index pass has counted every file
+//	POST <base>/migrations/recorded-at/pause — no new file is started; a
+//	     file not yet uploaded goes back to pending, one whose upload was
+//	     sent is settled (drain)
 //
 // Both answer with the same object /status carries as
 // recorded_at_migration. appinfo/info.xml declares them ADMIN.
@@ -44,7 +46,8 @@ type recordedAtMigrationStatus struct {
 	Applicable bool `json:"applicable"`
 	// State is what the Doctor leads with: not_applicable, checking (the
 	// first index pass has not finished and nothing is known yet), needed,
-	// running, pausing (paused, files still finishing), paused, blocked,
+	// running, pausing (paused, files still finishing or uploads still
+	// settling), paused, blocked,
 	// done (every file asked for is done) or not_needed.
 	State string `json:"state"`
 	// Checked is true once an index pass completed since this start, so
@@ -79,11 +82,13 @@ func recordedAtMigrationStateFor(s recordedAtMigrationStatus) string {
 	switch {
 	case !s.Applicable:
 		return "not_applicable"
-	case s.Paused && s.InProgress > 0:
+	case s.Paused && s.InProgress+s.Settling > 0:
+		// An upload that was sent is still settled after a pause (it lands
+		// as done or goes back to pending): until then, not yet paused.
 		return "pausing"
 	case !s.Paused && s.Queued+s.Settling+s.InProgress > 0:
 		return "running"
-	case s.Paused && s.Queued+s.Settling > 0:
+	case s.Paused && s.Queued > 0:
 		return "paused"
 	case s.Needed > 0:
 		return "needed"
@@ -220,7 +225,8 @@ func (w *recordedAtFileWorker) startMigration(ctx context.Context) (int64, error
 }
 
 // pauseMigration stops new files from starting. It does not wait: the files
-// in progress finish on their own, and /status says how many are left.
+// in progress settle on their own (finished, or put back if not yet
+// uploaded), and /status says how many are left.
 func (w *recordedAtFileWorker) pauseMigration(ctx context.Context) error {
 	tx, err := w.rt.meetingMetadata.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -255,6 +261,13 @@ func (rt *Runtime) recordedAtMigrationHandler(w http.ResponseWriter, r *http.Req
 	}
 	switch action {
 	case "start":
+		// Start asks for the files counted so far. Before the first index
+		// pass has finished that is part of the archive, and the rest would
+		// arrive as needed after the run, asking for a second press.
+		if !rt.recordedAtIndexChecked.Load() {
+			writeJSONError(w, http.StatusConflict, "Cassini is still counting the past recordings that need this; try again once it has finished")
+			return
+		}
 		n, err := worker.startMigration(r.Context())
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "could not start the migration: "+err.Error())
@@ -266,7 +279,7 @@ func (rt *Runtime) recordedAtMigrationHandler(w http.ResponseWriter, r *http.Req
 			writeJSONError(w, http.StatusInternalServerError, "could not pause the migration: "+err.Error())
 			return
 		}
-		worker.logf("recorded-at: file migration paused by %s; %d file(s) in progress finish first", who, worker.active.Load())
+		worker.logf("recorded-at: file migration paused by %s; %d file(s) in progress settle first", who, worker.active.Load())
 	}
 	writeJSON(w, http.StatusOK, worker.status(r.Context(), true))
 }
@@ -278,8 +291,13 @@ type nextcloudChangeCapabilities struct {
 	Version          string
 	ActivityApp      bool
 	NotificationsApp bool
-	WebPush          bool
-	Versioning       bool
+	// WebPush is the notifications app's "webpush" token: an administrator
+	// allowed web push (Nextcloud's webpush_enabled), which apps with their
+	// own push distributor use. BrowserPush is "webpush-browsers"
+	// (webpush_browsers_enabled), the separate switch for browsers.
+	WebPush     bool
+	BrowserPush bool
+	Versioning  bool
 }
 
 // capabilitiesAs reads /ocs/v2.php/cloud/capabilities as a user, and returns
@@ -338,6 +356,7 @@ func parseChangeCapabilities(version string, raw json.RawMessage) (nextcloudChan
 	if caps.Notifications != nil {
 		out.NotificationsApp = true
 		out.WebPush = slices.Contains(caps.Notifications.Push, "webpush")
+		out.BrowserPush = slices.Contains(caps.Notifications.Push, "webpush-browsers")
 	}
 	if caps.Files != nil {
 		out.Versioning = caps.Files.Versioning
@@ -357,6 +376,7 @@ type recordedAtNotificationsDoc struct {
 	ActivityApp      *bool  `json:"activity_app,omitempty"`
 	NotificationsApp *bool  `json:"notifications_app,omitempty"`
 	WebPush          *bool  `json:"web_push,omitempty"`
+	BrowserPush      *bool  `json:"browser_push,omitempty"`
 	Versioning       *bool  `json:"versioning,omitempty"`
 	// Details are the sentences to show, in order.
 	Details []string `json:"details"`
@@ -415,12 +435,17 @@ func (w *recordedAtFileWorker) notifications(ctx context.Context) *recordedAtNot
 // changed" setting (apps/files FileChanged) is always shown in the stream and
 // defaults to off for email and for notifications; an administrator can
 // change those defaults (Administration settings › Activity) and each person
-// their own, neither of which an app can read. files_versions keeps the
-// previous content as a version of the writer's file, expired by
-// versions_retention_obligation in config.php, which is not exposed either.
+// their own, neither of which an app can read; activity email is a digest
+// sent at each person's chosen frequency (MailQueueHandler), notifications
+// arrive one per activity. files_versions keeps the previous content as a
+// version of the writer's file, not counted against its quota, expired by
+// versions_retention_obligation in config.php (not exposed either) and by
+// the app's 50%-of-free-space limit. The notifications app announces
+// "webpush" when web push is allowed and "webpush-browsers" only when
+// browsers may use it too (lib/Capabilities.php).
 func recordedAtNotices(caps nextcloudChangeCapabilities, err error) *recordedAtNotificationsDoc {
 	doc := &recordedAtNotificationsDoc{Account: ncRecordingsOwner}
-	defaults := "With Nextcloud's defaults the change is not emailed and not sent as a notification: both are off for “A file or folder has been changed”. An administrator can change those defaults under Administration settings › Activity, and each person can turn them on in their own Activity settings. Cassini cannot read either, so anyone who did gets an email or a notification for each recording."
+	defaults := "With Nextcloud's defaults the change is not emailed and not sent as a notification: both are off for “A file or folder has been changed”. An administrator can change those defaults under Administration settings › Activity, and each person can turn them on in their own Activity settings. Cassini cannot read either. Anyone who turned notifications on gets one per recording; anyone who turned email on finds the changes in their activity email, which Nextcloud collects and sends at the frequency they chose rather than one per change."
 	if err != nil {
 		doc.Error = "Cassini could not read Nextcloud's capabilities, so it cannot tell whether the Activity and Notifications apps or file versioning are enabled."
 		doc.Details = []string{
@@ -435,13 +460,13 @@ func recordedAtNotices(caps nextcloudChangeCapabilities, err error) *recordedAtN
 	doc.NextcloudVersion = caps.Version
 	doc.ActivityApp, doc.NotificationsApp, doc.Versioning = &caps.ActivityApp, &caps.NotificationsApp, &caps.Versioning
 	if caps.NotificationsApp {
-		doc.WebPush = &caps.WebPush
+		doc.WebPush, doc.BrowserPush = &caps.WebPush, &caps.BrowserPush
 	}
 	doc.Details = []string{
 		"Each recording is saved again by Cassini's " + ncRecordingsOwner + " account, over the same file: its shares, links and file id stay as they are, and the audio is unchanged.",
 	}
 	if caps.Versioning {
-		doc.Details = append(doc.Details, "File versioning is enabled, so the file as it was before is kept as an earlier version in the "+ncRecordingsOwner+" account and counts toward its storage until Nextcloud expires it. How long versions are kept is set by versions_retention_obligation in Nextcloud's config.php, which Cassini cannot read.")
+		doc.Details = append(doc.Details, "File versioning is enabled, so the file as it was before is kept as an earlier version in the "+ncRecordingsOwner+" account. It takes disk space but does not count against that account's quota. Nextcloud expires versions by versions_retention_obligation in its config.php, which Cassini cannot read, and by the Versions app's limit of half the account's free space, past which the oldest go first.")
 	} else {
 		doc.Details = append(doc.Details, "File versioning is not enabled, so Nextcloud keeps no copy of the file as it was before.")
 	}
@@ -455,8 +480,11 @@ func recordedAtNotices(caps nextcloudChangeCapabilities, err error) *recordedAtN
 		doc.Details = append(doc.Details, "The Notifications app is not enabled, so no notification can be sent for the change.")
 	case caps.ActivityApp:
 		line := "The Notifications app is enabled, so a person who turned on notifications for changed files gets one per recording in Nextcloud, and on their devices where push notifications are set up."
-		if caps.WebPush {
-			line += " Browser push is enabled as well."
+		switch {
+		case caps.BrowserPush:
+			line += " Web push is allowed, for browsers too, so it can also reach a browser where that person accepted push notifications."
+		case caps.WebPush:
+			line += " Web push is allowed, but not for browsers."
 		}
 		doc.Details = append(doc.Details, line)
 	}

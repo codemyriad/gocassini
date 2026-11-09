@@ -140,9 +140,11 @@ type Runtime struct {
 	recordingAnchorProbe recordingAnchorProbe
 	// recordedAtIndexWait is the meeting index backfill's wait between two
 	// passes (sleepCtx when nil); recordedAtIndexBeforeStamp, when set (tests
-	// only), runs before each entry is stamped.
-	recordedAtIndexWait        func(ctx context.Context, d time.Duration) bool
-	recordedAtIndexBeforeStamp func(row recordedAtIndexRow)
+	// only), runs before each entry is stamped; recordedAtBeforeRepublishStamp
+	// (tests only) runs after a publish's entry is read, before it is stamped.
+	recordedAtIndexWait            func(ctx context.Context, d time.Duration) bool
+	recordedAtIndexBeforeStamp     func(row recordedAtIndexRow)
+	recordedAtBeforeRepublishStamp func()
 	// recordedAtIndexChecked is set once a meeting index pass has completed
 	// since this start: from then on the needed count is the enumeration of
 	// files to rewrite, not a partial one.

@@ -35,7 +35,7 @@ import (
 // shared with, so an administrator decides when it happens: the index pass
 // only enumerates the files (state needed), and the Doctor's button moves
 // them to pending (recorded_at_migration.go). Pausing stops new files from
-// starting; see drain.
+// starting, and a file not yet uploaded is put back; see drain.
 //
 // Progress lives in meetings.sqlite3 (recorded_at_file_backfill):
 //
@@ -205,11 +205,14 @@ func (w *recordedAtFileWorker) loop() {
 // drain processes every due file, one at a time per worker and paced
 // (recordedAtFilePace); it answers how many it attempted.
 //
-// A pause is honoured between files, never inside one: a file already being
-// rewritten runs to its outcome (done, blocked, or due again later), so
-// pausing never leaves a file half-written. Paused, a worker still settles a
-// file whose upload was sent but not confirmed (state uploading) — that file
-// was started, and only finishing it makes the index agree with Nextcloud.
+// A pause never leaves a file half-written. It is checked between files and
+// once more inside one, just before the upload: a file not yet uploaded goes
+// back to pending untouched, and one whose upload was sent runs to its
+// outcome (done, blocked, or due again later). Paused, a worker still settles
+// a row whose upload was sent but not confirmed (state uploading): if the
+// upload landed the row becomes done, and if it did not the row goes back to
+// pending without a new upload — only that makes the index agree with
+// Nextcloud, and no new version is written after the pause.
 func (w *recordedAtFileWorker) drain(ctx context.Context) int {
 	processed := 0
 	for ctx.Err() == nil {
@@ -450,6 +453,15 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 			}
 		}
 		return w.setState(ctx, name, "done")
+	}
+	// Paused since this file was taken (or, for an uploading row, since its
+	// earlier PUT failed without landing — the file above does not carry the
+	// value): nothing of it is written yet, so it goes back to pending
+	// unchanged rather than becoming a new version after the pause.
+	if paused, err := w.rt.meetingMetadata.recordedAtFilesPaused(ctx); err != nil {
+		return err
+	} else if paused {
+		return w.setState(ctx, name, recordedAtStatePending)
 	}
 	info, err := os.Stat(out)
 	if err != nil {

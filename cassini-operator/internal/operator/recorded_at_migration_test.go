@@ -120,6 +120,50 @@ func TestRecordedAtMigrationPauseStopsNewFiles(t *testing.T) {
 	}
 }
 
+// Paused, a file whose upload has not landed is put back as pending without
+// an upload: no new version is written after the pause. That covers an
+// uploading row whose earlier PUT failed outright (a 412, a 5xx, a timeout
+// before it was sent) and a pending file taken just before the pause.
+func TestRecordedAtMigrationPauseWritesNoNewVersion(t *testing.T) {
+	for _, state := range []string{recordedAtStateUploading, recordedAtStatePending} {
+		t.Run(state, func(t *testing.T) {
+			f := newFileWorkerFixture(t, 0)
+			ctx := context.Background()
+			f.w.rt.recordedAtIndexChecked.Store(true)
+			f.setState(t, state)
+			if err := f.w.pauseMigration(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if state == recordedAtStateUploading {
+				if got := f.w.status(ctx, false); got.State != "pausing" || got.Settling != 1 {
+					t.Fatalf("status with an upload to settle = %+v", got)
+				}
+				if n := f.w.drain(ctx); n != 1 {
+					t.Fatalf("drained %d, want the upload settled", n)
+				}
+			} else {
+				// Claimed before the pause: processed directly.
+				f.w.processOne(ctx, "MEETING1.opus")
+			}
+			if matches := f.nc.ifMatches(); len(matches) != 0 {
+				t.Fatalf("a paused migration uploaded: %v", matches)
+			}
+			if r := f.row(t); r.state != recordedAtStatePending {
+				t.Fatalf("row = %+v; logs: %s", r, f.logs)
+			}
+			if _, carried := f.remote(t)["recordedAtUtc"]; carried {
+				t.Fatalf("remote changed: %v", f.remote(t))
+			}
+			if got := f.w.status(ctx, false); got.State != "paused" || got.Queued != 1 || got.Settling != 0 {
+				t.Fatalf("status after = %+v", got)
+			}
+			if n := f.w.drain(ctx); n != 0 {
+				t.Fatalf("paused drain took %d more", n)
+			}
+		})
+	}
+}
+
 // A pause during a file lets that file finish, consistently, and stops the
 // drain before the next one — including one that came in during the pace
 // between two files.
@@ -213,6 +257,37 @@ func TestStampPublishedRecordedAtKeepsTheRequest(t *testing.T) {
 	}
 }
 
+// A start that commits while a republish is being stamped is not lost: the
+// file comes out pending, not needed again.
+func TestStampPublishedRecordedAtKeepsAStartThatRaced(t *testing.T) {
+	f := newRecordedAtFixture(t)
+	ctx := context.Background()
+	name := startedJob + ".opus"
+	entry := `{"id":"` + startedJob + `","dateLabel":"2026-07-17 10:33","audioPath":"./meetings/` + name + `"}`
+	f.job(t, startedJob, "2026-07-17T10:33:05Z")
+	f.put(t, 3, name, entry)
+	if _, err := f.rt.backfillRecordedAtIndex(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.put(t, 3, name, entry)
+	worker := &recordedAtFileWorker{rt: f.rt}
+	f.rt.recordedAtBeforeRepublishStamp = func() {
+		if n, err := worker.startMigration(ctx); err != nil || n != 1 {
+			t.Errorf("start during the republish = %d %v", n, err)
+		}
+	}
+	if err := f.rt.stampPublishedRecordedAt(ctx, 3, name); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := f.rt.meetingMetadata.db.QueryRow(`SELECT state FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != recordedAtStatePending {
+		t.Fatalf("state = %q, want the start kept as pending", state)
+	}
+}
+
 func TestRecordedAtMigrationStateRule(t *testing.T) {
 	for _, tc := range []struct {
 		s    recordedAtMigrationStatus
@@ -227,6 +302,7 @@ func TestRecordedAtMigrationStateRule(t *testing.T) {
 		{recordedAtMigrationStatus{Applicable: true, Checked: true, InProgress: 1}, "running"},
 		{recordedAtMigrationStatus{Applicable: true, Checked: true, Paused: true, InProgress: 1, Queued: 4}, "pausing"},
 		{recordedAtMigrationStatus{Applicable: true, Checked: true, Paused: true, Queued: 4}, "paused"},
+		{recordedAtMigrationStatus{Applicable: true, Checked: true, Paused: true, Settling: 1, Queued: 4}, "pausing"},
 		{recordedAtMigrationStatus{Applicable: true, Checked: true, Paused: true, Needed: 4}, "needed"},
 		{recordedAtMigrationStatus{Applicable: true, Checked: true, Blocked: 1, Done: 2}, "blocked"},
 	} {
@@ -286,7 +362,12 @@ func TestParseChangeCapabilities(t *testing.T) {
 	raw := `{"core":{},"files":{"bigfilechunking":true,"versioning":true},"activity":{"apiv2":["filters"]},"notifications":{"ocs-endpoints":["list"],"push":["devices","webpush"]}}`
 	got, err := parseChangeCapabilities("33.0.9", json.RawMessage(raw))
 	if err != nil || got != (nextcloudChangeCapabilities{Version: "33.0.9", ActivityApp: true, NotificationsApp: true, WebPush: true, Versioning: true}) {
-		t.Fatalf("got %+v %v", got, err)
+		t.Fatalf("web push without browsers: got %+v %v", got, err)
+	}
+	raw = `{"notifications":{"push":["devices","webpush","webpush-browsers"]}}`
+	got, err = parseChangeCapabilities("", json.RawMessage(raw))
+	if err != nil || got != (nextcloudChangeCapabilities{NotificationsApp: true, WebPush: true, BrowserPush: true}) {
+		t.Fatalf("browser push: got %+v %v", got, err)
 	}
 	// Providers exist only while their app is enabled.
 	got, err = parseChangeCapabilities("", json.RawMessage(`{"core":{},"files":{"bigfilechunking":true}}`))
@@ -328,11 +409,21 @@ func TestChangeCapabilitiesReadsTheOCSDocument(t *testing.T) {
 // Nextcloud's.
 func TestRecordedAtNoticesWording(t *testing.T) {
 	all := func(doc *recordedAtNotificationsDoc) string { return strings.Join(doc.Details, "\n") }
-	on := recordedAtNotices(nextcloudChangeCapabilities{ActivityApp: true, NotificationsApp: true, WebPush: true, Versioning: true}, nil)
-	for _, want := range []string{"cassini account", "earlier version", "versions_retention_obligation", "Activity app is enabled", "not emailed and not sent as a notification", "Administration settings › Activity", "Cassini cannot read either", "Browser push is enabled"} {
+	on := recordedAtNotices(nextcloudChangeCapabilities{ActivityApp: true, NotificationsApp: true, WebPush: true, BrowserPush: true, Versioning: true}, nil)
+	for _, want := range []string{"cassini account", "earlier version", "does not count against that account's quota", "versions_retention_obligation", "half the account's free space", "Activity app is enabled", "not emailed and not sent as a notification", "Administration settings › Activity", "Cassini cannot read either", "gets one per recording", "frequency they chose rather than one per change", "for browsers too"} {
 		if !strings.Contains(all(on), want) {
 			t.Errorf("enabled report lacks %q:\n%s", want, all(on))
 		}
+	}
+	for _, wrong := range []string{"counts toward its storage", "an email or a notification for each recording"} {
+		if strings.Contains(all(on), wrong) {
+			t.Errorf("enabled report claims %q:\n%s", wrong, all(on))
+		}
+	}
+	// Web push allowed is not browser push.
+	webOnly := recordedAtNotices(nextcloudChangeCapabilities{ActivityApp: true, NotificationsApp: true, WebPush: true}, nil)
+	if !strings.Contains(all(webOnly), "but not for browsers") || strings.Contains(all(webOnly), "for browsers too") || *webOnly.BrowserPush || !*webOnly.WebPush {
+		t.Errorf("web-push-only report:\n%s", all(webOnly))
 	}
 	off := recordedAtNotices(nextcloudChangeCapabilities{}, nil)
 	for _, want := range []string{"versioning is not enabled", "Activity app is not enabled", "Notifications app is not enabled"} {
@@ -369,6 +460,15 @@ func TestRecordedAtMigrationHandler(t *testing.T) {
 	if rec, _ := serve(http.MethodPost, recordedAtMigrationPath+"/resume"); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown action = %d", rec.Code)
 	}
+	// Not before the first count has finished: it would ask for part of
+	// the archive only.
+	if rec, _ := serve(http.MethodPost, recordedAtMigrationPath+"/start"); rec.Code != http.StatusConflict {
+		t.Fatalf("start before the count = %d %s", rec.Code, rec.Body)
+	}
+	if r := f.row(t); r.state != recordedAtStateNeeded {
+		t.Fatalf("a refused start queued the file: %+v", r)
+	}
+	f.w.rt.recordedAtIndexChecked.Store(true)
 	rec, s := serve(http.MethodPost, recordedAtMigrationPath+"/start")
 	if rec.Code != http.StatusOK || s.State != "running" || s.Queued != 1 || s.Notices == nil {
 		t.Fatalf("start = %d %s", rec.Code, rec.Body)

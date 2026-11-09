@@ -122,6 +122,14 @@ const (
 // backfill as fileState (needed, or pending where the administrator already
 // asked for it).
 func (rt *Runtime) stampRecordedAtRow(ctx context.Context, row recordedAtIndexRow, fileState string) (recordedAtStampOutcome, recordedAtSource, error) {
+	return rt.stampRecordedAtRowWith(ctx, row, func(ctx context.Context, tx *sql.Tx, opusName, value string) error {
+		return queueRecordedAtFileTx(ctx, tx, opusName, value, fileState)
+	})
+}
+
+// stampRecordedAtRowWith is stampRecordedAtRow with the file's entry written
+// by enter, in the same transaction as the stamp.
+func (rt *Runtime) stampRecordedAtRowWith(ctx context.Context, row recordedAtIndexRow, enter func(ctx context.Context, tx *sql.Tx, opusName, value string) error) (recordedAtStampOutcome, recordedAtSource, error) {
 	if present := entryRecordedAtUTC(json.RawMessage(row.entry)); present != "" {
 		// The entry states its instant; the column only mirrors it. A file
 		// that says so needs no rewrite, so nothing is queued.
@@ -167,7 +175,7 @@ func (rt *Runtime) stampRecordedAtRow(ctx context.Context, row recordedAtIndexRo
 		return recordedAtRaced, "", nil
 	}
 	if meetingExtension(row.opusName) == ".opus" {
-		if err := queueRecordedAtFileTx(ctx, tx, row.opusName, value, fileState); err != nil {
+		if err := enter(ctx, tx, row.opusName, value); err != nil {
 			return 0, "", err
 		}
 	}
@@ -184,12 +192,25 @@ func queueRecordedAtFileTx(ctx context.Context, tx *sql.Tx, opusName, value, sta
 	return err
 }
 
+// requeueRepublishedRecordedAtFileTx enters a just-replaced file afresh,
+// carrying the administrator's decision over from the old one in the same
+// statement: pending when the old file had been asked for (any state past
+// needed), needed otherwise. One statement, so a start committing meanwhile
+// is either seen (pending) or comes after (and converts needed itself).
+func requeueRepublishedRecordedAtFileTx(ctx context.Context, tx *sql.Tx, opusName, value string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO recorded_at_file_backfill(opus_name, recorded_at_utc, state, updated_at) VALUES(?, ?, 'needed', ?)
+ ON CONFLICT(opus_name) DO UPDATE SET recorded_at_utc=excluded.recorded_at_utc,
+ state=CASE WHEN recorded_at_file_backfill.state='needed' THEN 'needed' ELSE 'pending' END,
+ attempts=0, retry_at=0, last_error='', updated_at=excluded.updated_at`, opusName, value, nowUTCString())
+	return err
+}
+
 // stampPublishedRecordedAt runs right after a publish indexed an entry. An
-// entry that states its instant is left alone; otherwise the meeting is
-// stamped as the backfill would, and its file — just replaced — entered
-// afresh: pending when the administrator had already asked for the old file
-// (any state past needed), needed otherwise. A republish neither starts the
-// migration for a file nobody asked about nor drops one somebody did.
+// entry that states its instant is left alone and its file needs nothing;
+// otherwise the meeting is stamped as the backfill would, and its file —
+// just replaced — entered afresh (requeueRepublishedRecordedAtFileTx). A
+// republish neither starts the migration for a file nobody asked about nor
+// drops one somebody did.
 func (rt *Runtime) stampPublishedRecordedAt(ctx context.Context, fileID int64, opusName string) error {
 	if rt == nil || rt.meetingMetadata == nil || rt.store == nil {
 		return nil
@@ -202,23 +223,21 @@ func (rt *Runtime) stampPublishedRecordedAt(ctx context.Context, fileID int64, o
 	if err != nil {
 		return err
 	}
+	if rt.recordedAtBeforeRepublishStamp != nil {
+		rt.recordedAtBeforeRepublishStamp()
+	}
 	// The delivery replaced the file, so whatever an earlier pass did to the
-	// old one says nothing about it: either the new file states its instant
-	// (nothing to do) or it is queued afresh below.
-	fileState := recordedAtStateNeeded
-	var previous string
-	err = rt.meetingMetadata.db.QueryRowContext(ctx, `SELECT state FROM recorded_at_file_backfill WHERE opus_name=?`, opusName).Scan(&previous)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	// old one says nothing about it: either it is entered afresh (in the
+	// stamp's transaction), or the new file needs nothing and its row goes.
+	outcome, _, err := rt.stampRecordedAtRowWith(ctx, row, requeueRepublishedRecordedAtFileTx)
+	if err != nil {
 		return err
 	}
-	if previous != "" && previous != recordedAtStateNeeded {
-		fileState = recordedAtStatePending
-	}
-	if _, err := rt.meetingMetadata.db.ExecContext(ctx, `DELETE FROM recorded_at_file_backfill WHERE opus_name=?`, opusName); err != nil {
-		return err
-	}
-	if _, _, err := rt.stampRecordedAtRow(ctx, row, fileState); err != nil {
-		return err
+	switch outcome {
+	case recordedAtPresent, recordedAtNoJob, recordedAtNoEvidence:
+		if _, err := rt.meetingMetadata.db.ExecContext(ctx, `DELETE FROM recorded_at_file_backfill WHERE opus_name=?`, opusName); err != nil {
+			return err
+		}
 	}
 	rt.wakeRecordedAtFiles()
 	return nil
