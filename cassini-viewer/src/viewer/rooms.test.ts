@@ -177,6 +177,33 @@ describe("groupMeetingsByMonth", () => {
     expect(groups[0].key).toBe("2026-07");
   });
 
+  it("files an instant by the month the reader's clock shows", () => {
+    // 23:30 UTC on 31 January is 00:30 on 1 February in Rome (the suite's
+    // zone): the row prints 1 Feb, so the heading says February. The label-only
+    // entry with the same digits stays in January, as its row prints.
+    const groups = groupMeetingsByMonth([
+      meeting({ id: "instant", dateLabel: "2026-01-31 23:30", recordedAtUtc: "2026-01-31T23:30:00Z" }),
+      meeting({ id: "label", dateLabel: "2026-01-31 23:30" }),
+    ]);
+    expect(groups.map((group) => [group.label, group.meetings.map((m) => m.id)])).toEqual([
+      ["February 2026", ["instant"]],
+      ["January 2026", ["label"]],
+    ]);
+  });
+
+  it("files the same instant in January for a reader west of UTC", () => {
+    const realTZ = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      const groups = groupMeetingsByMonth([
+        meeting({ id: "instant", dateLabel: "2026-01-31 23:30", recordedAtUtc: "2026-01-31T23:30:00Z" }),
+      ]);
+      expect(groups[0].key).toBe("2026-01");
+    } finally {
+      process.env.TZ = realTZ;
+    }
+  });
+
   it("returns nothing for an empty list", () => {
     expect(groupMeetingsByMonth([])).toEqual([]);
   });
