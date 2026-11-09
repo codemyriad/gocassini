@@ -36,7 +36,9 @@ import (
 //	            settles it from the file itself
 //	done      — the file carries the instant (or states its own)
 //	blocked   — needs a person: the file is missing, or the CLI cannot
-//	            set the field; last_error says which
+//	            set the field; last_error says which. Requeued as pending
+//	            on the next operator start, which is the "retry" the
+//	            messages ask for once the person has fixed it.
 
 const (
 	recordedAtFileWorkers      = 2
@@ -57,6 +59,9 @@ type recordedAtFileWorker struct {
 	claimed sync.Map
 	start   sync.Once
 	now     func() time.Time
+	// afterAttempt, when set (tests only), runs between an attempt and the
+	// write of its outcome, with the per-recording lock still held.
+	afterAttempt func(name string)
 }
 
 func newRecordedAtFileWorker(rt *Runtime, exapp ExAppConfig, client *http.Client, logger *log.Logger) *recordedAtFileWorker {
@@ -100,12 +105,28 @@ func (w *recordedAtFileWorker) startWorkers() {
 		return
 	}
 	w.start.Do(func() {
+		if n, err := w.requeueBlocked(w.rt.ctx); err != nil {
+			w.logf("recorded-at: requeue blocked files: %v", err)
+		} else if n > 0 {
+			w.logf("recorded-at: retrying %d blocked file(s)", n)
+		}
 		for i := 0; i < recordedAtFileWorkers; i++ {
 			w.rt.workerWG.Add(1)
 			go w.loop()
 		}
 		w.poke()
 	})
+}
+
+// requeueBlocked gives every blocked file another attempt. A block needs a
+// person (restore the file, upgrade the CLI); a restart is when what they
+// fixed can take effect.
+func (w *recordedAtFileWorker) requeueBlocked(ctx context.Context) (int64, error) {
+	result, err := w.rt.meetingMetadata.db.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', attempts=0, retry_at=0, updated_at=? WHERE state='blocked'`, nowUTCString())
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (w *recordedAtFileWorker) loop() {
@@ -179,10 +200,22 @@ func (e *recordedAtFileBlocked) Error() string { return e.reason }
 // processOne runs one file and records the outcome. Every error leaves the
 // row due again later; only a verified write (or proof none is needed)
 // advances it to done.
+//
+// The outcome is written while the per-recording lock is still held. A
+// publish takes the same lock to replace the file and requeue its row; an
+// outcome written after release could land on that fresh row and, say,
+// block a file this attempt never saw.
 func (w *recordedAtFileWorker) processOne(ctx context.Context, name string) {
 	ctx, cancel := context.WithTimeout(ctx, recordedAtFileTimeout)
 	defer cancel()
-	err := w.retagFile(ctx, name)
+	release, err := annotationWriteLocks.acquire(ctx, name)
+	if err == nil {
+		defer release()
+		err = w.retagFile(ctx, name)
+	}
+	if w.afterAttempt != nil {
+		w.afterAttempt(name)
+	}
 	store := w.rt.meetingMetadata
 	persist, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), annotateIndexTimeout)
 	defer persistCancel()
@@ -221,17 +254,13 @@ func (w *recordedAtFileWorker) setState(ctx context.Context, name, state string)
 	return err
 }
 
-// retagFile is one pass of the pipeline for one delivered file.
+// retagFile is one pass of the pipeline for one delivered file. The caller
+// holds the recording's write lock.
 func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error {
-	release, err := annotationWriteLocks.acquire(ctx, name)
-	if err != nil {
-		return err
-	}
-	defer release()
 	// Re-read under the lock: a publish may have replaced the file and its
 	// row while this worker waited.
 	var value, state string
-	err = w.rt.meetingMetadata.db.QueryRowContext(ctx, `SELECT recorded_at_utc, state FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&value, &state)
+	err := w.rt.meetingMetadata.db.QueryRowContext(ctx, `SELECT recorded_at_utc, state FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&value, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

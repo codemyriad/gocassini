@@ -357,3 +357,85 @@ func TestRecordedAtFileWorkerBlocksOnUnsupportedCLI(t *testing.T) {
 		t.Fatal("blocked rows are not retried")
 	}
 }
+
+// writeLockHeld reports whether some caller holds the per-recording lock.
+func writeLockHeld(name string) bool {
+	annotationWriteLocks.mu.Lock()
+	defer annotationWriteLocks.mu.Unlock()
+	lock := annotationWriteLocks.locks[name]
+	return lock != nil && len(lock.slot) == 1
+}
+
+// A publish replaces the file and requeues its row under the per-recording
+// lock. An attempt's outcome is written under that lock too, so it can never
+// land on the publish's fresh row: here a blocked outcome would otherwise
+// turn the requeued file blocked for good.
+func TestRecordedAtFileWorkerOutcomeCannotOverwriteAPublishRequeue(t *testing.T) {
+	f := newFileWorkerFixture(t, 2)
+	ctx := context.Background()
+	var heldAtOutcome bool
+	published := make(chan error, 1)
+	f.w.afterAttempt = func(name string) {
+		heldAtOutcome = writeLockHeld(name)
+		go func() {
+			release, err := annotationWriteLocks.acquire(ctx, name)
+			if err != nil {
+				published <- err
+				return
+			}
+			defer release()
+			db := f.w.rt.meetingMetadata.db
+			if _, err := db.Exec(`DELETE FROM recorded_at_file_backfill WHERE opus_name=?`, name); err != nil {
+				published <- err
+				return
+			}
+			tx, err := db.Begin()
+			if err != nil {
+				published <- err
+				return
+			}
+			if err := queueRecordedAtFileTx(ctx, tx, name, testRecordedAt); err != nil {
+				_ = tx.Rollback()
+				published <- err
+				return
+			}
+			published <- tx.Commit()
+		}()
+	}
+	f.w.processOne(ctx, "MEETING1.opus")
+	if err := <-published; err != nil {
+		t.Fatal(err)
+	}
+	if !heldAtOutcome {
+		t.Fatal("the outcome was written after the recording's lock was released")
+	}
+	if r := f.row(t); r.state != "pending" {
+		t.Fatalf("the publish's requeued row = %+v, want pending", r)
+	}
+}
+
+// A blocked file is retried on the next operator start, once a person had
+// the chance to fix what blocked it; other states are left as they are.
+func TestRecordedAtFileWorkerRequeuesBlockedOnStart(t *testing.T) {
+	f := newFileWorkerFixture(t, 2)
+	ctx := context.Background()
+	f.w.drain(ctx)
+	if r := f.row(t); r.state != "blocked" {
+		t.Fatalf("row = %+v, want blocked", r)
+	}
+	db := f.w.rt.meetingMetadata.db
+	if _, err := db.Exec(`INSERT INTO recorded_at_file_backfill(opus_name, recorded_at_utc, state, updated_at) VALUES('DONE.opus', ?, 'done', 'now')`, testRecordedAt); err != nil {
+		t.Fatal(err)
+	}
+	n, err := f.w.requeueBlocked(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("requeued = %d %v, want 1", n, err)
+	}
+	if r := f.row(t); r.state != "pending" || r.attempts != 0 || r.retryAt != 0 {
+		t.Fatalf("row = %+v, want pending and due", r)
+	}
+	var done string
+	if err := db.QueryRow(`SELECT state FROM recorded_at_file_backfill WHERE opus_name='DONE.opus'`).Scan(&done); err != nil || done != "done" {
+		t.Fatalf("done row = %q %v", done, err)
+	}
+}
