@@ -384,6 +384,27 @@ func TestDecodeContextDocumentForms(t *testing.T) {
 	}
 }
 
+// The CLI's context document states when the recording started; MCP passes
+// both the instant and the zone-less label through unchanged.
+func TestDecodeContextDocumentKeepsRecordingStart(t *testing.T) {
+	doc := `{"version":"cassini.meetings.context.v1","meeting":{"id":"A","title":"a","recordedAtUtc":"2026-11-09T11:31:48.250Z","recordedAtLocal":"2026-11-09T12:31:48"},"transcriptSource":"derived-from-words","wordCount":0,"segments":[],"summary":{"present":false}}`
+	got, err := decodeContextDocument([]byte(doc))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	meeting := got.Meetings[0].Meeting
+	if meeting.RecordedAtUTC != "2026-11-09T11:31:48.250Z" || meeting.RecordedAtLocal != "2026-11-09T12:31:48" {
+		t.Fatalf("meeting = %+v, want both recording-start fields kept", meeting)
+	}
+	out, err := json.Marshal(meeting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"recordedAtLocal":"2026-11-09T12:31:48"`) {
+		t.Fatalf("re-encoded meeting lost recordedAtLocal: %s", out)
+	}
+}
+
 // The published route takes the same window, so the viewer and the CLI can
 // read a stretch too.
 func TestMeetingsContextRouteParsesAWindow(t *testing.T) {

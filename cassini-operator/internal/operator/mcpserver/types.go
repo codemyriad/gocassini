@@ -232,10 +232,13 @@ type MeetingContext struct {
 
 // ContextMeeting is what the meeting was.
 type ContextMeeting struct {
-	ID              string `json:"id"`
-	Title           string `json:"title"`
-	CreatedAtUTC    string `json:"createdAtUtc,omitempty"`
-	RecordedAtUTC   string `json:"recordedAtUtc,omitempty"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	CreatedAtUTC  string `json:"createdAtUtc,omitempty"`
+	RecordedAtUTC string `json:"recordedAtUtc,omitempty"`
+	// RecordedAtLocal is the file's zone-less wall-clock label, shown as
+	// such and never converted; RecordedAtUTC wins when both are present.
+	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
 	DurationMS      int64  `json:"durationMs,omitempty"`
 	RoomID          string `json:"roomId,omitempty"`
 	RoomName        string `json:"roomName,omitempty"`
