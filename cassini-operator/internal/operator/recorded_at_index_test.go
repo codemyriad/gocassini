@@ -318,7 +318,9 @@ func TestRecordedAtBackfillKeepsRoomDefaults(t *testing.T) {
 	}
 }
 
-// A version 2 index migrates in place: rows survive and gain the column.
+// A version 2 index migrates in place: rows survive and gain the column, and
+// user_version stays 2 so a released operator (which refuses anything newer)
+// can still open the file after a rollback.
 func TestMeetingMetadataV2MigratesRecordedAtColumn(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "meetings.sqlite3")
 	old, err := openSidecarDB(file, "fixture", meetingMetadataSchema+roomNamesSchema, 2, nil)
@@ -337,7 +339,7 @@ func TestMeetingMetadataV2MigratesRecordedAtColumn(t *testing.T) {
 	defer s.Close()
 	var version int
 	var column, entry string
-	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 3 {
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 2 {
 		t.Fatalf("version = %d %v", version, err)
 	}
 	if err := s.db.QueryRow(`SELECT recorded_at_utc, entry_json FROM meeting_metadata WHERE file_id=1`).Scan(&column, &entry); err != nil || column != "" || entry != raw {
@@ -345,6 +347,20 @@ func TestMeetingMetadataV2MigratesRecordedAtColumn(t *testing.T) {
 	}
 	if counts, err := s.recordedAtFileCounts(context.Background()); err != nil || len(counts) != 0 {
 		t.Fatalf("counts = %v %v", counts, err)
+	}
+	// A released operator's write (it names its columns and knows nothing of
+	// recorded_at_utc) still lands, and the next open of this build is a no-op.
+	if _, err := s.db.Exec(`INSERT INTO meeting_metadata (file_id, opus_name, date_label, entry_json, indexed_at) VALUES (2, 'B.opus', '', '{}', 'now')`); err != nil {
+		t.Fatalf("released-operator insert: %v", err)
+	}
+	s.Close()
+	again, err := openMeetingMetadataStore(file, nil)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer again.Close()
+	if err := again.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 2 {
+		t.Fatalf("version after reopen = %d %v", version, err)
 	}
 }
 

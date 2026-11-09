@@ -18,7 +18,7 @@ import (
 // derived; room_names in the SAME database are durable user data.
 const (
 	meetingMetadataFilename = "meetings.sqlite3"
-	meetingMetadataVersion  = 3
+	meetingMetadataVersion  = 2
 	meetingMetadataSchema   = `
 CREATE TABLE IF NOT EXISTS meeting_metadata (
   file_id     INTEGER PRIMARY KEY,
@@ -30,11 +30,13 @@ CREATE TABLE IF NOT EXISTS meeting_metadata (
 CREATE INDEX IF NOT EXISTS meeting_metadata_by_name ON meeting_metadata(opus_name);
 CREATE INDEX IF NOT EXISTS meeting_metadata_by_date ON meeting_metadata(date_label);
 `
-	// Version 3 adds the meeting's instant (recordedAtUtc, normalised to
+	// The meeting's instant (recordedAtUtc, normalised to
 	// recordedAtUTCLayout; '' when the entry has none) beside its label, and
-	// the progress of writing it back into delivered files. The column is
-	// added rather than declared above so version 1 and 2 files migrate in
-	// place; the backfill fills it (recorded_at_index.go).
+	// the progress of writing it back into delivered files. Purely additive,
+	// so it is applied on every open and user_version stays 2: a released
+	// operator refuses a newer version, and this schema is one it can run on
+	// unchanged, so a rollback keeps the room names and the index. The
+	// backfill fills the column (recorded_at_index.go).
 	meetingMetadataRecordedAtSchema = `
 CREATE INDEX IF NOT EXISTS meeting_metadata_by_recorded_at ON meeting_metadata(recorded_at_utc);
 CREATE TABLE IF NOT EXISTS recorded_at_file_backfill (
@@ -89,21 +91,21 @@ func openMeetingMetadataStore(file string, logger *log.Logger) (*meetingMetadata
 		if _, err := tx.Exec(meetingMetadataSchema + roomNamesSchema); err != nil {
 			return fail(err)
 		}
-		var hasColumn int
-		if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('meeting_metadata') WHERE name='recorded_at_utc'`).Scan(&hasColumn); err != nil {
-			return fail(err)
-		}
-		if hasColumn == 0 {
-			if _, err := tx.Exec(`ALTER TABLE meeting_metadata ADD COLUMN recorded_at_utc TEXT NOT NULL DEFAULT ''`); err != nil {
-				return fail(err)
-			}
-		}
-		if _, err := tx.Exec(meetingMetadataRecordedAtSchema); err != nil {
-			return fail(err)
-		}
 		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", meetingMetadataVersion)); err != nil {
 			return fail(err)
 		}
+	}
+	var hasColumn int
+	if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('meeting_metadata') WHERE name='recorded_at_utc'`).Scan(&hasColumn); err != nil {
+		return fail(err)
+	}
+	if hasColumn == 0 {
+		if _, err := tx.Exec(`ALTER TABLE meeting_metadata ADD COLUMN recorded_at_utc TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fail(err)
+		}
+	}
+	if _, err := tx.Exec(meetingMetadataRecordedAtSchema); err != nil {
+		return fail(err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fail(err)
