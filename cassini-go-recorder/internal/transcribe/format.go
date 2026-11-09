@@ -175,8 +175,12 @@ type artifactManifest struct {
 }
 
 type artifactSource struct {
-	Basename        string `json:"basename"`
-	DurationMS      int64  `json:"durationMs"`
+	Basename   string `json:"basename"`
+	DurationMS int64  `json:"durationMs"`
+	// RecordedAtUTC is the instant at position 0 of the meeting timeline,
+	// derived from the MKV's wall-clock anchors (recordedAtUTCFromStreams).
+	// Pack carries it to meeting.recordedAtUtc.
+	RecordedAtUTC   string `json:"recordedAtUtc,omitempty"`
 	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
 }
 
@@ -320,8 +324,13 @@ type HintsProvenance struct {
 // the point where a reader could tell the two device strings and the three
 // booleans apart at a call site.
 type ManifestInput struct {
-	Processing       *portable.Processing
-	SrcBasename      string
+	Processing  *portable.Processing
+	SrcBasename string
+	// RecordedAtUTC is the instant at position 0 of the meeting timeline
+	// (RFC 3339 UTC ending in Z), or "" when unknown.
+	RecordedAtUTC string
+	// RecordedAtLocal is a zone-less label, written only by a caller that
+	// knows the recording site's zone. The Talk build path does not.
 	RecordedAtLocal  string
 	SrcDurationMS    int64
 	DigestDurationMS int64
@@ -423,6 +432,10 @@ func WriteManifest(path string, in ManifestInput) error {
 	} else {
 		recordedAtLocal = meetingtime.InferRecordedAtLocal(in.SrcBasename)
 	}
+	recordedAtUTC := strings.TrimSpace(in.RecordedAtUTC)
+	if recordedAtUTC != "" && !portable.ValidRecordedAtUTC(recordedAtUTC) {
+		return fmt.Errorf("invalid recordedAtUtc %q", recordedAtUTC)
+	}
 	doc := artifactManifest{
 		Processing:  in.Processing,
 		Kind:        "cassini.meeting-artifact.v1",
@@ -431,6 +444,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		Source: artifactSource{
 			Basename:        in.SrcBasename,
 			DurationMS:      in.SrcDurationMS,
+			RecordedAtUTC:   recordedAtUTC,
 			RecordedAtLocal: recordedAtLocal,
 		},
 		Files:            files,

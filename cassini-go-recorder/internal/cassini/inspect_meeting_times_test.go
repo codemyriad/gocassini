@@ -3,6 +3,7 @@ package cassini
 import (
 	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	inspectpkg "gocassini/internal/inspect"
@@ -10,7 +11,10 @@ import (
 
 func TestInspectMeetingTimes(t *testing.T) {
 	requireFFMediaTools(t)
-	file := packFixtureOpus(t, t.TempDir(), "meeting")
+	dir := t.TempDir()
+	packed := packFixtureOpus(t, dir, "meeting")
+	file := filepath.Join(dir, "started.opus")
+	runRetagJSON(t, packed, "--out", file, "--recorded-at-utc", "2026-11-09T11:31:48.250Z")
 	meeting, err := inspectpkg.ExtractMeeting(file)
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +27,8 @@ func TestInspectMeetingTimes(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &dates); err != nil {
 		t.Fatal(err)
 	}
-	if len(dates) != 2 || dates["createdAtUtc"] == "" || dates["createdAtUtc"] != meeting.Manifest.Meeting.CreatedAtUTC || dates["recordedAtLocal"] != meeting.Manifest.Meeting.RecordedAtLocal {
+	if len(dates) != 3 || dates["createdAtUtc"] == "" || dates["createdAtUtc"] != meeting.Manifest.Meeting.CreatedAtUTC ||
+		dates["recordedAtUtc"] != "2026-11-09T11:31:48.250Z" || dates["recordedAtLocal"] != meeting.Manifest.Meeting.RecordedAtLocal {
 		t.Fatal(dates)
 	}
 }

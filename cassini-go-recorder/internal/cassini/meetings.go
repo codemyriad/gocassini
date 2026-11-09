@@ -366,6 +366,16 @@ type meetingsClient struct {
 	// an arbitrary link, so it bounds the time to first byte rather than the
 	// whole transfer, and lets the context govern the rest.
 	stream *http.Client
+	// loc is the zone dateLabels are read in so they can be ordered against
+	// recording starts; nil means time.Local.
+	loc *time.Location
+}
+
+func (c *meetingsClient) location() *time.Location {
+	if c == nil || c.loc == nil {
+		return time.Local
+	}
+	return c.loc
 }
 
 func newMeetingsClient(cfg meetingsConfig) *meetingsClient {

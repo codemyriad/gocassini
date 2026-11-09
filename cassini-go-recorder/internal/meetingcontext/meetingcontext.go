@@ -66,10 +66,19 @@ type MeetingContext struct {
 
 // Meeting is what the meeting was.
 type Meeting struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// CreatedAtUTC is when the file was built, not when the meeting
+	// happened. Kept for consumers that already read it.
 	CreatedAtUTC string `json:"createdAtUtc,omitempty"`
-	DurationMS   int64  `json:"durationMs,omitempty"`
+	// RecordedAtUTC is when the recording started: the instant at position 0
+	// of the audio, so a segment's wall-clock time is RecordedAtUTC + startMs.
+	// RFC 3339 UTC. Absent when the file does not know it.
+	RecordedAtUTC string `json:"recordedAtUtc,omitempty"`
+	// RecordedAtLocal is the file's zone-less wall-clock label, carried only
+	// so a reader can show it as such. It is never converted to an instant.
+	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
+	DurationMS      int64  `json:"durationMs,omitempty"`
 	// RoomID and RoomName say which conversation this meeting came out of
 	// (D-640). Both optional — a meeting with no room is an ordinary state —
 	// and both are read from the catalog entry rather than from the file,
@@ -344,6 +353,8 @@ type BuildInput struct {
 	ID              string
 	Title           string
 	CreatedAtUTC    string
+	RecordedAtUTC   string
+	RecordedAtLocal string
 	DurationMS      int64
 	RoomID          string
 	RoomName        string
@@ -373,6 +384,8 @@ func Build(in BuildInput) MeetingContext {
 			ID:              strings.TrimSpace(in.ID),
 			Title:           strings.TrimSpace(in.Title),
 			CreatedAtUTC:    strings.TrimSpace(in.CreatedAtUTC),
+			RecordedAtUTC:   strings.TrimSpace(in.RecordedAtUTC),
+			RecordedAtLocal: strings.TrimSpace(in.RecordedAtLocal),
 			DurationMS:      in.DurationMS,
 			RoomID:          strings.TrimSpace(in.RoomID),
 			RoomName:        strings.TrimSpace(in.RoomName),

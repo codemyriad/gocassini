@@ -16,8 +16,9 @@ import (
 // document, already filtered to what this account may read, and it is the only
 // index there is.
 type meetingsFilter struct {
-	// from and to are inclusive bounds on the meeting's dateLabel, compared in
-	// the label's own zone-less wall-clock space.
+	// from and to are inclusive bounds, read in the reader's zone (D-484's
+	// zone-less wall clock for entries that carry only a dateLabel, an instant
+	// for entries that carry recordedAtUtc; see meetingTime).
 	from    time.Time
 	hasFrom bool
 	to      time.Time
@@ -60,18 +61,18 @@ const meetingsFilterStampLayout = "2006-01-02 15:04:05"
 // Validation happens before the network call on purpose: a malformed date is a
 // usage error the caller must fix, and making them wait for a round trip to
 // hear it is pure cost.
-func parseMeetingsFilter(from, to, room string) (meetingsFilter, error) {
+func parseMeetingsFilter(from, to, room string, loc *time.Location) (meetingsFilter, error) {
 	var filter meetingsFilter
 	var err error
 	if trimmed := strings.TrimSpace(from); trimmed != "" {
-		filter.from, err = parseMeetingsFilterBound(trimmed, false)
+		filter.from, err = parseMeetingsFilterBound(trimmed, false, loc)
 		if err != nil {
 			return meetingsFilter{}, fmt.Errorf("--from: %w", err)
 		}
 		filter.hasFrom = true
 	}
 	if trimmed := strings.TrimSpace(to); trimmed != "" {
-		filter.to, err = parseMeetingsFilterBound(trimmed, true)
+		filter.to, err = parseMeetingsFilterBound(trimmed, true, loc)
 		if err != nil {
 			return meetingsFilter{}, fmt.Errorf("--to: %w", err)
 		}
@@ -98,23 +99,26 @@ func parseMeetingsFilter(from, to, room string) (meetingsFilter, error) {
 // which is what anyone typing it intends; a --to that stopped at midnight would
 // silently drop the last day.
 //
-// No timezone is parsed or applied. dateLabel deliberately does not know its
-// zone (D-484), so item.at is a wall clock valid only for relative ordering.
-// Comparisons stay in that space; asserting a zone here would invent an instant
-// the data cannot justify.
-func parseMeetingsFilterBound(value string, endOfRange bool) (time.Time, error) {
+// The bound is read in loc, the reader's zone. Against a meeting that carries
+// recordedAtUtc that makes `--from 2026-11-09` mean local midnight. Against a
+// meeting that only has a dateLabel, which deliberately does not know its zone
+// (D-484), the label is read in the same zone (meetingTime), so the comparison
+// stays the zone-less digit comparison it always was.
+func parseMeetingsFilterBound(value string, endOfRange bool, loc *time.Location) (time.Time, error) {
 	for _, layout := range meetingDateLabelLayouts {
-		at, err := time.Parse(layout, value)
+		at, err := time.ParseInLocation(layout, value, loc)
 		if err != nil {
 			continue
 		}
 		if endOfRange && layout == "2006-01-02" {
-			return at.Add(24*time.Hour - time.Second), nil
+			// The last second of that calendar day, by the calendar rather
+			// than +24h, which is wrong across a DST change.
+			return time.Date(at.Year(), at.Month(), at.Day(), 23, 59, 59, 0, loc), nil
 		}
 		return at, nil
 	}
 	return time.Time{}, fmt.Errorf(
-		"%q is not a date this catalog uses; write it as 2026-08-11, 2026-08-11 14:30 or 2026-08-11 14:30:05 (no timezone — meeting dates do not carry one)",
+		"%q is not a date this catalog uses; write it as 2026-08-11, 2026-08-11 14:30 or 2026-08-11 14:30:05 (read in your local time zone)",
 		oneLineField(value))
 }
 
