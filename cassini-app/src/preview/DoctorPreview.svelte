@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import RecordingSetup from "../RecordingSetup.svelte";
+  import RecordedAtMigration from "../RecordedAtMigration.svelte";
   import { createPreviewClient, doctorScenarios } from "./doctorScenarios";
   import { notifySetupChanged } from "../operator/setupSignal";
 
@@ -110,6 +111,7 @@
       </div>
       <div style:max-width={width || null} class="op-settings {width ? 'rounded-box border border-dashed border-base-300 p-2' : ''}">
         <RecordingSetup {operatorClient} provisioningBase="https://preview.invalid/index.php/apps/app_api/proxy/gocassini/operator/" on:openStorage={() => { notice = "This would open Publish pipeline in the live app. Server configuration is unavailable in this preview."; }} on:openRun={(event) => { notice = `This would open run ${event.detail} on the Recordings page in the live app, with the stage it stopped at, the stop reason and its logs. Recordings are unavailable in this preview.`; }} />
+        <RecordedAtMigration {operatorClient} pollMs={1500} />
       </div>
       {#if notice}<p class="rounded-box bg-base-100 p-4 text-sm" role="status">{notice}</p>{/if}
     {:else}

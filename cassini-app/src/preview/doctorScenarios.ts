@@ -9,6 +9,7 @@
 // probe agreeing), not the wording.
 import type { OperatorClient } from "../operator/client";
 import { checkLabels, type CheckState, type ReadinessCheck, type RecordingReadiness } from "../operator/readiness";
+import { normalizeRecordedAtMigration, type RecordedAtMigration } from "../operator/recordedAtMigration";
 
 export const doctorScenarios = [
   { id: "healthy", title: "Healthy recording setup", description: "Every check passing, a saved credential, and a test recording someone played back." },
@@ -34,10 +35,14 @@ export const doctorScenarios = [
   { id: "search-failed-index", title: "Re-index failed: search index unavailable", description: "A retry would fail the same way, so the row offers steps, not a button." },
   { id: "search-failed-environment", title: "Re-index failed: AppAPI settings missing", description: "Cassini is running without the settings AppAPI gives it. No retry, a deployment step instead." },
   { id: "old-findings", title: "Passing checks are two days old", description: "Age is shown separately from the verdict; simulated checks refresh timestamps." },
+  { id: "recorded-at-needed", title: "Past recordings lack their recording time", description: "The migration is found but not started: the count, what rewriting does in Nextcloud (versions, activity, notifications) as Nextcloud reports it, and the button. Starting simulates progress." },
+  { id: "recorded-at-running", title: "Writing recording times into files", description: "The migration is running, with a Pause button. Pausing lets the file in progress finish first." },
+  { id: "recorded-at-paused", title: "Recording-time migration paused", description: "Paused with files left, offering Resume." },
+  { id: "recorded-at-blocked", title: "Some recordings could not be rewritten", description: "Everything else is done; the blocked recordings are named with what to fix, and Retry. Nextcloud's capabilities could not be read, so the report falls back to Nextcloud's defaults." },
   { id: "refresh-error", title: "Refreshing diagnostics fails", description: "Cassini stops answering after the first read. The callout says why and offers to try again, and the rows keep their last results." },
 ] as const;
 
-type DoctorClient = Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup">;
+type DoctorClient = Pick<OperatorClient, "getReadiness" | "checkReadiness" | "repairReadiness" | "updateRecordingSetup" | "getRecordedAtMigration" | "startRecordedAtMigration" | "pauseRecordedAtMigration">;
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 const rank: Record<CheckState, number> = { passed: 0, not_verified: 1, warn: 2, needs_action: 3 };
 function verdict(checks: ReadinessCheck[]): CheckState {
@@ -330,13 +335,69 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
   return report;
 }
 
-// Deliberately implements only Doctor's four calls, with no fetch, credentials,
+// The operator's sentences for a Nextcloud with Activity, Notifications and
+// versioning enabled — recordedAtNotices in recorded_at_migration.go.
+const noticesEnabled = {
+  known: true, account: "cassini", nextcloud_version: "33.0.9", activity_app: true, notifications_app: true, web_push: false, versioning: true,
+  details: [
+    "Each recording is saved again by Cassini's cassini account, over the same file: its shares, links and file id stay as they are, and the audio is unchanged.",
+    "File versioning is enabled, so the file as it was before is kept as an earlier version in the cassini account and counts toward its storage until Nextcloud expires it. How long versions are kept is set by versions_retention_obligation in Nextcloud's config.php, which Cassini cannot read.",
+    "The Activity app is enabled, so everyone the recording is shared with gets a “file changed by cassini” entry in their Activity stream, one per recording.",
+    "With Nextcloud's defaults the change is not emailed and not sent as a notification: both are off for “A file or folder has been changed”. An administrator can change those defaults under Administration settings › Activity, and each person can turn them on in their own Activity settings. Cassini cannot read either, so anyone who did gets an email or a notification for each recording.",
+    "The Notifications app is enabled, so a person who turned on notifications for changed files gets one per recording in Nextcloud, and on their devices where push notifications are set up.",
+  ],
+};
+// The same when the capabilities could not be read.
+const noticesUnknown = {
+  known: false, account: "cassini", error: "Cassini could not read Nextcloud's capabilities, so it cannot tell whether the Activity and Notifications apps or file versioning are enabled.",
+  details: [
+    noticesEnabled.details[0],
+    "Cassini could not read Nextcloud's capabilities, so it cannot tell whether the Activity and Notifications apps or file versioning are enabled.",
+    "Where file versioning is enabled (Nextcloud's default), the file as it was before is kept as an earlier version. Where the Activity app is enabled (also the default), everyone the recording is shared with gets a “file changed” entry in their Activity stream, one per recording.",
+    noticesEnabled.details[3],
+  ],
+};
+
+// /status's recorded_at_migration for a scenario. Every scenario not about the
+// migration reports not_needed, which the panel does not show.
+export function scenarioMigration(id: string): RecordedAtMigration {
+  const base = { applicable: true, checked: true, paused: false, needed: 0, queued: 0, settling: 0, in_progress: 0, done: 0, blocked: 0, blocked_items: [], workers: 2, pace_seconds: 30 };
+  switch (id) {
+    case "recorded-at-needed":
+      return normalizeRecordedAtMigration({ ...base, state: "needed", needed: 37, notifications: noticesEnabled });
+    case "recorded-at-running":
+      return normalizeRecordedAtMigration({ ...base, state: "running", queued: 21, in_progress: 2, done: 14, notifications: noticesEnabled });
+    case "recorded-at-paused":
+      return normalizeRecordedAtMigration({ ...base, state: "paused", paused: true, queued: 21, done: 16, notifications: noticesEnabled });
+    case "recorded-at-blocked":
+      return normalizeRecordedAtMigration({ ...base, state: "blocked", done: 35, blocked: 2, notifications: noticesUnknown, blocked_items: [
+        { meeting: "01KXQT6N0000000000000000AA.opus", title: "Weekly sync", date_label: "2026-07-17 10:33", reason: "recording is missing; restore it and retry" },
+        { meeting: "01KXQT6N0000000000000000BB.opus", title: "Design review", date_label: "2026-07-21 15:00", reason: "the cassini CLI cannot set recordedAtUtc; upgrade it and retry" },
+      ] });
+    default:
+      return normalizeRecordedAtMigration({ ...base, state: "not_needed" });
+  }
+}
+
+// Deliberately implements only Doctor's calls, with no fetch, credentials,
 // operator URL or persistence. New tabs and reloads always get a fresh fixture.
 export function createPreviewClient(id: string): DoctorClient {
   let report = scenarioReport(id);
   let repairStarted = 0;
   let initialCheck = true;
   let readCount = 0;
+  let migration = scenarioMigration(id);
+  // A started migration finishes the files in progress on each read, as the
+  // panel polls, and takes the next ones unless paused.
+  const advance = () => {
+    if (migration.state !== "running" && migration.state !== "pausing") return;
+    migration.done += migration.in_progress;
+    migration.in_progress = 0;
+    if (migration.state === "pausing") { migration.state = migration.queued > 0 ? "paused" : "done"; return; }
+    migration.in_progress = Math.min(2, migration.queued);
+    migration.queued -= migration.in_progress;
+    if (migration.in_progress === 0) migration.state = migration.blocked > 0 ? "blocked" : "done";
+  };
   const read = () => {
     if (repairStarted && Date.now() - repairStarted >= 4000) {
       const healthy = scenarioReport("healthy");
@@ -349,6 +410,21 @@ export function createPreviewClient(id: string): DoctorClient {
     return structuredClone(report);
   };
   return {
+    async getRecordedAtMigration() {
+      advance();
+      return structuredClone(migration);
+    },
+    async startRecordedAtMigration() {
+      await delay(250);
+      const queued = migration.needed + migration.blocked + migration.queued;
+      migration = { ...migration, state: "running", paused: false, needed: 0, blocked: 0, blocked_items: [], queued: Math.max(0, queued - 2), in_progress: Math.min(2, queued) };
+      return structuredClone(migration);
+    },
+    async pauseRecordedAtMigration() {
+      await delay(250);
+      migration = { ...migration, paused: true, state: migration.in_progress > 0 ? "pausing" : "paused" };
+      return structuredClone(migration);
+    },
     async getReadiness() {
       if (id === "refresh-error" && readCount++ > 0) throw Object.assign(new Error("503 Service Unavailable"), { status: 503 });
       return read();
