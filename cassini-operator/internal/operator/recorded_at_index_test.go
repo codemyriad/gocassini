@@ -235,7 +235,7 @@ func TestRecordedAtIndexBackfillYieldsToConcurrentPublish(t *testing.T) {
 	}
 	replacement := `{"id":"` + startedJob + `","title":"Rerun","dateLabel":"2026-07-17 10:33","audioPath":"./meetings/` + startedJob + `.opus"}`
 	f.put(t, 3, startedJob+".opus", replacement)
-	outcome, _, err := f.rt.stampRecordedAtRow(context.Background(), row)
+	outcome, _, err := f.rt.stampRecordedAtRow(context.Background(), row, recordedAtStateNeeded)
 	if err != nil || outcome != recordedAtRaced {
 		t.Fatalf("outcome = %v err=%v", outcome, err)
 	}

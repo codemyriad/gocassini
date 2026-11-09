@@ -16,8 +16,9 @@ import (
 // meeting index (meetings.sqlite3) only changes on publish, import or reseed,
 // so nothing would ever give their entries an instant. This file stamps one
 // into each recorded meeting's indexed entry, derived from what the operator
-// still holds about the recording (chooseRecordedAt), and queues the delivered
-// file for the same value (recorded_at_files.go). A meeting with no jobs row —
+// still holds about the recording (chooseRecordedAt), and records that the
+// delivered file needs the same value (recorded_at_files.go, state needed —
+// rewriting it waits for an administrator). A meeting with no jobs row —
 // an import, a seeded legacy entry — is left exactly as it is.
 
 // recordedAtIndexReport is one pass over the index.
@@ -86,7 +87,7 @@ func (rt *Runtime) backfillRecordedAtIndex(ctx context.Context) (recordedAtIndex
 		if rt.recordedAtIndexBeforeStamp != nil {
 			rt.recordedAtIndexBeforeStamp(row)
 		}
-		outcome, source, err := rt.stampRecordedAtRow(ctx, row)
+		outcome, source, err := rt.stampRecordedAtRow(ctx, row, recordedAtStateNeeded)
 		if err != nil {
 			return report, fmt.Errorf("stamp %s: %w", row.opusName, err)
 		}
@@ -117,8 +118,10 @@ const (
 )
 
 // stampRecordedAtRow stamps one indexed entry when the operator recorded it
-// and it has no instant yet.
-func (rt *Runtime) stampRecordedAtRow(ctx context.Context, row recordedAtIndexRow) (recordedAtStampOutcome, recordedAtSource, error) {
+// and it has no instant yet, and enters its delivered file in the file
+// backfill as fileState (needed, or pending where the administrator already
+// asked for it).
+func (rt *Runtime) stampRecordedAtRow(ctx context.Context, row recordedAtIndexRow, fileState string) (recordedAtStampOutcome, recordedAtSource, error) {
 	if present := entryRecordedAtUTC(json.RawMessage(row.entry)); present != "" {
 		// The entry states its instant; the column only mirrors it. A file
 		// that says so needs no rewrite, so nothing is queued.
@@ -164,7 +167,7 @@ func (rt *Runtime) stampRecordedAtRow(ctx context.Context, row recordedAtIndexRo
 		return recordedAtRaced, "", nil
 	}
 	if meetingExtension(row.opusName) == ".opus" {
-		if err := queueRecordedAtFileTx(ctx, tx, row.opusName, value); err != nil {
+		if err := queueRecordedAtFileTx(ctx, tx, row.opusName, value, fileState); err != nil {
 			return 0, "", err
 		}
 	}
@@ -174,16 +177,19 @@ func (rt *Runtime) stampRecordedAtRow(ctx context.Context, row recordedAtIndexRo
 	return recordedAtStamped, source, nil
 }
 
-// queueRecordedAtFileTx asks for the delivered file to carry value. A file
-// already queued keeps its progress.
-func queueRecordedAtFileTx(ctx context.Context, tx *sql.Tx, opusName, value string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO recorded_at_file_backfill(opus_name, recorded_at_utc, state, updated_at) VALUES(?, ?, 'pending', ?) ON CONFLICT(opus_name) DO NOTHING`, opusName, value, nowUTCString())
+// queueRecordedAtFileTx records that the delivered file should carry value,
+// as state (needed or pending). A file already entered keeps its progress.
+func queueRecordedAtFileTx(ctx context.Context, tx *sql.Tx, opusName, value, state string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO recorded_at_file_backfill(opus_name, recorded_at_utc, state, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(opus_name) DO NOTHING`, opusName, value, state, nowUTCString())
 	return err
 }
 
 // stampPublishedRecordedAt runs right after a publish indexed an entry. An
 // entry that states its instant is left alone; otherwise the meeting is
-// stamped as the backfill would, and its file — just replaced — requeued.
+// stamped as the backfill would, and its file — just replaced — entered
+// afresh: pending when the administrator had already asked for the old file
+// (any state past needed), needed otherwise. A republish neither starts the
+// migration for a file nobody asked about nor drops one somebody did.
 func (rt *Runtime) stampPublishedRecordedAt(ctx context.Context, fileID int64, opusName string) error {
 	if rt == nil || rt.meetingMetadata == nil || rt.store == nil {
 		return nil
@@ -199,10 +205,19 @@ func (rt *Runtime) stampPublishedRecordedAt(ctx context.Context, fileID int64, o
 	// The delivery replaced the file, so whatever an earlier pass did to the
 	// old one says nothing about it: either the new file states its instant
 	// (nothing to do) or it is queued afresh below.
+	fileState := recordedAtStateNeeded
+	var previous string
+	err = rt.meetingMetadata.db.QueryRowContext(ctx, `SELECT state FROM recorded_at_file_backfill WHERE opus_name=?`, opusName).Scan(&previous)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if previous != "" && previous != recordedAtStateNeeded {
+		fileState = recordedAtStatePending
+	}
 	if _, err := rt.meetingMetadata.db.ExecContext(ctx, `DELETE FROM recorded_at_file_backfill WHERE opus_name=?`, opusName); err != nil {
 		return err
 	}
-	if _, _, err := rt.stampRecordedAtRow(ctx, row); err != nil {
+	if _, _, err := rt.stampRecordedAtRow(ctx, row, fileState); err != nil {
 		return err
 	}
 	rt.wakeRecordedAtFiles()
@@ -278,6 +293,7 @@ func (rt *Runtime) startRecordedAtIndexBackfill(logger *log.Logger) {
 		for {
 			report, err := rt.backfillRecordedAtIndex(rt.ctx)
 			if err == nil {
+				rt.recordedAtIndexChecked.Store(true)
 				if logger != nil {
 					logger.Printf("recorded-at: meeting index pass done — %s", report)
 				}

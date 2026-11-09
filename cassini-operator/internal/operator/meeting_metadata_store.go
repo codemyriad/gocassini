@@ -32,7 +32,8 @@ CREATE INDEX IF NOT EXISTS meeting_metadata_by_date ON meeting_metadata(date_lab
 `
 	// The meeting's instant (recordedAtUtc, normalised to
 	// recordedAtUTCLayout; '' when the entry has none) beside its label, and
-	// the progress of writing it back into delivered files. Purely additive,
+	// the progress of writing it back into delivered files (which an
+	// administrator starts and pauses: recorded_at_migration.go). Purely additive,
 	// so it is applied on every open and user_version stays 2: a released
 	// operator refuses a newer version, and this schema is one it can run on
 	// unchanged, so a rollback keeps the room names and the index. The
@@ -49,6 +50,11 @@ CREATE TABLE IF NOT EXISTS recorded_at_file_backfill (
   updated_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS recorded_at_file_backfill_due ON recorded_at_file_backfill(state, retry_at);
+CREATE TABLE IF NOT EXISTS recorded_at_file_backfill_control (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  paused     INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT ''
+);
 `
 )
 

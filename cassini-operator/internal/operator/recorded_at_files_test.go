@@ -116,7 +116,7 @@ func newFileWorkerFixture(t *testing.T, exitCode int) *fileWorkerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := queueRecordedAtFileTx(ctx, tx, "MEETING1.opus", testRecordedAt); err != nil {
+	if err := queueRecordedAtFileTx(ctx, tx, "MEETING1.opus", testRecordedAt, recordedAtStatePending); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -394,7 +394,7 @@ func TestRecordedAtFileWorkerOutcomeCannotOverwriteAPublishRequeue(t *testing.T)
 				published <- err
 				return
 			}
-			if err := queueRecordedAtFileTx(ctx, tx, name, testRecordedAt); err != nil {
+			if err := queueRecordedAtFileTx(ctx, tx, name, testRecordedAt, recordedAtStatePending); err != nil {
 				_ = tx.Rollback()
 				published <- err
 				return

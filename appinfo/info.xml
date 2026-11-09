@@ -367,6 +367,15 @@ Summaries and questions use whichever language model you connect, so their ratin
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: start / pause rewriting recordedAtUtc into past recordings'
+           delivered files (each rewrite is a new Nextcloud version and a
+           "file changed" activity for recipients, so it never runs on its
+           own). Progress is reported by /status. -->
+      <route>
+        <url>^operator\/migrations\/recorded-at\/(start|pause)\/?$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,
            Talk config presence, DB/storage health — never secret values) -->
       <route>

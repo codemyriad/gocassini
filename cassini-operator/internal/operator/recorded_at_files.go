@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -29,16 +30,28 @@ import (
 // kept so shares survive, and the annotation index told about the new
 // container digest the way a verified republish does.
 //
+// Nothing here runs on its own. Each rewrite is a new Nextcloud file version
+// and a "file changed" entry in the activity of everyone the recording is
+// shared with, so an administrator decides when it happens: the index pass
+// only enumerates the files (state needed), and the Doctor's button moves
+// them to pending (recorded_at_migration.go). Pausing stops new files from
+// starting; see drain.
+//
 // Progress lives in meetings.sqlite3 (recorded_at_file_backfill):
 //
-//	pending   — queued, or failed and waiting for retry_at
+//	needed    — found by the index pass; nobody has asked for it yet, and
+//	            the workers never take it
+//	pending   — requested, or failed and waiting for retry_at
 //	uploading — a PUT was sent whose answer is not known; the next attempt
 //	            settles it from the file itself
 //	done      — the file carries the instant (or states its own)
 //	blocked   — needs a person: the file is missing, or the CLI cannot
 //	            set the field; last_error says which. Requeued as pending
-//	            on the next operator start, which is the "retry" the
-//	            messages ask for once the person has fixed it.
+//	            on the next operator start, or when the administrator runs
+//	            the migration again, which is the "retry" the messages ask
+//	            for once the person has fixed it.
+//
+// recorded_at_file_backfill_control holds the one pause switch.
 
 const (
 	recordedAtFileWorkers      = 2
@@ -55,6 +68,15 @@ const (
 	recordedAtFilePace = 30 * time.Second
 )
 
+// The row states, as stored.
+const (
+	recordedAtStateNeeded    = "needed"
+	recordedAtStatePending   = "pending"
+	recordedAtStateUploading = "uploading"
+	recordedAtStateDone      = "done"
+	recordedAtStateBlocked   = "blocked"
+)
+
 type recordedAtFileWorker struct {
 	rt      *Runtime
 	exapp   ExAppConfig
@@ -63,24 +85,35 @@ type recordedAtFileWorker struct {
 	logger  *log.Logger
 	wake    chan struct{}
 	claimed sync.Map
-	start   sync.Once
-	now     func() time.Time
+	// active counts files a worker is rewriting right now (inside
+	// processOne), which a pause lets finish.
+	active atomic.Int32
+	start  sync.Once
+	now    func() time.Time
 	// pause waits between two files of one drain; false means stop.
 	pause func(ctx context.Context) bool
 	// afterAttempt, when set (tests only), runs between an attempt and the
 	// write of its outcome, with the per-recording lock still held.
 	afterAttempt func(name string)
+	// capabilities reads what Nextcloud says about the apps a rewrite
+	// touches (recorded_at_migration.go); tests replace it.
+	capabilities func(ctx context.Context) (nextcloudChangeCapabilities, error)
+	notices      capabilitiesCache
 }
 
 func newRecordedAtFileWorker(rt *Runtime, exapp ExAppConfig, client *http.Client, logger *log.Logger) *recordedAtFileWorker {
 	if rt == nil || rt.meetingMetadata == nil || strings.TrimSpace(rt.cfg.CassiniBin) == "" || client == nil {
 		return nil
 	}
-	return &recordedAtFileWorker{
+	w := &recordedAtFileWorker{
 		rt: rt, exapp: exapp, client: client, bin: rt.cfg.CassiniBin, logger: logger,
 		wake: make(chan struct{}, recordedAtFileWorkers), now: time.Now,
 		pause: func(ctx context.Context) bool { return sleepCtx(ctx, recordedAtFilePace) },
 	}
+	w.capabilities = func(ctx context.Context) (nextcloudChangeCapabilities, error) {
+		return exapp.changeCapabilities(ctx, client)
+	}
+	return w
 }
 
 // sleepCtx waits d, or less if ctx ends; it answers whether it waited out d.
@@ -171,6 +204,12 @@ func (w *recordedAtFileWorker) loop() {
 
 // drain processes every due file, one at a time per worker and paced
 // (recordedAtFilePace); it answers how many it attempted.
+//
+// A pause is honoured between files, never inside one: a file already being
+// rewritten runs to its outcome (done, blocked, or due again later), so
+// pausing never leaves a file half-written. Paused, a worker still settles a
+// file whose upload was sent but not confirmed (state uploading) — that file
+// was started, and only finishing it makes the index agree with Nextcloud.
 func (w *recordedAtFileWorker) drain(ctx context.Context) int {
 	processed := 0
 	for ctx.Err() == nil {
@@ -186,15 +225,47 @@ func (w *recordedAtFileWorker) drain(ctx context.Context) int {
 			w.claimed.Delete(name)
 			return processed
 		}
+		// The pace above is long; a pause may have come in during it.
+		if processed > 0 {
+			if ok, err := w.mayStart(ctx, name); err != nil || !ok {
+				w.claimed.Delete(name)
+				return processed
+			}
+		}
+		w.active.Add(1)
 		w.processOne(ctx, name)
+		w.active.Add(-1)
 		w.claimed.Delete(name)
 		processed++
 	}
 	return processed
 }
 
+// mayStart answers whether name may still be worked on now: always for a
+// file whose upload awaits settling, otherwise only while not paused.
+func (w *recordedAtFileWorker) mayStart(ctx context.Context, name string) (bool, error) {
+	paused, err := w.rt.meetingMetadata.recordedAtFilesPaused(ctx)
+	if err != nil || !paused {
+		return err == nil, err
+	}
+	var state string
+	err = w.rt.meetingMetadata.db.QueryRowContext(ctx, `SELECT state FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return state == recordedAtStateUploading, err
+}
+
 func (w *recordedAtFileWorker) next(ctx context.Context) (string, error) {
-	rows, err := w.rt.meetingMetadata.db.QueryContext(ctx, `SELECT opus_name FROM recorded_at_file_backfill WHERE state IN ('pending','uploading') AND retry_at <= ? ORDER BY retry_at, opus_name LIMIT 100`, w.now().Unix())
+	paused, err := w.rt.meetingMetadata.recordedAtFilesPaused(ctx)
+	if err != nil {
+		return "", err
+	}
+	states := `('pending','uploading')`
+	if paused {
+		states = `('uploading')`
+	}
+	rows, err := w.rt.meetingMetadata.db.QueryContext(ctx, `SELECT opus_name FROM recorded_at_file_backfill WHERE state IN `+states+` AND retry_at <= ? ORDER BY retry_at, opus_name LIMIT 100`, w.now().Unix())
 	if err != nil {
 		return "", err
 	}

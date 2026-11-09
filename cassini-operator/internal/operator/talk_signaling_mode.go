@@ -32,34 +32,28 @@ func (c ExAppConfig) talkSignalingMode(ctx context.Context, client *http.Client)
 	// context to report its config, so the app identity gets a capabilities
 	// document with no `spreed` block at all — which reads identically to "Talk
 	// is not installed" and is why this check silently reported nothing on the
-	// local harness.
-	status, body, err := c.apiGetAs(ctx, client, c.provisioningUser(),
-		strings.TrimRight(c.NextcloudURL, "/")+"/ocs/v2.php/cloud/capabilities")
+	// local harness. capabilitiesAs is shared with the recordedAtUtc migration's
+	// notification report (recorded_at_migration.go).
+	_, raw, err := c.capabilitiesAs(ctx, client, c.provisioningUser())
 	if err != nil {
 		return "", err
 	}
-	if status < 200 || status >= 300 {
-		return "", fmt.Errorf("capabilities -> %d", status)
+	if len(raw) == 0 {
+		return "", nil
 	}
-	var payload struct {
-		OCS struct {
-			Data struct {
-				Capabilities struct {
-					Spreed *struct {
-						Config struct {
-							Signaling struct {
-								Mode string `json:"mode"`
-							} `json:"signaling"`
-						} `json:"config"`
-					} `json:"spreed"`
-				} `json:"capabilities"`
-			} `json:"data"`
-		} `json:"ocs"`
+	var capabilities struct {
+		Spreed *struct {
+			Config struct {
+				Signaling struct {
+					Mode string `json:"mode"`
+				} `json:"signaling"`
+			} `json:"config"`
+		} `json:"spreed"`
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
+	if err := json.Unmarshal(raw, &capabilities); err != nil {
 		return "", fmt.Errorf("decode capabilities: %w", err)
 	}
-	spreed := payload.OCS.Data.Capabilities.Spreed
+	spreed := capabilities.Spreed
 	if spreed == nil {
 		// Talk is not installed. A different fault, and not this check's to
 		// report as a signaling mode.

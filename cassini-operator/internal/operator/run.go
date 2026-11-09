@@ -143,6 +143,10 @@ type Runtime struct {
 	// only), runs before each entry is stamped.
 	recordedAtIndexWait        func(ctx context.Context, d time.Duration) bool
 	recordedAtIndexBeforeStamp func(row recordedAtIndexRow)
+	// recordedAtIndexChecked is set once a meeting index pass has completed
+	// since this start: from then on the needed count is the enumeration of
+	// files to rewrite, not a partial one.
+	recordedAtIndexChecked atomic.Bool
 	// roomNameRetry backs off reconcile passes per room when its default keeps
 	// failing to reach a terminal source, bounding the repeated lineage proofs
 	// (full-file digest + CLI exec) for rooms that may never resolve.
@@ -1095,6 +1099,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/health/check", http.HandlerFunc(rt.readinessHandler)},
 		{"/health/repair", http.HandlerFunc(rt.readinessHandler)},
 		{"/talk/setup", http.HandlerFunc(rt.recordingSetupHandler)},
+		// ADMIN: start and pause rewriting recordedAtUtc into delivered
+		// files; progress is on /status (recorded_at_migration.go).
+		{recordedAtMigrationPath + "/", http.HandlerFunc(rt.recordedAtMigrationHandler)},
 	}
 }
 
@@ -1178,8 +1185,9 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 			files.startWorkers()
 		}
 	}
-	// Past recordings get their instant in the meeting index (and, through
-	// the worker above, in their files) in the background.
+	// Past recordings get their instant in the meeting index in the
+	// background; their files are only enumerated, and rewritten by the
+	// worker above once an administrator asks (recorded_at_migration.go).
 	rt.startRecordedAtIndexBackfill(logger)
 	// The MCP server (D-813): agents outside Cassini read meetings as the
 	// person who connected them. A sibling of insights on the ROOT mux —
