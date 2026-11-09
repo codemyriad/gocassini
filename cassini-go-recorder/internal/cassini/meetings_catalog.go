@@ -232,13 +232,21 @@ func (c *meetingsClient) fetchMeetings(ctx context.Context, filter meetingsFilte
 // an already-filtered set would report every count as zero and leave a short
 // list unexplained.
 func (c *meetingsClient) fetchFilteredListing(ctx context.Context, filter meetingsFilter) (meetingsListing, meetingsFilterResult, error) {
-	target, err := c.meetingsListURL(filter)
+	target, err := c.meetingsListURL(filter, true)
 	if err != nil {
 		return meetingsListing{}, meetingsFilterResult{}, err
 	}
 	body, header, err := c.readListing(ctx, target)
+	var httpErr *meetingsHTTPError
+	if err != nil && errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && (filter.hasFrom || filter.hasTo) {
+		// An app from before instants were accepted refuses an offset bound;
+		// ask again in the zone-less wall clock it compares labels in.
+		if target, err = c.meetingsListURL(filter, false); err != nil {
+			return meetingsListing{}, meetingsFilterResult{}, err
+		}
+		body, header, err = c.readListing(ctx, target)
+	}
 	if err != nil {
-		var httpErr *meetingsHTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
 			return meetingsListing{}, meetingsFilterResult{}, errMeetingsListAbsent
 		}
@@ -263,8 +271,11 @@ func (c *meetingsClient) fetchFilteredListing(ctx context.Context, filter meetin
 }
 
 // meetingsListURL is the list route with the filter encoded as query
-// parameters, in exactly the layout the server parses back.
-func (c *meetingsClient) meetingsListURL(filter meetingsFilter) (*url.URL, error) {
+// parameters, in exactly the layout the server parses back. With instants,
+// the bounds are RFC 3339 with the reader's offset, so the server compares a
+// meeting's recordedAtUtc against the moment the reader meant; without, they
+// are the zone-less stamp an older app accepts.
+func (c *meetingsClient) meetingsListURL(filter meetingsFilter, instants bool) (*url.URL, error) {
 	root, err := c.appRootURL()
 	if err != nil {
 		return nil, err
@@ -274,11 +285,15 @@ func (c *meetingsClient) meetingsListURL(filter meetingsFilter) (*url.URL, error
 		return nil, fmt.Errorf("build meeting list URL: %w", err)
 	}
 	query := url.Values{}
+	layout := meetingsFilterStampLayout
+	if instants {
+		layout = time.RFC3339
+	}
 	if filter.hasFrom {
-		query.Set("from", filter.from.Format(meetingsFilterStampLayout))
+		query.Set("from", filter.from.Format(layout))
 	}
 	if filter.hasTo {
-		query.Set("to", filter.to.Format(meetingsFilterStampLayout))
+		query.Set("to", filter.to.Format(layout))
 	}
 	if filter.room != "" {
 		query.Set("room", filter.room)

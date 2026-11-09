@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -218,5 +221,70 @@ func TestMeetingTimeAndDisplayTable(t *testing.T) {
 				t.Errorf("meetingDisplayDate = %q, want %q", got, tc.wantDisplay)
 			}
 		})
+	}
+}
+
+// The server-side list compares a zone-less bound as a UTC wall clock, so the
+// CLI sends its bounds as instants carrying the reader's offset: the server
+// then places a meeting with recordedAtUtc exactly where the CLI shows it.
+func TestMeetingsListSendsBoundsAsLocalInstants(t *testing.T) {
+	const body = `{"version":"cassini.viewer.catalog.v1","meetings":[]}`
+	fake := newMeetingsFakeNextcloud(t, serveMeetingsList(t, func(string) string { return body }))
+
+	code, _, stderr := runMeetingsCLIIn(t, meetingsTestZone(t), fake.server.URL,
+		"list", "--from", "2026-11-09", "--to", "2026-11-09 12:30")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if len(fake.queries) != 1 {
+		t.Fatalf("requests %v, want one list request", fake.requests)
+	}
+	query, err := url.ParseQuery(fake.queries[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := query.Get("from"); got != "2026-11-09T00:00:00+01:00" {
+		t.Errorf("from = %q, want the start of the Rome day as an instant", got)
+	}
+	if got := query.Get("to"); got != "2026-11-09T12:30:00+01:00" {
+		t.Errorf("to = %q, want 12:30 Rome as an instant", got)
+	}
+}
+
+// An app from before instants were accepted answers 400 to an offset bound.
+// The CLI asks again with the zone-less wall clock that app understands.
+func TestMeetingsListRetriesZonelessBoundsOnAnOlderApp(t *testing.T) {
+	const body = `{"version":"cassini.viewer.catalog.v1","meetings":[{"id":"A","title":"a","dateLabel":"2026-11-09 10:00","audioPath":"./meetings/A.opus"}]}`
+	fake := newMeetingsFakeNextcloud(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != meetingsTestListPath {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Query().Get("from"), "T") {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"from: not a date this catalog uses"}`)
+			return
+		}
+		w.Header().Set("X-Cassini-Meeting-Source", "nextcloud-files")
+		fmt.Fprint(w, body)
+	})
+
+	code, stdout, stderr := runMeetingsCLIIn(t, meetingsTestZone(t), fake.server.URL, "list", "--from", "2026-11-09")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if len(fake.queries) != 2 {
+		t.Fatalf("requests %v, want the instant request then the zone-less retry", fake.requests)
+	}
+	retry, err := url.ParseQuery(fake.queries[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := retry.Get("from"); got != "2026-11-09 00:00:00" {
+		t.Errorf("retry from = %q, want the zone-less stamp", got)
+	}
+	if !strings.Contains(stdout, "meeting=A") {
+		t.Errorf("stdout did not list the retried answer:\n%s", stdout)
 	}
 }
