@@ -16,7 +16,9 @@ import {
   preferredPortableTitle,
   userPortableTitle,
   portableContentFields,
+  portableRecordedAtUtc,
   portableRoomFields,
+  validRecordedAtUtc,
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
@@ -31,7 +33,7 @@ function writePublishedPortableProbeFixture(
   // What the file holds, for the tests that care: the transcript's words and
   // the summary the producer sealed in. Both default to what a minimal fixture
   // has always had — an empty transcript and no summary.
-  contents: { words?: string[]; summaryMarkdown?: string } = {},
+  contents: { words?: string[]; summaryMarkdown?: string; extraTags?: Record<string, string> } = {},
 ) {
   const encode = (value: unknown) => {
     const raw = Buffer.from(JSON.stringify(value), "utf8");
@@ -106,6 +108,7 @@ function writePublishedPortableProbeFixture(
         CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
         CASSINI_AUDIO_OPUS_SHA256: "a".repeat(64),
         CASSINI_TX_RAW_ASR_PAYLOAD_000: body.chunk,
+        ...contents.extraTags,
       } },
       streams: [],
     }),
@@ -260,6 +263,30 @@ describe("describeMeeting", () => {
     ).toBe("2026-04-08 07:31");
   });
 
+  it("dates an entry by recordedAtUtc first, writing its UTC digits as the legacy label", () => {
+    // The instant outranks recordedAtLocal, the id and createdAtUtc. The label
+    // stays zone-less for old readers: the instant's UTC digits, whatever zone
+    // the exporting machine is in.
+    expect(
+      describeMeeting(
+        "01KKA70QN0ABCDEFGHJKMNPQRS",
+        "2026-08-29T09:14:07Z",
+        "2026-03-09T22:11:00",
+        "2026-03-09T21:11:24.123Z",
+      ),
+    ).toEqual({ title: "Untitled meeting", dateLabel: "2026-03-09 21:11" });
+    expect(describeMeeting("weekly-sync", "", "", "2026-01-31T23:30:00Z").dateLabel).toBe("2026-01-31 23:30");
+  });
+
+  it("ignores a malformed recordedAtUtc and keeps today's precedence", () => {
+    for (const bad of ["2026-03-09T22:11:00+01:00", "2026-03-09 21:11", "2026-02-30T10:00:00Z", "soon"]) {
+      expect(describeMeeting("daily-meeting-2026-03-10--12:30", "", "2026-03-10T12:30:00", bad)).toEqual({
+        title: "Daily Meeting",
+        dateLabel: "2026-03-10 12:30",
+      });
+    }
+  });
+
   it("falls back to the id when createdAtUtc is missing or unparseable", () => {
     expect(describeMeeting("weekly-sync")).toEqual({
       title: "Weekly Sync",
@@ -271,6 +298,33 @@ describe("describeMeeting", () => {
     expect(describeMeeting("weekly-sync", "   ").dateLabel).toBe(
       "weekly-sync",
     );
+  });
+});
+
+describe("portableRecordedAtUtc", () => {
+  it("reads the manifest's meeting.recordedAtUtc first", () => {
+    expect(
+      portableRecordedAtUtc(
+        { meeting: { recordedAtUtc: "2026-03-09T21:11:24Z" } },
+        { CASSINI_RECORDED_AT_UTC: "2026-03-09T20:00:00Z" },
+      ),
+    ).toBe("2026-03-09T21:11:24Z");
+  });
+
+  it("falls back to the CASSINI_RECORDED_AT_UTC tag", () => {
+    expect(portableRecordedAtUtc({ meeting: {} }, { CASSINI_RECORDED_AT_UTC: "2026-03-09T21:11:24.5Z" })).toBe(
+      "2026-03-09T21:11:24.5Z",
+    );
+    expect(
+      portableRecordedAtUtc({ meeting: { recordedAtUtc: "garbage" } }, { CASSINI_RECORDED_AT_UTC: "2026-03-09T21:11:24Z" }),
+    ).toBe("2026-03-09T21:11:24Z");
+  });
+
+  it("is empty when neither holds a valid instant", () => {
+    expect(portableRecordedAtUtc({ meeting: { recordedAtLocal: "2026-03-09T21:11:24" } }, {})).toBe("");
+    expect(portableRecordedAtUtc(undefined, undefined)).toBe("");
+    expect(validRecordedAtUtc("2026-03-09T21:11:24+00:00")).toBe("");
+    expect(validRecordedAtUtc("2026-03-09T21:11:24Z")).toBe("2026-03-09T21:11:24Z");
   });
 });
 
@@ -1494,6 +1548,71 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
       expect(byId.get("daily-meeting-2026-04-09")).toMatchObject({
         dateLabel: "2026-04-09",
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // A file that states its recording start carries it into the catalog entry,
+  // from the manifest or, failing that, its tag mirror; the zone-less
+  // dateLabel stays for old readers. A file without one is exported as before.
+  it("carries recordedAtUtc from the .opus into the catalog entry", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-recorded-"));
+    try {
+      const distDir = join(root, "dist");
+      mkdirSync(distDir, { recursive: true });
+
+      const stubBinDir = join(root, "bin");
+      mkdirSync(stubBinDir, { recursive: true });
+      const stubPath = join(stubBinDir, "ffprobe");
+      writeFileSync(stubPath, '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nexec cat "${last}.ffprobe.json"\n');
+      chmodSync(stubPath, 0o755);
+
+      const sourceDir = join(root, "source");
+      mkdirSync(sourceDir, { recursive: true });
+      writePublishedPortableProbeFixture(sourceDir, "01KKA70QN0ABCDEFGHJKMNPQRS", {
+        id: "01KKA70QN0ABCDEFGHJKMNPQRS",
+        title: "Standup",
+        createdAtUtc: "2026-03-09T22:40:00Z",
+        recordedAtUtc: "2026-03-09T21:11:24.5Z",
+      }, { extraTags: { CASSINI_RECORDED_AT_UTC: "2026-03-09T21:11:24.5Z" } });
+      writePublishedPortableProbeFixture(sourceDir, "01KKA70QN0ABCDEFGHJKMNPQRT", {
+        id: "01KKA70QN0ABCDEFGHJKMNPQRT",
+        title: "Tag only",
+        createdAtUtc: "2026-03-09T23:40:00Z",
+      }, { extraTags: { CASSINI_RECORDED_AT_UTC: "2026-03-09T23:30:00Z" } });
+      writePublishedPortableProbeFixture(sourceDir, "daily-meeting-2026-03-10--12:30", {
+        id: "daily-meeting-2026-03-10--12:30",
+        title: "Cassini Meeting",
+        createdAtUtc: "2026-08-29T09:14:07Z",
+        recordedAtLocal: "2026-03-10T12:30:00",
+      });
+
+      const outputDir = join(root, "out");
+      execFileSync(
+        process.execPath,
+        [scriptPath, "--source-dir", sourceDir, "--output-dir", outputDir, "--recordings-base-url", "https://example.test/"],
+        {
+          // A non-UTC exporter must still write the instant's UTC digits.
+          env: { ...process.env, TZ: "Europe/Rome", CASSINI_VIEWER_DIST_DIR: distDir, PATH: `${stubBinDir}:${process.env.PATH}` },
+          encoding: "utf8",
+        },
+      );
+
+      const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
+      const byId = new Map(catalog.meetings.map((meeting: { id: string }) => [meeting.id, meeting]));
+      expect(byId.get("01KKA70QN0ABCDEFGHJKMNPQRS")).toMatchObject({
+        recordedAtUtc: "2026-03-09T21:11:24.5Z",
+        dateLabel: "2026-03-09 21:11",
+      });
+      expect(byId.get("01KKA70QN0ABCDEFGHJKMNPQRT")).toMatchObject({
+        recordedAtUtc: "2026-03-09T23:30:00Z",
+        dateLabel: "2026-03-09 23:30",
+      });
+      const legacy = byId.get("daily-meeting-2026-03-10--12:30") as Record<string, unknown>;
+      expect(legacy).toMatchObject({ dateLabel: "2026-03-10 12:30", recordedAtLocal: "2026-03-10T12:30:00" });
+      expect("recordedAtUtc" in legacy).toBe(false);
+      expect(catalog.version).toBe("cassini.viewer.catalog.v1");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

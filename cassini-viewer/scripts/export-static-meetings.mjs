@@ -161,11 +161,13 @@ export function parseArgs(argv) {
 
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
   if (sourceType === "portable") {
-    const portable = extractPortableManifest(sourcePath);
+    const { manifest: portable, tags } = readPortableMeeting(sourcePath);
+    const recordedAtUtc = portableRecordedAtUtc(portable, tags);
     const { title, dateLabel } = describeMeeting(
       meetingId,
       portable?.meeting?.createdAtUtc,
       portable?.meeting?.recordedAtLocal,
+      recordedAtUtc,
     );
     const transcript = buildTranscriptWordsFromPortable(portable);
     // A user-set rename (the annotations document's meeting.title, D-862)
@@ -189,6 +191,9 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       hasAudio: !transcriptionOnly,
       title: sttVariantLabel ? `${meetingTitle} (${sttVariantLabel})` : meetingTitle,
       dateLabel,
+      // When the recording started, as the file states it. Only when it does:
+      // an entry without one falls back to dateLabel in every reader.
+      ...(recordedAtUtc ? { recordedAtUtc } : {}),
       speakerCount: transcript.speakers?.length ?? 0,
       segmentCount: transcript.segments?.length ?? 0,
       digestDurationMs: transcript.media?.durationMs ?? 0,
@@ -1395,8 +1400,16 @@ export function preferredPortableTitle(portable, meetingId) {
 // The dateLabel answers "when did this meeting happen", NOT "when did we
 // process it" — the two diverge every time a pack is rebuilt, and a re-run of
 // the whole archive would otherwise stamp every meeting with the rebuild day
-// (D-685). Sources, best first:
+// (D-685).
 //
+// dateLabel is the LEGACY, zone-less form of that answer. A file that states
+// its start as an instant (meeting.recordedAtUtc) has its entry carry that
+// instant as recordedAtUtc, and readers that know the field use it and ignore
+// the label. The label is still written for older readers, as the UTC digits
+// of the instant — the same shape ULID-derived labels have always had.
+// Sources, best first:
+//
+//   0. recordedAtUtc — the instant playback position 0 was recorded.
 //   1. recordedAtLocal — the recording's own wall clock, the only field that
 //      states when people were actually in the room.
 //   2. the meeting id — filename stamps and ULID job ids both encode the
@@ -1407,9 +1420,14 @@ export function preferredPortableTitle(portable, meetingId) {
 //      timestamp still parses and sorts instead of showing a raw slug (D-588).
 //
 // The title always comes from the id.
-export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = "") {
+export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = "", recordedAtUtc = "") {
   const described = describeMeetingFromId(meetingId);
   const { dateFromId, ...describedFields } = described;
+
+  const instantMs = recordedAtUtcMs(recordedAtUtc);
+  if (instantMs !== null) {
+    return { title: described.title, dateLabel: formatUtcDateLabel(new Date(instantMs)) };
+  }
 
   const recordedDateLabel = dateLabelFromLocalTimestamp(recordedAtLocal);
   if (recordedDateLabel !== "") {
@@ -1423,6 +1441,43 @@ export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = 
     return { title: described.title, dateLabel: metadataDateLabel };
   }
   return describedFields;
+}
+
+// The shared shape of recordedAtUtc: RFC 3339, UTC, a literal Z, optional
+// fractional seconds. Mirrors parseRecordedAtUtc in src/viewer/meetingTime.ts.
+const RECORDED_AT_UTC_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?Z$/;
+
+// validRecordedAtUtc returns the value when it is a well-formed recordedAtUtc
+// naming a real calendar instant, else "".
+export function validRecordedAtUtc(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const match = RECORDED_AT_UTC_PATTERN.exec(value);
+  if (!match) {
+    return "";
+  }
+  const [, year, month, day, hour, minute, second] = match;
+  if (!isValidCalendarDate(year, month, day) || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) {
+    return "";
+  }
+  return value;
+}
+
+function recordedAtUtcMs(value) {
+  const valid = validRecordedAtUtc(value);
+  if (valid === "") {
+    return null;
+  }
+  const ms = Date.parse(valid);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// portableRecordedAtUtc reads a file's recording start: the manifest's
+// meeting.recordedAtUtc, else its mirror in the CASSINI_RECORDED_AT_UTC tag.
+// "" when neither holds a valid value.
+export function portableRecordedAtUtc(manifest, tags = {}) {
+  return validRecordedAtUtc(manifest?.meeting?.recordedAtUtc) || validRecordedAtUtc(safeToString(tags?.CASSINI_RECORDED_AT_UTC).trim());
 }
 
 // describeMeetingFromId also reports `dateFromId`: false means the dateLabel is

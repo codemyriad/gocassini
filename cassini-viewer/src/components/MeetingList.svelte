@@ -8,10 +8,10 @@
   import TagPicker from "./tags/TagPicker.svelte";
   import {
     filterMeetingCatalogEntries,
-    formatMeetingDateWithDay,
     formatMeetingDuration,
     type MeetingCatalogEntry,
   } from "../viewer/catalog";
+  import { formatMeetingStartWithDay } from "../viewer/meetingTime";
   import { roomLabelOf } from "../viewer/rooms";
   import { formatClockTime } from "../core/transcript";
   import {
@@ -673,7 +673,7 @@
                 <span class="row-main">
                   <span class="row-title">{meeting.title}</span>
                   <span class="row-meta">
-                    <span>{formatMeetingDateWithDay(meeting.dateLabel)}</span>
+                    <span>{formatMeetingStartWithDay(meeting)}</span>
                     <span class="badge badge-ghost badge-xs">{meeting.meetingPath ? "Transcription only" : "Audio included"}</span>
                     {#if meeting.imported}
                       <span

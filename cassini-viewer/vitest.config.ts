@@ -11,6 +11,11 @@ export default mergeConfig(viteConfig, defineConfig({
         test: {
           name: "unit",
           environment: "node",
+          // A zone that is not UTC, so a meeting start rendered in the
+          // reader's clock is visibly different from its UTC digits, and the
+          // suite means the same on a developer laptop as on CI. Tests that
+          // need a zone west of UTC set process.env.TZ themselves.
+          env: { TZ: "Europe/Rome" },
           exclude: [...configDefaults.exclude, "**/*.browser.test.ts"],
         },
       },

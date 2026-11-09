@@ -45,6 +45,7 @@ export function singleMeetingEntry(src: string, title = ""): MeetingCatalogEntry
     id,
     title: title.trim() || described.title,
     dateLabel: described.dateLabel,
+    ...(described.recordedAtUtc ? { recordedAtUtc: described.recordedAtUtc } : {}),
     ...(/\.json(?:[?#]|$)/i.test(src) ? { meetingPath: src } : { audioPath: src }),
   };
 }
