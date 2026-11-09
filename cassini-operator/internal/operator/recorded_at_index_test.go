@@ -3,12 +3,14 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // recordedAtFixture is a runtime with a jobs DB, a meeting index and a work
@@ -372,5 +374,66 @@ func TestMeetingFactsPreferRecordedAt(t *testing.T) {
 	facts := f.rt.meetingFactsFor(context.Background(), startedJob)
 	if got := facts.StartedAt.Format("15:04:05"); got != "10:34:00" {
 		t.Fatalf("started = %s", got)
+	}
+}
+
+// A pass that loses an entry to a concurrent write runs again, after a wait,
+// and stamps the replacement; one that keeps racing gives up after a bounded
+// number of passes with a doubling wait.
+func TestRecordedAtIndexBackfillRerunsAfterARace(t *testing.T) {
+	name := startedJob + ".opus"
+	original := `{"id":"` + startedJob + `","dateLabel":"2026-07-17 10:33","audioPath":"./meetings/` + name + `"}`
+	rerun := func(n int) string {
+		return fmt.Sprintf(`{"id":"%s","title":"Rerun %d","dateLabel":"2026-07-17 10:33","audioPath":"./meetings/%s"}`, startedJob, n, name)
+	}
+	for _, tc := range []struct {
+		name  string
+		races int // passes whose entry is replaced before it is stamped
+		waits []time.Duration
+		title string // the entry's title when the worker stops
+	}{
+		{name: "once", races: 1, waits: []time.Duration{recordedAtIndexRaceDelay}, title: "Rerun 1"},
+		{name: "always", races: 1 << 30, waits: []time.Duration{10 * time.Second, 20 * time.Second, 40 * time.Second, 80 * time.Second, 160 * time.Second}, title: fmt.Sprintf("Rerun %d", recordedAtIndexRaceRepasses+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRecordedAtFixture(t)
+			f.job(t, startedJob, "2026-07-17T10:33:05Z")
+			f.put(t, 3, name, original)
+			passes := 0
+			var putErr error
+			f.rt.recordedAtIndexBeforeStamp = func(recordedAtIndexRow) {
+				passes++
+				if passes <= tc.races {
+					if err := f.rt.meetingMetadata.Put(context.Background(), 3, name, json.RawMessage(rerun(passes))); err != nil && putErr == nil {
+						putErr = err
+					}
+				}
+			}
+			var waits []time.Duration
+			f.rt.recordedAtIndexWait = func(_ context.Context, d time.Duration) bool {
+				waits = append(waits, d)
+				return true
+			}
+			f.rt.startRecordedAtIndexBackfill(nil)
+			f.rt.workerWG.Wait()
+			if putErr != nil {
+				t.Fatal(putErr)
+			}
+			if fmt.Sprint(waits) != fmt.Sprint(tc.waits) {
+				t.Fatalf("waits = %v, want %v", waits, tc.waits)
+			}
+			entry, column := f.entry(t, 3)
+			if got := entryField(t, entry, "title"); got != tc.title {
+				t.Fatalf("title = %q, want %q", got, tc.title)
+			}
+			stamped := entryField(t, entry, recordedAtUTCField)
+			if tc.races == 1 {
+				if stamped == "" || column != stamped || f.queued(t)[name] != stamped {
+					t.Fatalf("replacement not stamped by the next pass: entry=%s column=%q queued=%v", entry, column, f.queued(t))
+				}
+			} else if stamped != "" || len(f.queued(t)) != 0 {
+				t.Fatalf("an always-raced entry was stamped: %s", entry)
+			}
+		})
 	}
 }

@@ -32,7 +32,8 @@ type recordedAtIndexReport struct {
 	// NoEvidence counts recorded entries for which no source gave an instant.
 	NoEvidence int
 	// Raced counts entries replaced by a publish while this pass ran; the
-	// replacement is stamped by whoever wrote it, or by the next pass.
+	// replacement is stamped by whoever wrote it, or by the next pass, which
+	// startRecordedAtIndexBackfill runs when this count is not zero.
 	Raced int
 }
 
@@ -81,6 +82,9 @@ func (rt *Runtime) backfillRecordedAtIndex(ctx context.Context) (recordedAtIndex
 	for _, row := range all {
 		if err := ctx.Err(); err != nil {
 			return report, err
+		}
+		if rt.recordedAtIndexBeforeStamp != nil {
+			rt.recordedAtIndexBeforeStamp(row)
 		}
 		outcome, source, err := rt.stampRecordedAtRow(ctx, row)
 		if err != nil {
@@ -246,17 +250,31 @@ func (rt *Runtime) adoptFileRecordedAt(ctx context.Context, opusName, value stri
 	return nil
 }
 
+// A pass that lost entries to a concurrent write runs again after
+// recordedAtIndexRaceDelay, doubling, at most recordedAtIndexRaceRepasses
+// times; a replacement still unstamped after that waits for the next start.
+const (
+	recordedAtIndexRaceDelay    = 10 * time.Second
+	recordedAtIndexRaceRepasses = 5
+)
+
 // startRecordedAtIndexBackfill runs the pass in the background at startup,
-// retrying with backoff while it cannot complete. Serving never waits on it:
-// an entry without an instant reads as it always has, by its dateLabel.
+// retrying with backoff while it cannot complete, and again while a pass
+// raced a concurrent write. Serving never waits on it: an entry without an
+// instant reads as it always has, by its dateLabel.
 func (rt *Runtime) startRecordedAtIndexBackfill(logger *log.Logger) {
 	if rt == nil || rt.ctx == nil || rt.meetingMetadata == nil || rt.store == nil {
 		return
+	}
+	wait := rt.recordedAtIndexWait
+	if wait == nil {
+		wait = sleepCtx
 	}
 	rt.workerWG.Add(1)
 	go func() {
 		defer rt.workerWG.Done()
 		delay := time.Minute
+		raceDelay, repasses := recordedAtIndexRaceDelay, 0
 		for {
 			report, err := rt.backfillRecordedAtIndex(rt.ctx)
 			if err == nil {
@@ -264,7 +282,24 @@ func (rt *Runtime) startRecordedAtIndexBackfill(logger *log.Logger) {
 					logger.Printf("recorded-at: meeting index pass done — %s", report)
 				}
 				rt.wakeRecordedAtFiles()
-				return
+				if report.Raced == 0 {
+					return
+				}
+				if repasses >= recordedAtIndexRaceRepasses {
+					if logger != nil {
+						logger.Printf("recorded-at: %d entries still raced after %d passes; the next start stamps them", report.Raced, repasses+1)
+					}
+					return
+				}
+				repasses++
+				if logger != nil {
+					logger.Printf("recorded-at: %d entries changed during the pass; running it again in %s", report.Raced, raceDelay)
+				}
+				if !wait(rt.ctx, raceDelay) {
+					return
+				}
+				raceDelay *= 2
+				continue
 			}
 			if rt.ctx.Err() != nil {
 				return
@@ -272,10 +307,8 @@ func (rt *Runtime) startRecordedAtIndexBackfill(logger *log.Logger) {
 			if logger != nil {
 				logger.Printf("recorded-at: meeting index pass failed (%v) after %s; retrying in %s", err, report, delay)
 			}
-			select {
-			case <-rt.ctx.Done():
+			if !wait(rt.ctx, delay) {
 				return
-			case <-time.After(delay):
 			}
 			if delay < 10*time.Minute {
 				delay *= 2

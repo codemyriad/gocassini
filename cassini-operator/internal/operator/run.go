@@ -138,6 +138,11 @@ type Runtime struct {
 	// means ffprobe. Tests stub it.
 	recordedAtFiles      atomic.Pointer[recordedAtFileWorker]
 	recordingAnchorProbe recordingAnchorProbe
+	// recordedAtIndexWait is the meeting index backfill's wait between two
+	// passes (sleepCtx when nil); recordedAtIndexBeforeStamp, when set (tests
+	// only), runs before each entry is stamped.
+	recordedAtIndexWait        func(ctx context.Context, d time.Duration) bool
+	recordedAtIndexBeforeStamp func(row recordedAtIndexRow)
 	// roomNameRetry backs off reconcile passes per room when its default keeps
 	// failing to reach a terminal source, bounding the repeated lineage proofs
 	// (full-file digest + CLI exec) for rooms that may never resolve.
