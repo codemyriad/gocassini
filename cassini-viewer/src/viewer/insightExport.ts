@@ -1,4 +1,5 @@
-import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "./catalog";
+import type { MeetingCatalogEntry } from "./catalog";
+import { formatMeetingStartForExport } from "./meetingTime";
 import {
   insightHeadline,
   insightTimestampMs,
@@ -60,7 +61,9 @@ export function renderInsightExport({
   if (sources.length > 0) {
     const items = sources.map((source) => {
       // A title is free text; a line break in a list item ends the item.
-      const label = `${oneLine(source.title)}, ${formatMeetingDateWithDay(source.dateLabel)}`;
+      // A start known as an instant carries its zone here, as createdAt does:
+      // the file is read on someone else's clock.
+      const label = `${oneLine(source.title)}, ${formatMeetingStartForExport(source)}`;
       const url = meetingUrl(source);
       return url ? `- [${escapeLinkText(label)}](${url})` : `- ${label}`;
     });

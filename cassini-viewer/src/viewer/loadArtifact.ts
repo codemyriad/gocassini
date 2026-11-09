@@ -32,6 +32,7 @@ import {
   type PortableTranscriptEntry,
 } from "./portable";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
+import { formatMeetingStartWithDay, parseRecordedAtUtc } from "./meetingTime";
 import { withoutSplitDevices } from "../core/speakers";
 import { readSummaryStatus, type SummaryStatus } from "./meetingSummary";
 
@@ -116,6 +117,9 @@ export interface ArtifactMetadataSection {
 }
 
 export interface ArtifactRecordingFacts {
+  // The file's own record of when the recording started (manifest
+  // meeting.recordedAtUtc), or null when it carries none or a malformed one.
+  recordedAtUtc: string | null;
   processedAtUtc: string | null;
   model: string | null;
   words: number | null;
@@ -788,6 +792,7 @@ function buildRecordingFacts(raw: Record<string, unknown>): ArtifactRecordingFac
   const stats = asMaybeObject(raw.stats);
   const speechToText = asMaybeObject(asMaybeObject(raw.provenance)?.speechToText);
   return {
+    recordedAtUtc: parseRecordedAtUtc(meeting?.recordedAtUtc) ?? null,
     processedAtUtc:
       asNonEmptyString(meeting?.processedAtUtc) ??
       asNonEmptyString(meeting?.processedAtUTC) ??
@@ -827,6 +832,7 @@ function buildMeetingMetadataRows(raw: Record<string, unknown>): ArtifactMetadat
   const meeting = asMaybeObject(raw.meeting);
   const source = asMaybeObject(raw.source);
   const stats = asMaybeObject(raw.stats);
+  const recordedAtUtc = parseRecordedAtUtc(meeting?.recordedAtUtc);
   const recordedAtLocal =
     asNonEmptyString(meeting?.recordedAtLocal) ??
     asNonEmptyString(source?.recordedAtLocal);
@@ -840,15 +846,22 @@ function buildMeetingMetadataRows(raw: Record<string, unknown>): ArtifactMetadat
   const speakerNames = normalizeSpeakerNames(raw.speakers);
   const passages = asFiniteNumber(stats?.passages);
 
-  if (recordedAtLocal) {
+  // recordedAtUtc is the start; recordedAtLocal is a label kept for files
+  // that carry nothing better, and is never converted.
+  if (recordedAtUtc) {
     rows.push({
       label: "Recorded",
-      value: formatLocalTimestamp(recordedAtLocal),
+      value: formatMeetingStartWithDay({ recordedAtUtc }),
+    });
+  } else if (recordedAtLocal) {
+    rows.push({
+      label: "Recorded",
+      value: formatMeetingStartWithDay({ dateLabel: recordedAtLocal }),
     });
   } else if (createdAtUtc) {
     rows.push({
       label: "Created",
-      value: formatUtcTimestamp(createdAtUtc),
+      value: formatInstantTimestamp(createdAtUtc),
     });
   }
   if (durationMs !== null) {
@@ -890,7 +903,7 @@ function buildProcessingMetadataRows(raw: Record<string, unknown>): ArtifactMeta
   if (processedAtUtc) {
     rows.push({
       label: "Processed",
-      value: formatUtcTimestamp(processedAtUtc),
+      value: formatInstantTimestamp(processedAtUtc),
     });
   }
 
@@ -1040,37 +1053,15 @@ function formatDurationMs(durationMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function formatLocalTimestamp(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
-  if (!match) {
+// The metadata rows render times with the same rule as every other surface
+// (meetingTime.ts): an instant in the reader's own clock, a zone-less label as
+// its own digits.
+function formatInstantTimestamp(value: string): string {
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) {
     return value;
   }
-  const [, year, month, day, hour, minute, second = "00"] = match;
-  const asDate = new Date(Date.UTC(
-    Number.parseInt(year, 10),
-    Number.parseInt(month, 10) - 1,
-    Number.parseInt(day, 10),
-    Number.parseInt(hour, 10),
-    Number.parseInt(minute, 10),
-    Number.parseInt(second, 10),
-  ));
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "long",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(asDate);
-}
-
-function formatUtcTimestamp(value: string): string {
-  const asDate = new Date(value);
-  if (Number.isNaN(asDate.getTime())) {
-    return value;
-  }
-  return `${new Intl.DateTimeFormat("en-US", {
-    dateStyle: "long",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(asDate)} UTC`;
+  return formatMeetingStartWithDay({ recordedAtUtc: new Date(ms).toISOString() });
 }
 
 function describeProcessingStep(step: Record<string, unknown> | null): string {

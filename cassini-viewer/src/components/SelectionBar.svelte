@@ -3,7 +3,8 @@
   import { cubicOut } from "svelte/easing";
   import { ChevronDown, FileText, Tag, Trash2, TriangleAlert, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
-  import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
+  import type { MeetingCatalogEntry } from "../viewer/catalog";
+  import { formatMeetingStartWithDay } from "../viewer/meetingTime";
   import type { MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
   import TagChip from "./tags/TagChip.svelte";
@@ -195,7 +196,7 @@
               <button type="button" class="selbar-item-open" on:click={() => dispatch("open", entry)}>
                 <span class="selbar-item-title">{entry.title}</span>
                 <span class="selbar-item-meta">
-                  {formatMeetingDateWithDay(entry.dateLabel)}
+                  {formatMeetingStartWithDay(entry)}
                   {#each wholeTags(entry.id).slice(0, MAX_ROW_TAGS) as tag (tag.tagId)}
                     <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
                   {/each}

@@ -83,6 +83,18 @@ describe("defaultInsightName", () => {
   });
 });
 
+describe("defaultInsightName with a recording instant", () => {
+  it("names the day the reader's clock shows", () => {
+    // 23:30Z on 31 January is 1 February in Rome (the suite's zone).
+    const late = meeting({ id: "a", title: "Late call", dateLabel: "2026-01-31 23:30", recordedAtUtc: "2026-01-31T23:30:00Z" });
+    expect(defaultInsightName({ templateName: "Summary", entries: [late] })).toBe("Summary · Late call, 1 Feb 2026");
+    const earlier = meeting({ id: "b", title: "Planning", dateLabel: "2026-01-20 10:00" });
+    expect(defaultInsightName({ templateName: "Summary", entries: [late, earlier] })).toBe(
+      "Summary · 2 meetings, 20 Jan – 1 Feb 2026",
+    );
+  });
+});
+
 describe("formatDateRange", () => {
   it("spans years in full", () => {
     expect(formatDateRange(["2026-01-03", "2025-12-28 09:00"])).toBe("28 Dec 2025 – 3 Jan 2026");

@@ -143,6 +143,18 @@ describe("materializeSearchResponse", () => {
     }
   });
 
+  it("keeps a hit's recordedAtUtc when valid, and drops a malformed one", () => {
+    const outcome = materializeSearchResponse({
+      hits: [
+        { meetingId: "m1", recordedAtUtc: "2026-03-09T21:11:00Z" },
+        { meetingId: "m2", recordedAtUtc: "2026-03-09 21:11" },
+      ],
+    });
+    if (outcome.status !== "ok") throw new Error("expected ok");
+    expect(outcome.hits[0]?.recordedAtUtc).toBe("2026-03-09T21:11:00Z");
+    expect(outcome.hits[1]).not.toHaveProperty("recordedAtUtc");
+  });
+
   it("drops a hit with no meeting id, which could not be linked anywhere", () => {
     const outcome = materializeSearchResponse({ hits: [{ segmentId: "s1" }, { meetingId: "m2" }] });
     if (outcome.status === "ok") {
