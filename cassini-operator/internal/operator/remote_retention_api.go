@@ -32,6 +32,7 @@ type remoteRetentionPreview struct {
 type remoteRetentionEffect struct {
 	CreatedAtUTC    string `json:"createdAtUtc"`
 	RecordedAtLocal string `json:"recordedAtLocal"`
+	RecordedAtUTC   string `json:"recordedAtUtc,omitempty"`
 	Age             *int   `json:"age"`
 	Decision        string `json:"decision"`
 
@@ -43,9 +44,9 @@ type remoteRetentionEffect struct {
 }
 
 func evaluateRemoteRetention(m meetingLifecycle, p nextcloudRetentionSettings, now time.Time) remoteRetentionEffect {
-	effect := remoteRetentionEffect{Name: m.Name, Action: "keep", Decision: "keep", CreatedAtUTC: m.CreatedAtUTC, RecordedAtLocal: m.RecordedAtLocal}
+	effect := remoteRetentionEffect{Name: m.Name, Action: "keep", Decision: "keep", CreatedAtUTC: m.CreatedAtUTC, RecordedAtLocal: m.RecordedAtLocal, RecordedAtUTC: m.RecordedAtUTC}
 	anchor, err := time.Parse(time.RFC3339Nano, m.Anchor)
-	validAge := err == nil && (m.AnchorSource == "createdAtUtc" || m.AnchorSource == "recordedAtLocal")
+	validAge := err == nil && meetingAgeSourceFrozen(m.AnchorSource)
 	if validAge {
 		age := int(utcDate(now).Sub(utcDate(anchor)).Hours() / 24)
 		effect.Age = &age
@@ -74,7 +75,7 @@ func evaluateRemoteRetention(m meetingLifecycle, p nextcloudRetentionSettings, n
 	return effect
 }
 func (s *Store) retainedMeetings(ctx context.Context) ([]meetingLifecycle, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local,reason FROM meeting_lifecycle ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local,recorded_at_utc,reason FROM meeting_lifecycle ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,7 @@ func (s *Store) retainedMeetings(ctx context.Context) ([]meetingLifecycle, error
 	result := []meetingLifecycle{}
 	for rows.Next() {
 		var m meetingLifecycle
-		if err := rows.Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource, &m.CreatedAtUTC, &m.RecordedAtLocal, &m.Reason); err != nil {
+		if err := rows.Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource, &m.CreatedAtUTC, &m.RecordedAtLocal, &m.RecordedAtUTC, &m.Reason); err != nil {
 			return nil, err
 		}
 		result = append(result, m)
