@@ -42,6 +42,11 @@ type meetingsRoom struct {
 	// meeting in the room, empty when none of them carried a usable label.
 	Latest   string `json:"latest,omitempty"`
 	Earliest string `json:"earliest,omitempty"`
+	// LatestRecordedAtUTC and EarliestRecordedAtUTC are those meetings'
+	// recordedAtUtc, empty when the meeting has none, as the CLI's
+	// rooms --json reports them.
+	LatestRecordedAtUTC   string `json:"latestRecordedAtUtc,omitempty"`
+	EarliestRecordedAtUTC string `json:"earliestRecordedAtUtc,omitempty"`
 	// latestAt is when the newest meeting happened, by its instant when it
 	// has one: what rooms are ordered by.
 	latestAt    time.Time
@@ -67,6 +72,7 @@ type listedMeeting struct {
 	raw             json.RawMessage
 	id              string
 	dateLabel       string
+	recordedAtUTC   string
 	roomID          string
 	roomName        string
 	roomDisplayName string
@@ -100,8 +106,8 @@ func orderListedMeetings(entries []json.RawMessage) ([]listedMeeting, int) {
 		at, dated := catalogEntryWhen(probe.DateLabel, probe.RecordedAtUTC)
 		items = append(items, listedMeeting{
 			raw: raw, id: strings.TrimSpace(probe.ID),
-			dateLabel: strings.TrimSpace(probe.DateLabel),
-			roomID:    strings.TrimSpace(probe.RoomID), roomName: strings.TrimSpace(probe.RoomName),
+			dateLabel: strings.TrimSpace(probe.DateLabel), recordedAtUTC: strings.TrimSpace(probe.RecordedAtUTC),
+			roomID: strings.TrimSpace(probe.RoomID), roomName: strings.TrimSpace(probe.RoomName),
 			roomDisplayName: strings.TrimSpace(probe.RoomDisplayName),
 			at:              at, dated: dated,
 		})
@@ -160,10 +166,10 @@ func groupMeetingsByRoom(items []listedMeeting) ([]meetingsRoom, int) {
 			continue
 		}
 		if !room.latestDated {
-			room.Latest = item.dateLabel
+			room.Latest, room.LatestRecordedAtUTC = item.dateLabel, item.recordedAtUTC
 			room.latestAt, room.latestDated = item.at, true
 		}
-		room.Earliest = item.dateLabel
+		room.Earliest, room.EarliestRecordedAtUTC = item.dateLabel, item.recordedAtUTC
 	}
 	// Most recently active first, the order the meeting list is in. Rooms
 	// whose meetings are all undated sort last; ties break by selector so the

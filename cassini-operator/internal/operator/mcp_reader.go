@@ -69,13 +69,18 @@ func (m *mcpReader) Rooms(ctx context.Context, caller string) (mcpserver.RoomsRe
 		Rooms: make([]mcpserver.Room, 0, len(response.Rooms)),
 	}
 	for _, room := range response.Rooms {
-		result.Rooms = append(result.Rooms, mcpserver.Room{
-			Room: room.Selector, RoomID: room.RoomID,
-			RoomName: room.RoomName, RoomDisplayName: room.RoomDisplayName,
-			Meetings: room.Meetings, Latest: room.Latest, Earliest: room.Earliest,
-		})
+		result.Rooms = append(result.Rooms, mcpRoomFrom(room))
 	}
 	return result, nil
+}
+
+func mcpRoomFrom(room meetingsRoom) mcpserver.Room {
+	return mcpserver.Room{
+		Room: room.Selector, RoomID: room.RoomID,
+		RoomName: room.RoomName, RoomDisplayName: room.RoomDisplayName,
+		Meetings: room.Meetings, Latest: room.Latest, Earliest: room.Earliest,
+		LatestRecordedAtUTC: room.LatestRecordedAtUTC, EarliestRecordedAtUTC: room.EarliestRecordedAtUTC,
+	}
 }
 
 func (m *mcpReader) List(ctx context.Context, caller string, in mcpserver.ListInput) (mcpserver.ListResult, error) {

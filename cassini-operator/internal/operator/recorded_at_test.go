@@ -272,3 +272,34 @@ func TestCatalogHydrationCarriesRecordedAt(t *testing.T) {
 		t.Fatalf("rooms = %+v", rooms)
 	}
 }
+
+// The rooms route carries the same members as the CLI's rooms --json: the
+// zone-less labels plus the instants of the newest and oldest meeting, and
+// MCP rooms passes them on.
+func TestMeetingsRoomsCarryRecordedAt(t *testing.T) {
+	ordered, _ := orderListedMeetings([]json.RawMessage{
+		json.RawMessage(`{"id":"A","dateLabel":"2026-11-09 10:00","recordedAtUtc":"2026-11-09T10:00:00Z","roomId":"r1"}`),
+		json.RawMessage(`{"id":"B","dateLabel":"2026-11-08 10:00","roomId":"r1"}`),
+		json.RawMessage(`{"id":"C","dateLabel":"2026-11-07 10:00","recordedAtUtc":"2026-11-07T10:00:00.250Z","roomId":"r1"}`),
+	})
+	rooms, _ := groupMeetingsByRoom(ordered)
+	if len(rooms) != 1 {
+		t.Fatalf("rooms = %+v", rooms)
+	}
+	body, err := json.Marshal(rooms[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"latest":"2026-11-09 10:00"`, `"latestRecordedAtUtc":"2026-11-09T10:00:00Z"`,
+		`"earliest":"2026-11-07 10:00"`, `"earliestRecordedAtUtc":"2026-11-07T10:00:00.250Z"`,
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("room %s lacks %s", body, want)
+		}
+	}
+	mcpRoom := mcpRoomFrom(rooms[0])
+	if mcpRoom.LatestRecordedAtUTC != "2026-11-09T10:00:00Z" || mcpRoom.EarliestRecordedAtUTC != "2026-11-07T10:00:00.250Z" {
+		t.Fatalf("mcp room = %+v", mcpRoom)
+	}
+}

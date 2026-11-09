@@ -29,6 +29,11 @@ type Room struct {
 	Meetings        int    `json:"meetings"`
 	Latest          string `json:"latest,omitempty"`
 	Earliest        string `json:"earliest,omitempty"`
+	// LatestRecordedAtUTC and EarliestRecordedAtUTC are when the newest and
+	// oldest meeting started (RFC 3339 UTC), absent when unknown; Latest and
+	// Earliest are then the only, zone-less, dates.
+	LatestRecordedAtUTC   string `json:"latestRecordedAtUtc,omitempty"`
+	EarliestRecordedAtUTC string `json:"earliestRecordedAtUtc,omitempty"`
 }
 
 // ListInput narrows list. Every field is optional.
