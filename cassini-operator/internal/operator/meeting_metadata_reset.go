@@ -10,7 +10,8 @@ import (
 // Run offline under the same work-root lock as the operator. Room names are
 // durable; only file-ID-bound derived rows are discarded during a restore,
 // and with them the recordedAtUtc file backfill's progress: the restored
-// files may predate it, so the next startup pass queues them afresh.
+// files may predate it, so the next startup pass enumerates them afresh
+// (as needed, for an administrator to run from the Doctor).
 func runClearMeetingMetadata(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		fmt.Fprintln(stderr, "clear-meeting-metadata takes no arguments; uses operator environment")

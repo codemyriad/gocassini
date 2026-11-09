@@ -63,8 +63,8 @@ const (
 	// recordedAtFilePace is the pause a worker takes between two files. Each
 	// file is a download, an upload and a verifying download, and each upload
 	// is a new Nextcloud file version (and a change in recipients' activity);
-	// the backfill of a whole archive runs at this pace, in the background,
-	// rather than as fast as Nextcloud answers.
+	// once an administrator starts it, the backfill of a whole archive runs at
+	// this pace, in the background, rather than as fast as Nextcloud answers.
 	recordedAtFilePace = 30 * time.Second
 )
 
