@@ -451,7 +451,7 @@ func recordedAtNotices(caps nextcloudChangeCapabilities, err error) *recordedAtN
 		doc.Details = []string{
 			"Each recording is saved again by Cassini's " + ncRecordingsOwner + " account, over the same file: its shares, links and file id stay as they are, and the audio is unchanged.",
 			doc.Error,
-			"Where file versioning is enabled (Nextcloud's default), the file as it was before is kept as an earlier version. Where the Activity app is enabled (also the default), everyone the recording is shared with gets a “file changed” entry in their Activity stream, one per recording.",
+			"Where file versioning is enabled (Nextcloud's default), the file as it was before is kept as an earlier version. Where the Activity app is enabled (also the default), everyone the recording is shared with gets a “file changed” entry for each recording in their Activity stream; Nextcloud may group changes that arrive close together.",
 			defaults,
 		}
 		return doc
@@ -471,7 +471,7 @@ func recordedAtNotices(caps nextcloudChangeCapabilities, err error) *recordedAtN
 		doc.Details = append(doc.Details, "File versioning is not enabled, so Nextcloud keeps no copy of the file as it was before.")
 	}
 	if caps.ActivityApp {
-		doc.Details = append(doc.Details, "The Activity app is enabled, so everyone the recording is shared with gets a “file changed by "+ncRecordingsOwner+"” entry in their Activity stream, one per recording.", defaults)
+		doc.Details = append(doc.Details, "The Activity app is enabled, so everyone the recording is shared with gets a “file changed” entry for each recording in their Activity stream; Nextcloud may group changes that arrive close together.", defaults)
 	} else {
 		doc.Details = append(doc.Details, "The Activity app is not enabled, so the change appears in nobody's activity stream and no activity email is sent.")
 	}

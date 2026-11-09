@@ -342,7 +342,7 @@ const noticesEnabled = {
   details: [
     "Each recording is saved again by Cassini's cassini account, over the same file: its shares, links and file id stay as they are, and the audio is unchanged.",
     "File versioning is enabled, so the file as it was before is kept as an earlier version in the cassini account. It takes disk space but does not count against that account's quota. Nextcloud expires versions by versions_retention_obligation in its config.php, which Cassini cannot read, and by the Versions app's limit of half the account's free space, past which the oldest go first.",
-    "The Activity app is enabled, so everyone the recording is shared with gets a “file changed by cassini” entry in their Activity stream, one per recording.",
+    "The Activity app is enabled, so everyone the recording is shared with gets a “file changed” entry for each recording in their Activity stream; Nextcloud may group changes that arrive close together.",
     "With Nextcloud's defaults the change is not emailed and not sent as a notification: both are off for “A file or folder has been changed”. An administrator can change those defaults under Administration settings › Activity, and each person can turn them on in their own Activity settings. Cassini cannot read either. Anyone who turned notifications on gets one per recording; anyone who turned email on finds the changes in their activity email, which Nextcloud collects and sends at the frequency they chose rather than one per change.",
     "The Notifications app is enabled, so a person who turned on notifications for changed files gets one per recording in Nextcloud, and on their devices where push notifications are set up.",
   ],
@@ -353,7 +353,7 @@ const noticesUnknown = {
   details: [
     noticesEnabled.details[0],
     "Cassini could not read Nextcloud's capabilities, so it cannot tell whether the Activity and Notifications apps or file versioning are enabled.",
-    "Where file versioning is enabled (Nextcloud's default), the file as it was before is kept as an earlier version. Where the Activity app is enabled (also the default), everyone the recording is shared with gets a “file changed” entry in their Activity stream, one per recording.",
+    "Where file versioning is enabled (Nextcloud's default), the file as it was before is kept as an earlier version. Where the Activity app is enabled (also the default), everyone the recording is shared with gets a “file changed” entry for each recording in their Activity stream; Nextcloud may group changes that arrive close together.",
     noticesEnabled.details[3],
   ],
 };

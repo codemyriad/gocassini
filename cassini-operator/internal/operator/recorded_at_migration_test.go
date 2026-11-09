@@ -410,7 +410,7 @@ func TestChangeCapabilitiesReadsTheOCSDocument(t *testing.T) {
 func TestRecordedAtNoticesWording(t *testing.T) {
 	all := func(doc *recordedAtNotificationsDoc) string { return strings.Join(doc.Details, "\n") }
 	on := recordedAtNotices(nextcloudChangeCapabilities{ActivityApp: true, NotificationsApp: true, WebPush: true, BrowserPush: true, Versioning: true}, nil)
-	for _, want := range []string{"cassini account", "earlier version", "does not count against that account's quota", "versions_retention_obligation", "half the account's free space", "Activity app is enabled", "not emailed and not sent as a notification", "Administration settings › Activity", "Cassini cannot read either", "gets one per recording", "frequency they chose rather than one per change", "for browsers too"} {
+	for _, want := range []string{"cassini account", "earlier version", "does not count against that account's quota", "versions_retention_obligation", "half the account's free space", "Activity app is enabled", "not emailed and not sent as a notification", "Administration settings › Activity", "Cassini cannot read either", "gets one per recording", "may group changes that arrive close together", "frequency they chose rather than one per change", "for browsers too"} {
 		if !strings.Contains(all(on), want) {
 			t.Errorf("enabled report lacks %q:\n%s", want, all(on))
 		}

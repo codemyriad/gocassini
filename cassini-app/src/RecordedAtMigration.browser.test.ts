@@ -93,7 +93,7 @@ it("explains what rewriting does before offering to start it", async () => {
   await expect.element(page.getByRole("heading", { name: /Recording times in past recordings/ })).toBeVisible();
   await expect.element(page.getByText(/37 recordings were published before/)).toBeVisible();
   // Open by default while the decision is pending.
-  await expect.element(page.getByText(/everyone the recording is shared with gets a “file changed by cassini” entry/)).toBeVisible();
+  await expect.element(page.getByText(/everyone the recording is shared with gets a “file changed” entry for each recording/)).toBeVisible();
   await expect.element(page.getByText(/not emailed and not sent as a notification/)).toBeVisible();
   await expect.element(page.getByText("Activity app", { exact: true })).toBeVisible();
   expect(calls).toEqual(["read"]);
