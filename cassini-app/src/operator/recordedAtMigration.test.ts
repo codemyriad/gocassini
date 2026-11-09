@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OperatorClient } from "./client";
-import { migrationActive, migrationButton, migrationSummary, migrationVisible, normalizeRecordedAtMigration, notificationFacts } from "./recordedAtMigration";
+import { migrationActive, migrationButton, migrationCounting, migrationSummary, migrationVisible, normalizeRecordedAtMigration, notificationFacts } from "./recordedAtMigration";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -25,6 +25,15 @@ describe("normalizeRecordedAtMigration", () => {
     ]);
   });
 
+  it("tells web push from browser push", () => {
+    const facts = (push: Record<string, boolean>) => notificationFacts(status({ state: "needed", needed: 1, notifications: { known: true, notifications_app: true, ...push, details: [] } }).notifications)
+      .find(fact => fact.label === "Web push")?.value;
+    expect(facts({ web_push: true, browser_push: false })).toBe("Allowed, not for browsers");
+    expect(facts({ web_push: true, browser_push: true })).toBe("Allowed, browsers too");
+    expect(facts({ web_push: false, browser_push: false })).toBe("Not allowed");
+    expect(facts({})).toBeUndefined();
+  });
+
   it("states no facts it could not read", () => {
     const m = status({ state: "needed", needed: 3, notifications: { known: false, error: "could not read", details: ["defaults"] } });
     expect(notificationFacts(m.notifications)).toEqual([]);
@@ -33,24 +42,36 @@ describe("normalizeRecordedAtMigration", () => {
 });
 
 describe("what the panel offers", () => {
-  it("shows nothing when nothing needs migrating or the first count found nothing yet", () => {
-    for (const state of ["not_needed", "checking", "not_applicable"]) expect(migrationVisible(status({ state }))).toBe(false);
-    for (const state of ["needed", "running", "pausing", "paused", "blocked", "done"]) expect(migrationVisible(status({ state }))).toBe(true);
+  it("shows nothing when nothing needs migrating, and a line while the first count runs", () => {
+    for (const state of ["not_needed", "not_applicable"]) expect(migrationVisible(status({ state }))).toBe(false);
+    for (const state of ["checking", "needed", "running", "pausing", "paused", "blocked", "done"]) expect(migrationVisible(status({ state }))).toBe(true);
+    expect(migrationSummary(status({ state: "checking", checked: false }))).toContain("checking which past recordings");
+  });
+
+  it("keeps a start disabled until the first count finished", () => {
+    expect(migrationButton(status({ state: "needed", needed: 3, checked: false }))?.disabled).toBe(true);
+    expect(migrationButton(status({ state: "paused", queued: 3, checked: false }))?.disabled).toBe(true);
+    expect(migrationButton(status({ state: "running", queued: 3, checked: false }))?.disabled).toBe(false);
+    expect(migrationButton(status({ state: "needed", needed: 3 }))?.disabled).toBe(false);
   });
 
   it("offers one button per state", () => {
-    expect(migrationButton(status({ state: "needed", needed: 37 }))).toEqual({ action: "start", label: "Write the recording time into 37 recordings" });
-    expect(migrationButton(status({ state: "running", queued: 3 }))).toEqual({ action: "pause", label: "Pause" });
+    expect(migrationButton(status({ state: "needed", needed: 37 }))).toEqual({ action: "start", label: "Write the recording time into 37 recordings", disabled: false });
+    expect(migrationButton(status({ state: "running", queued: 3 }))).toEqual({ action: "pause", label: "Pause", disabled: false });
     expect(migrationButton(status({ state: "pausing", in_progress: 1 }))).toBeNull();
-    expect(migrationButton(status({ state: "paused", queued: 3 }))).toEqual({ action: "start", label: "Resume" });
+    expect(migrationButton(status({ state: "paused", queued: 3 }))).toEqual({ action: "start", label: "Resume", disabled: false });
     expect(migrationButton(status({ state: "blocked", blocked: 1 }))?.label).toBe("Retry the blocked recording");
     expect(migrationButton(status({ state: "done", done: 4 }))).toBeNull();
   });
 
-  it("polls only while files are being written", () => {
+  it("polls while files are being written, and more slowly while still counting", () => {
     expect(migrationActive(status({ state: "running" }))).toBe(true);
     expect(migrationActive(status({ state: "pausing" }))).toBe(true);
     expect(migrationActive(status({ state: "paused" }))).toBe(false);
+    expect(migrationCounting(status({ state: "checking", checked: false }))).toBe(true);
+    expect(migrationCounting(status({ state: "needed", needed: 2, checked: false }))).toBe(true);
+    expect(migrationCounting(status({ state: "needed", needed: 2 }))).toBe(false);
+    expect(migrationCounting(status({ state: "not_applicable", applicable: false }))).toBe(false);
   });
 
   it("says a count may still grow before the first count finished", () => {
@@ -59,7 +80,9 @@ describe("what the panel offers", () => {
   });
 
   it("says a pause lets the files in progress finish", () => {
-    expect(migrationSummary(status({ state: "pausing", in_progress: 2, queued: 5 }))).toBe("Pausing. The 2 recordings being written now finish first, so no file is left half-written; 5 recordings then wait.");
+    expect(migrationSummary(status({ state: "pausing", in_progress: 2, queued: 5 }))).toBe("Pausing. The 2 recordings already being written are finished first, or left as they were if their upload had not gone through, so no file is left half-written; 5 recordings then wait.");
+    // An upload sent before the pause is still settled: pausing, not paused.
+    expect(migrationSummary(status({ state: "pausing", settling: 1, queued: 5 }))).toContain("The recording already being written is finished first");
     expect(migrationSummary(status({ state: "running", queued: 5, in_progress: 2, done: 3 }))).toContain("7 recordings; 3 done");
   });
 });

@@ -36,7 +36,7 @@ export const doctorScenarios = [
   { id: "search-failed-environment", title: "Re-index failed: AppAPI settings missing", description: "Cassini is running without the settings AppAPI gives it. No retry, a deployment step instead." },
   { id: "old-findings", title: "Passing checks are two days old", description: "Age is shown separately from the verdict; simulated checks refresh timestamps." },
   { id: "recorded-at-needed", title: "Past recordings lack their recording time", description: "The migration is found but not started: the count, what rewriting does in Nextcloud (versions, activity, notifications) as Nextcloud reports it, and the button. Starting simulates progress." },
-  { id: "recorded-at-running", title: "Writing recording times into files", description: "The migration is running, with a Pause button. Pausing lets the file in progress finish first." },
+  { id: "recorded-at-running", title: "Writing recording times into files", description: "The migration is running, with a Pause button. Pausing settles the files in progress first." },
   { id: "recorded-at-paused", title: "Recording-time migration paused", description: "Paused with files left, offering Resume." },
   { id: "recorded-at-blocked", title: "Some recordings could not be rewritten", description: "Everything else is done; the blocked recordings are named with what to fix, and Retry. Nextcloud's capabilities could not be read, so the report falls back to Nextcloud's defaults." },
   { id: "refresh-error", title: "Refreshing diagnostics fails", description: "Cassini stops answering after the first read. The callout says why and offers to try again, and the rows keep their last results." },
@@ -338,12 +338,12 @@ export function scenarioReport(id: string, now = new Date()): RecordingReadiness
 // The operator's sentences for a Nextcloud with Activity, Notifications and
 // versioning enabled — recordedAtNotices in recorded_at_migration.go.
 const noticesEnabled = {
-  known: true, account: "cassini", nextcloud_version: "33.0.9", activity_app: true, notifications_app: true, web_push: false, versioning: true,
+  known: true, account: "cassini", nextcloud_version: "33.0.9", activity_app: true, notifications_app: true, web_push: false, browser_push: false, versioning: true,
   details: [
     "Each recording is saved again by Cassini's cassini account, over the same file: its shares, links and file id stay as they are, and the audio is unchanged.",
-    "File versioning is enabled, so the file as it was before is kept as an earlier version in the cassini account and counts toward its storage until Nextcloud expires it. How long versions are kept is set by versions_retention_obligation in Nextcloud's config.php, which Cassini cannot read.",
+    "File versioning is enabled, so the file as it was before is kept as an earlier version in the cassini account. It takes disk space but does not count against that account's quota. Nextcloud expires versions by versions_retention_obligation in its config.php, which Cassini cannot read, and by the Versions app's limit of half the account's free space, past which the oldest go first.",
     "The Activity app is enabled, so everyone the recording is shared with gets a “file changed by cassini” entry in their Activity stream, one per recording.",
-    "With Nextcloud's defaults the change is not emailed and not sent as a notification: both are off for “A file or folder has been changed”. An administrator can change those defaults under Administration settings › Activity, and each person can turn them on in their own Activity settings. Cassini cannot read either, so anyone who did gets an email or a notification for each recording.",
+    "With Nextcloud's defaults the change is not emailed and not sent as a notification: both are off for “A file or folder has been changed”. An administrator can change those defaults under Administration settings › Activity, and each person can turn them on in their own Activity settings. Cassini cannot read either. Anyone who turned notifications on gets one per recording; anyone who turned email on finds the changes in their activity email, which Nextcloud collects and sends at the frequency they chose rather than one per change.",
     "The Notifications app is enabled, so a person who turned on notifications for changed files gets one per recording in Nextcloud, and on their devices where push notifications are set up.",
   ],
 };

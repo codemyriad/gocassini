@@ -23,7 +23,11 @@ export interface RecordedAtNotifications {
   nextcloud_version?: string;
   activity_app?: boolean;
   notifications_app?: boolean;
+  // web_push: Nextcloud's "webpush" (web push allowed, for apps with their
+  // own push distributor); browser_push: "webpush-browsers", the separate
+  // switch that lets browsers use it too.
   web_push?: boolean;
+  browser_push?: boolean;
   versioning?: boolean;
   details: string[];
 }
@@ -82,6 +86,7 @@ export function normalizeRecordedAtMigration(raw: unknown): RecordedAtMigration 
       activity_app: flag(notices.activity_app),
       notifications_app: flag(notices.notifications_app),
       web_push: flag(notices.web_push),
+      browser_push: flag(notices.browser_push),
       versioning: flag(notices.versioning),
       details: Array.isArray(notices.details) ? notices.details.filter((line): line is string => typeof line === "string" && line.trim() !== "") : [],
     } : undefined,
@@ -91,11 +96,11 @@ export function normalizeRecordedAtMigration(raw: unknown): RecordedAtMigration 
 
 const recordings = (n: number) => `${n} ${n === 1 ? "recording" : "recordings"}`;
 
-// Whether the panel shows anything. Nothing to say where nothing applies, where
-// no past recording needs it, and while the first count is still running with
-// nothing found yet.
+// Whether the panel shows anything. Nothing to say where nothing applies or
+// where no past recording needs it. While the first count is still running
+// with nothing found yet, one line says so.
 export function migrationVisible(m: RecordedAtMigration | null): m is RecordedAtMigration {
-  return !!m && m.state !== "not_applicable" && m.state !== "not_needed" && m.state !== "checking";
+  return !!m && m.state !== "not_applicable" && m.state !== "not_needed";
 }
 
 // The rewrite is under way (or settling): the panel re-reads by itself.
@@ -103,20 +108,30 @@ export function migrationActive(m: RecordedAtMigration): boolean {
   return m.state === "running" || m.state === "pausing";
 }
 
+// The first count has not finished: the panel re-reads, more slowly, until
+// it has, so the count and the button do not go stale.
+export function migrationCounting(m: RecordedAtMigration): boolean {
+  return m.applicable && (!m.checked || m.state === "checking");
+}
+
 export type MigrationAction = "start" | "pause";
 
 export interface MigrationButton {
   action: MigrationAction;
   label: string;
+  // A start waits for the first count to finish: the operator refuses it
+  // before then, since it would cover only part of the archive.
+  disabled: boolean;
 }
 
 // The one button for the state, or none.
 export function migrationButton(m: RecordedAtMigration): MigrationButton | null {
+  const start = (label: string): MigrationButton => ({ action: "start", label, disabled: !m.checked });
   switch (m.state) {
-    case "needed": return { action: "start", label: m.blocked > 0 ? `Write the recording time into ${recordings(m.needed + m.blocked)}` : `Write the recording time into ${recordings(m.needed)}` };
-    case "running": return { action: "pause", label: "Pause" };
-    case "paused": return { action: "start", label: "Resume" };
-    case "blocked": return { action: "start", label: m.blocked === 1 ? "Retry the blocked recording" : `Retry ${m.blocked} blocked recordings` };
+    case "needed": return start(m.blocked > 0 ? `Write the recording time into ${recordings(m.needed + m.blocked)}` : `Write the recording time into ${recordings(m.needed)}`);
+    case "running": return { action: "pause", label: "Pause", disabled: false };
+    case "paused": return start("Resume");
+    case "blocked": return start(m.blocked === 1 ? "Retry the blocked recording" : `Retry ${m.blocked} blocked recordings`);
     default: return null;
   }
 }
@@ -127,14 +142,18 @@ export function migrationSummary(m: RecordedAtMigration): string {
   switch (m.state) {
     case "needed":
       return `${recordings(m.needed)} ${m.needed === 1 ? "was" : "were"} published before Cassini wrote the recording time into the file itself. Browse already shows the right time; writing it into the ${m.needed === 1 ? "file" : "files"} makes it travel with downloads, the Nextcloud apps and the cassini command line.` +
-        (m.checked ? "" : " Cassini is still counting, so this number may grow.");
+        (m.checked ? "" : " Cassini is still counting, so this number may grow; you can start once it has finished.");
+    case "checking":
+      return "Cassini is checking which past recordings were published before it wrote the recording time into the file itself.";
     case "running":
       return `Writing the recording time into ${recordings(left)}${m.done > 0 ? `; ${m.done} done` : ""}. Cassini works on ${m.workers > 1 ? `up to ${m.workers} at a time` : "one at a time"}, ${m.pace_seconds} seconds apart, so it stays out of Nextcloud's way.`;
-    case "pausing":
-      return `Pausing. ${m.in_progress === 1 ? "The recording being written now finishes first" : `The ${m.in_progress} recordings being written now finish first`}, so no file is left half-written; ${recordings(m.queued + m.settling)} then wait.`;
+    case "pausing": {
+      // In progress, or an upload sent before the pause still being settled.
+      const started = m.in_progress + m.settling;
+      return `Pausing. ${started === 1 ? "The recording already being written is finished first, or left as it was if its upload had not gone through" : `The ${started} recordings already being written are finished first, or left as they were if their upload had not gone through`}, so no file is left half-written; ${recordings(m.queued)} then wait.`;
+    }
     case "paused":
-      return `Paused with ${recordings(m.queued + m.settling)} left${m.done > 0 ? ` and ${m.done} done` : ""}. Nothing is being written until you resume.` +
-        (m.settling > 0 ? ` ${m.settling === 1 ? "One upload that was already sent is" : `${m.settling} uploads that were already sent are`} still confirmed, so ${m.settling === 1 ? "its file is" : "their files are"} not left half-written.` : "");
+      return `Paused with ${recordings(m.queued + m.settling)} left${m.done > 0 ? ` and ${m.done} done` : ""}. Nothing is being written until you resume.`;
     case "blocked":
       return `${recordings(m.blocked)} could not be written and ${m.blocked === 1 ? "needs" : "need"} you${m.done > 0 ? `; ${m.done} ${m.done === 1 ? "is" : "are"} done` : ""}. Fix what each one says, then retry.`;
     case "done":
@@ -154,8 +173,11 @@ export function notificationFacts(n: RecordedAtNotifications | undefined): Array
   const facts = [
     { label: "File versioning", value: on(n.versioning) },
     { label: "Activity app", value: on(n.activity_app) },
-    { label: "Notifications app", value: n.notifications_app && n.web_push ? "Enabled, with browser push" : on(n.notifications_app) },
+    { label: "Notifications app", value: on(n.notifications_app) },
   ];
+  if (n.notifications_app && n.web_push !== undefined) {
+    facts.push({ label: "Web push", value: n.browser_push ? "Allowed, browsers too" : n.web_push ? "Allowed, not for browsers" : "Not allowed" });
+  }
   if (n.nextcloud_version) facts.push({ label: "Nextcloud", value: n.nextcloud_version });
   return facts;
 }

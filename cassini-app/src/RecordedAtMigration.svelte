@@ -7,23 +7,32 @@
   import { onDestroy, onMount } from "svelte";
   import { CircleAlert, CircleCheck, Clock, Info, Pause, Play, TriangleAlert } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
-  import { migrationActive, migrationButton, migrationSummary, migrationVisible, notificationFacts, type RecordedAtMigration } from "./operator/recordedAtMigration";
+  import { migrationActive, migrationButton, migrationCounting, migrationSummary, migrationVisible, notificationFacts, type RecordedAtMigration } from "./operator/recordedAtMigration";
   import { toneClasses } from "./operator/readiness";
 
   export let operatorClient: Pick<OperatorClient, "getRecordedAtMigration" | "startRecordedAtMigration" | "pauseRecordedAtMigration">;
-  // How often the section re-reads while files are being written.
+  // How often the section re-reads while files are being written, and while
+  // the first count of past recordings has not finished.
   export let pollMs = 10000;
+  export let countingPollMs = 30000;
+  // The timer the re-reads run on; tests fire it themselves.
+  export let timers: { set: (run: () => void, ms: number) => unknown; clear: (handle: unknown) => void } = {
+    set: (run, ms) => setTimeout(run, ms),
+    clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  };
 
   let migration: RecordedAtMigration | null = null;
   let busy = false;
   let error = "";
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: unknown;
   let destroyed = false;
   // Bumped by every action, so a read that started before it cannot put the
-  // state it answered back over the action's newer one.
+  // state it answered (or its failure) over the action's newer one. No read
+  // starts while an action is in flight: its answer could predate the action.
   let generation = 0;
 
   async function load(): Promise<void> {
+    if (busy) return;
     const started = generation;
     try {
       const read = await operatorClient.getRecordedAtMigration();
@@ -31,6 +40,7 @@
       migration = read;
       error = "";
     } catch (cause) {
+      if (started !== generation) return;
       // Said only once something was shown: a section that never loaded has
       // nothing to correct, and the checks above already report an operator
       // that does not answer.
@@ -40,11 +50,14 @@
   }
 
   function schedule(): void {
-    clearTimeout(timer);
-    if (!destroyed && migration && migrationActive(migration)) timer = setTimeout(load, pollMs);
+    timers.clear(timer);
+    if (destroyed || !migration) return;
+    if (migrationActive(migration)) timer = timers.set(load, pollMs);
+    else if (migrationCounting(migration)) timer = timers.set(load, countingPollMs);
   }
 
   async function act(action: "start" | "pause"): Promise<void> {
+    timers.clear(timer);
     busy = true;
     error = "";
     generation++;
@@ -59,7 +72,7 @@
   }
 
   onMount(load);
-  onDestroy(() => { destroyed = true; clearTimeout(timer); });
+  onDestroy(() => { destroyed = true; timers.clear(timer); });
 
   $: button = migration ? migrationButton(migration) : null;
   $: facts = notificationFacts(migration?.notifications);
@@ -81,12 +94,14 @@
         <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs self-center" aria-hidden="true"></span>{migration.state === "pausing" ? "Pausing" : "Running"}</span>
       {:else if migration.state === "paused"}
         <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><Pause size={14} class="shrink-0 self-center" aria-hidden="true" />Paused</span>
+      {:else if migration.state === "checking"}
+        <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><span class="loading loading-spinner loading-xs self-center" aria-hidden="true"></span>Checking</span>
       {:else if migration.state === "needed"}
         <span class="inline-flex items-baseline gap-1 whitespace-nowrap text-xs font-normal text-base-content/65"><Clock size={14} class="shrink-0 self-center" aria-hidden="true" />Not started</span>
       {/if}
     </h2>
     {#if button}
-      <button type="button" class="{button.action === 'start' ? 'op-btn' : 'btn btn-sm btn-outline btn-outline-quiet btn-outline-hover'} inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" disabled={busy} on:click={() => act(button.action)}>
+      <button type="button" class="{button.action === 'start' ? 'op-btn' : 'btn btn-sm btn-outline btn-outline-quiet btn-outline-hover'} inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" disabled={busy || button.disabled} on:click={() => act(button.action)}>
         <svelte:component this={button.action === "start" ? Play : Pause} size={15} class="shrink-0" aria-hidden="true" />{button.label}
       </button>
     {/if}
@@ -113,7 +128,7 @@
           </dl>
         {/if}
         {#each migration.notifications.details as line}<p class="text-sm text-base-content/70">{line}</p>{/each}
-        <p class="flex gap-1.5 text-xs text-base-content/60"><Info size={12} class="mt-0.5 shrink-0" aria-hidden="true" />You can pause at any time; a file already being written is finished first, never left half-written.</p>
+        <p class="flex gap-1.5 text-xs text-base-content/60"><Info size={12} class="mt-0.5 shrink-0" aria-hidden="true" />You can pause at any time. A file whose upload was already sent is finished first, and one not yet uploaded is left as it was, so none is left half-written.</p>
       </div>
     </details>
   {/if}
