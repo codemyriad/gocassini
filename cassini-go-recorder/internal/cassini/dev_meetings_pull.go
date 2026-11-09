@@ -191,7 +191,7 @@ directory out of version control and treat it as confidential.
 		fmt.Fprintln(stderr, "--annotations must be embedded or current")
 		return 2
 	}
-	filter, err := parseMeetingsFilter(*fromDate, *toDate, *room)
+	filter, err := parseMeetingsFilter(*fromDate, *toDate, *room, meetingsLocation(ctx))
 	if err != nil {
 		fmt.Fprintf(stderr, "pull configuration error: %v\n", err)
 		return 2
@@ -203,6 +203,7 @@ directory out of version control and treat it as confidential.
 	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
+	client.loc = meetingsLocation(ctx)
 	listing, result, err := client.fetchMeetings(ctx, filter)
 	if err != nil {
 		return reportMeetingsError(stderr, "pull", cfg, err)
