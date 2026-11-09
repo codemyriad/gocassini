@@ -12,9 +12,10 @@ import (
 // when it tells a person about it: the title Browse shows, when it started
 // and how long it runs.
 //
-// Every time here is UTC. The operator records a recording's start and end
-// in UTC (jobs.record_started_at and record_finished_at), and an imported
-// meeting's createdAtUtc is UTC by name. Neither records a zone, so none is
+// Every time here is UTC. A meeting's start is the instant its indexed entry
+// states (recordedAtUtc) when it has one; otherwise the operator's own record
+// of a recording's start (jobs.record_started_at), and an imported meeting's
+// createdAtUtc, UTC by name. Neither records a zone, so none is
 // applied: a share note says "10:00 UTC" for a meeting that started then.
 type meetingFacts struct {
 	Title     string
@@ -53,6 +54,7 @@ func (rt *Runtime) meetingFactsForJobs(ctx context.Context, jobIDs []string) map
 		return facts
 	}
 	audioLength := map[string]time.Duration{}
+	recordedAt := map[string]time.Time{}
 	if rt.meetingMetadata != nil {
 		entries, err := rt.meetingMetadata.entriesByName(ctx, meetingFileNames(ids))
 		if err == nil {
@@ -65,6 +67,7 @@ func (rt *Runtime) meetingFactsForJobs(ctx context.Context, jobIDs []string) map
 					var entry struct {
 						Title            string `json:"title"`
 						DigestDurationMS int64  `json:"digestDurationMs"`
+						RecordedAtUTC    string `json:"recordedAtUtc"`
 					}
 					if json.Unmarshal(raw, &entry) != nil {
 						continue
@@ -74,6 +77,9 @@ func (rt *Runtime) meetingFactsForJobs(ctx context.Context, jobIDs []string) map
 					facts[id] = f
 					if entry.DigestDurationMS > 0 {
 						audioLength[id] = time.Duration(entry.DigestDurationMS) * time.Millisecond
+					}
+					if at, ok := parseRecordedAtUTC(entry.RecordedAtUTC); ok {
+						recordedAt[id] = at
 					}
 					break
 				}
@@ -138,6 +144,13 @@ func (rt *Runtime) meetingFactsForJobs(ctx context.Context, jobIDs []string) map
 				}
 			}
 		}
+	}
+	// The instant the entry states is when the audio the person will play
+	// starts; the job's record start only stands in without one.
+	for id, at := range recordedAt {
+		f := facts[id]
+		f.StartedAt = at
+		facts[id] = f
 	}
 	// The audio as published is what the person will play; the recording's
 	// own span only stands in when the index does not know the length.

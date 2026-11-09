@@ -288,7 +288,7 @@ func TestMeetingsListRejectsBadQueries(t *testing.T) {
 	for _, tc := range []struct{ name, query, want string }{
 		{"inverted range", "from=2026-08-31&to=2026-08-01", "swap"},
 		{"malformed date", "from=31%2F08%2F2026", "not a date"},
-		{"timezone offered", "from=2026-08-01T09:00:00Z", "not a date"},
+		{"instant without its zone", "from=2026-08-01T09:00:00", "not a date"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := getMeetingsList(t, cfg, tc.query, "alice")

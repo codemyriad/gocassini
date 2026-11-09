@@ -215,7 +215,7 @@ func (m *mcpReader) Search(ctx context.Context, caller string, in mcpserver.Sear
 			}
 		}
 		result.Hits = append(result.Hits, mcpserver.SearchHit{
-			MeetingID: hit.MeetingID, Title: hit.Title, DateLabel: hit.DateLabel,
+			MeetingID: hit.MeetingID, Title: hit.Title, DateLabel: hit.DateLabel, RecordedAtUTC: hit.RecordedAtUTC,
 			RoomID: hit.RoomID, RoomName: hit.RoomName, RoomDisplayName: hit.RoomDisplayName,
 			SegmentID: hit.SegmentID, StartMS: hit.StartMS, EndMS: hit.EndMS,
 			SpeakerID: hit.SpeakerID, Matched: hit.Matched, Marks: marks,

@@ -52,7 +52,7 @@ func (s *meetingMetadataStore) registerRoom(ctx context.Context, id, name string
 // Seed from the same newest-first inventory for all callers; a viewer's subset
 // cannot choose a shared default. Never rewrite the original JSON.
 func (s *meetingMetadataStore) registerMetadataRooms(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT entry_json FROM meeting_metadata ORDER BY date_label DESC, file_id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT entry_json FROM meeting_metadata ORDER BY `+meetingMetadataSortKeySQL+` DESC, file_id DESC`)
 	if err != nil {
 		return err
 	}

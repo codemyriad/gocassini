@@ -18,7 +18,7 @@ import (
 // derived; room_names in the SAME database are durable user data.
 const (
 	meetingMetadataFilename = "meetings.sqlite3"
-	meetingMetadataVersion  = 2
+	meetingMetadataVersion  = 3
 	meetingMetadataSchema   = `
 CREATE TABLE IF NOT EXISTS meeting_metadata (
   file_id     INTEGER PRIMARY KEY,
@@ -29,6 +29,24 @@ CREATE TABLE IF NOT EXISTS meeting_metadata (
 );
 CREATE INDEX IF NOT EXISTS meeting_metadata_by_name ON meeting_metadata(opus_name);
 CREATE INDEX IF NOT EXISTS meeting_metadata_by_date ON meeting_metadata(date_label);
+`
+	// Version 3 adds the meeting's instant (recordedAtUtc, normalised to
+	// recordedAtUTCLayout; '' when the entry has none) beside its label, and
+	// the progress of writing it back into delivered files. The column is
+	// added rather than declared above so version 1 and 2 files migrate in
+	// place; the backfill fills it (recorded_at_index.go).
+	meetingMetadataRecordedAtSchema = `
+CREATE INDEX IF NOT EXISTS meeting_metadata_by_recorded_at ON meeting_metadata(recorded_at_utc);
+CREATE TABLE IF NOT EXISTS recorded_at_file_backfill (
+  opus_name       TEXT PRIMARY KEY,
+  recorded_at_utc TEXT NOT NULL,
+  state           TEXT NOT NULL DEFAULT 'pending',
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  retry_at        INTEGER NOT NULL DEFAULT 0,
+  last_error      TEXT NOT NULL DEFAULT '',
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS recorded_at_file_backfill_due ON recorded_at_file_backfill(state, retry_at);
 `
 )
 
@@ -71,6 +89,18 @@ func openMeetingMetadataStore(file string, logger *log.Logger) (*meetingMetadata
 		if _, err := tx.Exec(meetingMetadataSchema + roomNamesSchema); err != nil {
 			return fail(err)
 		}
+		var hasColumn int
+		if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('meeting_metadata') WHERE name='recorded_at_utc'`).Scan(&hasColumn); err != nil {
+			return fail(err)
+		}
+		if hasColumn == 0 {
+			if _, err := tx.Exec(`ALTER TABLE meeting_metadata ADD COLUMN recorded_at_utc TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fail(err)
+			}
+		}
+		if _, err := tx.Exec(meetingMetadataRecordedAtSchema); err != nil {
+			return fail(err)
+		}
 		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", meetingMetadataVersion)); err != nil {
 			return fail(err)
 		}
@@ -111,13 +141,16 @@ func (s *meetingMetadataStore) Put(ctx context.Context, fileID int64, opusName s
 	if catalogEntryOpusName(meetingPath(probe.AudioPath, probe.MeetingPath), "") != opusName {
 		return fmt.Errorf("meeting metadata does not describe %s", opusName)
 	}
+	// The instant is stored as the entry states it, nothing derived here: an
+	// entry without one is stamped by the backfill or the publish sink.
 	_, err := s.db.ExecContext(ctx, `INSERT INTO meeting_metadata
-  (file_id, opus_name, date_label, entry_json, indexed_at)
-  VALUES (?, ?, ?, ?, ?)
+  (file_id, opus_name, date_label, entry_json, indexed_at, recorded_at_utc)
+  VALUES (?, ?, ?, ?, ?, ?)
   ON CONFLICT(file_id) DO UPDATE SET
     opus_name=excluded.opus_name, date_label=excluded.date_label,
-    entry_json=excluded.entry_json, indexed_at=excluded.indexed_at`,
-		fileID, opusName, probe.DateLabel, string(entry), nowUTCString())
+    entry_json=excluded.entry_json, indexed_at=excluded.indexed_at,
+    recorded_at_utc=excluded.recorded_at_utc`,
+		fileID, opusName, probe.DateLabel, string(entry), nowUTCString(), normalizedRecordedAtUTC(entryRecordedAtUTC(entry)))
 	if err != nil {
 		return err
 	}

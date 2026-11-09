@@ -117,6 +117,14 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 		if err := s.rt.meetingMetadata.Put(ctx, after.FileID, path.Base(remote), overlaid); err != nil {
 			return "", fmt.Errorf("index recording metadata: %w", err)
 		}
+		// An entry whose file does not state recordedAtUtc gets the instant the
+		// operator can derive, and its file is queued for it. Best-effort: a
+		// failure costs the instant until the next startup pass, never the
+		// meeting. Runs under the recording's write lock, so no file rewrite
+		// for this meeting is in flight.
+		if err := s.rt.stampPublishedRecordedAt(ctx, after.FileID, path.Base(remote)); err != nil {
+			s.rt.logger.Printf("recorded-at: stamp published job=%s: %v (the startup pass will retry)", d.JobID, err)
+		}
 	}
 	// Best-effort, like the room stamp at build time: a failed registration
 	// costs the room default, never the meeting. The reconcile worker's next
