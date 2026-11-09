@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"gocassini/internal/inspect"
 	"gocassini/internal/portable"
@@ -125,8 +127,10 @@ func TestTranscriptionPackSnapshotAndRepublishPreserveDisplayAndSummary(t *testi
 	}
 }
 
-// Exercise capture metadata through a delayed build, both pack formats, and
-// audio eviction. The input name deliberately carries a conflicting date.
+// Exercise the Talk recording start through a delayed build, both pack
+// formats, and audio eviction: the MKV's wall-clock anchor becomes
+// meeting.recordedAtUtc, its CASSINI_RECORDED_AT_UTC mirror and DATE, while
+// the zone-unknown recorded_at_local label is not propagated.
 func TestRecordingTimeSurvivesBuildPackAndTranscriptionExport(t *testing.T) {
 	requireFFMediaTools(t)
 	dir := t.TempDir()
@@ -134,9 +138,16 @@ func TestRecordingTimeSurvivesBuildPackAndTranscriptionExport(t *testing.T) {
 	if err := writeReadyMeetingBundleFixture(bundle, "source.mkv"); err != nil {
 		t.Fatal(err)
 	}
-	input := filepath.Join(dir, "renamed--20261007T120000.mkv")
-	const recorded = "2026-03-10T14:00:00"
-	if raw, err := exec.Command("ffmpeg", "-y", "-v", "error", "-i", filepath.Join(bundle, "meeting.webm"), "-c:a", "copy", "-metadata", "recorded_at_local="+recorded, input).CombinedOutput(); err != nil {
+	input := filepath.Join(dir, "recording.mkv")
+	origin := time.Date(2026, 3, 10, 14, 0, 0, 125e6, time.UTC)
+	const recorded = "2026-03-10T14:00:00.125Z"
+	if raw, err := exec.Command("ffmpeg", "-y", "-v", "error", "-i", filepath.Join(bundle, "meeting.webm"), "-c:a", "copy",
+		"-metadata", "session_started_at=2026-03-10T13:59:57Z",
+		"-metadata", "recorded_at_local=2026-03-10T14:00:00",
+		"-metadata:s:a:0", fmt.Sprintf("first_packet_wall_ms=%d", origin.UnixMilli()),
+		"-metadata:s:a:0", fmt.Sprintf("first_timeline_ns=%d", origin.UnixNano()),
+		"-metadata:s:a:0", "clock_rate=48000",
+		input).CombinedOutput(); err != nil {
 		t.Fatalf("mkv fixture: %v: %s", err, raw)
 	}
 	if err := transcribe.BuildMeetingArtifact(context.Background(), input, bundle, transcribe.BuildConfig{TranscriptionMode: "off"}, io.Discard); err != nil {
@@ -148,16 +159,25 @@ func TestRecordingTimeSurvivesBuildPackAndTranscriptionExport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if meeting.Manifest.Meeting.RecordedAtLocal != recorded {
-			t.Fatalf("%s lost recording date: %+v", ext, meeting.Manifest.Meeting)
+		if meeting.Manifest.Meeting.RecordedAtUTC != recorded || meeting.Manifest.Meeting.RecordedAtLocal != "" {
+			t.Fatalf("%s: recordedAtUtc lost or recordedAtLocal propagated: %+v", ext, meeting.Manifest.Meeting)
+		}
+		if meeting.Manifest.Meeting.CreatedAtUTC == recorded {
+			t.Fatalf("%s: createdAtUtc must stay the pack/build time: %+v", ext, meeting.Manifest.Meeting)
 		}
 		if ext == ".opus" {
 			tags, err := portableMeetingTags(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tags["CASSINI_RECORDED_AT_LOCAL"] != recorded {
-				t.Fatalf("mirror lost recording date: %+v", tags)
+			if tags["CASSINI_RECORDED_AT_UTC"] != recorded || tags["DATE"] != recorded {
+				t.Fatalf("mirror/DATE lost recording start: %+v", tags)
+			}
+			if _, ok := tags["CASSINI_RECORDED_AT_LOCAL"]; ok {
+				t.Fatalf("zone-unknown label mirrored: %+v", tags)
+			}
+			if tags["CASSINI_CREATED_AT"] != meeting.Manifest.Meeting.CreatedAtUTC {
+				t.Fatalf("CASSINI_CREATED_AT moved off createdAtUtc: %+v", tags)
 			}
 			raw, err := portable.EncodeTranscription(tags)
 			if err != nil {
@@ -172,7 +192,7 @@ func TestRecordingTimeSurvivesBuildPackAndTranscriptionExport(t *testing.T) {
 			if err := json.Unmarshal(raw, &doc); err != nil {
 				t.Fatal(err)
 			}
-			if doc.Source.Meeting.RecordedAtLocal != recorded || doc.Tags["CASSINI_RECORDED_AT_LOCAL"] != recorded {
+			if doc.Source.Meeting.RecordedAtUTC != recorded || doc.Tags["CASSINI_RECORDED_AT_UTC"] != recorded {
 				t.Fatalf("transcription conversion lost recording time: %s", raw)
 			}
 		}

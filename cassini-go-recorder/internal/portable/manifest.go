@@ -283,9 +283,17 @@ type HintsProvenance struct {
 }
 
 type Meeting struct {
-	ID              string `json:"id"`
-	Title           string `json:"title"`
-	CreatedAtUTC    string `json:"createdAtUtc"`
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	CreatedAtUTC string `json:"createdAtUtc"`
+	// RecordedAtUTC is the instant of playback position 0 of the audio, so a
+	// word's wall-clock time is RecordedAtUTC + startMs. RFC 3339 UTC ending
+	// in Z (see ValidRecordedAtUTC). Optional: absent when the producer does
+	// not know when the recording started. Mirrored as the
+	// CASSINI_RECORDED_AT_UTC tag, and DATE carries the same value.
+	RecordedAtUTC string `json:"recordedAtUtc,omitempty"`
+	// RecordedAtLocal is a zone-less wall-clock label, never an instant.
+	// Producers write it only when they know the recording site's zone.
 	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
 	ProcessedAtUTC  string `json:"processedAtUtc,omitempty"`
 	DurationMS      int64  `json:"durationMs"`
