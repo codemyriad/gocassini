@@ -313,18 +313,19 @@ func formatTimestamp(offsetMS int64) string {
 const StartLayout = "2006-01-02T15:04-07:00"
 
 // meetingStartLine says when the meeting started, as honestly as the file
-// allows. createdAtUtc is the build time, so it is never presented as the
-// start: with nothing better the line says the start is unknown and names
-// the build time as what it is.
+// allows, picked by portable.MeetingStartOf. createdAtUtc is the build time,
+// so it is never presented as the start: with nothing better the line says
+// the start is unknown and names the build time as what it is.
 func meetingStartLine(meeting Meeting, loc *time.Location) string {
 	if loc == nil {
 		loc = time.Local
 	}
-	if started, err := time.Parse(time.RFC3339Nano, meeting.RecordedAtUTC); err == nil && meeting.RecordedAtUTC != "" {
-		return "- Started: " + started.In(loc).Format(StartLayout)
+	start := meeting.start("")
+	if start.Instant {
+		return "- Started: " + start.At.In(loc).Format(StartLayout)
 	}
-	if meeting.RecordedAtLocal != "" {
-		return "- Started: " + meeting.RecordedAtLocal + " (recording site's wall clock, time zone unknown)"
+	if start.Known() {
+		return "- Started: " + start.Value + " (recording site's wall clock, time zone unknown)"
 	}
 	if meeting.CreatedAtUTC != "" {
 		return "- Started: unknown (the file was built " + meeting.CreatedAtUTC + ")"

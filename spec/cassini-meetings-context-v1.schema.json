@@ -85,6 +85,16 @@
           "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$",
           "description": "The recording's wall-clock label at the recording site, with no time zone. A label, never to be converted to an instant. Readers prefer recordedAtUtc."
         },
+        "meetingStart": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "value"],
+          "description": "When the meeting happened, picked by the portable format's rule: recordedAtUtc, else the file's DATE tag when it carries an offset and is not the build time, else the recordedAtLocal label. Absent when the recording does not say.",
+          "properties": {
+            "source": { "enum": ["recordedAtUtc", "DATE", "recordedAtLocal"] },
+            "value": { "type": "string", "minLength": 1, "description": "The chosen field's text as the recording carries it. An instant for recordedAtUtc and DATE; a zone-less label for recordedAtLocal." }
+          }
+        },
         "durationMs": { "type": "integer", "minimum": 0 },
         "roomId": {
           "type": "string",

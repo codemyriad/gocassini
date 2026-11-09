@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"gocassini/internal/portable"
 )
 
 // Version identifies the context bundle's shape. Bumping it is a breaking
@@ -78,7 +80,11 @@ type Meeting struct {
 	// RecordedAtLocal is the file's zone-less wall-clock label, carried only
 	// so a reader can show it as such. It is never converted to an instant.
 	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
-	DurationMS      int64  `json:"durationMs,omitempty"`
+	// MeetingStart is when the meeting happened as the format's rule picks
+	// it (portable.MeetingStartOf), which can also come from the file's DATE
+	// tag. Absent when the file does not say.
+	MeetingStart *portable.MeetingStart `json:"meetingStart,omitempty"`
+	DurationMS   int64                  `json:"durationMs,omitempty"`
 	// RoomID and RoomName say which conversation this meeting came out of
 	// (D-640). Both optional — a meeting with no room is an ordinary state —
 	// and both are read from the catalog entry rather than from the file,
@@ -355,6 +361,9 @@ type BuildInput struct {
 	CreatedAtUTC    string
 	RecordedAtUTC   string
 	RecordedAtLocal string
+	// DateTag is the file's plain DATE tag, which says when the meeting
+	// happened when the manifest does not (see portable.MeetingStartOf).
+	DateTag         string
 	DurationMS      int64
 	RoomID          string
 	RoomName        string
@@ -401,7 +410,26 @@ func Build(in BuildInput) MeetingContext {
 		Segments: make([]Segment, 0, len(in.Segments)),
 		Summary:  in.Summary,
 	}
+	if start := bundle.Meeting.start(in.DateTag); start.Known() {
+		bundle.Meeting.MeetingStart = &start
+	}
 	bundle.Speakers = append(bundle.Speakers, in.Speakers...)
 	bundle.Segments = append(bundle.Segments, in.Segments...)
 	return bundle
+}
+
+// start is when the meeting happened: MeetingStart when the bundle carries
+// it, else the format's rule applied to the fields it has and dateTag.
+func (m Meeting) start(dateTag string) portable.MeetingStart {
+	if m.MeetingStart != nil {
+		// A decoded bundle carries the text only; recover the instant.
+		if start := portable.ParseMeetingStart(m.MeetingStart.Source, m.MeetingStart.Value); start.Known() {
+			return start
+		}
+	}
+	return portable.MeetingStartOf(portable.Meeting{
+		RecordedAtUTC:   m.RecordedAtUTC,
+		RecordedAtLocal: m.RecordedAtLocal,
+		CreatedAtUTC:    m.CreatedAtUTC,
+	}, dateTag)
 }

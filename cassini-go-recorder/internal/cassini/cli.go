@@ -16,6 +16,7 @@ import (
 	"gocassini/internal/app"
 	"gocassini/internal/config"
 	inspectpkg "gocassini/internal/inspect"
+	"gocassini/internal/portable"
 	"gocassini/internal/talk"
 )
 
@@ -519,11 +520,18 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		// recordedAtUtc is when the recording started (the instant at audio
 		// position 0); createdAtUtc is when the file was built. Readers that
 		// want "when" prefer recordedAtUtc and fall back to the label.
+		// meetingStart is that choice made by the format's rule, which can
+		// also take it from the DATE tag; absent when the file does not say.
+		var start *portable.MeetingStart
+		if picked := meeting.MeetingStart(); picked.Known() {
+			start = &picked
+		}
 		if err := json.NewEncoder(stdout).Encode(struct {
-			CreatedAtUTC    string `json:"createdAtUtc"`
-			RecordedAtUTC   string `json:"recordedAtUtc"`
-			RecordedAtLocal string `json:"recordedAtLocal"`
-		}{meeting.Manifest.Meeting.CreatedAtUTC, meeting.Manifest.Meeting.RecordedAtUTC, meeting.Manifest.Meeting.RecordedAtLocal}); err != nil {
+			CreatedAtUTC    string                 `json:"createdAtUtc"`
+			RecordedAtUTC   string                 `json:"recordedAtUtc"`
+			RecordedAtLocal string                 `json:"recordedAtLocal"`
+			MeetingStart    *portable.MeetingStart `json:"meetingStart,omitempty"`
+		}{meeting.Manifest.Meeting.CreatedAtUTC, meeting.Manifest.Meeting.RecordedAtUTC, meeting.Manifest.Meeting.RecordedAtLocal, start}); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

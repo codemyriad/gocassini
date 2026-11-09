@@ -2,6 +2,7 @@
 
 - Talk recordings now record exactly when they started. The meeting file gains `meeting.recordedAtUtc` (mirrored as the `CASSINI_RECORDED_AT_UTC` tag), its `DATE` tag holds that start instead of the time the file was built, and `catalog.json`, the meeting list, search hits, the rooms list and MCP results carry `recordedAtUtc`. `dateLabel` is unchanged for older clients.
 - `cassini retag --recorded-at-utc <RFC 3339 UTC>` adds the recording start to an existing file without changing its meeting id.
+- `cassini inspect` prints a meeting's `recorded_at` fields and a `meeting_start` line, and warns when `CASSINI_RECORDED_AT_UTC` disagrees with the manifest. `inspect --meeting-times` and `meetings context` add `meetingStart` (`source`, `value`): `recordedAtUtc`, else a `DATE` tag with an offset that is not the build time, else the `recordedAtLocal` label.
 
 ### Changed
 
