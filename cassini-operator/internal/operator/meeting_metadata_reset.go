@@ -8,7 +8,9 @@ import (
 )
 
 // Run offline under the same work-root lock as the operator. Room names are
-// durable; only file-ID-bound derived rows are discarded during a restore.
+// durable; only file-ID-bound derived rows are discarded during a restore,
+// and with them the recordedAtUtc file backfill's progress: the restored
+// files may predate it, so the next startup pass queues them afresh.
 func runClearMeetingMetadata(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		fmt.Fprintln(stderr, "clear-meeting-metadata takes no arguments; uses operator environment")
@@ -34,7 +36,19 @@ func runClearMeetingMetadata(ctx context.Context, args []string, stdout, stderr 
 		return 1
 	}
 	defer store.Close()
-	if _, err = store.db.ExecContext(ctx, `DELETE FROM meeting_metadata`); err != nil {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"meeting_metadata", "recorded_at_file_backfill"} {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	if err = tx.Commit(); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}

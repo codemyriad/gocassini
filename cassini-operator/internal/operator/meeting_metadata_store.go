@@ -257,10 +257,23 @@ func (s *meetingMetadataStore) entriesByName(ctx context.Context, names []string
 	return out, nil
 }
 
+// Forget drops a meeting's entry and any recordedAtUtc file work queued for
+// it: a retired or deleted file is never re-tagged, and a missing one must not
+// sit in the backfill as blocked.
 func (s *meetingMetadataStore) Forget(ctx context.Context, fileID int64) error {
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM meeting_metadata WHERE file_id = ?`, fileID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM recorded_at_file_backfill WHERE opus_name IN (SELECT opus_name FROM meeting_metadata WHERE file_id = ?)`, fileID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_metadata WHERE file_id = ?`, fileID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
