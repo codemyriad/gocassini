@@ -107,9 +107,16 @@ func meetingSortKey(dateLabel, recordedAtUTC string) string {
 // recorded_at_utc is always in recordedAtUTCLayout or empty.
 const meetingMetadataSortKeySQL = `CASE WHEN recorded_at_utc <> '' THEN replace(substr(recorded_at_utc, 1, 23), 'T', ' ') ELSE date_label END`
 
-// catalogEntryWhen places an entry in time for filters and orderings: its
-// instant when it has one, otherwise its dateLabel read as a wall clock with
-// no zone applied (as every reader did before recordedAtUtc existed).
+// catalogEntryWhen places an entry in time for orderings: its instant when it
+// has one, otherwise its dateLabel read as a wall clock with no zone applied
+// (as every reader did before recordedAtUtc existed).
+//
+// Placing a label next to an instant needs a zone for the label, and the
+// server has no reader. It reads the digits as UTC, which is what an ExApp
+// label's digits are. The viewer and the CLI read them in the reader's zone,
+// so in a set mixing the two kinds, entries within the reader's offset of each
+// other can order differently there. The date filter does not use this: it
+// compares a label against the bound's own digits (applyMeetingsListFilter).
 func catalogEntryWhen(dateLabel, recordedAtUTC string) (time.Time, bool) {
 	if at, ok := parseRecordedAtUTC(recordedAtUTC); ok {
 		return at, true

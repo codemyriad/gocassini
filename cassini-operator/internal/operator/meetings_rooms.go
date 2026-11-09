@@ -80,10 +80,12 @@ type listedMeeting struct {
 	dated           bool
 }
 
-// orderListedMeetings decodes a list's entries and puts them in the order the
-// viewer and the CLI show them: newest first by recordedAtUtc when an entry
-// has one and by dateLabel otherwise (catalogEntryWhen), entries with neither
-// last, ties broken by id descending. An entry with no id
+// orderListedMeetings decodes a list's entries newest first: by recordedAtUtc
+// when an entry has one and by dateLabel otherwise (catalogEntryWhen), entries
+// with neither last, ties broken by id descending. Between an instant and a
+// label this is the server's reading (label digits as UTC, see
+// catalogEntryWhen), which can differ from the viewer's and the CLI's by up to
+// the reader's UTC offset. An entry with no id
 // cannot be referred to, so it is dropped and counted.
 func orderListedMeetings(entries []json.RawMessage) ([]listedMeeting, int) {
 	items := make([]listedMeeting, 0, len(entries))
