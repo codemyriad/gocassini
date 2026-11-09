@@ -103,7 +103,9 @@ func parseMeetingsFilter(from, to, room string, loc *time.Location) (meetingsFil
 // recordedAtUtc that makes `--from 2026-11-09` mean local midnight. Against a
 // meeting that only has a dateLabel, which deliberately does not know its zone
 // (D-484), the label is read in the same zone (meetingTime), so the comparison
-// stays the zone-less digit comparison it always was.
+// stays the zone-less digit comparison it always was. The list route keeps the
+// same reading: it compares a label against the digits of the bound in the
+// offset the CLI sent it with (meetingsListURL), not against its UTC instant.
 func parseMeetingsFilterBound(value string, endOfRange bool, loc *time.Location) (time.Time, error) {
 	for _, layout := range meetingDateLabelLayouts {
 		at, err := time.ParseInLocation(layout, value, loc)

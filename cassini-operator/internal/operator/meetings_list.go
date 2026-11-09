@@ -53,16 +53,24 @@ type meetingsListFilter struct {
 	// from and to are INCLUSIVE bounds on when a meeting happened.
 	//
 	// A bound may be an instant (RFC 3339 with Z or an offset) or a zone-less
-	// wall clock in a dateLabel layout. A meeting is placed by its
-	// recordedAtUtc when it has one, otherwise by its dateLabel. No zone is
-	// invented for a zone-less value (D-484): it is read as the UTC wall
-	// clock it was always compared as, which is what an ExApp dateLabel's
-	// digits are. So old clients' zone-less filters keep matching what they
-	// matched before, and an instant bound compares instants exactly.
+	// wall clock in a dateLabel layout, and is kept in both readings:
+	//
+	//   - from/to, the instant. A meeting that has recordedAtUtc is compared
+	//     against it. A zone-less bound is read as the UTC wall clock it was
+	//     always compared as (no zone is invented, D-484).
+	//   - fromWall/toWall, the bound's own wall-clock digits (in the offset it
+	//     was written with), as a UTC-located time. A meeting with only a
+	//     dateLabel, which deliberately does not know its zone, is compared
+	//     digit for digit against these, as every reader always did. Reading
+	//     the label as UTC against an offset instant would shift the range by
+	//     the caller's offset, and disagree with the CLI's own catalog
+	//     fallback, which compares the label in the caller's zone.
 	from        time.Time
+	fromWall    time.Time
 	hasFrom     bool
 	fromInstant bool
 	to          time.Time
+	toWall      time.Time
 	hasTo       bool
 	toInstant   bool
 	// room is a room id exactly as `cassini meetings rooms` prints it. Matched
@@ -109,14 +117,14 @@ func newMeetingsListFilter(from, to, room, tag string) (meetingsListFilter, erro
 	var filter meetingsListFilter
 	var err error
 	if raw := strings.TrimSpace(from); raw != "" {
-		filter.from, filter.fromInstant, err = parseMeetingsListBound(raw, false)
+		filter.from, filter.fromWall, filter.fromInstant, err = parseMeetingsListBound(raw, false)
 		if err != nil {
 			return meetingsListFilter{}, fmt.Errorf("from: %w", err)
 		}
 		filter.hasFrom = true
 	}
 	if raw := strings.TrimSpace(to); raw != "" {
-		filter.to, filter.toInstant, err = parseMeetingsListBound(raw, true)
+		filter.to, filter.toWall, filter.toInstant, err = parseMeetingsListBound(raw, true)
 		if err != nil {
 			return meetingsListFilter{}, fmt.Errorf("to: %w", err)
 		}
@@ -140,15 +148,18 @@ func newMeetingsListFilter(from, to, room, tag string) (meetingsListFilter, erro
 
 // parseMeetingsListBound parses one end of the range: an instant in RFC 3339
 // (with Z or an offset, answered instant=true), or exactly the zone-less
-// layouts the catalog's own dateLabel uses.
+// layouts the catalog's own dateLabel uses. It answers the instant and the
+// bound's wall-clock digits (see meetingsListFilter); for a zone-less bound
+// the two are the same.
 //
 // A bare date means the whole day: 00:00:00 at the start of a range and
 // 23:59:59 at the end. `from=2026-08-01&to=2026-08-31` has to mean August,
 // which is what anyone writing it intends; a `to` that stopped at midnight
 // would silently drop the last day.
-func parseMeetingsListBound(value string, endOfRange bool) (time.Time, bool, error) {
+func parseMeetingsListBound(value string, endOfRange bool) (instant, wall time.Time, isInstant bool, err error) {
 	if at, err := time.Parse(time.RFC3339Nano, value); err == nil {
-		return at.UTC(), true, nil
+		wall := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), at.Minute(), at.Second(), at.Nanosecond(), time.UTC)
+		return at.UTC(), wall, true, nil
 	}
 	for _, layout := range meetingsListDateLayouts {
 		at, err := time.Parse(layout, value)
@@ -156,11 +167,11 @@ func parseMeetingsListBound(value string, endOfRange bool) (time.Time, bool, err
 			continue
 		}
 		if endOfRange && layout == "2006-01-02" {
-			return at.Add(24*time.Hour - time.Second), false, nil
+			at = at.Add(24*time.Hour - time.Second)
 		}
-		return at, false, nil
+		return at, at, false, nil
 	}
-	return time.Time{}, false, &meetingsListBadRequest{fmt.Sprintf(
+	return time.Time{}, time.Time{}, false, &meetingsListBadRequest{fmt.Sprintf(
 		"%q is not a date this catalog uses; write it as 2026-08-11, "+
 			"2026-08-11 14:30 or 2026-08-11 14:30:05, or as an instant "+
 			"with its offset, 2026-08-11T14:30:05+02:00",
@@ -276,17 +287,24 @@ func applyMeetingsListFilter(entries []json.RawMessage, filter meetingsListFilte
 			continue
 		}
 		if dated {
-			at, ok := catalogEntryWhen(probe.DateLabel, probe.RecordedAtUTC)
+			// An instant against the bound's instant; a label's digits
+			// against the bound's digits (see meetingsListFilter).
+			from, to := filter.from, filter.to
+			at, ok := parseRecordedAtUTC(probe.RecordedAtUTC)
+			if !ok {
+				at, ok = parseMeetingsListDateLabel(probe.DateLabel)
+				from, to = filter.fromWall, filter.toWall
+			}
 			if !ok {
 				excluded.Total++
 				excluded.Undated++
 				continue
 			}
-			if filter.hasFrom && at.Before(filter.from) {
+			if filter.hasFrom && at.Before(from) {
 				excluded.Total++
 				continue
 			}
-			if filter.hasTo && at.After(filter.to) {
+			if filter.hasTo && at.After(to) {
 				excluded.Total++
 				continue
 			}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -362,5 +363,54 @@ func TestMeetingsListNotServedUnderLocalSinkWithoutCaller(t *testing.T) {
 	rec := httptest.NewRecorder()
 	if cfg.ncFilesProxy(nil, searchDeps{})(rec, callerReq(http.MethodGet, "/published/"+meetingsListPath, ""), meetingsListPath) {
 		t.Fatal("local sink must decline the list route for an unidentified caller too")
+	}
+}
+
+// The bounds the CLI sends are instants in the reader's offset. A meeting with
+// recordedAtUtc is compared by instant; one with only a dateLabel is compared
+// digit for digit against the bound's own wall clock, which is how the CLI's
+// catalog fallback reads it (cassini meetings_time_test.go
+// TestMeetingsListDateRangeIsReadInTheLocalZone, same fixture and cases).
+// Reading the label as UTC would shift the range by the reader's offset.
+func TestMeetingsListOffsetBoundsReadLabelsInTheBoundsOffset(t *testing.T) {
+	entries := []json.RawMessage{
+		json.RawMessage(`{"id":"LATE8","dateLabel":"2026-11-08 23:30"}`),
+		json.RawMessage(`{"id":"CRON","dateLabel":"2026-11-09 12:00"}`),
+		json.RawMessage(`{"id":"TALKOLD","dateLabel":"2026-11-09 10:45","recordedAtUtc":"2026-11-09T10:45:12.500Z"}`),
+		json.RawMessage(`{"id":"TALKNEW","dateLabel":"2026-11-09 11:31","recordedAtUtc":"2026-11-09T11:31:48Z"}`),
+		json.RawMessage(`{"id":"LATE9","dateLabel":"2026-11-09 23:30"}`),
+	}
+	for _, tc := range []struct {
+		from, to string
+		want     string
+	}{
+		// `--from 2026-11-09 --to 2026-11-09` in Rome: the label-only meetings
+		// of the 9th stay, the one of the 8th does not.
+		{"2026-11-09T00:00:00+01:00", "2026-11-09T23:59:59+01:00", "CRON,TALKOLD,TALKNEW,LATE9"},
+		{"2026-11-09T11:40:00+01:00", "", "CRON,TALKOLD,TALKNEW,LATE9"},
+		{"2026-11-09T12:10:00+01:00", "", "TALKNEW,LATE9"},
+		{"", "2026-11-09T12:00:00+01:00", "LATE8,CRON,TALKOLD"},
+		// New York: the shift would be five hours.
+		{"2026-11-09T00:00:00-05:00", "2026-11-09T04:59:59-05:00", ""},
+		// Zone-less and Z bounds keep comparing labels as they always did.
+		{"2026-11-09", "2026-11-09", "CRON,TALKOLD,TALKNEW,LATE9"},
+		{"2026-11-08T23:00:00Z", "2026-11-09T11:00:00Z", "LATE8,TALKOLD"},
+	} {
+		filter, err := parseMeetingsListFilter(url.Values{"from": {tc.from}, "to": {tc.to}})
+		if err != nil {
+			t.Fatalf("%s..%s: %v", tc.from, tc.to, err)
+		}
+		kept, _ := applyMeetingsListFilter(entries, filter)
+		var ids []string
+		for _, raw := range kept {
+			var probe struct{ ID string }
+			if err := json.Unmarshal(raw, &probe); err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, probe.ID)
+		}
+		if got := strings.Join(ids, ","); got != tc.want {
+			t.Errorf("%s..%s = %q, want %q", tc.from, tc.to, got, tc.want)
+		}
 	}
 }
