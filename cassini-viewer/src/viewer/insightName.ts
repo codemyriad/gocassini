@@ -1,4 +1,5 @@
-import { formatMeetingDateShort, parseDateLabelMs, type MeetingCatalogEntry } from "./catalog";
+import type { MeetingCatalogEntry } from "./catalog";
+import { formatMeetingDateShort, meetingStartDayKey, parseDateLabelMs } from "./meetingTime";
 import { NO_ROOM_KEY, roomKeyOf, roomLabelOf } from "./rooms";
 
 // The name an insight is given before anybody types one (D-791). Pure, so the
@@ -40,7 +41,7 @@ function describeSources(entries: readonly MeetingCatalogEntry[]): string {
   }
   if (entries.length === 1) {
     const [entry] = entries;
-    const day = dayOf(entry.dateLabel);
+    const day = meetingStartDayKey(entry);
     const title = oneLine(entry.title ?? "") || "1 meeting";
     return day === "" ? title : `${title}, ${formatMeetingDateShort(day)}`;
   }
@@ -52,7 +53,9 @@ function describeSources(entries: readonly MeetingCatalogEntry[]): string {
     parts.push(oneLine(roomLabelOf(entries[0])));
   }
   parts.push(`${entries.length} meetings`);
-  const range = formatDateRange(entries.map((entry) => entry.dateLabel));
+  // The day each meeting is SHOWN on — local for one with recordedAtUtc — so
+  // the name agrees with the list it was picked from.
+  const range = formatDateRange(entries.map((entry) => meetingStartDayKey(entry)));
   if (range !== "") {
     parts.push(range);
   }
@@ -77,7 +80,7 @@ function dayOf(dateLabel: string | undefined): string {
 const DAY_FORMAT = new Intl.DateTimeFormat("en-GB", { day: "numeric", timeZone: "UTC" });
 const DAY_MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
-// formatDateRange spans the dated labels, in the browse list's own date style:
+// formatDateRange spans the dated labels (or "YYYY-MM-DD" day keys), in the browse list's own date style:
 // one day as "3 Oct 2026", one month as "1–12 Oct 2026", one year as
 // "28 Sept – 12 Oct 2026", and otherwise both dates in full. Undated labels are
 // ignored, and "" when none is dated.

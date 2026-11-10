@@ -10,12 +10,16 @@ import (
 
 func TestRemoteRetentionUsesPublishedDates(t *testing.T) {
 	for _, tc := range []struct {
-		name, created, recorded, want, source string
-		unpublished, legacy                   bool
+		name, created, recorded, recordedUTC, want, source string
+		unpublished, legacy                                bool
 	}{
 		{name: "creation fallback", created: "2026-03-05T13:38:29Z", want: "2026-03-05T13:38:29Z", source: "createdAtUtc"},
 		{name: "recording preferred", created: "2026-09-29T12:00:00Z", recorded: "2026-03-05T23:38:29", want: "2026-03-05T23:38:29Z", source: "recordedAtLocal"},
 		{name: "upgrade existing job age", created: "2026-09-29T12:00:00Z", recorded: "2026-03-05T23:38:29", want: "2026-03-05T23:38:29Z", source: "recordedAtLocal", legacy: true},
+		{name: "instant preferred", created: "2026-09-29T12:00:00Z", recorded: "2026-03-05T23:38:29", recordedUTC: "2026-03-05T22:38:29.000Z", want: "2026-03-05T22:38:29Z", source: "recordedAtUtc"},
+		{name: "instant without label", created: "2026-09-29T12:00:00Z", recordedUTC: "2026-03-05T22:38:29Z", want: "2026-03-05T22:38:29Z", source: "recordedAtUtc"},
+		{name: "upgrade existing job age to instant", created: "2026-09-29T12:00:00Z", recordedUTC: "2026-03-05T22:38:29.000Z", want: "2026-03-05T22:38:29Z", source: "recordedAtUtc", legacy: true},
+		{name: "invalid instant", created: "2026-09-29T12:00:00Z", recorded: "2026-03-05T23:38:29", recordedUTC: "2026-03-05T23:38:29+01:00"},
 		{name: "invalid recording date", created: "2026-09-29T12:00:00Z", recorded: "invalid"},
 		{name: "invalid required creation", created: "invalid", recorded: "2026-03-05T12:00:00"},
 		{name: "unpublished", created: "2026-03-05T12:00:00Z", unpublished: true},
@@ -37,7 +41,7 @@ func TestRemoteRetentionUsesPublishedDates(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer metadata.Close()
-			raw, _ := json.Marshal(map[string]string{"audioPath": "./meetings/m.opus", "createdAtUtc": tc.created, "recordedAtLocal": tc.recorded})
+			raw, _ := json.Marshal(map[string]string{"audioPath": "./meetings/m.opus", "createdAtUtc": tc.created, "recordedAtLocal": tc.recorded, "recordedAtUtc": tc.recordedUTC})
 			if err := metadata.Put(ctx, 42, "m.opus", raw); err != nil {
 				t.Fatal(err)
 			}
@@ -72,15 +76,23 @@ func TestRemoteRetentionUsesPublishedDates(t *testing.T) {
 				t.Fatal(err)
 			}
 			saved, _, err := rt.store.meetingLifecycle(ctx, "m.opus")
-			if err != nil || saved.Anchor != tc.want || saved.CreatedAtUTC != tc.created || saved.RecordedAtLocal != tc.recorded {
+			if err != nil || saved.Anchor != tc.want || saved.AnchorSource != tc.source || saved.CreatedAtUTC != tc.created || saved.RecordedAtLocal != tc.recorded || saved.RecordedAtUTC != tc.recordedUTC {
 				t.Fatal(saved, err)
 			}
-			if err := metadata.Put(ctx, 42, "m.opus", json.RawMessage(`{"audioPath":"./meetings/m.opus","createdAtUtc":"2026-10-01T00:00:00Z"}`)); err != nil {
+			// A republish, or the recordedAtUtc backfill stamping the entry
+			// with an instant, never moves an adopted age.
+			if err := metadata.Put(ctx, 42, "m.opus", json.RawMessage(`{"audioPath":"./meetings/m.opus","createdAtUtc":"2026-10-01T00:00:00Z","recordedAtUtc":"2026-01-01T00:00:00.000Z"}`)); err != nil {
 				t.Fatal(err)
 			}
 			meetings, _, err = service.retentionInventory(ctx)
-			if err != nil || len(meetings) != 1 || meetings[0].Anchor != tc.want {
+			if err != nil || len(meetings) != 1 || meetings[0].Anchor != tc.want || meetings[0].AnchorSource != tc.source {
 				t.Fatal("republish reset age", meetings, err)
+			}
+			if _, err := service.reconcileRetentionInventory(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if again, _, err := rt.store.meetingLifecycle(ctx, "m.opus"); err != nil || again != saved {
+				t.Fatal("reconcile moved an adopted age", again, err)
 			}
 		})
 	}

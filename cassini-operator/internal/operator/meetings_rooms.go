@@ -42,6 +42,15 @@ type meetingsRoom struct {
 	// meeting in the room, empty when none of them carried a usable label.
 	Latest   string `json:"latest,omitempty"`
 	Earliest string `json:"earliest,omitempty"`
+	// LatestRecordedAtUTC and EarliestRecordedAtUTC are those meetings'
+	// recordedAtUtc, empty when the meeting has none, as the CLI's
+	// rooms --json reports them.
+	LatestRecordedAtUTC   string `json:"latestRecordedAtUtc,omitempty"`
+	EarliestRecordedAtUTC string `json:"earliestRecordedAtUtc,omitempty"`
+	// latestAt is when the newest meeting happened, by its instant when it
+	// has one: what rooms are ordered by.
+	latestAt    time.Time
+	latestDated bool
 }
 
 // meetingsRoomsResponse is the route's body, the CLI's `rooms --json`.
@@ -63,6 +72,7 @@ type listedMeeting struct {
 	raw             json.RawMessage
 	id              string
 	dateLabel       string
+	recordedAtUTC   string
 	roomID          string
 	roomName        string
 	roomDisplayName string
@@ -70,9 +80,12 @@ type listedMeeting struct {
 	dated           bool
 }
 
-// orderListedMeetings decodes a list's entries and puts them in the order the
-// viewer and the CLI show them: newest first by dateLabel, entries with an
-// unreadable label last, ties broken by id descending. An entry with no id
+// orderListedMeetings decodes a list's entries newest first: by recordedAtUtc
+// when an entry has one and by dateLabel otherwise (catalogEntryWhen), entries
+// with neither last, ties broken by id descending. Between an instant and a
+// label this is the server's reading (label digits as UTC, see
+// catalogEntryWhen), which can differ from the viewer's and the CLI's by up to
+// the reader's UTC offset. An entry with no id
 // cannot be referred to, so it is dropped and counted.
 func orderListedMeetings(entries []json.RawMessage) ([]listedMeeting, int) {
 	items := make([]listedMeeting, 0, len(entries))
@@ -81,6 +94,7 @@ func orderListedMeetings(entries []json.RawMessage) ([]listedMeeting, int) {
 		var probe struct {
 			ID              string `json:"id"`
 			DateLabel       string `json:"dateLabel"`
+			RecordedAtUTC   string `json:"recordedAtUtc"`
 			RoomID          string `json:"roomId"`
 			RoomName        string `json:"roomName"`
 			RoomDisplayName string `json:"roomDisplayName"`
@@ -91,11 +105,11 @@ func orderListedMeetings(entries []json.RawMessage) ([]listedMeeting, int) {
 			skipped++
 			continue
 		}
-		at, dated := parseMeetingsListDateLabel(probe.DateLabel)
+		at, dated := catalogEntryWhen(probe.DateLabel, probe.RecordedAtUTC)
 		items = append(items, listedMeeting{
 			raw: raw, id: strings.TrimSpace(probe.ID),
-			dateLabel: strings.TrimSpace(probe.DateLabel),
-			roomID:    strings.TrimSpace(probe.RoomID), roomName: strings.TrimSpace(probe.RoomName),
+			dateLabel: strings.TrimSpace(probe.DateLabel), recordedAtUTC: strings.TrimSpace(probe.RecordedAtUTC),
+			roomID: strings.TrimSpace(probe.RoomID), roomName: strings.TrimSpace(probe.RoomName),
 			roomDisplayName: strings.TrimSpace(probe.RoomDisplayName),
 			at:              at, dated: dated,
 		})
@@ -153,18 +167,19 @@ func groupMeetingsByRoom(items []listedMeeting) ([]meetingsRoom, int) {
 		if !item.dated {
 			continue
 		}
-		if room.Latest == "" {
-			room.Latest = item.dateLabel
+		if !room.latestDated {
+			room.Latest, room.LatestRecordedAtUTC = item.dateLabel, item.recordedAtUTC
+			room.latestAt, room.latestDated = item.at, true
 		}
-		room.Earliest = item.dateLabel
+		room.Earliest, room.EarliestRecordedAtUTC = item.dateLabel, item.recordedAtUTC
 	}
 	// Most recently active first, the order the meeting list is in. Rooms
 	// whose meetings are all undated sort last; ties break by selector so the
 	// output is deterministic.
 	sort.SliceStable(rooms, func(i, j int) bool {
 		left, right := rooms[i], rooms[j]
-		leftAt, leftDated := parseMeetingsListDateLabel(left.Latest)
-		rightAt, rightDated := parseMeetingsListDateLabel(right.Latest)
+		leftAt, leftDated := left.latestAt, left.latestDated
+		rightAt, rightDated := right.latestAt, right.latestDated
 		switch {
 		case leftDated && rightDated:
 			if !leftAt.Equal(rightAt) {

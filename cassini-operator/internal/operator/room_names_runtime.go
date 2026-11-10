@@ -109,7 +109,7 @@ func (rt *Runtime) reconcileRoomNames(ctx context.Context) error {
 	if err := rt.meetingMetadata.registerMetadataRooms(ctx); err != nil {
 		return err
 	}
-	rows, err := rt.meetingMetadata.db.QueryContext(ctx, `SELECT entry_json FROM meeting_metadata ORDER BY date_label DESC, file_id DESC`)
+	rows, err := rt.meetingMetadata.db.QueryContext(ctx, `SELECT entry_json FROM meeting_metadata ORDER BY `+meetingMetadataSortKeySQL+` DESC, file_id DESC`)
 	if err != nil {
 		return err
 	}

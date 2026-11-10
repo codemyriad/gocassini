@@ -53,8 +53,13 @@ func (rt *Runtime) storagePublications(ctx context.Context) (map[string]storageP
 }
 
 // This is informational dating, not retention eligibility. Unlike retention's
-// stricter validation, either valid timestamp is enough to date the chart.
-func storageMetadataDate(recorded, created string) string {
+// stricter validation, any valid timestamp is enough to date the chart; when
+// the meeting happened (recordedAtUtc, then recordedAtLocal) beats when the
+// file was packed (createdAtUtc).
+func storageMetadataDate(recordedUTC, recorded, created string) string {
+	if t, ok := parseRecordedAtUTC(recordedUTC); ok {
+		return t.Format("2006-01-02")
+	}
 	if t, err := time.Parse("2006-01-02T15:04:05", recorded); err == nil {
 		return t.Format("2006-01-02")
 	}
@@ -64,14 +69,11 @@ func storageMetadataDate(recorded, created string) string {
 	return ""
 }
 func storageRawMetadataDate(raw json.RawMessage) string {
-	var dates struct {
-		Recorded string `json:"recordedAtLocal"`
-		Created  string `json:"createdAtUtc"`
-	}
+	var dates meetingTimes
 	if json.Unmarshal(raw, &dates) != nil {
 		return ""
 	}
-	return storageMetadataDate(dates.Recorded, dates.Created)
+	return storageMetadataDate(dates.RecordedAtUTC, dates.RecordedAtLocal, dates.CreatedAtUTC)
 }
 
 func (rt *Runtime) publishedStorageCategory(ctx context.Context, c ExAppConfig, entries []davSizeEntry) (*storageUsageCategory, string) {
@@ -155,7 +157,7 @@ func (rt *Runtime) orphanStorageDate(ctx context.Context, c ExAppConfig, entry d
 			return "", err
 		}
 		if ok && m.FileID == entry.fileID && m.Path == entry.relPath {
-			if date := storageMetadataDate(m.RecordedAtLocal, m.CreatedAtUTC); date != "" {
+			if date := storageMetadataDate(m.RecordedAtUTC, m.RecordedAtLocal, m.CreatedAtUTC); date != "" {
 				return date, nil
 			}
 		}

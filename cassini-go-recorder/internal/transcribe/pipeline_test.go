@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gocassini/internal/insight"
 	"gocassini/internal/portable"
@@ -78,6 +79,10 @@ func fixedTimedWords(n int) []Word {
 // into a two-participant MKV so attribution has a rival track to measure
 // against. Identical audio on both tracks makes every word's gap exactly
 // 0 dB: measured (so attributionGapDb is written), never flagged.
+var smokeFixtureOrigin = time.Date(2026, 3, 10, 14, 0, 0, 0, time.UTC)
+
+const smokeFixtureRecordedAtUTC = "2026-03-10T14:00:00.000Z"
+
 func buildTwoTrackMeetingFromSmoke(t *testing.T, dir string) string {
 	t.Helper()
 	src := filepath.Join("..", "..", "..", "harness", "media", "parakeet-smoke.mkv")
@@ -93,6 +98,15 @@ func buildTwoTrackMeetingFromSmoke(t *testing.T, dir string) string {
 		"-metadata:s:a:0", "participant_id=user-one",
 		"-metadata:s:a:1", "title=SpeakerTwo",
 		"-metadata:s:a:1", "participant_id=user-two",
+		// Talk-shaped wall-clock anchors: both tracks start at position 0,
+		// which is smokeFixtureRecordedAtUTC.
+		"-metadata:s:a:0", fmt.Sprintf("first_packet_wall_ms=%d", smokeFixtureOrigin.UnixMilli()),
+		"-metadata:s:a:0", fmt.Sprintf("first_timeline_ns=%d", smokeFixtureOrigin.UnixNano()),
+		"-metadata:s:a:0", "clock_rate=48000",
+		"-metadata:s:a:1", fmt.Sprintf("first_packet_wall_ms=%d", smokeFixtureOrigin.UnixMilli()),
+		"-metadata:s:a:1", fmt.Sprintf("first_timeline_ns=%d", smokeFixtureOrigin.UnixNano()),
+		"-metadata:s:a:1", "clock_rate=48000",
+		// The legacy label v0.2.0+ MKVs carry; the build must not propagate it.
 		"-metadata", "recorded_at_local=2026-03-10T14:00:00",
 		"-c:a", "flac",
 		out,
@@ -120,8 +134,8 @@ func TestBuildMeetingArtifactOffAndFailedPreserveAudio(t *testing.T) {
 			if err := json.Unmarshal(raw, &manifest); err != nil {
 				t.Fatal(err)
 			}
-			if manifest.Source.RecordedAtLocal != "2026-03-10T14:00:00" {
-				t.Fatalf("recording time lost: %s", raw)
+			if manifest.Source.RecordedAtUTC != smokeFixtureRecordedAtUTC || manifest.Source.RecordedAtLocal != "" {
+				t.Fatalf("recording time lost or zone-unknown label propagated: %s", raw)
 			}
 			want := "skipped"
 			if mode == "on" {
@@ -325,8 +339,8 @@ func TestBuildMeetingArtifactPipelineWiring(t *testing.T) {
 	if err := json.Unmarshal(rawManifest, &manifest); err != nil {
 		t.Fatalf("parse manifest: %v", err)
 	}
-	if manifest.Source.RecordedAtLocal != "2026-03-10T14:00:00" {
-		t.Fatalf("recording time lost: %s", rawManifest)
+	if manifest.Source.RecordedAtUTC != smokeFixtureRecordedAtUTC || manifest.Source.RecordedAtLocal != "" {
+		t.Fatalf("recording time lost or zone-unknown label propagated: %s", rawManifest)
 	}
 	if manifest.Provenance.SpeechToText.Backend != "fake-fixed" {
 		t.Errorf("provenance.speechToText.backend = %q, want the engine actually used (fake-fixed)",

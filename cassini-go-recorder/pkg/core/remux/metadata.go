@@ -26,14 +26,13 @@ type embeddedReport struct {
 }
 
 type embeddedSession struct {
-	Version         int                    `json:"version"`
-	SessionID       string                 `json:"session_id"`
-	StartedWallUTC  string                 `json:"started_wall_utc"`
-	RecordedAtLocal string                 `json:"recorded_at_local,omitempty"`
-	Platform        embeddedPlatform       `json:"platform"`
-	Participants    []session.Participant  `json:"participants,omitempty"`
-	LogicalTracks   []embeddedLogicalTrack `json:"logical_tracks,omitempty"`
-	PacketStreams   []embeddedPacketStream `json:"packet_streams,omitempty"`
+	Version        int                    `json:"version"`
+	SessionID      string                 `json:"session_id"`
+	StartedWallUTC string                 `json:"started_wall_utc"`
+	Platform       embeddedPlatform       `json:"platform"`
+	Participants   []session.Participant  `json:"participants,omitempty"`
+	LogicalTracks  []embeddedLogicalTrack `json:"logical_tracks,omitempty"`
+	PacketStreams  []embeddedPacketStream `json:"packet_streams,omitempty"`
 }
 
 type embeddedPlatform struct {
@@ -112,10 +111,9 @@ func buildEmbeddedReport(sess session.Session, plans []StreamPlan, skipped []Ski
 		Schema:      embeddedReportSchema,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		Session: embeddedSession{
-			Version:         sess.Version,
-			SessionID:       sess.SessionID,
-			StartedWallUTC:  sess.StartedWallUTC,
-			RecordedAtLocal: sess.RecordedAtLocal,
+			Version:        sess.Version,
+			SessionID:      sess.SessionID,
+			StartedWallUTC: sess.StartedWallUTC,
 			Platform: embeddedPlatform{
 				Name:             sess.Platform.Name,
 				Deployment:       sess.Platform.Deployment,
@@ -176,9 +174,10 @@ func containerMetadataEntries(title string, sess session.Session, plans []Stream
 		"artifact_remux_total_adjust_ns=" + strconv.FormatInt(totalAdjustNS, 10),
 		"artifact_remux_max_abs_adjust_ns=" + strconv.FormatInt(maxAbsAdjustNS, 10),
 	}
-	if sess.RecordedAtLocal != "" {
-		entries = append(entries, "recorded_at_local="+sess.RecordedAtLocal)
-	}
+	// session.RecordedAtLocal is deliberately not copied into the MKV. The
+	// Talk session formats it in the container's zone, which no ExApp install
+	// sets, so it is UTC digits posing as a local label. The build derives the
+	// true instant from the per-stream first_packet_wall_ms anchors instead.
 	return entries
 }
 

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -131,6 +132,23 @@ type Runtime struct {
 	// meetingMetadata is a disposable description index. Visibility always
 	// comes from the caller's current Nextcloud shares, never from these rows.
 	meetingMetadata *meetingMetadataStore
+	// recordedAtFiles writes recordedAtUtc back into delivered files
+	// (recorded_at_files.go); nil where no file can be rewritten.
+	// recordingAnchorProbe reads a run bundle's recording.mkv anchors; nil
+	// means ffprobe. Tests stub it.
+	recordedAtFiles      atomic.Pointer[recordedAtFileWorker]
+	recordingAnchorProbe recordingAnchorProbe
+	// recordedAtIndexWait is the meeting index backfill's wait between two
+	// passes (sleepCtx when nil); recordedAtIndexBeforeStamp, when set (tests
+	// only), runs before each entry is stamped; recordedAtBeforeRepublishStamp
+	// (tests only) runs after a publish's entry is read, before it is stamped.
+	recordedAtIndexWait            func(ctx context.Context, d time.Duration) bool
+	recordedAtIndexBeforeStamp     func(row recordedAtIndexRow)
+	recordedAtBeforeRepublishStamp func()
+	// recordedAtIndexChecked is set once a meeting index pass has completed
+	// since this start: from then on the needed count is the enumeration of
+	// files to rewrite, not a partial one.
+	recordedAtIndexChecked atomic.Bool
 	// roomNameRetry backs off reconcile passes per room when its default keeps
 	// failing to reach a terminal source, bounding the repeated lineage proofs
 	// (full-file digest + CLI exec) for rooms that may never resolve.
@@ -1083,6 +1101,9 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/health/check", http.HandlerFunc(rt.readinessHandler)},
 		{"/health/repair", http.HandlerFunc(rt.readinessHandler)},
 		{"/talk/setup", http.HandlerFunc(rt.recordingSetupHandler)},
+		// ADMIN: start and pause rewriting recordedAtUtc into delivered
+		// files; progress is on /status (recorded_at_migration.go).
+		{recordedAtMigrationPath + "/", http.HandlerFunc(rt.recordedAtMigrationHandler)},
 	}
 }
 
@@ -1159,7 +1180,17 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 				}
 			}()
 		}
+		// Delivered files are rewritten through the annotation pipeline's
+		// client and locks, so only where that pipeline runs.
+		if files := newRecordedAtFileWorker(rt, exappCfg, annotations.client, logger); files != nil {
+			rt.recordedAtFiles.Store(files)
+			files.startWorkers()
+		}
 	}
+	// Past recordings get their instant in the meeting index in the
+	// background; their files are only enumerated, and rewritten by the
+	// worker above once an administrator asks (recorded_at_migration.go).
+	rt.startRecordedAtIndexBackfill(logger)
 	// The MCP server (D-813): agents outside Cassini read meetings as the
 	// person who connected them. A sibling of insights on the ROOT mux —
 	// appinfo/info.xml declares `^mcp\/?$`, POST, USER — so it sits inside the

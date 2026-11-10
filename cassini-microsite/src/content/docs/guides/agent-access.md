@@ -137,8 +137,13 @@ Expected: a first line summarising the result
 newest first, in the order the app shows them:
 
 ```text
+meeting=01KA3H… date=2026-11-09T12:31+01:00 room=rm_9f2a1c3d4e5b6a70 title=Weekly Sync speakers=4 segments=210 duration_ms=2700000 fetchable=yes
 meeting=01JZ8K… date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes
 ```
+
+`date=` is when the recording started, in your local time zone with its offset
+written out. Older meetings that only carry a date label show it unchanged and
+without an offset.
 
 `source=nextcloud-files` confirms the bytes came from Nextcloud Files, read as
 the calling account. Anything else also prints a warning
@@ -158,10 +163,12 @@ cassini meetings list --from 2026-08-01 --to 2026-08-31
 cassini meetings list --tag hiring --from 2026-08-01
 ```
 
-`--from` and `--to` take the dates the catalogue itself prints — `2026-08-11`,
-`2026-08-11 14:30`, or `2026-08-11 14:30:05`. They carry **no timezone**, because
-a meeting's date label does not: it is a wall clock. A bare date covers the whole
-day at both ends. A range whose ends are backwards is rejected rather than
+`--from` and `--to` take `2026-08-11`, `2026-08-11 14:30`, or
+`2026-08-11 14:30:05`, with no timezone: they are read in your local time zone.
+A meeting that knows when its recording started is compared by that instant;
+an older one with only a date label is compared by the label's digits, a wall
+clock whose zone was never recorded. A bare date covers the whole day at both
+ends. A range whose ends are backwards is rejected rather than
 returning an empty list.
 
 `--room` takes the `room=` value `cassini meetings rooms` prints; matching is

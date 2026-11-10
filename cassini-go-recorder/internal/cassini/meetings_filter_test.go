@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestMeetingsListFiltersByRoom(t *testing.T) {
@@ -258,21 +257,20 @@ func TestParseMeetingsFilterBoundAcceptsWhatTheCatalogPrints(t *testing.T) {
 		{"2026-08-11 14:30", true, "2026-08-11 14:30:00"},
 		{"2026-08-11 14:30:05", true, "2026-08-11 14:30:05"},
 	}
+	rome := meetingsTestZone(t)
 	for _, tc := range cases {
-		at, err := parseMeetingsFilterBound(tc.value, tc.endOfRange)
+		at, err := parseMeetingsFilterBound(tc.value, tc.endOfRange, rome)
 		if err != nil {
 			t.Fatalf("parseMeetingsFilterBound(%q, %t): %v", tc.value, tc.endOfRange, err)
 		}
 		if got := at.Format(meetingsFilterStampLayout); got != tc.want {
 			t.Errorf("parseMeetingsFilterBound(%q, %t) = %s, want %s", tc.value, tc.endOfRange, got, tc.want)
 		}
-		// The catalog's labels carry no timezone (D-484), so neither may these:
-		// asserting one would invent an instant the data cannot justify. A
-		// zone-less time.Parse yields UTC, which is the same space
-		// parseMeetingDateLabel puts the catalog's own labels in — so the two
-		// sides of every comparison agree.
-		if at.Location() != time.UTC {
-			t.Errorf("parseMeetingsFilterBound(%q) location = %v, want UTC", tc.value, at.Location())
+		// Read in the reader's zone, the same zone meetingTime reads a
+		// zone-less dateLabel in, so a label-only comparison stays the digit
+		// comparison D-484 defines and an instant compares against local time.
+		if at.Location() != rome {
+			t.Errorf("parseMeetingsFilterBound(%q) location = %v, want the injected zone", tc.value, at.Location())
 		}
 	}
 }

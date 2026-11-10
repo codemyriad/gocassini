@@ -55,6 +55,7 @@ func runRetag(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		attemptNumber   int
 		clearAttempt    bool
 		clearJobID      bool
+		recordedAtUTC   string
 		emitJSONSummary bool
 	)
 
@@ -67,6 +68,7 @@ func runRetag(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.BoolVar(&clearJobID, "clear-job-id", false, "remove the job id")
 	fs.IntVar(&attemptNumber, "attempt-number", 0, "set the 1-based attempt of that job")
 	fs.BoolVar(&clearAttempt, "clear-attempt-number", false, "remove the attempt number")
+	fs.StringVar(&recordedAtUTC, "recorded-at-utc", "", "set when the recording started (RFC 3339 UTC ending in Z): meeting.recordedAtUtc, CASSINI_RECORDED_AT_UTC and DATE")
 	fs.BoolVar(&emitJSONSummary, "json", false, "print a machine-readable before/after summary instead of a line of prose")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
@@ -74,6 +76,8 @@ func runRetag(ctx context.Context, args []string, stdout, stderr io.Writer) int 
   cassini retag ./meeting.opus --out ./retagged.opus \
     --job-id 01K3Q7W8ZC9F0MJXQ2NB8V4RTD --attempt-number 1
   cassini retag ./meeting.opus --out ./retagged.opus --clear-room-id --json
+  cassini retag ./meeting.opus --out ./retagged.opus \
+    --recorded-at-utc 2026-11-09T11:31:48.250Z
 
 Rewrite the identity fields of an already-packed portable .opus file. The audio
 is copied, not re-encoded, and the result is integrity-checked against the
@@ -86,6 +90,13 @@ its room the next time it is published, because the exporter reads the manifest.
 --room-id takes an ALREADY-DERIVED id, never a Talk conversation token. The id
 is a one-way derivation precisely so the token does not travel with the
 recording; derive it where the token already is, and pass the result here.
+
+--recorded-at-utc records when the recording started: the instant at
+playback position 0, so a word's wall-clock time is that instant plus its
+startMs. Only add it from a trustworthy record of the start. It sets
+meeting.recordedAtUtc, its CASSINI_RECORDED_AT_UTC mirror and the DATE tag;
+createdAtUtc keeps meaning when the file was built. Setting the value a file
+already has changes nothing.
 
 Every field is left exactly as it was unless a flag names it. Setting and
 clearing the same field is refused rather than resolved.
@@ -118,6 +129,7 @@ clearing the same field is refused rather than resolved.
 		clearJobID:    clearJobID,
 		attemptNumber: attemptNumber,
 		clearAttempt:  clearAttempt,
+		recordedAtUTC: recordedAtUTC,
 	}, fs, stderr)
 	if code != 0 {
 		return code
@@ -162,8 +174,8 @@ clearing the same field is refused rather than resolved.
 	for _, change := range summary.Changes {
 		fmt.Fprintf(stdout, "  %s: %s -> %s\n", change.Field, retagDisplayValue(change.From), retagDisplayValue(change.To))
 	}
-	if len(summary.Changes) == 0 {
-		fmt.Fprintln(stdout, "  (no field changed; the file was rewritten unchanged)")
+	if summary.Unchanged {
+		fmt.Fprintln(stdout, "  unchanged (no field changed; the file was rewritten unchanged)")
 	}
 	return 0
 }
@@ -175,6 +187,7 @@ type retagFlagValues struct {
 	clearJobID    bool
 	attemptNumber int
 	clearAttempt  bool
+	recordedAtUTC string
 }
 
 // retagEdit is one requested field change. A nil Value means "remove the field".
@@ -251,6 +264,21 @@ func retagEditsFromFlags(values retagFlagValues, fs *flag.FlagSet, stderr io.Wri
 			edits = append(edits, retagEdit{Field: "attemptNumber", Value: values.attemptNumber})
 		}
 	}
+	if provided["recorded-at-utc"] {
+		trimmed := strings.TrimSpace(values.recordedAtUTC)
+		if trimmed == "" {
+			fmt.Fprintln(stderr, "retag configuration error: --recorded-at-utc is empty")
+			return nil, 2
+		}
+		// Only the format's own shape: UTC, ending in Z. An offset would be
+		// convertible, but accepting it invites a caller to pass local digits
+		// with a guessed offset, and this edits published recordings.
+		if !portable.ValidRecordedAtUTC(trimmed) {
+			fmt.Fprintf(stderr, "retag configuration error: --recorded-at-utc %q is not RFC 3339 UTC ending in Z (e.g. 2026-11-09T11:31:48Z)\n", trimmed)
+			return nil, 2
+		}
+		edits = append(edits, retagEdit{Field: "recordedAtUtc", Value: trimmed})
+	}
 	return edits, 0
 }
 
@@ -269,6 +297,9 @@ type RetagSummary struct {
 	Output    string        `json:"output"`
 	MeetingID string        `json:"meetingId"`
 	Changes   []RetagChange `json:"changes"`
+	// Unchanged is true when no requested field moved, so a repeated retag
+	// is recognisably a no-op.
+	Unchanged bool `json:"unchanged"`
 }
 
 func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits []retagEdit) (RetagSummary, error) {
@@ -315,9 +346,16 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 		if had && retagValuesEqual(before, edit.Value) {
 			continue
 		}
+		if had && edit.Field == "recordedAtUtc" && sameRecordedAtUTC(before, edit.Value) {
+			// The same instant spelled differently (2026-…:48Z vs :48.000Z)
+			// is the same value; keep the file's spelling.
+			continue
+		}
 		meeting[edit.Field] = edit.Value
 		summary.Changes = append(summary.Changes, RetagChange{Field: edit.Field, From: retagJSONValue(before), To: edit.Value})
 	}
+
+	summary.Unchanged = len(summary.Changes) == 0
 
 	// The retag-specific half of the verification the shared rewrite runs
 	// against the STAGED file: the fields this command exists to move must be
@@ -331,11 +369,20 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 	verify := func(intended, written portable.Manifest, writtenTags map[string]string) error {
 		if written.Meeting.RoomID != intended.Meeting.RoomID ||
 			written.Meeting.JobID != intended.Meeting.JobID ||
-			written.Meeting.AttemptNumber != intended.Meeting.AttemptNumber {
+			written.Meeting.AttemptNumber != intended.Meeting.AttemptNumber ||
+			written.Meeting.RecordedAtUTC != intended.Meeting.RecordedAtUTC {
 			return fmt.Errorf("verify retagged file: the written manifest does not carry the requested fields")
 		}
 		if got := portableTagValue(writtenTags, "CASSINI_ROOM_ID"); got != written.Meeting.RoomID {
 			return fmt.Errorf("verify retagged file: CASSINI_ROOM_ID is %q, manifest says %q", got, written.Meeting.RoomID)
+		}
+		if got := portableTagValue(writtenTags, "CASSINI_RECORDED_AT_UTC"); got != written.Meeting.RecordedAtUTC {
+			return fmt.Errorf("verify retagged file: CASSINI_RECORDED_AT_UTC is %q, manifest says %q", got, written.Meeting.RecordedAtUTC)
+		}
+		if written.Meeting.RecordedAtUTC != "" {
+			if got := portableTagValue(writtenTags, "DATE"); got != written.Meeting.RecordedAtUTC {
+				return fmt.Errorf("verify retagged file: DATE is %q, manifest recordedAtUtc says %q", got, written.Meeting.RecordedAtUTC)
+			}
 		}
 		return nil
 	}
@@ -461,15 +508,22 @@ func retagOpusTags(existing map[string]string, payloadJSON []byte, manifest port
 		attempt = fmt.Sprintf("%d", manifest.Meeting.AttemptNumber)
 	}
 	for tag, value := range map[string]string{
-		"CASSINI_ROOM_ID":        manifest.Meeting.RoomID,
-		"CASSINI_JOB_ID":         manifest.Meeting.JobID,
-		"CASSINI_ATTEMPT_NUMBER": attempt,
+		"CASSINI_ROOM_ID":         manifest.Meeting.RoomID,
+		"CASSINI_JOB_ID":          manifest.Meeting.JobID,
+		"CASSINI_ATTEMPT_NUMBER":  attempt,
+		"CASSINI_RECORDED_AT_UTC": manifest.Meeting.RecordedAtUTC,
 	} {
 		if value == "" {
 			deleteTagAnyCase(tags, tag)
 			continue
 		}
 		setTagPreservingCase(tags, tag, value)
+	}
+	// DATE is when the recording started once the manifest knows it. Without
+	// recordedAtUtc it is left exactly as the producer wrote it: the pack
+	// time on Talk files, a start with an offset on desktop ones.
+	if manifest.Meeting.RecordedAtUTC != "" {
+		setTagPreservingCase(tags, "DATE", manifest.Meeting.RecordedAtUTC)
 	}
 	return tags, nil
 }
@@ -575,4 +629,17 @@ func sameFilePath(inputPath, outPath string) (bool, error) {
 		return false, nil
 	}
 	return os.SameFile(inInfo, outInfo), nil
+}
+
+// sameRecordedAtUTC reports whether two recordedAtUtc values name the same
+// instant. Anything unparseable is never the same as anything.
+func sameRecordedAtUTC(a, b any) bool {
+	as, aok := a.(string)
+	bs, bok := b.(string)
+	if !aok || !bok {
+		return false
+	}
+	at, aok := portable.ParseRecordedAtUTC(as)
+	bt, bok := portable.ParseRecordedAtUTC(bs)
+	return aok && bok && at.Equal(bt)
 }

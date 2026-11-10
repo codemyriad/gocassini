@@ -74,6 +74,11 @@ type statusResponse struct {
 	// recordings per-participant readable is actually there (D-554). It is the
 	// last recorded outcome of provisioning, not a live probe.
 	RecordingsAccess statusRecordingsAccess `json:"recordings_access"`
+	// RecordedAtMigration is whether past recordings' delivered files still
+	// need recordedAtUtc written into them, how far an administrator-started
+	// rewrite has got, and what a rewrite does in Nextcloud
+	// (recorded_at_migration.go). Informational: it never affects OK.
+	RecordedAtMigration recordedAtMigrationStatus `json:"recorded_at_migration"`
 }
 
 // statusRecordingsAccess answers "can this deployment actually restrict a
@@ -344,6 +349,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	resp.RecordedAtMigration = rt.recordedAtMigrationStatus(r.Context())
 	resp.ImageTag = resp.Version
 	resp.DB = statusCheck{OK: true, Path: rt.cfg.DBPath}
 	if err := rt.store.Ping(r.Context()); err != nil {

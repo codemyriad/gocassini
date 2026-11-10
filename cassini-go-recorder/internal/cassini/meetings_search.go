@@ -174,7 +174,7 @@ inside a marked stretch of a meeting lists the marks it falls in.
 			blankMeetingsDash(hit.SpeakerID),
 			blankMeetingsDash(hit.Matched),
 			blankMeetingsDash(firstNonBlank(hit.RoomDisplayName, hit.RoomName, hit.RoomID)),
-			blankMeetingsDash(hit.DateLabel),
+			blankMeetingsDash(meetingSearchHitDisplayDate(hit, meetingsLocation(ctx))),
 			formatMeetingsSearchMarks(hit.Marks),
 			blankMeetingsDash(hit.Title))
 	}
@@ -206,9 +206,12 @@ type meetingsSearchResults struct {
 }
 
 type meetingsSearchHit struct {
-	MeetingID       string `json:"meetingId"`
-	Title           string `json:"title,omitempty"`
-	DateLabel       string `json:"dateLabel,omitempty"`
+	MeetingID string `json:"meetingId"`
+	Title     string `json:"title,omitempty"`
+	DateLabel string `json:"dateLabel,omitempty"`
+	// RecordedAtUTC is when the hit's recording started, when the server
+	// knows it; shown in the reader's zone in place of DateLabel.
+	RecordedAtUTC   string `json:"recordedAtUtc,omitempty"`
 	RoomID          string `json:"roomId,omitempty"`
 	RoomName        string `json:"roomName,omitempty"`
 	RoomDisplayName string `json:"roomDisplayName,omitempty"`

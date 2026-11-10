@@ -27,6 +27,11 @@ func TestClearMeetingMetadataPreservesNamesAndRequiresOfflineLock(t *testing.T) 
 	if err := s.Put(ctx, 1, "A.opus", json.RawMessage(`{"id":"A","audioPath":"./meetings/A.opus","roomId":"one","roomName":"Alice"}`)); err != nil {
 		t.Fatal(err)
 	}
+	// The file backfill already re-tagged A.opus; a restore may bring back a
+	// file that predates it, so its progress must go with the index rows.
+	if _, err := s.db.Exec(`INSERT INTO recorded_at_file_backfill(opus_name, recorded_at_utc, state, updated_at) VALUES('A.opus', '2026-07-17T10:33:05.000Z', 'done', '')`); err != nil {
+		t.Fatal(err)
+	}
 	name := "Planning"
 	saved, err := s.saveRoomName(ctx, "one", &name, 1, "alice")
 	if err != nil {
@@ -53,6 +58,10 @@ func TestClearMeetingMetadataPreservesNamesAndRequiresOfflineLock(t *testing.T) 
 	entries, err = s.EntriesFor(ctx, []int64{1})
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("derived rows retained: %v", err)
+	}
+	var progress int
+	if err := s.db.QueryRow(`SELECT count(*) FROM recorded_at_file_backfill`).Scan(&progress); err != nil || progress != 0 {
+		t.Fatalf("file backfill progress survived the clear: %d %v", progress, err)
 	}
 	names, err := s.roomNames(ctx, []string{"one"})
 	if err != nil || names["one"].DisplayName != name || names["one"].Revision != saved.Revision {

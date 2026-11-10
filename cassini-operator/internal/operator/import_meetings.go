@@ -67,6 +67,7 @@ type meetingImportResult struct {
 	SourceRoomID    string `json:"sourceRoomId,omitempty"`
 	CreatedAtUTC    string `json:"createdAtUtc"`
 	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
+	RecordedAtUTC   string `json:"recordedAtUtc,omitempty"`
 	ImportedAtUTC   string `json:"importedAtUtc"`
 	SharedWith      int    `json:"sharedWith"`
 	// NotSharedWith are individual recipients Nextcloud refused (D-885); a
@@ -160,7 +161,7 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	if strings.TrimSpace(times.CreatedAtUTC) == "" {
 		return result, fmt.Errorf("the meeting carries no createdAtUtc timestamp, so retention could never establish its age; it cannot be imported")
 	}
-	result.CreatedAtUTC, result.RecordedAtLocal = times.CreatedAtUTC, times.RecordedAtLocal
+	result.CreatedAtUTC, result.RecordedAtLocal, result.RecordedAtUTC = times.CreatedAtUTC, times.RecordedAtLocal, times.RecordedAtUTC
 	if shown, err := runAnnotateShow(ctx, s.cassiniBin, staged); err == nil {
 		if digest := strings.TrimSpace(shown.AudioOpusSHA256); digest != "" {
 			result.ContentID = "mtg_" + digest
@@ -240,6 +241,7 @@ func (imp *meetingImporter) run(ctx context.Context, req meetingImportRequest, r
 	lifecycle := meetingLifecycle{
 		CreatedAtUTC:    times.CreatedAtUTC,
 		RecordedAtLocal: times.RecordedAtLocal,
+		RecordedAtUTC:   times.RecordedAtUTC,
 		Name:            name,
 		FileID:          after.FileID,
 		Path:            remote,
@@ -321,14 +323,9 @@ func (imp *meetingImporter) logf(format string, args ...any) {
 	}
 }
 
-// meetingTimesDocument is `cassini inspect --meeting-times`: the same reader
+// inspectMeetingTimes runs `cassini inspect --meeting-times`: the same reader
 // retention uses to establish a delivered meeting's age.
-type meetingTimesDocument struct {
-	CreatedAtUTC    string `json:"createdAtUtc"`
-	RecordedAtLocal string `json:"recordedAtLocal"`
-}
-
-func (imp *meetingImporter) inspectMeetingTimes(ctx context.Context, file string) (meetingTimesDocument, error) {
+func (imp *meetingImporter) inspectMeetingTimes(ctx context.Context, file string) (meetingTimes, error) {
 	ctx, cancel := context.WithTimeout(ctx, importCLITimeout)
 	defer cancel()
 	cmd := cassiniCommand(ctx, imp.sink.cassiniBin, "inspect", "--meeting-times", file)
@@ -336,11 +333,11 @@ func (imp *meetingImporter) inspectMeetingTimes(ctx context.Context, file string
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return meetingTimesDocument{}, fmt.Errorf("read meeting times: %w: %s", err, tailOfOutput(stderr.String()))
+		return meetingTimes{}, fmt.Errorf("read meeting times: %w: %s", err, tailOfOutput(stderr.String()))
 	}
-	var times meetingTimesDocument
+	var times meetingTimes
 	if err := json.Unmarshal(out, &times); err != nil {
-		return meetingTimesDocument{}, fmt.Errorf("decode meeting times: %w", err)
+		return meetingTimes{}, fmt.Errorf("decode meeting times: %w", err)
 	}
 	return times, nil
 }

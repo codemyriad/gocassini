@@ -16,6 +16,7 @@ var errMeetingRetired = errors.New("meeting has expired")
 type meetingLifecycle struct {
 	CreatedAtUTC    string `json:"createdAtUtc"`
 	RecordedAtLocal string `json:"recordedAtLocal"`
+	RecordedAtUTC   string `json:"recordedAtUtc,omitempty"`
 	Name            string `json:"name"`
 	FileID          int64  `json:"fileId"`
 	Path            string `json:"documentPath"`
@@ -52,7 +53,7 @@ func (s *Store) ensureMeetingLifecycleSchema() error {
 	if err != nil {
 		return err
 	}
-	for _, column := range []string{"created_at_utc", "recorded_at_local", "reason"} {
+	for _, column := range []string{"created_at_utc", "recorded_at_local", "reason", "recorded_at_utc"} {
 		var present int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('meeting_lifecycle') WHERE name=?`, column).Scan(&present); err != nil {
 			return err
@@ -81,7 +82,7 @@ func (s *Store) meetingLifecycle(ctx context.Context, name string) (meetingLifec
 	if s == nil {
 		return m, false, nil
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local,reason FROM meeting_lifecycle WHERE name=?`, logicalMeetingName(name)).Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource, &m.CreatedAtUTC, &m.RecordedAtLocal, &m.Reason)
+	err := s.db.QueryRowContext(ctx, `SELECT name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local,recorded_at_utc,reason FROM meeting_lifecycle WHERE name=?`, logicalMeetingName(name)).Scan(&m.Name, &m.FileID, &m.Path, &m.State, &m.Anchor, &m.AnchorSource, &m.CreatedAtUTC, &m.RecordedAtLocal, &m.RecordedAtUTC, &m.Reason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, false, nil
 	}
@@ -100,7 +101,7 @@ func (s *Store) adoptMeetingLifecycle(ctx context.Context, m meetingLifecycle) e
 	if _, err := time.Parse(time.RFC3339Nano, m.Anchor); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local,reason) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(name) DO NOTHING`, m.Name, m.FileID, m.Path, m.State, m.Anchor, m.AnchorSource, m.CreatedAtUTC, m.RecordedAtLocal, m.Reason)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO meeting_lifecycle(name,file_id,document_path,state,age_anchor,anchor_source,created_at_utc,recorded_at_local,recorded_at_utc,reason) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(name) DO NOTHING`, m.Name, m.FileID, m.Path, m.State, m.Anchor, m.AnchorSource, m.CreatedAtUTC, m.RecordedAtLocal, m.RecordedAtUTC, m.Reason)
 	if err != nil {
 		return err
 	}

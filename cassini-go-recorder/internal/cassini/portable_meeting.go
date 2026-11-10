@@ -70,6 +70,7 @@ type portableMeetingArtifact struct {
 	Source      struct {
 		Basename        string `json:"basename"`
 		DurationMS      int64  `json:"durationMs"`
+		RecordedAtUTC   string `json:"recordedAtUtc"`
 		RecordedAtLocal string `json:"recordedAtLocal"`
 	} `json:"source"`
 	Provenance *portable.Provenance `json:"provenance"`
@@ -525,6 +526,12 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 		recordedAtLocal = meetingtime.InferRecordedAtLocal(source.Artifact.Source.Basename)
 	}
 	processedAtUTC := strings.TrimSpace(source.Artifact.GeneratedAt)
+	// The build validated this; a bundle edited by hand is refused rather
+	// than sealed with a value no reader can trust.
+	recordedAtUTC := strings.TrimSpace(source.Artifact.Source.RecordedAtUTC)
+	if recordedAtUTC != "" && !portable.ValidRecordedAtUTC(recordedAtUTC) {
+		return portable.Manifest{}, fmt.Errorf("meeting bundle source.recordedAtUtc %q is not RFC 3339 UTC", recordedAtUTC)
+	}
 
 	manifest := portable.NormalizePublishedManifest(portable.Manifest{
 		Processing: source.Artifact.Processing,
@@ -532,6 +539,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			ID:              portable.MeetingIDFromAudioHash(audio.OpusSHA256),
 			Title:           title,
 			CreatedAtUTC:    createdAt,
+			RecordedAtUTC:   recordedAtUTC,
 			RecordedAtLocal: recordedAtLocal,
 			ProcessedAtUTC:  processedAtUTC,
 			DurationMS:      audio.DurationMS,

@@ -203,6 +203,10 @@ type portableFixtureOptions struct {
 	// annotations selects the manifest's annotations member: "" for none, or
 	// one of the fixtureAnnotations kinds.
 	annotations string
+	// meeting edits the manifest's meeting before it is encoded; tags edits
+	// the finished tag set.
+	meeting func(*portable.Meeting)
+	tags    func(map[string]string)
 }
 
 func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
@@ -217,6 +221,9 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 	if opts.repeatFirstTranscriptChunk {
 		key := prefix + "000"
 		tags[key] = tags[key] + ";" + tags[key]
+	}
+	if opts.tags != nil {
+		opts.tags(tags)
 	}
 
 	args := []string{"-y", "-v", "error", "-i", basePath, "-map", "0:a:0", "-c", "copy"}
@@ -287,6 +294,9 @@ func buildPublishedPortableTags(t *testing.T, opts portableFixtureOptions, audio
 	}
 	if opts.annotations != "" {
 		manifest.Annotations = fixtureAnnotations(t, opts.annotations, identity.SHA256)
+	}
+	if opts.meeting != nil {
+		opts.meeting(&manifest.Meeting)
 	}
 	inputs := []portable.TranscriptInput{{
 		ID: portable.DefaultWordsTranscriptID, Default: true,
