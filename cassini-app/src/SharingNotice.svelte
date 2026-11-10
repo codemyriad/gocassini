@@ -89,7 +89,7 @@
   $: kinds = [
     {
       key: "refused",
-      label: $LL.app.operator.sharing_notice.refused_group_label(),
+      label: $LL.app.shell.sharing_notice.refused_group_label(),
       entries: notListed(news?.refused ?? []),
       title: refusedNoticeTitle,
       groupTitle: refusedTitle,
@@ -97,7 +97,7 @@
     },
     {
       key: "unpublished",
-      label: $LL.app.operator.sharing_notice.unpublished_group_label(),
+      label: $LL.app.shell.sharing_notice.unpublished_group_label(),
       entries: notListed(news?.unpublished ?? []),
       title: unpublishedTitle,
       groupTitle: starterRefusedTitle,
@@ -168,7 +168,7 @@
         const refusals = result.failed.filter((failure) => entry.shareIds.includes(failure.shareId));
         if (refusals.length === 0) continue;
         const reasons = refusals.map((failure) => failure.reason).filter((reason) => reason !== "");
-        next.set(pendingRowKey(entry), reasons.join(" ") || $LL.app.operator.sharing_notice.accept_refused());
+        next.set(pendingRowKey(entry), reasons.join(" ") || $LL.app.shell.sharing_notice.accept_refused());
       }
       failures = next;
       // A refusal is something to read, and the rows are where it is said.
@@ -190,7 +190,7 @@
 {#if news && shown}
   <div class="sharing-notice" class:sharing-card={variant === "card"} class:sharing-strip={variant === "strip"}>
     {#if pending.length > 0}
-      <section class="sharing-block" role="status" aria-label={$LL.app.operator.sharing_notice.pending_label()}>
+      <section class="sharing-block" role="status" aria-label={$LL.app.shell.sharing_notice.pending_label()}>
         <!-- No mark in front of the pending line: the count is in the sentence
              and on the button, and this is an invitation rather than a
              warning. The refused lines below keep the shell's warning mark, as
@@ -224,7 +224,7 @@
                   type="button"
                   class="btn btn-sm"
                   disabled={busy}
-                  aria-label={$LL.app.operator.sharing_notice.accept_row_aria({ title: pendingRowTitle(entry) })}
+                  aria-label={$LL.app.shell.sharing_notice.accept_row_aria({ title: pendingRowTitle(entry) })}
                   on:click={() => acceptRows([entry])}
                 >
                   {#if rowBusy(entry, inFlight) && !acceptingAll}
@@ -265,7 +265,7 @@
                     type="button"
                     class="btn btn-sm"
                     disabled={dismissing.size > 0}
-                    aria-label={$LL.app.operator.sharing_notice.dismiss_row_aria({ label: noticeRowLabel(entry) })}
+                    aria-label={$LL.app.shell.sharing_notice.dismiss_row_aria({ label: noticeRowLabel(entry) })}
                     on:click={() => dismissRows([entry.jobId])}
                   >
                     {#if dismissing.has(entry.jobId) && dismissing.size === 1}
@@ -304,7 +304,7 @@
                 type="button"
                 class="btn btn-ghost btn-xs btn-square"
                 title={dismissLabel()}
-                aria-label={$LL.app.operator.sharing_notice.dismiss_notice_aria({ title: kind.title(entry) })}
+                aria-label={$LL.app.shell.sharing_notice.dismiss_notice_aria({ title: kind.title(entry) })}
                 disabled={dismissing.size > 0}
                 on:click={() => dismissRows([entry.jobId])}
               >

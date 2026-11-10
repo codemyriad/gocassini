@@ -341,6 +341,278 @@ export type NamespaceAppTranslation = {
 			 */
 			bundle_failed: RequiredParams<'status'>
 		}
+		setup_notice: {
+			/**
+			 * C​h​e​c​k​i​n​g​…
+			 */
+			checking: string
+			/**
+			 * S​h​o​w​ ​d​e​t​a​i​l​s
+			 */
+			show_details: string
+			/**
+			 * D​e​t​a​i​l​s​ ​f​o​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​s
+			 */
+			details_heading: string
+			/**
+			 * O​p​e​n​ ​{​p​l​a​c​e​}
+			 * @param {unknown} place
+			 */
+			open_publish_pipeline: RequiredParams<'place'>
+			/**
+			 * C​a​s​s​i​n​i​ ​c​a​n​'​t​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​s​ ​r​i​g​h​t​ ​n​o​w
+			 */
+			title_failing: string
+			/**
+			 * C​a​s​s​i​n​i​ ​h​a​s​n​'​t​ ​c​h​e​c​k​e​d​ ​t​h​a​t​ ​i​t​ ​c​a​n​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​s
+			 */
+			title_unchecked: string
+			/**
+			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​C​a​l​l​s​ ​w​i​l​l​ ​s​t​i​l​l​ ​r​u​n​,​ ​b​u​t​ ​t​h​e​i​r​ ​r​e​c​o​r​d​i​n​g​s​ ​w​i​l​l​ ​f​a​i​l​ ​u​n​t​i​l​ ​t​h​i​s​ ​i​s​ ​f​i​x​e​d​.
+			 */
+			summary_failing: string
+			/**
+			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​,​ ​b​u​t​ ​n​e​w​ ​o​n​e​s​ ​w​i​l​l​ ​f​a​i​l​ ​u​n​t​i​l​ ​t​h​i​s​ ​c​h​e​c​k​ ​r​u​n​s​.
+			 */
+			summary_unchecked: string
+			/**
+			 * S​e​n​d​ ​t​h​i​s​ ​l​i​n​k​ ​t​o​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​f​o​r​ ​s​e​t​u​p​ ​i​n​s​t​r​u​c​t​i​o​n​s​.
+			 */
+			share_label: string
+			/**
+			 * R​e​-​r​u​n​ ​C​a​s​s​i​n​i​'​s​ ​s​e​t​u​p​ ​b​y​ ​d​i​s​a​b​l​i​n​g​ ​a​n​d​ ​e​n​a​b​l​i​n​g​ ​t​h​e​ ​a​p​p
+			 */
+			step_rerun_setup: string
+			/**
+			 * O​p​e​n​ ​{​p​l​a​c​e​}​ ​t​o​ ​c​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t
+			 * @param {unknown} place
+			 */
+			step_open_settings: RequiredParams<'place'>
+			/**
+			 * C​r​e​a​t​e​ ​t​h​e​ ​{​u​s​e​r​}​ ​a​c​c​o​u​n​t​ ​i​n​ ​N​e​x​t​c​l​o​u​d
+			 * @param {unknown} user
+			 */
+			step_create_account: RequiredParams<'user'>
+			/**
+			 * S​e​t​ ​{​v​a​r​i​a​b​l​e​}​ ​t​o​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
+			 * @param {unknown} variable
+			 */
+			step_set_admin_user: RequiredParams<'variable'>
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​.
+			 */
+			cause_unknown: string
+			/**
+			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​.
+			 * @param {unknown} state
+			 */
+			detail_state: RequiredParams<'state'>
+			/**
+			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​ ​a​t​ ​{​s​t​e​p​}​.
+			 * @param {unknown} state
+			 * @param {unknown} step
+			 */
+			detail_state_at_step: RequiredParams<'state' | 'step'>
+			/**
+			 * {​c​o​m​m​a​n​d​}​ ​i​s​ ​h​o​w​e​v​e​r​ ​y​o​u​r​ ​d​e​p​l​o​y​m​e​n​t​ ​i​n​v​o​k​e​s​ ​i​t​,​ ​f​o​r​ ​e​x​a​m​p​l​e​ ​{​e​x​a​m​p​l​e​}​.
+			 * @param {unknown} command
+			 * @param {unknown} example
+			 */
+			note_occ: RequiredParams<'command' | 'example'>
+			/**
+			 * S​e​e​ ​{​e​n​d​p​o​i​n​t​}​ ​f​o​r​ ​t​h​e​ ​f​u​l​l​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​e​s​s​ ​r​e​p​o​r​t​.
+			 * @param {unknown} endpoint
+			 */
+			reference: RequiredParams<'endpoint'>
+		}
+		sharing_notice: {
+			/**
+			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
+			 */
+			pending_title_one: string
+			/**
+			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
+			 * @param {unknown} count
+			 */
+			pending_title_other: RequiredParams<'count'>
+			/**
+			 * R​e​c​o​r​d​i​n​g​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
+			 */
+			pending_label: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​h​o​l​d​s​ ​f​i​l​e​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​ ​u​n​t​i​l​ ​y​o​u​ ​a​c​c​e​p​t​ ​t​h​e​m​.
+			 */
+			pending_line: string
+			/**
+			 * S​h​o​w​ ​t​h​e​m
+			 */
+			show_them: string
+			/**
+			 * H​i​d​e​ ​t​h​e​m
+			 */
+			hide_them: string
+			/**
+			 * A​c​c​e​p​t
+			 */
+			accept: string
+			/**
+			 * A​c​c​e​p​t​ ​a​l​l​ ​{​c​o​u​n​t​}
+			 * @param {unknown} count
+			 */
+			accept_all: RequiredParams<'count'>
+			/**
+			 * A​c​c​e​p​t​ ​{​t​i​t​l​e​}
+			 * @param {unknown} title
+			 */
+			accept_row_aria: RequiredParams<'title'>
+			/**
+			 * W​h​y​?​ ​Y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​c​c​e​p​t​s​ ​s​h​a​r​e​d​ ​f​i​l​e​s​ ​b​y​ ​h​a​n​d​ ​(​P​e​r​s​o​n​a​l​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​)​,​ ​o​r​ ​t​h​i​s​ ​s​e​r​v​e​r​ ​a​s​k​s​ ​e​v​e​r​y​o​n​e​ ​t​o​.​ ​C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​a​c​c​e​p​t​s​ ​f​o​r​ ​y​o​u​.
+			 */
+			why_accept: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​d​i​d​ ​n​o​t​ ​a​c​c​e​p​t​ ​t​h​i​s​ ​s​h​a​r​e​.
+			 */
+			accept_refused: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​a​c​c​e​p​t​ ​t​h​e​ ​s​h​a​r​e​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
+			 * @param {unknown} status
+			 */
+			accept_failed: RequiredParams<'status'>
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​d​i​s​m​i​s​s​ ​t​h​e​ ​n​o​t​i​c​e​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
+			 * @param {unknown} status
+			 */
+			dismiss_failed: RequiredParams<'status'>
+			/**
+			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+			 */
+			refused_title_one: string
+			/**
+			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+			 * @param {unknown} count
+			 */
+			refused_title_other: RequiredParams<'count'>
+			/**
+			 * A​ ​N​e​x​t​c​l​o​u​d​ ​s​h​a​r​i​n​g​ ​s​e​t​t​i​n​g​ ​s​t​o​p​s​ ​i​t​.
+			 */
+			refused_line: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u
+			 */
+			refused_group_label: string
+			/**
+			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 */
+			starter_refused_title_one: string
+			/**
+			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 * @param {unknown} count
+			 */
+			starter_refused_title_other: RequiredParams<'count'>
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​o​ ​s​h​a​r​e​ ​i​t​ ​w​i​t​h​ ​y​o​u​.
+			 */
+			starter_refused_line_one: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​o​ ​s​h​a​r​e​ ​t​h​e​m​ ​w​i​t​h​ ​y​o​u​.
+			 */
+			starter_refused_line_other: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​s​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​t​h​a​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d
+			 */
+			unpublished_group_label: string
+			refused_notice: {
+				/**
+				 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​“​{​n​a​m​e​}​”​ ​o​n​ ​{​d​a​t​e​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+				 * @param {unknown} date
+				 * @param {unknown} name
+				 */
+				room_date: RequiredParams<'date' | 'name'>
+				/**
+				 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​“​{​n​a​m​e​}​”​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+				 * @param {unknown} name
+				 */
+				room: RequiredParams<'name'>
+				/**
+				 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​o​n​ ​{​d​a​t​e​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+				 * @param {unknown} date
+				 */
+				date: RequiredParams<'date'>
+				/**
+				 * A​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+				 */
+				unknown: string
+			}
+			unpublished_notice: {
+				/**
+				 * Y​o​u​r​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​“​{​n​a​m​e​}​”​ ​o​n​ ​{​d​a​t​e​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+				 * @param {unknown} date
+				 * @param {unknown} name
+				 */
+				room_date: RequiredParams<'date' | 'name'>
+				/**
+				 * Y​o​u​r​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​“​{​n​a​m​e​}​”​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+				 * @param {unknown} name
+				 */
+				room: RequiredParams<'name'>
+				/**
+				 * Y​o​u​r​ ​r​e​c​o​r​d​i​n​g​ ​o​n​ ​{​d​a​t​e​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+				 * @param {unknown} date
+				 */
+				date: RequiredParams<'date'>
+				/**
+				 * A​ ​r​e​c​o​r​d​i​n​g​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+				 */
+				unknown: string
+			}
+			/**
+			 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
+			 */
+			refused_this: string
+			/**
+			 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
+			 */
+			unpublished_this: string
+			/**
+			 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
+			 */
+			waiting_title: string
+			/**
+			 * A​ ​r​e​c​o​r​d​i​n​g
+			 */
+			a_recording: string
+			/**
+			 * D​i​s​m​i​s​s​ ​a​l​l
+			 */
+			dismiss_all: string
+			/**
+			 * D​i​s​m​i​s​s​ ​{​l​a​b​e​l​}
+			 * @param {unknown} label
+			 */
+			dismiss_row_aria: RequiredParams<'label'>
+			/**
+			 * D​i​s​m​i​s​s​:​ ​{​t​i​t​l​e​}
+			 * @param {unknown} title
+			 */
+			dismiss_notice_aria: RequiredParams<'title'>
+			/**
+			 * A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​f​i​x​ ​t​h​a​t​:​ ​{​l​i​n​k​}​.
+			 * @param {unknown} link
+			 */
+			admin_fix: RequiredParams<'link'>
+			/**
+			 * s​e​n​d​ ​t​h​e​m​ ​t​h​i​s​ ​l​i​n​k
+			 */
+			send_link: string
+			/**
+			 * O​p​e​n​i​n​g​ ​i​t​ ​a​s​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​s​h​o​w​s​ ​e​x​a​c​t​l​y​ ​w​h​a​t​ ​i​s​ ​s​t​o​p​p​i​n​g​ ​i​t
+			 */
+			send_link_title: string
+			/**
+			 * A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​f​i​x​ ​t​h​a​t​.
+			 */
+			admin_fix_plain: string
+		}
 	}
 	operator: {
 		readiness: {
@@ -638,90 +910,6 @@ export type NamespaceAppTranslation = {
 				 */
 				summary_other_since: RequiredParams<'count' | 'since'>
 			}
-		}
-		setup_notice: {
-			/**
-			 * C​h​e​c​k​i​n​g​…
-			 */
-			checking: string
-			/**
-			 * S​h​o​w​ ​d​e​t​a​i​l​s
-			 */
-			show_details: string
-			/**
-			 * D​e​t​a​i​l​s​ ​f​o​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​s
-			 */
-			details_heading: string
-			/**
-			 * O​p​e​n​ ​{​p​l​a​c​e​}
-			 * @param {unknown} place
-			 */
-			open_publish_pipeline: RequiredParams<'place'>
-			/**
-			 * C​a​s​s​i​n​i​ ​c​a​n​'​t​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​s​ ​r​i​g​h​t​ ​n​o​w
-			 */
-			title_failing: string
-			/**
-			 * C​a​s​s​i​n​i​ ​h​a​s​n​'​t​ ​c​h​e​c​k​e​d​ ​t​h​a​t​ ​i​t​ ​c​a​n​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​s
-			 */
-			title_unchecked: string
-			/**
-			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​.​ ​C​a​l​l​s​ ​w​i​l​l​ ​s​t​i​l​l​ ​r​u​n​,​ ​b​u​t​ ​t​h​e​i​r​ ​r​e​c​o​r​d​i​n​g​s​ ​w​i​l​l​ ​f​a​i​l​ ​u​n​t​i​l​ ​t​h​i​s​ ​i​s​ ​f​i​x​e​d​.
-			 */
-			summary_failing: string
-			/**
-			 * Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​b​r​o​w​s​e​ ​r​e​c​o​r​d​i​n​g​s​,​ ​b​u​t​ ​n​e​w​ ​o​n​e​s​ ​w​i​l​l​ ​f​a​i​l​ ​u​n​t​i​l​ ​t​h​i​s​ ​c​h​e​c​k​ ​r​u​n​s​.
-			 */
-			summary_unchecked: string
-			/**
-			 * S​e​n​d​ ​t​h​i​s​ ​l​i​n​k​ ​t​o​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​f​o​r​ ​s​e​t​u​p​ ​i​n​s​t​r​u​c​t​i​o​n​s​.
-			 */
-			share_label: string
-			/**
-			 * R​e​-​r​u​n​ ​C​a​s​s​i​n​i​'​s​ ​s​e​t​u​p​ ​b​y​ ​d​i​s​a​b​l​i​n​g​ ​a​n​d​ ​e​n​a​b​l​i​n​g​ ​t​h​e​ ​a​p​p
-			 */
-			step_rerun_setup: string
-			/**
-			 * O​p​e​n​ ​{​p​l​a​c​e​}​ ​t​o​ ​c​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t
-			 * @param {unknown} place
-			 */
-			step_open_settings: RequiredParams<'place'>
-			/**
-			 * C​r​e​a​t​e​ ​t​h​e​ ​{​u​s​e​r​}​ ​a​c​c​o​u​n​t​ ​i​n​ ​N​e​x​t​c​l​o​u​d
-			 * @param {unknown} user
-			 */
-			step_create_account: RequiredParams<'user'>
-			/**
-			 * S​e​t​ ​{​v​a​r​i​a​b​l​e​}​ ​t​o​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​d​m​i​n​i​s​t​r​a​t​o​r
-			 * @param {unknown} variable
-			 */
-			step_set_admin_user: RequiredParams<'variable'>
-			/**
-			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​.
-			 */
-			cause_unknown: string
-			/**
-			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​.
-			 * @param {unknown} state
-			 */
-			detail_state: RequiredParams<'state'>
-			/**
-			 * T​h​e​ ​o​p​e​r​a​t​o​r​ ​r​e​p​o​r​t​e​d​ ​{​s​t​a​t​e​}​ ​a​t​ ​{​s​t​e​p​}​.
-			 * @param {unknown} state
-			 * @param {unknown} step
-			 */
-			detail_state_at_step: RequiredParams<'state' | 'step'>
-			/**
-			 * {​c​o​m​m​a​n​d​}​ ​i​s​ ​h​o​w​e​v​e​r​ ​y​o​u​r​ ​d​e​p​l​o​y​m​e​n​t​ ​i​n​v​o​k​e​s​ ​i​t​,​ ​f​o​r​ ​e​x​a​m​p​l​e​ ​{​e​x​a​m​p​l​e​}​.
-			 * @param {unknown} command
-			 * @param {unknown} example
-			 */
-			note_occ: RequiredParams<'command' | 'example'>
-			/**
-			 * S​e​e​ ​{​e​n​d​p​o​i​n​t​}​ ​f​o​r​ ​t​h​e​ ​f​u​l​l​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​e​s​s​ ​r​e​p​o​r​t​.
-			 * @param {unknown} endpoint
-			 */
-			reference: RequiredParams<'endpoint'>
 		}
 		feature_notice: {
 			/**
@@ -1155,20 +1343,6 @@ export type NamespaceAppTranslation = {
 			 * U​n​k​n​o​w​n
 			 */
 			unknown: string
-			quality: {
-				/**
-				 * F​a​s​t
-				 */
-				fast: string
-				/**
-				 * B​a​l​a​n​c​e​d
-				 */
-				balanced: string
-				/**
-				 * B​e​s​t
-				 */
-				best: string
-			}
 			reason: {
 				/**
 				 * p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​m​e​a​n​w​h​i​l​e
@@ -1235,20 +1409,6 @@ export type NamespaceAppTranslation = {
 				 * A​u​d​i​o​,​ ​n​o​ ​t​r​a​n​s​c​r​i​p​t
 				 */
 				audio_no_transcript: string
-			}
-			keep: {
-				/**
-				 * N​o​t​h​i​n​g
-				 */
-				nothing: string
-				/**
-				 * A​u​d​i​o​ ​+​ ​v​i​d​e​o
-				 */
-				audio_video: string
-				/**
-				 * A​u​d​i​o​ ​o​n​l​y
-				 */
-				audio_only: string
 			}
 			retention: {
 				/**
@@ -1519,106 +1679,46 @@ export type NamespaceAppTranslation = {
 		}
 		storage: {
 			category: {
-				published: {
-					/**
-					 * I​n​ ​N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s
-					 */
-					label: string
-					/**
-					 * P​u​b​l​i​s​h​e​d​ ​f​i​l​e​s​,​ ​i​n​c​l​u​d​i​n​g​ ​l​e​g​a​c​y​ ​a​r​c​h​i​v​e​s​,​ ​d​a​t​e​d​ ​b​y​ ​p​u​b​l​i​c​a​t​i​o​n​ ​o​r​ ​r​e​c​o​r​d​i​n​g​.​ ​N​o​t​ ​t​o​u​c​h​e​d​ ​b​y​ ​t​h​i​s​ ​s​e​r​v​e​r​’​s​ ​c​l​e​a​n​u​p​.
-					 */
-					description: string
-				}
-				recordings: {
-					/**
-					 * R​e​c​o​r​d​i​n​g​s
-					 */
-					label: string
-					/**
-					 * A​u​d​i​o​,​ ​v​i​d​e​o​ ​a​n​d​ ​s​u​p​p​o​r​t​i​n​g​ ​f​i​l​e​s​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​r​e​c​o​r​d​i​n​g​ ​f​i​n​i​s​h​e​d​.
-					 */
-					description: string
-				}
-				current: {
-					/**
-					 * P​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​s​ ​(​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​)
-					 */
-					label: string
-					/**
-					 * T​h​i​s​ ​s​e​r​v​e​r​'​s​ ​c​o​p​y​ ​o​f​ ​t​h​e​ ​l​a​t​e​s​t​ ​p​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​i​t​ ​w​a​s​ ​p​u​b​l​i​s​h​e​d​.
-					 */
-					description: string
-				}
-				history: {
-					/**
-					 * P​r​e​v​i​o​u​s​ ​a​t​t​e​m​p​t​s
-					 */
-					label: string
-					/**
-					 * F​a​i​l​e​d​ ​r​e​c​o​r​d​i​n​g​s​,​ ​f​a​i​l​e​d​ ​p​r​o​c​e​s​s​i​n​g​,​ ​r​e​p​l​a​c​e​d​ ​o​u​t​p​u​t​ ​a​n​d​ ​f​a​i​l​e​d​ ​p​u​b​l​i​s​h​i​n​g​.
-					 */
-					description: string
-				}
-				failed_capture: {
-					/**
-					 * F​a​i​l​e​d​ ​r​e​c​o​r​d​i​n​g​s
-					 */
-					label: string
-					/**
-					 * R​e​c​o​r​d​i​n​g​s​ ​f​r​o​m​ ​f​a​i​l​e​d​ ​o​r​ ​i​n​t​e​r​r​u​p​t​e​d​ ​a​t​t​e​m​p​t​s​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​t​h​e​ ​a​t​t​e​m​p​t​ ​e​n​d​e​d​.
-					 */
-					description: string
-				}
-				failed_build: {
-					/**
-					 * F​a​i​l​e​d​ ​p​r​o​c​e​s​s​i​n​g
-					 */
-					label: string
-					/**
-					 * P​r​o​c​e​s​s​i​n​g​ ​o​u​t​p​u​t​ ​f​r​o​m​ ​f​a​i​l​e​d​ ​o​r​ ​i​n​t​e​r​r​u​p​t​e​d​ ​a​t​t​e​m​p​t​s​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​t​h​e​ ​a​t​t​e​m​p​t​ ​e​n​d​e​d​.
-					 */
-					description: string
-				}
-				superseded: {
-					/**
-					 * R​e​p​l​a​c​e​d​ ​o​u​t​p​u​t
-					 */
-					label: string
-					/**
-					 * O​l​d​e​r​ ​o​u​t​p​u​t​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​a​ ​l​a​t​e​r​ ​p​u​b​l​i​c​a​t​i​o​n​ ​r​e​p​l​a​c​e​d​ ​i​t​.
-					 */
-					description: string
-				}
-				failed_publish: {
-					/**
-					 * F​a​i​l​e​d​ ​p​u​b​l​i​s​h​i​n​g
-					 */
-					label: string
-					/**
-					 * P​u​b​l​i​s​h​i​n​g​ ​f​i​l​e​s​ ​f​r​o​m​ ​f​a​i​l​e​d​ ​o​r​ ​i​n​t​e​r​r​u​p​t​e​d​ ​a​t​t​e​m​p​t​s​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​t​h​e​ ​a​t​t​e​m​p​t​ ​e​n​d​e​d​.
-					 */
-					description: string
-				}
-				logs: {
-					/**
-					 * P​r​o​c​e​s​s​i​n​g​ ​l​o​g​s
-					 */
-					label: string
-					/**
-					 * L​o​g​s​ ​f​r​o​m​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​a​t​t​e​m​p​t​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​t​h​e​ ​a​t​t​e​m​p​t​ ​e​n​d​e​d​.
-					 */
-					description: string
-				}
-				other: {
-					/**
-					 * O​t​h​e​r​ ​l​o​c​a​l​ ​f​i​l​e​s
-					 */
-					label: string
-					/**
-					 * W​o​r​k​ ​i​n​ ​p​r​o​g​r​e​s​s​ ​a​n​d​ ​f​i​l​e​s​ ​n​o​ ​c​l​e​a​n​u​p​ ​r​u​l​e​ ​c​o​v​e​r​s​.​ ​T​h​e​y​ ​h​a​v​e​ ​n​o​ ​d​a​t​e​.
-					 */
-					description: string
-				}
+				/**
+				 * P​u​b​l​i​s​h​e​d​ ​f​i​l​e​s​,​ ​i​n​c​l​u​d​i​n​g​ ​l​e​g​a​c​y​ ​a​r​c​h​i​v​e​s​,​ ​d​a​t​e​d​ ​b​y​ ​p​u​b​l​i​c​a​t​i​o​n​ ​o​r​ ​r​e​c​o​r​d​i​n​g​.​ ​N​o​t​ ​t​o​u​c​h​e​d​ ​b​y​ ​t​h​i​s​ ​s​e​r​v​e​r​’​s​ ​c​l​e​a​n​u​p​.
+				 */
+				published: string
+				/**
+				 * A​u​d​i​o​,​ ​v​i​d​e​o​ ​a​n​d​ ​s​u​p​p​o​r​t​i​n​g​ ​f​i​l​e​s​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​r​e​c​o​r​d​i​n​g​ ​f​i​n​i​s​h​e​d​.
+				 */
+				recordings: string
+				/**
+				 * T​h​i​s​ ​s​e​r​v​e​r​'​s​ ​c​o​p​y​ ​o​f​ ​t​h​e​ ​l​a​t​e​s​t​ ​p​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​i​t​ ​w​a​s​ ​p​u​b​l​i​s​h​e​d​.
+				 */
+				current: string
+				/**
+				 * F​a​i​l​e​d​ ​r​e​c​o​r​d​i​n​g​s​,​ ​f​a​i​l​e​d​ ​p​r​o​c​e​s​s​i​n​g​,​ ​r​e​p​l​a​c​e​d​ ​o​u​t​p​u​t​ ​a​n​d​ ​f​a​i​l​e​d​ ​p​u​b​l​i​s​h​i​n​g​.
+				 */
+				history: string
+				/**
+				 * R​e​c​o​r​d​i​n​g​s​ ​f​r​o​m​ ​f​a​i​l​e​d​ ​o​r​ ​i​n​t​e​r​r​u​p​t​e​d​ ​a​t​t​e​m​p​t​s​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​t​h​e​ ​a​t​t​e​m​p​t​ ​e​n​d​e​d​.
+				 */
+				failed_capture: string
+				/**
+				 * P​r​o​c​e​s​s​i​n​g​ ​o​u​t​p​u​t​ ​f​r​o​m​ ​f​a​i​l​e​d​ ​o​r​ ​i​n​t​e​r​r​u​p​t​e​d​ ​a​t​t​e​m​p​t​s​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​t​h​e​ ​a​t​t​e​m​p​t​ ​e​n​d​e​d​.
+				 */
+				failed_build: string
+				/**
+				 * O​l​d​e​r​ ​o​u​t​p​u​t​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​a​ ​l​a​t​e​r​ ​p​u​b​l​i​c​a​t​i​o​n​ ​r​e​p​l​a​c​e​d​ ​i​t​.
+				 */
+				superseded: string
+				/**
+				 * P​u​b​l​i​s​h​i​n​g​ ​f​i​l​e​s​ ​f​r​o​m​ ​f​a​i​l​e​d​ ​o​r​ ​i​n​t​e​r​r​u​p​t​e​d​ ​a​t​t​e​m​p​t​s​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​t​h​e​ ​a​t​t​e​m​p​t​ ​e​n​d​e​d​.
+				 */
+				failed_publish: string
+				/**
+				 * L​o​g​s​ ​f​r​o​m​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​a​t​t​e​m​p​t​,​ ​d​a​t​e​d​ ​w​h​e​n​ ​t​h​e​ ​a​t​t​e​m​p​t​ ​e​n​d​e​d​.
+				 */
+				logs: string
+				/**
+				 * W​o​r​k​ ​i​n​ ​p​r​o​g​r​e​s​s​ ​a​n​d​ ​f​i​l​e​s​ ​n​o​ ​c​l​e​a​n​u​p​ ​r​u​l​e​ ​c​o​v​e​r​s​.​ ​T​h​e​y​ ​h​a​v​e​ ​n​o​ ​d​a​t​e​.
+				 */
+				other: string
 			}
 			report: {
 				/**
@@ -1969,194 +2069,6 @@ export type NamespaceAppTranslation = {
 			 * @param {unknown} action
 			 */
 			unknown_step: RequiredParams<'action'>
-		}
-		sharing_notice: {
-			/**
-			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
-			 */
-			pending_title_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
-			 * @param {unknown} count
-			 */
-			pending_title_other: RequiredParams<'count'>
-			/**
-			 * R​e​c​o​r​d​i​n​g​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
-			 */
-			pending_label: string
-			/**
-			 * N​e​x​t​c​l​o​u​d​ ​h​o​l​d​s​ ​f​i​l​e​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​ ​u​n​t​i​l​ ​y​o​u​ ​a​c​c​e​p​t​ ​t​h​e​m​.
-			 */
-			pending_line: string
-			/**
-			 * S​h​o​w​ ​t​h​e​m
-			 */
-			show_them: string
-			/**
-			 * H​i​d​e​ ​t​h​e​m
-			 */
-			hide_them: string
-			/**
-			 * A​c​c​e​p​t
-			 */
-			accept: string
-			/**
-			 * A​c​c​e​p​t​ ​a​l​l​ ​{​c​o​u​n​t​}
-			 * @param {unknown} count
-			 */
-			accept_all: RequiredParams<'count'>
-			/**
-			 * A​c​c​e​p​t​ ​{​t​i​t​l​e​}
-			 * @param {unknown} title
-			 */
-			accept_row_aria: RequiredParams<'title'>
-			/**
-			 * W​h​y​?​ ​Y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​c​c​e​p​t​s​ ​s​h​a​r​e​d​ ​f​i​l​e​s​ ​b​y​ ​h​a​n​d​ ​(​P​e​r​s​o​n​a​l​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​)​,​ ​o​r​ ​t​h​i​s​ ​s​e​r​v​e​r​ ​a​s​k​s​ ​e​v​e​r​y​o​n​e​ ​t​o​.​ ​C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​a​c​c​e​p​t​s​ ​f​o​r​ ​y​o​u​.
-			 */
-			why_accept: string
-			/**
-			 * N​e​x​t​c​l​o​u​d​ ​d​i​d​ ​n​o​t​ ​a​c​c​e​p​t​ ​t​h​i​s​ ​s​h​a​r​e​.
-			 */
-			accept_refused: string
-			/**
-			 * C​o​u​l​d​ ​n​o​t​ ​a​c​c​e​p​t​ ​t​h​e​ ​s​h​a​r​e​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
-			 * @param {unknown} status
-			 */
-			accept_failed: RequiredParams<'status'>
-			/**
-			 * C​o​u​l​d​ ​n​o​t​ ​d​i​s​m​i​s​s​ ​t​h​e​ ​n​o​t​i​c​e​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
-			 * @param {unknown} status
-			 */
-			dismiss_failed: RequiredParams<'status'>
-			/**
-			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
-			 */
-			refused_title_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
-			 * @param {unknown} count
-			 */
-			refused_title_other: RequiredParams<'count'>
-			/**
-			 * A​ ​N​e​x​t​c​l​o​u​d​ ​s​h​a​r​i​n​g​ ​s​e​t​t​i​n​g​ ​s​t​o​p​s​ ​i​t​.
-			 */
-			refused_line: string
-			/**
-			 * R​e​c​o​r​d​i​n​g​s​ ​t​h​a​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u
-			 */
-			refused_group_label: string
-			/**
-			 * 1​ ​r​e​c​o​r​d​i​n​g​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
-			 */
-			starter_refused_title_one: string
-			/**
-			 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
-			 * @param {unknown} count
-			 */
-			starter_refused_title_other: RequiredParams<'count'>
-			/**
-			 * N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​o​ ​s​h​a​r​e​ ​i​t​ ​w​i​t​h​ ​y​o​u​.
-			 */
-			starter_refused_line_one: string
-			/**
-			 * N​e​x​t​c​l​o​u​d​ ​r​e​f​u​s​e​d​ ​t​o​ ​s​h​a​r​e​ ​t​h​e​m​ ​w​i​t​h​ ​y​o​u​.
-			 */
-			starter_refused_line_other: string
-			/**
-			 * R​e​c​o​r​d​i​n​g​s​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​t​h​a​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d
-			 */
-			unpublished_group_label: string
-			refused_notice: {
-				/**
-				 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​“​{​n​a​m​e​}​”​ ​o​n​ ​{​d​a​t​e​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
-				 * @param {unknown} date
-				 * @param {unknown} name
-				 */
-				room_date: RequiredParams<'date' | 'name'>
-				/**
-				 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​“​{​n​a​m​e​}​”​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
-				 * @param {unknown} name
-				 */
-				room: RequiredParams<'name'>
-				/**
-				 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​o​n​ ​{​d​a​t​e​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
-				 * @param {unknown} date
-				 */
-				date: RequiredParams<'date'>
-				/**
-				 * A​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
-				 */
-				unknown: string
-			}
-			unpublished_notice: {
-				/**
-				 * Y​o​u​r​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​“​{​n​a​m​e​}​”​ ​o​n​ ​{​d​a​t​e​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
-				 * @param {unknown} date
-				 * @param {unknown} name
-				 */
-				room_date: RequiredParams<'date' | 'name'>
-				/**
-				 * Y​o​u​r​ ​r​e​c​o​r​d​i​n​g​ ​i​n​ ​“​{​n​a​m​e​}​”​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
-				 * @param {unknown} name
-				 */
-				room: RequiredParams<'name'>
-				/**
-				 * Y​o​u​r​ ​r​e​c​o​r​d​i​n​g​ ​o​n​ ​{​d​a​t​e​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
-				 * @param {unknown} date
-				 */
-				date: RequiredParams<'date'>
-				/**
-				 * A​ ​r​e​c​o​r​d​i​n​g​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
-				 */
-				unknown: string
-			}
-			/**
-			 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​y​o​u​.
-			 */
-			refused_this: string
-			/**
-			 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​ ​y​o​u​ ​s​t​a​r​t​e​d​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​u​b​l​i​s​h​e​d​.
-			 */
-			unpublished_this: string
-			/**
-			 * T​h​i​s​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​w​a​i​t​i​n​g​ ​f​o​r​ ​y​o​u
-			 */
-			waiting_title: string
-			/**
-			 * A​ ​r​e​c​o​r​d​i​n​g
-			 */
-			a_recording: string
-			/**
-			 * D​i​s​m​i​s​s​ ​a​l​l
-			 */
-			dismiss_all: string
-			/**
-			 * D​i​s​m​i​s​s​ ​{​l​a​b​e​l​}
-			 * @param {unknown} label
-			 */
-			dismiss_row_aria: RequiredParams<'label'>
-			/**
-			 * D​i​s​m​i​s​s​:​ ​{​t​i​t​l​e​}
-			 * @param {unknown} title
-			 */
-			dismiss_notice_aria: RequiredParams<'title'>
-			/**
-			 * A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​f​i​x​ ​t​h​a​t​:​ ​{​l​i​n​k​}​.
-			 * @param {unknown} link
-			 */
-			admin_fix: RequiredParams<'link'>
-			/**
-			 * s​e​n​d​ ​t​h​e​m​ ​t​h​i​s​ ​l​i​n​k
-			 */
-			send_link: string
-			/**
-			 * O​p​e​n​i​n​g​ ​i​t​ ​a​s​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​s​h​o​w​s​ ​e​x​a​c​t​l​y​ ​w​h​a​t​ ​i​s​ ​s​t​o​p​p​i​n​g​ ​i​t
-			 */
-			send_link_title: string
-			/**
-			 * A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​f​i​x​ ​t​h​a​t​.
-			 */
-			admin_fix_plain: string
 		}
 		doctor: {
 			/**
@@ -3240,25 +3152,13 @@ export type NamespaceAppTranslation = {
 			 */
 			off_description: string
 			/**
-			 * F​a​s​t
-			 */
-			quality_fast: string
-			/**
 			 * F​a​s​t​e​s​t​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​,​ ​l​o​w​e​r​ ​a​c​c​u​r​a​c​y​.
 			 */
 			quality_fast_description: string
 			/**
-			 * B​a​l​a​n​c​e​d
-			 */
-			quality_balanced: string
-			/**
 			 * D​e​f​a​u​l​t​ ​—​ ​g​o​o​d​ ​a​c​c​u​r​a​c​y​ ​a​t​ ​r​e​a​s​o​n​a​b​l​e​ ​s​p​e​e​d​.
 			 */
 			quality_balanced_description: string
-			/**
-			 * B​e​s​t
-			 */
-			quality_best: string
 			/**
 			 * H​i​g​h​e​s​t​ ​a​c​c​u​r​a​c​y​ ​(​f​p​3​2​)​,​ ​s​l​o​w​e​s​t​.
 			 */
@@ -3527,10 +3427,6 @@ export type NamespaceAppTranslation = {
 			 */
 			keep_heading: string
 			/**
-			 * N​o​t​h​i​n​g
-			 */
-			keep_nothing: string
-			/**
 			 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​d​e​l​e​t​e​d​ ​a​f​t​e​r​ ​p​u​b​l​i​s​h​i​n​g​ ​a​n​d​ ​c​a​n​n​o​t​ ​b​e​ ​r​e​p​r​o​c​e​s​s​e​d​.
 			 */
 			keep_nothing_help: string
@@ -3539,17 +3435,9 @@ export type NamespaceAppTranslation = {
 			 */
 			keep_nothing_unavailable: string
 			/**
-			 * A​u​d​i​o​ ​a​n​d​ ​v​i​d​e​o
-			 */
-			keep_video: string
-			/**
 			 * U​s​e​s​ ​t​h​e​ ​m​o​s​t​ ​s​p​a​c​e​.
 			 */
 			keep_video_help: string
-			/**
-			 * A​u​d​i​o​ ​o​n​l​y
-			 */
-			keep_audio: string
 			/**
 			 * {​m​e​d​i​a​}​.
 			 * @param {unknown} media
@@ -3653,22 +3541,6 @@ export type NamespaceAppTranslation = {
 			 * S​a​v​i​n​g​ ​c​h​a​n​g​e​s​…
 			 */
 			saving_changes: string
-			/**
-			 * L​e​a​v​e​ ​w​i​t​h​o​u​t​ ​s​a​v​i​n​g​?
-			 */
-			leave_title: string
-			/**
-			 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​c​h​a​n​g​e​s​.​ ​L​e​a​v​e​ ​w​i​t​h​o​u​t​ ​s​a​v​i​n​g​?
-			 */
-			leave_prompt: string
-			/**
-			 * S​t​a​y
-			 */
-			stay: string
-			/**
-			 * L​e​a​v​e
-			 */
-			leave: string
 		}
 		retention: {
 			/**
@@ -3680,25 +3552,13 @@ export type NamespaceAppTranslation = {
 			 */
 			intro: string
 			/**
-			 * R​e​c​o​r​d​i​n​g​s
-			 */
-			recordings_heading: string
-			/**
 			 * A​u​d​i​o​ ​a​n​d​ ​v​i​d​e​o​ ​c​a​p​t​u​r​e​d​ ​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​.​ ​D​e​l​e​t​i​n​g​ ​t​h​e​m​ ​m​e​a​n​s​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​c​a​n​n​o​t​ ​b​e​ ​r​e​p​r​o​c​e​s​s​e​d​.
 			 */
 			recordings_description: string
 			/**
-			 * P​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​s​ ​(​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​)
-			 */
-			current_heading: string
-			/**
 			 * T​h​e​ ​p​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​ ​s​t​a​y​s​ ​i​n​ ​N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s​ ​a​f​t​e​r​ ​t​h​i​s​ ​c​o​p​y​ ​i​s​ ​r​e​m​o​v​e​d​.
 			 */
 			current_description: string
-			/**
-			 * P​r​e​v​i​o​u​s​ ​a​t​t​e​m​p​t​s
-			 */
-			history_heading: string
 			/**
 			 * F​a​i​l​e​d​ ​r​e​c​o​r​d​i​n​g​s​,​ ​f​a​i​l​e​d​ ​p​r​o​c​e​s​s​i​n​g​,​ ​r​e​p​l​a​c​e​d​ ​o​u​t​p​u​t​ ​a​n​d​ ​f​a​i​l​e​d​ ​p​u​b​l​i​s​h​i​n​g​.
 			 */
@@ -3711,10 +3571,6 @@ export type NamespaceAppTranslation = {
 			 * U​s​e​ ​o​n​e​ ​s​e​t​t​i​n​g​ ​f​o​r​ ​a​l​l​ ​k​i​n​d​s
 			 */
 			join_kinds: string
-			/**
-			 * P​r​o​c​e​s​s​i​n​g​ ​l​o​g​s
-			 */
-			logs_heading: string
 			/**
 			 * L​o​g​s​ ​f​r​o​m​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​a​t​t​e​m​p​t​.
 			 */
@@ -3759,24 +3615,6 @@ export type NamespaceAppTranslation = {
 			 * R​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​a​r​e​ ​b​e​i​n​g​ ​s​a​v​e​d​.​ ​T​r​y​ ​a​g​a​i​n​.
 			 */
 			save_in_progress: string
-			kinds: {
-				/**
-				 * F​a​i​l​e​d​ ​r​e​c​o​r​d​i​n​g​s
-				 */
-				failed_capture: string
-				/**
-				 * F​a​i​l​e​d​ ​p​r​o​c​e​s​s​i​n​g
-				 */
-				failed_build: string
-				/**
-				 * R​e​p​l​a​c​e​d​ ​o​u​t​p​u​t
-				 */
-				superseded: string
-				/**
-				 * F​a​i​l​e​d​ ​p​u​b​l​i​s​h​i​n​g
-				 */
-				failed_publish: string
-			}
 		}
 		retention_policy: {
 			/**
@@ -3811,6 +3649,8 @@ export type NamespaceAppTranslation = {
 			 * C​h​a​n​g​e​s​ ​t​a​k​e​ ​e​f​f​e​c​t​ ​a​t​ ​t​h​e​ ​n​e​x​t​ ​c​l​e​a​n​u​p​.​ ​S​a​v​i​n​g​ ​n​e​v​e​r​ ​d​e​l​e​t​e​s​ ​f​i​l​e​s​ ​i​m​m​e​d​i​a​t​e​l​y​.
 			 */
 			takes_effect: string
+		}
+		unsaved: {
 			/**
 			 * D​i​s​c​a​r​d​ ​c​h​a​n​g​e​s
 			 */
@@ -3915,10 +3755,6 @@ export type NamespaceAppTranslation = {
 			 */
 			description: string
 			/**
-			 * R​e​a​d​y
-			 */
-			state_ready: string
-			/**
 			 * N​o​t​ ​a​v​a​i​l​a​b​l​e​ ​i​n​ ​t​h​i​s​ ​s​e​r​v​e​r​'​s​ ​C​a​s​s​i​n​i​ ​b​u​i​l​d
 			 */
 			state_unsupported: string
@@ -3927,13 +3763,23 @@ export type NamespaceAppTranslation = {
 			 */
 			state_installed: string
 			/**
+			 * V​o​i​c​e​ ​s​e​p​a​r​a​t​i​o​n​ ​d​o​w​n​l​o​a​d​ ​p​r​o​g​r​e​s​s
+			 */
+			progress_label: string
+		}
+		model_download: {
+			/**
+			 * R​e​a​d​y
+			 */
+			ready: string
+			/**
 			 * D​o​w​n​l​o​a​d​ ​c​a​n​c​e​l​l​e​d​.​ ​R​e​t​r​y​ ​r​e​s​u​m​e​s​ ​i​t​.
 			 */
-			state_cancelled: string
+			cancelled: string
 			/**
 			 * N​o​t​ ​i​n​s​t​a​l​l​e​d
 			 */
-			state_not_installed: string
+			not_installed: string
 			/**
 			 * C​h​e​c​k
 			 */
@@ -3942,16 +3788,8 @@ export type NamespaceAppTranslation = {
 			 * D​o​w​n​l​o​a​d
 			 */
 			download: string
-			/**
-			 * V​o​i​c​e​ ​s​e​p​a​r​a​t​i​o​n​ ​d​o​w​n​l​o​a​d​ ​p​r​o​g​r​e​s​s
-			 */
-			progress_label: string
 		}
 		speech_model_cell: {
-			/**
-			 * R​e​a​d​y
-			 */
-			state_ready: string
 			/**
 			 * I​n​s​t​a​l​l​e​d​ ​·​ ​c​h​e​c​k​e​d​ ​b​e​f​o​r​e​ ​t​h​e​ ​n​e​x​t​ ​r​e​c​o​r​d​i​n​g
 			 */
@@ -3960,22 +3798,6 @@ export type NamespaceAppTranslation = {
 			 * I​n​s​t​a​l​l​e​d​ ​·​ ​n​o​t​ ​c​h​e​c​k​e​d​ ​o​n​ ​t​h​i​s​ ​b​u​i​l​d​ ​y​e​t
 			 */
 			state_installed: string
-			/**
-			 * D​o​w​n​l​o​a​d​ ​c​a​n​c​e​l​l​e​d​.​ ​R​e​t​r​y​ ​r​e​s​u​m​e​s​ ​i​t​.
-			 */
-			state_cancelled: string
-			/**
-			 * N​o​t​ ​i​n​s​t​a​l​l​e​d
-			 */
-			state_not_installed: string
-			/**
-			 * C​h​e​c​k
-			 */
-			check: string
-			/**
-			 * D​o​w​n​l​o​a​d
-			 */
-			download: string
 			/**
 			 * I​n​ ​u​s​e
 			 */
@@ -4864,6 +4686,76 @@ export type NamespaceAppTranslation = {
 			step_lead_external: RequiredParams<'provider'>
 		}
 	}
+	file_kind: {
+		/**
+		 * I​n​ ​N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s
+		 */
+		published: string
+		/**
+		 * R​e​c​o​r​d​i​n​g​s
+		 */
+		recordings: string
+		/**
+		 * P​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​s​ ​(​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​)
+		 */
+		current: string
+		/**
+		 * P​r​e​v​i​o​u​s​ ​a​t​t​e​m​p​t​s
+		 */
+		history: string
+		/**
+		 * F​a​i​l​e​d​ ​r​e​c​o​r​d​i​n​g​s
+		 */
+		failed_capture: string
+		/**
+		 * F​a​i​l​e​d​ ​p​r​o​c​e​s​s​i​n​g
+		 */
+		failed_build: string
+		/**
+		 * R​e​p​l​a​c​e​d​ ​o​u​t​p​u​t
+		 */
+		superseded: string
+		/**
+		 * F​a​i​l​e​d​ ​p​u​b​l​i​s​h​i​n​g
+		 */
+		failed_publish: string
+		/**
+		 * P​r​o​c​e​s​s​i​n​g​ ​l​o​g​s
+		 */
+		logs: string
+		/**
+		 * O​t​h​e​r​ ​l​o​c​a​l​ ​f​i​l​e​s
+		 */
+		other: string
+	}
+	quality: {
+		/**
+		 * F​a​s​t
+		 */
+		fast: string
+		/**
+		 * B​a​l​a​n​c​e​d
+		 */
+		balanced: string
+		/**
+		 * B​e​s​t
+		 */
+		best: string
+	}
+	keep: {
+		/**
+		 * N​o​t​h​i​n​g
+		 */
+		nothing: string
+		/**
+		 * A​u​d​i​o​ ​a​n​d​ ​v​i​d​e​o
+		 */
+		audio_video: string
+		/**
+		 * A​u​d​i​o​ ​o​n​l​y
+		 */
+		audio_only: string
+	}
 }
 
 export type NamespaceViewerTranslation = {
@@ -5511,17 +5403,6 @@ export type NamespaceViewerTranslation = {
 			 * T​a​g​,​ ​d​o​w​n​l​o​a​d​ ​o​r​ ​g​e​t​ ​i​n​s​i​g​h​t​s​ ​f​r​o​m​ ​t​h​e​m​.
 			 */
 			what_next: string
-			/**
-			 * Y​o​u​ ​c​a​n​ ​w​o​r​k​ ​w​i​t​h​ ​u​p​ ​t​o​ ​{​m​a​x​}​ ​m​e​e​t​i​n​g​s​ ​a​t​ ​o​n​c​e​.​ ​U​n​p​i​c​k​ ​o​n​e​.
-			 * @param {unknown} max
-			 */
-			over_cap_one: RequiredParams<'max'>
-			/**
-			 * Y​o​u​ ​c​a​n​ ​w​o​r​k​ ​w​i​t​h​ ​u​p​ ​t​o​ ​{​m​a​x​}​ ​m​e​e​t​i​n​g​s​ ​a​t​ ​o​n​c​e​.​ ​U​n​p​i​c​k​ ​{​c​o​u​n​t​}​.
-			 * @param {unknown} count
-			 * @param {unknown} max
-			 */
-			over_cap_other: RequiredParams<'count' | 'max'>
 			/**
 			 * R​e​t​r​y​ ​t​a​g​ ​u​p​d​a​t​e
 			 */
@@ -8451,6 +8332,250 @@ export type TranslationFunctions = {
 				 */
 				bundle_failed: (arg: { status: unknown }) => LocalizedString
 			}
+			setup_notice: {
+				/**
+				 * Checking…
+				 */
+				checking: () => LocalizedString
+				/**
+				 * Show details
+				 */
+				show_details: () => LocalizedString
+				/**
+				 * Details for administrators
+				 */
+				details_heading: () => LocalizedString
+				/**
+				 * Open {place}
+				 */
+				open_publish_pipeline: (arg: { place: unknown }) => LocalizedString
+				/**
+				 * Cassini can't save recordings right now
+				 */
+				title_failing: () => LocalizedString
+				/**
+				 * Cassini hasn't checked that it can save recordings
+				 */
+				title_unchecked: () => LocalizedString
+				/**
+				 * You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.
+				 */
+				summary_failing: () => LocalizedString
+				/**
+				 * You can still browse recordings, but new ones will fail until this check runs.
+				 */
+				summary_unchecked: () => LocalizedString
+				/**
+				 * Send this link to an administrator for setup instructions.
+				 */
+				share_label: () => LocalizedString
+				/**
+				 * Re-run Cassini's setup by disabling and enabling the app
+				 */
+				step_rerun_setup: () => LocalizedString
+				/**
+				 * Open {place} to check the recordings account
+				 */
+				step_open_settings: (arg: { place: unknown }) => LocalizedString
+				/**
+				 * Create the {user} account in Nextcloud
+				 */
+				step_create_account: (arg: { user: unknown }) => LocalizedString
+				/**
+				 * Set {variable} to a Nextcloud administrator
+				 */
+				step_set_admin_user: (arg: { variable: unknown }) => LocalizedString
+				/**
+				 * Cassini could not confirm its recordings setup.
+				 */
+				cause_unknown: () => LocalizedString
+				/**
+				 * The operator reported {state}.
+				 */
+				detail_state: (arg: { state: unknown }) => LocalizedString
+				/**
+				 * The operator reported {state} at {step}.
+				 */
+				detail_state_at_step: (arg: { state: unknown, step: unknown }) => LocalizedString
+				/**
+				 * {command} is however your deployment invokes it, for example {example}.
+				 */
+				note_occ: (arg: { command: unknown, example: unknown }) => LocalizedString
+				/**
+				 * See {endpoint} for the full recordings access report.
+				 */
+				reference: (arg: { endpoint: unknown }) => LocalizedString
+			}
+			sharing_notice: {
+				/**
+				 * 1 recording is waiting for you
+				 */
+				pending_title_one: () => LocalizedString
+				/**
+				 * {count} recordings are waiting for you
+				 */
+				pending_title_other: (arg: { count: unknown }) => LocalizedString
+				/**
+				 * Recordings waiting for you
+				 */
+				pending_label: () => LocalizedString
+				/**
+				 * Nextcloud holds files shared with you until you accept them.
+				 */
+				pending_line: () => LocalizedString
+				/**
+				 * Show them
+				 */
+				show_them: () => LocalizedString
+				/**
+				 * Hide them
+				 */
+				hide_them: () => LocalizedString
+				/**
+				 * Accept
+				 */
+				accept: () => LocalizedString
+				/**
+				 * Accept all {count}
+				 */
+				accept_all: (arg: { count: unknown }) => LocalizedString
+				/**
+				 * Accept {title}
+				 */
+				accept_row_aria: (arg: { title: unknown }) => LocalizedString
+				/**
+				 * Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.
+				 */
+				why_accept: () => LocalizedString
+				/**
+				 * Nextcloud did not accept this share.
+				 */
+				accept_refused: () => LocalizedString
+				/**
+				 * Could not accept the share (HTTP {status}).
+				 */
+				accept_failed: (arg: { status: unknown }) => LocalizedString
+				/**
+				 * Could not dismiss the notice (HTTP {status}).
+				 */
+				dismiss_failed: (arg: { status: unknown }) => LocalizedString
+				/**
+				 * 1 recording could not be shared with you.
+				 */
+				refused_title_one: () => LocalizedString
+				/**
+				 * {count} recordings could not be shared with you.
+				 */
+				refused_title_other: (arg: { count: unknown }) => LocalizedString
+				/**
+				 * A Nextcloud sharing setting stops it.
+				 */
+				refused_line: () => LocalizedString
+				/**
+				 * Recordings that could not be shared with you
+				 */
+				refused_group_label: () => LocalizedString
+				/**
+				 * 1 recording you started could not be published.
+				 */
+				starter_refused_title_one: () => LocalizedString
+				/**
+				 * {count} recordings you started could not be published.
+				 */
+				starter_refused_title_other: (arg: { count: unknown }) => LocalizedString
+				/**
+				 * Nextcloud refused to share it with you.
+				 */
+				starter_refused_line_one: () => LocalizedString
+				/**
+				 * Nextcloud refused to share them with you.
+				 */
+				starter_refused_line_other: () => LocalizedString
+				/**
+				 * Recordings you started that could not be published
+				 */
+				unpublished_group_label: () => LocalizedString
+				refused_notice: {
+					/**
+					 * The recording in “{name}” on {date} could not be shared with you.
+					 */
+					room_date: (arg: { date: unknown, name: unknown }) => LocalizedString
+					/**
+					 * The recording in “{name}” could not be shared with you.
+					 */
+					room: (arg: { name: unknown }) => LocalizedString
+					/**
+					 * The recording on {date} could not be shared with you.
+					 */
+					date: (arg: { date: unknown }) => LocalizedString
+					/**
+					 * A recording could not be shared with you.
+					 */
+					unknown: () => LocalizedString
+				}
+				unpublished_notice: {
+					/**
+					 * Your recording in “{name}” on {date} could not be published.
+					 */
+					room_date: (arg: { date: unknown, name: unknown }) => LocalizedString
+					/**
+					 * Your recording in “{name}” could not be published.
+					 */
+					room: (arg: { name: unknown }) => LocalizedString
+					/**
+					 * Your recording on {date} could not be published.
+					 */
+					date: (arg: { date: unknown }) => LocalizedString
+					/**
+					 * A recording you started could not be published.
+					 */
+					unknown: () => LocalizedString
+				}
+				/**
+				 * This recording could not be shared with you.
+				 */
+				refused_this: () => LocalizedString
+				/**
+				 * This recording you started could not be published.
+				 */
+				unpublished_this: () => LocalizedString
+				/**
+				 * This recording is waiting for you
+				 */
+				waiting_title: () => LocalizedString
+				/**
+				 * A recording
+				 */
+				a_recording: () => LocalizedString
+				/**
+				 * Dismiss all
+				 */
+				dismiss_all: () => LocalizedString
+				/**
+				 * Dismiss {label}
+				 */
+				dismiss_row_aria: (arg: { label: unknown }) => LocalizedString
+				/**
+				 * Dismiss: {title}
+				 */
+				dismiss_notice_aria: (arg: { title: unknown }) => LocalizedString
+				/**
+				 * An administrator can fix that: {link}.
+				 */
+				admin_fix: (arg: { link: unknown }) => LocalizedString
+				/**
+				 * send them this link
+				 */
+				send_link: () => LocalizedString
+				/**
+				 * Opening it as an administrator shows exactly what is stopping it
+				 */
+				send_link_title: () => LocalizedString
+				/**
+				 * An administrator can fix that.
+				 */
+				admin_fix_plain: () => LocalizedString
+			}
 		}
 		operator: {
 			readiness: {
@@ -8730,80 +8855,6 @@ export type TranslationFunctions = {
 					 */
 					summary_other_since: (arg: { count: unknown, since: unknown }) => LocalizedString
 				}
-			}
-			setup_notice: {
-				/**
-				 * Checking…
-				 */
-				checking: () => LocalizedString
-				/**
-				 * Show details
-				 */
-				show_details: () => LocalizedString
-				/**
-				 * Details for administrators
-				 */
-				details_heading: () => LocalizedString
-				/**
-				 * Open {place}
-				 */
-				open_publish_pipeline: (arg: { place: unknown }) => LocalizedString
-				/**
-				 * Cassini can't save recordings right now
-				 */
-				title_failing: () => LocalizedString
-				/**
-				 * Cassini hasn't checked that it can save recordings
-				 */
-				title_unchecked: () => LocalizedString
-				/**
-				 * You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.
-				 */
-				summary_failing: () => LocalizedString
-				/**
-				 * You can still browse recordings, but new ones will fail until this check runs.
-				 */
-				summary_unchecked: () => LocalizedString
-				/**
-				 * Send this link to an administrator for setup instructions.
-				 */
-				share_label: () => LocalizedString
-				/**
-				 * Re-run Cassini's setup by disabling and enabling the app
-				 */
-				step_rerun_setup: () => LocalizedString
-				/**
-				 * Open {place} to check the recordings account
-				 */
-				step_open_settings: (arg: { place: unknown }) => LocalizedString
-				/**
-				 * Create the {user} account in Nextcloud
-				 */
-				step_create_account: (arg: { user: unknown }) => LocalizedString
-				/**
-				 * Set {variable} to a Nextcloud administrator
-				 */
-				step_set_admin_user: (arg: { variable: unknown }) => LocalizedString
-				/**
-				 * Cassini could not confirm its recordings setup.
-				 */
-				cause_unknown: () => LocalizedString
-				/**
-				 * The operator reported {state}.
-				 */
-				detail_state: (arg: { state: unknown }) => LocalizedString
-				/**
-				 * The operator reported {state} at {step}.
-				 */
-				detail_state_at_step: (arg: { state: unknown, step: unknown }) => LocalizedString
-				/**
-				 * {command} is however your deployment invokes it, for example {example}.
-				 */
-				note_occ: (arg: { command: unknown, example: unknown }) => LocalizedString
-				/**
-				 * See {endpoint} for the full recordings access report.
-				 */
-				reference: (arg: { endpoint: unknown }) => LocalizedString
 			}
 			feature_notice: {
 				/**
@@ -9204,20 +9255,6 @@ export type TranslationFunctions = {
 				 * Unknown
 				 */
 				unknown: () => LocalizedString
-				quality: {
-					/**
-					 * Fast
-					 */
-					fast: () => LocalizedString
-					/**
-					 * Balanced
-					 */
-					balanced: () => LocalizedString
-					/**
-					 * Best
-					 */
-					best: () => LocalizedString
-				}
 				reason: {
 					/**
 					 * previous model transcribes meanwhile
@@ -9283,20 +9320,6 @@ export type TranslationFunctions = {
 					 * Audio, no transcript
 					 */
 					audio_no_transcript: () => LocalizedString
-				}
-				keep: {
-					/**
-					 * Nothing
-					 */
-					nothing: () => LocalizedString
-					/**
-					 * Audio + video
-					 */
-					audio_video: () => LocalizedString
-					/**
-					 * Audio only
-					 */
-					audio_only: () => LocalizedString
 				}
 				retention: {
 					/**
@@ -9541,106 +9564,46 @@ export type TranslationFunctions = {
 			}
 			storage: {
 				category: {
-					published: {
-						/**
-						 * In Nextcloud Files
-						 */
-						label: () => LocalizedString
-						/**
-						 * Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup.
-						 */
-						description: () => LocalizedString
-					}
-					recordings: {
-						/**
-						 * Recordings
-						 */
-						label: () => LocalizedString
-						/**
-						 * Audio, video and supporting files, dated when recording finished.
-						 */
-						description: () => LocalizedString
-					}
-					current: {
-						/**
-						 * Published meetings (on this server)
-						 */
-						label: () => LocalizedString
-						/**
-						 * This server's copy of the latest published meeting, dated when it was published.
-						 */
-						description: () => LocalizedString
-					}
-					history: {
-						/**
-						 * Previous attempts
-						 */
-						label: () => LocalizedString
-						/**
-						 * Failed recordings, failed processing, replaced output and failed publishing.
-						 */
-						description: () => LocalizedString
-					}
-					failed_capture: {
-						/**
-						 * Failed recordings
-						 */
-						label: () => LocalizedString
-						/**
-						 * Recordings from failed or interrupted attempts, dated when the attempt ended.
-						 */
-						description: () => LocalizedString
-					}
-					failed_build: {
-						/**
-						 * Failed processing
-						 */
-						label: () => LocalizedString
-						/**
-						 * Processing output from failed or interrupted attempts, dated when the attempt ended.
-						 */
-						description: () => LocalizedString
-					}
-					superseded: {
-						/**
-						 * Replaced output
-						 */
-						label: () => LocalizedString
-						/**
-						 * Older output, dated when a later publication replaced it.
-						 */
-						description: () => LocalizedString
-					}
-					failed_publish: {
-						/**
-						 * Failed publishing
-						 */
-						label: () => LocalizedString
-						/**
-						 * Publishing files from failed or interrupted attempts, dated when the attempt ended.
-						 */
-						description: () => LocalizedString
-					}
-					logs: {
-						/**
-						 * Processing logs
-						 */
-						label: () => LocalizedString
-						/**
-						 * Logs from each recording attempt, dated when the attempt ended.
-						 */
-						description: () => LocalizedString
-					}
-					other: {
-						/**
-						 * Other local files
-						 */
-						label: () => LocalizedString
-						/**
-						 * Work in progress and files no cleanup rule covers. They have no date.
-						 */
-						description: () => LocalizedString
-					}
+					/**
+					 * Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup.
+					 */
+					published: () => LocalizedString
+					/**
+					 * Audio, video and supporting files, dated when recording finished.
+					 */
+					recordings: () => LocalizedString
+					/**
+					 * This server's copy of the latest published meeting, dated when it was published.
+					 */
+					current: () => LocalizedString
+					/**
+					 * Failed recordings, failed processing, replaced output and failed publishing.
+					 */
+					history: () => LocalizedString
+					/**
+					 * Recordings from failed or interrupted attempts, dated when the attempt ended.
+					 */
+					failed_capture: () => LocalizedString
+					/**
+					 * Processing output from failed or interrupted attempts, dated when the attempt ended.
+					 */
+					failed_build: () => LocalizedString
+					/**
+					 * Older output, dated when a later publication replaced it.
+					 */
+					superseded: () => LocalizedString
+					/**
+					 * Publishing files from failed or interrupted attempts, dated when the attempt ended.
+					 */
+					failed_publish: () => LocalizedString
+					/**
+					 * Logs from each recording attempt, dated when the attempt ended.
+					 */
+					logs: () => LocalizedString
+					/**
+					 * Work in progress and files no cleanup rule covers. They have no date.
+					 */
+					other: () => LocalizedString
 				}
 				report: {
 					/**
@@ -9960,176 +9923,6 @@ export type TranslationFunctions = {
 				 * This version of Cassini can't run the "{action}" step.
 				 */
 				unknown_step: (arg: { action: unknown }) => LocalizedString
-			}
-			sharing_notice: {
-				/**
-				 * 1 recording is waiting for you
-				 */
-				pending_title_one: () => LocalizedString
-				/**
-				 * {count} recordings are waiting for you
-				 */
-				pending_title_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Recordings waiting for you
-				 */
-				pending_label: () => LocalizedString
-				/**
-				 * Nextcloud holds files shared with you until you accept them.
-				 */
-				pending_line: () => LocalizedString
-				/**
-				 * Show them
-				 */
-				show_them: () => LocalizedString
-				/**
-				 * Hide them
-				 */
-				hide_them: () => LocalizedString
-				/**
-				 * Accept
-				 */
-				accept: () => LocalizedString
-				/**
-				 * Accept all {count}
-				 */
-				accept_all: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Accept {title}
-				 */
-				accept_row_aria: (arg: { title: unknown }) => LocalizedString
-				/**
-				 * Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.
-				 */
-				why_accept: () => LocalizedString
-				/**
-				 * Nextcloud did not accept this share.
-				 */
-				accept_refused: () => LocalizedString
-				/**
-				 * Could not accept the share (HTTP {status}).
-				 */
-				accept_failed: (arg: { status: unknown }) => LocalizedString
-				/**
-				 * Could not dismiss the notice (HTTP {status}).
-				 */
-				dismiss_failed: (arg: { status: unknown }) => LocalizedString
-				/**
-				 * 1 recording could not be shared with you.
-				 */
-				refused_title_one: () => LocalizedString
-				/**
-				 * {count} recordings could not be shared with you.
-				 */
-				refused_title_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * A Nextcloud sharing setting stops it.
-				 */
-				refused_line: () => LocalizedString
-				/**
-				 * Recordings that could not be shared with you
-				 */
-				refused_group_label: () => LocalizedString
-				/**
-				 * 1 recording you started could not be published.
-				 */
-				starter_refused_title_one: () => LocalizedString
-				/**
-				 * {count} recordings you started could not be published.
-				 */
-				starter_refused_title_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Nextcloud refused to share it with you.
-				 */
-				starter_refused_line_one: () => LocalizedString
-				/**
-				 * Nextcloud refused to share them with you.
-				 */
-				starter_refused_line_other: () => LocalizedString
-				/**
-				 * Recordings you started that could not be published
-				 */
-				unpublished_group_label: () => LocalizedString
-				refused_notice: {
-					/**
-					 * The recording in “{name}” on {date} could not be shared with you.
-					 */
-					room_date: (arg: { date: unknown, name: unknown }) => LocalizedString
-					/**
-					 * The recording in “{name}” could not be shared with you.
-					 */
-					room: (arg: { name: unknown }) => LocalizedString
-					/**
-					 * The recording on {date} could not be shared with you.
-					 */
-					date: (arg: { date: unknown }) => LocalizedString
-					/**
-					 * A recording could not be shared with you.
-					 */
-					unknown: () => LocalizedString
-				}
-				unpublished_notice: {
-					/**
-					 * Your recording in “{name}” on {date} could not be published.
-					 */
-					room_date: (arg: { date: unknown, name: unknown }) => LocalizedString
-					/**
-					 * Your recording in “{name}” could not be published.
-					 */
-					room: (arg: { name: unknown }) => LocalizedString
-					/**
-					 * Your recording on {date} could not be published.
-					 */
-					date: (arg: { date: unknown }) => LocalizedString
-					/**
-					 * A recording you started could not be published.
-					 */
-					unknown: () => LocalizedString
-				}
-				/**
-				 * This recording could not be shared with you.
-				 */
-				refused_this: () => LocalizedString
-				/**
-				 * This recording you started could not be published.
-				 */
-				unpublished_this: () => LocalizedString
-				/**
-				 * This recording is waiting for you
-				 */
-				waiting_title: () => LocalizedString
-				/**
-				 * A recording
-				 */
-				a_recording: () => LocalizedString
-				/**
-				 * Dismiss all
-				 */
-				dismiss_all: () => LocalizedString
-				/**
-				 * Dismiss {label}
-				 */
-				dismiss_row_aria: (arg: { label: unknown }) => LocalizedString
-				/**
-				 * Dismiss: {title}
-				 */
-				dismiss_notice_aria: (arg: { title: unknown }) => LocalizedString
-				/**
-				 * An administrator can fix that: {link}.
-				 */
-				admin_fix: (arg: { link: unknown }) => LocalizedString
-				/**
-				 * send them this link
-				 */
-				send_link: () => LocalizedString
-				/**
-				 * Opening it as an administrator shows exactly what is stopping it
-				 */
-				send_link_title: () => LocalizedString
-				/**
-				 * An administrator can fix that.
-				 */
-				admin_fix_plain: () => LocalizedString
 			}
 			doctor: {
 				/**
@@ -11181,25 +10974,13 @@ export type TranslationFunctions = {
 				 */
 				off_description: () => LocalizedString
 				/**
-				 * Fast
-				 */
-				quality_fast: () => LocalizedString
-				/**
 				 * Fastest transcription, lower accuracy.
 				 */
 				quality_fast_description: () => LocalizedString
 				/**
-				 * Balanced
-				 */
-				quality_balanced: () => LocalizedString
-				/**
 				 * Default — good accuracy at reasonable speed.
 				 */
 				quality_balanced_description: () => LocalizedString
-				/**
-				 * Best
-				 */
-				quality_best: () => LocalizedString
 				/**
 				 * Highest accuracy (fp32), slowest.
 				 */
@@ -11437,10 +11218,6 @@ export type TranslationFunctions = {
 				 */
 				keep_heading: () => LocalizedString
 				/**
-				 * Nothing
-				 */
-				keep_nothing: () => LocalizedString
-				/**
 				 * The recording is deleted after publishing and cannot be reprocessed.
 				 */
 				keep_nothing_help: () => LocalizedString
@@ -11449,17 +11226,9 @@ export type TranslationFunctions = {
 				 */
 				keep_nothing_unavailable: () => LocalizedString
 				/**
-				 * Audio and video
-				 */
-				keep_video: () => LocalizedString
-				/**
 				 * Uses the most space.
 				 */
 				keep_video_help: () => LocalizedString
-				/**
-				 * Audio only
-				 */
-				keep_audio: () => LocalizedString
 				/**
 				 * {media}.
 				 */
@@ -11553,22 +11322,6 @@ export type TranslationFunctions = {
 				 * Saving changes…
 				 */
 				saving_changes: () => LocalizedString
-				/**
-				 * Leave without saving?
-				 */
-				leave_title: () => LocalizedString
-				/**
-				 * You have unsaved changes. Leave without saving?
-				 */
-				leave_prompt: () => LocalizedString
-				/**
-				 * Stay
-				 */
-				stay: () => LocalizedString
-				/**
-				 * Leave
-				 */
-				leave: () => LocalizedString
 			}
 			retention: {
 				/**
@@ -11580,25 +11333,13 @@ export type TranslationFunctions = {
 				 */
 				intro: () => LocalizedString
 				/**
-				 * Recordings
-				 */
-				recordings_heading: () => LocalizedString
-				/**
 				 * Audio and video captured on this server. Deleting them means the meeting cannot be reprocessed.
 				 */
 				recordings_description: () => LocalizedString
 				/**
-				 * Published meetings (on this server)
-				 */
-				current_heading: () => LocalizedString
-				/**
 				 * The published meeting stays in Nextcloud Files after this copy is removed.
 				 */
 				current_description: () => LocalizedString
-				/**
-				 * Previous attempts
-				 */
-				history_heading: () => LocalizedString
 				/**
 				 * Failed recordings, failed processing, replaced output and failed publishing.
 				 */
@@ -11611,10 +11352,6 @@ export type TranslationFunctions = {
 				 * Use one setting for all kinds
 				 */
 				join_kinds: () => LocalizedString
-				/**
-				 * Processing logs
-				 */
-				logs_heading: () => LocalizedString
 				/**
 				 * Logs from each recording attempt.
 				 */
@@ -11659,24 +11396,6 @@ export type TranslationFunctions = {
 				 * Retention settings are being saved. Try again.
 				 */
 				save_in_progress: () => LocalizedString
-				kinds: {
-					/**
-					 * Failed recordings
-					 */
-					failed_capture: () => LocalizedString
-					/**
-					 * Failed processing
-					 */
-					failed_build: () => LocalizedString
-					/**
-					 * Replaced output
-					 */
-					superseded: () => LocalizedString
-					/**
-					 * Failed publishing
-					 */
-					failed_publish: () => LocalizedString
-				}
 			}
 			retention_policy: {
 				/**
@@ -11709,6 +11428,8 @@ export type TranslationFunctions = {
 				 * Changes take effect at the next cleanup. Saving never deletes files immediately.
 				 */
 				takes_effect: () => LocalizedString
+			}
+			unsaved: {
 				/**
 				 * Discard changes
 				 */
@@ -11810,10 +11531,6 @@ export type TranslationFunctions = {
 				 */
 				description: () => LocalizedString
 				/**
-				 * Ready
-				 */
-				state_ready: () => LocalizedString
-				/**
 				 * Not available in this server's Cassini build
 				 */
 				state_unsupported: () => LocalizedString
@@ -11822,13 +11539,23 @@ export type TranslationFunctions = {
 				 */
 				state_installed: () => LocalizedString
 				/**
+				 * Voice separation download progress
+				 */
+				progress_label: () => LocalizedString
+			}
+			model_download: {
+				/**
+				 * Ready
+				 */
+				ready: () => LocalizedString
+				/**
 				 * Download cancelled. Retry resumes it.
 				 */
-				state_cancelled: () => LocalizedString
+				cancelled: () => LocalizedString
 				/**
 				 * Not installed
 				 */
-				state_not_installed: () => LocalizedString
+				not_installed: () => LocalizedString
 				/**
 				 * Check
 				 */
@@ -11837,16 +11564,8 @@ export type TranslationFunctions = {
 				 * Download
 				 */
 				download: () => LocalizedString
-				/**
-				 * Voice separation download progress
-				 */
-				progress_label: () => LocalizedString
 			}
 			speech_model_cell: {
-				/**
-				 * Ready
-				 */
-				state_ready: () => LocalizedString
 				/**
 				 * Installed · checked before the next recording
 				 */
@@ -11855,22 +11574,6 @@ export type TranslationFunctions = {
 				 * Installed · not checked on this build yet
 				 */
 				state_installed: () => LocalizedString
-				/**
-				 * Download cancelled. Retry resumes it.
-				 */
-				state_cancelled: () => LocalizedString
-				/**
-				 * Not installed
-				 */
-				state_not_installed: () => LocalizedString
-				/**
-				 * Check
-				 */
-				check: () => LocalizedString
-				/**
-				 * Download
-				 */
-				download: () => LocalizedString
 				/**
 				 * In use
 				 */
@@ -12697,6 +12400,76 @@ export type TranslationFunctions = {
 				step_lead_external: (arg: { provider: unknown }) => LocalizedString
 			}
 		}
+		file_kind: {
+			/**
+			 * In Nextcloud Files
+			 */
+			published: () => LocalizedString
+			/**
+			 * Recordings
+			 */
+			recordings: () => LocalizedString
+			/**
+			 * Published meetings (on this server)
+			 */
+			current: () => LocalizedString
+			/**
+			 * Previous attempts
+			 */
+			history: () => LocalizedString
+			/**
+			 * Failed recordings
+			 */
+			failed_capture: () => LocalizedString
+			/**
+			 * Failed processing
+			 */
+			failed_build: () => LocalizedString
+			/**
+			 * Replaced output
+			 */
+			superseded: () => LocalizedString
+			/**
+			 * Failed publishing
+			 */
+			failed_publish: () => LocalizedString
+			/**
+			 * Processing logs
+			 */
+			logs: () => LocalizedString
+			/**
+			 * Other local files
+			 */
+			other: () => LocalizedString
+		}
+		quality: {
+			/**
+			 * Fast
+			 */
+			fast: () => LocalizedString
+			/**
+			 * Balanced
+			 */
+			balanced: () => LocalizedString
+			/**
+			 * Best
+			 */
+			best: () => LocalizedString
+		}
+		keep: {
+			/**
+			 * Nothing
+			 */
+			nothing: () => LocalizedString
+			/**
+			 * Audio and video
+			 */
+			audio_video: () => LocalizedString
+			/**
+			 * Audio only
+			 */
+			audio_only: () => LocalizedString
+		}
 	}
 	viewer: {
 		browse: {
@@ -13301,14 +13074,6 @@ export type TranslationFunctions = {
 				 * Tag, download or get insights from them.
 				 */
 				what_next: () => LocalizedString
-				/**
-				 * You can work with up to {max} meetings at once. Unpick one.
-				 */
-				over_cap_one: (arg: { max: unknown }) => LocalizedString
-				/**
-				 * You can work with up to {max} meetings at once. Unpick {count}.
-				 */
-				over_cap_other: (arg: { count: unknown, max: unknown }) => LocalizedString
 				/**
 				 * Retry tag update
 				 */

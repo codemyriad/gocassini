@@ -116,37 +116,6 @@ const operator = {
         "Nextcloud's share limit held back recipients of {count} recordings since {since}. Re-share each from its run, or raise the limit.",
     },
   },
-  // SetupNotice.svelte and buildSetupNotice (operator/setupHealth.ts): the
-  // strip above Browse's meeting list when recordings cannot be saved.
-  setup_notice: {
-    checking: "Checking…",
-    show_details: "Show details",
-    details_heading: "Details for administrators",
-    // A link. {place} is the path to a settings page, "Operator › Publish pipeline".
-    open_publish_pipeline: "Open {place}",
-    title_failing: "Cassini can't save recordings right now",
-    title_unchecked: "Cassini hasn't checked that it can save recordings",
-    summary_failing: "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.",
-    summary_unchecked: "You can still browse recordings, but new ones will fail until this check runs.",
-    // Shown to someone who is not an administrator, above the app's address.
-    share_label: "Send this link to an administrator for setup instructions.",
-    step_rerun_setup: "Re-run Cassini's setup by disabling and enabling the app",
-    // {place}: as open_publish_pipeline.
-    step_open_settings: "Open {place} to check the recordings account",
-    // {user}: the account name, "cassini".
-    step_create_account: "Create the {user} account in Nextcloud",
-    // {variable}: an environment variable name, CASSINI_NC_ADMIN_USER.
-    step_set_admin_user: "Set {variable} to a Nextcloud administrator",
-    cause_unknown: "Cassini could not confirm its recordings setup.",
-    // {state} and {step}: the operator's internal names for the failing check,
-    // e.g. "unavailable" at "owner_account". Shown to administrators only.
-    detail_state: "The operator reported {state}.",
-    detail_state_at_step: "The operator reported {state} at {step}.",
-    // {command}: "occ". {example}: "sudo -u www-data php occ".
-    note_occ: "{command} is however your deployment invokes it, for example {example}.",
-    // {endpoint}: "GET /operator/status".
-    reference: "See {endpoint} for the full recordings access report.",
-  },
   // buildFeatureNotice (operator/setupHealth.ts): what Browse says about a
   // capability with no AI provider behind it (NeedsSetupCard).
   feature_notice: {
@@ -322,12 +291,6 @@ const operator = {
     off_downloading: "Off · downloading",
     off_downloading_percent: "Off · downloading {percent}%",
     unknown: "Unknown",
-    // The speech quality tiers, as Settings names them.
-    quality: {
-      fast: "Fast",
-      balanced: "Balanced",
-      best: "Best",
-    },
     // Why a step is amber or busy; lowercase, after the state.
     reason: {
       previous_model_meanwhile: "previous model transcribes meanwhile",
@@ -350,11 +313,6 @@ const operator = {
       transcript_only: "Transcript only",
       audio_transcript: "Audio + transcript",
       audio_no_transcript: "Audio, no transcript",
-    },
-    keep: {
-      nothing: "Nothing",
-      audio_video: "Audio + video",
-      audio_only: "Audio only",
     },
     // How long recordings are kept, after the media kept, e.g. "Audio only · 30 days".
     retention: {
@@ -452,47 +410,18 @@ const operator = {
   storage: {
     // Each kind of stored file: its name (a row and a chart title) and a line
     // under it.
+    // What each kind of file is (its name is app.file_kind).
     category: {
-      published: {
-        label: "In Nextcloud Files",
-        description: "Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup.",
-      },
-      recordings: {
-        label: "Recordings",
-        description: "Audio, video and supporting files, dated when recording finished.",
-      },
-      current: {
-        label: "Published meetings (on this server)",
-        description: "This server's copy of the latest published meeting, dated when it was published.",
-      },
-      history: {
-        label: "Previous attempts",
-        description: "Failed recordings, failed processing, replaced output and failed publishing.",
-      },
-      failed_capture: {
-        label: "Failed recordings",
-        description: "Recordings from failed or interrupted attempts, dated when the attempt ended.",
-      },
-      failed_build: {
-        label: "Failed processing",
-        description: "Processing output from failed or interrupted attempts, dated when the attempt ended.",
-      },
-      superseded: {
-        label: "Replaced output",
-        description: "Older output, dated when a later publication replaced it.",
-      },
-      failed_publish: {
-        label: "Failed publishing",
-        description: "Publishing files from failed or interrupted attempts, dated when the attempt ended.",
-      },
-      logs: {
-        label: "Processing logs",
-        description: "Logs from each recording attempt, dated when the attempt ended.",
-      },
-      other: {
-        label: "Other local files",
-        description: "Work in progress and files no cleanup rule covers. They have no date.",
-      },
+      published: "Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup.",
+      recordings: "Audio, video and supporting files, dated when recording finished.",
+      current: "This server's copy of the latest published meeting, dated when it was published.",
+      history: "Failed recordings, failed processing, replaced output and failed publishing.",
+      failed_capture: "Recordings from failed or interrupted attempts, dated when the attempt ended.",
+      failed_build: "Processing output from failed or interrupted attempts, dated when the attempt ended.",
+      superseded: "Older output, dated when a later publication replaced it.",
+      failed_publish: "Publishing files from failed or interrupted attempts, dated when the attempt ended.",
+      logs: "Logs from each recording attempt, dated when the attempt ended.",
+      other: "Work in progress and files no cleanup rule covers. They have no date.",
     },
     report: {
       title: "Storage",
@@ -596,70 +525,6 @@ const operator = {
     password_unavailable: "The password can't be changed on this page because Nextcloud's scripts aren't loaded here.",
     // {action}: an internal step name, e.g. "create_user".
     unknown_step: "This version of Cassini can't run the \"{action}\" step.",
-  },
-  // SharingNotice.svelte and operator/sharingNotice.ts: what Browse says about
-  // the reader's own recording shares, waiting for them to accept or refused
-  // by a Nextcloud sharing setting. Also used by a meeting opened from a link
-  // that the reader cannot open yet.
-  sharing_notice: {
-    pending_title_one: "1 recording is waiting for you",
-    pending_title_other: "{count} recordings are waiting for you",
-    pending_label: "Recordings waiting for you",
-    pending_line: "Nextcloud holds files shared with you until you accept them.",
-    // A link that opens or closes the list under it.
-    show_them: "Show them",
-    hide_them: "Hide them",
-    accept: "Accept",
-    accept_all: "Accept all {count}",
-    // {title}: the recording's title, or its date.
-    accept_row_aria: "Accept {title}",
-    why_accept:
-      "Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.",
-    accept_refused: "Nextcloud did not accept this share.",
-    // {status}: an HTTP status code.
-    accept_failed: "Could not accept the share (HTTP {status}).",
-    dismiss_failed: "Could not dismiss the notice (HTTP {status}).",
-    refused_title_one: "1 recording could not be shared with you.",
-    refused_title_other: "{count} recordings could not be shared with you.",
-    refused_line: "A Nextcloud sharing setting stops it.",
-    refused_group_label: "Recordings that could not be shared with you",
-    starter_refused_title_one: "1 recording you started could not be published.",
-    starter_refused_title_other: "{count} recordings you started could not be published.",
-    starter_refused_line_one: "Nextcloud refused to share it with you.",
-    starter_refused_line_other: "Nextcloud refused to share them with you.",
-    unpublished_group_label: "Recordings you started that could not be published",
-    // One refused recording, in bold. {name}: the Talk room (or the meeting's
-    // title). {date}: e.g. "Fri 30 Oct, 10:00".
-    refused_notice: {
-      room_date: "The recording in “{name}” on {date} could not be shared with you.",
-      room: "The recording in “{name}” could not be shared with you.",
-      date: "The recording on {date} could not be shared with you.",
-      unknown: "A recording could not be shared with you.",
-    },
-    // One recording the reader started that was not published.
-    unpublished_notice: {
-      room_date: "Your recording in “{name}” on {date} could not be published.",
-      room: "Your recording in “{name}” could not be published.",
-      date: "Your recording on {date} could not be published.",
-      unknown: "A recording you started could not be published.",
-    },
-    // A meeting opened from a link, when only its id is known.
-    refused_this: "This recording could not be shared with you.",
-    unpublished_this: "This recording you started could not be published.",
-    waiting_title: "This recording is waiting for you",
-    // Stands in for a recording with no title and no date.
-    a_recording: "A recording",
-    dismiss_all: "Dismiss all",
-    // {label}: the room or title, and the date.
-    dismiss_row_aria: "Dismiss {label}",
-    // {title}: the notice's sentence.
-    dismiss_notice_aria: "Dismiss: {title}",
-    // {link} becomes a link whose text is send_link; it opens the app.
-    admin_fix: "An administrator can fix that: {link}.",
-    send_link: "send them this link",
-    send_link_title: "Opening it as an administrator shows exactly what is stopping it",
-    // When there is no address to hand on.
-    admin_fix_plain: "An administrator can fix that.",
   },
   // RecordingSetup.svelte: Operator › Doctor.
   doctor: {

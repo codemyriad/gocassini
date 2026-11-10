@@ -50,9 +50,9 @@ export interface PipelineInput {
 const copy = () => get(LL).app.operator.pipeline_status;
 
 const QUALITY_LABELS: Record<SettingsQuality, () => string> = {
-  fast: () => copy().quality.fast(),
-  balanced: () => copy().quality.balanced(),
-  best: () => copy().quality.best(),
+  fast: () => get(LL).app.quality.fast(),
+  balanced: () => get(LL).app.quality.balanced(),
+  best: () => get(LL).app.quality.best(),
 };
 
 // The tier a speech model belongs to. Builds use the saved model, not the
@@ -176,10 +176,10 @@ export function pipelineStatus(input: PipelineInput): PipelineStatus {
 
   let keep: StepStatus;
   if (input.keep === "nothing") {
-    keep = { state: t.keep.nothing(), tone: "off", badge: t.badge.no_reprocessing() };
+    keep = { state: get(LL).app.keep.nothing(), tone: "off", badge: t.badge.no_reprocessing() };
   } else {
     const span = retentionSpan(input.recordingsPolicy);
-    const media = input.keep === "audio-video" ? t.keep.audio_video() : t.keep.audio_only();
+    const media = input.keep === "audio-video" ? get(LL).app.keep.audio_video() : get(LL).app.keep.audio_only();
     keep = { state: span ? `${media} · ${span}` : media, tone: "on" };
   }
 

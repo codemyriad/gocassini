@@ -87,17 +87,17 @@
   $: QUALITY_OPTIONS = [
     {
       value: "fast",
-      label: t.quality_fast(),
+      label: $LL.app.quality.fast(),
       description: t.quality_fast_description(),
     },
     {
       value: "balanced",
-      label: t.quality_balanced(),
+      label: $LL.app.quality.balanced(),
       description: t.quality_balanced_description(),
     },
     {
       value: "best",
-      label: t.quality_best(),
+      label: $LL.app.quality.best(),
       description: t.quality_best_description(),
     },
   ];
@@ -671,9 +671,9 @@
       : t.kept_days_other({ media: m, count: formatCount(days) });
     return segments(sentence).map((part) => (part.slot === "media" ? { ...part, text: media } : part));
   }
-  $: keepVideoLine = keptLine(t.keep_video(), keptSpan, keptDays);
-  $: keepAudioLine = keptLine(t.keep_audio(), keptSpan, keptDays);
-  $: keepNothingLine = segments(t.kept_plain({ media: slot("media") })).map((part) => (part.slot === "media" ? { ...part, text: t.keep_nothing() } : part));
+  $: keepVideoLine = keptLine($LL.app.keep.audio_video(), keptSpan, keptDays);
+  $: keepAudioLine = keptLine($LL.app.keep.audio_only(), keptSpan, keptDays);
+  $: keepNothingLine = segments(t.kept_plain({ media: slot("media") })).map((part) => (part.slot === "media" ? { ...part, text: $LL.app.keep.nothing() } : part));
   $: keepSource = segments(
     keptSpan === "forever" ? t.source_forever({ storage: slot("storage") })
       : keptSpan ? keptDays === 1 ? t.source_days_one({ storage: slot("storage") }) : t.source_days_other({ storage: slot("storage"), count: formatCount(keptDays) })
@@ -1081,16 +1081,16 @@
                 <span class="q-title">{t.keep_heading()}</span>
               </legend>
               <label class="flex items-start gap-3 text-sm" class:keep-unavailable={publishedFormat === "opus"}>
-                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="nothing" aria-label={t.keep_nothing()} checked={recordingMedia === "nothing"} disabled={publishedFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
+                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="nothing" aria-label={$LL.app.keep.nothing()} checked={recordingMedia === "nothing"} disabled={publishedFormat === "opus"} on:change={() => selectRecordingMedia("nothing")} aria-describedby="keep-nothing-help" />
                 <span>{#each keepNothingLine as part}{#if part.slot === "media"}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each} <span id="keep-nothing-help">{t.keep_nothing_help()}</span>
                   {#if publishedFormat === "opus"}<span class="set-row-sub block pipe-warn">{t.keep_nothing_unavailable()}</span>{/if}</span>
               </label>
               <label class="flex items-start gap-3 text-sm">
-                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-video" aria-label={t.keep_video()} checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
+                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-video" aria-label={$LL.app.keep.audio_video()} checked={recordingMedia === "audio-video"} on:change={() => selectRecordingMedia("audio-video")} aria-describedby="keep-video-help" />
                 <span>{#each keepVideoLine as part}{#if part.slot === "media"}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each} <span id="keep-video-help">{t.keep_video_help()}</span></span>
               </label>
               <label class="flex items-start gap-3 text-sm">
-                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-only" aria-label={t.keep_audio()} checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
+                <input class="radio radio-primary radio-sm" type="radio" name="recording-media" value="audio-only" aria-label={$LL.app.keep.audio_only()} checked={recordingMedia === "audio-only"} on:change={() => selectRecordingMedia("audio-only")} />
                 <span>{#each keepAudioLine as part}{#if part.slot === "media"}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each}</span>
               </label>
               {#if recordingMedia !== "nothing"}
@@ -1142,17 +1142,17 @@
         class="save-bar"
         class:asking={$leavePrompt !== null}
         role={$leavePrompt ? "alertdialog" : "region"}
-        aria-label={$leavePrompt ? t.leave_title() : t.unsaved_region()}
+        aria-label={$leavePrompt ? $LL.app.settings.unsaved.leave_title() : t.unsaved_region()}
         transition:fly={{ y: 16, duration: prefersReducedMotion() ? 0 : 180 }}
       >
         {#if $leavePrompt}
           <TriangleAlert size={16} class="save-bar-icon" aria-hidden="true" />
-          <p class="save-bar-text">{t.leave_prompt()}</p>
+          <p class="save-bar-text">{$LL.app.settings.unsaved.leave_prompt()}</p>
           <div class="save-bar-actions">
             <button bind:this={stayButton} class="sb-btn sb-light" type="button" on:click={cancelLeave}>
-              {t.stay()}
+              {$LL.app.settings.unsaved.stay()}
             </button>
-            <button class="sb-btn sb-danger" type="button" on:click={confirmLeave}>{t.leave()}</button>
+            <button class="sb-btn sb-danger" type="button" on:click={confirmLeave}>{$LL.app.settings.unsaved.leave()}</button>
           </div>
         {:else}
           <p class="save-bar-text">{saving ? t.saving_changes() : t.unsaved()}</p>

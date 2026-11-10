@@ -9,7 +9,7 @@ export interface RetentionSettings { nextcloud?: {meetings:RetentionPolicy}; ver
 // at call time so it follows the reader's language; a kind this build does not
 // know shows as the operator sent it.
 export function retentionLabel(kind: string): string {
-  const t = get(LL).app.settings.retention.kinds;
+  const t = get(LL).app.file_kind;
   switch (kind) {
     case "failed_capture": return t.failed_capture();
     case "failed_build": return t.failed_build();

@@ -140,8 +140,8 @@
           <TriangleAlert size={14} aria-hidden="true" />
           <span>
             {excess === 1
-              ? text.over_cap_one({ max: formatCount(MAX_SELECTED_MEETINGS) })
-              : text.over_cap_other({ max: formatCount(MAX_SELECTED_MEETINGS), count: formatCount(excess) })}
+              ? $LL.viewer.browse.selection.over_cap_one({ max: formatCount(MAX_SELECTED_MEETINGS) })
+              : $LL.viewer.browse.selection.over_cap_other({ max: formatCount(MAX_SELECTED_MEETINGS), count: formatCount(excess) })}
           </span>
         </p>
       {/if}

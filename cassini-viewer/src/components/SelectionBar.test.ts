@@ -66,8 +66,8 @@ describe("SelectionBar", () => {
     expect(selectionBarSource).toContain('import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";');
     expect(selectionBarSource).toContain("$: overCap = count > MAX_SELECTED_MEETINGS;");
     expect(selectionBarSource).toContain("disabled={overCap}");
-    expect(selectionBarSource).toContain("text.over_cap_other({ max: formatCount(MAX_SELECTED_MEETINGS), count: formatCount(excess) })");
-    expect(get(LL).viewer.browse.selection_bar.over_cap_other({ max: 100, count: 3 })).toBe(
+    expect(selectionBarSource).toContain("$LL.viewer.browse.selection.over_cap_other({ max: formatCount(MAX_SELECTED_MEETINGS), count: formatCount(excess) })");
+    expect(get(LL).viewer.browse.selection.over_cap_other({ max: 100, count: 3 })).toBe(
       "You can work with up to 100 meetings at once. Unpick 3.",
     );
   });

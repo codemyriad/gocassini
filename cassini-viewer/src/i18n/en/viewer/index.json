@@ -172,8 +172,6 @@
       "clear_selection": "Clear selection",
       "not_shown_count": "{count} not shown here.",
       "what_next": "Tag, download or get insights from them.",
-      "over_cap_one": "You can work with up to {max} meetings at once. Unpick one.",
-      "over_cap_other": "You can work with up to {max} meetings at once. Unpick {count}.",
       "retry_tag_update": "Retry tag update",
       "tag": "Tag",
       "prepare": "Prepare",

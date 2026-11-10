@@ -11,6 +11,34 @@ const en_app = {
   operator,
   settings,
   insights,
+  // The kinds of file Cassini keeps, as Storage charts them and Retention sets
+  // how long each is kept. failed_capture to failed_publish are the kinds of
+  // previous attempt.
+  file_kind: {
+    published: "In Nextcloud Files",
+    recordings: "Recordings",
+    current: "Published meetings (on this server)",
+    history: "Previous attempts",
+    failed_capture: "Failed recordings",
+    failed_build: "Failed processing",
+    superseded: "Replaced output",
+    failed_publish: "Failed publishing",
+    logs: "Processing logs",
+    other: "Other local files",
+  },
+  // The speech quality tiers, in Settings and in the pipeline's status strip.
+  quality: {
+    fast: "Fast",
+    balanced: "Balanced",
+    best: "Best",
+  },
+  // What media stays on the server after publishing, in Settings and in the
+  // pipeline's status strip.
+  keep: {
+    nothing: "Nothing",
+    audio_video: "Audio and video",
+    audio_only: "Audio only",
+  },
 } satisfies BaseTranslation;
 
 export default en_app;

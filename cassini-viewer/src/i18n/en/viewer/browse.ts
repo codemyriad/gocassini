@@ -211,9 +211,7 @@ const browse = {
     // {count} of the picked meetings are outside the current room or search.
     not_shown_count: "{count} not shown here.",
     what_next: "Tag, download or get insights from them.",
-    // {max} is the most meetings one bundle can hold.
-    over_cap_one: "You can work with up to {max} meetings at once. Unpick one.",
-    over_cap_other: "You can work with up to {max} meetings at once. Unpick {count}.",
+    // Over the cap, the bar says selection.over_cap_*.
     retry_tag_update: "Retry tag update",
     tag: "Tag",
     prepare: "Prepare",
@@ -232,6 +230,8 @@ const browse = {
     // {count} is already formatted ("12,405").
     words: "{count} words",
     at_least_words: "At least {count} words",
+    // In the selection bar and the Prepare panel. {max} is the most meetings
+    // one bundle can hold; {count} how many to unpick.
     over_cap_one: "You can work with up to {max} meetings at once. Unpick one.",
     over_cap_other: "You can work with up to {max} meetings at once. Unpick {count}.",
     no_portable_audio_one: "One of these predates the single-file format (marked in the list). Unpick it to prepare.",

@@ -47,6 +47,73 @@
       "bundle_not_found": "One of these meetings is not available to you, or this deployment cannot assemble bundles.",
       "bundle_nextcloud_unreadable": "Cassini could not read these meetings from Nextcloud.",
       "bundle_failed": "Could not prepare the bundle (HTTP {status})."
+    },
+    "setup_notice": {
+      "checking": "Checking…",
+      "show_details": "Show details",
+      "details_heading": "Details for administrators",
+      "open_publish_pipeline": "Open {place}",
+      "title_failing": "Cassini can't save recordings right now",
+      "title_unchecked": "Cassini hasn't checked that it can save recordings",
+      "summary_failing": "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.",
+      "summary_unchecked": "You can still browse recordings, but new ones will fail until this check runs.",
+      "share_label": "Send this link to an administrator for setup instructions.",
+      "step_rerun_setup": "Re-run Cassini's setup by disabling and enabling the app",
+      "step_open_settings": "Open {place} to check the recordings account",
+      "step_create_account": "Create the {user} account in Nextcloud",
+      "step_set_admin_user": "Set {variable} to a Nextcloud administrator",
+      "cause_unknown": "Cassini could not confirm its recordings setup.",
+      "detail_state": "The operator reported {state}.",
+      "detail_state_at_step": "The operator reported {state} at {step}.",
+      "note_occ": "{command} is however your deployment invokes it, for example {example}.",
+      "reference": "See {endpoint} for the full recordings access report."
+    },
+    "sharing_notice": {
+      "pending_title_one": "1 recording is waiting for you",
+      "pending_title_other": "{count} recordings are waiting for you",
+      "pending_label": "Recordings waiting for you",
+      "pending_line": "Nextcloud holds files shared with you until you accept them.",
+      "show_them": "Show them",
+      "hide_them": "Hide them",
+      "accept": "Accept",
+      "accept_all": "Accept all {count}",
+      "accept_row_aria": "Accept {title}",
+      "why_accept": "Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.",
+      "accept_refused": "Nextcloud did not accept this share.",
+      "accept_failed": "Could not accept the share (HTTP {status}).",
+      "dismiss_failed": "Could not dismiss the notice (HTTP {status}).",
+      "refused_title_one": "1 recording could not be shared with you.",
+      "refused_title_other": "{count} recordings could not be shared with you.",
+      "refused_line": "A Nextcloud sharing setting stops it.",
+      "refused_group_label": "Recordings that could not be shared with you",
+      "starter_refused_title_one": "1 recording you started could not be published.",
+      "starter_refused_title_other": "{count} recordings you started could not be published.",
+      "starter_refused_line_one": "Nextcloud refused to share it with you.",
+      "starter_refused_line_other": "Nextcloud refused to share them with you.",
+      "unpublished_group_label": "Recordings you started that could not be published",
+      "refused_notice": {
+        "room_date": "The recording in “{name}” on {date} could not be shared with you.",
+        "room": "The recording in “{name}” could not be shared with you.",
+        "date": "The recording on {date} could not be shared with you.",
+        "unknown": "A recording could not be shared with you."
+      },
+      "unpublished_notice": {
+        "room_date": "Your recording in “{name}” on {date} could not be published.",
+        "room": "Your recording in “{name}” could not be published.",
+        "date": "Your recording on {date} could not be published.",
+        "unknown": "A recording you started could not be published."
+      },
+      "refused_this": "This recording could not be shared with you.",
+      "unpublished_this": "This recording you started could not be published.",
+      "waiting_title": "This recording is waiting for you",
+      "a_recording": "A recording",
+      "dismiss_all": "Dismiss all",
+      "dismiss_row_aria": "Dismiss {label}",
+      "dismiss_notice_aria": "Dismiss: {title}",
+      "admin_fix": "An administrator can fix that: {link}.",
+      "send_link": "send them this link",
+      "send_link_title": "Opening it as an administrator shows exactly what is stopping it",
+      "admin_fix_plain": "An administrator can fix that."
     }
   },
   "operator": {
@@ -135,26 +202,6 @@
         "summary_other": "Nextcloud's share limit held back recipients of {count} recordings. Re-share each from its run, or raise the limit.",
         "summary_other_since": "Nextcloud's share limit held back recipients of {count} recordings since {since}. Re-share each from its run, or raise the limit."
       }
-    },
-    "setup_notice": {
-      "checking": "Checking…",
-      "show_details": "Show details",
-      "details_heading": "Details for administrators",
-      "open_publish_pipeline": "Open {place}",
-      "title_failing": "Cassini can't save recordings right now",
-      "title_unchecked": "Cassini hasn't checked that it can save recordings",
-      "summary_failing": "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.",
-      "summary_unchecked": "You can still browse recordings, but new ones will fail until this check runs.",
-      "share_label": "Send this link to an administrator for setup instructions.",
-      "step_rerun_setup": "Re-run Cassini's setup by disabling and enabling the app",
-      "step_open_settings": "Open {place} to check the recordings account",
-      "step_create_account": "Create the {user} account in Nextcloud",
-      "step_set_admin_user": "Set {variable} to a Nextcloud administrator",
-      "cause_unknown": "Cassini could not confirm its recordings setup.",
-      "detail_state": "The operator reported {state}.",
-      "detail_state_at_step": "The operator reported {state} at {step}.",
-      "note_occ": "{command} is however your deployment invokes it, for example {example}.",
-      "reference": "See {endpoint} for the full recordings access report."
     },
     "feature_notice": {
       "insights_title": "No AI endpoint is available",
@@ -282,11 +329,6 @@
       "off_downloading": "Off · downloading",
       "off_downloading_percent": "Off · downloading {percent}%",
       "unknown": "Unknown",
-      "quality": {
-        "fast": "Fast",
-        "balanced": "Balanced",
-        "best": "Best"
-      },
       "reason": {
         "previous_model_meanwhile": "previous model transcribes meanwhile",
         "downloading_model": "downloading the model",
@@ -307,11 +349,6 @@
         "transcript_only": "Transcript only",
         "audio_transcript": "Audio + transcript",
         "audio_no_transcript": "Audio, no transcript"
-      },
-      "keep": {
-        "nothing": "Nothing",
-        "audio_video": "Audio + video",
-        "audio_only": "Audio only"
       },
       "retention": {
         "forever": "forever",
@@ -385,46 +422,16 @@
     },
     "storage": {
       "category": {
-        "published": {
-          "label": "In Nextcloud Files",
-          "description": "Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup."
-        },
-        "recordings": {
-          "label": "Recordings",
-          "description": "Audio, video and supporting files, dated when recording finished."
-        },
-        "current": {
-          "label": "Published meetings (on this server)",
-          "description": "This server's copy of the latest published meeting, dated when it was published."
-        },
-        "history": {
-          "label": "Previous attempts",
-          "description": "Failed recordings, failed processing, replaced output and failed publishing."
-        },
-        "failed_capture": {
-          "label": "Failed recordings",
-          "description": "Recordings from failed or interrupted attempts, dated when the attempt ended."
-        },
-        "failed_build": {
-          "label": "Failed processing",
-          "description": "Processing output from failed or interrupted attempts, dated when the attempt ended."
-        },
-        "superseded": {
-          "label": "Replaced output",
-          "description": "Older output, dated when a later publication replaced it."
-        },
-        "failed_publish": {
-          "label": "Failed publishing",
-          "description": "Publishing files from failed or interrupted attempts, dated when the attempt ended."
-        },
-        "logs": {
-          "label": "Processing logs",
-          "description": "Logs from each recording attempt, dated when the attempt ended."
-        },
-        "other": {
-          "label": "Other local files",
-          "description": "Work in progress and files no cleanup rule covers. They have no date."
-        }
+        "published": "Published files, including legacy archives, dated by publication or recording. Not touched by this server’s cleanup.",
+        "recordings": "Audio, video and supporting files, dated when recording finished.",
+        "current": "This server's copy of the latest published meeting, dated when it was published.",
+        "history": "Failed recordings, failed processing, replaced output and failed publishing.",
+        "failed_capture": "Recordings from failed or interrupted attempts, dated when the attempt ended.",
+        "failed_build": "Processing output from failed or interrupted attempts, dated when the attempt ended.",
+        "superseded": "Older output, dated when a later publication replaced it.",
+        "failed_publish": "Publishing files from failed or interrupted attempts, dated when the attempt ended.",
+        "logs": "Logs from each recording attempt, dated when the attempt ended.",
+        "other": "Work in progress and files no cleanup rule covers. They have no date."
       },
       "report": {
         "title": "Storage",
@@ -510,53 +517,6 @@
       "setup_unavailable": "Setup can't run on this page because Nextcloud's scripts aren't loaded here.",
       "password_unavailable": "The password can't be changed on this page because Nextcloud's scripts aren't loaded here.",
       "unknown_step": "This version of Cassini can't run the \"{action}\" step."
-    },
-    "sharing_notice": {
-      "pending_title_one": "1 recording is waiting for you",
-      "pending_title_other": "{count} recordings are waiting for you",
-      "pending_label": "Recordings waiting for you",
-      "pending_line": "Nextcloud holds files shared with you until you accept them.",
-      "show_them": "Show them",
-      "hide_them": "Hide them",
-      "accept": "Accept",
-      "accept_all": "Accept all {count}",
-      "accept_row_aria": "Accept {title}",
-      "why_accept": "Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.",
-      "accept_refused": "Nextcloud did not accept this share.",
-      "accept_failed": "Could not accept the share (HTTP {status}).",
-      "dismiss_failed": "Could not dismiss the notice (HTTP {status}).",
-      "refused_title_one": "1 recording could not be shared with you.",
-      "refused_title_other": "{count} recordings could not be shared with you.",
-      "refused_line": "A Nextcloud sharing setting stops it.",
-      "refused_group_label": "Recordings that could not be shared with you",
-      "starter_refused_title_one": "1 recording you started could not be published.",
-      "starter_refused_title_other": "{count} recordings you started could not be published.",
-      "starter_refused_line_one": "Nextcloud refused to share it with you.",
-      "starter_refused_line_other": "Nextcloud refused to share them with you.",
-      "unpublished_group_label": "Recordings you started that could not be published",
-      "refused_notice": {
-        "room_date": "The recording in “{name}” on {date} could not be shared with you.",
-        "room": "The recording in “{name}” could not be shared with you.",
-        "date": "The recording on {date} could not be shared with you.",
-        "unknown": "A recording could not be shared with you."
-      },
-      "unpublished_notice": {
-        "room_date": "Your recording in “{name}” on {date} could not be published.",
-        "room": "Your recording in “{name}” could not be published.",
-        "date": "Your recording on {date} could not be published.",
-        "unknown": "A recording you started could not be published."
-      },
-      "refused_this": "This recording could not be shared with you.",
-      "unpublished_this": "This recording you started could not be published.",
-      "waiting_title": "This recording is waiting for you",
-      "a_recording": "A recording",
-      "dismiss_all": "Dismiss all",
-      "dismiss_row_aria": "Dismiss {label}",
-      "dismiss_notice_aria": "Dismiss: {title}",
-      "admin_fix": "An administrator can fix that: {link}.",
-      "send_link": "send them this link",
-      "send_link_title": "Opening it as an administrator shows exactly what is stopping it",
-      "admin_fix_plain": "An administrator can fix that."
     },
     "doctor": {
       "title": "Doctor",
@@ -854,11 +814,8 @@
       "tiers_label": "What transcribes recordings",
       "off": "Off",
       "off_description": "Recordings are published without a transcript.",
-      "quality_fast": "Fast",
       "quality_fast_description": "Fastest transcription, lower accuracy.",
-      "quality_balanced": "Balanced",
       "quality_balanced_description": "Default — good accuracy at reasonable speed.",
-      "quality_best": "Best",
       "quality_best_description": "Highest accuracy (fp32), slowest.",
       "lead_downloading": "Downloading the {tier} model. Transcription turns on when it finishes.",
       "lead_off": "Nothing is transcribed. Install and pick a model to turn transcription on.",
@@ -918,12 +875,9 @@
       "publication_heading": "What participants receive",
       "no_video_published": "Camera video is never published.",
       "keep_heading": "What media stays on the server",
-      "keep_nothing": "Nothing",
       "keep_nothing_help": "The recording is deleted after publishing and cannot be reprocessed.",
       "keep_nothing_unavailable": "Unavailable while audio is published (step 3).",
-      "keep_video": "Audio and video",
       "keep_video_help": "Uses the most space.",
-      "keep_audio": "Audio only",
       "kept_plain": "{media}.",
       "kept_forever": "{media}, kept forever.",
       "kept_days_one": "{media}, for 1 day.",
@@ -946,24 +900,16 @@
       "search_note_when": "Use these spellings when the transcriber mishears a name.",
       "unsaved_region": "Unsaved changes",
       "unsaved": "You have unsaved changes",
-      "saving_changes": "Saving changes…",
-      "leave_title": "Leave without saving?",
-      "leave_prompt": "You have unsaved changes. Leave without saving?",
-      "stay": "Stay",
-      "leave": "Leave"
+      "saving_changes": "Saving changes…"
     },
     "retention": {
       "heading": "Retention",
       "intro": "How long Cassini keeps each kind of file. Saving never deletes anything immediately.",
-      "recordings_heading": "Recordings",
       "recordings_description": "Audio and video captured on this server. Deleting them means the meeting cannot be reprocessed.",
-      "current_heading": "Published meetings (on this server)",
       "current_description": "The published meeting stays in Nextcloud Files after this copy is removed.",
-      "history_heading": "Previous attempts",
       "history_description": "Failed recordings, failed processing, replaced output and failed publishing.",
       "split_kinds": "Set each kind separately",
       "join_kinds": "Use one setting for all kinds",
-      "logs_heading": "Processing logs",
       "logs_description": "Logs from each recording attempt.",
       "nextcloud_heading": "Published meetings in Nextcloud",
       "nextcloud_description": "Deletes the published meeting, including its transcript and notes.",
@@ -974,13 +920,7 @@
       "loading": "Loading retention settings…",
       "saved": "Retention settings saved.",
       "operator_unavailable": "Operator unavailable",
-      "save_in_progress": "Retention settings are being saved. Try again.",
-      "kinds": {
-        "failed_capture": "Failed recordings",
-        "failed_build": "Failed processing",
-        "superseded": "Replaced output",
-        "failed_publish": "Failed publishing"
-      }
+      "save_in_progress": "Retention settings are being saved. Try again."
     },
     "retention_policy": {
       "keep_forever": "Keep forever",
@@ -991,7 +931,9 @@
       "custom_days_label": "{label} days"
     },
     "retention_actions": {
-      "takes_effect": "Changes take effect at the next cleanup. Saving never deletes files immediately.",
+      "takes_effect": "Changes take effect at the next cleanup. Saving never deletes files immediately."
+    },
+    "unsaved": {
       "discard": "Discard changes",
       "leave_title": "Leave without saving?",
       "leave_prompt": "You have unsaved changes. Leave without saving?",
@@ -1023,23 +965,20 @@
       "heading": "Voice separation",
       "optional": "(optional)",
       "description": "For Cassini to tell apart several people talking on one device in a call, download this model. Anyone who can read the meeting can then split that device's audio into separate voices from its participant list. It runs on this server's CPU, only when someone asks.",
-      "state_ready": "Ready",
       "state_unsupported": "Not available in this server's Cassini build",
       "state_installed": "Installed — runtime check needed",
-      "state_cancelled": "Download cancelled. Retry resumes it.",
-      "state_not_installed": "Not installed",
-      "check": "Check",
-      "download": "Download",
       "progress_label": "Voice separation download progress"
     },
+    "model_download": {
+      "ready": "Ready",
+      "cancelled": "Download cancelled. Retry resumes it.",
+      "not_installed": "Not installed",
+      "check": "Check",
+      "download": "Download"
+    },
     "speech_model_cell": {
-      "state_ready": "Ready",
       "state_installed_selected": "Installed · checked before the next recording",
       "state_installed": "Installed · not checked on this build yet",
-      "state_cancelled": "Download cancelled. Retry resumes it.",
-      "state_not_installed": "Not installed",
-      "check": "Check",
-      "download": "Download",
       "in_use": "In use",
       "progress_label": "Model download progress",
       "progress": "{done} / {total}",
@@ -1267,5 +1206,27 @@
       "step_lead_local": "Sends each transcript to {provider} on your own network. One request per meeting.",
       "step_lead_external": "Sends each transcript to {provider}. One request per meeting, which it may bill."
     }
+  },
+  "file_kind": {
+    "published": "In Nextcloud Files",
+    "recordings": "Recordings",
+    "current": "Published meetings (on this server)",
+    "history": "Previous attempts",
+    "failed_capture": "Failed recordings",
+    "failed_build": "Failed processing",
+    "superseded": "Replaced output",
+    "failed_publish": "Failed publishing",
+    "logs": "Processing logs",
+    "other": "Other local files"
+  },
+  "quality": {
+    "fast": "Fast",
+    "balanced": "Balanced",
+    "best": "Best"
+  },
+  "keep": {
+    "nothing": "Nothing",
+    "audio_video": "Audio and video",
+    "audio_only": "Audio only"
   }
 }

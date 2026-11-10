@@ -65,7 +65,7 @@ function fileStem(ref: string | undefined): string {
 
 // Every sentence here is read when it is shown, so it is in the reader's
 // language: functions, never constants.
-const copy = () => get(LL).app.operator.sharing_notice;
+const copy = () => get(LL).app.shell.sharing_notice;
 
 // --- Pending (contract §5, revised in §8) ---
 

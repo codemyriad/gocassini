@@ -29,12 +29,12 @@
   $: t = $LL.app.settings.speech_model_cell;
   const size = modelSize;
   $: state = !model ? "" : running && job ? jobStepText(job)
-    : model.ready ? t.state_ready()
+    : model.ready ? $LL.app.settings.model_download.ready()
     // Not checked against this build yet. The model in use is checked before
     // the next recording on its own; any other one when someone presses Check.
     : model.installed ? (selected ? t.state_installed_selected() : t.state_installed())
-    : job?.state === "cancelled" ? t.state_cancelled()
-    : t.state_not_installed();
+    : job?.state === "cancelled" ? $LL.app.settings.model_download.cancelled()
+    : $LL.app.settings.model_download.not_installed();
   async function action(kind: "install" | "cancel" | "retry") {
     if (!client || !model || busy) return;
     busy = true;
@@ -62,7 +62,7 @@
     {:else if model.ready}
       {#if selected}<span class="model-inuse">{t.in_use()}</span>{/if}
     {:else if model.installed || inventory?.downloads_allowed}
-      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? t.check() : job ? $LL.common.action.retry() : t.download()}</button>
+      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? $LL.app.settings.model_download.check() : job ? $LL.common.action.retry() : $LL.app.settings.model_download.download()}</button>
     {/if}
   {/if}
 </span>

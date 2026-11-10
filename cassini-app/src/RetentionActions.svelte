@@ -18,16 +18,16 @@
   <div class="buttons">
     <p class="text-sm opacity-80">{$LL.app.settings.retention_actions.takes_effect()}</p>
     <div class="button-row">
-      {#if dirty}<button class="btn btn-ghost" type="button" {disabled} on:click={() => dispatch("reload")}>{$LL.app.settings.retention_actions.discard()}</button>{/if}
+      {#if dirty}<button class="btn btn-ghost" type="button" {disabled} on:click={() => dispatch("reload")}>{$LL.app.settings.unsaved.discard()}</button>{/if}
       <!-- Native form association preserves validation when actions sit outside the scroller. -->
       <button class="btn btn-primary" type="submit" form={formId} disabled={disabled || !canSave}>{$LL.common.action.save()}</button>
     </div>
   </div>
   {#if $leavePrompt}
-    <div class="alert" role="alertdialog" tabindex="-1" aria-label={$LL.app.settings.retention_actions.leave_title()}>
-      <p>{$LL.app.settings.retention_actions.leave_prompt()}</p>
-      <button class="btn btn-sm" on:click={cancelLeave}>{$LL.app.settings.retention_actions.stay()}</button>
-      <button class="btn btn-sm" on:click={confirmLeave}>{$LL.app.settings.retention_actions.leave()}</button>
+    <div class="alert" role="alertdialog" tabindex="-1" aria-label={$LL.app.settings.unsaved.leave_title()}>
+      <p>{$LL.app.settings.unsaved.leave_prompt()}</p>
+      <button class="btn btn-sm" on:click={cancelLeave}>{$LL.app.settings.unsaved.stay()}</button>
+      <button class="btn btn-sm" on:click={confirmLeave}>{$LL.app.settings.unsaved.leave()}</button>
     </div>
   {/if}
 </div>

@@ -216,11 +216,11 @@ export function shareableAppUrl(href: string): string {
 const APP_ID = "gocassini";
 // Functions rather than constants, so each notice is in the reader's language.
 const rerunSetup = (): SetupNoticeStep => ({
-  label: get(LL).app.operator.setup_notice.step_rerun_setup(),
+  label: get(LL).app.shell.setup_notice.step_rerun_setup(),
   commands: [`occ app_api:app:disable ${APP_ID}`, `occ app_api:app:enable ${APP_ID}`],
 });
 const settingsOffer = (): SetupNoticeStep => ({
-  label: get(LL).app.operator.setup_notice.step_open_settings({ place: operatorPlace("publish_pipeline") }),
+  label: get(LL).app.shell.setup_notice.step_open_settings({ place: operatorPlace("publish_pipeline") }),
   commands: [], action: "settings",
 });
 
@@ -237,7 +237,7 @@ export function buildSetupNotice(options: {
   // it, so the notice never replaces the meeting list (D-849). It promises
   // browsing, not that every read succeeds: a Nextcloud outage that fails this
   // check can fail a reader's share scan too, and the list reports that itself.
-  const t = get(LL).app.operator.setup_notice;
+  const t = get(LL).app.shell.setup_notice;
   const failing = verdict.state !== "unknown";
   const summary = failing ? t.summary_failing() : t.summary_unchecked();
   const base: SetupNotice = {

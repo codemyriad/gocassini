@@ -20,11 +20,11 @@
   $: unsupported = model?.runtime_supported === false;
   $: t = $LL.app.settings.voice_separation;
   $: state = !model ? "" : running && job ? jobStepText(job)
-    : model.ready ? t.state_ready()
+    : model.ready ? $LL.app.settings.model_download.ready()
     : unsupported ? t.state_unsupported()
     : model.installed ? t.state_installed()
-    : job?.state === "cancelled" ? t.state_cancelled()
-    : t.state_not_installed();
+    : job?.state === "cancelled" ? $LL.app.settings.model_download.cancelled()
+    : $LL.app.settings.model_download.not_installed();
   async function act(kind: "install" | "cancel" | "retry") {
     if (!client || !model || busy) return;
     busy = true;
@@ -48,7 +48,7 @@
         {#if running && job}
           <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act("cancel")}>{$LL.common.action.cancel()}</button>
         {:else if !model.ready && !unsupported && (model.installed || inventory?.downloads_allowed)}
-          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act(job ? "retry" : "install")}>{model.installed ? t.check() : job ? $LL.common.action.retry() : t.download()}</button>
+          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act(job ? "retry" : "install")}>{model.installed ? $LL.app.settings.model_download.check() : job ? $LL.common.action.retry() : $LL.app.settings.model_download.download()}</button>
         {/if}
       </svelte:fragment>
       {#if running && job && job.state === "downloading" && job.progress.total_bytes > 0}

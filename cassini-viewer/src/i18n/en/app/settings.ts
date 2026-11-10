@@ -24,12 +24,10 @@ const settings = {
     tiers_label: "What transcribes recordings",
     off: "Off",
     off_description: "Recordings are published without a transcript.",
-    // Quality tiers. Their names also fill {tier} in the sentences below.
-    quality_fast: "Fast",
+    // Quality tiers (their names are app.quality). The names also fill {tier}
+    // in the sentences below.
     quality_fast_description: "Fastest transcription, lower accuracy.",
-    quality_balanced: "Balanced",
     quality_balanced_description: "Default — good accuracy at reasonable speed.",
-    quality_best: "Best",
     // fp32 is a model precision; keep it.
     quality_best_description: "Highest accuracy (fp32), slowest.",
     // The line under the step heading. {tier} is a quality tier's name (Fast, Balanced, Best).
@@ -87,6 +85,7 @@ const settings = {
     // {error} is why, a sentence of its own.
     llm_load_failed: "Couldn't load the AI provider settings, so this step can't be shown or changed: {error}",
     needs_provider: "Needs a provider.",
+    // Each kind's heading is its name in app.file_kind.
     // Link-style button after needs_provider.
     add_provider: "Add one",
     field_provider: "Provider",
@@ -107,13 +106,11 @@ const settings = {
     no_video_published: "Camera video is never published.",
     // Step 4: what media stays on the server.
     keep_heading: "What media stays on the server",
-    keep_nothing: "Nothing",
+    // The options' names are app.keep.
     keep_nothing_help: "The recording is deleted after publishing and cannot be reprocessed.",
     keep_nothing_unavailable: "Unavailable while audio is published (step 3).",
-    keep_video: "Audio and video",
     keep_video_help: "Uses the most space.",
-    keep_audio: "Audio only",
-    // An option and how long it is kept. {media} is keep_nothing, keep_video or keep_audio, in bold.
+    // An option and how long it is kept. {media} is one of app.keep, in bold.
     kept_plain: "{media}.",
     kept_forever: "{media}, kept forever.",
     kept_days_one: "{media}, for 1 day.",
@@ -143,25 +140,17 @@ const settings = {
     unsaved_region: "Unsaved changes",
     unsaved: "You have unsaved changes",
     saving_changes: "Saving changes…",
-    leave_title: "Leave without saving?",
-    leave_prompt: "You have unsaved changes. Leave without saving?",
-    stay: "Stay",
-    leave: "Leave",
   },
   // Operator › Retention: how long each kind of file is kept.
   retention: {
     heading: "Retention",
     intro: "How long Cassini keeps each kind of file. Saving never deletes anything immediately.",
-    recordings_heading: "Recordings",
     recordings_description: "Audio and video captured on this server. Deleting them means the meeting cannot be reprocessed.",
-    current_heading: "Published meetings (on this server)",
     current_description: "The published meeting stays in Nextcloud Files after this copy is removed.",
-    history_heading: "Previous attempts",
     history_description: "Failed recordings, failed processing, replaced output and failed publishing.",
     // Link-style button: switch from one policy for every kind of previous attempt to one each.
     split_kinds: "Set each kind separately",
     join_kinds: "Use one setting for all kinds",
-    logs_heading: "Processing logs",
     logs_description: "Logs from each recording attempt.",
     nextcloud_heading: "Published meetings in Nextcloud",
     nextcloud_description: "Deletes the published meeting, including its transcript and notes.",
@@ -175,13 +164,6 @@ const settings = {
     operator_unavailable: "Operator unavailable",
     // Shown when a second save starts while one is still running.
     save_in_progress: "Retention settings are being saved. Try again.",
-    // The kinds of previous attempt, each with its own policy when split.
-    kinds: {
-      failed_capture: "Failed recordings",
-      failed_build: "Failed processing",
-      superseded: "Replaced output",
-      failed_publish: "Failed publishing",
-    },
   },
   // One retention policy: keep forever, a preset number of days, or a custom number.
   retention_policy: {
@@ -198,6 +180,9 @@ const settings = {
   // The footer under the retention editor.
   retention_actions: {
     takes_effect: "Changes take effect at the next cleanup. Saving never deletes files immediately.",
+  },
+  // Leaving a settings page with unsaved changes: Publish pipeline and Retention.
+  unsaved: {
     discard: "Discard changes",
     leave_title: "Leave without saving?",
     leave_prompt: "You have unsaved changes. Leave without saving?",
@@ -236,26 +221,24 @@ const settings = {
     // Next to the heading.
     optional: "(optional)",
     description: "For Cassini to tell apart several people talking on one device in a call, download this model. Anyone who can read the meeting can then split that device's audio into separate voices from its participant list. It runs on this server's CPU, only when someone asks.",
-    state_ready: "Ready",
     state_unsupported: "Not available in this server's Cassini build",
     state_installed: "Installed — runtime check needed",
-    state_cancelled: "Download cancelled. Retry resumes it.",
-    state_not_installed: "Not installed",
+    progress_label: "Voice separation download progress",
+  },
+  // A downloadable model's state and buttons: the speech models and the voice
+  // separation model.
+  model_download: {
+    ready: "Ready",
+    cancelled: "Download cancelled. Retry resumes it.",
+    not_installed: "Not installed",
     // Small buttons.
     check: "Check",
     download: "Download",
-    progress_label: "Voice separation download progress",
   },
   // One speech model inside a quality row of the Transcript step.
   speech_model_cell: {
-    state_ready: "Ready",
     state_installed_selected: "Installed · checked before the next recording",
     state_installed: "Installed · not checked on this build yet",
-    state_cancelled: "Download cancelled. Retry resumes it.",
-    state_not_installed: "Not installed",
-    // Small buttons.
-    check: "Check",
-    download: "Download",
     // Badge on the model new recordings use.
     in_use: "In use",
     progress_label: "Model download progress",

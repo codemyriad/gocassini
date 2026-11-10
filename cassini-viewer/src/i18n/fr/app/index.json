@@ -47,6 +47,73 @@
       "bundle_not_found": "",
       "bundle_nextcloud_unreadable": "",
       "bundle_failed": ""
+    },
+    "setup_notice": {
+      "checking": "",
+      "show_details": "",
+      "details_heading": "",
+      "open_publish_pipeline": "",
+      "title_failing": "",
+      "title_unchecked": "",
+      "summary_failing": "",
+      "summary_unchecked": "",
+      "share_label": "",
+      "step_rerun_setup": "",
+      "step_open_settings": "",
+      "step_create_account": "",
+      "step_set_admin_user": "",
+      "cause_unknown": "",
+      "detail_state": "",
+      "detail_state_at_step": "",
+      "note_occ": "",
+      "reference": ""
+    },
+    "sharing_notice": {
+      "pending_title_one": "",
+      "pending_title_other": "",
+      "pending_label": "",
+      "pending_line": "",
+      "show_them": "",
+      "hide_them": "",
+      "accept": "",
+      "accept_all": "",
+      "accept_row_aria": "",
+      "why_accept": "",
+      "accept_refused": "",
+      "accept_failed": "",
+      "dismiss_failed": "",
+      "refused_title_one": "",
+      "refused_title_other": "",
+      "refused_line": "",
+      "refused_group_label": "",
+      "starter_refused_title_one": "",
+      "starter_refused_title_other": "",
+      "starter_refused_line_one": "",
+      "starter_refused_line_other": "",
+      "unpublished_group_label": "",
+      "refused_notice": {
+        "room_date": "",
+        "room": "",
+        "date": "",
+        "unknown": ""
+      },
+      "unpublished_notice": {
+        "room_date": "",
+        "room": "",
+        "date": "",
+        "unknown": ""
+      },
+      "refused_this": "",
+      "unpublished_this": "",
+      "waiting_title": "",
+      "a_recording": "",
+      "dismiss_all": "",
+      "dismiss_row_aria": "",
+      "dismiss_notice_aria": "",
+      "admin_fix": "",
+      "send_link": "",
+      "send_link_title": "",
+      "admin_fix_plain": ""
     }
   },
   "operator": {
@@ -135,26 +202,6 @@
         "summary_other": "",
         "summary_other_since": ""
       }
-    },
-    "setup_notice": {
-      "checking": "",
-      "show_details": "",
-      "details_heading": "",
-      "open_publish_pipeline": "",
-      "title_failing": "",
-      "title_unchecked": "",
-      "summary_failing": "",
-      "summary_unchecked": "",
-      "share_label": "",
-      "step_rerun_setup": "",
-      "step_open_settings": "",
-      "step_create_account": "",
-      "step_set_admin_user": "",
-      "cause_unknown": "",
-      "detail_state": "",
-      "detail_state_at_step": "",
-      "note_occ": "",
-      "reference": ""
     },
     "feature_notice": {
       "insights_title": "",
@@ -282,11 +329,6 @@
       "off_downloading": "",
       "off_downloading_percent": "",
       "unknown": "",
-      "quality": {
-        "fast": "",
-        "balanced": "",
-        "best": ""
-      },
       "reason": {
         "previous_model_meanwhile": "",
         "downloading_model": "",
@@ -307,11 +349,6 @@
         "transcript_only": "",
         "audio_transcript": "",
         "audio_no_transcript": ""
-      },
-      "keep": {
-        "nothing": "",
-        "audio_video": "",
-        "audio_only": ""
       },
       "retention": {
         "forever": "",
@@ -385,46 +422,16 @@
     },
     "storage": {
       "category": {
-        "published": {
-          "label": "",
-          "description": ""
-        },
-        "recordings": {
-          "label": "",
-          "description": ""
-        },
-        "current": {
-          "label": "",
-          "description": ""
-        },
-        "history": {
-          "label": "",
-          "description": ""
-        },
-        "failed_capture": {
-          "label": "",
-          "description": ""
-        },
-        "failed_build": {
-          "label": "",
-          "description": ""
-        },
-        "superseded": {
-          "label": "",
-          "description": ""
-        },
-        "failed_publish": {
-          "label": "",
-          "description": ""
-        },
-        "logs": {
-          "label": "",
-          "description": ""
-        },
-        "other": {
-          "label": "",
-          "description": ""
-        }
+        "published": "",
+        "recordings": "",
+        "current": "",
+        "history": "",
+        "failed_capture": "",
+        "failed_build": "",
+        "superseded": "",
+        "failed_publish": "",
+        "logs": "",
+        "other": ""
       },
       "report": {
         "title": "",
@@ -510,53 +517,6 @@
       "setup_unavailable": "",
       "password_unavailable": "",
       "unknown_step": ""
-    },
-    "sharing_notice": {
-      "pending_title_one": "",
-      "pending_title_other": "",
-      "pending_label": "",
-      "pending_line": "",
-      "show_them": "",
-      "hide_them": "",
-      "accept": "",
-      "accept_all": "",
-      "accept_row_aria": "",
-      "why_accept": "",
-      "accept_refused": "",
-      "accept_failed": "",
-      "dismiss_failed": "",
-      "refused_title_one": "",
-      "refused_title_other": "",
-      "refused_line": "",
-      "refused_group_label": "",
-      "starter_refused_title_one": "",
-      "starter_refused_title_other": "",
-      "starter_refused_line_one": "",
-      "starter_refused_line_other": "",
-      "unpublished_group_label": "",
-      "refused_notice": {
-        "room_date": "",
-        "room": "",
-        "date": "",
-        "unknown": ""
-      },
-      "unpublished_notice": {
-        "room_date": "",
-        "room": "",
-        "date": "",
-        "unknown": ""
-      },
-      "refused_this": "",
-      "unpublished_this": "",
-      "waiting_title": "",
-      "a_recording": "",
-      "dismiss_all": "",
-      "dismiss_row_aria": "",
-      "dismiss_notice_aria": "",
-      "admin_fix": "",
-      "send_link": "",
-      "send_link_title": "",
-      "admin_fix_plain": ""
     },
     "doctor": {
       "title": "",
@@ -854,11 +814,8 @@
       "tiers_label": "",
       "off": "",
       "off_description": "",
-      "quality_fast": "",
       "quality_fast_description": "",
-      "quality_balanced": "",
       "quality_balanced_description": "",
-      "quality_best": "",
       "quality_best_description": "",
       "lead_downloading": "",
       "lead_off": "",
@@ -918,12 +875,9 @@
       "publication_heading": "",
       "no_video_published": "",
       "keep_heading": "",
-      "keep_nothing": "",
       "keep_nothing_help": "",
       "keep_nothing_unavailable": "",
-      "keep_video": "",
       "keep_video_help": "",
-      "keep_audio": "",
       "kept_plain": "",
       "kept_forever": "",
       "kept_days_one": "",
@@ -946,24 +900,16 @@
       "search_note_when": "",
       "unsaved_region": "",
       "unsaved": "",
-      "saving_changes": "",
-      "leave_title": "",
-      "leave_prompt": "",
-      "stay": "",
-      "leave": ""
+      "saving_changes": ""
     },
     "retention": {
       "heading": "",
       "intro": "",
-      "recordings_heading": "",
       "recordings_description": "",
-      "current_heading": "",
       "current_description": "",
-      "history_heading": "",
       "history_description": "",
       "split_kinds": "",
       "join_kinds": "",
-      "logs_heading": "",
       "logs_description": "",
       "nextcloud_heading": "",
       "nextcloud_description": "",
@@ -974,13 +920,7 @@
       "loading": "",
       "saved": "",
       "operator_unavailable": "",
-      "save_in_progress": "",
-      "kinds": {
-        "failed_capture": "",
-        "failed_build": "",
-        "superseded": "",
-        "failed_publish": ""
-      }
+      "save_in_progress": ""
     },
     "retention_policy": {
       "keep_forever": "",
@@ -991,7 +931,9 @@
       "custom_days_label": ""
     },
     "retention_actions": {
-      "takes_effect": "",
+      "takes_effect": ""
+    },
+    "unsaved": {
       "discard": "",
       "leave_title": "",
       "leave_prompt": "",
@@ -1023,23 +965,20 @@
       "heading": "",
       "optional": "",
       "description": "",
-      "state_ready": "",
       "state_unsupported": "",
       "state_installed": "",
-      "state_cancelled": "",
-      "state_not_installed": "",
-      "check": "",
-      "download": "",
       "progress_label": ""
     },
+    "model_download": {
+      "ready": "",
+      "cancelled": "",
+      "not_installed": "",
+      "check": "",
+      "download": ""
+    },
     "speech_model_cell": {
-      "state_ready": "",
       "state_installed_selected": "",
       "state_installed": "",
-      "state_cancelled": "",
-      "state_not_installed": "",
-      "check": "",
-      "download": "",
       "in_use": "",
       "progress_label": "",
       "progress": "",
@@ -1267,5 +1206,27 @@
       "step_lead_local": "",
       "step_lead_external": ""
     }
+  },
+  "file_kind": {
+    "published": "",
+    "recordings": "",
+    "current": "",
+    "history": "",
+    "failed_capture": "",
+    "failed_build": "",
+    "superseded": "",
+    "failed_publish": "",
+    "logs": "",
+    "other": ""
+  },
+  "quality": {
+    "fast": "",
+    "balanced": "",
+    "best": ""
+  },
+  "keep": {
+    "nothing": "",
+    "audio_video": "",
+    "audio_only": ""
   }
 }

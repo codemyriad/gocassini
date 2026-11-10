@@ -9,8 +9,8 @@ type CategoryId = keyof ReturnType<typeof categoryCopy>;
 const categoryCopy = () => get(LL).app.operator.storage.category;
 function category(id: CategoryId, color: string): { label: string; description: string; color: string } {
   return {
-    get label() { return categoryCopy()[id].label(); },
-    get description() { return categoryCopy()[id].description(); },
+    get label() { return get(LL).app.file_kind[id](); },
+    get description() { return categoryCopy()[id](); },
     color,
   };
 }

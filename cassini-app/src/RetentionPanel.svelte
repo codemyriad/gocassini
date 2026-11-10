@@ -86,20 +86,20 @@
     <form id={formId} class="grid gap-4" on:submit|preventDefault={save}>
       <fieldset disabled={busy || disabled || $retentionMutationBusy} class="grid gap-4">
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">{$LL.app.settings.retention.recordings_heading()}</h3>
+          <h3 class="font-semibold">{$LL.app.file_kind.recordings()}</h3>
           <p class="text-sm opacity-80">{$LL.app.settings.retention.recordings_description()}</p>
-          <RetentionPolicyField bind:policy={settings.recordings} label={$LL.app.settings.retention.recordings_heading()} hideLabel />
+          <RetentionPolicyField bind:policy={settings.recordings} label={$LL.app.file_kind.recordings()} hideLabel />
         </section>
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">{$LL.app.settings.retention.current_heading()}</h3>
+          <h3 class="font-semibold">{$LL.app.file_kind.current()}</h3>
           <p class="text-sm opacity-80">{$LL.app.settings.retention.current_description()}</p>
-          <RetentionPolicyField bind:policy={settings.current} label={$LL.app.settings.retention.current_heading()} hideLabel />
+          <RetentionPolicyField bind:policy={settings.current} label={$LL.app.file_kind.current()} hideLabel />
         </section>
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">{$LL.app.settings.retention.history_heading()}</h3>
+          <h3 class="font-semibold">{$LL.app.file_kind.history()}</h3>
           <p class="text-sm opacity-80">{$LL.app.settings.retention.history_description()}</p>
           {#if settings.history.mode === "group"}
-            <RetentionPolicyField bind:policy={settings.history.policy} label={$LL.app.settings.retention.history_heading()} hideLabel />
+            <RetentionPolicyField bind:policy={settings.history.policy} label={$LL.app.file_kind.history()} hideLabel />
             <button type="button" class="link text-sm justify-self-start" on:click={() => mode("fine")}>{$LL.app.settings.retention.split_kinds()}</button>
           {:else}
             {#each Object.keys(settings.history.fine) as kind (kind)}<RetentionPolicyField bind:policy={settings.history.fine[kind]} label={retentionLabel(kind)} />{/each}
@@ -107,9 +107,9 @@
           {/if}
         </section>
         <section class="op-tint p-4 category">
-          <h3 class="font-semibold">{$LL.app.settings.retention.logs_heading()}</h3>
+          <h3 class="font-semibold">{$LL.app.file_kind.logs()}</h3>
           <p class="text-sm opacity-80">{$LL.app.settings.retention.logs_description()}</p>
-          <RetentionPolicyField bind:policy={settings.logs} label={$LL.app.settings.retention.logs_heading()} hideLabel />
+          <RetentionPolicyField bind:policy={settings.logs} label={$LL.app.file_kind.logs()} hideLabel />
         </section>
         {#if settings.nextcloud}
         <section class="op-tint p-4 category">
