@@ -17,9 +17,14 @@ from nextcloud_compatibility import (ROOT, INVENTORY, DIGEST, command, read_json
 
 WORKFLOW = ".github/workflows/publish-exapp-image.yml"
 SCENARIO = 'installed-talk-readiness-cpu-v1'
-REQUIRED_JOBS = ("validate-manifest", "build-image", "build-image-arm64", "build-image-cuda",
-                 "faithful-installed-exapp-talk-cpu", "smoke", "e2e-container", "e2e-entrypoint",
+REQUIRED_JOBS = ("prepare", "build-image", "build-image-arm64", "build-image-cuda",
+                 "faithful-installed-exapp-talk-cpu", "container-checks",
                  "e2e-talk-record-cuda", "transcribe-smoke-cuda")
+# The same jobs before D-906 merged them. Evidence recorded by an earlier
+# release names these, and `verify-release --existing` rebuilds its index.
+LEGACY_REQUIRED_JOBS = ("validate-manifest", "build-image", "build-image-arm64", "build-image-cuda",
+                        "faithful-installed-exapp-talk-cpu", "smoke", "e2e-container", "e2e-entrypoint",
+                        "e2e-talk-record-cuda", "transcribe-smoke-cuda")
 REQUIRED_CHECKS = {"installation", "image_identity", "recording", "transcription", "publication",
                    "participant_access", "outsider_denied", "restart", "embedded_browser"}
 
@@ -132,7 +137,8 @@ def registry_identity(ref):
 def build_index(policy, records, jobs, images, src, policy_hash, manifest_hash):
     require(src['event'] == 'push' and src['ref'].startswith('refs/tags/v'), 'release evidence requires a tag-push run')
     require(src['workflow'] == src['repository'] + '/' + WORKFLOW, 'unexpected source workflow')
-    for job in REQUIRED_JOBS:
+    required = LEGACY_REQUIRED_JOBS if 'prepare' not in jobs and 'validate-manifest' in jobs else REQUIRED_JOBS
+    for job in required:
         require(jobs.get(job, {}).get('result') == 'success', f"required job did not pass: {job}")
     check_records(policy, records, src, policy_hash, manifest_hash)
     require(set(images) == {'cpu', 'cuda'}, 'release must identify CPU and CUDA images')

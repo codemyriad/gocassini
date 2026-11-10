@@ -3,7 +3,7 @@
 # Shared helpers for the Cassini release version ladder.
 #
 # The release version lives in appinfo/info.xml as <version>, and the AppAPI
-# Docker <image-tag> must stay equal to it (CI's validate-manifest job rejects
+# Docker <image-tag> must stay equal to it (CI's prepare job rejects
 # a manifest where they disagree, and a release tag vX.Y.Z whose X.Y.Z doesn't
 # match). Every mutation here rewrites the two in lockstep.
 #

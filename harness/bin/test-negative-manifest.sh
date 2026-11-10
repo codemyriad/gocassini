@@ -5,7 +5,7 @@
 # EXACTLY the removed CASSINI_TALK_SIGNALING_INTERNAL_SECRET declaration — the
 # D-403 regression the faithful installed-ExApp sensitivity control models — and
 # nothing else: sibling <variable> declarations, <version>, <image-tag>, and the
-# markers the required "Validate appinfo/info.xml" job greps for all survive, so
+# markers the image workflow's `prepare` job greps for all survive, so
 # AppAPI can still register the app and the failure surfaces at route
 # verification rather than at manifest validation.
 
@@ -75,8 +75,8 @@ done
 [[ "$(exapp_image_ref "$negative")" == "$(exapp_image_ref "$SOURCE")" ]] \
   || fail "negative manifest image ref drifted from source"
 
-# It still passes the SAME required-fields check publish-exapp-image.yml's
-# "Validate appinfo/info.xml" job runs, so the manifest remains registrable.
+# It still passes the SAME required-fields check that publish-exapp-image.yml's
+# `prepare` job runs, so the manifest remains registrable.
 for field in '<id>gocassini</id>' '<external-app>' '<docker-install>' '<routes>'; do
   grep -qF "$field" "$negative" \
     || fail "negative manifest missing required marker: $field"

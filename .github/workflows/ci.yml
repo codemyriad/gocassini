@@ -139,15 +139,12 @@ jobs:
           python3 -m py_compile harness/bin/installed-validation.py
           python3 -m py_compile harness/bin/make-negative-manifest.py
 
+  # One job for both packages (D-906): each took about a minute, so as a
+  # matrix they spent far longer waiting for a runner than testing. Both run
+  # even if the first fails.
   ui:
-    name: UI tests (${{ matrix.package }})
+    name: UI tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - cassini-viewer
-          - cassini-app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -161,17 +158,31 @@ jobs:
           cache-dependency-path: '**/package-lock.json'
       # cassini-app consumes cassini-viewer via the npm workspace (D-420), so it
       # can't be installed standalone. Install at the workspace root, then test
-      # the one package via -w, matching deployment/Dockerfile.exapp.
+      # each package via -w, matching deployment/Dockerfile.exapp.
       #
       # `npm ci`, not `npm install`: D-578 committed the root lockfile, so the
       # install is reproducible and CI can no longer silently resolve a different
       # dependency tree than the lockfile pins.
       - name: Install workspace
         run: npm ci
+      # Both packages pin the same Playwright, hoisted once to the root.
       - name: Install Chromium for browser tests
-        run: npm exec -w ${{ matrix.package }} -- playwright install --with-deps chromium
-      - name: Run tests
-        run: npm test -w ${{ matrix.package }}
+        run: npm exec -w cassini-viewer -- playwright install --with-deps chromium
+      - name: Test cassini-viewer
+        id: viewer
+        run: npm test -w cassini-viewer
+      - name: Test cassini-app
+        if: ${{ !cancelled() && steps.viewer.outcome != 'skipped' }}
+        run: npm test -w cassini-app
+      # A failing browser test leaves a screenshot of the page (D-900).
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-failure-screenshots
+          path: '*/node_modules/.cache/vitest-screenshots/'
+          retention-days: 7
+          if-no-files-found: ignore
 
   unit:
     name: Unit tests (${{ matrix.module }})
@@ -182,7 +193,6 @@ jobs:
         module:
           - cassini-go-recorder
           - cassini-operator
-          - harness/go-talk-rotator
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -192,7 +202,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module }}/go.mod
-          cache-dependency-path: ${{ matrix.module }}/go.sum
+          cache-dependency-path: |
+            ${{ matrix.module }}/go.sum
+            harness/go-talk-rotator/go.sum
       - name: Install Go dependencies
         working-directory: ${{ matrix.module }}
         run: go mod download
@@ -200,7 +212,6 @@ jobs:
         # The operator needs them too: its CLI byte-parity test
         # (TestMeetingsContextBytesMatchTheCLIOverTheSameIDs) packs a real
         # portable meeting with ffmpeg and silently skips without it (D-740).
-        if: matrix.module == 'cassini-go-recorder' || matrix.module == 'cassini-operator'
         run: |
           # A vendor apt source we never install from can fail `apt-get update`
           # (exit 100) and take this step with it. ci-apt-update.sh drops every
@@ -215,6 +226,14 @@ jobs:
       - name: Run unit tests
         working-directory: ${{ matrix.module }}
         run: go test -race ./...
+      # The harness's rotator used to be a matrix leg of its own; its tests
+      # take seconds, so it rides along with the recorder (D-906).
+      - name: Vet and test harness/go-talk-rotator
+        if: ${{ !cancelled() && matrix.module == 'cassini-go-recorder' }}
+        working-directory: harness/go-talk-rotator
+        run: |
+          go vet ./...
+          go test -race ./...
 
       # Real recognition belongs in ordinary PR CI. FP32 runs on the hosted
       # CPU runner; neither full-ci nor a self-hosted GPU is needed. The tag
@@ -286,9 +305,10 @@ jobs:
   integration:
     name: "Integration (${{ matrix.script }}${{ matrix.nextcloud_image && format(', {0}', matrix.nextcloud_image) || '' }})"
     runs-on: ubuntu-latest
+    # Not `unit` (D-906): waiting for the slowest unit job, then for a runner,
+    # cost more than the integration runs it saved when a unit test failed.
     needs:
       - contracts
-      - unit
     if: needs.contracts.outputs.recorder-integration == 'true'
     timeout-minutes: 45
     strategy:
@@ -340,9 +360,10 @@ jobs:
   integration-mute:
     name: "Integration (ci-e2e-mute.sh)"
     runs-on: ubuntu-latest
+    # Not `unit` (D-906): waiting for the slowest unit job, then for a runner,
+    # cost more than the integration runs it saved when a unit test failed.
     needs:
       - contracts
-      - unit
     if: needs.contracts.outputs.recorder-integration == 'true'
     # Runs on every relevant PR and every push-to-main, without a label gate.
     # Only known unrelated changes skip these standalone recorder scenarios;

@@ -48,15 +48,18 @@ CI is partitioned into distinct workflows in `.github/workflows/` to balance fas
 
 1. **`.github/workflows/ci.yml` (Fast PR & Main Gate)**:
    - `contracts`: Offline manifest validation (`./scripts/test-info-schema.sh`), classifier checks (`./scripts/test-classify-image-relevance.sh`), harness regression scripts (`./harness/bin/test-*.sh`), and shellcheck.
-   - `ui`: Workspace unit and component test suites (`cassini-viewer`, `cassini-app`) via Vitest (`npm test -w <pkg>`) using root lockfile (`npm ci`). No Playwright browser suite in `ci.yml`.
-   - `unit`: Go unit test matrix with `-race` across `cassini-go-recorder`, `cassini-operator`, and `harness/go-talk-rotator`.
+   - `ui`: One job runs both workspace suites (`cassini-viewer`, then `cassini-app`) via Vitest (`npm test -w <pkg>`) using root lockfile (`npm ci`); uploads browser-test failure screenshots. No Playwright browser suite in `ci.yml`.
+   - `unit`: Go unit test matrix with `-race` across `cassini-go-recorder` and `cassini-operator`; `harness/go-talk-rotator` runs inside the recorder leg.
    - `integration`: Fast recorder integration matrix (`ci-e2e.sh`, `ci-e2e-private.sh`, `ci-e2e-rejoin.sh`) plus `nextcloud:33` oldest CI-tested major compatibility leg (`appinfo/info.xml` declares `min-version="32"`).
    - `integration-mute`: Dedicated `ci-e2e-mute.sh` run (gated on recorder-side `stream_opened` evidence via D-444 to prevent retry noise).
+   - `ci-passed` ("CI passed"): the workflow's gate (see §7).
    - PR concurrency cancels superseded runs (`cancel-in-progress: true`), preserving main pushes.
 
 2. **`.github/workflows/publish-exapp-image.yml` (Heavy Packaging & Product Verticals)**:
-   - Builds CPU and CUDA ExApp container images (CUDA split into content-hashed base and app layer).
-   - Container e2e (`ci-e2e-exapp.sh`) and published entrypoint validation (`ci-e2e-entrypoint-exapp.sh`).
+   - `prepare` classifies changes, validates `appinfo/info.xml` and resolves FFmpeg in one job.
+   - Builds CPU and CUDA ExApp container images (CUDA split into content-hashed base and app layer). `build-image` (the multi-arch join) runs on push only; PR jobs load the amd64 image.
+   - `container-checks`: smoke, container e2e (`ci-e2e-exapp.sh`) and real-entrypoint validation (`ci-e2e-entrypoint-exapp.sh`) in one job.
+   - "Faithful installed ExApp Talk artifact (CPU)" is the workflow's gate (see §7). `scripts/compatibility_evidence.py` `REQUIRED_JOBS` must match `release-evidence`'s `needs`.
    - Manual-install checks (`ci-e2e-install-exapp.sh`) and faithful AppAPI/HaRP installation and Talk verification (`ci-e2e-installed-exapp-talk.sh`).
    - Talk recording roundtrip (`ci-e2e-talk-record-roundtrip.sh`) and GPU transcription smoke with transcript-quality verification (`ci-transcribe-smoke-exapp.sh`).
    - Summary-template scenario (`ci-e2e-summary-template.sh`, D-895): reuses the roundtrip's phases 1-7 from `harness/bin/lib/talk-roundtrip.sh` and records against the fake OpenAI-compatible endpoint (`harness/fake-llm/`, compose profile `fake-llm`). New scenarios that need a recorded, published meeting should source that lib rather than copy the roundtrip.
@@ -115,6 +118,9 @@ Single self-hosted Linux/X64 GPU runner:
 ---
 
 ## 7. CI efficiency conventions
+
+- **The bottleneck is runner queueing, not job length (D-906).** The org's plan caps concurrent hosted jobs, so every job waits for a runner, often far longer than it runs, and every `needs` hop waits again. Prefer adding steps to an existing job over a new job; don't make a job wait on another unless it uses its output.
+- **Branch protection requires only gates.** main and `release/**` require "CI passed", "Faithful installed ExApp Talk artifact (CPU)", lint and changelog. Each gate needs every job of its workflow and fails unless each passed or was skipped (`scripts/ci-require-jobs.sh`). Add a new job to its workflow's gate `needs`; then jobs can be merged or renamed without editing the rulesets.
 
 - **Harness stack startup**: `harness_start_compose_stack` brings up containers with `docker compose up -d` (without `--wait`) followed by condition-based HTTP polling (`wait_for_nextcloud`). Dedicated `docker compose pull` steps are reserved for heavy image-publishing pipelines in `publish-exapp-image.yml`.
 - **Trim per-job install footprints**: Only install heavy tools (e.g. `ffmpeg`, `ripgrep`) on jobs that require them.
