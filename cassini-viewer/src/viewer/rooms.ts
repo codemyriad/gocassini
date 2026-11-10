@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 
-import { LL } from "../i18n";
+import { LL, locale } from "../i18n";
 import type { MeetingCatalogEntry } from "./catalog";
 import { meetingStartMonth } from "./meetingTime";
 
@@ -110,7 +110,7 @@ export function buildRoomBuckets(
     if (left.hasRoom !== right.hasRoom) {
       return left.hasRoom ? -1 : 1;
     }
-    return left.name.localeCompare(right.name, undefined, {
+    return left.name.localeCompare(right.name, get(locale), {
       sensitivity: "base",
     });
   });

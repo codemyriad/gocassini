@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 
-import { LL } from "../i18n";
+import { LL, locale } from "../i18n";
 import { colorFor, TAG_ICONS, type TagColorId, type TagIconId } from "./tagPalette";
 
 // The wire of the annotation routes (D-737, D-746). Time ranges are half-open
@@ -223,7 +223,7 @@ export function tagsByMeeting(vocabulary: TagVocabulary): Map<string, MeetingTag
       };
       return [{ tag: local, whole, stretches }];
     });
-    tags.sort((a, b) => Number(b.whole) - Number(a.whole) || a.tag.label.localeCompare(b.tag.label));
+    tags.sort((a, b) => Number(b.whole) - Number(a.whole) || a.tag.label.localeCompare(b.tag.label, get(locale)));
     result.set(meeting.meetingId, tags);
   }
   return result;
@@ -277,7 +277,7 @@ export function matchTags(tags: readonly VocabularyTag[], query: string): Vocabu
     .filter((tag) => labelKey(tag.label).includes(key))
     .sort(
       (a, b) =>
-        a.label.localeCompare(b.label, undefined, { sensitivity: "base" }) ||
+        a.label.localeCompare(b.label, get(locale), { sensitivity: "base" }) ||
         a.tagId.localeCompare(b.tagId),
     );
 }
