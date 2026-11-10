@@ -48,7 +48,7 @@ describe("nextcloudLanguage", () => {
 
 describe("a language without a translation for a string", () => {
   it("shows the English string instead of an empty one", () => {
-    const partial = mergeTranslations(en_viewer, { export: { button: "Exporter", download_audio: "" } });
+    const partial = mergeTranslations<typeof en_viewer>(en_viewer, { export: { button: "Exporter", download_audio: "" } });
     expect(partial.export.button).toBe("Exporter");
     expect(partial.export.download_audio).toBe("Download audio");
   });
