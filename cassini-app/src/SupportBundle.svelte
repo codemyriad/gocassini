@@ -3,9 +3,9 @@
   import { Download } from "@lucide/svelte";
   import { requestSupportBundle, SupportDownloadError } from "./support/client";
 
-  // administrator: Operator › Doctor's installation bundle, with the scrub
-  // choice (its logs can hold sensitive text). Otherwise the reader's own
-  // bundle from Help › Support (D-910): no logs, so no choice to make.
+  // administrator: Operator › Doctor's installation bundle. Otherwise the
+  // reader's own bundle from Help › Support (D-910). Both offer scrubbing:
+  // a reader's original bundle still holds their user ID and error text.
   export let administrator = false;
   export let surface: "browse" | "operator" = "browse";
   // Help › Support offers an administrator the way to Doctor instead of a
@@ -46,9 +46,7 @@
       try { link.click(); } finally { link.remove(); }
       // Let the browser start reading the Blob before releasing it.
       cleanupTimer = setTimeout(cleanupURL, 1000);
-      result = bundle.administrator
-        ? `Administrator support bundle downloaded. Privacy filtering was ${scrubSensitive ? "on" : "off"}.`
-        : "Support bundle downloaded. Attach it to your support request.";
+      result = `${bundle.administrator ? "Administrator support bundle" : "Support bundle"} downloaded. Privacy filtering was ${scrubSensitive ? "on" : "off"}.`;
     } catch (cause) {
       cleanupURL();
       if (alive) error = cause instanceof SupportDownloadError ? cause.message : request.signal.aborted
@@ -71,15 +69,14 @@
       {:else}<Download size={14} aria-hidden="true" />{/if}
       {busy ? "Preparing support bundle…" : "Download support bundle"}
     </button>
-    {#if administrator}
-      <label class="support-choice">
-        <input type="checkbox" class="checkbox checkbox-xs" bind:checked={scrubSensitive} disabled={busy} />
-        Scrub sensitive information
-      </label>
-    {/if}
+    <label class="support-choice">
+      <input type="checkbox" class="checkbox checkbox-xs" bind:checked={scrubSensitive} disabled={busy} />
+      Scrub sensitive information
+    </label>
   </div>
   <p class="support-explanation">
-    {#if !administrator}It holds your Nextcloud user ID, details about your browser and the recordings shared with you. It holds no meeting content and no server logs.
+    {#if !administrator && scrubSensitive}Leaves out your user ID and error messages; keeps counts and status codes.
+    {:else if !administrator}Includes your Nextcloud user ID and error messages as received, but no meeting content or server logs. Review before sharing.
     {:else if scrubSensitive}Downloads scrubbed diagnostics. Review before sharing.
     {:else}Original logs may contain names, URLs, credentials or meeting text. Review or edit the ZIP before sharing.{/if}
     Nothing is sent automatically.

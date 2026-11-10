@@ -827,22 +827,25 @@ func TestSupportRetentionSkipsWhenAFileIsUnreadable(t *testing.T) {
 	}
 }
 
-// Readers are offered no scrub choice (D-910): their README must not send
-// them back for one, and must say what their bundle does hold.
-func TestSupportUserReadmeOffersNoScrubbing(t *testing.T) {
-	b, err := newSupportBundle(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := b.writeZIP(&out); err != nil {
-		t.Fatal(err)
-	}
-	readme := string(b.entries["README.txt"])
-	if strings.Contains(readme, "scrubbing enabled") || strings.Contains(readme, "filtering is OFF") {
-		t.Fatalf("reader README offers a choice readers do not have:\n%s", readme)
-	}
-	if !strings.Contains(readme, "Nextcloud user ID") || !strings.Contains(readme, "no server logs") {
-		t.Fatalf("reader README does not say what the bundle holds:\n%s", readme)
+// A reader's README says which mode they chose and what their bundle holds
+// (D-910); it never describes logs or job references they do not have.
+func TestSupportUserReadmeDescribesTheReadersBundle(t *testing.T) {
+	for _, scrub := range []bool{false, true} {
+		b, err := newSupportBundle(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scrub {
+			b.manifest.Privacy = "scrubbed"
+		}
+		var out bytes.Buffer
+		if err := b.writeZIP(&out); err != nil {
+			t.Fatal(err)
+		}
+		readme := string(b.entries["README.txt"])
+		want := map[bool]string{false: "filtering is OFF", true: "filtering is ON"}[scrub]
+		if !strings.Contains(readme, want) || !strings.Contains(readme, "Nextcloud user ID") || strings.Contains(readme, "job references") {
+			t.Fatalf("scrub=%v: reader README is wrong:\n%s", scrub, readme)
+		}
 	}
 }

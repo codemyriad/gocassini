@@ -31,7 +31,7 @@ it("downloads once, reports success, and releases its Blob URL on unmount", asyn
   await page.getByRole("button", { name: "Download support bundle" }).click();
   await expect.element(page.getByRole("button", { name: "Preparing support bundle…" })).toBeDisabled();
   complete(new Response(new Blob(["PK-test"]), { headers: { "Content-Type": "application/zip" } }));
-  await expect.element(page.getByRole("status")).toHaveTextContent("Support bundle downloaded.");
+  await expect.element(page.getByRole("status")).toHaveTextContent("Support bundle downloaded. Privacy filtering was off.");
   expect(create).toHaveBeenCalledOnce(); expect(click).toHaveBeenCalledOnce(); expect(fetchMock).toHaveBeenCalledOnce();
   await unmount(component); component = undefined;
   expect(revoke).toHaveBeenCalledWith("blob:diagnostic-test");
@@ -66,19 +66,22 @@ it("keeps support reachable from Help for an ordinary user when the catalog fail
   await expect.element(page.getByRole("button", { name: "Download support bundle" })).not.toBeInTheDocument();
   await page.getByRole("group", { name: "Help" }).getByRole("button", { name: "Support" }).click();
   await expect.element(page.getByRole("button", { name: "Download support bundle" })).toBeEnabled();
-  // A reader's own bundle holds no logs: no scrub choice, no logs warning, no Doctor link.
-  await expect.element(page.getByRole("checkbox", { name: "Scrub sensitive information" })).not.toBeInTheDocument();
+  // A reader's own bundle holds no logs, but their user ID and error text:
+  // the scrub choice stays, the logs warning and the Doctor link do not.
+  await expect.element(page.getByRole("checkbox", { name: "Scrub sensitive information" })).not.toBeChecked();
+  await expect.element(page.getByText(/Includes your Nextcloud user ID/)).toBeVisible();
   expect(document.body.textContent).not.toContain("Original logs may contain");
   expect(document.body.textContent).not.toContain("Operator › Doctor");
 });
 
-it("offers original logs by default and scrubs only when selected", async () => {
+for (const [administrator, originalCopy] of [[true, /Original logs may contain/], [false, /Includes your Nextcloud user ID/]] as const)
+it(`offers original diagnostics by default and scrubs only when selected (administrator=${administrator})`, async () => {
   const bodies: {privacy:string}[]=[];
   vi.stubGlobal("fetch",vi.fn(async (_url,init)=>{bodies.push(JSON.parse(init.body));return new Response(null,{status:500});}));
-  component=mount(SupportBundle,{target:host,props:{administrator:true,surface:"operator"}});
+  component=mount(SupportBundle,{target:host,props:{administrator,surface:administrator?"operator":"browse"}});
   const choice=page.getByRole("checkbox",{name:"Scrub sensitive information"});
   await expect.element(choice).not.toBeChecked();
-  await expect.element(page.getByText(/Original logs may contain/)).toBeVisible();
+  await expect.element(page.getByText(originalCopy)).toBeVisible();
   await page.getByRole("button",{name:"Download support bundle"}).click();
   await expect.element(page.getByRole("alert")).toBeVisible();
   expect(bodies[0].privacy).toBe("original");
@@ -118,5 +121,5 @@ it("keeps a download running when the Support sheet is closed", async () => {
   complete(new Response(new Blob(["PK-test"]), { headers: { "Content-Type": "application/zip" } }));
   await expect.poll(() => click.mock.calls.length).toBe(1);
   await page.getByRole("group", { name: "Help" }).getByRole("button", { name: "Support" }).click();
-  await expect.element(page.getByText("Support bundle downloaded. Attach it to your support request.")).toBeVisible();
+  await expect.element(page.getByText("Support bundle downloaded. Privacy filtering was off.")).toBeVisible();
 });

@@ -14,7 +14,9 @@ attaching it to your support request. Nothing is uploaded automatically.
 
 A reader's bundle holds their Nextcloud user ID, details about their browser and
 the recordings shared with them, with any error messages exactly as received. It
-holds no meeting content and no server logs, so it offers no scrubbing.
+holds no meeting content and no server logs. **Scrub sensitive information**
+leaves out the user ID and the error text, and keeps the share counts, status
+codes and failure categories.
 
 **In Doctor, original diagnostics are the default.** They retain log text, unfamiliar error
 messages and diagnostic identifiers, which can contain names, URLs, credentials
