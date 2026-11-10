@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -554,5 +555,30 @@ func TestRecordedAtFileWorkerSettlesALandedUploadAfterABlock(t *testing.T) {
 	}
 	if len(f.nc.ifMatches()) != 0 {
 		t.Fatalf("a file already carrying the value was uploaded: %v", f.nc.ifMatches())
+	}
+}
+
+// A file whose marks the index recorded as unreadable is not "behind": the
+// worker must not run `annotate show` on it (which refused it already) and
+// must finish the row instead of retrying it forever.
+func TestRecordedAtFileWorkerLeavesAnUnreadableIndexAlone(t *testing.T) {
+	f := newFileWorkerFixture(t, 0)
+	ctx := context.Background()
+	var r map[string]any
+	if err := json.Unmarshal([]byte(f.nc.recording(annTestRecording)), &r); err != nil {
+		t.Fatal(err)
+	}
+	r["recordedAtUtc"] = testRecordedAt
+	ours, _ := json.Marshal(r)
+	f.nc.seed(annTestRecording, string(ours), nil)
+	if err := f.store.MarkUnavailable(ctx, path.Base(annTestRecording), ""); err != nil {
+		t.Fatal(err)
+	}
+	f.w.drain(ctx)
+	if row := f.row(t); row.state != recordedAtStateDone {
+		t.Fatalf("row = %+v, want done; logs: %s", row, f.logs)
+	}
+	if n := cliRuns(t, f.w.bin, "annotate show"); n != 0 {
+		t.Fatalf("annotate show ran %d times on a file the index holds as unreadable", n)
 	}
 }

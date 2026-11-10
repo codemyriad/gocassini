@@ -558,13 +558,19 @@ func (w *recordedAtFileWorker) annotationIndexBehind(ctx context.Context, name, 
 	if store == nil {
 		return false, nil
 	}
-	var indexed string
-	err := store.db.QueryRowContext(ctx, `SELECT container_sha256 FROM meeting_annotations WHERE opus_name=?`, name).Scan(&indexed)
+	var state, indexed string
+	err := store.db.QueryRowContext(ctx, `SELECT state, container_sha256 FROM meeting_annotations WHERE opus_name=?`, name).Scan(&state, &indexed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	// A file the index already recorded as unreadable has no digest to fall
+	// behind, and `annotate show` would refuse it again: leave it to the
+	// annotation backfill rather than retrying it here forever.
+	if state == annotationsStateUnavailable {
+		return false, nil
 	}
 	digest, err := fileSHA256(delivered)
 	if err != nil {
