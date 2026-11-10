@@ -265,3 +265,24 @@ describe("renderInsightExport with the viewer's own meeting links", () => {
     expect(out).not.toContain("t=12");
   });
 });
+
+describe("renderInsightExport with a recording instant", () => {
+  it("writes the source meeting's start in the reader's clock, zone named", () => {
+    const source: MeetingCatalogEntry = {
+      id: "m1",
+      title: "Standup",
+      dateLabel: "2026-10-05 14:30",
+      recordedAtUtc: "2026-10-05T14:30:00Z",
+      audioPath: "m1.opus",
+    };
+    const out = renderInsightExport({
+      record: insight(),
+      sources: [source],
+      markdown: DOCUMENT,
+      meetingUrl: noLink,
+    });
+    // Rome is UTC+2 on 5 October; the label's UTC digits must not appear.
+    expect(out).toContain("- Standup, Mon 5 Oct 2026, 16:30 CEST");
+    expect(out).not.toContain("14:30");
+  });
+});

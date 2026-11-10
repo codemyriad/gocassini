@@ -87,15 +87,17 @@ func TestWholeMeetingPolicyDeadlines(t *testing.T) {
 func TestPreviewPublishedAgeAndDecision(t *testing.T) {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
-		recorded string
-		age      int
-		decision string
+		recordedUTC, recorded string
+		age                   int
+		decision              string
 	}{
-		{"2026-08-02T23:59:59", 30, "evict"},
-		{"", 1, "keep"},
-		{"2026-09-02T00:00:00", -1, "keep"},
+		{"", "2026-08-02T23:59:59", 30, "evict"},
+		{"", "", 1, "keep"},
+		{"", "2026-09-02T00:00:00", -1, "keep"},
+		{"2026-08-02T22:59:59.000Z", "2026-08-03T00:59:59", 30, "evict"},
+		{"2026-08-03T00:00:00.000Z", "", 29, "keep"},
 	} {
-		m := meetingLifecycle{Name: "m.opus", State: "active", CreatedAtUTC: "2026-08-31T12:00:00Z", RecordedAtLocal: tc.recorded}
+		m := meetingLifecycle{Name: "m.opus", State: "active", CreatedAtUTC: "2026-08-31T12:00:00Z", RecordedAtLocal: tc.recorded, RecordedAtUTC: tc.recordedUTC}
 		if err := setMeetingRetentionAge(&m); err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +110,11 @@ func TestPreviewPublishedAgeAndDecision(t *testing.T) {
 		if err := json.Unmarshal(raw, &row); err != nil {
 			t.Fatal(err)
 		}
-		if row["name"] != "m.opus" || row["createdAtUtc"] != m.CreatedAtUTC || row["recordedAtLocal"] != tc.recorded || row["age"] != float64(tc.age) || row["decision"] != tc.decision {
+		var wantUTC any
+		if tc.recordedUTC != "" {
+			wantUTC = tc.recordedUTC
+		}
+		if row["name"] != "m.opus" || row["createdAtUtc"] != m.CreatedAtUTC || row["recordedAtLocal"] != tc.recorded || row["recordedAtUtc"] != wantUTC || row["age"] != float64(tc.age) || row["decision"] != tc.decision {
 			t.Fatalf("wrong preview: %s", raw)
 		}
 	}

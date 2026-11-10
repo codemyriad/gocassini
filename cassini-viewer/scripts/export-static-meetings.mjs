@@ -5,6 +5,11 @@ import { gunzipSync } from "node:zlib";
 import { dirname, join, resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { portableRecordedAtUtc, recordedAtUtcInstantMs } from "./meeting-start.mjs";
+
+// When the meeting happened, by the format's rule; see meeting-start.mjs.
+export { portableMeetingStart, portableRecordedAtUtc } from "./meeting-start.mjs";
+
 const CATALOG_VERSION = "cassini.viewer.catalog.v1";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -161,11 +166,13 @@ export function parseArgs(argv) {
 
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
   if (sourceType === "portable") {
-    const portable = extractPortableManifest(sourcePath);
+    const { manifest: portable, tags } = readPortableMeeting(sourcePath);
+    const recordedAtUtc = portableRecordedAtUtc(portable, tags);
     const { title, dateLabel } = describeMeeting(
       meetingId,
       portable?.meeting?.createdAtUtc,
       portable?.meeting?.recordedAtLocal,
+      recordedAtUtc,
     );
     const transcript = buildTranscriptWordsFromPortable(portable);
     // A user-set rename (the annotations document's meeting.title, D-862)
@@ -189,6 +196,9 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       hasAudio: !transcriptionOnly,
       title: sttVariantLabel ? `${meetingTitle} (${sttVariantLabel})` : meetingTitle,
       dateLabel,
+      // When the recording started, as the file states it. Only when it does:
+      // an entry without one falls back to dateLabel in every reader.
+      ...(recordedAtUtc ? { recordedAtUtc } : {}),
       speakerCount: transcript.speakers?.length ?? 0,
       segmentCount: transcript.segments?.length ?? 0,
       digestDurationMs: transcript.media?.durationMs ?? 0,
@@ -1395,8 +1405,17 @@ export function preferredPortableTitle(portable, meetingId) {
 // The dateLabel answers "when did this meeting happen", NOT "when did we
 // process it" — the two diverge every time a pack is rebuilt, and a re-run of
 // the whole archive would otherwise stamp every meeting with the rebuild day
-// (D-685). Sources, best first:
+// (D-685).
 //
+// dateLabel is the LEGACY, zone-less form of that answer. A file that states
+// its start as an instant (meeting.recordedAtUtc, or a qualifying DATE tag;
+// see meeting-start.mjs) has its entry carry that instant as recordedAtUtc,
+// and readers that know the field use it and ignore the label. The label is still written for older readers, as the UTC digits
+// of the instant — the same shape ULID-derived labels have always had.
+// Sources, best first:
+//
+//   0. recordedAtUtc — the instant playback position 0 was recorded, as
+//      portableRecordedAtUtc reads it.
 //   1. recordedAtLocal — the recording's own wall clock, the only field that
 //      states when people were actually in the room.
 //   2. the meeting id — filename stamps and ULID job ids both encode the
@@ -1407,9 +1426,14 @@ export function preferredPortableTitle(portable, meetingId) {
 //      timestamp still parses and sorts instead of showing a raw slug (D-588).
 //
 // The title always comes from the id.
-export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = "") {
+export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = "", recordedAtUtc = "") {
   const described = describeMeetingFromId(meetingId);
   const { dateFromId, ...describedFields } = described;
+
+  const instantMs = recordedAtUtcInstantMs(recordedAtUtc);
+  if (instantMs !== null) {
+    return { title: described.title, dateLabel: formatUtcDateLabel(new Date(instantMs)) };
+  }
 
   const recordedDateLabel = dateLabelFromLocalTimestamp(recordedAtLocal);
   if (recordedDateLabel !== "") {
@@ -1423,6 +1447,13 @@ export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = 
     return { title: described.title, dateLabel: metadataDateLabel };
   }
   return describedFields;
+}
+
+// validRecordedAtUtc returns the value when it is a well-formed recordedAtUtc
+// naming a real calendar instant, else "". The shape and the check live in
+// meeting-start.mjs, shared with the viewer.
+export function validRecordedAtUtc(value) {
+  return recordedAtUtcInstantMs(value) === null ? "" : value;
 }
 
 // describeMeetingFromId also reports `dateFromId`: false means the dateLabel is

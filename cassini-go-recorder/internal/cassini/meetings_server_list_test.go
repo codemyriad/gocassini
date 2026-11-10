@@ -3,8 +3,10 @@ package cassini
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The CLI prefers the app's server-side list route (D-701) and falls back to
@@ -50,10 +52,12 @@ func TestMeetingsListPrefersTheServerRouteAndSendsTheFilter(t *testing.T) {
 	if len(fake.requests) != 1 || fake.requests[0] != meetingsTestListPath {
 		t.Fatalf("requested %v, want only the list route", fake.requests)
 	}
-	// The filter must reach the server in the stamp layout it parses back. A
-	// bare --from date means the start of that day.
+	// The filter must reach the server in a layout it parses back: an
+	// instant with the reader's offset. A bare --from date means the start
+	// of that day in the reader's zone.
 	query := fake.queries[0]
-	for _, want := range []string{"from=2026-08-11+00%3A00%3A00", "room=rm_0123456789abcdef"} {
+	from := url.Values{"from": {time.Date(2026, 8, 11, 0, 0, 0, 0, time.Local).Format(time.RFC3339)}}.Encode()
+	for _, want := range []string{from, "room=rm_0123456789abcdef"} {
 		if !strings.Contains(query, want) {
 			t.Errorf("query %q is missing %q", query, want)
 		}

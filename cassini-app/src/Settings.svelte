@@ -16,6 +16,7 @@
   import StorageUsagePanel from "./StorageUsagePanel.svelte";
   import RetentionPanel from "./RetentionPanel.svelte";
   import RecordingSetup from "./RecordingSetup.svelte";
+  import RecordedAtMigration from "./RecordedAtMigration.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
   import SupportPanel from "./SupportPanel.svelte";
@@ -66,6 +67,9 @@
          made the one screen that answers "is this working" the hardest one to
          find. -->
     <RecordingSetup {operatorClient} on:openStorage={() => dispatch("panel", "pipeline")} on:openRun={(event) => openRun(event.detail)} on:openRuns={() => dispatch("panel", "recordings")} />
+    <!-- Below the checks: not a check, a one-off migration an administrator
+         starts (and can pause) once they have read what it does. -->
+    {#if operatorClient}<RecordedAtMigration {operatorClient} />{/if}
   {:else if panel === "endpoints"}
     <LLMSettingsPanel {operatorClient} />
   {:else if panel === "pipeline"}

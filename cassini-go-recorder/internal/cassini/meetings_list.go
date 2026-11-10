@@ -68,7 +68,8 @@ listing every meeting as though it had narrowed them.
 	// Validate the filter before the network call: a malformed date is a usage
 	// error the caller has to fix either way, and making them wait for a round
 	// trip to hear it is pure cost.
-	filter, err := parseMeetingsFilter(*fromDate, *toDate, *room)
+	loc := meetingsLocation(ctx)
+	filter, err := parseMeetingsFilter(*fromDate, *toDate, *room, loc)
 	if err != nil {
 		fmt.Fprintf(stderr, "list configuration error: %v\n", err)
 		return 2
@@ -81,6 +82,7 @@ listing every meeting as though it had narrowed them.
 	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
+	client.loc = loc
 	var narrowing meetingsTagNarrowing
 	if filter.tag != "" {
 		// Checked first for the reason search checks it: an app without tags
@@ -152,7 +154,7 @@ listing every meeting as though it had narrowed them.
 	for _, entry := range entries {
 		fmt.Fprintf(stdout, "meeting=%s date=%s room=%s title=%s speakers=%s segments=%s duration_ms=%s fetchable=%s\n",
 			blankMeetingsDash(entry.ID),
-			blankMeetingsDash(entry.DateLabel),
+			blankMeetingsDash(meetingDisplayDate(entry, loc)),
 			blankMeetingsDash(entry.roomSelector()),
 			blankMeetingsDash(entry.Title),
 			meetingsCount(entry.SpeakerCount),

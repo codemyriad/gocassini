@@ -43,7 +43,7 @@ describe("MeetingView header", () => {
     expect(meetingFactsSource).toContain("{#if durationMs > 0}");
     expect(meetingFactsSource).toContain("{#if people.voices > 0}");
     expect(meetingFactsSource).toContain("{#if room}");
-    expect(meetingFactsSource).toContain("$: dated = hasMeetingDate(dateLabel);");
+    expect(meetingFactsSource).toContain("$: dated = hasMeetingStart(start);");
     expect(meetingFactsSource).toContain("{#if hasAny}");
   });
 

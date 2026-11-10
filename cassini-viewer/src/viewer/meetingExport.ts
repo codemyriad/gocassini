@@ -5,6 +5,7 @@ import { buildDisplayTranscriptFromArtifacts } from "./portable";
 import type { JudgedDisplaySegment } from "../core/transcript";
 import type { LoadedArtifact } from "./loadArtifact";
 import type { MeetingCatalogEntry } from "./catalog";
+import { formatMeetingStartForExport } from "./meetingTime";
 
 /** The same display projection used by the meeting reader, including its selected transcript. */
 export function displaySegmentsForArtifact(artifact: Pick<LoadedArtifact, "index" | "readableTranscript" | "displayTranscript" | "wordEndsBoundedByAudio">): JudgedDisplaySegment[] {
@@ -55,8 +56,11 @@ export function displaySegmentsForArtifact(artifact: Pick<LoadedArtifact, "index
 }
 
 /** Markdown follows the reader's turn order and its inline interjections. */
-export function transcriptMarkdown(entry: Pick<MeetingCatalogEntry, "title" | "dateLabel"> | null, segments: JudgedDisplaySegment[]): string {
-  const heading = [entry?.title || "Meeting transcript", entry?.dateLabel].filter(Boolean).join(" — ");
+export function transcriptMarkdown(entry: Pick<MeetingCatalogEntry, "title" | "dateLabel" | "recordedAtUtc"> | null, segments: JudgedDisplaySegment[]): string {
+  // An instant start is written in the reader's clock with its zone named,
+  // since the copy is read elsewhere; a label-only start keeps its raw digits.
+  const when = entry?.recordedAtUtc ? formatMeetingStartForExport(entry) : entry?.dateLabel;
+  const heading = [entry?.title || "Meeting transcript", when].filter(Boolean).join(" — ");
   const rows = buildTranscriptRows(segments);
   const body = rows.map((row) => {
     const over = row.over.length ? ` (over ${row.over.join(" and ")})` : "";

@@ -410,16 +410,173 @@ describe("loadArtifactFromDirectory", () => {
 
     expect(meetingSection?.rows).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ label: "Recorded", value: "March 10, 2026 at 12:30 PM" }),
+        // recordedAtLocal is a label: its own digits, no zone claimed.
+        expect.objectContaining({ label: "Recorded", value: "Tue 10 Mar 2026, 12:30" }),
         expect.objectContaining({ label: "Duration", value: "17:26" }),
         expect.objectContaining({ label: "Speakers", values: ["Chris", "Alex"] }),
       ]),
     );
     expect(processingSection?.rows).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ label: "Processed", value: "March 19, 2026 at 9:43 AM UTC" }),
+        // An instant, in the reader's clock (the suite runs in Europe/Rome).
+        expect.objectContaining({ label: "Processed", value: "Thu 19 Mar 2026, 10:43" }),
         expect.objectContaining({ label: "Speech to text", value: "sherpa-onnx · parakeet-tdt-0.6b-v2-int8" }),
       ]),
+    );
+  });
+
+  it("reads the recording start instant from the manifest and shows it in the reader's clock", async () => {
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/?meeting=weekly-sync-2026-03-10--12:30",
+        protocol: "http:",
+      },
+    } as Window;
+    const portableFixture = {
+      meeting: {
+        id: "mtg_abc123",
+        durationMs: 1_046_260,
+        createdAtUtc: "2026-03-19T09:43:13Z",
+        recordedAtLocal: "2026-03-10T12:30:00",
+        recordedAtUtc: "2026-03-10T11:30:00Z",
+        processedAtUtc: "2026-03-19T09:43:13Z",
+      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
+      provenance: {
+        speechToText: {
+          "raw-asr": {
+            backend: "sherpa-onnx",
+            model: "parakeet-tdt-0.6b-v2-int8",
+          },
+        },
+      },
+      speakers: [
+        { id: "spk_chris", label: "Chris" },
+        { id: "spk_alex", label: "Alex" },
+      ],
+      transcript: {
+        items: [
+          {
+            id: "seg_1",
+            speaker: "spk_chris",
+            startMs: 1000,
+            endMs: 1500,
+            text: "hello",
+          },
+        ],
+      },
+    };
+    const { transcript: rawTranscript, ...manifest } = portableFixture;
+    const portableBytes = buildPortableOpusFixture({ manifest, rawTranscript });
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(".opus")) {
+        expect(init?.headers).toMatchObject({
+          Range: "bytes=0-1048575",
+        });
+        return {
+          ok: true,
+          status: 206,
+          headers: new Headers({
+            "content-range": "bytes 0-1999/2000",
+          }),
+          arrayBuffer: async () =>
+            portableBytes.buffer.slice(
+              portableBytes.byteOffset,
+              portableBytes.byteOffset + portableBytes.byteLength,
+            ),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadPortableArtifactFromAudioPath("./weekly-sync-2026-03-10--12:30.opus");
+    const meetingSection = artifact.metadata?.sections.find((section) => section.title === "Meeting");
+
+    // The file's own instant is what the header uses for a meeting opened
+    // without a catalog entry that knows it.
+    expect(artifact.metadata?.recording.recordedAtUtc).toBe("2026-03-10T11:30:00Z");
+    // It outranks recordedAtLocal, and renders in the reader's clock: Rome.
+    expect(meetingSection?.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Recorded", value: "Tue 10 Mar 2026, 12:30" }),
+      ]),
+    );
+    process.env.TZ = "America/New_York";
+    try {
+      const west = await loadPortableArtifactFromAudioPath("./weekly-sync-2026-03-10--12:30.opus");
+      expect(west.metadata?.sections.find((section) => section.title === "Meeting")?.rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ label: "Recorded", value: "Tue 10 Mar 2026, 07:30" }),
+        ]),
+      );
+    } finally {
+      process.env.TZ = "Europe/Rome";
+    }
+  });
+
+  // Format SPEC "When the meeting happened", step 2, shaped like conformance
+  // vector 029: no recordedAtUtc, DATE is the start with an offset and is not
+  // createdAtUtc, recordedAtLocal carries other digits. And the mirror tag
+  // CASSINI_RECORDED_AT_UTC is never taken in place of the manifest member.
+  it("reads the start from a DATE tag that is not the pack stamp, never from the mirror tag", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=date-with-offset", protocol: "http:" },
+    } as Window;
+    const manifest = {
+      meeting: {
+        id: "mtg_date",
+        durationMs: 60,
+        createdAtUtc: "2026-11-09T10:47:02Z",
+        recordedAtLocal: "2026-11-09T09:31:48",
+      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
+      speakers: [{ id: "spk_a", label: "A" }],
+    };
+    const rawTranscript = {
+      items: [{ id: "seg_1", speaker: "spk_a", startMs: 0, endMs: 50, text: "hi" }],
+    };
+    const serve = (bytes: Uint8Array) =>
+      vi.fn(async (input: string | URL) => {
+        if (String(input).endsWith(".opus")) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers(),
+            arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+          } as Response;
+        }
+        return { ok: false } as Response;
+      }) as typeof fetch;
+
+    globalThis.fetch = serve(
+      buildPortableOpusFixture({
+        manifest,
+        rawTranscript,
+        extraTags: { DATE: "2026-11-09T10:31:48+01:00", CASSINI_RECORDED_AT_UTC: "2026-11-09T05:00:00Z" },
+      }),
+    );
+    const store = new PortableMeetingStore();
+    const artifact = await loadPortableArtifactFromAudioPath("./date-with-offset.opus", store);
+    expect(artifact.metadata?.recording.recordedAtUtc).toBe("2026-11-09T09:31:48.000Z");
+    // 09:31:48Z in Rome, not the label's 09:31 and not the mirror's 05:00Z.
+    expect(artifact.metadata?.sections.find((section) => section.title === "Meeting")?.rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: "Recorded", value: "Mon 9 Nov 2026, 10:31" })]),
+    );
+
+    // DATE equal to createdAtUtc says nothing about the recording; with only
+    // the mirror tag left, the label is what is shown.
+    globalThis.fetch = serve(
+      buildPortableOpusFixture({
+        manifest,
+        rawTranscript,
+        extraTags: { DATE: "2026-11-09T10:47:02Z", CASSINI_RECORDED_AT_UTC: "2026-11-09T05:00:00Z" },
+      }),
+    );
+    const stamped = await loadPortableArtifactFromAudioPath("./date-is-created-at.opus", new PortableMeetingStore());
+    expect(stamped.metadata?.recording.recordedAtUtc).toBeNull();
+    expect(stamped.metadata?.sections.find((section) => section.title === "Meeting")?.rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: "Recorded", value: "Mon 9 Nov 2026, 09:31" })]),
     );
   });
 

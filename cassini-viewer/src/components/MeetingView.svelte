@@ -95,6 +95,7 @@
   import { loadAudioFile, saveBlob, saveTranscript } from "../viewer/exportTransfer";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { hasRoom, roomLabelOf } from "../viewer/rooms";
+  import { withRecordedAtUtc } from "../viewer/meetingTime";
   import {
     formatInsightCreated,
     insightHeadline,
@@ -380,6 +381,12 @@
   let chaptersSrc: string | null = null;
   let timingPrecision: ArtifactTimingPrecision | null = null;
   let artifactMetadata: ArtifactMetadata | null = null;
+  // The meeting with its start completed from the file once it has loaded. A
+  // single recording opened by URL (the public embed) has no catalog, so its
+  // entry knows only what the file name said; the manifest's
+  // meeting.recordedAtUtc is the file's own record of when it started and wins
+  // over that guess. Everything that shows or exports the start reads this.
+  $: meetingWithStart = withRecordedAtUtc(meeting, artifactMetadata?.recording?.recordedAtUtc ?? null);
   // Whether the PRODUCER already bounded this artifact's word ends by the
   // measured audio (manifest provenance.wordTimings.endsBoundedByAudio). When
   // it did, the legacy display-time repair must stand down: its budget would
@@ -649,7 +656,7 @@
 
   async function copyTranscript() {
     if (copyExportBusy) return;
-    const text = transcriptMarkdown(meeting, displaySegments);
+    const text = transcriptMarkdown(meetingWithStart, displaySegments);
     if (!navigator.clipboard?.writeText) {
       exportStatus = "Clipboard unavailable here — use Download transcript.";
       return;
@@ -669,7 +676,7 @@
 
   function downloadTranscript() {
     exportRequestId += 1;
-    saveTranscript(transcriptMarkdown(meeting, displaySegments), `${exportStem()}-transcript.md`);
+    saveTranscript(transcriptMarkdown(meetingWithStart, displaySegments), `${exportStem()}-transcript.md`);
     exportStatus = "Transcript downloaded.";
   }
 
@@ -1725,7 +1732,7 @@
       <div class="mt-2 flex flex-wrap items-center gap-1.5">
         <span class="mv-meta contents">
           <MeetingFacts
-            dateLabel={meeting.dateLabel}
+            start={meetingWithStart}
             room={hasRoom(meeting) ? roomLabelOf(meeting) : null}
             durationMs={transcriptIndex ? clampedDurationMs : 0}
             {speakerGroups}

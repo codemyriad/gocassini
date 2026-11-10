@@ -130,3 +130,23 @@ it("has valid independent fixtures for every listed URL and rejects unknown ones
   }
   expect(() => scenarioReport("invalid")).toThrow("Unknown Doctor preview");
 });
+
+// The migration previews show the section; every other scenario reports
+// not_needed, which the panel hides. Start and pause are simulated the way
+// the operator answers them.
+it("simulates the recording-time migration only in its own scenarios", async () => {
+  for (const scenario of doctorScenarios) {
+    const state = (await createPreviewClient(scenario.id).getRecordedAtMigration()).state;
+    if (scenario.id.startsWith("recorded-at-")) expect(state).not.toBe("not_needed");
+    else expect(state).toBe("not_needed");
+  }
+  vi.useFakeTimers();
+  const client = createPreviewClient("recorded-at-needed");
+  const started = client.startRecordedAtMigration();
+  await vi.runAllTimersAsync();
+  expect(await started).toMatchObject({ state: "running", needed: 0, in_progress: 2, queued: 35 });
+  const paused = client.pauseRecordedAtMigration();
+  await vi.runAllTimersAsync();
+  expect(await paused).toMatchObject({ state: "pausing", in_progress: 2 });
+  expect(await client.getRecordedAtMigration()).toMatchObject({ state: "paused", in_progress: 0, done: 2, queued: 35 });
+});

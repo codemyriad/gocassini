@@ -129,7 +129,7 @@ func (s *annotationService) retentionInventory(ctx context.Context) ([]meetingLi
 		delete(ids, name)
 		if m.State == "active" {
 			if err := s.loadMeetingRetentionAge(ctx, &m); err != nil {
-				skipped = append(skipped, remoteRetentionEffect{Name: name, CreatedAtUTC: m.CreatedAtUTC, RecordedAtLocal: m.RecordedAtLocal, Decision: "keep", Action: "skip", Reason: "Published meeting timestamps could not be established; file left unchanged."})
+				skipped = append(skipped, remoteRetentionEffect{Name: name, CreatedAtUTC: m.CreatedAtUTC, RecordedAtLocal: m.RecordedAtLocal, RecordedAtUTC: m.RecordedAtUTC, Decision: "keep", Action: "skip", Reason: "Published meeting timestamps could not be established; file left unchanged."})
 				continue
 			}
 		}
@@ -153,7 +153,7 @@ func (s *annotationService) reconcileRetentionInventory(ctx context.Context) ([]
 			return nil, err
 		} else if ok {
 			if m.State == "active" {
-				if _, err := s.rt.store.db.ExecContext(ctx, `UPDATE meeting_lifecycle SET age_anchor=?,anchor_source=?,created_at_utc=?,recorded_at_local=? WHERE name=? AND state='active' AND file_id=? AND document_path=? AND anchor_source NOT IN ('createdAtUtc','recordedAtLocal')`, m.Anchor, m.AnchorSource, m.CreatedAtUTC, m.RecordedAtLocal, m.Name, m.FileID, m.Path); err != nil {
+				if _, err := s.rt.store.db.ExecContext(ctx, `UPDATE meeting_lifecycle SET age_anchor=?,anchor_source=?,created_at_utc=?,recorded_at_local=?,recorded_at_utc=? WHERE name=? AND state='active' AND file_id=? AND document_path=? AND anchor_source NOT IN `+meetingAgeFrozenSourcesSQL, m.Anchor, m.AnchorSource, m.CreatedAtUTC, m.RecordedAtLocal, m.RecordedAtUTC, m.Name, m.FileID, m.Path); err != nil {
 					return nil, err
 				}
 			}

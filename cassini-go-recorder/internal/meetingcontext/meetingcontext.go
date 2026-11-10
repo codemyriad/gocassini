@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"gocassini/internal/portable"
 )
 
 // Version identifies the context bundle's shape. Bumping it is a breaking
@@ -66,10 +68,23 @@ type MeetingContext struct {
 
 // Meeting is what the meeting was.
 type Meeting struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// CreatedAtUTC is when the file was built, not when the meeting
+	// happened. Kept for consumers that already read it.
 	CreatedAtUTC string `json:"createdAtUtc,omitempty"`
-	DurationMS   int64  `json:"durationMs,omitempty"`
+	// RecordedAtUTC is when the recording started: the instant at position 0
+	// of the audio, so a segment's wall-clock time is RecordedAtUTC + startMs.
+	// RFC 3339 UTC. Absent when the file does not know it.
+	RecordedAtUTC string `json:"recordedAtUtc,omitempty"`
+	// RecordedAtLocal is the file's zone-less wall-clock label, carried only
+	// so a reader can show it as such. It is never converted to an instant.
+	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
+	// MeetingStart is when the meeting happened as the format's rule picks
+	// it (portable.MeetingStartOf), which can also come from the file's DATE
+	// tag. Absent when the file does not say.
+	MeetingStart *portable.MeetingStart `json:"meetingStart,omitempty"`
+	DurationMS   int64                  `json:"durationMs,omitempty"`
 	// RoomID and RoomName say which conversation this meeting came out of
 	// (D-640). Both optional — a meeting with no room is an ordinary state —
 	// and both are read from the catalog entry rather than from the file,
@@ -344,6 +359,11 @@ type BuildInput struct {
 	ID              string
 	Title           string
 	CreatedAtUTC    string
+	RecordedAtUTC   string
+	RecordedAtLocal string
+	// DateTag is the file's plain DATE tag, which says when the meeting
+	// happened when the manifest does not (see portable.MeetingStartOf).
+	DateTag         string
 	DurationMS      int64
 	RoomID          string
 	RoomName        string
@@ -373,6 +393,8 @@ func Build(in BuildInput) MeetingContext {
 			ID:              strings.TrimSpace(in.ID),
 			Title:           strings.TrimSpace(in.Title),
 			CreatedAtUTC:    strings.TrimSpace(in.CreatedAtUTC),
+			RecordedAtUTC:   strings.TrimSpace(in.RecordedAtUTC),
+			RecordedAtLocal: strings.TrimSpace(in.RecordedAtLocal),
 			DurationMS:      in.DurationMS,
 			RoomID:          strings.TrimSpace(in.RoomID),
 			RoomName:        strings.TrimSpace(in.RoomName),
@@ -388,7 +410,26 @@ func Build(in BuildInput) MeetingContext {
 		Segments: make([]Segment, 0, len(in.Segments)),
 		Summary:  in.Summary,
 	}
+	if start := bundle.Meeting.start(in.DateTag); start.Known() {
+		bundle.Meeting.MeetingStart = &start
+	}
 	bundle.Speakers = append(bundle.Speakers, in.Speakers...)
 	bundle.Segments = append(bundle.Segments, in.Segments...)
 	return bundle
+}
+
+// start is when the meeting happened: MeetingStart when the bundle carries
+// it, else the format's rule applied to the fields it has and dateTag.
+func (m Meeting) start(dateTag string) portable.MeetingStart {
+	if m.MeetingStart != nil {
+		// A decoded bundle carries the text only; recover the instant.
+		if start := portable.ParseMeetingStart(m.MeetingStart.Source, m.MeetingStart.Value); start.Known() {
+			return start
+		}
+	}
+	return portable.MeetingStartOf(portable.Meeting{
+		RecordedAtUTC:   m.RecordedAtUTC,
+		RecordedAtLocal: m.RecordedAtLocal,
+		CreatedAtUTC:    m.CreatedAtUTC,
+	}, dateTag)
 }

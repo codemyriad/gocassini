@@ -44,6 +44,22 @@ describe("singleMeetingEntry", () => {
     });
   });
 
+  it("treats a ULID job id's time as the instant it is", () => {
+    // The id's timestamp is the job's creation in UTC; it renders in the
+    // reader's clock rather than as UTC digits.
+    const entry = singleMeetingEntry("https://x.test/01KKA70QN0ABCDEFGHJKMNPQRS.opus");
+    expect(entry).toMatchObject({
+      dateLabel: "2026-03-09 21:11",
+      recordedAtUtc: "2026-03-09T21:11:00.000Z",
+    });
+  });
+
+  it("claims no instant for a file-name stamp", () => {
+    expect(singleMeetingEntry("https://x.test/Daily-Standup--2026-03-13--12-00-00.opus")).not.toHaveProperty(
+      "recordedAtUtc",
+    );
+  });
+
   it("lets the embedding page name the recording", () => {
     expect(singleMeetingEntry("/talk.opus", "  Cassini at NCC 2026  ").title).toBe("Cassini at NCC 2026");
     expect(singleMeetingEntry("/talk.opus", "   ").title).toBe("Talk");

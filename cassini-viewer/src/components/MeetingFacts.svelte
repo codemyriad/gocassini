@@ -6,13 +6,20 @@
 
   import { formatClockTime } from "../core/transcript";
   import { countPeople, type SpeakerGroup, type VoiceSample } from "../core/speakers";
-  import { formatMeetingDateShort, formatMeetingDateWithDay, hasMeetingDate } from "../viewer/catalog";
+  import {
+    formatMeetingStartDay,
+    formatMeetingStartWithDay,
+    hasMeetingStart,
+    type MeetingTimeSource,
+  } from "../viewer/meetingTime";
   import { popover } from "./tags/popover";
   import PeoplePanel from "./speakers/PeoplePanel.svelte";
   import type { SpeakersSession } from "./speakers/session";
   import type { ArtifactRecordingFacts, ArtifactTimingPrecision } from "../viewer/loadArtifact";
 
-  export let dateLabel = "";
+  // When the meeting started: the instant when known, else the legacy label
+  // (meetingTime.ts decides which, and in which clock).
+  export let start: MeetingTimeSource | null = null;
   export let room: string | null = null;
   export let durationMs = 0;
   // The meeting's devices with any voices separated from them (groupSpeakers).
@@ -32,7 +39,7 @@
   let anchor: HTMLButtonElement;
   let panel: HTMLDivElement;
 
-  $: dated = hasMeetingDate(dateLabel);
+  $: dated = hasMeetingStart(start);
   // The meeting's people are the same whichever transcript is shown, so the
   // header counts what the People panel lists.
   $: people = countPeople(speakerGroups);
@@ -106,7 +113,7 @@
     {#if dated}
       <span class="mf-chip-part">
         <Calendar size={12} aria-hidden="true" />
-        {formatMeetingDateShort(dateLabel.slice(0, 10))}
+        {formatMeetingStartDay(start)}
       </span>
     {:else if room}
       <span class="mf-chip-part min-w-0">
@@ -142,7 +149,7 @@
           {#if dated}
             <div class="mf-fact">
               <dt><Calendar size={14} aria-hidden="true" /><span class="sr-only">Date</span></dt>
-              <dd>{formatMeetingDateWithDay(dateLabel)}</dd>
+              <dd>{formatMeetingStartWithDay(start)}</dd>
             </div>
           {/if}
           {#if durationMs > 0}

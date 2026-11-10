@@ -29,6 +29,10 @@ type ExtractedMeeting struct {
 	// FormatTag is CASSINI_FORMAT exactly as the file carries it.
 	FormatTag string
 
+	// DateTag is the plain DATE tag exactly as the file carries it. It can say
+	// when the meeting happened when the manifest does not; see MeetingStart.
+	DateTag string
+
 	// Transcript is the default raw-words transcript: the same value
 	// ExtractTranscriptWords returns.
 	Transcript ExtractedTranscript
@@ -88,6 +92,7 @@ func extractMeetingTags(path string, tags map[string]string) (ExtractedMeeting, 
 	extracted := ExtractedMeeting{
 		Manifest:        manifest,
 		FormatTag:       formatTag,
+		DateTag:         strings.TrimSpace(metadataTag(tags, "DATE")),
 		SummaryMarkdown: summaryMarkdownFromAttachments(manifest.Attachments),
 	}
 
@@ -108,6 +113,13 @@ func extractMeetingTags(path string, tags map[string]string) (ExtractedMeeting, 
 	}
 	extracted.Transcript = transcript
 	return extracted, nil
+}
+
+// MeetingStart is when the meeting happened, by the format's rule: the
+// manifest's recordedAtUtc, else a DATE with an offset that is not the build
+// time, else the recordedAtLocal label.
+func (m ExtractedMeeting) MeetingStart() portable.MeetingStart {
+	return portable.MeetingStartOf(m.Manifest.Meeting, m.DateTag)
 }
 
 // summaryMarkdownFromAttachments returns the decoded summary.md attachment, or

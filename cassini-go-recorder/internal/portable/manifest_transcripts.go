@@ -579,7 +579,7 @@ func BuildPublishedOpusTags(manifest Manifest, encoded EncodedMultiTranscriptMan
 func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultWordsID string) map[string]string {
 	tags := map[string]string{
 		"TITLE":                       manifest.Meeting.Title,
-		"DATE":                        manifest.Meeting.CreatedAtUTC,
+		"DATE":                        MeetingDateTag(manifest.Meeting),
 		"DESCRIPTION":                 Description,
 		"ENCODER":                     "Cassini",
 		"CASSINI_FORMAT":              Format,
@@ -601,6 +601,9 @@ func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscr
 		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(People(manifest.Speakers))),
 	}
 	applyAudioIntegrityTags(tags, manifest.Integrity)
+	if manifest.Meeting.RecordedAtUTC != "" {
+		tags["CASSINI_RECORDED_AT_UTC"] = manifest.Meeting.RecordedAtUTC
+	}
 	if manifest.Meeting.RecordedAtLocal != "" {
 		tags["CASSINI_RECORDED_AT_LOCAL"] = manifest.Meeting.RecordedAtLocal
 	}

@@ -29,12 +29,17 @@ type Room struct {
 	Meetings        int    `json:"meetings"`
 	Latest          string `json:"latest,omitempty"`
 	Earliest        string `json:"earliest,omitempty"`
+	// LatestRecordedAtUTC and EarliestRecordedAtUTC are when the newest and
+	// oldest meeting started (RFC 3339 UTC), absent when unknown; Latest and
+	// Earliest are then the only, zone-less, dates.
+	LatestRecordedAtUTC   string `json:"latestRecordedAtUtc,omitempty"`
+	EarliestRecordedAtUTC string `json:"earliestRecordedAtUtc,omitempty"`
 }
 
 // ListInput narrows list. Every field is optional.
 type ListInput struct {
 	Room string `json:"room,omitempty" jsonschema:"a room id, as rooms reports it"`
-	From string `json:"from,omitempty" jsonschema:"earliest date, inclusive: 2026-08-11, 2026-08-11 14:30 or 2026-08-11 14:30:05; no timezone"`
+	From string `json:"from,omitempty" jsonschema:"earliest date, inclusive: 2026-08-11, 2026-08-11 14:30 or 2026-08-11 14:30:05 (zone-less, compared as UTC), or an instant with its offset such as 2026-08-11T14:30:05+02:00"`
 	To   string `json:"to,omitempty" jsonschema:"latest date, inclusive, in the same forms as from"`
 	Tag  string `json:"tag,omitempty" jsonschema:"a tag label (any case) or tag id"`
 }
@@ -162,9 +167,13 @@ type SearchResult struct {
 
 // SearchHit is one moment: which meeting, who, and where in the recording.
 type SearchHit struct {
-	MeetingID       string `json:"meetingId"`
-	Title           string `json:"title,omitempty"`
-	DateLabel       string `json:"dateLabel,omitempty"`
+	MeetingID string `json:"meetingId"`
+	Title     string `json:"title,omitempty"`
+	DateLabel string `json:"dateLabel,omitempty"`
+	// RecordedAtUTC is when the meeting's audio starts (RFC 3339 UTC), so
+	// this moment happened at RecordedAtUTC + StartMS. Absent when unknown;
+	// DateLabel is then the only, zone-less, date.
+	RecordedAtUTC   string `json:"recordedAtUtc,omitempty"`
 	RoomID          string `json:"roomId,omitempty"`
 	RoomName        string `json:"roomName,omitempty"`
 	RoomDisplayName string `json:"roomDisplayName,omitempty"`
@@ -228,9 +237,13 @@ type MeetingContext struct {
 
 // ContextMeeting is what the meeting was.
 type ContextMeeting struct {
-	ID              string `json:"id"`
-	Title           string `json:"title"`
-	CreatedAtUTC    string `json:"createdAtUtc,omitempty"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	CreatedAtUTC  string `json:"createdAtUtc,omitempty"`
+	RecordedAtUTC string `json:"recordedAtUtc,omitempty"`
+	// RecordedAtLocal is the file's zone-less wall-clock label, shown as
+	// such and never converted; RecordedAtUTC wins when both are present.
+	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
 	DurationMS      int64  `json:"durationMs,omitempty"`
 	RoomID          string `json:"roomId,omitempty"`
 	RoomName        string `json:"roomName,omitempty"`

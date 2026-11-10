@@ -63,3 +63,27 @@ func TestMeetingMetadataFileIDForPrefersLatestDelivery(t *testing.T) {
 		t.Fatalf("nil store file id = %d, %v", got, err)
 	}
 }
+
+// Forgetting a meeting (retired or deleted) drops its queued file work, so a
+// missing file never sits in the backfill as blocked; other meetings keep theirs.
+func TestForgetDropsRecordedAtFileWork(t *testing.T) {
+	f := newRecordedAtFixture(t)
+	f.put(t, 3, startedJob+".opus", `{"id":"`+startedJob+`","audioPath":"./meetings/`+startedJob+`.opus"}`)
+	f.put(t, 4, bareJob+".opus", `{"id":"`+bareJob+`","audioPath":"./meetings/`+bareJob+`.opus"}`)
+	for _, name := range []string{startedJob + ".opus", bareJob + ".opus"} {
+		if _, err := f.rt.meetingMetadata.db.Exec(`INSERT INTO recorded_at_file_backfill(opus_name, recorded_at_utc, state, updated_at) VALUES(?, '2026-07-17T10:33:05.000Z', 'blocked', '')`, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.rt.meetingMetadata.Forget(context.Background(), 3); err != nil {
+		t.Fatal(err)
+	}
+	queued := f.queued(t)
+	if _, kept := queued[startedJob+".opus"]; kept || len(queued) != 1 {
+		t.Fatalf("queued after forget = %v", queued)
+	}
+	counts, err := f.rt.meetingMetadata.recordedAtFileCounts(context.Background())
+	if err != nil || counts["blocked"] != 1 {
+		t.Fatalf("counts = %v %v", counts, err)
+	}
+}

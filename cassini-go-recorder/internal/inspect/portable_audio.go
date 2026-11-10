@@ -127,7 +127,7 @@ func inspectPortableAudio(out io.Writer, path string) error {
 	}
 
 	audioStatus := integrity.Status
-	printPortableMeeting(out, path, audioSummary, payload, manifest, bodies, integrity)
+	printPortableMeeting(out, path, audioSummary, payload, manifest, metadataTag(tags, "DATE"), metadataTag(tags, "CASSINI_RECORDED_AT_UTC"), bodies, integrity)
 	if audioStatus != "ok" {
 		fmt.Fprintln(out, "fallback=plain-audio")
 	}
@@ -232,7 +232,7 @@ func printPlainPortableAudio(out io.Writer, audio portableAudioSummary, cassiniS
 	}
 }
 
-func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary, payload portablePayloadInfo, manifest portable.Manifest, bodies portableTranscriptBodies, integrity portableIntegrityResult) {
+func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary, payload portablePayloadInfo, manifest portable.Manifest, dateTag, recordedAtTag string, bodies portableTranscriptBodies, integrity portableIntegrityResult) {
 	title := blankDash(manifest.Meeting.Title)
 	meetingID := blankDash(manifest.Meeting.ID)
 	createdAt := blankDash(manifest.Meeting.CreatedAtUTC)
@@ -267,6 +267,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	fmt.Fprintf(out, "payload encoding=%s schema=%s chunks=%d raw_bytes=%d compressed_bytes=%d sha256=%s language=%s\n",
 		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), blankDash(language))
 	printPortableOrigin(out, manifest.Meeting)
+	printPortableMeetingStart(out, manifest.Meeting, dateTag)
 	for _, entry := range manifest.Transcripts {
 		printPortableTranscriptEntry(out, "transcript", entry, bodies.DefaultID)
 	}
@@ -281,6 +282,9 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	printAttachments(out, manifest.Attachments)
 	printPortableAnnotations(out, manifest)
 	for _, warning := range bodies.Warnings {
+		fmt.Fprintf(out, "warning=%s\n", warning)
+	}
+	if warning := recordedAtTagDisagreement(manifest.Meeting, recordedAtTag); warning != "" {
 		fmt.Fprintf(out, "warning=%s\n", warning)
 	}
 	for _, warning := range integrity.Warnings {
@@ -311,6 +315,37 @@ func printPortableOrigin(out io.Writer, meeting portable.Meeting) {
 	}
 	fmt.Fprintf(out, "origin room_id=%s job_id=%s attempt=%s\n",
 		blankDash(meeting.RoomID), blankDash(meeting.JobID), attempt)
+}
+
+// printPortableMeetingStart prints the manifest's two recording-time fields
+// and when the meeting happened as the format's rule picks it, which can also
+// come from the DATE tag. Each line is omitted when it has nothing to say;
+// createdAtUtc, on the first line, is when the file was built.
+func printPortableMeetingStart(out io.Writer, meeting portable.Meeting, dateTag string) {
+	if meeting.RecordedAtUTC != "" || meeting.RecordedAtLocal != "" {
+		fmt.Fprintf(out, "recorded_at utc=%s local=%s\n", blankDash(meeting.RecordedAtUTC), blankDash(meeting.RecordedAtLocal))
+	}
+	if start := portable.MeetingStartOf(meeting, dateTag); start.Known() {
+		fmt.Fprintf(out, "meeting_start source=%s value=%s\n", start.Source, start.Value)
+	}
+}
+
+// recordedAtTagDisagreement reports a CASSINI_RECORDED_AT_UTC tag that does
+// not name the manifest's recordedAtUtc. The manifest is the record; the tag
+// is a copy for tag-only tools, so this is a warning, not an error. The same
+// instant spelled differently is not a disagreement.
+func recordedAtTagDisagreement(meeting portable.Meeting, tagged string) string {
+	tagged = strings.TrimSpace(tagged)
+	if tagged == "" || tagged == meeting.RecordedAtUTC {
+		return ""
+	}
+	if tagAt, ok := portable.ParseRecordedAtUTC(tagged); ok {
+		if manifestAt, ok := portable.ParseRecordedAtUTC(meeting.RecordedAtUTC); ok && tagAt.Equal(manifestAt) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("recorded-at disagrees between manifest and tag: manifest=%s CASSINI_RECORDED_AT_UTC=%s",
+		blankDash(meeting.RecordedAtUTC), tagged)
 }
 
 func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry, defaultID string) {

@@ -5,7 +5,8 @@
   import { Calendar, ExternalLink, FileText, FileX, MessageSquare, Pencil } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
   import ExportMenu from "./ExportMenu.svelte";
-  import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
+  import type { MeetingCatalogEntry } from "../viewer/catalog";
+  import { formatMeetingStartWithDay } from "../viewer/meetingTime";
   import { saveTranscript } from "../viewer/exportTransfer";
   import { exportFileName, renderInsightExport } from "../viewer/insightExport";
   import { roomLabelOf } from "../viewer/rooms";
@@ -419,7 +420,7 @@
                 <FileText size={14} aria-hidden="true" />
                 <span class="ins-source-title">{source.title}</span>
                 <span class="ins-source-meta">
-                  {formatMeetingDateWithDay(source.dateLabel)}
+                  {formatMeetingStartWithDay(source)}
                 </span>
               </button>
             </li>

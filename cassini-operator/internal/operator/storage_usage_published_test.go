@@ -11,17 +11,26 @@ import (
 )
 
 func TestStorageMetadataDate(t *testing.T) {
-	for _, tc := range []struct{ recorded, created, want string }{
-		{"2026-03-05T23:38:29", "2026-09-29T12:00:00Z", "2026-03-05"},
-		{"2026-03-05T23:38:29", "", "2026-03-05"},
-		{"", "2026-03-05T23:38:29-02:00", "2026-03-06"},
-		{"invalid", "2026-03-05T12:00:00Z", "2026-03-05"},
-		{"2026-02-30T12:00:00", "", ""},
-		{"", "", ""},
+	for _, tc := range []struct{ recordedUTC, recorded, created, want string }{
+		{"", "2026-03-05T23:38:29", "2026-09-29T12:00:00Z", "2026-03-05"},
+		{"", "2026-03-05T23:38:29", "", "2026-03-05"},
+		{"", "", "2026-03-05T23:38:29-02:00", "2026-03-06"},
+		{"", "invalid", "2026-03-05T12:00:00Z", "2026-03-05"},
+		{"", "2026-02-30T12:00:00", "", ""},
+		{"", "", "", ""},
+		// When the meeting happened beats when the file was packed, and the
+		// instant beats the zone-less label.
+		{"2026-03-04T22:38:29.000Z", "2026-03-05T23:38:29", "2026-09-29T12:00:00Z", "2026-03-04"},
+		{"2026-03-04T22:38:29Z", "", "2026-09-29T12:00:00Z", "2026-03-04"},
+		{"2026-03-04T23:38:29+01:00", "", "2026-09-29T12:00:00Z", "2026-09-29"},
 	} {
-		if got := storageMetadataDate(tc.recorded, tc.created); got != tc.want {
+		if got := storageMetadataDate(tc.recordedUTC, tc.recorded, tc.created); got != tc.want {
 			t.Errorf("%+v: got %q", tc, got)
 		}
+	}
+	raw := json.RawMessage(`{"createdAtUtc":"2026-09-29T12:00:00Z","recordedAtUtc":"2026-03-04T22:38:29.000Z"}`)
+	if got := storageRawMetadataDate(raw); got != "2026-03-04" {
+		t.Errorf("catalog entry with recordedAtUtc dated %q, want the meeting's day", got)
 	}
 }
 

@@ -144,7 +144,11 @@ Expected:
 - A first line summarising the result:
   `meetings=2 caller=alice source=nextcloud-files`
 - One line per meeting, newest first, matching the order the viewer shows:
-  `meeting=01JZ8K… date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes`
+  `meeting=01JZ8K… date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes`.
+  `date=` is the recording start in your local time zone with its offset, as
+  one token (`date=2026-11-09T12:31+01:00`), when the meeting knows it, or the
+  published zone-less `dateLabel` unchanged (`date=2026-08-11 10:32`) when it
+  does not
 - Exit code `0`.
 
 `source=nextcloud-files` confirms the bytes came from Nextcloud Files, under
@@ -182,10 +186,12 @@ you pass:
 ./bin/cassini meetings list --room rm_9f2a1c3d4e5b6a70 --from 2026-08-01 --json
 ```
 
-`--from` and `--to` take the dates the catalog itself prints — `2026-08-11`,
-`2026-08-11 14:30`, or `2026-08-11 14:30:05`. They carry **no timezone**,
-because a meeting's `dateLabel` does not: it is a wall clock, and asserting a
-zone here would claim an instant the data cannot justify. A bare date covers the
+`--from` and `--to` take `2026-08-11`, `2026-08-11 14:30`, or
+`2026-08-11 14:30:05`, with no timezone: they are read in your local time zone.
+A meeting whose catalog entry carries `recordedAtUtc` (when the recording
+started) is compared by that instant. An older meeting with only a `dateLabel`
+is compared by the label's digits, as before: that label is a wall clock whose
+zone was never recorded, so no zone is claimed for it. A bare date covers the
 whole day at both ends, so `--from 2026-08-01 --to 2026-08-31` means all of
 August. A range whose ends are backwards is rejected (exit `2`) rather than
 returning an empty list that would be indistinguishable from having no
@@ -223,9 +229,11 @@ range you typed.
 
 ```text
 rooms=2 caller=alice source=nextcloud-files
-room=rm_9f2a1c3d4e5b6a70 name=Weekly Sync meetings=12 latest=2026-08-11 10:32 earliest=2026-05-05 10:30
+room=rm_9f2a1c3d4e5b6a70 name=Weekly Sync meetings=12 latest=2026-11-09T12:31+01:00 earliest=2026-05-05 10:30
 room=rm_11bb22cc33dd44ee name=Old Standup meetings=3 latest=2026-07-02 09:00 earliest=2026-06-18 09:00
 ```
+
+`latest=` and `earliest=` take the same two shapes as `list`'s `date=`.
 
 The rooms are derived from the catalog you may already read, not fetched from
 Talk, so a room you have no readable recording from does not appear. This

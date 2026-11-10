@@ -44,6 +44,43 @@ describe("validateMeetingCatalog", () => {
     );
   });
 
+  it("keeps a valid recordedAtUtc on the entry", () => {
+    // validateMeetingCatalogEntry rebuilds each entry from a literal, so a
+    // field it does not copy is silently dropped at load.
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "01KKA70QN0ABCDEFGHJKMNPQRS",
+          audioPath: "./01KKA70QN0ABCDEFGHJKMNPQRS.opus",
+          title: "Standup",
+          dateLabel: "2026-03-09 21:11",
+          recordedAtUtc: "2026-03-09T21:11:04.5Z",
+        },
+      ],
+    });
+    expect(catalog.meetings[0]?.recordedAtUtc).toBe("2026-03-09T21:11:04.5Z");
+  });
+
+  it("drops a malformed recordedAtUtc instead of refusing the catalog", () => {
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: ["2026-03-09 21:11", "2026-03-09T21:11:00+01:00", 1773090660000, "", null].map(
+        (recordedAtUtc, index) => ({
+          id: `m${index}`,
+          audioPath: `./m${index}.opus`,
+          title: "Standup",
+          dateLabel: "2026-03-09 21:11",
+          recordedAtUtc,
+        }),
+      ),
+    });
+    expect(catalog.meetings).toHaveLength(5);
+    for (const meeting of catalog.meetings) {
+      expect(meeting).not.toHaveProperty("recordedAtUtc");
+    }
+  });
+
   it("accepts audio-backed meeting entries with runtime metadata", () => {
     const catalog = validateMeetingCatalog({
       version: "cassini.viewer.catalog.v1",
@@ -424,6 +461,36 @@ describe("sortMeetingCatalogEntries", () => {
     ]);
   });
 
+  it("sorts two instants by instant across a DST fall-back", () => {
+    // Rome, 25 Oct 2026: 00:30Z reads 02:30 CEST, 01:10Z reads 02:10 CET forty
+    // minutes later. By wall clock the later one would sort as older.
+    const sorted = sortMeetingCatalogEntries([
+      { id: "first", audioPath: "./x.opus", title: "X", dateLabel: "2026-10-25 00:30", recordedAtUtc: "2026-10-25T00:30:00Z" },
+      { id: "second", audioPath: "./y.opus", title: "Y", dateLabel: "2026-10-25 01:10", recordedAtUtc: "2026-10-25T01:10:00Z" },
+    ]);
+    expect(sorted.map((meeting) => meeting.id)).toEqual(["second", "first"]);
+  });
+
+  it("sorts instants and labels together by the time each row shows", () => {
+    // In Rome (the suite's zone) 11:31Z reads 12:31: between a label reading
+    // 12:00 and one reading 13:00. An undated entry still goes last, and an
+    // instant beats its own entry's UTC-digit label.
+    const sorted = sortMeetingCatalogEntries([
+      { id: "noon", audioPath: "./a.opus", title: "A", dateLabel: "2026-11-09 12:00" },
+      { id: "undated", audioPath: "./b.opus", title: "B", dateLabel: "weekly-sync" },
+      {
+        id: "instant",
+        audioPath: "./c.opus",
+        title: "C",
+        dateLabel: "2026-11-09 11:31",
+        recordedAtUtc: "2026-11-09T11:31:00Z",
+      },
+      { id: "one", audioPath: "./d.opus", title: "D", dateLabel: "2026-11-09 13:00" },
+      { id: "eleven-forty", audioPath: "./e.opus", title: "E", dateLabel: "2026-11-09 11:40" },
+    ]);
+    expect(sorted.map((meeting) => meeting.id)).toEqual(["one", "instant", "noon", "eleven-forty", "undated"]);
+  });
+
   it("sorts entries with unparseable date labels after every dated entry", () => {
     const sorted = sortMeetingCatalogEntries([
       {
@@ -547,6 +614,38 @@ describe("filterMeetingCatalogEntries", () => {
     expect(
       filterMeetingCatalogEntries(meetings, "mar 2026").map((m) => m.id),
     ).toEqual(["m1"]);
+  });
+
+  it("matches an instant entry by the local time its card shows, not its UTC label", () => {
+    // 21:11Z on 9 March is 22:11 in Rome. The card says 22:11, so typing that
+    // must find it; the label's UTC digits are not on screen and must not.
+    const withInstant = [
+      ...meetings,
+      {
+        id: "m4",
+        audioPath: "./m4.opus",
+        title: "Standup",
+        dateLabel: "2026-03-09 21:11",
+        recordedAtUtc: "2026-03-09T21:11:00Z",
+      },
+    ];
+    expect(filterMeetingCatalogEntries(withInstant, "22:11").map((m) => m.id)).toEqual(["m4"]);
+    expect(filterMeetingCatalogEntries(withInstant, "21:11").map((m) => m.id)).toEqual([]);
+    expect(filterMeetingCatalogEntries(withInstant, "mon 9 mar").map((m) => m.id)).toEqual(["m4"]);
+  });
+
+  it("matches the local day an instant moved to", () => {
+    const late = [{
+      id: "late",
+      audioPath: "./late.opus",
+      title: "Late call",
+      dateLabel: "2026-01-31 23:30",
+      recordedAtUtc: "2026-01-31T23:30:00Z",
+    }];
+    expect(filterMeetingCatalogEntries(late, "1 feb 2026").map((m) => m.id)).toEqual(["late"]);
+    expect(filterMeetingCatalogEntries(late, "31 jan").map((m) => m.id)).toEqual([]);
+    expect(filterMeetingCatalogEntries(late, "2026-02-01").map((m) => m.id)).toEqual(["late"]);
+    expect(filterMeetingCatalogEntries(late, "2026-01-31").map((m) => m.id)).toEqual([]);
   });
 
   it("returns an empty list when nothing matches", () => {

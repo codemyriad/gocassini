@@ -23,6 +23,7 @@
 
 import { readViewerBase } from "./appBase";
 import type { MeetingCatalogEntry } from "./catalog";
+import { parseRecordedAtUtc } from "./meetingTime";
 
 const SEARCH_PATH = "published/search";
 
@@ -31,6 +32,10 @@ export interface MeetingSearchHit {
   readonly meetingId: string;
   readonly title: string;
   readonly dateLabel: string;
+  // The meeting's start as an instant, when the server knows it. Rows render
+  // the catalog entry a hit is grouped onto, not the hit; carried so a hit is a
+  // complete description of its meeting on its own.
+  readonly recordedAtUtc?: string;
   readonly roomId: string;
   readonly roomName: string;
   readonly roomDisplayName?: string;
@@ -208,6 +213,7 @@ export function materializeSearchResponse(value: unknown): MeetingSearchOutcome 
       meetingId,
       title: optionalString(raw.title) ?? "",
       dateLabel: optionalString(raw.dateLabel) ?? "",
+      ...(parseRecordedAtUtc(raw.recordedAtUtc) ? { recordedAtUtc: raw.recordedAtUtc as string } : {}),
       roomId: optionalString(raw.roomId) ?? "",
       roomName: optionalString(raw.roomName) ?? "",
       roomDisplayName: optionalString(raw.roomDisplayName),

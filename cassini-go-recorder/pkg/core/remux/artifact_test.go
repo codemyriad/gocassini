@@ -418,11 +418,13 @@ func TestMergeSegmentsEmbedsCassiniMetadata(t *testing.T) {
 	if err := json.Unmarshal(reportBody, &report); err != nil {
 		t.Fatalf("parse embedded report json: %v", err)
 	}
-	if got := tagValue(meta.Format.Tags, "RECORDED_AT_LOCAL", "recorded_at_local"); got != "2026-03-10T14:00:00" {
-		t.Fatalf("recorded_at_local = %q", got)
+	// The session's zone-unknown local label must not reach the MKV: the
+	// build derives the instant from first_packet_wall_ms instead.
+	if got := tagValue(meta.Format.Tags, "RECORDED_AT_LOCAL", "recorded_at_local"); got != "" {
+		t.Fatalf("recorded_at_local propagated into the MKV: %q", got)
 	}
-	if report.Session.RecordedAtLocal != "2026-03-10T14:00:00" {
-		t.Fatalf("report lost local time: %+v", report.Session)
+	if strings.Contains(string(reportBody), "recorded_at_local") {
+		t.Fatalf("recorded_at_local propagated into the embedded report: %s", reportBody)
 	}
 	if report.Schema != embeddedReportSchema {
 		t.Fatalf("unexpected embedded report schema: %q", report.Schema)
