@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 
 import appSource from "./App.svelte?raw";
 
@@ -116,8 +118,10 @@ describe("the shell's setup features", () => {
 // recordings on every browse surface in the shell.
 describe("the shell after the Setup tab", () => {
   it("has two tabs, and no way to reach a surface that no longer exists", () => {
-    expect(appSource).toContain(">\n        Browse\n      </button>");
-    expect(appSource).toContain(">\n        Operator\n      </button>");
+    expect(appSource).toContain(">\n        {$LL.app.shell.app.tab_browse()}\n      </button>");
+    expect(appSource).toContain(">\n        {$LL.app.shell.app.tab_operator()}\n      </button>");
+    expect(get(LL).app.shell.app.tab_browse()).toBe("Browse");
+    expect(get(LL).app.shell.app.tab_operator()).toBe("Operator");
     expect(appSource).not.toContain('selectSurface("setup")');
     expect(appSource).not.toContain('surface === "setup"');
     expect(appSource).not.toContain('"./Setup.svelte"');

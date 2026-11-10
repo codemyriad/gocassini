@@ -36,10 +36,1505 @@ type RootTranslation = {
 
 export type NamespaceAppTranslation = {
 	shell: {
+		app: {
+			/**
+			 * C​a​s​s​i​n​i​ ​s​u​r​f​a​c​e​s
+			 */
+			nav_label: string
+			/**
+			 * B​r​o​w​s​e
+			 */
+			tab_browse: string
+			/**
+			 * O​p​e​r​a​t​o​r
+			 */
+			tab_operator: string
+			/**
+			 * C​l​o​s​e
+			 */
+			close_overlay: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​n​e​e​d​s​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​’​s​ ​a​t​t​e​n​t​i​o​n​.
+			 */
+			recording_needs_action: string
+			/**
+			 * O​p​e​n​ ​r​e​c​o​r​d​i​n​g​ ​s​e​t​u​p
+			 */
+			open_recording_setup: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​r​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​.
+			 */
+			retention_load_failed: string
+		}
+		load_error: {
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​n​'​t​ ​r​e​a​d​ ​t​h​e​s​e​ ​s​e​t​t​i​n​g​s
+			 */
+			title: string
+			/**
+			 * T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.​ ​I​f​ ​i​t​ ​s​t​i​l​l​ ​w​o​n​'​t​ ​l​o​a​d​,​ ​s​h​a​r​e​ ​t​h​e​ ​t​e​c​h​n​i​c​a​l​ ​d​e​t​a​i​l​s​ ​b​e​l​o​w​ ​w​i​t​h​ ​C​a​s​s​i​n​i​ ​s​u​p​p​o​r​t​.
+			 */
+			summary_default: string
+			/**
+			 * S​i​g​n​ ​i​n​ ​t​o​ ​N​e​x​t​c​l​o​u​d​ ​a​g​a​i​n​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			summary_unauthorized: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​d​e​n​i​e​d​ ​a​c​c​e​s​s​.​ ​M​a​k​e​ ​s​u​r​e​ ​y​o​u​'​r​e​ ​s​i​g​n​e​d​ ​i​n​ ​w​i​t​h​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​a​c​c​o​u​n​t​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			summary_forbidden: string
+			/**
+			 * C​a​s​s​i​n​i​'​s​ ​s​t​o​r​a​g​e​ ​s​e​t​t​i​n​g​s​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​f​o​u​n​d​.​ ​I​f​ ​y​o​u​ ​j​u​s​t​ ​u​p​d​a​t​e​d​ ​C​a​s​s​i​n​i​,​ ​c​h​e​c​k​ ​t​h​a​t​ ​t​h​e​ ​u​p​d​a​t​e​ ​h​a​s​ ​f​i​n​i​s​h​e​d​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			summary_not_found: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​n​'​t​ ​r​e​s​p​o​n​d​ ​r​i​g​h​t​ ​n​o​w​.​ ​W​a​i​t​ ​a​ ​m​o​m​e​n​t​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			summary_server_error: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​r​e​a​c​h​e​d​.​ ​C​h​e​c​k​ ​y​o​u​r​ ​c​o​n​n​e​c​t​i​o​n​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			summary_unreachable: string
+		}
+		room_names: {
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​r​e​a​c​h​ ​C​a​s​s​i​n​i​.​ ​Y​o​u​r​ ​d​r​a​f​t​ ​i​s​ ​s​t​i​l​l​ ​h​e​r​e​.
+			 */
+			unreachable: string
+			/**
+			 * T​h​i​s​ ​r​o​o​m​ ​i​s​ ​n​o​ ​l​o​n​g​e​r​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​y​o​u​.
+			 */
+			room_gone: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​u​p​d​a​t​e​ ​t​h​e​ ​r​o​o​m​ ​n​a​m​e​.
+			 */
+			update_failed: string
+			/**
+			 * C​a​s​s​i​n​i​ ​r​e​t​u​r​n​e​d​ ​a​n​ ​i​n​v​a​l​i​d​ ​r​o​o​m​ ​n​a​m​e​.​ ​R​e​f​r​e​s​h​ ​b​e​f​o​r​e​ ​t​r​y​i​n​g​ ​a​g​a​i​n​.
+			 */
+			invalid_response: string
+		}
+		meeting_access: {
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​d​i​d​ ​n​o​t​ ​a​c​c​e​p​t​ ​t​h​i​s​ ​s​h​a​r​e​.
+			 */
+			share_refused: string
+		}
+		imports_client: {
+			/**
+			 * I​m​p​o​r​t​ ​n​e​e​d​s​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​s​e​s​s​i​o​n​,​ ​a​n​d​ ​t​h​i​s​ ​p​a​g​e​ ​h​a​s​ ​n​o​n​e​.
+			 */
+			no_session: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​p​r​e​p​a​r​e​ ​t​h​e​ ​s​t​a​g​i​n​g​ ​f​o​l​d​e​r​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
+			 * @param {unknown} status
+			 */
+			staging_failed: RequiredParams<'status'>
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​r​e​g​i​s​t​e​r​ ​t​h​e​ ​u​p​l​o​a​d​.
+			 */
+			register_failed: string
+			/**
+			 * T​h​e​ ​u​p​l​o​a​d​ ​f​a​i​l​e​d​ ​—​ ​c​h​e​c​k​ ​t​h​e​ ​c​o​n​n​e​c​t​i​o​n​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			upload_failed: string
+			/**
+			 * T​h​e​ ​u​p​l​o​a​d​ ​w​a​s​ ​i​n​t​e​r​r​u​p​t​e​d​.
+			 */
+			upload_interrupted: string
+			/**
+			 * N​o​t​ ​e​n​o​u​g​h​ ​s​p​a​c​e​ ​i​n​ ​y​o​u​r​ ​N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s​ ​f​o​r​ ​t​h​i​s​ ​u​p​l​o​a​d​.
+			 */
+			not_enough_space: string
+			/**
+			 * T​h​e​ ​u​p​l​o​a​d​ ​w​a​s​ ​r​e​f​u​s​e​d​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
+			 * @param {unknown} status
+			 */
+			upload_refused: RequiredParams<'status'>
+			/**
+			 * T​h​i​s​ ​u​p​l​o​a​d​ ​i​s​ ​n​o​ ​l​o​n​g​e​r​ ​r​e​g​i​s​t​e​r​e​d​ ​w​i​t​h​ ​C​a​s​s​i​n​i​;​ ​a​d​d​ ​t​h​e​ ​f​i​l​e​ ​a​g​a​i​n​.
+			 */
+			upload_unregistered: string
+			/**
+			 * C​a​s​s​i​n​i​ ​s​t​o​p​p​e​d​ ​a​n​s​w​e​r​i​n​g​ ​d​u​r​i​n​g​ ​t​h​e​ ​u​p​l​o​a​d​,​ ​s​o​ ​i​t​ ​w​a​s​ ​i​n​t​e​r​r​u​p​t​e​d​;​ ​a​d​d​ ​t​h​e​ ​f​i​l​e​ ​a​g​a​i​n​.
+			 */
+			upload_unanswered: string
+			/**
+			 * T​h​i​s​ ​d​e​p​l​o​y​m​e​n​t​ ​d​o​e​s​ ​n​o​t​ ​s​e​r​v​e​ ​m​e​e​t​i​n​g​ ​i​m​p​o​r​t​s​.
+			 */
+			imports_not_served: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​v​e​r​i​f​y​ ​w​h​o​ ​y​o​u​ ​a​r​e​;​ ​r​e​l​o​a​d​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
+			 */
+			identity_unverified: string
+			/**
+			 * T​h​e​ ​i​m​p​o​r​t​ ​r​e​q​u​e​s​t​ ​f​a​i​l​e​d​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
+			 * @param {unknown} status
+			 */
+			request_failed: RequiredParams<'status'>
+			/**
+			 * P​e​o​p​l​e​ ​s​e​a​r​c​h​ ​f​a​i​l​e​d​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
+			 * @param {unknown} status
+			 */
+			people_search_failed: RequiredParams<'status'>
+		}
+		data_provider: {
+			/**
+			 * P​i​c​k​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​m​e​e​t​i​n​g​ ​f​i​r​s​t​.
+			 */
+			bundle_needs_meetings: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​t​h​a​t​ ​r​e​q​u​e​s​t​ ​f​o​r​ ​a​ ​b​u​n​d​l​e​.
+			 */
+			bundle_bad_request: string
+			/**
+			 * O​n​e​ ​o​f​ ​t​h​e​s​e​ ​m​e​e​t​i​n​g​s​ ​i​s​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​y​o​u​,​ ​o​r​ ​t​h​i​s​ ​d​e​p​l​o​y​m​e​n​t​ ​c​a​n​n​o​t​ ​a​s​s​e​m​b​l​e​ ​b​u​n​d​l​e​s​.
+			 */
+			bundle_not_found: string
+			/**
+			 * C​a​s​s​i​n​i​ ​c​o​u​l​d​ ​n​o​t​ ​r​e​a​d​ ​t​h​e​s​e​ ​m​e​e​t​i​n​g​s​ ​f​r​o​m​ ​N​e​x​t​c​l​o​u​d​.
+			 */
+			bundle_nextcloud_unreadable: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​p​r​e​p​a​r​e​ ​t​h​e​ ​b​u​n​d​l​e​ ​(​H​T​T​P​ ​{​s​t​a​t​u​s​}​)​.
+			 * @param {unknown} status
+			 */
+			bundle_failed: RequiredParams<'status'>
+		}
 	}
 	operator: {
 	}
 	settings: {
+		pipeline: {
+			/**
+			 * P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e
+			 */
+			heading: string
+			/**
+			 * E​v​e​r​y​ ​s​t​e​p​ ​b​e​t​w​e​e​n​ ​t​h​e​ ​c​a​l​l​ ​e​n​d​i​n​g​ ​a​n​d​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​b​e​i​n​g​ ​p​u​b​l​i​s​h​e​d​.​ ​T​h​e​s​e​ ​a​p​p​l​y​ ​t​o​ ​e​v​e​r​y​ ​r​o​o​m​.
+			 */
+			intro: string
+			/**
+			 * L​o​a​d​i​n​g​ ​s​e​t​t​i​n​g​s​…
+			 */
+			loading: string
+			/**
+			 * S​e​t​t​i​n​g​s​ ​a​r​e​n​'​t​ ​a​v​a​i​l​a​b​l​e​.
+			 */
+			unavailable: string
+			/**
+			 * A​f​t​e​r​ ​e​a​c​h​ ​m​e​e​t​i​n​g
+			 */
+			after_meeting: string
+			/**
+			 * C​u​r​r​e​n​t
+			 */
+			current: string
+			/**
+			 * T​h​e​ ​s​a​v​e​d​ ​s​e​t​t​i​n​g​s​ ​n​e​w​ ​r​e​c​o​r​d​i​n​g​s​ ​g​e​t
+			 */
+			current_title: string
+			/**
+			 * C​u​r​r​e​n​t​ ​s​e​t​t​i​n​g​s
+			 */
+			strip_label: string
+			/**
+			 * T​r​a​n​s​c​r​i​b​e
+			 */
+			chip_transcribe: string
+			/**
+			 * S​u​m​m​a​r​i​s​e
+			 */
+			chip_summarise: string
+			/**
+			 * P​u​b​l​i​s​h
+			 */
+			chip_publish: string
+			/**
+			 * M​e​d​i​a​ ​r​e​t​e​n​t​i​o​n
+			 */
+			chip_retention: string
+			/**
+			 * T​r​a​n​s​c​r​i​p​t​i​o​n​ ​s​e​t​t​i​n​g​s
+			 */
+			transcription_label: string
+			/**
+			 * T​r​a​n​s​c​r​i​p​t
+			 */
+			transcript_heading: string
+			/**
+			 * W​h​a​t​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s
+			 */
+			tiers_label: string
+			/**
+			 * O​f​f
+			 */
+			off: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​s​ ​a​r​e​ ​p​u​b​l​i​s​h​e​d​ ​w​i​t​h​o​u​t​ ​a​ ​t​r​a​n​s​c​r​i​p​t​.
+			 */
+			off_description: string
+			/**
+			 * F​a​s​t
+			 */
+			quality_fast: string
+			/**
+			 * F​a​s​t​e​s​t​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​,​ ​l​o​w​e​r​ ​a​c​c​u​r​a​c​y​.
+			 */
+			quality_fast_description: string
+			/**
+			 * B​a​l​a​n​c​e​d
+			 */
+			quality_balanced: string
+			/**
+			 * D​e​f​a​u​l​t​ ​—​ ​g​o​o​d​ ​a​c​c​u​r​a​c​y​ ​a​t​ ​r​e​a​s​o​n​a​b​l​e​ ​s​p​e​e​d​.
+			 */
+			quality_balanced_description: string
+			/**
+			 * B​e​s​t
+			 */
+			quality_best: string
+			/**
+			 * H​i​g​h​e​s​t​ ​a​c​c​u​r​a​c​y​ ​(​f​p​3​2​)​,​ ​s​l​o​w​e​s​t​.
+			 */
+			quality_best_description: string
+			/**
+			 * D​o​w​n​l​o​a​d​i​n​g​ ​t​h​e​ ​{​t​i​e​r​}​ ​m​o​d​e​l​.​ ​T​r​a​n​s​c​r​i​p​t​i​o​n​ ​t​u​r​n​s​ ​o​n​ ​w​h​e​n​ ​i​t​ ​f​i​n​i​s​h​e​s​.
+			 * @param {unknown} tier
+			 */
+			lead_downloading: RequiredParams<'tier'>
+			/**
+			 * N​o​t​h​i​n​g​ ​i​s​ ​t​r​a​n​s​c​r​i​b​e​d​.​ ​I​n​s​t​a​l​l​ ​a​n​d​ ​p​i​c​k​ ​a​ ​m​o​d​e​l​ ​t​o​ ​t​u​r​n​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​o​n​.
+			 */
+			lead_off: string
+			/**
+			 * T​r​a​n​s​c​r​i​p​t​i​o​n​ ​i​s​ ​o​n​.​ ​S​a​v​e​ ​t​o​ ​a​p​p​l​y​ ​i​t​ ​t​o​ ​n​e​w​ ​r​e​c​o​r​d​i​n​g​s​.
+			 */
+			lead_on_unsaved: string
+			/**
+			 * N​o​w​ ​t​r​a​n​s​c​r​i​b​i​n​g​ ​w​i​t​h​ ​t​h​e​ ​{​t​i​e​r​}​ ​m​o​d​e​l​.​ ​S​a​v​e​ ​t​o​ ​a​p​p​l​y​ ​i​t​.
+			 * @param {unknown} tier
+			 */
+			lead_switched: RequiredParams<'tier'>
+			/**
+			 * N​o​w​ ​t​r​a​n​s​c​r​i​b​i​n​g​ ​w​i​t​h​ ​t​h​e​ ​c​h​o​s​e​n​ ​m​o​d​e​l​.​ ​S​a​v​e​ ​t​o​ ​a​p​p​l​y​ ​i​t​.
+			 */
+			lead_switched_unnamed: string
+			/**
+			 * T​r​a​n​s​c​r​i​b​i​n​g​ ​e​v​e​r​y​ ​r​e​c​o​r​d​i​n​g​ ​w​i​t​h​ ​t​h​e​ ​{​t​i​e​r​}​ ​m​o​d​e​l​.
+			 * @param {unknown} tier
+			 */
+			lead_tier: RequiredParams<'tier'>
+			/**
+			 * T​r​a​n​s​c​r​i​p​t​i​o​n​ ​i​s​ ​o​n​.
+			 */
+			lead_on: string
+			/**
+			 * O​n​ ​t​h​e​ ​G​P​U​,​ ​e​v​e​r​y​ ​q​u​a​l​i​t​y​ ​s​e​t​t​i​n​g​ ​u​s​e​s​ ​t​h​e​ ​s​a​m​e​ ​f​u​l​l​-​p​r​e​c​i​s​i​o​n​ ​m​o​d​e​l​,​ ​s​o​ ​t​h​i​s​ ​o​n​l​y​ ​c​h​a​n​g​e​s​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​o​n​ ​t​h​e​ ​C​P​U​.
+			 */
+			gpu_same_model: string
+			/**
+			 * C​a​n​n​o​t​ ​r​e​f​r​e​s​h​ ​m​o​d​e​l​ ​s​t​a​t​u​s​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 */
+			inventory_refresh_failed: RequiredParams<'error'>
+			/**
+			 * L​o​a​d​i​n​g​ ​m​o​d​e​l​ ​i​n​v​e​n​t​o​r​y​…
+			 */
+			loading_inventory: string
+			/**
+			 * D​o​w​n​l​o​a​d​s​ ​a​r​e​ ​d​i​s​a​b​l​e​d​.​ ​P​r​e​p​a​r​e​ ​a​ ​p​a​c​k​a​g​e​ ​w​i​t​h​ ​{​p​a​c​k​}​ ​o​n​ ​a​ ​c​o​n​n​e​c​t​e​d​ ​m​a​c​h​i​n​e​,​ ​c​o​p​y​ ​i​t​ ​h​e​r​e​,​ ​a​n​d​ ​r​u​n​ ​{​i​m​p​o​r​t​}​ ​i​n​s​i​d​e​ ​t​h​i​s​ ​s​e​r​v​e​r​'​s​ ​C​a​s​s​i​n​i​ ​r​u​n​t​i​m​e​.​ ​I​m​p​o​r​t​e​d​ ​m​o​d​e​l​s​ ​a​p​p​e​a​r​ ​h​e​r​e​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.
+			 * @param {unknown} import
+			 * @param {unknown} pack
+			 */
+			downloads_disabled: RequiredParams<'import' | 'pack'>
+			/**
+			 * S​a​v​e​d​ ​s​e​t​t​i​n​g​s​ ​p​u​b​l​i​s​h​ ​t​r​a​n​s​c​r​i​p​t​-​o​n​l​y​ ​m​e​e​t​i​n​g​s​ ​w​i​t​h​ ​n​o​ ​t​r​a​n​s​c​r​i​p​t​.​ ​S​a​v​e​ ​t​o​ ​p​u​b​l​i​s​h​ ​t​h​e​ ​a​u​d​i​o​ ​i​n​s​t​e​a​d​.
+			 */
+			transcript_only_without: string
+			/**
+			 * t​h​e​ ​G​P​U​ ​(​C​U​D​A​)
+			 */
+			runs_on_gpu: string
+			/**
+			 * t​h​e​ ​C​P​U
+			 */
+			runs_on_cpu: string
+			/**
+			 * t​h​e​ ​C​P​U​ ​(​n​o​ ​G​P​U​ ​f​o​u​n​d​)
+			 */
+			runs_on_cpu_no_gpu: string
+			/**
+			 * {​m​o​d​e​l​}​ ​i​s​n​'​t​ ​i​n​s​t​a​l​l​e​d​,​ ​s​o​ ​r​e​c​o​r​d​i​n​g​s​ ​g​e​t​ ​n​o​ ​t​r​a​n​s​c​r​i​p​t​.
+			 * @param {unknown} model
+			 */
+			in_use_missing: RequiredParams<'model'>
+			/**
+			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​o​n​ ​{​d​e​v​i​c​e​}​ ​m​e​a​n​w​h​i​l​e​.
+			 * @param {unknown} device
+			 * @param {unknown} model
+			 */
+			in_use_stand_in_downloading: RequiredParams<'device' | 'model'>
+			/**
+			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​ ​(​{​p​e​r​c​e​n​t​}​%​)​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​o​n​ ​{​d​e​v​i​c​e​}​ ​m​e​a​n​w​h​i​l​e​.
+			 * @param {unknown} device
+			 * @param {unknown} model
+			 * @param {unknown} percent
+			 */
+			in_use_stand_in_downloading_percent: RequiredParams<'device' | 'model' | 'percent'>
+			/**
+			 * {​m​o​d​e​l​}​ ​i​s​ ​i​n​s​t​a​l​l​e​d​ ​b​u​t​ ​f​a​i​l​e​d​ ​i​t​s​ ​r​u​n​t​i​m​e​ ​c​h​e​c​k​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​o​n​ ​{​d​e​v​i​c​e​}​ ​m​e​a​n​w​h​i​l​e​.
+			 * @param {unknown} device
+			 * @param {unknown} model
+			 */
+			in_use_stand_in_failed_check: RequiredParams<'device' | 'model'>
+			/**
+			 * {​m​o​d​e​l​}​ ​i​s​n​'​t​ ​i​n​s​t​a​l​l​e​d​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​o​n​ ​{​d​e​v​i​c​e​}​ ​m​e​a​n​w​h​i​l​e​.
+			 * @param {unknown} device
+			 * @param {unknown} model
+			 */
+			in_use_stand_in_missing: RequiredParams<'device' | 'model'>
+			/**
+			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​;​ ​r​e​c​o​r​d​i​n​g​s​ ​w​a​i​t​ ​f​o​r​ ​i​t​.
+			 * @param {unknown} model
+			 */
+			in_use_downloading: RequiredParams<'model'>
+			/**
+			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​ ​(​{​p​e​r​c​e​n​t​}​%​)​;​ ​r​e​c​o​r​d​i​n​g​s​ ​w​a​i​t​ ​f​o​r​ ​i​t​.
+			 * @param {unknown} model
+			 * @param {unknown} percent
+			 */
+			in_use_downloading_percent: RequiredParams<'model' | 'percent'>
+			/**
+			 * T​r​a​n​s​c​r​i​b​i​n​g​ ​w​i​t​h​ ​{​m​o​d​e​l​}​ ​o​n​ ​{​d​e​v​i​c​e​}​.
+			 * @param {unknown} device
+			 * @param {unknown} model
+			 */
+			in_use_transcribing: RequiredParams<'device' | 'model'>
+			/**
+			 * T​r​a​n​s​c​r​i​p​t​i​o​n​ ​r​u​n​s​ ​o​n​ ​{​d​e​v​i​c​e​}​.
+			 * @param {unknown} device
+			 */
+			in_use_runs_on: RequiredParams<'device'>
+			/**
+			 * H​a​r​d​w​a​r​e
+			 */
+			hardware: string
+			/**
+			 * G​P​U
+			 */
+			hw_gpu: string
+			/**
+			 * F​o​u​n​d
+			 */
+			hw_gpu_found: string
+			/**
+			 * N​o​n​e​ ​f​o​u​n​d
+			 */
+			hw_gpu_none: string
+			/**
+			 * C​P​U​ ​c​o​r​e​s
+			 */
+			hw_cores: string
+			/**
+			 * M​e​m​o​r​y
+			 */
+			hw_memory: string
+			/**
+			 * E​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​w​a​i​t​s​ ​f​o​r​ ​{​s​i​z​e​}​ ​f​r​e​e
+			 * @param {unknown} size
+			 */
+			hw_memory_wait: RequiredParams<'size'>
+			/**
+			 * {​s​i​z​e​}​ ​G​B
+			 * @param {unknown} size
+			 */
+			memory_gb: RequiredParams<'size'>
+			/**
+			 * {​s​i​z​e​}​ ​M​B
+			 * @param {unknown} size
+			 */
+			memory_mb: RequiredParams<'size'>
+			/**
+			 * D​e​v​i​c​e
+			 */
+			hw_device: string
+			/**
+			 * A​u​t​o
+			 */
+			hw_device_auto: string
+			/**
+			 * A​u​t​o​ ​u​s​e​s​ ​t​h​e​ ​G​P​U​ ​w​h​e​n​ ​t​h​e​r​e​ ​i​s​ ​o​n​e​.​ ​C​h​a​n​g​e​ ​i​t​ ​o​n​l​y​ ​i​f​ ​t​h​e​ ​h​a​r​d​w​a​r​e​ ​a​b​o​v​e​ ​i​s​ ​w​r​o​n​g​.
+			 */
+			hw_device_help: string
+			/**
+			 * N​o​ ​G​P​U​ ​w​a​s​ ​f​o​u​n​d​,​ ​s​o​ ​r​e​c​o​r​d​i​n​g​s​ ​w​o​n​'​t​ ​b​e​ ​p​r​o​c​e​s​s​e​d​ ​o​n​ ​t​h​i​s​ ​s​e​t​t​i​n​g​.
+			 */
+			hw_no_gpu_forced: string
+			/**
+			 * F​o​r​ ​f​a​s​t​e​r​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​,​ ​r​u​n​ ​C​a​s​s​i​n​i​'​s​ ​C​U​D​A​ ​i​m​a​g​e​ ​o​n​ ​a​ ​s​e​r​v​e​r​ ​w​i​t​h​ ​a​ ​G​P​U​.
+			 */
+			hw_cuda_tip: string
+			/**
+			 * S​u​m​m​a​r​y
+			 */
+			summary_heading: string
+			/**
+			 * n​e​e​d​s​ ​a​ ​t​r​a​n​s​c​r​i​p​t
+			 */
+			needs_transcript: string
+			/**
+			 * S​u​m​m​a​r​i​s​e​ ​e​v​e​r​y​ ​m​e​e​t​i​n​g
+			 */
+			summarise_switch: string
+			/**
+			 * C​o​u​l​d​n​'​t​ ​l​o​a​d​ ​t​h​e​ ​A​I​ ​p​r​o​v​i​d​e​r​ ​s​e​t​t​i​n​g​s​,​ ​s​o​ ​t​h​i​s​ ​s​t​e​p​ ​c​a​n​'​t​ ​b​e​ ​s​h​o​w​n​ ​o​r​ ​c​h​a​n​g​e​d​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 */
+			llm_load_failed: RequiredParams<'error'>
+			/**
+			 * N​e​e​d​s​ ​a​ ​p​r​o​v​i​d​e​r​.
+			 */
+			needs_provider: string
+			/**
+			 * A​d​d​ ​o​n​e
+			 */
+			add_provider: string
+			/**
+			 * P​r​o​v​i​d​e​r
+			 */
+			field_provider: string
+			/**
+			 * I​n​s​i​g​h​t​ ​t​e​m​p​l​a​t​e
+			 */
+			field_template: string
+			/**
+			 * T​h​e​ ​w​o​r​k​f​l​o​w​ ​C​a​s​s​i​n​i​ ​s​h​i​p​s
+			 */
+			template_shipped: string
+			/**
+			 * T​e​m​p​l​a​t​e​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​i​s​t​e​d​.
+			 */
+			templates_unlisted: string
+			/**
+			 * M​e​e​t​i​n​g​s​ ​p​u​b​l​i​s​h​e​d​ ​f​r​o​m​ ​n​o​w​ ​o​n​ ​a​r​e​ ​s​u​m​m​a​r​i​s​e​d​ ​w​i​t​h​ ​t​h​i​s​ ​t​e​m​p​l​a​t​e​.
+			 */
+			template_help: string
+			/**
+			 * E​d​i​t​ ​t​e​m​p​l​a​t​e​s
+			 */
+			edit_templates: string
+			/**
+			 * {​i​d​}​ ​c​a​n​n​o​t​ ​r​u​n​:​ ​{​e​r​r​o​r​}
+			 * @param {unknown} error
+			 * @param {unknown} id
+			 */
+			template_cannot_run: RequiredParams<'error' | 'id'>
+			/**
+			 * {​i​d​}​ ​c​a​n​n​o​t​ ​r​u​n​:​ ​i​t​ ​a​s​k​s​ ​f​o​r​ ​a​ ​q​u​e​s​t​i​o​n​,​ ​a​n​d​ ​a​ ​s​u​m​m​a​r​y​ ​h​a​s​ ​n​o​b​o​d​y​ ​t​o​ ​a​s​k
+			 * @param {unknown} id
+			 */
+			template_asks_question: RequiredParams<'id'>
+			/**
+			 * {​i​d​}​ ​—​ ​n​o​t​ ​i​n​ ​t​h​i​s​ ​b​u​i​l​d
+			 * @param {unknown} id
+			 */
+			template_not_in_build: RequiredParams<'id'>
+			/**
+			 * {​m​o​d​e​l​}​ ​(​t​h​e​ ​p​r​o​v​i​d​e​r​'​s​ ​d​e​f​a​u​l​t​)
+			 * @param {unknown} model
+			 */
+			provider_default_model: RequiredParams<'model'>
+			/**
+			 * n​o​ ​d​e​f​a​u​l​t​ ​m​o​d​e​l​ ​s​e​t​ ​o​n​ ​t​h​i​s​ ​p​r​o​v​i​d​e​r
+			 */
+			no_provider_default: string
+			/**
+			 * W​h​a​t​ ​p​a​r​t​i​c​i​p​a​n​t​s​ ​r​e​c​e​i​v​e
+			 */
+			publication_heading: string
+			/**
+			 * C​a​m​e​r​a​ ​v​i​d​e​o​ ​i​s​ ​n​e​v​e​r​ ​p​u​b​l​i​s​h​e​d​.
+			 */
+			no_video_published: string
+			/**
+			 * W​h​a​t​ ​m​e​d​i​a​ ​s​t​a​y​s​ ​o​n​ ​t​h​e​ ​s​e​r​v​e​r
+			 */
+			keep_heading: string
+			/**
+			 * N​o​t​h​i​n​g
+			 */
+			keep_nothing: string
+			/**
+			 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​d​e​l​e​t​e​d​ ​a​f​t​e​r​ ​p​u​b​l​i​s​h​i​n​g​ ​a​n​d​ ​c​a​n​n​o​t​ ​b​e​ ​r​e​p​r​o​c​e​s​s​e​d​.
+			 */
+			keep_nothing_help: string
+			/**
+			 * U​n​a​v​a​i​l​a​b​l​e​ ​w​h​i​l​e​ ​a​u​d​i​o​ ​i​s​ ​p​u​b​l​i​s​h​e​d​ ​(​s​t​e​p​ ​3​)​.
+			 */
+			keep_nothing_unavailable: string
+			/**
+			 * A​u​d​i​o​ ​a​n​d​ ​v​i​d​e​o
+			 */
+			keep_video: string
+			/**
+			 * U​s​e​s​ ​t​h​e​ ​m​o​s​t​ ​s​p​a​c​e​.
+			 */
+			keep_video_help: string
+			/**
+			 * A​u​d​i​o​ ​o​n​l​y
+			 */
+			keep_audio: string
+			/**
+			 * {​m​e​d​i​a​}​.
+			 * @param {unknown} media
+			 */
+			kept_plain: RequiredParams<'media'>
+			/**
+			 * {​m​e​d​i​a​}​,​ ​k​e​p​t​ ​f​o​r​e​v​e​r​.
+			 * @param {unknown} media
+			 */
+			kept_forever: RequiredParams<'media'>
+			/**
+			 * {​m​e​d​i​a​}​,​ ​f​o​r​ ​1​ ​d​a​y​.
+			 * @param {unknown} media
+			 */
+			kept_days_one: RequiredParams<'media'>
+			/**
+			 * {​m​e​d​i​a​}​,​ ​f​o​r​ ​{​c​o​u​n​t​}​ ​d​a​y​s​.
+			 * @param {unknown} count
+			 * @param {unknown} media
+			 */
+			kept_days_other: RequiredParams<'count' | 'media'>
+			/**
+			 * K​e​p​t​ ​f​o​r​e​v​e​r​:​ ​c​h​a​n​g​e​ ​t​h​i​s​ ​i​n​ ​{​s​t​o​r​a​g​e​}​.
+			 * @param {unknown} storage
+			 */
+			source_forever: RequiredParams<'storage'>
+			/**
+			 * T​h​e​ ​1​ ​d​a​y​ ​c​o​m​e​s​ ​f​r​o​m​ ​{​s​t​o​r​a​g​e​}​.
+			 * @param {unknown} storage
+			 */
+			source_days_one: RequiredParams<'storage'>
+			/**
+			 * T​h​e​ ​{​c​o​u​n​t​}​ ​d​a​y​s​ ​c​o​m​e​ ​f​r​o​m​ ​{​s​t​o​r​a​g​e​}​.
+			 * @param {unknown} count
+			 * @param {unknown} storage
+			 */
+			source_days_other: RequiredParams<'count' | 'storage'>
+			/**
+			 * H​o​w​ ​l​o​n​g​ ​k​e​p​t​ ​m​e​d​i​a​ ​s​t​a​y​s​ ​i​s​ ​s​e​t​ ​i​n​ ​{​s​t​o​r​a​g​e​}​.
+			 * @param {unknown} storage
+			 */
+			source_unset: RequiredParams<'storage'>
+			/**
+			 * S​t​o​r​a​g​e
+			 */
+			storage_link: string
+			/**
+			 * T​r​a​n​s​c​r​i​p​t​i​o​n​ ​m​u​s​t​ ​b​e​ ​o​n​ ​t​o​ ​k​e​e​p​ ​n​o​t​h​i​n​g​.
+			 */
+			must_transcribe: string
+			/**
+			 * S​e​t​ ​u​p​ ​t​r​a​n​s​c​r​i​p​t​i​o​n
+			 */
+			set_up_transcription: string
+			/**
+			 * A​p​p​l​i​e​s​ ​t​o​ ​n​e​w​ ​r​e​c​o​r​d​i​n​g​s​ ​a​f​t​e​r​ ​s​a​v​i​n​g​.
+			 */
+			applies_to_new: string
+			/**
+			 * S​e​a​r​c​h​ ​s​p​e​l​l​i​n​g​s
+			 */
+			search_heading: string
+			/**
+			 * C​o​m​m​o​n​ ​m​i​s​h​e​a​r​i​n​g​s​ ​o​f​ ​a​ ​n​a​m​e​,​ ​s​o​ ​s​e​a​r​c​h​i​n​g​ ​f​o​r​ ​t​h​e​ ​n​a​m​e​ ​f​i​n​d​s​ ​t​h​e​m​ ​t​o​o​.
+			 */
+			search_intro: string
+			/**
+			 * O​n​e​ ​n​a​m​e​ ​p​e​r​ ​l​i​n​e​,​ ​t​h​e​n​ ​i​t​s​ ​s​p​e​l​l​i​n​g​s​,​ ​s​e​p​a​r​a​t​e​d​ ​b​y​ ​c​o​m​m​a​s
+			 */
+			search_field: string
+			/**
+			 * (​u​p​ ​t​o​ ​1​0​0​ ​n​a​m​e​s​,​ ​2​5​ ​s​p​e​l​l​i​n​g​s​ ​e​a​c​h​)
+			 */
+			search_limit: string
+			/**
+			 * D​o​e​s​n​'​t​ ​c​h​a​n​g​e​ ​a​n​y​ ​t​r​a​n​s​c​r​i​p​t​,​ ​o​n​l​y​ ​w​h​a​t​ ​s​e​a​r​c​h​ ​f​i​n​d​s​.
+			 */
+			search_note_transcripts: string
+			/**
+			 * R​e​s​u​l​t​s​ ​s​a​y​ ​w​h​e​n​ ​t​h​e​y​ ​m​a​t​c​h​e​d​ ​o​n​e​ ​o​f​ ​t​h​e​s​e​ ​s​p​e​l​l​i​n​g​s​.
+			 */
+			search_note_results: string
+			/**
+			 * U​s​e​ ​t​h​e​s​e​ ​s​p​e​l​l​i​n​g​s​ ​w​h​e​n​ ​t​h​e​ ​t​r​a​n​s​c​r​i​b​e​r​ ​m​i​s​h​e​a​r​s​ ​a​ ​n​a​m​e​.
+			 */
+			search_note_when: string
+			/**
+			 * U​n​s​a​v​e​d​ ​c​h​a​n​g​e​s
+			 */
+			unsaved_region: string
+			/**
+			 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​c​h​a​n​g​e​s
+			 */
+			unsaved: string
+			/**
+			 * S​a​v​i​n​g​ ​c​h​a​n​g​e​s​…
+			 */
+			saving_changes: string
+			/**
+			 * S​a​v​i​n​g​…
+			 */
+			saving: string
+			/**
+			 * S​a​v​e
+			 */
+			save: string
+			/**
+			 * L​e​a​v​e​ ​w​i​t​h​o​u​t​ ​s​a​v​i​n​g​?
+			 */
+			leave_title: string
+			/**
+			 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​c​h​a​n​g​e​s​.​ ​L​e​a​v​e​ ​w​i​t​h​o​u​t​ ​s​a​v​i​n​g​?
+			 */
+			leave_prompt: string
+			/**
+			 * S​t​a​y
+			 */
+			stay: string
+			/**
+			 * L​e​a​v​e
+			 */
+			leave: string
+		}
+		retention: {
+			/**
+			 * R​e​t​e​n​t​i​o​n
+			 */
+			heading: string
+			/**
+			 * H​o​w​ ​l​o​n​g​ ​C​a​s​s​i​n​i​ ​k​e​e​p​s​ ​e​a​c​h​ ​k​i​n​d​ ​o​f​ ​f​i​l​e​.​ ​S​a​v​i​n​g​ ​n​e​v​e​r​ ​d​e​l​e​t​e​s​ ​a​n​y​t​h​i​n​g​ ​i​m​m​e​d​i​a​t​e​l​y​.
+			 */
+			intro: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​s
+			 */
+			recordings_heading: string
+			/**
+			 * A​u​d​i​o​ ​a​n​d​ ​v​i​d​e​o​ ​c​a​p​t​u​r​e​d​ ​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​.​ ​D​e​l​e​t​i​n​g​ ​t​h​e​m​ ​m​e​a​n​s​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​c​a​n​n​o​t​ ​b​e​ ​r​e​p​r​o​c​e​s​s​e​d​.
+			 */
+			recordings_description: string
+			/**
+			 * P​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​s​ ​(​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​)
+			 */
+			current_heading: string
+			/**
+			 * T​h​e​ ​p​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​ ​s​t​a​y​s​ ​i​n​ ​N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s​ ​a​f​t​e​r​ ​t​h​i​s​ ​c​o​p​y​ ​i​s​ ​r​e​m​o​v​e​d​.
+			 */
+			current_description: string
+			/**
+			 * P​r​e​v​i​o​u​s​ ​a​t​t​e​m​p​t​s
+			 */
+			history_heading: string
+			/**
+			 * F​a​i​l​e​d​ ​r​e​c​o​r​d​i​n​g​s​,​ ​f​a​i​l​e​d​ ​p​r​o​c​e​s​s​i​n​g​,​ ​r​e​p​l​a​c​e​d​ ​o​u​t​p​u​t​ ​a​n​d​ ​f​a​i​l​e​d​ ​p​u​b​l​i​s​h​i​n​g​.
+			 */
+			history_description: string
+			/**
+			 * S​e​t​ ​e​a​c​h​ ​k​i​n​d​ ​s​e​p​a​r​a​t​e​l​y
+			 */
+			split_kinds: string
+			/**
+			 * U​s​e​ ​o​n​e​ ​s​e​t​t​i​n​g​ ​f​o​r​ ​a​l​l​ ​k​i​n​d​s
+			 */
+			join_kinds: string
+			/**
+			 * P​r​o​c​e​s​s​i​n​g​ ​l​o​g​s
+			 */
+			logs_heading: string
+			/**
+			 * L​o​g​s​ ​f​r​o​m​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​a​t​t​e​m​p​t​.
+			 */
+			logs_description: string
+			/**
+			 * P​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​s​ ​i​n​ ​N​e​x​t​c​l​o​u​d
+			 */
+			nextcloud_heading: string
+			/**
+			 * D​e​l​e​t​e​s​ ​t​h​e​ ​p​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​,​ ​i​n​c​l​u​d​i​n​g​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​ ​a​n​d​ ​n​o​t​e​s​.
+			 */
+			nextcloud_description: string
+			/**
+			 * D​a​i​l​y​ ​c​l​e​a​n​u​p
+			 */
+			schedule_heading: string
+			/**
+			 * R​u​n​ ​a​t
+			 */
+			run_at: string
+			/**
+			 * C​l​e​a​n​u​p​ ​t​i​m​e
+			 */
+			cleanup_time_label: string
+			/**
+			 * T​i​m​e​z​o​n​e
+			 */
+			timezone_label: string
+			/**
+			 * L​o​a​d​i​n​g​ ​r​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​…
+			 */
+			loading: string
+			/**
+			 * R​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​.
+			 */
+			saved: string
+			/**
+			 * O​p​e​r​a​t​o​r​ ​u​n​a​v​a​i​l​a​b​l​e
+			 */
+			operator_unavailable: string
+			/**
+			 * R​e​t​e​n​t​i​o​n​ ​s​e​t​t​i​n​g​s​ ​a​r​e​ ​b​e​i​n​g​ ​s​a​v​e​d​.​ ​T​r​y​ ​a​g​a​i​n​.
+			 */
+			save_in_progress: string
+			kinds: {
+				/**
+				 * F​a​i​l​e​d​ ​r​e​c​o​r​d​i​n​g​s
+				 */
+				failed_capture: string
+				/**
+				 * F​a​i​l​e​d​ ​p​r​o​c​e​s​s​i​n​g
+				 */
+				failed_build: string
+				/**
+				 * R​e​p​l​a​c​e​d​ ​o​u​t​p​u​t
+				 */
+				superseded: string
+				/**
+				 * F​a​i​l​e​d​ ​p​u​b​l​i​s​h​i​n​g
+				 */
+				failed_publish: string
+			}
+		}
+		retention_policy: {
+			/**
+			 * K​e​e​p​ ​f​o​r​e​v​e​r
+			 */
+			keep_forever: string
+			/**
+			 * {​c​o​u​n​t​}​ ​d​a​y​s
+			 * @param {unknown} count
+			 */
+			preset_days_other: RequiredParams<'count'>
+			/**
+			 * C​u​s​t​o​m
+			 */
+			custom: string
+			/**
+			 * K​e​e​p​ ​f​o​r
+			 */
+			keep_for_before: string
+			/**
+			 * d​a​y​s
+			 */
+			keep_for_after: string
+			/**
+			 * {​l​a​b​e​l​}​ ​d​a​y​s
+			 * @param {unknown} label
+			 */
+			custom_days_label: RequiredParams<'label'>
+		}
+		retention_actions: {
+			/**
+			 * C​h​a​n​g​e​s​ ​t​a​k​e​ ​e​f​f​e​c​t​ ​a​t​ ​t​h​e​ ​n​e​x​t​ ​c​l​e​a​n​u​p​.​ ​S​a​v​i​n​g​ ​n​e​v​e​r​ ​d​e​l​e​t​e​s​ ​f​i​l​e​s​ ​i​m​m​e​d​i​a​t​e​l​y​.
+			 */
+			takes_effect: string
+			/**
+			 * D​i​s​c​a​r​d​ ​c​h​a​n​g​e​s
+			 */
+			discard: string
+			/**
+			 * S​a​v​e
+			 */
+			save: string
+			/**
+			 * L​e​a​v​e​ ​w​i​t​h​o​u​t​ ​s​a​v​i​n​g​?
+			 */
+			leave_title: string
+			/**
+			 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​c​h​a​n​g​e​s​.​ ​L​e​a​v​e​ ​w​i​t​h​o​u​t​ ​s​a​v​i​n​g​?
+			 */
+			leave_prompt: string
+			/**
+			 * S​t​a​y
+			 */
+			stay: string
+			/**
+			 * L​e​a​v​e
+			 */
+			leave: string
+		}
+		retention_reminder: {
+			/**
+			 * R​e​t​e​n​t​i​o​n​ ​r​e​m​i​n​d​e​r
+			 */
+			region_label: string
+			/**
+			 * C​h​o​o​s​e​ ​h​o​w​ ​l​o​n​g​ ​C​a​s​s​i​n​i​ ​k​e​e​p​s​ ​r​e​c​o​r​d​i​n​g​s
+			 */
+			title: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​s​ ​a​n​d​ ​p​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g​s​ ​a​r​e​ ​k​e​p​t​ ​i​n​d​e​f​i​n​i​t​e​l​y​ ​u​n​t​i​l​ ​y​o​u​ ​s​e​t​ ​a​ ​l​i​m​i​t​.
+			 */
+			keeps_forever: string
+			/**
+			 * S​a​v​e​ ​o​r​ ​d​i​s​c​a​r​d​ ​y​o​u​r​ ​c​h​a​n​g​e​s​ ​b​e​f​o​r​e​ ​d​i​s​m​i​s​s​i​n​g​.
+			 */
+			unsaved_first: string
+			/**
+			 * R​e​v​i​e​w
+			 */
+			review: string
+			/**
+			 * D​i​s​m​i​s​s
+			 */
+			dismiss: string
+			/**
+			 * D​i​s​m​i​s​s​i​n​g​…
+			 */
+			dismissing: string
+			/**
+			 * R​e​t​r​y
+			 */
+			retry: string
+			/**
+			 * R​e​t​r​y​i​n​g​…
+			 */
+			retrying: string
+		}
+		speech_models: {
+			/**
+			 * {​s​i​z​e​}​ ​M​i​B
+			 * @param {unknown} size
+			 */
+			size_mib: RequiredParams<'size'>
+			/**
+			 * {​s​i​z​e​}​ ​G​i​B
+			 * @param {unknown} size
+			 */
+			size_gib: RequiredParams<'size'>
+			job_step: {
+				/**
+				 * W​a​i​t​i​n​g​ ​t​o​ ​s​t​a​r​t
+				 */
+				queued: string
+				/**
+				 * D​o​w​n​l​o​a​d​i​n​g
+				 */
+				downloading: string
+				/**
+				 * D​o​w​n​l​o​a​d​i​n​g​ ​·​ ​{​p​e​r​c​e​n​t​}​%
+				 * @param {unknown} percent
+				 */
+				downloading_percent: RequiredParams<'percent'>
+				/**
+				 * V​e​r​i​f​y​i​n​g​ ​t​h​e​ ​d​o​w​n​l​o​a​d
+				 */
+				verifying: string
+				/**
+				 * U​n​p​a​c​k​i​n​g
+				 */
+				unpacking: string
+				/**
+				 * D​o​w​n​l​o​a​d​e​d​ ​·​ ​c​h​e​c​k​s​ ​o​n​c​e​ ​n​o​ ​m​e​e​t​i​n​g​ ​i​s​ ​b​e​i​n​g​ ​p​r​o​c​e​s​s​e​d
+				 */
+				installed: string
+				/**
+				 * C​h​e​c​k​i​n​g​ ​i​t​ ​r​u​n​s​ ​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r
+				 */
+				checking: string
+			}
+		}
+		voice_separation: {
+			/**
+			 * V​o​i​c​e​ ​s​e​p​a​r​a​t​i​o​n
+			 */
+			heading: string
+			/**
+			 * (​o​p​t​i​o​n​a​l​)
+			 */
+			optional: string
+			/**
+			 * F​o​r​ ​C​a​s​s​i​n​i​ ​t​o​ ​t​e​l​l​ ​a​p​a​r​t​ ​s​e​v​e​r​a​l​ ​p​e​o​p​l​e​ ​t​a​l​k​i​n​g​ ​o​n​ ​o​n​e​ ​d​e​v​i​c​e​ ​i​n​ ​a​ ​c​a​l​l​,​ ​d​o​w​n​l​o​a​d​ ​t​h​i​s​ ​m​o​d​e​l​.​ ​A​n​y​o​n​e​ ​w​h​o​ ​c​a​n​ ​r​e​a​d​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​c​a​n​ ​t​h​e​n​ ​s​p​l​i​t​ ​t​h​a​t​ ​d​e​v​i​c​e​'​s​ ​a​u​d​i​o​ ​i​n​t​o​ ​s​e​p​a​r​a​t​e​ ​v​o​i​c​e​s​ ​f​r​o​m​ ​i​t​s​ ​p​a​r​t​i​c​i​p​a​n​t​ ​l​i​s​t​.​ ​I​t​ ​r​u​n​s​ ​o​n​ ​t​h​i​s​ ​s​e​r​v​e​r​'​s​ ​C​P​U​,​ ​o​n​l​y​ ​w​h​e​n​ ​s​o​m​e​o​n​e​ ​a​s​k​s​.
+			 */
+			description: string
+			/**
+			 * R​e​a​d​y
+			 */
+			state_ready: string
+			/**
+			 * N​o​t​ ​a​v​a​i​l​a​b​l​e​ ​i​n​ ​t​h​i​s​ ​s​e​r​v​e​r​'​s​ ​C​a​s​s​i​n​i​ ​b​u​i​l​d
+			 */
+			state_unsupported: string
+			/**
+			 * I​n​s​t​a​l​l​e​d​ ​—​ ​r​u​n​t​i​m​e​ ​c​h​e​c​k​ ​n​e​e​d​e​d
+			 */
+			state_installed: string
+			/**
+			 * D​o​w​n​l​o​a​d​ ​c​a​n​c​e​l​l​e​d​.​ ​R​e​t​r​y​ ​r​e​s​u​m​e​s​ ​i​t​.
+			 */
+			state_cancelled: string
+			/**
+			 * N​o​t​ ​i​n​s​t​a​l​l​e​d
+			 */
+			state_not_installed: string
+			/**
+			 * C​a​n​c​e​l
+			 */
+			cancel: string
+			/**
+			 * C​h​e​c​k
+			 */
+			check: string
+			/**
+			 * R​e​t​r​y
+			 */
+			retry: string
+			/**
+			 * D​o​w​n​l​o​a​d
+			 */
+			download: string
+			/**
+			 * V​o​i​c​e​ ​s​e​p​a​r​a​t​i​o​n​ ​d​o​w​n​l​o​a​d​ ​p​r​o​g​r​e​s​s
+			 */
+			progress_label: string
+		}
+		speech_model_cell: {
+			/**
+			 * R​e​a​d​y
+			 */
+			state_ready: string
+			/**
+			 * I​n​s​t​a​l​l​e​d​ ​·​ ​c​h​e​c​k​e​d​ ​b​e​f​o​r​e​ ​t​h​e​ ​n​e​x​t​ ​r​e​c​o​r​d​i​n​g
+			 */
+			state_installed_selected: string
+			/**
+			 * I​n​s​t​a​l​l​e​d​ ​·​ ​n​o​t​ ​c​h​e​c​k​e​d​ ​o​n​ ​t​h​i​s​ ​b​u​i​l​d​ ​y​e​t
+			 */
+			state_installed: string
+			/**
+			 * D​o​w​n​l​o​a​d​ ​c​a​n​c​e​l​l​e​d​.​ ​R​e​t​r​y​ ​r​e​s​u​m​e​s​ ​i​t​.
+			 */
+			state_cancelled: string
+			/**
+			 * N​o​t​ ​i​n​s​t​a​l​l​e​d
+			 */
+			state_not_installed: string
+			/**
+			 * C​a​n​c​e​l
+			 */
+			cancel: string
+			/**
+			 * C​h​e​c​k
+			 */
+			check: string
+			/**
+			 * R​e​t​r​y
+			 */
+			retry: string
+			/**
+			 * D​o​w​n​l​o​a​d
+			 */
+			download: string
+			/**
+			 * I​n​ ​u​s​e
+			 */
+			in_use: string
+			/**
+			 * M​o​d​e​l​ ​d​o​w​n​l​o​a​d​ ​p​r​o​g​r​e​s​s
+			 */
+			progress_label: string
+			/**
+			 * {​d​o​n​e​}​ ​/​ ​{​t​o​t​a​l​}
+			 * @param {unknown} done
+			 * @param {unknown} total
+			 */
+			progress: RequiredParams<'done' | 'total'>
+			/**
+			 * {​s​i​z​e​}​ ​r​e​u​s​e​d
+			 * @param {unknown} size
+			 */
+			reused: RequiredParams<'size'>
+			/**
+			 * Y​o​u​ ​c​a​n​ ​c​l​o​s​e​ ​t​h​i​s​ ​p​a​g​e​;​ ​i​t​ ​c​a​r​r​i​e​s​ ​o​n​.
+			 */
+			carries_on: string
+		}
+		password_reveal: {
+			/**
+			 * T​h​e​ ​C​a​s​s​i​n​i​ ​s​e​r​v​i​c​e​ ​a​c​c​o​u​n​t​'​s​ ​p​a​s​s​w​o​r​d
+			 */
+			dialog_label: string
+			/**
+			 * S​a​v​e​ ​t​h​e​ ​p​a​s​s​w​o​r​d​ ​f​o​r​ ​t​h​e​ ​{​u​s​e​r​}​ ​a​c​c​o​u​n​t​ ​n​o​w​.
+			 * @param {unknown} user
+			 */
+			save_now: RequiredParams<'user'>
+			/**
+			 * T​h​i​s​ ​i​s​ ​t​h​e​ ​o​n​l​y​ ​t​i​m​e​ ​i​t​'​s​ ​s​h​o​w​n​.​ ​C​a​s​s​i​n​i​ ​d​o​e​s​n​'​t​ ​s​t​o​r​e​ ​i​t​ ​a​n​d​ ​c​a​n​'​t​ ​s​h​o​w​ ​i​t​ ​a​g​a​i​n​.​ ​Y​o​u​ ​o​n​l​y​ ​n​e​e​d​ ​i​t​ ​t​o​ ​s​i​g​n​ ​i​n​ ​a​s​ ​{​u​s​e​r​}​ ​y​o​u​r​s​e​l​f​;​ ​C​a​s​s​i​n​i​ ​c​o​n​n​e​c​t​s​ ​a​n​o​t​h​e​r​ ​w​a​y​.​ ​I​f​ ​y​o​u​ ​l​o​s​e​ ​i​t​,​ ​s​e​t​ ​a​ ​n​e​w​ ​o​n​e​ ​h​e​r​e​.
+			 * @param {unknown} user
+			 */
+			only_time: RequiredParams<'user'>
+			/**
+			 * G​e​n​e​r​a​t​e​d​ ​p​a​s​s​w​o​r​d
+			 */
+			field_label: string
+			/**
+			 * C​o​p​y
+			 */
+			copy: string
+			/**
+			 * C​o​p​i​e​d
+			 */
+			copied: string
+			/**
+			 * Y​o​u​r​ ​b​r​o​w​s​e​r​ ​b​l​o​c​k​e​d​ ​c​o​p​y​i​n​g​.​ ​T​h​e​ ​p​a​s​s​w​o​r​d​ ​i​s​ ​s​e​l​e​c​t​e​d​ ​a​b​o​v​e​,​ ​s​o​ ​c​o​p​y​ ​i​t​ ​w​i​t​h​ ​y​o​u​r​ ​k​e​y​b​o​a​r​d​.
+			 */
+			copy_blocked: string
+			/**
+			 * O​r​ ​s​e​t​ ​o​n​e​ ​o​n​ ​t​h​e​ ​s​e​r​v​e​r​ ​i​n​s​t​e​a​d
+			 */
+			set_on_server: string
+			/**
+			 * I​ ​h​a​v​e​ ​s​a​v​e​d​ ​i​t
+			 */
+			acknowledge: string
+		}
+		direct_share: {
+			/**
+			 * W​h​o​ ​c​a​n​ ​s​e​e​ ​r​e​c​o​r​d​i​n​g​s
+			 */
+			heading: string
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s​ ​c​o​n​t​r​o​l​s​ ​w​h​o​ ​c​a​n​ ​r​e​a​d​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​.
+			 */
+			intro: string
+			/**
+			 * E​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​a​l​l​ ​o​f​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​p​a​r​t​i​c​i​p​a​n​t​s​,​ ​w​h​e​t​h​e​r​ ​t​h​e​y​ ​w​e​r​e​ ​p​r​e​s​e​n​t​ ​o​n​ ​t​h​e​ ​c​a​l​l​ ​o​r​ ​n​o​t​.
+			 */
+			point_participants: string
+			/**
+			 * G​u​e​s​t​s​ ​w​i​t​h​o​u​t​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​c​c​o​u​n​t​ ​c​a​n​'​t​ ​o​p​e​n​ ​i​t​.
+			 */
+			point_guests: string
+			/**
+			 * C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​c​r​e​a​t​e​s​ ​a​ ​p​u​b​l​i​c​ ​l​i​n​k​.​ ​I​n​ ​p​u​b​l​i​c​ ​r​o​o​m​s​,​ ​p​e​o​p​l​e​ ​c​a​n​ ​r​e​s​h​a​r​e​ ​t​h​e​ ​f​i​l​e​ ​i​f​ ​t​h​i​s​ ​N​e​x​t​c​l​o​u​d​ ​a​l​l​o​w​s​ ​i​t​.
+			 */
+			point_public_links: string
+			/**
+			 * C​h​e​c​k​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​…
+			 */
+			checking: string
+			/**
+			 * C​a​s​s​i​n​i​ ​n​e​e​d​s​ ​i​t​s​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t​ ​b​e​f​o​r​e​ ​i​t​ ​c​a​n​ ​p​u​b​l​i​s​h​.
+			 */
+			needs_account: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​ ​n​e​e​d​s​ ​a​t​t​e​n​t​i​o​n​.
+			 */
+			needs_attention: string
+			/**
+			 * C​r​e​a​t​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t
+			 */
+			create_account: string
+			/**
+			 * C​r​e​a​t​i​n​g​…
+			 */
+			creating: string
+			/**
+			 * C​h​e​c​k​ ​a​g​a​i​n
+			 */
+			check_again: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t​ ​c​r​e​a​t​e​d​.​ ​S​h​a​r​i​n​g​ ​i​s​ ​r​e​a​d​y​.
+			 */
+			account_created: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​c​h​e​c​k​ ​N​e​x​t​c​l​o​u​d​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​.
+			 */
+			check_failed: string
+			/**
+			 * C​o​u​l​d​ ​n​o​t​ ​c​r​e​a​t​e​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t​.
+			 */
+			create_failed: string
+		}
+		model_combobox: {
+			/**
+			 * M​o​d​e​l
+			 */
+			label: string
+			/**
+			 * e​n​d​p​o​i​n​t​ ​d​e​f​a​u​l​t
+			 */
+			placeholder: string
+			/**
+			 * L​o​a​d​i​n​g​ ​m​o​d​e​l​s​…
+			 */
+			loading: string
+			/**
+			 * {​e​r​r​o​r​}​ ​Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​t​y​p​e​ ​a​ ​m​o​d​e​l​ ​I​D​.
+			 * @param {unknown} error
+			 */
+			list_failed: RequiredParams<'error'>
+			/**
+			 * T​h​i​s​ ​e​n​d​p​o​i​n​t​ ​l​i​s​t​e​d​ ​n​o​ ​m​o​d​e​l​s​.​ ​T​y​p​e​ ​a​ ​m​o​d​e​l​ ​I​D​.
+			 */
+			no_models: string
+			/**
+			 * N​o​ ​m​a​t​c​h​ ​f​o​r​ ​“​{​t​e​x​t​}​”​.​ ​I​t​ ​w​i​l​l​ ​b​e​ ​u​s​e​d​ ​a​s​ ​t​y​p​e​d​.
+			 * @param {unknown} text
+			 */
+			no_match: RequiredParams<'text'>
+			/**
+			 * {​s​h​o​w​n​}​ ​o​f​ ​{​c​o​u​n​t​}​ ​m​o​d​e​l​s
+			 * @param {unknown} count
+			 * @param {unknown} shown
+			 */
+			match_count_other: RequiredParams<'count' | 'shown'>
+		}
+		published_format: {
+			/**
+			 * P​u​b​l​i​s​h​e​d​ ​m​e​e​t​i​n​g
+			 */
+			field_label: string
+			/**
+			 * A​u​d​i​o​ ​a​n​d​ ​t​r​a​n​s​c​r​i​p​t​ ​(​.​o​p​u​s​)
+			 */
+			opus_label: string
+			/**
+			 * T​r​a​n​s​c​r​i​p​t​ ​o​n​l​y​ ​(​.​j​s​o​n​)
+			 */
+			json_label: string
+			/**
+			 * O​n​e​ ​p​o​r​t​a​b​l​e​ ​f​i​l​e​:​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​w​i​t​h​ ​i​t​s​ ​t​r​a​n​s​c​r​i​p​t​.
+			 */
+			opus_description: string
+			/**
+			 * T​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​s​ ​o​n​e​ ​p​o​r​t​a​b​l​e​ ​f​i​l​e​.​ ​N​o​ ​t​r​a​n​s​c​r​i​p​t​ ​w​h​i​l​e​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​i​s​ ​o​f​f​.
+			 */
+			opus_description_no_transcript: string
+			/**
+			 * T​h​e​ ​t​r​a​n​s​c​r​i​p​t​ ​a​l​o​n​e​,​ ​n​o​ ​a​u​d​i​o​.
+			 */
+			json_description: string
+			/**
+			 * N​e​e​d​s​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​o​n​ ​i​n​ ​s​t​e​p​ ​1​.
+			 */
+			json_needs_transcript: string
+		}
+		llm: {
+			/**
+			 * A​I​ ​p​r​o​v​i​d​e​r​s
+			 */
+			heading: string
+			/**
+			 * O​p​t​i​o​n​a​l
+			 */
+			optional_badge: string
+			/**
+			 * W​h​e​r​e​ ​C​a​s​s​i​n​i​ ​s​e​n​d​s​ ​t​r​a​n​s​c​r​i​p​t​s​ ​f​o​r​ ​s​u​m​m​a​r​i​e​s​ ​a​n​d​ ​i​n​s​i​g​h​t​s​.
+			 */
+			subtitle: string
+			/**
+			 * R​e​l​o​a​d​ ​A​I​ ​p​r​o​v​i​d​e​r​s
+			 */
+			reload: string
+			/**
+			 * A​d​d​ ​a​ ​p​r​o​v​i​d​e​r
+			 */
+			add_provider: string
+			/**
+			 * L​o​a​d​i​n​g​ ​A​I​ ​p​r​o​v​i​d​e​r​s​…
+			 */
+			loading: string
+			/**
+			 * N​o​ ​A​I​ ​p​r​o​v​i​d​e​r​ ​s​e​t​t​i​n​g​s​ ​a​v​a​i​l​a​b​l​e​.
+			 */
+			unavailable: string
+			/**
+			 * N​o​ ​o​p​e​r​a​t​o​r​ ​c​l​i​e​n​t​ ​i​s​ ​a​v​a​i​l​a​b​l​e​.
+			 */
+			no_client: string
+			/**
+			 * S​u​m​m​a​r​i​e​s
+			 */
+			feature_summaries: string
+			/**
+			 * S​h​o​w​n​ ​a​t​ ​t​h​e​ ​t​o​p​ ​o​f​ ​e​v​e​r​y​ ​m​e​e​t​i​n​g​.
+			 */
+			feature_summaries_description: string
+			/**
+			 * I​n​s​i​g​h​t​s
+			 */
+			feature_insights: string
+			/**
+			 * A​n​s​w​e​r​s​ ​d​r​a​w​n​ ​f​r​o​m​ ​m​e​e​t​i​n​g​s​ ​y​o​u​ ​c​h​o​o​s​e​.
+			 */
+			feature_insights_description: string
+			/**
+			 * R​e​c​o​r​d​i​n​g​ ​a​n​d​ ​t​r​a​n​s​c​r​i​p​t​i​o​n​ ​r​u​n​ ​o​n​ ​y​o​u​r​ ​o​w​n​ ​s​e​r​v​e​r​s​.​ ​A​ ​p​r​o​v​i​d​e​r​ ​i​s​ ​o​n​l​y​ ​n​e​e​d​e​d​ ​f​o​r​ ​s​u​m​m​a​r​i​e​s​ ​a​n​d​ ​i​n​s​i​g​h​t​s​.
+			 */
+			only_for_ai: string
+			/**
+			 * S​a​v​i​n​g​ ​y​o​u​r​ ​f​i​r​s​t​ ​p​r​o​v​i​d​e​r​ ​t​u​r​n​s​ ​o​n​ ​s​u​m​m​a​r​i​e​s​ ​f​o​r​ ​e​v​e​r​y​ ​m​e​e​t​i​n​g​.​ ​Y​o​u​ ​c​a​n​ ​t​u​r​n​ ​t​h​e​m​ ​o​f​f​ ​i​n​ ​{​p​l​a​c​e​}​.
+			 * @param {unknown} place
+			 */
+			first_save_turns_on: RequiredParams<'place'>
+			/**
+			 * O​p​e​r​a​t​o​r​ ​›​ ​P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e
+			 */
+			publish_pipeline_place: string
+			/**
+			 * N​e​w​ ​p​r​o​v​i​d​e​r
+			 */
+			new_provider: string
+			/**
+			 * E​d​i​t​i​n​g​ ​{​n​a​m​e​}
+			 * @param {unknown} name
+			 */
+			editing: RequiredParams<'name'>
+			/**
+			 * P​r​o​v​i​d​e​r
+			 */
+			field_provider: string
+			/**
+			 * O​p​e​n​R​o​u​t​e​r​,​ ​l​o​c​a​l​ ​Q​w​e​n​…
+			 */
+			provider_placeholder: string
+			/**
+			 * B​a​s​e​ ​U​R​L
+			 */
+			field_base_url: string
+			/**
+			 * h​t​t​p​s​:​/​/​o​p​e​n​r​o​u​t​e​r​.​a​i​/​a​p​i​/​v​1​ ​o​r​ ​h​t​t​p​:​/​/​y​o​u​r​-​h​o​s​t​:​8​0​0​0​/​v​1
+			 */
+			base_url_placeholder: string
+			/**
+			 * A​P​I​ ​k​e​y
+			 */
+			field_api_key: string
+			/**
+			 * s​t​o​r​e​d
+			 */
+			key_stored: string
+			/**
+			 * w​i​l​l​ ​b​e​ ​r​e​m​o​v​e​d
+			 */
+			key_will_be_removed: string
+			/**
+			 * L​e​a​v​e​ ​b​l​a​n​k​ ​t​o​ ​k​e​e​p​ ​t​h​e​ ​s​a​v​e​d​ ​k​e​y
+			 */
+			key_placeholder_keep: string
+			/**
+			 * P​a​s​t​e​ ​t​h​e​ ​f​u​l​l​ ​A​P​I​ ​k​e​y​ ​(​s​k​-​o​r​-​v​1​-​…​ ​f​o​r​ ​O​p​e​n​R​o​u​t​e​r​)​.​ ​S​e​l​f​-​h​o​s​t​e​d​ ​s​e​r​v​e​r​s​ ​u​s​u​a​l​l​y​ ​d​o​n​'​t​ ​n​e​e​d​ ​o​n​e​.
+			 */
+			key_placeholder_new: string
+			/**
+			 * O​p​e​n​R​o​u​t​e​r​ ​k​e​y​s​ ​s​t​a​r​t​ ​w​i​t​h​ ​s​k​-​o​r​-​v​1​-​.​ ​C​h​e​c​k​ ​y​o​u​ ​p​a​s​t​e​d​ ​t​h​e​ ​w​h​o​l​e​ ​k​e​y​.
+			 */
+			openrouter_key_prefix: string
+			/**
+			 * K​e​e​p​ ​t​h​e​ ​s​a​v​e​d​ ​k​e​y
+			 */
+			keep_saved_key: string
+			/**
+			 * R​e​m​o​v​e​ ​t​h​e​ ​s​a​v​e​d​ ​k​e​y
+			 */
+			remove_saved_key: string
+			/**
+			 * D​e​f​a​u​l​t​ ​m​o​d​e​l
+			 */
+			default_model: string
+			/**
+			 * e​.​g​.​ ​o​p​e​n​a​i​/​g​p​t​-​4​o​-​m​i​n​i​ ​o​r​ ​q​w​e​n​3​-​3​0​b
+			 */
+			model_placeholder: string
+			/**
+			 * S​a​v​e​ ​t​h​e​ ​p​r​o​v​i​d​e​r​ ​f​i​r​s​t​ ​t​o​ ​l​i​s​t​ ​i​t​s​ ​m​o​d​e​l​s​.
+			 */
+			save_first_for_models: string
+			/**
+			 * M​o​d​e​l​ ​l​i​s​t​ ​u​n​a​v​a​i​l​a​b​l​e​:​ ​{​d​e​t​a​i​l​}​.
+			 * @param {unknown} detail
+			 */
+			model_list_unavailable: RequiredParams<'detail'>
+			/**
+			 * {​r​e​a​s​o​n​}​ ​Y​o​u​ ​c​a​n​ ​s​t​i​l​l​ ​t​y​p​e​ ​a​ ​m​o​d​e​l​ ​I​D​.
+			 * @param {unknown} reason
+			 */
+			probe_failed_hint: RequiredParams<'reason'>
+			/**
+			 * R​e​q​u​e​s​t​ ​l​i​m​i​t​s
+			 */
+			request_limits: string
+			/**
+			 * R​e​q​u​e​s​t​ ​t​i​m​e​o​u​t​ ​(​s​)
+			 */
+			request_timeout: string
+			/**
+			 * {​s​e​c​o​n​d​s​}​ ​(​d​e​f​a​u​l​t​)
+			 * @param {unknown} seconds
+			 */
+			timeout_placeholder: RequiredParams<'seconds'>
+			/**
+			 * R​e​s​p​o​n​s​e​ ​t​o​k​e​n​ ​l​i​m​i​t
+			 */
+			token_limit_field: string
+			/**
+			 * {​t​o​k​e​n​s​}​ ​(​d​e​f​a​u​l​t​)
+			 * @param {unknown} tokens
+			 */
+			token_limit_placeholder: RequiredParams<'tokens'>
+			/**
+			 * S​a​v​i​n​g​…
+			 */
+			saving: string
+			/**
+			 * S​a​v​e​ ​p​r​o​v​i​d​e​r
+			 */
+			save_provider: string
+			/**
+			 * C​a​n​c​e​l
+			 */
+			cancel: string
+			/**
+			 * T​h​i​s​ ​e​n​d​p​o​i​n​t​ ​a​n​s​w​e​r​e​d​ ​w​i​t​h​ ​i​t​s​ ​m​o​d​e​l​ ​l​i​s​t
+			 */
+			probe_ok: string
+			/**
+			 * T​h​i​s​ ​e​n​d​p​o​i​n​t​ ​d​i​d​ ​n​o​t​ ​l​i​s​t​ ​i​t​s​ ​m​o​d​e​l​s
+			 */
+			probe_failed: string
+			/**
+			 * K​e​y​ ​s​a​v​e​d
+			 */
+			key_saved: string
+			/**
+			 * N​o​ ​k​e​y
+			 */
+			no_key: string
+			/**
+			 * M​o​d​e​l​ ​{​m​o​d​e​l​}
+			 * @param {unknown} model
+			 */
+			model_named: RequiredParams<'model'>
+			/**
+			 * N​o​ ​d​e​f​a​u​l​t​ ​m​o​d​e​l
+			 */
+			no_default_model: string
+			/**
+			 * 1​ ​m​o​d​e​l
+			 */
+			model_count_one: string
+			/**
+			 * {​c​o​u​n​t​}​ ​m​o​d​e​l​s
+			 * @param {unknown} count
+			 */
+			model_count_other: RequiredParams<'count'>
+			/**
+			 * L​o​a​d​i​n​g​ ​m​o​d​e​l​s​…
+			 */
+			loading_models: string
+			/**
+			 * {​s​e​c​o​n​d​s​}​s​ ​t​i​m​e​o​u​t
+			 * @param {unknown} seconds
+			 */
+			timeout_fact: RequiredParams<'seconds'>
+			/**
+			 * {​t​o​k​e​n​s​}​ ​t​o​k​e​n​ ​l​i​m​i​t
+			 * @param {unknown} tokens
+			 */
+			token_limit_fact: RequiredParams<'tokens'>
+			/**
+			 * E​d​i​t
+			 */
+			edit: string
+			/**
+			 * R​e​m​o​v​e
+			 */
+			remove: string
+			/**
+			 * C​o​n​f​i​r​m​ ​r​e​m​o​v​i​n​g​ ​t​h​i​s​ ​e​n​d​p​o​i​n​t
+			 */
+			remove_confirm_label: string
+			/**
+			 * R​e​m​o​v​e​ ​{​n​a​m​e​}​?
+			 * @param {unknown} name
+			 */
+			remove_confirm_title: RequiredParams<'name'>
+			/**
+			 * T​h​e​ ​s​a​v​e​d​ ​A​P​I​ ​k​e​y​ ​i​s​ ​d​e​l​e​t​e​d​ ​a​n​d​ ​c​a​n​'​t​ ​b​e​ ​r​e​c​o​v​e​r​e​d​.
+			 */
+			remove_deletes_key: string
+			/**
+			 * T​h​i​s​ ​s​t​o​p​s​ ​m​e​e​t​i​n​g​ ​s​u​m​m​a​r​i​e​s​ ​u​n​t​i​l​ ​y​o​u​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​p​r​o​v​i​d​e​r​ ​i​n​ ​{​p​l​a​c​e​}​.
+			 * @param {unknown} place
+			 */
+			remove_stops_summaries: RequiredParams<'place'>
+			/**
+			 * T​h​i​s​ ​s​t​o​p​s​ ​i​n​s​i​g​h​t​s​ ​u​n​t​i​l​ ​y​o​u​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​p​r​o​v​i​d​e​r​ ​i​n​ ​{​p​l​a​c​e​}​.
+			 * @param {unknown} place
+			 */
+			remove_stops_insights: RequiredParams<'place'>
+			/**
+			 * T​h​i​s​ ​s​t​o​p​s​ ​m​e​e​t​i​n​g​ ​s​u​m​m​a​r​i​e​s​ ​a​n​d​ ​i​n​s​i​g​h​t​s​ ​u​n​t​i​l​ ​y​o​u​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​p​r​o​v​i​d​e​r​ ​i​n​ ​{​p​l​a​c​e​}​.
+			 * @param {unknown} place
+			 */
+			remove_stops_both: RequiredParams<'place'>
+			/**
+			 * M​e​e​t​i​n​g​s​ ​a​l​r​e​a​d​y​ ​p​u​b​l​i​s​h​e​d​ ​k​e​e​p​ ​t​h​e​i​r​ ​s​u​m​m​a​r​i​e​s​.
+			 */
+			remove_keeps_summaries: string
+			/**
+			 * Y​e​s​,​ ​r​e​m​o​v​e​ ​i​t
+			 */
+			remove_confirm: string
+			/**
+			 * S​u​m​m​a​r​i​e​s​ ​u​s​e​ ​{​p​r​o​v​i​d​e​r​}​.
+			 * @param {unknown} provider
+			 */
+			summary_uses: RequiredParams<'provider'>
+			/**
+			 * S​u​m​m​a​r​i​e​s​ ​u​s​e​ ​{​p​r​o​v​i​d​e​r​}​ ​w​i​t​h​ ​{​m​o​d​e​l​}​.
+			 * @param {unknown} model
+			 * @param {unknown} provider
+			 */
+			summary_uses_with_model: RequiredParams<'model' | 'provider'>
+			/**
+			 * S​u​m​m​a​r​i​e​s​ ​a​r​e​ ​o​f​f​.
+			 */
+			summaries_off: string
+			/**
+			 * C​h​a​n​g​e​ ​t​h​i​s​ ​i​n​ ​{​p​l​a​c​e​}​.
+			 * @param {unknown} place
+			 */
+			change_in_pipeline: RequiredParams<'place'>
+			/**
+			 * W​h​o​e​v​e​r​ ​c​r​e​a​t​e​s​ ​a​n​ ​i​n​s​i​g​h​t​ ​p​i​c​k​s​ ​w​h​i​c​h​ ​p​r​o​v​i​d​e​r​ ​i​t​ ​u​s​e​s​.​ ​I​f​ ​t​h​e​y​ ​d​o​n​'​t​ ​p​i​c​k​ ​o​n​e​,​ ​i​t​ ​u​s​e​s​ ​{​p​r​o​v​i​d​e​r​}​.
+			 * @param {unknown} provider
+			 */
+			insight_default: RequiredParams<'provider'>
+			/**
+			 * W​h​o​e​v​e​r​ ​c​r​e​a​t​e​s​ ​a​n​ ​i​n​s​i​g​h​t​ ​p​i​c​k​s​ ​w​h​i​c​h​ ​p​r​o​v​i​d​e​r​ ​i​t​ ​u​s​e​s​.​ ​I​f​ ​t​h​e​y​ ​d​o​n​'​t​ ​p​i​c​k​ ​o​n​e​,​ ​i​t​ ​u​s​e​s​ ​{​p​r​o​v​i​d​e​r​}​ ​w​i​t​h​ ​{​m​o​d​e​l​}​.
+			 * @param {unknown} model
+			 * @param {unknown} provider
+			 */
+			insight_default_with_model: RequiredParams<'model' | 'provider'>
+			/**
+			 * R​e​m​o​v​e​ ​a​l​l​ ​p​r​o​v​i​d​e​r​s​ ​t​o​ ​t​u​r​n​ ​o​f​f​ ​b​o​t​h​ ​s​u​m​m​a​r​i​e​s​ ​a​n​d​ ​i​n​s​i​g​h​t​s​.
+			 */
+			remove_all_turns_off: string
+		}
 	}
 	insights: {
 		generate_card: {
@@ -4087,10 +5582,1424 @@ export type TranslationFunctions = {
 	}
 	app: {
 		shell: {
+			app: {
+				/**
+				 * Cassini surfaces
+				 */
+				nav_label: () => LocalizedString
+				/**
+				 * Browse
+				 */
+				tab_browse: () => LocalizedString
+				/**
+				 * Operator
+				 */
+				tab_operator: () => LocalizedString
+				/**
+				 * Close
+				 */
+				close_overlay: () => LocalizedString
+				/**
+				 * Recording setup needs an administrator’s attention.
+				 */
+				recording_needs_action: () => LocalizedString
+				/**
+				 * Open recording setup
+				 */
+				open_recording_setup: () => LocalizedString
+				/**
+				 * Could not load retention settings.
+				 */
+				retention_load_failed: () => LocalizedString
+			}
+			load_error: {
+				/**
+				 * Cassini couldn't read these settings
+				 */
+				title: () => LocalizedString
+				/**
+				 * Try again in a moment. If it still won't load, share the technical details below with Cassini support.
+				 */
+				summary_default: () => LocalizedString
+				/**
+				 * Sign in to Nextcloud again, then try again.
+				 */
+				summary_unauthorized: () => LocalizedString
+				/**
+				 * Nextcloud denied access. Make sure you're signed in with an administrator account, then try again.
+				 */
+				summary_forbidden: () => LocalizedString
+				/**
+				 * Cassini's storage settings couldn't be found. If you just updated Cassini, check that the update has finished, then try again.
+				 */
+				summary_not_found: () => LocalizedString
+				/**
+				 * Cassini couldn't respond right now. Wait a moment and try again.
+				 */
+				summary_server_error: () => LocalizedString
+				/**
+				 * Cassini couldn't be reached. Check your connection and try again.
+				 */
+				summary_unreachable: () => LocalizedString
+			}
+			room_names: {
+				/**
+				 * Could not reach Cassini. Your draft is still here.
+				 */
+				unreachable: () => LocalizedString
+				/**
+				 * This room is no longer available to you.
+				 */
+				room_gone: () => LocalizedString
+				/**
+				 * Could not update the room name.
+				 */
+				update_failed: () => LocalizedString
+				/**
+				 * Cassini returned an invalid room name. Refresh before trying again.
+				 */
+				invalid_response: () => LocalizedString
+			}
+			meeting_access: {
+				/**
+				 * Nextcloud did not accept this share.
+				 */
+				share_refused: () => LocalizedString
+			}
+			imports_client: {
+				/**
+				 * Import needs a Nextcloud session, and this page has none.
+				 */
+				no_session: () => LocalizedString
+				/**
+				 * Could not prepare the staging folder (HTTP {status}).
+				 */
+				staging_failed: (arg: { status: unknown }) => LocalizedString
+				/**
+				 * Could not register the upload.
+				 */
+				register_failed: () => LocalizedString
+				/**
+				 * The upload failed — check the connection and try again.
+				 */
+				upload_failed: () => LocalizedString
+				/**
+				 * The upload was interrupted.
+				 */
+				upload_interrupted: () => LocalizedString
+				/**
+				 * Not enough space in your Nextcloud Files for this upload.
+				 */
+				not_enough_space: () => LocalizedString
+				/**
+				 * The upload was refused (HTTP {status}).
+				 */
+				upload_refused: (arg: { status: unknown }) => LocalizedString
+				/**
+				 * This upload is no longer registered with Cassini; add the file again.
+				 */
+				upload_unregistered: () => LocalizedString
+				/**
+				 * Cassini stopped answering during the upload, so it was interrupted; add the file again.
+				 */
+				upload_unanswered: () => LocalizedString
+				/**
+				 * This deployment does not serve meeting imports.
+				 */
+				imports_not_served: () => LocalizedString
+				/**
+				 * Cassini could not verify who you are; reload and try again.
+				 */
+				identity_unverified: () => LocalizedString
+				/**
+				 * The import request failed (HTTP {status}).
+				 */
+				request_failed: (arg: { status: unknown }) => LocalizedString
+				/**
+				 * People search failed (HTTP {status}).
+				 */
+				people_search_failed: (arg: { status: unknown }) => LocalizedString
+			}
+			data_provider: {
+				/**
+				 * Pick at least one meeting first.
+				 */
+				bundle_needs_meetings: () => LocalizedString
+				/**
+				 * Cassini could not read that request for a bundle.
+				 */
+				bundle_bad_request: () => LocalizedString
+				/**
+				 * One of these meetings is not available to you, or this deployment cannot assemble bundles.
+				 */
+				bundle_not_found: () => LocalizedString
+				/**
+				 * Cassini could not read these meetings from Nextcloud.
+				 */
+				bundle_nextcloud_unreadable: () => LocalizedString
+				/**
+				 * Could not prepare the bundle (HTTP {status}).
+				 */
+				bundle_failed: (arg: { status: unknown }) => LocalizedString
+			}
 		}
 		operator: {
 		}
 		settings: {
+			pipeline: {
+				/**
+				 * Publish pipeline
+				 */
+				heading: () => LocalizedString
+				/**
+				 * Every step between the call ending and the meeting being published. These apply to every room.
+				 */
+				intro: () => LocalizedString
+				/**
+				 * Loading settings…
+				 */
+				loading: () => LocalizedString
+				/**
+				 * Settings aren't available.
+				 */
+				unavailable: () => LocalizedString
+				/**
+				 * After each meeting
+				 */
+				after_meeting: () => LocalizedString
+				/**
+				 * Current
+				 */
+				current: () => LocalizedString
+				/**
+				 * The saved settings new recordings get
+				 */
+				current_title: () => LocalizedString
+				/**
+				 * Current settings
+				 */
+				strip_label: () => LocalizedString
+				/**
+				 * Transcribe
+				 */
+				chip_transcribe: () => LocalizedString
+				/**
+				 * Summarise
+				 */
+				chip_summarise: () => LocalizedString
+				/**
+				 * Publish
+				 */
+				chip_publish: () => LocalizedString
+				/**
+				 * Media retention
+				 */
+				chip_retention: () => LocalizedString
+				/**
+				 * Transcription settings
+				 */
+				transcription_label: () => LocalizedString
+				/**
+				 * Transcript
+				 */
+				transcript_heading: () => LocalizedString
+				/**
+				 * What transcribes recordings
+				 */
+				tiers_label: () => LocalizedString
+				/**
+				 * Off
+				 */
+				off: () => LocalizedString
+				/**
+				 * Recordings are published without a transcript.
+				 */
+				off_description: () => LocalizedString
+				/**
+				 * Fast
+				 */
+				quality_fast: () => LocalizedString
+				/**
+				 * Fastest transcription, lower accuracy.
+				 */
+				quality_fast_description: () => LocalizedString
+				/**
+				 * Balanced
+				 */
+				quality_balanced: () => LocalizedString
+				/**
+				 * Default — good accuracy at reasonable speed.
+				 */
+				quality_balanced_description: () => LocalizedString
+				/**
+				 * Best
+				 */
+				quality_best: () => LocalizedString
+				/**
+				 * Highest accuracy (fp32), slowest.
+				 */
+				quality_best_description: () => LocalizedString
+				/**
+				 * Downloading the {tier} model. Transcription turns on when it finishes.
+				 */
+				lead_downloading: (arg: { tier: unknown }) => LocalizedString
+				/**
+				 * Nothing is transcribed. Install and pick a model to turn transcription on.
+				 */
+				lead_off: () => LocalizedString
+				/**
+				 * Transcription is on. Save to apply it to new recordings.
+				 */
+				lead_on_unsaved: () => LocalizedString
+				/**
+				 * Now transcribing with the {tier} model. Save to apply it.
+				 */
+				lead_switched: (arg: { tier: unknown }) => LocalizedString
+				/**
+				 * Now transcribing with the chosen model. Save to apply it.
+				 */
+				lead_switched_unnamed: () => LocalizedString
+				/**
+				 * Transcribing every recording with the {tier} model.
+				 */
+				lead_tier: (arg: { tier: unknown }) => LocalizedString
+				/**
+				 * Transcription is on.
+				 */
+				lead_on: () => LocalizedString
+				/**
+				 * On the GPU, every quality setting uses the same full-precision model, so this only changes transcription on the CPU.
+				 */
+				gpu_same_model: () => LocalizedString
+				/**
+				 * Cannot refresh model status: {error}
+				 */
+				inventory_refresh_failed: (arg: { error: unknown }) => LocalizedString
+				/**
+				 * Loading model inventory…
+				 */
+				loading_inventory: () => LocalizedString
+				/**
+				 * Downloads are disabled. Prepare a package with {pack} on a connected machine, copy it here, and run {import} inside this server's Cassini runtime. Imported models appear here automatically.
+				 */
+				downloads_disabled: (arg: { import: unknown, pack: unknown }) => LocalizedString
+				/**
+				 * Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.
+				 */
+				transcript_only_without: () => LocalizedString
+				/**
+				 * the GPU (CUDA)
+				 */
+				runs_on_gpu: () => LocalizedString
+				/**
+				 * the CPU
+				 */
+				runs_on_cpu: () => LocalizedString
+				/**
+				 * the CPU (no GPU found)
+				 */
+				runs_on_cpu_no_gpu: () => LocalizedString
+				/**
+				 * {model} isn't installed, so recordings get no transcript.
+				 */
+				in_use_missing: (arg: { model: unknown }) => LocalizedString
+				/**
+				 * Downloading {model}; the previous model transcribes recordings on {device} meanwhile.
+				 */
+				in_use_stand_in_downloading: (arg: { device: unknown, model: unknown }) => LocalizedString
+				/**
+				 * Downloading {model} ({percent}%); the previous model transcribes recordings on {device} meanwhile.
+				 */
+				in_use_stand_in_downloading_percent: (arg: { device: unknown, model: unknown, percent: unknown }) => LocalizedString
+				/**
+				 * {model} is installed but failed its runtime check; the previous model transcribes recordings on {device} meanwhile.
+				 */
+				in_use_stand_in_failed_check: (arg: { device: unknown, model: unknown }) => LocalizedString
+				/**
+				 * {model} isn't installed; the previous model transcribes recordings on {device} meanwhile.
+				 */
+				in_use_stand_in_missing: (arg: { device: unknown, model: unknown }) => LocalizedString
+				/**
+				 * Downloading {model}; recordings wait for it.
+				 */
+				in_use_downloading: (arg: { model: unknown }) => LocalizedString
+				/**
+				 * Downloading {model} ({percent}%); recordings wait for it.
+				 */
+				in_use_downloading_percent: (arg: { model: unknown, percent: unknown }) => LocalizedString
+				/**
+				 * Transcribing with {model} on {device}.
+				 */
+				in_use_transcribing: (arg: { device: unknown, model: unknown }) => LocalizedString
+				/**
+				 * Transcription runs on {device}.
+				 */
+				in_use_runs_on: (arg: { device: unknown }) => LocalizedString
+				/**
+				 * Hardware
+				 */
+				hardware: () => LocalizedString
+				/**
+				 * GPU
+				 */
+				hw_gpu: () => LocalizedString
+				/**
+				 * Found
+				 */
+				hw_gpu_found: () => LocalizedString
+				/**
+				 * None found
+				 */
+				hw_gpu_none: () => LocalizedString
+				/**
+				 * CPU cores
+				 */
+				hw_cores: () => LocalizedString
+				/**
+				 * Memory
+				 */
+				hw_memory: () => LocalizedString
+				/**
+				 * Each recording waits for {size} free
+				 */
+				hw_memory_wait: (arg: { size: unknown }) => LocalizedString
+				/**
+				 * {size} GB
+				 */
+				memory_gb: (arg: { size: unknown }) => LocalizedString
+				/**
+				 * {size} MB
+				 */
+				memory_mb: (arg: { size: unknown }) => LocalizedString
+				/**
+				 * Device
+				 */
+				hw_device: () => LocalizedString
+				/**
+				 * Auto
+				 */
+				hw_device_auto: () => LocalizedString
+				/**
+				 * Auto uses the GPU when there is one. Change it only if the hardware above is wrong.
+				 */
+				hw_device_help: () => LocalizedString
+				/**
+				 * No GPU was found, so recordings won't be processed on this setting.
+				 */
+				hw_no_gpu_forced: () => LocalizedString
+				/**
+				 * For faster transcription, run Cassini's CUDA image on a server with a GPU.
+				 */
+				hw_cuda_tip: () => LocalizedString
+				/**
+				 * Summary
+				 */
+				summary_heading: () => LocalizedString
+				/**
+				 * needs a transcript
+				 */
+				needs_transcript: () => LocalizedString
+				/**
+				 * Summarise every meeting
+				 */
+				summarise_switch: () => LocalizedString
+				/**
+				 * Couldn't load the AI provider settings, so this step can't be shown or changed: {error}
+				 */
+				llm_load_failed: (arg: { error: unknown }) => LocalizedString
+				/**
+				 * Needs a provider.
+				 */
+				needs_provider: () => LocalizedString
+				/**
+				 * Add one
+				 */
+				add_provider: () => LocalizedString
+				/**
+				 * Provider
+				 */
+				field_provider: () => LocalizedString
+				/**
+				 * Insight template
+				 */
+				field_template: () => LocalizedString
+				/**
+				 * The workflow Cassini ships
+				 */
+				template_shipped: () => LocalizedString
+				/**
+				 * Templates could not be listed.
+				 */
+				templates_unlisted: () => LocalizedString
+				/**
+				 * Meetings published from now on are summarised with this template.
+				 */
+				template_help: () => LocalizedString
+				/**
+				 * Edit templates
+				 */
+				edit_templates: () => LocalizedString
+				/**
+				 * {id} cannot run: {error}
+				 */
+				template_cannot_run: (arg: { error: unknown, id: unknown }) => LocalizedString
+				/**
+				 * {id} cannot run: it asks for a question, and a summary has nobody to ask
+				 */
+				template_asks_question: (arg: { id: unknown }) => LocalizedString
+				/**
+				 * {id} — not in this build
+				 */
+				template_not_in_build: (arg: { id: unknown }) => LocalizedString
+				/**
+				 * {model} (the provider's default)
+				 */
+				provider_default_model: (arg: { model: unknown }) => LocalizedString
+				/**
+				 * no default model set on this provider
+				 */
+				no_provider_default: () => LocalizedString
+				/**
+				 * What participants receive
+				 */
+				publication_heading: () => LocalizedString
+				/**
+				 * Camera video is never published.
+				 */
+				no_video_published: () => LocalizedString
+				/**
+				 * What media stays on the server
+				 */
+				keep_heading: () => LocalizedString
+				/**
+				 * Nothing
+				 */
+				keep_nothing: () => LocalizedString
+				/**
+				 * The recording is deleted after publishing and cannot be reprocessed.
+				 */
+				keep_nothing_help: () => LocalizedString
+				/**
+				 * Unavailable while audio is published (step 3).
+				 */
+				keep_nothing_unavailable: () => LocalizedString
+				/**
+				 * Audio and video
+				 */
+				keep_video: () => LocalizedString
+				/**
+				 * Uses the most space.
+				 */
+				keep_video_help: () => LocalizedString
+				/**
+				 * Audio only
+				 */
+				keep_audio: () => LocalizedString
+				/**
+				 * {media}.
+				 */
+				kept_plain: (arg: { media: unknown }) => LocalizedString
+				/**
+				 * {media}, kept forever.
+				 */
+				kept_forever: (arg: { media: unknown }) => LocalizedString
+				/**
+				 * {media}, for 1 day.
+				 */
+				kept_days_one: (arg: { media: unknown }) => LocalizedString
+				/**
+				 * {media}, for {count} days.
+				 */
+				kept_days_other: (arg: { count: unknown, media: unknown }) => LocalizedString
+				/**
+				 * Kept forever: change this in {storage}.
+				 */
+				source_forever: (arg: { storage: unknown }) => LocalizedString
+				/**
+				 * The 1 day comes from {storage}.
+				 */
+				source_days_one: (arg: { storage: unknown }) => LocalizedString
+				/**
+				 * The {count} days come from {storage}.
+				 */
+				source_days_other: (arg: { count: unknown, storage: unknown }) => LocalizedString
+				/**
+				 * How long kept media stays is set in {storage}.
+				 */
+				source_unset: (arg: { storage: unknown }) => LocalizedString
+				/**
+				 * Storage
+				 */
+				storage_link: () => LocalizedString
+				/**
+				 * Transcription must be on to keep nothing.
+				 */
+				must_transcribe: () => LocalizedString
+				/**
+				 * Set up transcription
+				 */
+				set_up_transcription: () => LocalizedString
+				/**
+				 * Applies to new recordings after saving.
+				 */
+				applies_to_new: () => LocalizedString
+				/**
+				 * Search spellings
+				 */
+				search_heading: () => LocalizedString
+				/**
+				 * Common mishearings of a name, so searching for the name finds them too.
+				 */
+				search_intro: () => LocalizedString
+				/**
+				 * One name per line, then its spellings, separated by commas
+				 */
+				search_field: () => LocalizedString
+				/**
+				 * (up to 100 names, 25 spellings each)
+				 */
+				search_limit: () => LocalizedString
+				/**
+				 * Doesn't change any transcript, only what search finds.
+				 */
+				search_note_transcripts: () => LocalizedString
+				/**
+				 * Results say when they matched one of these spellings.
+				 */
+				search_note_results: () => LocalizedString
+				/**
+				 * Use these spellings when the transcriber mishears a name.
+				 */
+				search_note_when: () => LocalizedString
+				/**
+				 * Unsaved changes
+				 */
+				unsaved_region: () => LocalizedString
+				/**
+				 * You have unsaved changes
+				 */
+				unsaved: () => LocalizedString
+				/**
+				 * Saving changes…
+				 */
+				saving_changes: () => LocalizedString
+				/**
+				 * Saving…
+				 */
+				saving: () => LocalizedString
+				/**
+				 * Save
+				 */
+				save: () => LocalizedString
+				/**
+				 * Leave without saving?
+				 */
+				leave_title: () => LocalizedString
+				/**
+				 * You have unsaved changes. Leave without saving?
+				 */
+				leave_prompt: () => LocalizedString
+				/**
+				 * Stay
+				 */
+				stay: () => LocalizedString
+				/**
+				 * Leave
+				 */
+				leave: () => LocalizedString
+			}
+			retention: {
+				/**
+				 * Retention
+				 */
+				heading: () => LocalizedString
+				/**
+				 * How long Cassini keeps each kind of file. Saving never deletes anything immediately.
+				 */
+				intro: () => LocalizedString
+				/**
+				 * Recordings
+				 */
+				recordings_heading: () => LocalizedString
+				/**
+				 * Audio and video captured on this server. Deleting them means the meeting cannot be reprocessed.
+				 */
+				recordings_description: () => LocalizedString
+				/**
+				 * Published meetings (on this server)
+				 */
+				current_heading: () => LocalizedString
+				/**
+				 * The published meeting stays in Nextcloud Files after this copy is removed.
+				 */
+				current_description: () => LocalizedString
+				/**
+				 * Previous attempts
+				 */
+				history_heading: () => LocalizedString
+				/**
+				 * Failed recordings, failed processing, replaced output and failed publishing.
+				 */
+				history_description: () => LocalizedString
+				/**
+				 * Set each kind separately
+				 */
+				split_kinds: () => LocalizedString
+				/**
+				 * Use one setting for all kinds
+				 */
+				join_kinds: () => LocalizedString
+				/**
+				 * Processing logs
+				 */
+				logs_heading: () => LocalizedString
+				/**
+				 * Logs from each recording attempt.
+				 */
+				logs_description: () => LocalizedString
+				/**
+				 * Published meetings in Nextcloud
+				 */
+				nextcloud_heading: () => LocalizedString
+				/**
+				 * Deletes the published meeting, including its transcript and notes.
+				 */
+				nextcloud_description: () => LocalizedString
+				/**
+				 * Daily cleanup
+				 */
+				schedule_heading: () => LocalizedString
+				/**
+				 * Run at
+				 */
+				run_at: () => LocalizedString
+				/**
+				 * Cleanup time
+				 */
+				cleanup_time_label: () => LocalizedString
+				/**
+				 * Timezone
+				 */
+				timezone_label: () => LocalizedString
+				/**
+				 * Loading retention settings…
+				 */
+				loading: () => LocalizedString
+				/**
+				 * Retention settings saved.
+				 */
+				saved: () => LocalizedString
+				/**
+				 * Operator unavailable
+				 */
+				operator_unavailable: () => LocalizedString
+				/**
+				 * Retention settings are being saved. Try again.
+				 */
+				save_in_progress: () => LocalizedString
+				kinds: {
+					/**
+					 * Failed recordings
+					 */
+					failed_capture: () => LocalizedString
+					/**
+					 * Failed processing
+					 */
+					failed_build: () => LocalizedString
+					/**
+					 * Replaced output
+					 */
+					superseded: () => LocalizedString
+					/**
+					 * Failed publishing
+					 */
+					failed_publish: () => LocalizedString
+				}
+			}
+			retention_policy: {
+				/**
+				 * Keep forever
+				 */
+				keep_forever: () => LocalizedString
+				/**
+				 * {count} days
+				 */
+				preset_days_other: (arg: { count: unknown }) => LocalizedString
+				/**
+				 * Custom
+				 */
+				custom: () => LocalizedString
+				/**
+				 * Keep for
+				 */
+				keep_for_before: () => LocalizedString
+				/**
+				 * days
+				 */
+				keep_for_after: () => LocalizedString
+				/**
+				 * {label} days
+				 */
+				custom_days_label: (arg: { label: unknown }) => LocalizedString
+			}
+			retention_actions: {
+				/**
+				 * Changes take effect at the next cleanup. Saving never deletes files immediately.
+				 */
+				takes_effect: () => LocalizedString
+				/**
+				 * Discard changes
+				 */
+				discard: () => LocalizedString
+				/**
+				 * Save
+				 */
+				save: () => LocalizedString
+				/**
+				 * Leave without saving?
+				 */
+				leave_title: () => LocalizedString
+				/**
+				 * You have unsaved changes. Leave without saving?
+				 */
+				leave_prompt: () => LocalizedString
+				/**
+				 * Stay
+				 */
+				stay: () => LocalizedString
+				/**
+				 * Leave
+				 */
+				leave: () => LocalizedString
+			}
+			retention_reminder: {
+				/**
+				 * Retention reminder
+				 */
+				region_label: () => LocalizedString
+				/**
+				 * Choose how long Cassini keeps recordings
+				 */
+				title: () => LocalizedString
+				/**
+				 * Recordings and published meetings are kept indefinitely until you set a limit.
+				 */
+				keeps_forever: () => LocalizedString
+				/**
+				 * Save or discard your changes before dismissing.
+				 */
+				unsaved_first: () => LocalizedString
+				/**
+				 * Review
+				 */
+				review: () => LocalizedString
+				/**
+				 * Dismiss
+				 */
+				dismiss: () => LocalizedString
+				/**
+				 * Dismissing…
+				 */
+				dismissing: () => LocalizedString
+				/**
+				 * Retry
+				 */
+				retry: () => LocalizedString
+				/**
+				 * Retrying…
+				 */
+				retrying: () => LocalizedString
+			}
+			speech_models: {
+				/**
+				 * {size} MiB
+				 */
+				size_mib: (arg: { size: unknown }) => LocalizedString
+				/**
+				 * {size} GiB
+				 */
+				size_gib: (arg: { size: unknown }) => LocalizedString
+				job_step: {
+					/**
+					 * Waiting to start
+					 */
+					queued: () => LocalizedString
+					/**
+					 * Downloading
+					 */
+					downloading: () => LocalizedString
+					/**
+					 * Downloading · {percent}%
+					 */
+					downloading_percent: (arg: { percent: unknown }) => LocalizedString
+					/**
+					 * Verifying the download
+					 */
+					verifying: () => LocalizedString
+					/**
+					 * Unpacking
+					 */
+					unpacking: () => LocalizedString
+					/**
+					 * Downloaded · checks once no meeting is being processed
+					 */
+					installed: () => LocalizedString
+					/**
+					 * Checking it runs on this server
+					 */
+					checking: () => LocalizedString
+				}
+			}
+			voice_separation: {
+				/**
+				 * Voice separation
+				 */
+				heading: () => LocalizedString
+				/**
+				 * (optional)
+				 */
+				optional: () => LocalizedString
+				/**
+				 * For Cassini to tell apart several people talking on one device in a call, download this model. Anyone who can read the meeting can then split that device's audio into separate voices from its participant list. It runs on this server's CPU, only when someone asks.
+				 */
+				description: () => LocalizedString
+				/**
+				 * Ready
+				 */
+				state_ready: () => LocalizedString
+				/**
+				 * Not available in this server's Cassini build
+				 */
+				state_unsupported: () => LocalizedString
+				/**
+				 * Installed — runtime check needed
+				 */
+				state_installed: () => LocalizedString
+				/**
+				 * Download cancelled. Retry resumes it.
+				 */
+				state_cancelled: () => LocalizedString
+				/**
+				 * Not installed
+				 */
+				state_not_installed: () => LocalizedString
+				/**
+				 * Cancel
+				 */
+				cancel: () => LocalizedString
+				/**
+				 * Check
+				 */
+				check: () => LocalizedString
+				/**
+				 * Retry
+				 */
+				retry: () => LocalizedString
+				/**
+				 * Download
+				 */
+				download: () => LocalizedString
+				/**
+				 * Voice separation download progress
+				 */
+				progress_label: () => LocalizedString
+			}
+			speech_model_cell: {
+				/**
+				 * Ready
+				 */
+				state_ready: () => LocalizedString
+				/**
+				 * Installed · checked before the next recording
+				 */
+				state_installed_selected: () => LocalizedString
+				/**
+				 * Installed · not checked on this build yet
+				 */
+				state_installed: () => LocalizedString
+				/**
+				 * Download cancelled. Retry resumes it.
+				 */
+				state_cancelled: () => LocalizedString
+				/**
+				 * Not installed
+				 */
+				state_not_installed: () => LocalizedString
+				/**
+				 * Cancel
+				 */
+				cancel: () => LocalizedString
+				/**
+				 * Check
+				 */
+				check: () => LocalizedString
+				/**
+				 * Retry
+				 */
+				retry: () => LocalizedString
+				/**
+				 * Download
+				 */
+				download: () => LocalizedString
+				/**
+				 * In use
+				 */
+				in_use: () => LocalizedString
+				/**
+				 * Model download progress
+				 */
+				progress_label: () => LocalizedString
+				/**
+				 * {done} / {total}
+				 */
+				progress: (arg: { done: unknown, total: unknown }) => LocalizedString
+				/**
+				 * {size} reused
+				 */
+				reused: (arg: { size: unknown }) => LocalizedString
+				/**
+				 * You can close this page; it carries on.
+				 */
+				carries_on: () => LocalizedString
+			}
+			password_reveal: {
+				/**
+				 * The Cassini service account's password
+				 */
+				dialog_label: () => LocalizedString
+				/**
+				 * Save the password for the {user} account now.
+				 */
+				save_now: (arg: { user: unknown }) => LocalizedString
+				/**
+				 * This is the only time it's shown. Cassini doesn't store it and can't show it again. You only need it to sign in as {user} yourself; Cassini connects another way. If you lose it, set a new one here.
+				 */
+				only_time: (arg: { user: unknown }) => LocalizedString
+				/**
+				 * Generated password
+				 */
+				field_label: () => LocalizedString
+				/**
+				 * Copy
+				 */
+				copy: () => LocalizedString
+				/**
+				 * Copied
+				 */
+				copied: () => LocalizedString
+				/**
+				 * Your browser blocked copying. The password is selected above, so copy it with your keyboard.
+				 */
+				copy_blocked: () => LocalizedString
+				/**
+				 * Or set one on the server instead
+				 */
+				set_on_server: () => LocalizedString
+				/**
+				 * I have saved it
+				 */
+				acknowledge: () => LocalizedString
+			}
+			direct_share: {
+				/**
+				 * Who can see recordings
+				 */
+				heading: () => LocalizedString
+				/**
+				 * Nextcloud Files controls who can read each recording.
+				 */
+				intro: () => LocalizedString
+				/**
+				 * Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.
+				 */
+				point_participants: () => LocalizedString
+				/**
+				 * Guests without a Nextcloud account can't open it.
+				 */
+				point_guests: () => LocalizedString
+				/**
+				 * Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.
+				 */
+				point_public_links: () => LocalizedString
+				/**
+				 * Checking recordings setup…
+				 */
+				checking: () => LocalizedString
+				/**
+				 * Cassini needs its recordings account before it can publish.
+				 */
+				needs_account: () => LocalizedString
+				/**
+				 * Recordings setup needs attention.
+				 */
+				needs_attention: () => LocalizedString
+				/**
+				 * Create recordings account
+				 */
+				create_account: () => LocalizedString
+				/**
+				 * Creating…
+				 */
+				creating: () => LocalizedString
+				/**
+				 * Check again
+				 */
+				check_again: () => LocalizedString
+				/**
+				 * Recordings account created. Sharing is ready.
+				 */
+				account_created: () => LocalizedString
+				/**
+				 * Could not check Nextcloud recordings setup.
+				 */
+				check_failed: () => LocalizedString
+				/**
+				 * Could not create the recordings account.
+				 */
+				create_failed: () => LocalizedString
+			}
+			model_combobox: {
+				/**
+				 * Model
+				 */
+				label: () => LocalizedString
+				/**
+				 * endpoint default
+				 */
+				placeholder: () => LocalizedString
+				/**
+				 * Loading models…
+				 */
+				loading: () => LocalizedString
+				/**
+				 * {error} You can still type a model ID.
+				 */
+				list_failed: (arg: { error: unknown }) => LocalizedString
+				/**
+				 * This endpoint listed no models. Type a model ID.
+				 */
+				no_models: () => LocalizedString
+				/**
+				 * No match for “{text}”. It will be used as typed.
+				 */
+				no_match: (arg: { text: unknown }) => LocalizedString
+				/**
+				 * {shown} of {count} models
+				 */
+				match_count_other: (arg: { count: unknown, shown: unknown }) => LocalizedString
+			}
+			published_format: {
+				/**
+				 * Published meeting
+				 */
+				field_label: () => LocalizedString
+				/**
+				 * Audio and transcript (.opus)
+				 */
+				opus_label: () => LocalizedString
+				/**
+				 * Transcript only (.json)
+				 */
+				json_label: () => LocalizedString
+				/**
+				 * One portable file: the recording with its transcript.
+				 */
+				opus_description: () => LocalizedString
+				/**
+				 * The recording as one portable file. No transcript while transcription is off.
+				 */
+				opus_description_no_transcript: () => LocalizedString
+				/**
+				 * The transcript alone, no audio.
+				 */
+				json_description: () => LocalizedString
+				/**
+				 * Needs transcription on in step 1.
+				 */
+				json_needs_transcript: () => LocalizedString
+			}
+			llm: {
+				/**
+				 * AI providers
+				 */
+				heading: () => LocalizedString
+				/**
+				 * Optional
+				 */
+				optional_badge: () => LocalizedString
+				/**
+				 * Where Cassini sends transcripts for summaries and insights.
+				 */
+				subtitle: () => LocalizedString
+				/**
+				 * Reload AI providers
+				 */
+				reload: () => LocalizedString
+				/**
+				 * Add a provider
+				 */
+				add_provider: () => LocalizedString
+				/**
+				 * Loading AI providers…
+				 */
+				loading: () => LocalizedString
+				/**
+				 * No AI provider settings available.
+				 */
+				unavailable: () => LocalizedString
+				/**
+				 * No operator client is available.
+				 */
+				no_client: () => LocalizedString
+				/**
+				 * Summaries
+				 */
+				feature_summaries: () => LocalizedString
+				/**
+				 * Shown at the top of every meeting.
+				 */
+				feature_summaries_description: () => LocalizedString
+				/**
+				 * Insights
+				 */
+				feature_insights: () => LocalizedString
+				/**
+				 * Answers drawn from meetings you choose.
+				 */
+				feature_insights_description: () => LocalizedString
+				/**
+				 * Recording and transcription run on your own servers. A provider is only needed for summaries and insights.
+				 */
+				only_for_ai: () => LocalizedString
+				/**
+				 * Saving your first provider turns on summaries for every meeting. You can turn them off in {place}.
+				 */
+				first_save_turns_on: (arg: { place: unknown }) => LocalizedString
+				/**
+				 * Operator › Publish pipeline
+				 */
+				publish_pipeline_place: () => LocalizedString
+				/**
+				 * New provider
+				 */
+				new_provider: () => LocalizedString
+				/**
+				 * Editing {name}
+				 */
+				editing: (arg: { name: unknown }) => LocalizedString
+				/**
+				 * Provider
+				 */
+				field_provider: () => LocalizedString
+				/**
+				 * OpenRouter, local Qwen…
+				 */
+				provider_placeholder: () => LocalizedString
+				/**
+				 * Base URL
+				 */
+				field_base_url: () => LocalizedString
+				/**
+				 * https://openrouter.ai/api/v1 or http://your-host:8000/v1
+				 */
+				base_url_placeholder: () => LocalizedString
+				/**
+				 * API key
+				 */
+				field_api_key: () => LocalizedString
+				/**
+				 * stored
+				 */
+				key_stored: () => LocalizedString
+				/**
+				 * will be removed
+				 */
+				key_will_be_removed: () => LocalizedString
+				/**
+				 * Leave blank to keep the saved key
+				 */
+				key_placeholder_keep: () => LocalizedString
+				/**
+				 * Paste the full API key (sk-or-v1-… for OpenRouter). Self-hosted servers usually don't need one.
+				 */
+				key_placeholder_new: () => LocalizedString
+				/**
+				 * OpenRouter keys start with sk-or-v1-. Check you pasted the whole key.
+				 */
+				openrouter_key_prefix: () => LocalizedString
+				/**
+				 * Keep the saved key
+				 */
+				keep_saved_key: () => LocalizedString
+				/**
+				 * Remove the saved key
+				 */
+				remove_saved_key: () => LocalizedString
+				/**
+				 * Default model
+				 */
+				default_model: () => LocalizedString
+				/**
+				 * e.g. openai/gpt-4o-mini or qwen3-30b
+				 */
+				model_placeholder: () => LocalizedString
+				/**
+				 * Save the provider first to list its models.
+				 */
+				save_first_for_models: () => LocalizedString
+				/**
+				 * Model list unavailable: {detail}.
+				 */
+				model_list_unavailable: (arg: { detail: unknown }) => LocalizedString
+				/**
+				 * {reason} You can still type a model ID.
+				 */
+				probe_failed_hint: (arg: { reason: unknown }) => LocalizedString
+				/**
+				 * Request limits
+				 */
+				request_limits: () => LocalizedString
+				/**
+				 * Request timeout (s)
+				 */
+				request_timeout: () => LocalizedString
+				/**
+				 * {seconds} (default)
+				 */
+				timeout_placeholder: (arg: { seconds: unknown }) => LocalizedString
+				/**
+				 * Response token limit
+				 */
+				token_limit_field: () => LocalizedString
+				/**
+				 * {tokens} (default)
+				 */
+				token_limit_placeholder: (arg: { tokens: unknown }) => LocalizedString
+				/**
+				 * Saving…
+				 */
+				saving: () => LocalizedString
+				/**
+				 * Save provider
+				 */
+				save_provider: () => LocalizedString
+				/**
+				 * Cancel
+				 */
+				cancel: () => LocalizedString
+				/**
+				 * This endpoint answered with its model list
+				 */
+				probe_ok: () => LocalizedString
+				/**
+				 * This endpoint did not list its models
+				 */
+				probe_failed: () => LocalizedString
+				/**
+				 * Key saved
+				 */
+				key_saved: () => LocalizedString
+				/**
+				 * No key
+				 */
+				no_key: () => LocalizedString
+				/**
+				 * Model {model}
+				 */
+				model_named: (arg: { model: unknown }) => LocalizedString
+				/**
+				 * No default model
+				 */
+				no_default_model: () => LocalizedString
+				/**
+				 * 1 model
+				 */
+				model_count_one: () => LocalizedString
+				/**
+				 * {count} models
+				 */
+				model_count_other: (arg: { count: unknown }) => LocalizedString
+				/**
+				 * Loading models…
+				 */
+				loading_models: () => LocalizedString
+				/**
+				 * {seconds}s timeout
+				 */
+				timeout_fact: (arg: { seconds: unknown }) => LocalizedString
+				/**
+				 * {tokens} token limit
+				 */
+				token_limit_fact: (arg: { tokens: unknown }) => LocalizedString
+				/**
+				 * Edit
+				 */
+				edit: () => LocalizedString
+				/**
+				 * Remove
+				 */
+				remove: () => LocalizedString
+				/**
+				 * Confirm removing this endpoint
+				 */
+				remove_confirm_label: () => LocalizedString
+				/**
+				 * Remove {name}?
+				 */
+				remove_confirm_title: (arg: { name: unknown }) => LocalizedString
+				/**
+				 * The saved API key is deleted and can't be recovered.
+				 */
+				remove_deletes_key: () => LocalizedString
+				/**
+				 * This stops meeting summaries until you choose another provider in {place}.
+				 */
+				remove_stops_summaries: (arg: { place: unknown }) => LocalizedString
+				/**
+				 * This stops insights until you choose another provider in {place}.
+				 */
+				remove_stops_insights: (arg: { place: unknown }) => LocalizedString
+				/**
+				 * This stops meeting summaries and insights until you choose another provider in {place}.
+				 */
+				remove_stops_both: (arg: { place: unknown }) => LocalizedString
+				/**
+				 * Meetings already published keep their summaries.
+				 */
+				remove_keeps_summaries: () => LocalizedString
+				/**
+				 * Yes, remove it
+				 */
+				remove_confirm: () => LocalizedString
+				/**
+				 * Summaries use {provider}.
+				 */
+				summary_uses: (arg: { provider: unknown }) => LocalizedString
+				/**
+				 * Summaries use {provider} with {model}.
+				 */
+				summary_uses_with_model: (arg: { model: unknown, provider: unknown }) => LocalizedString
+				/**
+				 * Summaries are off.
+				 */
+				summaries_off: () => LocalizedString
+				/**
+				 * Change this in {place}.
+				 */
+				change_in_pipeline: (arg: { place: unknown }) => LocalizedString
+				/**
+				 * Whoever creates an insight picks which provider it uses. If they don't pick one, it uses {provider}.
+				 */
+				insight_default: (arg: { provider: unknown }) => LocalizedString
+				/**
+				 * Whoever creates an insight picks which provider it uses. If they don't pick one, it uses {provider} with {model}.
+				 */
+				insight_default_with_model: (arg: { model: unknown, provider: unknown }) => LocalizedString
+				/**
+				 * Remove all providers to turn off both summaries and insights.
+				 */
+				remove_all_turns_off: () => LocalizedString
+			}
 		}
 		insights: {
 			generate_card: {

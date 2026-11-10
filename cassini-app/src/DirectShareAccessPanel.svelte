@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { LL } from "cassini-viewer/i18n";
   import type { OperatorClient } from "./operator/client";
   import { accountSteps, isSetupAvailable, runSetupPlan } from "./operator/ncSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
@@ -22,7 +23,7 @@
     try {
       status = recheck ? await operatorClient.recheckStorage() : await operatorClient.getStorage();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Could not check Nextcloud recordings setup.";
+      error = cause instanceof Error ? cause.message : $LL.app.settings.direct_share.check_failed();
     } finally {
       loading = false;
     }
@@ -38,7 +39,7 @@
       fixed = status.ok;
       notifySetupChanged();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Could not create the recordings account.";
+      error = cause instanceof Error ? cause.message : $LL.app.settings.direct_share.create_failed();
     } finally {
       busy = false;
     }
@@ -48,36 +49,36 @@
 </script>
 
 <section class="op-tint access">
-  <h2 class="set-row-name op-card-title">Who can see recordings</h2>
+  <h2 class="set-row-name op-card-title">{$LL.app.settings.direct_share.heading()}</h2>
   <div class="access-body grid gap-3 text-sm">
     <!-- Same points as the rooms rail's "Shared with participants" note
          (cassini-viewer RoomsRail.svelte); change both together. -->
-    <p>Nextcloud Files controls who can read each recording.</p>
+    <p>{$LL.app.settings.direct_share.intro()}</p>
     <ul class="access-points">
-      <li>Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.</li>
-      <li>Guests without a Nextcloud account can't open it.</li>
-      <li>Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.</li>
+      <li>{$LL.app.settings.direct_share.point_participants()}</li>
+      <li>{$LL.app.settings.direct_share.point_guests()}</li>
+      <li>{$LL.app.settings.direct_share.point_public_links()}</li>
     </ul>
     {#if loading}
-      <p role="status">Checking recordings setup…</p>
+      <p role="status">{$LL.app.settings.direct_share.checking()}</p>
     {:else if error || (status && (!status.service_account.exists || !status.ok))}
       {#if error}
         <p class="text-error" role="alert">{error}</p>
       {:else if status && !status.service_account.exists}
-        <p role="status">Cassini needs its recordings account before it can publish.</p>
+        <p role="status">{$LL.app.settings.direct_share.needs_account()}</p>
       {:else if status}
-        <p role="status">{status.detail || "Recordings setup needs attention."}</p>
+        <p role="status">{status.detail || $LL.app.settings.direct_share.needs_attention()}</p>
       {/if}
       <div class="access-actions">
         {#if status && !status.service_account.exists && operatorClient && isSetupAvailable() && accountSteps(status).length > 0}
           <button class="btn btn-sm btn-primary" type="button" on:click={createAccount} disabled={busy || disabled}>
-            {busy ? "Creating…" : "Create recordings account"}
+            {busy ? $LL.app.settings.direct_share.creating() : $LL.app.settings.direct_share.create_account()}
           </button>
         {/if}
-        <button class="btn btn-sm" type="button" on:click={() => load(true)} disabled={busy || disabled || !operatorClient}>Check again</button>
+        <button class="btn btn-sm" type="button" on:click={() => load(true)} disabled={busy || disabled || !operatorClient}>{$LL.app.settings.direct_share.check_again()}</button>
       </div>
     {:else if fixed}
-      <p role="status">Recordings account created. Sharing is ready.</p>
+      <p role="status">{$LL.app.settings.direct_share.account_created()}</p>
     {/if}
   </div>
 </section>

@@ -32,6 +32,7 @@
     TextAlignStart,
     TriangleAlert,
   } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
   import ModelCombobox from "./ModelCombobox.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import type {
@@ -117,7 +118,7 @@
 
   function settingsClient(): OperatorClient {
     if (!operatorClient) {
-      throw new Error("No operator client is available.");
+      throw new Error($LL.app.settings.llm.no_client());
     }
     return operatorClient;
   }
@@ -197,12 +198,12 @@
   $: draftModelsError = draft
     ? draft.existing
       ? modelListUnavailable(probeErrorOf(probes[draft.id]))
-      : "Save the provider first to list its models."
+      : $LL.app.settings.llm.save_first_for_models()
     : "";
 
   // One wording for a listing that failed, on the card and in the combobox.
   function modelListUnavailable(detail: string): string {
-    return detail === "" ? "" : `Model list unavailable: ${detail.replace(/\.$/, "")}.`;
+    return detail === "" ? "" : $LL.app.settings.llm.model_list_unavailable({ detail: detail.replace(/\.$/, "") });
   }
 
   function probeModelsOf(state: ProbeState | undefined): LLMModel[] {
@@ -233,7 +234,7 @@
   // field, never enforced: only OpenRouter's keys have a known shape.
   $: keyPrefixWarning =
     draft && hostOf(draft.baseUrl) === "openrouter.ai" && looksUnprefixed(draft.key)
-      ? "OpenRouter keys start with sk-or-v1-. Check you pasted the whole key."
+      ? $LL.app.settings.llm.openrouter_key_prefix()
       : "";
 
   function hostOf(url: string): string {
@@ -311,19 +312,59 @@
   // Which steps run on this endpoint, for the confirmation to name. The
   // insight step is not shown in this panel, but a deployment that set it by
   // hand still loses it here, and the prompt should say so.
-  function stepsRunningOn(provider: LLMProviderView): string[] {
+  function stepsRunningOn(provider: LLMProviderView): ("summary" | "insight")[] {
     if (!settings) {
       return [];
     }
-    const names: string[] = [];
+    const steps: ("summary" | "insight")[] = [];
     if (settings.summary.enabled && settings.summary.provider === provider.id) {
-      names.push("meeting summaries");
+      steps.push("summary");
     }
     if (settings.insight.enabled && settings.insight.provider === provider.id) {
-      names.push("insights");
+      steps.push("insight");
     }
-    return names;
+    return steps;
   }
+
+  // The confirmation's sentence for what removing stops: one whole sentence
+  // per combination, never a list joined with "and".
+  function stopsSentence(steps: ("summary" | "insight")[]): string {
+    const t = $LL.app.settings.llm;
+    const place = slot("place");
+    if (steps.length === 2) return t.remove_stops_both({ place });
+    return steps[0] === "summary" ? t.remove_stops_summaries({ place }) : t.remove_stops_insights({ place });
+  }
+
+  // Sentences with marked-up parts in them (a bold place name, a provider in
+  // medium weight, a model as code). The sentence is translated whole, with a
+  // marker where each part goes, then cut at the markers so the parts can be
+  // drawn as elements without piecing the sentence together from fragments.
+  const MARK = "\u0000";
+  function slot(name: "place" | "provider" | "model"): string {
+    return `${MARK}${name}${MARK}`;
+  }
+  type Segment = { text: string; slot: "" | "place" | "provider" | "model" };
+  function segments(sentence: string): Segment[] {
+    return sentence
+      .split(new RegExp(`${MARK}(\\w+)${MARK}`))
+      .map((bit, index) => (index % 2 === 1 ? { text: "", slot: bit as Segment["slot"] } : { text: bit, slot: "" }));
+  }
+  $: firstSave = segments($LL.app.settings.llm.first_save_turns_on({ place: slot("place") }));
+  $: summaryUsage = effectiveSummary
+    ? segments(
+        effectiveSummary.model
+          ? $LL.app.settings.llm.summary_uses_with_model({ provider: slot("provider"), model: slot("model") })
+          : $LL.app.settings.llm.summary_uses({ provider: slot("provider") }),
+      )
+    : [];
+  $: changeInPipeline = segments($LL.app.settings.llm.change_in_pipeline({ place: slot("place") }));
+  $: insightUsage = effectiveInsight
+    ? segments(
+        effectiveInsight.model
+          ? $LL.app.settings.llm.insight_default_with_model({ provider: slot("provider"), model: slot("model") })
+          : $LL.app.settings.llm.insight_default({ provider: slot("provider") }),
+      )
+    : [];
 
   async function removeProvider(provider: LLMProviderView) {
     if (!settings || saving) {
@@ -423,31 +464,31 @@
         </div>
         <div class="ep-form-grid">
           <label class="op-field">
-            <span class="op-field-label">Provider</span>
+            <span class="op-field-label">{$LL.app.settings.llm.field_provider()}</span>
             <input
               bind:value={draft.name}
               type="text"
               class="op-input"
-              placeholder="OpenRouter, local Qwen…"
+              placeholder={$LL.app.settings.llm.provider_placeholder()}
             />
           </label>
           <label class="op-field">
-            <span class="op-field-label">Base URL</span>
+            <span class="op-field-label">{$LL.app.settings.llm.field_base_url()}</span>
             <input
               bind:value={draft.baseUrl}
               type="url"
               class="op-input"
-              placeholder="https://openrouter.ai/api/v1 or http://your-host:8000/v1"
+              placeholder={$LL.app.settings.llm.base_url_placeholder()}
             />
           </label>
         </div>
         <label class="op-field">
           <span class="op-field-label">
-            API key
+            {$LL.app.settings.llm.field_api_key()}
             {#if draft.keyConfigured && !draft.keyCleared}
-              <span class="ep-key-state ep-key-ok">stored</span>
+              <span class="ep-key-state ep-key-ok">{$LL.app.settings.llm.key_stored()}</span>
             {:else if draft.keyCleared}
-              <span class="ep-key-state ep-key-warn">will be removed</span>
+              <span class="ep-key-state ep-key-warn">{$LL.app.settings.llm.key_will_be_removed()}</span>
             {/if}
           </span>
           <input
@@ -456,8 +497,8 @@
             autocomplete="off"
             class="op-input"
             placeholder={draft.keyConfigured && !draft.keyCleared
-              ? "Leave blank to keep the saved key"
-              : "Paste the full API key (sk-or-v1-… for OpenRouter). Self-hosted servers usually don't need one."}
+              ? $LL.app.settings.llm.key_placeholder_keep()
+              : $LL.app.settings.llm.key_placeholder_new()}
           />
           {#if keyPrefixWarning}
             <p class="ep-warn">{keyPrefixWarning}</p>
@@ -476,7 +517,7 @@
                 }
               }}
             >
-              {draft.keyCleared ? "Keep the saved key" : "Remove the saved key"}
+              {draft.keyCleared ? $LL.app.settings.llm.keep_saved_key() : $LL.app.settings.llm.remove_saved_key()}
             </button>
           {/if}
         </label>
@@ -488,11 +529,11 @@
              combobox gives: the registry of models is the endpoint's. -->
         <ModelCombobox
           bind:value={draft.model}
-          label="Default model"
+          label={$LL.app.settings.llm.default_model()}
           models={draftModels}
           loading={draftModelsLoading}
           error={draftModelsError}
-          placeholder="e.g. openai/gpt-4o-mini or qwen3-30b"
+          placeholder={$LL.app.settings.llm.model_placeholder()}
           on:open={reprobeDraft}
         />
 
@@ -503,31 +544,31 @@
         <details bind:open={draft.advanced}>
           <summary class="tpl-toggle">
             <span class="tpl-chev" aria-hidden="true"></span>
-            Request limits
+            {$LL.app.settings.llm.request_limits()}
           </summary>
           <div class="ep-form-grid ep-bounds">
             <label class="op-field">
               <span class="op-field-label">
-                Request timeout (s)
+                {$LL.app.settings.llm.request_timeout()}
               </span>
               <input
                 bind:value={draft.timeoutSec}
                 type="number"
                 min="1"
                 class="op-input"
-                placeholder="900 (default)"
+                placeholder={$LL.app.settings.llm.timeout_placeholder({ seconds: 900 })}
               />
             </label>
             <label class="op-field">
               <span class="op-field-label">
-                Response token limit
+                {$LL.app.settings.llm.token_limit_field()}
               </span>
               <input
                 bind:value={draft.maxTokens}
                 type="number"
                 min="1"
                 class="op-input"
-                placeholder="4096 (default)"
+                placeholder={$LL.app.settings.llm.token_limit_placeholder({ tokens: 4096 })}
               />
             </label>
           </div>
@@ -544,9 +585,9 @@
           >
             {#if saving}
               <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-              Saving…
+              {$LL.app.settings.llm.saving()}
             {:else}
-              Save provider
+              {$LL.app.settings.llm.save_provider()}
             {/if}
           </button>
           {#if providers.length > 0}
@@ -556,7 +597,7 @@
               disabled={saving}
               on:click={() => (draft = null)}
             >
-              Cancel
+              {$LL.app.settings.llm.cancel()}
             </button>
           {/if}
         </div>
@@ -568,14 +609,14 @@
 <header class="op-panel-head">
     <div>
       <div class="op-panel-title">
-        <h1>AI providers</h1>
+        <h1>{$LL.app.settings.llm.heading()}</h1>
         <!-- Optional, and said out loud: recording and transcription need none
              of this, and an administrator who reads this page as a required
              step has been misled about what Cassini does on its own. -->
-        <span class="panel-badge">Optional</span>
+        <span class="panel-badge">{$LL.app.settings.llm.optional_badge()}</span>
       </div>
       {#if showSubtitle}
-        <p>Where Cassini sends transcripts for summaries and insights.</p>
+        <p>{$LL.app.settings.llm.subtitle()}</p>
       {/if}
     </div>
     <div class="op-panel-actions">
@@ -584,7 +625,7 @@
         type="button"
         on:click={load}
         disabled={loading || !operatorClient}
-        aria-label="Reload AI providers"
+        aria-label={$LL.app.settings.llm.reload()}
       >
         <RefreshCw size={15} aria-hidden="true" />
       </button>
@@ -594,7 +635,7 @@
           type="button"
           on:click={() => (draft = freshDraft())}
         >
-          Add a provider
+          {$LL.app.settings.llm.add_provider()}
         </button>
       {/if}
     </div>
@@ -603,9 +644,9 @@
   {#if loadError}
     <div class="err-box" role="alert">{loadError}</div>
   {:else if loading}
-    <p class="op-state">Loading AI providers…</p>
+    <p class="op-state">{$LL.app.settings.llm.loading()}</p>
   {:else if !settings}
-    <p class="op-state">No AI provider settings available.</p>
+    <p class="op-state">{$LL.app.settings.llm.unavailable()}</p>
   {:else}
     <div class="ep-body">
       {#if providers.length === 0}
@@ -615,27 +656,23 @@
           <div class="ep-explain-grid">
             <div class="op-tint ep-feat">
               <TextAlignStart size={16} class="ep-feat-icon" aria-hidden="true" />
-              <strong>Summaries</strong>
-              <span>Shown at the top of every meeting.</span>
+              <strong>{$LL.app.settings.llm.feature_summaries()}</strong>
+              <span>{$LL.app.settings.llm.feature_summaries_description()}</span>
             </div>
             <div class="op-tint ep-feat">
               <FileText size={16} class="ep-feat-icon" aria-hidden="true" />
-              <strong>Insights</strong>
-              <span>Answers drawn from meetings you choose.</span>
+              <strong>{$LL.app.settings.llm.feature_insights()}</strong>
+              <span>{$LL.app.settings.llm.feature_insights_description()}</span>
             </div>
           </div>
-          <p class="ep-note">
-            Recording and transcription run on your own servers. A provider is only needed for
-            summaries and insights.
-          </p>
+          <p class="ep-note">{$LL.app.settings.llm.only_for_ai()}</p>
           <!-- Said before the save, not discovered after it. Registering the
                first endpoint switches summarising on — which is what a fresh
                install wants and what makes the configured state reachable in
                one go — and that is a decision about what leaves this
                deployment, so it is not a surprise worth saving for later. -->
           <p class="ep-note">
-            Saving your first provider turns on summaries for every meeting. You can turn them off in
-            <strong>Operator › Publish pipeline</strong>.
+            {#each firstSave as part}{#if part.slot === "place"}<strong>{$LL.app.settings.llm.publish_pipeline_place()}</strong>{:else}{part.text}{/if}{/each}
           </p>
         </section>
       {:else}
@@ -645,7 +682,7 @@
               {#if draft?.existing && draft.id === provider.id}
                 <!-- Edited where it stands, so the form is unmistakably
                      this endpoint's and not a second one being added. -->
-                {@render providerForm(`Editing ${providerLabel(provider)}`)}
+                {@render providerForm($LL.app.settings.llm.editing({ name: providerLabel(provider) }))}
               {:else}
                 <!-- Facts left, actions right, and the row never wraps: a
                      failure message long enough to fill the card used to push
@@ -663,42 +700,42 @@
                         <CircleCheck
                           size={14}
                           class="text-success"
-                          aria-label="This endpoint answered with its model list"
+                          aria-label={$LL.app.settings.llm.probe_ok()}
                         />
                       {:else if probes[provider.id]?.status === "failed"}
                         <TriangleAlert
                           size={14}
                           class="text-warning"
-                          aria-label="This endpoint did not list its models"
+                          aria-label={$LL.app.settings.llm.probe_failed()}
                         />
                       {/if}
                     </div>
                     <div class="set-row-sub">
                       <code class="ep-code">{provider.base_url}</code>
                       <span>
-                        {provider.api_key_configured ? "Key saved" : "No key"}
+                        {provider.api_key_configured ? $LL.app.settings.llm.key_saved() : $LL.app.settings.llm.no_key()}
                       </span>
                       <!-- The model every step on this endpoint asks for. Not
                            having one is worth seeing: the recorder then falls
                            back to its own default, which a local endpoint has
                            probably never heard of. -->
                       <span class:text-warning={!provider.model}>
-                        {provider.model ? `Model ${provider.model}` : "No default model"}
+                        {provider.model ? $LL.app.settings.llm.model_named({ model: provider.model }) : $LL.app.settings.llm.no_default_model()}
                       </span>
                       {#if probes[provider.id]?.status === "ok"}
                         {@const state = probes[provider.id]}
+                        {@const count = state.status === "ok" ? state.count : 0}
                         <span>
-                          {state.status === "ok" ? state.count : 0}
-                          {state.status === "ok" && state.count === 1 ? "model" : "models"}
+                          {count === 1 ? $LL.app.settings.llm.model_count_one() : $LL.app.settings.llm.model_count_other({ count })}
                         </span>
                       {:else if probes[provider.id]?.status === "checking"}
-                        <span>Loading models…</span>
+                        <span>{$LL.app.settings.llm.loading_models()}</span>
                       {/if}
                       {#if provider.timeout_sec > 0}
-                        <span>{provider.timeout_sec}s timeout</span>
+                        <span>{$LL.app.settings.llm.timeout_fact({ seconds: provider.timeout_sec })}</span>
                       {/if}
                       {#if provider.max_tokens > 0}
-                        <span>{provider.max_tokens} token limit</span>
+                        <span>{$LL.app.settings.llm.token_limit_fact({ tokens: provider.max_tokens })}</span>
                       {/if}
                     </div>
                   </div>
@@ -709,7 +746,7 @@
                       disabled={saving}
                       on:click={() => (draft = editDraft(provider))}
                     >
-                      Edit
+                      {$LL.app.settings.llm.edit()}
                     </button>
                     <button
                       class="link-btn danger"
@@ -718,15 +755,14 @@
                       aria-expanded={pendingRemoval?.id === provider.id}
                       on:click={() => (pendingRemoval = provider)}
                     >
-                      Remove
+                      {$LL.app.settings.llm.remove()}
                     </button>
                   </div>
                 </div>
                 {#if probes[provider.id]?.status === "failed"}
                   {@const state = probes[provider.id]}
                   <p class="ep-warn ep-probe-fail">
-                    {modelListUnavailable(state.status === "failed" ? state.message : "")}
-                    You can still type a model ID.
+                    {$LL.app.settings.llm.probe_failed_hint({ reason: modelListUnavailable(state.status === "failed" ? state.message : "") })}
                   </p>
                 {/if}
                 {#if pendingRemoval?.id === provider.id}
@@ -740,28 +776,27 @@
                   <div
                     class="ep-confirm"
                     role="alertdialog"
-                    aria-label="Confirm removing this endpoint"
+                    aria-label={$LL.app.settings.llm.remove_confirm_label()}
                   >
                     <div class="flex items-start gap-2">
                       <TriangleAlert size={18} class="mt-0.5 shrink-0 text-error" aria-hidden="true" />
                       <div class="grid gap-1">
                         <p class="ep-confirm-title">
-                          Remove {provider.name || provider.base_url || provider.id}?
+                          {$LL.app.settings.llm.remove_confirm_title({ name: provider.name || provider.base_url || provider.id })}
                         </p>
                         <p class="ep-confirm-text">
                           <code class="ep-code">{provider.base_url}</code>
                         </p>
                         <ul class="ep-confirm-text grid gap-1">
                           {#if provider.api_key_configured}
-                            <li>The saved API key is deleted and can't be recovered.</li>
+                            <li>{$LL.app.settings.llm.remove_deletes_key()}</li>
                           {/if}
                           {#if stepsRunningOn(provider).length > 0}
                             <li>
-                              This stops {stepsRunningOn(provider).join(" and ")} until you choose
-                              another provider in <strong>Operator › Publish pipeline</strong>.
+                              {#each segments(stopsSentence(stepsRunningOn(provider))) as part}{#if part.slot === "place"}<strong>{$LL.app.settings.llm.publish_pipeline_place()}</strong>{:else}{part.text}{/if}{/each}
                             </li>
                           {/if}
-                          <li>Meetings already published keep their summaries.</li>
+                          <li>{$LL.app.settings.llm.remove_keeps_summaries()}</li>
                         </ul>
                       </div>
                     </div>
@@ -772,7 +807,7 @@
                         disabled={saving}
                         on:click={() => void removeProvider(provider)}
                       >
-                        Yes, remove it
+                        {$LL.app.settings.llm.remove_confirm()}
                       </button>
                       <button
                         class="link-btn op-cancel"
@@ -780,7 +815,7 @@
                         disabled={saving}
                         on:click={() => (pendingRemoval = null)}
                       >
-                        Cancel
+                        {$LL.app.settings.llm.cancel()}
                       </button>
                     </div>
                   </div>
@@ -795,7 +830,7 @@
         <!-- Only a NEW provider's form lives here, under the list; editing
              happens on the card itself. -->
         <section class="ep-new" class:ep-new-ruled={providers.length > 0}>
-          {@render providerForm("New provider")}
+          {@render providerForm($LL.app.settings.llm.new_provider())}
         </section>
       {/if}
 
@@ -813,19 +848,16 @@
         <div class="ep-usage">
           <p class="ep-note">
             {#if effectiveSummary}
-              Summaries use <span class="font-medium">{providerName(effectiveSummary.provider)}</span>{#if effectiveSummary.model}{" "}with
-                <code class="ep-model">{effectiveSummary.model}</code>{/if}.
+              {#each summaryUsage as part}{#if part.slot === "provider"}<span class="font-medium">{providerName(effectiveSummary.provider)}</span>{:else if part.slot === "model"}<code class="ep-model">{effectiveSummary.model}</code>{:else}{part.text}{/if}{/each}
             {:else}
-              Summaries are off.
+              {$LL.app.settings.llm.summaries_off()}
             {/if}
-            Change this in <strong>Operator › Publish pipeline</strong>.
+            {#each changeInPipeline as part}{#if part.slot === "place"}<strong>{$LL.app.settings.llm.publish_pipeline_place()}</strong>{:else}{part.text}{/if}{/each}
           </p>
           <p class="ep-note">
-            Whoever creates an insight picks which provider it uses. If they don't pick one, it uses
-            <span class="font-medium">{providerName(effectiveInsight.provider)}</span>{#if effectiveInsight.model}{" "}with
-              <code class="ep-model">{effectiveInsight.model}</code>{/if}.
+            {#each insightUsage as part}{#if part.slot === "provider"}<span class="font-medium">{providerName(effectiveInsight.provider)}</span>{:else if part.slot === "model"}<code class="ep-model">{effectiveInsight.model}</code>{:else}{part.text}{/if}{/each}
           </p>
-          <p class="ep-note">Remove all providers to turn off both summaries and insights.</p>
+          <p class="ep-note">{$LL.app.settings.llm.remove_all_turns_off()}</p>
         </div>
       {/if}
 

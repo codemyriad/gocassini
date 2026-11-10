@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 
 import llmSettingsPanelSource from "./LLMSettingsPanel.svelte?raw";
 
@@ -33,13 +35,15 @@ describe("AI providers key handling", () => {
       'draft && hostOf(draft.baseUrl) === "openrouter.ai" && looksUnprefixed(draft.key)',
     );
     expect(llmSettingsPanelSource).toContain('return typed !== "" && !typed.startsWith("sk-or-");');
-    expect(llmSettingsPanelSource).toContain(
+    expect(llmSettingsPanelSource).toContain("$LL.app.settings.llm.openrouter_key_prefix()");
+    expect(get(LL).app.settings.llm.openrouter_key_prefix()).toBe(
       "OpenRouter keys start with sk-or-v1-. Check you pasted the whole key.",
     );
     expect(llmSettingsPanelSource).not.toContain("draftReady = draftReady && !keyPrefixWarning");
     // The placeholder asks for the whole key rather than showing the prefix
     // as if it were already there.
-    expect(llmSettingsPanelSource).toContain(
+    expect(llmSettingsPanelSource).toContain("$LL.app.settings.llm.key_placeholder_new()");
+    expect(get(LL).app.settings.llm.key_placeholder_new()).toBe(
       "Paste the full API key (sk-or-v1-… for OpenRouter). Self-hosted servers usually don't need one.",
     );
   });
@@ -79,12 +83,17 @@ describe("AI providers scope", () => {
     // the endpoint, says the key is destroyed and that summarising stops.
     expect(llmSettingsPanelSource).toContain("on:click={() => (pendingRemoval = provider)}");
     expect(llmSettingsPanelSource).toContain('role="alertdialog"');
-    expect(llmSettingsPanelSource).toContain("Remove {provider.name || provider.base_url || provider.id}?");
-    expect(llmSettingsPanelSource).toContain("The saved API key is deleted");
-    expect(llmSettingsPanelSource).toContain('names.push("meeting summaries");');
+    expect(llmSettingsPanelSource).toContain(
+      "$LL.app.settings.llm.remove_confirm_title({ name: provider.name || provider.base_url || provider.id })",
+    );
+    expect(llmSettingsPanelSource).toContain("$LL.app.settings.llm.remove_deletes_key()");
+    expect(get(LL).app.settings.llm.remove_deletes_key()).toContain("The saved API key is deleted");
+    expect(llmSettingsPanelSource).toContain('steps.push("summary");');
+    expect(get(LL).app.settings.llm.remove_stops_summaries({ place: "P" })).toContain("This stops meeting summaries");
     // The write happens only from the confirmation's own button.
     expect(llmSettingsPanelSource.match(/void removeProvider\(provider\)/g)).toHaveLength(1);
-    expect(llmSettingsPanelSource).toContain("Yes, remove it");
+    expect(llmSettingsPanelSource).toContain("$LL.app.settings.llm.remove_confirm()");
+    expect(get(LL).app.settings.llm.remove_confirm()).toBe("Yes, remove it");
   });
 
   it("sends every untouched provider back, so a save cannot drop one", () => {
@@ -103,8 +112,10 @@ describe("AI providers verification", () => {
   it("reports a failed listing as itself, not as a broken endpoint", () => {
     // An endpoint with no /models route still answers completions perfectly
     // well, so this must not read as "this provider does not work".
-    expect(llmSettingsPanelSource).toContain("Model list unavailable");
-    expect(llmSettingsPanelSource).toContain("can still type a model ID");
+    expect(llmSettingsPanelSource).toContain("$LL.app.settings.llm.model_list_unavailable(");
+    expect(llmSettingsPanelSource).toContain("$LL.app.settings.llm.probe_failed_hint(");
+    expect(get(LL).app.settings.llm.model_list_unavailable({ detail: "x" })).toContain("Model list unavailable");
+    expect(get(LL).app.settings.llm.probe_failed_hint({ reason: "" })).toContain("can still type a model ID");
   });
 });
 
@@ -116,13 +127,15 @@ describe("AI providers edit placement (D-749)", () => {
     expect(llmSettingsPanelSource).toContain("{#snippet providerForm(heading: string)}");
     expect(llmSettingsPanelSource).toContain("{#if draft?.existing && draft.id === provider.id}");
     expect(llmSettingsPanelSource).toContain(
-      "{@render providerForm(`Editing ${providerLabel(provider)}`)}",
+      "{@render providerForm($LL.app.settings.llm.editing({ name: providerLabel(provider) }))}",
     );
+    expect(get(LL).app.settings.llm.editing({ name: "X" })).toBe("Editing X");
   });
 
   it("keeps only a new provider's form under the list, and says so in a heading", () => {
     expect(llmSettingsPanelSource).toContain("{#if draft && !draft.existing}");
-    expect(llmSettingsPanelSource).toContain('{@render providerForm("New provider")}');
+    expect(llmSettingsPanelSource).toContain("{@render providerForm($LL.app.settings.llm.new_provider())}");
+    expect(get(LL).app.settings.llm.new_provider()).toBe("New provider");
     expect(llmSettingsPanelSource).toContain(
       '<h3 class="set-row-name ep-form-title">{heading}</h3>',
     );
@@ -146,8 +159,8 @@ describe("AI providers card layout (D-749)", () => {
     expect(llmSettingsPanelSource).not.toContain("flex flex-wrap items-start justify-between");
     expect(llmSettingsPanelSource).toContain('class="flex flex-none items-center gap-3"');
     const row = llmSettingsPanelSource.indexOf(header);
-    const remove = llmSettingsPanelSource.indexOf("Remove\n                    </button>", row);
-    const warning = llmSettingsPanelSource.indexOf("{modelListUnavailable(state.status", row);
+    const remove = llmSettingsPanelSource.indexOf("{$LL.app.settings.llm.remove()}\n                    </button>", row);
+    const warning = llmSettingsPanelSource.indexOf("reason: modelListUnavailable(state.status", row);
     expect(row).toBeGreaterThan(-1);
     expect(remove).toBeGreaterThan(row);
     expect(warning).toBeGreaterThan(remove);
@@ -160,7 +173,8 @@ describe("AI providers default model (D-749)", () => {
     // and whoever creates an insight gets it with the endpoint they pick.
     expect(llmSettingsPanelSource).toContain("<ModelCombobox");
     expect(llmSettingsPanelSource).toContain("bind:value={draft.model}");
-    expect(llmSettingsPanelSource).toContain('label="Default model"');
+    expect(llmSettingsPanelSource).toContain("label={$LL.app.settings.llm.default_model()}");
+    expect(get(LL).app.settings.llm.default_model()).toBe("Default model");
     expect(llmSettingsPanelSource).toContain("model: provider.model,");
     expect(llmSettingsPanelSource).toContain("model: current.model.trim(),");
   });
@@ -176,11 +190,13 @@ describe("AI providers default model (D-749)", () => {
   it("says when an endpoint has no default model", () => {
     // The recorder then falls back to its own default, which a local endpoint
     // has probably never heard of.
-    expect(llmSettingsPanelSource).toContain("No default model");
+    expect(llmSettingsPanelSource).toContain("$LL.app.settings.llm.no_default_model()");
+    expect(get(LL).app.settings.llm.no_default_model()).toBe("No default model");
   });
 
   it("offers a saved endpoint's own listing and says why an unsaved one has none", () => {
-    expect(llmSettingsPanelSource).toContain("Save the provider first to list its models.");
+    expect(llmSettingsPanelSource).toContain("$LL.app.settings.llm.save_first_for_models()");
+    expect(get(LL).app.settings.llm.save_first_for_models()).toBe("Save the provider first to list its models.");
     expect(llmSettingsPanelSource).toContain("models: LLMModel[]");
   });
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { LL } from "cassini-viewer/i18n";
   import type { RetentionSettings } from "./operator/retention";
   export let settings: RetentionSettings | null = null;
   export let error = "";
@@ -14,21 +15,21 @@
     .every(policy => policy.forever);
 </script>
 
-<section class="retention-reminder" aria-label="Retention reminder">
+<section class="retention-reminder" aria-label={$LL.app.settings.retention_reminder.region_label()}>
   <div>
-    <p class="font-semibold">Choose how long Cassini keeps recordings</p>
-    {#if keepsForever}<p>Recordings and published meetings are kept indefinitely until you set a limit.</p>{/if}
-    {#if settings?.revision === 0 && dirty}<p class="scope">Save or discard your changes before dismissing.</p>{/if}
+    <p class="font-semibold">{$LL.app.settings.retention_reminder.title()}</p>
+    {#if keepsForever}<p>{$LL.app.settings.retention_reminder.keeps_forever()}</p>{/if}
+    {#if settings?.revision === 0 && dirty}<p class="scope">{$LL.app.settings.retention_reminder.unsaved_first()}</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
   </div>
   <div class="actions">
-    <button class="btn btn-sm" on:click={() => dispatch("review")}>Review</button>
+    <button class="btn btn-sm" on:click={() => dispatch("review")}>{$LL.app.settings.retention_reminder.review()}</button>
     {#if settings?.revision === 0}
       <button class="btn btn-sm btn-ghost" disabled={dirty || busy || loading} on:click={() => dispatch("ignore")}>
-        {dismissing ? "Dismissing…" : "Dismiss"}
+        {dismissing ? $LL.app.settings.retention_reminder.dismissing() : $LL.app.settings.retention_reminder.dismiss()}
       </button>
     {/if}
-    {#if error}<button class="btn btn-sm" disabled={loading || busy} on:click={() => dispatch("retry")}>{loading ? "Retrying…" : "Retry"}</button>{/if}
+    {#if error}<button class="btn btn-sm" disabled={loading || busy} on:click={() => dispatch("retry")}>{loading ? $LL.app.settings.retention_reminder.retrying() : $LL.app.settings.retention_reminder.retry()}</button>{/if}
   </div>
 </section>
 

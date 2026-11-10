@@ -6,6 +6,7 @@
   import { writable } from "svelte/store";
   import { createSelect } from "@melt-ui/svelte";
   import { ChevronDown } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
 
   type Format = "opus" | "json";
   export let value: Format = "opus";
@@ -15,26 +16,25 @@
   export let disabled = false;
 
   const dispatch = createEventDispatcher<{ change: Format }>();
-  const LABELS: Record<Format, string> = { opus: "Audio and transcript (.opus)", json: "Transcript only (.json)" };
+  $: t = $LL.app.settings.published_format;
+  $: LABELS = { opus: t.opus_label(), json: t.json_label() } satisfies Record<Format, string>;
 
   $: options = [
     {
       value: "opus" as const,
       label: LABELS.opus,
-      description: transcript
-        ? "One portable file: the recording with its transcript."
-        : "The recording as one portable file. No transcript while transcription is off.",
+      description: transcript ? t.opus_description() : t.opus_description_no_transcript(),
       disabled: false,
     },
     {
       value: "json" as const,
       label: LABELS.json,
-      description: transcript ? "The transcript alone, no audio." : "Needs transcription on in step 1.",
+      description: transcript ? t.json_description() : t.json_needs_transcript(),
       disabled: !transcript,
     },
   ];
 
-  const selected = writable<{ value: Format; label: string }>({ value, label: LABELS[value] });
+  const selected = writable<{ value: Format; label: string }>({ value, label: "" });
   const {
     elements: { trigger, menu, option, label },
     states: { open },
@@ -60,7 +60,7 @@
 <!-- Spread + `use:$store.action` rather than melt's `use:melt={$store}` sugar;
      see ModelCombobox for why. -->
 <div class="fmt-field">
-  <span class="fmt-label" {...$label} use:$label.action>Published meeting</span>
+  <span class="fmt-label" {...$label} use:$label.action>{t.field_label()}</span>
   <button type="button" class="op-input fmt-trigger" {disabled} {...$trigger} use:$trigger.action>
     <span>{LABELS[value]}</span>
     <ChevronDown size={14} class="fmt-chevron" aria-hidden="true" />
