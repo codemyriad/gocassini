@@ -133,6 +133,12 @@ list_a="$(call "${BEARER_A[@]}" -- list '{}')"
 list_b="$(call "${BEARER_B[@]}" -- list '{}')"
 jq -e '.isError != true' <<<"$list_a" >/dev/null || fail "list failed for $USER_A: $list_a"
 jq -e '.isError != true' <<<"$list_b" >/dev/null || fail "list failed for $USER_B: $list_b"
+# A page, not the archive: total counts every match, and the page is bounded.
+jq -e '.structuredContent | .total >= (.meetings | length) and .limit == 25 and .offset == 0' <<<"$list_a" >/dev/null \
+  || fail "list did not answer as a page: $(jq -c '.structuredContent | {total, offset, limit}' <<<"$list_a")"
+page="$(call "${BEARER_A[@]}" -- list '{"limit": 1}')"
+jq -e '.structuredContent | (.meetings | length) <= 1 and .limit == 1' <<<"$page" >/dev/null || fail "limit was not applied: $page"
+jq -e '[.structuredContent.meetings[] | has("audioPath")] | any | not' <<<"$list_a" >/dev/null || fail "an entry carries a storage path"
 ids_a="$(jq -r '[.structuredContent.meetings[] | "\(.id) \(.dateLabel) \(.title)"] | join("\n")' <<<"$list_a")"
 ids_b="$(jq -r '[.structuredContent.meetings[] | "\(.id) \(.dateLabel) \(.title)"] | join("\n")' <<<"$list_b")"
 printf '%s sees:\n%s\n%s sees:\n%s\n' "$USER_A" "${ids_a:-  (nothing)}" "$USER_B" "${ids_b:-  (nothing)}" >&2

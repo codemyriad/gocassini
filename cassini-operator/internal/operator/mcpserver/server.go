@@ -80,7 +80,7 @@ func NewServer(reader Reader, caller CallerFunc, logger *log.Logger) *mcp.Server
 			return reader.Rooms(ctx, caller)
 		})
 	addTool(server, t, "list",
-		"Which meetings may this account read, optionally only a room's, a date range's or a tag's? Newest first.",
+		"Which meetings may this account read, optionally only a room's, a date range's or a tag's? Newest first, a page at a time; total says how many match.",
 		reader.List)
 	addTool(server, t, "search",
 		"Where was this said, across the meetings this account may read? References only (meeting, speaker, startMs), never the words; read them with context.",
