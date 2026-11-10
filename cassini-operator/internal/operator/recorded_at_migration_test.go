@@ -663,3 +663,30 @@ func TestRecordedAtMigrationPausedSettleRetriesSoon(t *testing.T) {
 		t.Fatalf("paused settle failure = %+v, want uploading due within %s", r, recordedAtFileRetryBase*6/5)
 	}
 }
+
+// A pause that commits while a failed settle is writing its retry still
+// makes that settle due soon: the retry cannot overwrite the pause's reset
+// with the full backoff the row's earlier attempts earned.
+func TestRecordedAtMigrationPauseDuringRetryWriteRetriesSoon(t *testing.T) {
+	f := newFileWorkerFixture(t, 0)
+	ctx := context.Background()
+	if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET state='uploading', attempts=6`); err != nil {
+		t.Fatal(err)
+	}
+	f.w.client.Transport = annotationRoundTripper(func(r *http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})
+	f.w.beforeRetryWrite = func(string) {
+		if err := f.w.pauseMigration(ctx); err != nil {
+			t.Error(err)
+		}
+	}
+	if n := f.w.drain(ctx); n != 1 {
+		t.Fatalf("drained %d", n)
+	}
+	r := f.row(t)
+	limit := f.clock.Add(recordedAtFileRetryBase * 6 / 5).Unix()
+	if r.state != recordedAtStateUploading || r.retryAt <= f.clock.Unix() || r.retryAt > limit {
+		t.Fatalf("settle failure with a pause committing meanwhile = %+v, want uploading due within %s", r, recordedAtFileRetryBase*6/5)
+	}
+}

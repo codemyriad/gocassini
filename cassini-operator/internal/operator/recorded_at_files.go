@@ -95,6 +95,9 @@ type recordedAtFileWorker struct {
 	// afterAttempt, when set (tests only), runs between an attempt and the
 	// write of its outcome, with the per-recording lock still held.
 	afterAttempt func(name string)
+	// beforeRetryWrite, when set (tests only), runs just before a failed
+	// attempt's retry is written.
+	beforeRetryWrite func(name string)
 	// capabilities reads what Nextcloud says about the apps a rewrite
 	// touches (recorded_at_migration.go); tests replace it.
 	capabilities func(ctx context.Context) (nextcloudChangeCapabilities, error)
@@ -337,21 +340,29 @@ func (w *recordedAtFileWorker) processOne(ctx context.Context, name string) {
 	default:
 		w.logf("recorded-at: retag %s: %v", name, err)
 		var attempts int
-		var state string
-		_ = store.db.QueryRowContext(persist, `SELECT attempts, state FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&attempts, &state)
-		wait := min(recordedAtFileRetryCap, recordedAtFileRetryBase<<min(attempts, 10))
-		if state == recordedAtStateUploading {
-			// Paused, the migration is pausing until this upload is settled:
-			// retry it as soon as a first failure would, not after the
-			// backoff its earlier attempts earned.
-			if paused, err := store.recordedAtFilesPaused(persist); err == nil && paused {
-				wait = recordedAtFileRetryBase
-			}
+		_ = store.db.QueryRowContext(persist, `SELECT attempts FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&attempts)
+		jitter := 0.8 + rand.Float64()*0.4
+		backoff := time.Duration(float64(min(recordedAtFileRetryCap, recordedAtFileRetryBase<<min(attempts, 10))) * jitter)
+		// Paused, the migration is pausing until an upload is settled: such a
+		// row is retried as soon as a first failure would, not after the
+		// backoff its earlier attempts earned. The choice is made in the
+		// statement itself, so a pause committing meanwhile is always seen.
+		soon := time.Duration(float64(recordedAtFileRetryBase) * jitter)
+		now := w.now()
+		if w.beforeRetryWrite != nil {
+			w.beforeRetryWrite(name)
 		}
-		wait = time.Duration(float64(wait) * (0.8 + rand.Float64()*0.4))
-		retry := w.now().Add(wait)
-		if _, e := store.db.ExecContext(persist, `UPDATE recorded_at_file_backfill SET attempts=attempts+1, retry_at=?, last_error=?, updated_at=? WHERE opus_name=?`, retry.Unix(), "delivered file could not be re-tagged yet; retrying", nowUTCString(), name); e != nil {
-			w.logf("recorded-at: persist retry %s: %v", name, e)
+		var retryAt int64
+		err := store.db.QueryRowContext(persist, `UPDATE recorded_at_file_backfill SET attempts=attempts+1,
+ retry_at=CASE WHEN state='uploading' AND COALESCE((SELECT paused FROM recorded_at_file_backfill_control WHERE id=1), 0)!=0 THEN ? ELSE ? END,
+ last_error=?, updated_at=? WHERE opus_name=? RETURNING retry_at`,
+			now.Add(soon).Unix(), now.Add(backoff).Unix(), "delivered file could not be re-tagged yet; retrying", nowUTCString(), name).Scan(&retryAt)
+		wait := soon
+		if err != nil || retryAt != now.Add(soon).Unix() {
+			wait = backoff
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			w.logf("recorded-at: persist retry %s: %v", name, err)
 		}
 		time.AfterFunc(wait, w.poke)
 	}
@@ -454,9 +465,18 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 		}
 	}
 	if !retag.Changed || ownValue {
-		if state == "uploading" {
-			// Our earlier PUT landed but its answer was lost: settle the
-			// annotation index against the bytes actually there.
+		// Our earlier PUT landed but its answer was lost (uploading), or the
+		// index otherwise still names other bytes than these — the route a
+		// landed upload takes when its row left uploading unsettled, say
+		// blocked and requeued: settle the annotation index against the
+		// bytes actually there.
+		stale := state == recordedAtStateUploading
+		if !stale {
+			if stale, err = w.annotationIndexBehind(ctx, name, in); err != nil {
+				return err
+			}
+		}
+		if stale {
 			if err := w.reconcileAnnotations(ctx, name, in); err != nil {
 				return err
 			}
@@ -466,7 +486,9 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 	// Paused since this file was taken (or, for an uploading row, since its
 	// earlier PUT failed without landing — the file above does not carry the
 	// value): nothing of it is written yet, so it goes back to pending
-	// unchanged rather than becoming a new version after the pause.
+	// unchanged rather than becoming a new version after the pause. Should
+	// that earlier PUT still land later, the pending attempt that then finds
+	// the value in the file settles the index (annotationIndexBehind).
 	if paused, err := w.rt.meetingMetadata.recordedAtFilesPaused(ctx); err != nil {
 		return err
 	} else if paused {
@@ -487,11 +509,15 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 		return err
 	}
 	if status, _, err := w.exapp.davPutFileIfMatch(ctx, w.client, ncRecordingsOwner, rel, out, meetingContentType(rel), before.ETag); err != nil {
-		if status >= 400 && status < 500 {
+		if status >= 400 && status < 500 && state == recordedAtStatePending {
 			// Nextcloud answered and refused it (a 412: the file changed
 			// since it was read): nothing of this upload was written, so
 			// there is no upload to settle. Any other failure — no answer,
-			// a 5xx — may have landed, and stays uploading.
+			// a 5xx — may have landed, and stays uploading. So does a row
+			// this attempt found uploading: the earlier PUT whose answer
+			// was lost may be what changed the file (it can land late, and
+			// is the reason for this refusal), so the next attempt still
+			// settles it from the file.
 			if _, e := w.rt.meetingMetadata.db.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', updated_at=? WHERE opus_name=? AND state='uploading'`, nowUTCString(), name); e != nil {
 				return errors.Join(err, e)
 			}
@@ -523,6 +549,28 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 		return err
 	}
 	return w.setState(ctx, name, "done")
+}
+
+// annotationIndexBehind answers whether the annotation index knows name and
+// names a container other than the file at delivered.
+func (w *recordedAtFileWorker) annotationIndexBehind(ctx context.Context, name, delivered string) (bool, error) {
+	store := w.rt.annotationReads()
+	if store == nil {
+		return false, nil
+	}
+	var indexed string
+	err := store.db.QueryRowContext(ctx, `SELECT container_sha256 FROM meeting_annotations WHERE opus_name=?`, name).Scan(&indexed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	digest, err := fileSHA256(delivered)
+	if err != nil {
+		return false, err
+	}
+	return !strings.EqualFold(indexed, digest), nil
 }
 
 // reconcileAnnotations tells the tag index about the file as now delivered —

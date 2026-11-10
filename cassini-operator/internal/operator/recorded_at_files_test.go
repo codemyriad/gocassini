@@ -469,3 +469,90 @@ func TestRecordedAtFileWorkerPacesBetweenFiles(t *testing.T) {
 		t.Fatalf("the file left by the stopped drain is not claimable again: %q %v", name, err)
 	}
 }
+
+// An earlier PUT whose outcome was unknown may still land. Here it lands just
+// before the settle attempt's own PUT, which If-Match then refuses: the row
+// must stay an upload to settle, so the next attempt reconciles the
+// annotation index with the bytes now stored instead of just marking it done.
+func TestRecordedAtFileWorkerLateLandingEarlierPutIsStillSettled(t *testing.T) {
+	f := newFileWorkerFixture(t, 0)
+	ctx := context.Background()
+	if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET state='uploading'`); err != nil {
+		t.Fatal(err)
+	}
+	landed := false
+	f.w.client.Transport = annotationRoundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPut || landed {
+			return http.DefaultTransport.RoundTrip(r)
+		}
+		landed = true
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		// The earlier PUT carried the same bytes; it lands now.
+		f.nc.fakeNCFiles.mu.Lock()
+		f.nc.files[annTestRecording] = body
+		f.nc.etags[annTestRecording]++
+		f.nc.fakeNCFiles.mu.Unlock()
+		return &http.Response{StatusCode: http.StatusPreconditionFailed, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
+	})
+	f.w.drain(ctx)
+	r := f.row(t)
+	if r.state != recordedAtStateUploading || r.attempts != 1 {
+		t.Fatalf("after a refused re-send of an unsettled upload, row = %+v, want still uploading", r)
+	}
+	f.clock = time.Unix(r.retryAt, 0).Add(time.Second)
+	f.w.drain(ctx)
+	if r := f.row(t); r.state != recordedAtStateDone {
+		t.Fatalf("settle = %+v; logs: %s", r, f.logs)
+	}
+	if f.remote(t)["recordedAtUtc"] != testRecordedAt {
+		t.Fatalf("remote = %v", f.remote(t))
+	}
+	if want := fileSHA256Of(t, f.nc.recording(annTestRecording)); f.indexedContainer(t) != want {
+		t.Fatalf("index container = %q, want the stored file's %q", f.indexedContainer(t), want)
+	}
+}
+
+// A file that already carries the value while the annotation index still
+// names an older container gets the index reconciled, whatever route the row
+// took to pending: here an unsettled upload (which had landed) was blocked by
+// a CLI that could not run the retag, then requeued once the CLI was fixed.
+func TestRecordedAtFileWorkerSettlesALandedUploadAfterABlock(t *testing.T) {
+	f := newFileWorkerFixture(t, 2)
+	ctx := context.Background()
+	original := f.indexedContainer(t)
+	var r map[string]any
+	if err := json.Unmarshal([]byte(f.nc.recording(annTestRecording)), &r); err != nil {
+		t.Fatal(err)
+	}
+	r["recordedAtUtc"] = testRecordedAt
+	ours, _ := json.Marshal(r)
+	f.nc.seed(annTestRecording, string(ours), nil)
+	if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET state='uploading'`); err != nil {
+		t.Fatal(err)
+	}
+	f.w.drain(ctx)
+	if row := f.row(t); row.state != recordedAtStateBlocked {
+		t.Fatalf("row = %+v, want blocked", row)
+	}
+	f.w.bin = retagCLI(t, 0)
+	if _, err := f.w.requeueBlocked(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.w.drain(ctx)
+	if row := f.row(t); row.state != recordedAtStateDone {
+		t.Fatalf("row = %+v; logs: %s", row, f.logs)
+	}
+	want := fileSHA256Of(t, string(ours))
+	if want == original {
+		t.Fatal("fixture: the index must start behind the file")
+	}
+	if got := f.indexedContainer(t); got != want {
+		t.Fatalf("index container = %q, want the stored file's %q", got, want)
+	}
+	if len(f.nc.ifMatches()) != 0 {
+		t.Fatalf("a file already carrying the value was uploaded: %v", f.nc.ifMatches())
+	}
+}
