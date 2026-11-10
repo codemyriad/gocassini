@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dateFormat } from "../i18n/format";
   import { tick } from "svelte";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -61,19 +62,18 @@
   let copied = false;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const PROCESSED_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  const PROCESSED_OPTIONS: Intl.DateTimeFormatOptions = {
     day: "numeric",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
-  });
+  };
 
   function formatProcessed(iso: string | null): string {
     if (!iso) return "";
     const date = new Date(iso);
-    return Number.isNaN(date.getTime()) ? "" : PROCESSED_FORMAT.format(date);
+    return Number.isNaN(date.getTime()) ? "" : dateFormat(PROCESSED_OPTIONS).format(date);
   }
 
   function shortId(id: string): string {

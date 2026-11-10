@@ -1,3 +1,4 @@
+import { dateFormat } from "cassini-viewer/i18n";
 import type { StorageUsageCategory } from "./types";
 import { retentionDayPresets, type RetentionPolicy, type RetentionSettings } from "./retention";
 
@@ -69,7 +70,7 @@ export function storageBuckets(category: StorageUsageCategory, from: string, to:
   return { buckets, error: "" };
 }
 export function chartDate(date: string): string {
-  return new Date(utcDay(date)).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return dateFormat({ day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(utcDay(date)));
 }
 export function bucketLabel(bucket: StorageBucket): string {
   return bucket.from === bucket.to ? chartDate(bucket.from) : `${chartDate(bucket.from)} – ${chartDate(bucket.to)}`;

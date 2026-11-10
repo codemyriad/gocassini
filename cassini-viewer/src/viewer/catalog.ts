@@ -1,3 +1,4 @@
+import { dateFormat } from "../i18n/format";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import {
   formatMeetingStartShort,
@@ -433,7 +434,7 @@ export function formatMeetingDate(dateLabel: string): string {
   if (Number.isNaN(date.getTime())) {
     return dateLabel;
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return dateFormat({
     weekday: "short",
     month: "short",
     day: "numeric",

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dateFormat } from "cassini-viewer/i18n";
   import SupportBundle from "./SupportBundle.svelte";
   import { createEventDispatcher, onMount } from "svelte";
   import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, RefreshCw, Settings, TextSearch, TriangleAlert, Video, X } from "@lucide/svelte";
@@ -246,7 +247,7 @@
       <p class="mt-0.5 text-base-content/80">{refreshFailure}</p>
       <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" disabled={busy} on:click={() => load(lastLoad.check, lastLoad.only)}><RefreshCw size={15} class="shrink-0" aria-hidden="true" />{busy ? "Trying…" : "Try again"}</button>
-        {#if shared}<p class="text-xs text-base-content/70" title={new Date(shared.checkedAt).toLocaleString()}>Last checked {formatAge(shared.checkedAt)}</p>{/if}
+        {#if shared}<p class="text-xs text-base-content/70" title={dateFormat({ dateStyle: "medium", timeStyle: "short" }).format(new Date(shared.checkedAt))}>Last checked {formatAge(shared.checkedAt)}</p>{/if}
       </div>
     </div>
   </div>
@@ -255,7 +256,7 @@
     <svelte:component this={toneIcons[verdictTone]} size={16} class="mt-0.5 shrink-0 {verdictTone === 'neutral' ? 'opacity-70' : toneClasses[verdictTone]}" aria-hidden="true" />
     <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
       <p class="font-semibold text-base-content">{verdict}{#if followUp}{testFailed && report?.recording_state === "passed" ? ", but " : "; "}<button type="button" class="link font-semibold" on:click={goToTest}>{followUp}</button>{/if}</p>
-      {#if shared}<p class="text-xs text-base-content/70" title={new Date(shared.checkedAt).toLocaleString()}>Checked {formatAge(shared.checkedAt)}</p>{/if}
+      {#if shared}<p class="text-xs text-base-content/70" title={dateFormat({ dateStyle: "medium", timeStyle: "short" }).format(new Date(shared.checkedAt))}>Checked {formatAge(shared.checkedAt)}</p>{/if}
     </div>
   </div>
 {/if}
@@ -320,7 +321,7 @@
               </ul>
             </details>
           {/if}
-          {#if check.checked_at && (check.code === "test_playback" || !shared?.ids.has(check.id))}<p class="mt-2 flex items-center gap-1 text-xs text-base-content/65" title={new Date(check.checked_at).toLocaleString()}><svelte:component this={check.code === "test_playback" ? Headphones : Clock} size={12} class="shrink-0" aria-hidden="true" />{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
+          {#if check.checked_at && (check.code === "test_playback" || !shared?.ids.has(check.id))}<p class="mt-2 flex items-center gap-1 text-xs text-base-content/65" title={dateFormat({ dateStyle: "medium", timeStyle: "short" }).format(new Date(check.checked_at))}><svelte:component this={check.code === "test_playback" ? Headphones : Clock} size={12} class="shrink-0" aria-hidden="true" />{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
           {#if (check.repair && repairLabels[check.repair]) || rowGuide(check) || rowActions(check).some((item) => item.action !== "recheck")}
             <div class="mt-3 flex flex-wrap gap-2">
               {#if check.id === "test" && waitingForTalk && testRoomHref}

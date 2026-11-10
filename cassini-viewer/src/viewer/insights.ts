@@ -1,3 +1,4 @@
+import { dateFormat } from "../i18n/format";
 import type { MeetingCatalogEntry } from "./catalog";
 import {
   compareStartOrder,
@@ -301,14 +302,13 @@ export function insightTimestampMs(record: InsightRecord): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-const CREATED_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+const CREATED_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
   day: "numeric",
   month: "short",
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
-  hour12: false,
-});
+};
 
 // formatInsightCreated renders createdAt in the reader's own timezone.
 //
@@ -322,7 +322,7 @@ export function formatInsightCreated(record: InsightRecord): string {
   if (ms === null) {
     return record.createdAt ?? "";
   }
-  return CREATED_DATE_FORMAT.format(new Date(ms));
+  return dateFormat(CREATED_DATE_OPTIONS).format(new Date(ms));
 }
 
 // stripInsightFrontMatter removes the YAML provenance block the recorder writes

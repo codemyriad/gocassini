@@ -29,7 +29,7 @@ describe("transcript export", () => {
       [segment("a", "Ana", 1000, "Let's ship this.")],
     );
     // Rome is UTC+2 in September (the suite's zone).
-    expect(text.split("\n")[0]).toBe("# Planning — Thu 24 Sept 2026, 10:05 CEST");
+    expect(text.split("\n")[0]).toBe("# Planning — Thu, 24 Sept 2026, 10:05 CEST");
   });
 
   it("keeps Markdown syntax in meeting text literal", () => {

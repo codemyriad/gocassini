@@ -8,6 +8,7 @@
 // file arrived under, mirroring how the published routes tolerate a recipient's
 // rename.
 
+import { dateFormat } from "../i18n/format";
 import {
   extractPortableManifestFromArrayBuffer,
   extractTranscriptionDocument,
@@ -153,7 +154,7 @@ export function formatImportDate(dateLabel: string): string {
     return dateLabel;
   }
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return dateFormat({ day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(date);
 }
 
 export function formatImportDuration(durationMs: number): string {

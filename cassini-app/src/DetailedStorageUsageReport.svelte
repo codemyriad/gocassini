@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dateFormat } from "cassini-viewer/i18n";
   import { onDestroy, onMount } from "svelte";
   import { HardDrive, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { formatStorageBytes, storageUsageTotal } from "./operator/storageUsage";
@@ -87,7 +88,7 @@
 
   function measuredAt(value: string): string {
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "just now" : date.toLocaleString();
+    return Number.isNaN(date.getTime()) ? "just now" : dateFormat({ dateStyle: "medium", timeStyle: "short" }).format(date);
   }
 </script>
 

@@ -19,12 +19,16 @@ This file is the published surface. The implementation is
 | `title` | no | A name for the recording, shown as the heading. | Read from the file name, e.g. `Daily-Standup--2026-03-13--12-00-00.opus` → "Daily Standup", 2026-03-13 12:00 |
 | `theme` | no | `light`, `dark`, or `auto` | `auto` — follows the reader's `prefers-color-scheme` |
 | `hide-badge` | no | Present to remove the "Recorded with Cassini" footer | absent — the badge is shown |
+| `lang` | no | The language for the viewer's own words (buttons, headings, the badge), as a language tag such as `es` or `pt-PT`. The recording's transcript is never translated. With no translation for that language, the viewer uses English. | The nearest `lang` on the page around the element, then the reader's browser languages |
 | `layout` | no | `inline` for a page that already names the recording and shows its details: the viewer drops its title, date line and file details, and the player sits above the transcript instead of floating over it | the full viewer |
 
 Attributes are read when the element enters the page. Changing one afterwards
 has no effect; replace the element instead. `theme` is the exception: set it
 again and the viewer follows, so a page with its own light/dark switch can keep
 the recording in step with it.
+
+One page shows one language: two embeds on the same page that ask for
+different languages both use the language of the one added last.
 
 ## Events
 

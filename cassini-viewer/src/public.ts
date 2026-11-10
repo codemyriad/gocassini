@@ -29,10 +29,12 @@
 // someone else's page, and their CSS does not reach into ours.
 
 import { mount, unmount } from "svelte";
+import { get } from "svelte/store";
 
 import MeetingView from "./components/MeetingView.svelte";
 import { StaticCatalogProvider } from "./viewer/dataProvider";
 import { resolveEmbedTheme, singleMeetingEntry } from "./viewer/singleMeeting";
+import { LL, browserLanguages, useFormatLocale, useLocale } from "./i18n";
 import "./app.css";
 
 export const ELEMENT_NAME = "cassini-meeting";
@@ -41,7 +43,19 @@ export const ELEMENT_NAME = "cassini-meeting";
 // who have never heard of Cassini, on pages we do not control, so it says what
 // produced what they are reading.
 export const BADGE_HREF = "https://gocassini.com";
-export const BADGE_TEXT = "Recorded with Cassini";
+// In the language the embed is showing (embedLanguages).
+export const badgeText = (): string => get(LL).viewer.embed.badge();
+
+// Which language an embed reads in, most-preferred first: its own `lang`
+// attribute, then the nearest `lang` on the page around it (the page's own
+// language, usually set on <html>), then the reader's browser. A Spanish page
+// embedding a recording gets the viewer in Spanish, whatever the reader's
+// browser says.
+export function embedLanguages(element: Element): string[] {
+  const own = element.getAttribute("lang");
+  const page = element.parentElement?.closest("[lang]")?.getAttribute("lang");
+  return [own, page, ...browserLanguages()].filter((tag): tag is string => Boolean(tag));
+}
 
 // Dispatched on the element when the recording's audio will not play (D-838).
 // The viewer shows no error of its own for this, so it is the page's to say.
@@ -243,6 +257,10 @@ export function defineCassiniMeeting(): void {
       // the viewer is themed with it rather than falling back to the default.
       const wrapper = document.createElement("div");
       wrapper.className = "cassini-embed";
+      // One language per page: the dictionaries are shared, so two embeds
+      // asking for different languages end up in the last one's (ATTRIBUTES.md).
+      wrapper.lang = useLocale(embedLanguages(this));
+      useFormatLocale(embedLanguages(this));
       wrapper.dataset.theme = resolveEmbedTheme(this.getAttribute("theme"), prefersDarkScheme());
       const layout = (this.getAttribute("layout") ?? "").trim().toLowerCase();
       if ((LAYOUTS as readonly string[]).includes(layout)) {
@@ -262,7 +280,7 @@ export function defineCassiniMeeting(): void {
         badge.href = BADGE_HREF;
         badge.target = "_blank";
         badge.rel = "noopener noreferrer";
-        badge.textContent = BADGE_TEXT;
+        badge.textContent = badgeText();
         wrapper.appendChild(badge);
       }
 

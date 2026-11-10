@@ -1,5 +1,7 @@
 import { writable } from "svelte/store";
 
+import { relativeTimeFormat } from "../i18n/format";
+
 import { AnnotationError, plural, type TagJob, type TagUpdate, type VocabularyTag } from "./annotations";
 import type { DataProvider } from "./dataProvider";
 import { colorFor, type TagColorId, type TagIconId } from "./tagPalette";
@@ -34,14 +36,13 @@ export function confirmLine(meetings: number): string {
   return `Updates ${meetings === 1 ? "one" : meetings} of your meetings. Meetings that are in rooms you can't access will keep the old tag.`;
 }
 
-const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const DAY = 864e5;
 const UNITS = [["year", 365 * DAY], ["month", 30 * DAY], ["week", 7 * DAY], ["day", DAY], ["hour", 36e5], ["minute", 6e4]] as const;
 
 export function relativeTime(iso: string, now = Date.now()): string {
   const ago = now - Date.parse(iso);
   const unit = UNITS.find(([, size]) => ago >= size);
-  return unit ? RELATIVE.format(-Math.floor(ago / unit[1]), unit[0]) : "just now";
+  return unit ? relativeTimeFormat({ numeric: "auto" }).format(-Math.floor(ago / unit[1]), unit[0]) : "just now";
 }
 
 // Compatibility formatter for older operator responses. The manager no longer

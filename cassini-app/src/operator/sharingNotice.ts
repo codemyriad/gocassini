@@ -3,6 +3,7 @@
 // setting kept from them. The copy and the wire call live here, pure, for the
 // reason buildSetupNotice gives: the sentences are the part worth testing, and
 // SharingNotice.svelte renders what it is handed.
+import { formatLocale } from "cassini-viewer/i18n";
 import { readServedMessage } from "../servedMessage";
 import { isRecord, readSharing, type PendingRecording, type RecordingNotice, type SharingStatus } from "./setupHealth";
 
@@ -149,7 +150,7 @@ export const SEND_LINK_TITLE = "Opening it as an administrator shows exactly wha
 // --- Rows ---
 
 export interface DateFormatOptions {
-  // Test seams. Production leaves both unset: the reader's own locale and zone.
+  // Test seams. Production leaves both unset: the reader's locale (formatLocale) and zone.
   locale?: string;
   timeZone?: string;
 }
@@ -160,7 +161,7 @@ export function formatShareDate(iso: string, options: DateFormatOptions = {}): s
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(options.locale, {
+  return new Intl.DateTimeFormat(options.locale ?? formatLocale(), {
     weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
   }).format(date);

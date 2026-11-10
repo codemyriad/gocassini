@@ -1,0 +1,16 @@
+{
+  "embed": {
+    "badge": "Recorded with Cassini"
+  },
+  "export": {
+    "button": "Export",
+    "menu_label": "Export this meeting",
+    "copy_full_context": "Copy full context",
+    "download_full_context": "Download full context",
+    "copy_transcript": "Copy transcript",
+    "copy_transcripts": "Copy transcripts",
+    "download_transcript": "Download transcript",
+    "download_transcripts": "Download transcripts",
+    "download_audio": "Download audio"
+  }
+}

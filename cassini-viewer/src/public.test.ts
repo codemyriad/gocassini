@@ -4,13 +4,14 @@ import attributesDoc from "../ATTRIBUTES.md?raw";
 import meetingViewSource from "./components/MeetingView.svelte?raw";
 import {
   BADGE_HREF,
-  BADGE_TEXT,
+  badgeText,
   ELEMENT_NAME,
   EMBED_CSS,
   LAYOUTS,
   LIVE_ATTRIBUTES,
   PALETTE_PROPERTIES,
   PLAYBACK_ERROR_EVENT,
+  embedLanguages,
   embedStylesheetHref,
   findEmbedScriptSrc,
 } from "./public";
@@ -91,7 +92,7 @@ describe("the embed's published names", () => {
   it("are the ones ATTRIBUTES.md documents", () => {
     expect(ELEMENT_NAME).toBe("cassini-meeting");
     expect(BADGE_HREF).toBe("https://gocassini.com");
-    expect(BADGE_TEXT).toBe("Recorded with Cassini");
+    expect(badgeText()).toBe("Recorded with Cassini");
     expect(PLAYBACK_ERROR_EVENT).toBe("playbackerror");
     expect(attributesDoc).toContain("`playbackerror`");
   });
@@ -120,5 +121,25 @@ describe("the embed's styling hooks (D-838)", () => {
       expect(EMBED_CSS).toContain(`.${hook}`);
       expect(meetingViewSource).toMatch(new RegExp(`class="${hook}[ "]`));
     }
+  });
+});
+
+describe("the embed's language", () => {
+  // jsdom-free: a stand-in element with just what embedLanguages reads.
+  const element = (own: string | null, page: string | null) =>
+    ({
+      getAttribute: (name: string) => (name === "lang" ? own : null),
+      parentElement: page === null ? null : { closest: () => ({ getAttribute: () => page }) },
+    }) as unknown as Element;
+
+  it("prefers its own lang attribute, then the page's", () => {
+    expect(embedLanguages(element("es", "de")).slice(0, 2)).toEqual(["es", "de"]);
+    expect(embedLanguages(element(null, "de"))[0]).toBe("de");
+  });
+
+  it("falls back to the reader's browser when the page names no language", () => {
+    expect(embedLanguages(element(null, null))).toEqual(
+      [...(navigator.languages ?? []), navigator.language].filter(Boolean),
+    );
   });
 });

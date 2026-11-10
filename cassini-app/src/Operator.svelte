@@ -1,4 +1,5 @@
 <script module lang="ts">
+  import { dateFormat } from "cassini-viewer/i18n";
   import type { Job, JobAttempt } from "./operator/types";
   import type { OperatorPanel } from "./surfaceRouting";
   import {
@@ -933,7 +934,7 @@
     if (Number.isNaN(date.getTime())) {
       return value;
     }
-    return new Intl.DateTimeFormat(undefined, {
+    return dateFormat({
       dateStyle: "medium",
       timeStyle: "medium",
     }).format(date);

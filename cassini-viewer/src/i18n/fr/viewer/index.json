@@ -1,0 +1,16 @@
+{
+  "embed": {
+    "badge": ""
+  },
+  "export": {
+    "button": "",
+    "menu_label": "",
+    "copy_full_context": "",
+    "download_full_context": "",
+    "copy_transcript": "",
+    "copy_transcripts": "",
+    "download_transcript": "",
+    "download_transcripts": "",
+    "download_audio": ""
+  }
+}

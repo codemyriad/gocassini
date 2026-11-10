@@ -2,17 +2,19 @@
   import { createEventDispatcher } from "svelte";
   import { ChevronDown, Copy, FileAudio, FileText } from "@lucide/svelte";
 
+  import { LL } from "../i18n";
   import { popover, stepIndex } from "./tags/popover";
 
   export let canCopy = true;
   export let canDownloadTranscript = true;
   export let canDownloadAudio = true;
-  export let audioLabel = "Download audio";
+  // Empty means the default wording, in the reader's language.
+  export let audioLabel = "";
   export let status = "";
   export let includeContext = false;
   export let canExportContext = true;
   export let plural = false;
-  export let label = "Export this meeting";
+  export let label = "";
   // Labels for the two items every caller has, for one whose thing is not a
   // transcript: the insight drawer exports markdown. Empty keeps the transcript
   // wording, singular or plural.
@@ -59,7 +61,7 @@
   title={status || undefined}
   on:click={() => (open = !open)}
 >
-  Export
+  {$LL.viewer.export.button()}
   <ChevronDown size={12} aria-hidden="true" />
 </button>
 
@@ -70,27 +72,27 @@
     use:focusFirst
     role="menu"
     tabindex="-1"
-    aria-label={label}
+    aria-label={label || $LL.viewer.export.menu_label()}
     class="tag-popover grid w-52 p-1"
     on:keydown={onKeydown}
   >
     {#if includeContext}
       <button type="button" role="menuitem" class="em-item" disabled={!canExportContext} on:click={() => choose("copyContext")}>
-        <Copy size={14} aria-hidden="true" />Copy full context
+        <Copy size={14} aria-hidden="true" />{$LL.viewer.export.copy_full_context()}
       </button>
       <button type="button" role="menuitem" class="em-item" disabled={!canExportContext} on:click={() => choose("context")}>
-        <FileText size={14} aria-hidden="true" />Download full context
+        <FileText size={14} aria-hidden="true" />{$LL.viewer.export.download_full_context()}
       </button>
     {/if}
     <button type="button" role="menuitem" class="em-item" disabled={!canCopy} on:click={() => choose("copy")}>
-      <Copy size={14} aria-hidden="true" />{copyLabel || `Copy ${plural ? "transcripts" : "transcript"}`}
+      <Copy size={14} aria-hidden="true" />{copyLabel || (plural ? $LL.viewer.export.copy_transcripts() : $LL.viewer.export.copy_transcript())}
     </button>
     <button type="button" role="menuitem" class="em-item" disabled={!canDownloadTranscript} on:click={() => choose("transcript")}>
-      <FileText size={14} aria-hidden="true" />{transcriptLabel || `Download ${plural ? "transcripts" : "transcript"}`}
+      <FileText size={14} aria-hidden="true" />{transcriptLabel || (plural ? $LL.viewer.export.download_transcripts() : $LL.viewer.export.download_transcript())}
     </button>
     {#if includeAudio}
       <button type="button" role="menuitem" class="em-item" disabled={!canDownloadAudio} on:click={() => choose("audio")}>
-        <FileAudio size={14} aria-hidden="true" />{audioLabel}
+        <FileAudio size={14} aria-hidden="true" />{audioLabel || $LL.viewer.export.download_audio()}
       </button>
     {/if}
   </div>

@@ -1,6 +1,9 @@
 // `warn` arrived with the host checks (D-798 V2): something is impaired but
 // audio recording remains possible, such as a disk getting low on space or an
 // enabled optional transcription model being unavailable.
+
+import { dateFormat } from "cassini-viewer/i18n";
+
 export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
 // One thing to do about a check that is not ok. Mirrors SetupNoticeStep, which
 // already renders this shape for storage faults: commands behind a disclosure,
@@ -106,7 +109,7 @@ function formatSince(iso: string | undefined, now: Date): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   const sameYear = date.getFullYear() === now.getFullYear();
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) }).format(date);
+  return dateFormat({ day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) }).format(date);
 }
 
 

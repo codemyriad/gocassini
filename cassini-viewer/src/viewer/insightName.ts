@@ -1,5 +1,6 @@
 import type { MeetingCatalogEntry } from "./catalog";
-import { formatMeetingDateShort, meetingStartDayKey, parseDateLabelMs } from "./meetingTime";
+import { dateFormat } from "../i18n/format";
+import { DAY_OPTIONS, formatMeetingDateShort, meetingStartDayKey, parseDateLabelMs } from "./meetingTime";
 import { NO_ROOM_KEY, roomKeyOf, roomLabelOf } from "./rooms";
 
 // The name an insight is given before anybody types one (D-791). Pure, so the
@@ -77,12 +78,11 @@ function dayOf(dateLabel: string | undefined): string {
   return parseDateLabelMs(day) === null ? "" : day;
 }
 
-const DAY_FORMAT = new Intl.DateTimeFormat("en-GB", { day: "numeric", timeZone: "UTC" });
-const DAY_MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
 // formatDateRange spans the dated labels (or "YYYY-MM-DD" day keys), in the browse list's own date style:
-// one day as "3 Oct 2026", one month as "1–12 Oct 2026", one year as
-// "28 Sept – 12 Oct 2026", and otherwise both dates in full. Undated labels are
+// one day as "3 Oct 2026", and a span the way the reader's locale shortens one
+// (Intl formatRange): "1–12 Oct 2026" and "28 Sept – 12 Oct 2026" in en-GB,
+// "Oct 1 – 12, 2026" in the US. Undated labels are
 // ignored, and "" when none is dated.
 export function formatDateRange(dateLabels: readonly (string | undefined)[]): string {
   const days = dateLabels.map(dayOf).filter((day) => day !== "").sort();
@@ -94,15 +94,11 @@ export function formatDateRange(dateLabels: readonly (string | undefined)[]): st
   if (first === last) {
     return formatMeetingDateShort(first);
   }
-  const lastFull = formatMeetingDateShort(last);
-  const firstUTC = new Date(`${first}T00:00:00Z`);
-  if (first.slice(0, 7) === last.slice(0, 7)) {
-    return `${DAY_FORMAT.format(firstUTC)}–${lastFull}`;
-  }
-  if (first.slice(0, 4) === last.slice(0, 4)) {
-    return `${DAY_MONTH_FORMAT.format(firstUTC)} – ${lastFull}`;
-  }
-  return `${formatMeetingDateShort(first)} – ${lastFull}`;
+  // Intl puts thin spaces around the dash. A name is something people edit and
+  // turn into a file name, so it gets ordinary ones.
+  return dateFormat(DAY_OPTIONS)
+    .formatRange(new Date(`${first}T00:00:00Z`), new Date(`${last}T00:00:00Z`))
+    .replace(/[\u2009\u202f]/g, " ");
 }
 
 function capName(name: string): string {

@@ -1,3 +1,4 @@
+import { dateFormat } from "../i18n/format";
 import type { MeetingCatalogEntry } from "./catalog";
 import { formatMeetingStartForExport } from "./meetingTime";
 import {
@@ -103,19 +104,18 @@ function oneLine(text: string): string {
 // The drawer shows createdAt in the reader's clock with no zone, which is right
 // on screen (formatInsightCreated). A copy is read somewhere else, by someone
 // whose clock this may not be, so here the zone goes with it.
-const EXPORT_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+const EXPORT_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
   day: "numeric",
   month: "short",
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
-  hour12: false,
   timeZoneName: "short",
-});
+};
 
 function formatExportCreated(record: InsightRecord): string {
   const ms = insightTimestampMs(record);
-  return ms === null ? (record.createdAt ?? "") : EXPORT_DATE_FORMAT.format(new Date(ms));
+  return ms === null ? (record.createdAt ?? "") : dateFormat(EXPORT_DATE_OPTIONS).format(new Date(ms));
 }
 
 const MAX_FILE_STEM = 100;
