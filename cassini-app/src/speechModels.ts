@@ -1,3 +1,5 @@
+import { get } from "svelte/store";
+import { LL, numberFormat } from "cassini-viewer/i18n";
 import type { SpeechModel, SpeechModelInventory, SpeechModelJob } from "./operator/types";
 
 // The speaker separation model Settings offers (docs/speaker-separation.md).
@@ -28,8 +30,16 @@ export function jobRunning(job: SpeechModelJob | undefined): boolean {
   return !!job && !["ready", "failed", "cancelled"].includes(job.state);
 }
 
+// A size in GiB from 1 GiB up, MiB below, written for the reader's locale.
+export function modelSize(n: number): string {
+  if (n < 1024 ** 3) return mebibytes(n);
+  const size = numberFormat({ minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n / 1024 ** 3);
+  return get(LL).app.settings.speech_models.size_gib({ size });
+}
+
 export function mebibytes(n: number): string {
-  return `${(n / 1024 / 1024).toFixed(1)} MiB`;
+  const size = numberFormat({ minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n / 1024 / 1024);
+  return get(LL).app.settings.speech_models.size_mib({ size });
 }
 
 // What a running model job is doing, in words. After the download the job
@@ -37,13 +47,15 @@ export function mebibytes(n: number): string {
 // checks the model runs here; without saying so it looks stuck at 100%.
 export function jobStepText(job: SpeechModelJob): string {
   const { completed_bytes: done, total_bytes: total } = job.progress;
+  const t = get(LL).app.settings.speech_models.job_step;
   switch (job.state) {
-    case "queued": return "Waiting to start";
-    case "downloading": return total > 0 ? `Downloading · ${Math.min(100, Math.round((done / total) * 100))}%` : "Downloading";
-    case "verifying": return "Verifying the download";
-    case "unpacking": return "Unpacking";
-    case "installed": return "Downloaded · checks once no meeting is being processed";
-    case "checking": return "Checking it runs on this server";
+    case "queued": return t.queued();
+    case "downloading": return total > 0 ? t.downloading_percent({ percent: Math.min(100, Math.round((done / total) * 100)) }) : t.downloading();
+    case "verifying": return t.verifying();
+    case "unpacking": return t.unpacking();
+    case "installed": return t.installed();
+    case "checking": return t.checking();
+    // A state this build does not know, as the operator sent it.
     default: return job.state;
   }
 }

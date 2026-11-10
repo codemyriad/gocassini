@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { LL } from "cassini-viewer/i18n";
   import { leavePrompt, cancelLeave, confirmLeave } from "./operator/unsaved";
 
   export let formId: string;
@@ -15,18 +16,18 @@
   {#if error}<p class="alert alert-error" role="alert">{error}</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
   <div class="buttons">
-    <p class="text-sm opacity-80">Changes take effect at the next cleanup. Saving never deletes files immediately.</p>
+    <p class="text-sm opacity-80">{$LL.app.settings.retention_actions.takes_effect()}</p>
     <div class="button-row">
-      {#if dirty}<button class="btn btn-ghost" type="button" {disabled} on:click={() => dispatch("reload")}>Discard changes</button>{/if}
+      {#if dirty}<button class="btn btn-ghost" type="button" {disabled} on:click={() => dispatch("reload")}>{$LL.app.settings.retention_actions.discard()}</button>{/if}
       <!-- Native form association preserves validation when actions sit outside the scroller. -->
-      <button class="btn btn-primary" type="submit" form={formId} disabled={disabled || !canSave}>Save</button>
+      <button class="btn btn-primary" type="submit" form={formId} disabled={disabled || !canSave}>{$LL.app.settings.retention_actions.save()}</button>
     </div>
   </div>
   {#if $leavePrompt}
-    <div class="alert" role="alertdialog" tabindex="-1" aria-label="Leave without saving?">
-      <p>You have unsaved changes. Leave without saving?</p>
-      <button class="btn btn-sm" on:click={cancelLeave}>Stay</button>
-      <button class="btn btn-sm" on:click={confirmLeave}>Leave</button>
+    <div class="alert" role="alertdialog" tabindex="-1" aria-label={$LL.app.settings.retention_actions.leave_title()}>
+      <p>{$LL.app.settings.retention_actions.leave_prompt()}</p>
+      <button class="btn btn-sm" on:click={cancelLeave}>{$LL.app.settings.retention_actions.stay()}</button>
+      <button class="btn btn-sm" on:click={confirmLeave}>{$LL.app.settings.retention_actions.leave()}</button>
     </div>
   {/if}
 </div>

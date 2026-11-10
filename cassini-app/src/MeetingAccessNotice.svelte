@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { TriangleAlert } from "@lucide/svelte";
+  import { LL } from "cassini-viewer/i18n";
   import {
     ACCEPT,
     accessLine,
@@ -44,7 +45,7 @@
       const result = await accept(ids);
       const refusals = result.failed.filter((entry) => ids.includes(entry.shareId));
       if (refusals.length > 0) {
-        failure = refusals.map((entry) => entry.reason).filter((reason) => reason !== "").join(" ") || "Nextcloud did not accept this share.";
+        failure = refusals.map((entry) => entry.reason).filter((reason) => reason !== "").join(" ") || $LL.app.shell.meeting_access.share_refused();
       }
       dispatch("accepted", result);
     } catch (error) {

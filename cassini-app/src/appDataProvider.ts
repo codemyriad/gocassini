@@ -1,3 +1,5 @@
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 import { requestRoomName } from "./roomNames";
 import { recordCatalogDiagnostic } from "./support/client";
 import {
@@ -91,7 +93,7 @@ export class AppDataProvider extends StaticCatalogProvider {
   // makes Prepare cheap enough to be a button in the browse list.
   async loadContextBundle(entries: readonly MeetingCatalogEntry[]): Promise<string> {
     if (entries.length === 0) {
-      throw new Error("Pick at least one meeting first.");
+      throw new Error(get(LL).app.shell.data_provider.bundle_needs_meetings());
     }
     const url = new URL(resolvePublishedUrl("meetings-context"));
     // ONE comma-separated `ids`, in pick order, because the document prints its
@@ -381,6 +383,7 @@ async function readAnnotationError(response: Response): Promise<AnnotationError>
 
 // describeBundleFailure turns a refusal into something a reader can act on.
 async function describeBundleFailure(response: Response): Promise<string> {
+  const t = get(LL).app.shell.data_provider;
   switch (response.status) {
     case 400:
       // Only here is the served message worth repeating: the endpoint knows
@@ -389,7 +392,7 @@ async function describeBundleFailure(response: Response): Promise<string> {
       // other statuses answer in fixed terms ("404 page not found") that would
       // be worse than the sentence below.
       return (
-        (await readServedMessage(response)) || "Cassini could not read that request for a bundle."
+        (await readServedMessage(response)) || t.bundle_bad_request()
       );
     case 404:
       // Whether a meeting exists and whether this caller may read it are
@@ -400,14 +403,14 @@ async function describeBundleFailure(response: Response): Promise<string> {
       // to the published file server and 404s identically, so the sentence
       // names that too rather than sending an administrator hunting a
       // permissions problem that is not there.
-      return "One of these meetings is not available to you, or this deployment cannot assemble bundles.";
+      return t.bundle_not_found();
     case 502:
       // Both of this status's causes — no verified caller identity, and a
       // failed scan — are the operator being unable to read Nextcloud as this
       // user, which is what the sentence says. Neither is anything the reader
       // can fix from here, so it does not pretend to be actionable.
-      return "Cassini could not read these meetings from Nextcloud.";
+      return t.bundle_nextcloud_unreadable();
     default:
-      return `Could not prepare the bundle (HTTP ${response.status}).`;
+      return t.bundle_failed({ status: response.status });
   }
 }

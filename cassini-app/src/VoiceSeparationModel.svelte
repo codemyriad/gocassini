@@ -4,6 +4,7 @@
   // happens after each meeting (docs/speaker-separation.md). Download, check,
   // cancel and retry work like a speech model; the inventory is the one the
   // transcript step polls.
+  import { LL } from "cassini-viewer/i18n";
   import type { OperatorClient } from "./operator/client";
   import type { SpeechModelInventory } from "./operator/types";
   import ModelStatusRow from "./ModelStatusRow.svelte";
@@ -17,12 +18,13 @@
   $: job = modelJob(inventory, model, "cpu");
   $: running = jobRunning(job);
   $: unsupported = model?.runtime_supported === false;
+  $: t = $LL.app.settings.voice_separation;
   $: state = !model ? "" : running && job ? jobStepText(job)
-    : model.ready ? "Ready"
-    : unsupported ? "Not available in this server's Cassini build"
-    : model.installed ? "Installed — runtime check needed"
-    : job?.state === "cancelled" ? "Download cancelled. Retry resumes it."
-    : "Not installed";
+    : model.ready ? t.state_ready()
+    : unsupported ? t.state_unsupported()
+    : model.installed ? t.state_installed()
+    : job?.state === "cancelled" ? t.state_cancelled()
+    : t.state_not_installed();
   async function act(kind: "install" | "cancel" | "retry") {
     if (!client || !model || busy) return;
     busy = true;
@@ -38,19 +40,19 @@
 {#if model}
   <section class="op-tint voice-card" aria-labelledby="voice-separation-heading">
     <div>
-      <h2 id="voice-separation-heading" class="set-row-name op-card-title">Voice separation <span class="optional">(optional)</span></h2>
-      <p class="set-row-sub">For Cassini to tell apart several people talking on one device in a call, download this model. Anyone who can read the meeting can then split that device's audio into separate voices from its participant list. It runs on this server's CPU, only when someone asks.</p>
+      <h2 id="voice-separation-heading" class="set-row-name op-card-title">{t.heading()} <span class="optional">{t.optional()}</span></h2>
+      <p class="set-row-sub">{t.description()}</p>
     </div>
     <ModelStatusRow name={model.name} size={mebibytes(model.download_bytes)} {state} quiet>
       <svelte:fragment slot="action">
         {#if running && job}
-          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act("cancel")}>Cancel</button>
+          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act("cancel")}>{t.cancel()}</button>
         {:else if !model.ready && !unsupported && (model.installed || inventory?.downloads_allowed)}
-          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act(job ? "retry" : "install")}>{model.installed ? "Check" : job ? "Retry" : "Download"}</button>
+          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act(job ? "retry" : "install")}>{model.installed ? t.check() : job ? t.retry() : t.download()}</button>
         {/if}
       </svelte:fragment>
       {#if running && job && job.state === "downloading" && job.progress.total_bytes > 0}
-        <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label="Voice separation download progress"></progress>
+        <progress max={job.progress.total_bytes} value={job.progress.completed_bytes} aria-label={t.progress_label()}></progress>
       {/if}
       {#if error || job?.error}<p class="op-error">{error || job?.error}</p>{/if}
     </ModelStatusRow>
