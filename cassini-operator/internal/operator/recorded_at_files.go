@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -85,9 +84,10 @@ type recordedAtFileWorker struct {
 	logger  *log.Logger
 	wake    chan struct{}
 	claimed sync.Map
-	// active counts files a worker is rewriting right now (inside
-	// processOne), which a pause lets finish.
-	active atomic.Int32
+	// active names the files a worker is rewriting right now (inside
+	// processOne), which a pause lets finish. /status counts each by the
+	// state its row is in.
+	active sync.Map
 	start  sync.Once
 	now    func() time.Time
 	// pause waits between two files of one drain; false means stop.
@@ -235,9 +235,9 @@ func (w *recordedAtFileWorker) drain(ctx context.Context) int {
 				return processed
 			}
 		}
-		w.active.Add(1)
+		w.active.Store(name, struct{}{})
 		w.processOne(ctx, name)
-		w.active.Add(-1)
+		w.active.Delete(name)
 		w.claimed.Delete(name)
 		processed++
 	}
@@ -337,8 +337,17 @@ func (w *recordedAtFileWorker) processOne(ctx context.Context, name string) {
 	default:
 		w.logf("recorded-at: retag %s: %v", name, err)
 		var attempts int
-		_ = store.db.QueryRowContext(persist, `SELECT attempts FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&attempts)
+		var state string
+		_ = store.db.QueryRowContext(persist, `SELECT attempts, state FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&attempts, &state)
 		wait := min(recordedAtFileRetryCap, recordedAtFileRetryBase<<min(attempts, 10))
+		if state == recordedAtStateUploading {
+			// Paused, the migration is pausing until this upload is settled:
+			// retry it as soon as a first failure would, not after the
+			// backoff its earlier attempts earned.
+			if paused, err := store.recordedAtFilesPaused(persist); err == nil && paused {
+				wait = recordedAtFileRetryBase
+			}
+		}
 		wait = time.Duration(float64(wait) * (0.8 + rand.Float64()*0.4))
 		retry := w.now().Add(wait)
 		if _, e := store.db.ExecContext(persist, `UPDATE recorded_at_file_backfill SET attempts=attempts+1, retry_at=?, last_error=?, updated_at=? WHERE opus_name=?`, retry.Unix(), "delivered file could not be re-tagged yet; retrying", nowUTCString(), name); e != nil {
@@ -477,7 +486,16 @@ func (w *recordedAtFileWorker) retagFile(ctx context.Context, name string) error
 	if _, err := w.rt.meetingMetadata.db.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='uploading', updated_at=? WHERE opus_name=?`, nowUTCString(), name); err != nil {
 		return err
 	}
-	if _, _, err := w.exapp.davPutFileIfMatch(ctx, w.client, ncRecordingsOwner, rel, out, meetingContentType(rel), before.ETag); err != nil {
+	if status, _, err := w.exapp.davPutFileIfMatch(ctx, w.client, ncRecordingsOwner, rel, out, meetingContentType(rel), before.ETag); err != nil {
+		if status >= 400 && status < 500 {
+			// Nextcloud answered and refused it (a 412: the file changed
+			// since it was read): nothing of this upload was written, so
+			// there is no upload to settle. Any other failure — no answer,
+			// a 5xx — may have landed, and stays uploading.
+			if _, e := w.rt.meetingMetadata.db.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET state='pending', updated_at=? WHERE opus_name=? AND state='uploading'`, nowUTCString(), name); e != nil {
+				return errors.Join(err, e)
+			}
+		}
 		return err
 	}
 	if err := w.exapp.verifyUploadedLeaf(ctx, w.client, rel, info.Size()); err != nil {

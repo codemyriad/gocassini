@@ -118,7 +118,6 @@ func (w *recordedAtFileWorker) status(ctx context.Context, withNotices bool) rec
 	s := recordedAtMigrationStatus{
 		Applicable: true, Checked: w.rt.recordedAtIndexChecked.Load(),
 		Workers: recordedAtFileWorkers, PaceSeconds: int(recordedAtFilePace / time.Second),
-		InProgress: int(w.active.Load()),
 	}
 	store := w.rt.meetingMetadata
 	counts, err := store.recordedAtFileCounts(ctx)
@@ -134,13 +133,23 @@ func (w *recordedAtFileWorker) status(ctx context.Context, withNotices bool) rec
 	}
 	s.Needed, s.Done, s.Blocked = counts[recordedAtStateNeeded], counts[recordedAtStateDone], counts[recordedAtStateBlocked]
 	s.Queued, s.Settling = counts[recordedAtStatePending], counts[recordedAtStateUploading]
-	// The files being rewritten are still pending or uploading in the table;
-	// counted once, as in progress.
-	for left := s.InProgress; left > 0 && s.Queued+s.Settling > 0; left-- {
-		if s.Queued > 0 {
+	// A file being rewritten is still pending (not yet uploaded) or
+	// uploading (its upload sent) in the table: counted once, as in
+	// progress, out of the bucket its row is in. One whose outcome is
+	// already written (done, blocked) is no longer in progress.
+	active, err := store.recordedAtFileStates(ctx, w.activeNames())
+	if err != nil {
+		s.State, s.Error = "unknown", "Cassini could not read the migration's progress: "+err.Error()
+		return s
+	}
+	for _, state := range active {
+		switch {
+		case state == recordedAtStatePending && s.Queued > 0:
 			s.Queued--
-		} else {
+			s.InProgress++
+		case state == recordedAtStateUploading && s.Settling > 0:
 			s.Settling--
+			s.InProgress++
 		}
 	}
 	s.State = recordedAtMigrationStateFor(s)
@@ -151,6 +160,33 @@ func (w *recordedAtFileWorker) status(ctx context.Context, withNotices bool) rec
 		}
 	}
 	return s
+}
+
+// activeNames lists the files the workers are rewriting right now.
+func (w *recordedAtFileWorker) activeNames() []string {
+	var names []string
+	w.active.Range(func(key, _ any) bool {
+		names = append(names, key.(string))
+		return true
+	})
+	return names
+}
+
+// recordedAtFileStates answers the state of each named file that has a row.
+func (s *meetingMetadataStore) recordedAtFileStates(ctx context.Context, names []string) (map[string]string, error) {
+	out := make(map[string]string, len(names))
+	for _, name := range names {
+		var state string
+		err := s.db.QueryRowContext(ctx, `SELECT state FROM recorded_at_file_backfill WHERE opus_name=?`, name).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[name] = state
+	}
+	return out, nil
 }
 
 func (s *meetingMetadataStore) recordedAtFilesPaused(ctx context.Context) (bool, error) {
@@ -226,7 +262,10 @@ func (w *recordedAtFileWorker) startMigration(ctx context.Context) (int64, error
 
 // pauseMigration stops new files from starting. It does not wait: the files
 // in progress settle on their own (finished, or put back if not yet
-// uploaded), and /status says how many are left.
+// uploaded), and /status says how many are left. An upload whose outcome is
+// unknown and that waits out a retry backoff is made due now, and the
+// workers woken, so it is settled (never sent again) right away rather than
+// holding the migration at pausing until its backoff ends.
 func (w *recordedAtFileWorker) pauseMigration(ctx context.Context) error {
 	tx, err := w.rt.meetingMetadata.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -236,7 +275,19 @@ func (w *recordedAtFileWorker) pauseMigration(ctx context.Context) error {
 	if err := setRecordedAtFilesPausedTx(ctx, tx, true); err != nil {
 		return err
 	}
-	return tx.Commit()
+	settle, err := tx.ExecContext(ctx, `UPDATE recorded_at_file_backfill SET retry_at=0, updated_at=? WHERE state='uploading' AND retry_at>0`, nowUTCString())
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if n, _ := settle.RowsAffected(); n > 0 {
+		for i := 0; i < recordedAtFileWorkers; i++ {
+			w.poke()
+		}
+	}
+	return nil
 }
 
 // recordedAtMigrationHandler serves the two ADMIN actions.
@@ -279,7 +330,7 @@ func (rt *Runtime) recordedAtMigrationHandler(w http.ResponseWriter, r *http.Req
 			writeJSONError(w, http.StatusInternalServerError, "could not pause the migration: "+err.Error())
 			return
 		}
-		worker.logf("recorded-at: file migration paused by %s; %d file(s) in progress settle first", who, worker.active.Load())
+		worker.logf("recorded-at: file migration paused by %s; %d file(s) in progress settle first", who, len(worker.activeNames()))
 	}
 	writeJSON(w, http.StatusOK, worker.status(r.Context(), true))
 }

@@ -208,7 +208,8 @@ func fileSHA256Of(t *testing.T, body string) string {
 }
 
 // Somebody else wrote the file between our read and our PUT: If-Match refuses
-// it, their write survives, and the row retries later with backoff.
+// it, their write survives, and the row retries later with backoff. Nextcloud
+// wrote nothing of ours, so the row is pending again, not an upload to settle.
 func TestRecordedAtFileWorkerIfMatchConflictRetriesLater(t *testing.T) {
 	f := newFileWorkerFixture(t, 0)
 	ctx := context.Background()
@@ -226,7 +227,7 @@ func TestRecordedAtFileWorkerIfMatchConflictRetriesLater(t *testing.T) {
 	})
 	f.w.drain(ctx)
 	r := f.row(t)
-	if r.state != "uploading" || r.attempts != 1 || r.retryAt <= f.clock.Unix() {
+	if r.state != recordedAtStatePending || r.attempts != 1 || r.retryAt <= f.clock.Unix() {
 		t.Fatalf("row after conflict = %+v", r)
 	}
 	if f.nc.recording(annTestRecording) != theirs {

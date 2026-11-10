@@ -122,8 +122,8 @@ func TestRecordedAtMigrationPauseStopsNewFiles(t *testing.T) {
 
 // Paused, a file whose upload has not landed is put back as pending without
 // an upload: no new version is written after the pause. That covers an
-// uploading row whose earlier PUT failed outright (a 412, a 5xx, a timeout
-// before it was sent) and a pending file taken just before the pause.
+// uploading row whose earlier PUT did not land (a 5xx, a timeout before it
+// was sent) and a pending file taken just before the pause.
 func TestRecordedAtMigrationPauseWritesNoNewVersion(t *testing.T) {
 	for _, state := range []string{recordedAtStateUploading, recordedAtStatePending} {
 		t.Run(state, func(t *testing.T) {
@@ -173,14 +173,19 @@ func TestRecordedAtMigrationPauseLetsTheCurrentFileFinish(t *testing.T) {
 		ctx := context.Background()
 		f.addRow(t, "OTHER.opus", recordedAtStatePending)
 		f.w.pause = func(context.Context) bool { return true }
-		f.w.afterAttempt = func(string) {
-			if err := f.w.pauseMigration(ctx); err != nil {
-				t.Error(err)
+		// Paused as the upload goes out: the file is past the last pause
+		// check, so it runs to its outcome.
+		f.w.client.Transport = annotationRoundTripper(func(r *http.Request) (*http.Response, error) {
+			if r.Method == http.MethodPut {
+				if err := f.w.pauseMigration(ctx); err != nil {
+					t.Error(err)
+				}
+				if got := f.w.status(ctx, false); got.InProgress != 1 || got.Settling != 0 || got.Queued != 1 || got.State != "pausing" {
+					t.Errorf("status during the paused file = %+v", got)
+				}
 			}
-			if got := f.w.status(ctx, false); got.InProgress != 1 || got.State != "pausing" {
-				t.Errorf("status during the paused file = %+v", got)
-			}
-		}
+			return http.DefaultTransport.RoundTrip(r)
+		})
 		if n := f.w.drain(ctx); n != 1 {
 			t.Fatalf("drained %d, want the current file only", n)
 		}
@@ -537,5 +542,124 @@ func TestRecordedAtMigrationRouteIsAdminOnly(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("recorded-at migration ADMIN route missing")
+	}
+}
+
+// A file being rewritten is counted once, as in progress, from the state its
+// row is actually in: while its upload is sent the row is uploading, and the
+// files still waiting stay queued. Once its outcome is written it is no
+// longer in progress, even before the worker lets go of it.
+func TestRecordedAtMigrationStatusCountsTheActiveFileByItsState(t *testing.T) {
+	f := newFileWorkerFixture(t, 0)
+	ctx := context.Background()
+	f.w.rt.recordedAtIndexChecked.Store(true)
+	// Sorted after MEETING1, which the drain takes first.
+	for _, name := range []string{"X1.opus", "X2.opus", "X3.opus"} {
+		f.addRow(t, name, recordedAtStatePending)
+	}
+	var atPut recordedAtMigrationStatus
+	f.w.client.Transport = annotationRoundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodPut {
+			atPut = f.w.status(ctx, false)
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})
+	var afterOutcome recordedAtMigrationStatus
+	f.w.afterAttempt = func(string) { afterOutcome = f.w.status(ctx, false) }
+	f.w.pause = func(context.Context) bool { return false }
+	if n := f.w.drain(ctx); n != 1 {
+		t.Fatalf("drained %d, want MEETING1 only", n)
+	}
+	if atPut.InProgress != 1 || atPut.Settling != 0 || atPut.Queued != 3 {
+		t.Fatalf("status during the upload = %+v, want 1 in progress, 0 settling, 3 queued", atPut)
+	}
+	if afterOutcome.InProgress != 0 || afterOutcome.Done != 1 || afterOutcome.Queued != 3 || afterOutcome.State != "running" {
+		t.Fatalf("status once the file is done = %+v", afterOutcome)
+	}
+}
+
+// Pausing settles an upload whose outcome is unknown without waiting out its
+// retry backoff, and never sends it again: if it landed the file is done, if
+// not it goes back to pending. Either way the migration is paused, not
+// pausing, as soon as the workers have looked.
+func TestRecordedAtMigrationPauseSettlesABackedOffUpload(t *testing.T) {
+	for _, landed := range []bool{true, false} {
+		name := "lost"
+		if landed {
+			name = "landed"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newFileWorkerFixture(t, 0)
+			ctx := context.Background()
+			f.w.rt.recordedAtIndexChecked.Store(true)
+			f.addRow(t, "OTHER.opus", recordedAtStateDone)
+			puts := 0
+			f.w.client.Transport = annotationRoundTripper(func(r *http.Request) (*http.Response, error) {
+				if r.Method != http.MethodPut {
+					return http.DefaultTransport.RoundTrip(r)
+				}
+				puts++
+				if landed {
+					// The PUT lands; its answer is lost.
+					response, err := http.DefaultTransport.RoundTrip(r)
+					if err == nil {
+						drainClose(response.Body)
+					}
+				}
+				return nil, errors.New("connection reset by peer")
+			})
+			f.w.drain(ctx)
+			r := f.row(t)
+			if r.state != recordedAtStateUploading || r.retryAt <= f.clock.Unix() {
+				t.Fatalf("an upload with an unknown outcome = %+v, want uploading and backed off", r)
+			}
+			if err := f.w.pauseMigration(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.w.wake) == 0 {
+				t.Fatal("pausing did not wake the workers to settle the upload")
+			}
+			if n := f.w.drain(ctx); n != 1 {
+				t.Fatalf("paused drain settled %d, want the backed-off upload", n)
+			}
+			if puts != 1 {
+				t.Fatalf("a paused migration sent the upload again (%d PUTs)", puts)
+			}
+			want := recordedAtStatePending
+			if landed {
+				want = recordedAtStateDone
+			}
+			if r := f.row(t); r.state != want {
+				t.Fatalf("settled row = %+v, want %s; logs: %s", r, want, f.logs)
+			}
+			if got := f.w.status(ctx, false); got.State == "pausing" || got.Settling != 0 {
+				t.Fatalf("status after settling = %+v", got)
+			}
+		})
+	}
+}
+
+// Paused, a settle that fails is retried soon rather than after the doubled
+// backoff its earlier attempts earned: the migration stays pausing only as
+// long as Nextcloud cannot be read.
+func TestRecordedAtMigrationPausedSettleRetriesSoon(t *testing.T) {
+	f := newFileWorkerFixture(t, 0)
+	ctx := context.Background()
+	if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET state='uploading', attempts=6`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.w.pauseMigration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.w.client.Transport = annotationRoundTripper(func(r *http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})
+	if n := f.w.drain(ctx); n != 1 {
+		t.Fatalf("drained %d", n)
+	}
+	r := f.row(t)
+	limit := f.clock.Add(recordedAtFileRetryBase * 6 / 5).Unix()
+	if r.state != recordedAtStateUploading || r.retryAt <= f.clock.Unix() || r.retryAt > limit {
+		t.Fatalf("paused settle failure = %+v, want uploading due within %s", r, recordedAtFileRetryBase*6/5)
 	}
 }
