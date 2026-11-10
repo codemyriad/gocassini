@@ -2,6 +2,8 @@
   import { createEventDispatcher } from "svelte";
   import { ChevronDown, ChevronUp } from "@lucide/svelte";
 
+  import { LL, numberFormat } from "../../i18n";
+
   // How many sections are tagged, and the arrows that go between them: in
   // the bar over the tag column on a wide screen, in the dock on a narrow one.
   export let count = 0;
@@ -16,19 +18,20 @@
 
 <span class="tf-marks" role="status">
   {#if current >= 0 && current < count}
-    <span class="tf-marks-at tabular-nums">{current + 1} of {count}</span>
-    {count === 1 ? "tagged section" : "tagged sections"}
+    <span class="tf-marks-at tabular-nums">{$LL.viewer.meeting.sections_nav.position({ current: numberFormat().format(current + 1), count: numberFormat().format(count) })}</span>
+    {count === 1 ? $LL.viewer.meeting.sections_nav.label_one() : $LL.viewer.meeting.sections_nav.label_other()}
   {:else}
-    {count}
-    {count === 1 ? "tagged section" : "tagged sections"}
+    {count === 1
+      ? $LL.viewer.meeting.sections_nav.count_one({ count: numberFormat().format(count) })
+      : $LL.viewer.meeting.sections_nav.count_other({ count: numberFormat().format(count) })}
   {/if}
 </span>
 {#if count > 0}
   <span class="tf-marks-group" class:large>
-    <button type="button" class="tf-marks-step" aria-label="Previous tagged section" title="Previous tagged section" on:click={() => dispatch("step", -1)}>
+    <button type="button" class="tf-marks-step" aria-label={$LL.viewer.meeting.sections_nav.previous()} title={$LL.viewer.meeting.sections_nav.previous()} on:click={() => dispatch("step", -1)}>
       <ChevronUp size={large ? 18 : 13} aria-hidden="true" />
     </button>
-    <button type="button" class="tf-marks-step" aria-label="Next tagged section" title="Next tagged section" on:click={() => dispatch("step", 1)}>
+    <button type="button" class="tf-marks-step" aria-label={$LL.viewer.meeting.sections_nav.next()} title={$LL.viewer.meeting.sections_nav.next()} on:click={() => dispatch("step", 1)}>
       <ChevronDown size={large ? 18 : 13} aria-hidden="true" />
     </button>
   </span>

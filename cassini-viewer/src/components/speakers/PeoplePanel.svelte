@@ -3,18 +3,20 @@
   import { readable, type Readable } from "svelte/store";
   import { ChevronDown, Ellipsis, Play, Square, X } from "@lucide/svelte";
 
-  import { countPeople, voiceNumber, voiceParent, type SpeakerGroup, type VoiceSample } from "../../core/speakers";
+  import { LL, numberFormat } from "../../i18n";
+  import { countPeople, SHARED_DEVICE_LABEL, voiceNumber, voiceParent, type SpeakerGroup, type VoiceSample } from "../../core/speakers";
   import type { TranscriptSpeaker } from "../../core/types";
   import {
     applyPending,
     isSplit,
     labelProblem,
+    peopleCountText,
     phaseText,
     progressNow,
     remainingText,
     sameEdits,
     speakerEditsLocked,
-    UNAVAILABLE_REASONS,
+    unavailableReasonText,
     MAX_SPEAKER_LABEL_LENGTH,
   } from "../../viewer/speakerEdits";
   import { popover, stepIndex } from "../tags/popover";
@@ -61,9 +63,7 @@
   // transcript is gone): the voices are shown as they are, with nothing to do.
   $: locked = Boolean(server && speakerEditsLocked(server));
   $: people = countPeople(groups);
-  $: heading = people.split
-    ? `${plural(people.voices, "voice")} on ${plural(people.devices, "device")}`
-    : plural(people.voices, "participant");
+  $: heading = peopleCountText(people);
 
   // Devices nobody separated, or asked to: each is one person, named on its
   // own row the way a voice is named on its.
@@ -105,7 +105,7 @@
   // left on its estimate counted down since it answered, and the bar.
   $: progress =
     server?.state === "applying" && server.progress ? progressNow(server.progress, sinceAnswer($store)) : null;
-  $: applyingText = progress ? phaseText(progress.phase) : separating ? "Separating voices…" : "Updating the recording…";
+  $: applyingText = phaseText(progress ? progress.phase : separating ? "separating" : "updating");
   // The time left changes every few seconds: shown, but left out of the live
   // status so a screen reader is not interrupted by it; the bar carries it.
   $: timeLeft = progress && progress.phase !== "queued" ? remainingText(progress.remainingMs) : "";
@@ -133,18 +133,34 @@
     (id) => doc && isSplit(doc, id) && !groups.some((group) => group.device.id === id && group.voices.length > 0),
   );
 
-  function plural(n: number, word: string) {
-    return `${n} ${word}${n === 1 ? "" : "s"}`;
-  }
-
   function initials(name: string): string {
     const parts = name.trim().split(/\s+/).filter(Boolean);
     return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? (parts.at(-1)?.[0] ?? "") : "")).toUpperCase() || "?";
   }
 
-  // A voice's default label, as the producer writes it.
+  // A device's name as shown: the English placeholder for a separated device
+  // with no name of its own is put in the reader's language here.
+  function deviceName(label: string): string {
+    return label === SHARED_DEVICE_LABEL ? $LL.viewer.meeting.people.shared_device() : label;
+  }
+
+  // "Speaker 2": a voice inside its device's group.
+  function voiceShort(id: string): string {
+    return $LL.viewer.meeting.people.voice({ number: numberFormat().format(voiceNumber(id)) });
+  }
+
+  // "Same person as {name}", with the name in bold: the whole sentence is
+  // translated, then cut where the name goes.
+  function mergedIntoParts(): [string, string] {
+    const marker = "\u0000";
+    const [before = "", after = ""] = $LL.viewer.meeting.people.merged_into({ name: marker }).split(marker);
+    return [before, after];
+  }
+
+  // A voice's default label, as the producer writes it. Not translated: it is
+  // compared with what the operator wrote.
   function defaultLabel(id: string): string {
-    return `${deviceLabels.get(voiceParent(id)) ?? "Shared device"} · Speaker ${voiceNumber(id)}`;
+    return `${deviceLabels.get(voiceParent(id)) ?? SHARED_DEVICE_LABEL} · Speaker ${voiceNumber(id)}`;
   }
 
   function voiceInitials(voice: TranscriptSpeaker): string {
@@ -167,7 +183,7 @@
   // Inside its device's group a voice needs no device name: "Speaker 2".
   function shortName(id: string): string {
     const name = nameOf(id);
-    return name === defaultLabel(id) ? `Speaker ${voiceNumber(id)}` : name;
+    return name === defaultLabel(id) ? voiceShort(id) : name;
   }
 
   function isGroupSplit(group: SpeakerGroup): boolean {
@@ -234,30 +250,30 @@
       {#each groups as group (group.device.id)}
         {@const split = isGroupSplit(group)}
         <li class="pp-device" class:pp-shared={split && !group.speaks}>
-          <span class="mf-avatar" aria-hidden="true">{initials(group.device.label)}</span>
+          <span class="mf-avatar" aria-hidden="true">{initials(deviceName(group.device.label))}</span>
           {#if editable && ownNamed.has(group.device.id)}
             {@const label = labelOf(group.device.id)}
             <input
               type="text"
               class="input input-xs pp-input"
-              aria-label={`Name for ${label}`}
+              aria-label={$LL.viewer.meeting.people.name_for({ name: deviceName(label) })}
               maxlength={MAX_SPEAKER_LABEL_LENGTH}
               autocomplete="off"
               spellcheck="false"
-              placeholder="Add a name"
+              placeholder={$LL.viewer.meeting.people.add_name()}
               disabled={locked}
               value={pending.labels[group.device.id] ?? label}
               on:input={(event) => session?.setLabel(group.device.id, event.currentTarget.value)}
               on:focus={(event) => event.currentTarget.select()}
             />
           {:else}
-            <span class="pp-name truncate">{group.device.label}</span>
+            <span class="pp-name truncate">{deviceName(group.device.label)}</span>
           {/if}
           {#if editable}
             <button
               type="button"
               class="pp-icon"
-              aria-label={`Actions for ${group.device.label}`}
+              aria-label={$LL.viewer.meeting.people.actions_for({ name: deviceName(group.device.label) })}
               aria-haspopup="menu"
               aria-expanded={menu?.group.device.id === group.device.id}
               on:click={(event) => toggleMenu(group, event.currentTarget)}
@@ -276,9 +292,9 @@
                 <button
                   type="button"
                   class="pp-icon pp-play"
-                  aria-label={playingSampleId === voice.id ? `Stop the sample of ${label}` : `Play a sample of ${label}`}
+                  aria-label={playingSampleId === voice.id ? $LL.viewer.meeting.people.stop_sample({ name: label }) : $LL.viewer.meeting.people.play_sample({ name: label })}
                   aria-pressed={playingSampleId === voice.id}
-                  title={playingSampleId === voice.id ? "Stop" : "Listen to a few seconds of this voice"}
+                  title={playingSampleId === voice.id ? $LL.viewer.meeting.people.stop() : $LL.viewer.meeting.people.listen_title()}
                   disabled={!sample}
                   on:click={() => playOrStop(voice)}
                 >
@@ -289,12 +305,13 @@
                   {/if}
                 </button>
                 {#if into}
-                  <span class="pp-merged truncate">Same person as <strong>{shortName(into)}</strong></span>
+                  {@const [mergedBefore, mergedAfter] = mergedIntoParts()}
+                  <span class="pp-merged truncate">{mergedBefore}<strong>{shortName(into)}</strong>{mergedAfter}</span>
                   <button
                     type="button"
                     class="pp-icon"
-                    aria-label={`${label} is not the same person as ${shortName(into)}`}
-                    title="Not the same person"
+                    aria-label={$LL.viewer.meeting.people.not_same_as({ name: label, other: shortName(into) })}
+                    title={$LL.viewer.meeting.people.not_same()}
                     disabled={busy || locked}
                     on:click={() => session?.setMerge(voice.id, null)}
                   >
@@ -304,11 +321,11 @@
                   <input
                     type="text"
                     class="input input-xs pp-input"
-                    aria-label={`Name for ${label}`}
+                    aria-label={$LL.viewer.meeting.people.name_for({ name: label })}
                     maxlength={MAX_SPEAKER_LABEL_LENGTH}
                     autocomplete="off"
                     spellcheck="false"
-                    placeholder={`Speaker ${voiceNumber(voice.id)} · add a name`}
+                    placeholder={$LL.viewer.meeting.people.voice_placeholder({ number: numberFormat().format(voiceNumber(voice.id)) })}
                     disabled={locked}
                     value={pending.labels[voice.id] ?? (label === defaultLabel(voice.id) ? "" : label)}
                     on:input={(event) => session?.setLabel(voice.id, event.currentTarget.value)}
@@ -324,26 +341,26 @@
                       class="pp-same"
                       aria-haspopup="menu"
                       aria-expanded={sameAs?.voice.id === voice.id}
-                      aria-label={`${label} is the same person as…`}
+                      aria-label={$LL.viewer.meeting.people.same_as_label({ name: label })}
                       disabled={locked}
                       on:click={(event) => {
                         menu = null;
                         sameAs = sameAs?.voice.id === voice.id ? null : { voice, anchor: event.currentTarget };
                       }}
                     >
-                      Same person as <ChevronDown size={11} aria-hidden="true" />
+                      {$LL.viewer.meeting.people.same_as_button()} <ChevronDown size={11} aria-hidden="true" />
                     </button>
                   {/if}
                   {#if sample && sample.speechMs < LITTLE_SPEECH_MS}
-                    <span class="pp-hint">Little speech — listen to check</span>
+                    <span class="pp-hint">{$LL.viewer.meeting.people.little_speech()}</span>
                   {/if}
                 </div>
               {/if}
               {#each absorbed(voice) as from (from)}
                 <p class="pp-voice-meta pp-absorbed">
-                  <span class="truncate">Includes {shortName(from)}</span>
+                  <span class="truncate">{$LL.viewer.meeting.people.includes({ name: shortName(from) })}</span>
                   <button type="button" class="link" disabled={busy || locked} on:click={() => session?.setMerge(from, null)}>
-                    Not the same person
+                    {$LL.viewer.meeting.people.not_same()}
                   </button>
                 </p>
               {/each}
@@ -358,7 +375,7 @@
       {/each}
     </ul>
     {#if nameable}
-      <p class="pp-privacy">Names are saved in the recording and visible to everyone who can open it.</p>
+      <p class="pp-privacy">{$LL.viewer.meeting.people.privacy()}</p>
     {/if}
 
     {#if editable && server}
@@ -366,19 +383,19 @@
         <div class="pp-footer">
           {#if summaryStale}
             <p class="pp-note" role="status">
-              The summary was written before these speaker changes.{#if !server.canRewriteSummary}
-                An administrator or a moderator of the room can rewrite it.{/if}
+              {$LL.viewer.meeting.people.summary_stale()}{#if !server.canRewriteSummary}
+                {$LL.viewer.meeting.people.summary_stale_who()}{/if}
             </p>
           {/if}
           {#each inconclusive as id (id)}
             <p class="pp-note" role="status">
-              Couldn't separate voices on {deviceLabels.get(id) ?? id}: only one voice found
+              {$LL.viewer.meeting.people.inconclusive({ device: deviceName(deviceLabels.get(id) ?? id) })}
             </p>
           {/each}
           {#if $store.error}
             <p class="pp-note text-error" role="alert">
               {$store.error}
-              <button type="button" class="link" on:click={() => session?.dismissError()}>Dismiss</button>
+              <button type="button" class="link" on:click={() => session?.dismissError()}>{$LL.viewer.meeting.people.dismiss()}</button>
             </p>
           {:else if problem}
             <p class="pp-note text-error" role="alert">{problem}</p>
@@ -386,18 +403,18 @@
           <div class="pp-status-row">
             <p class="pp-status" role="status">
               {#if $store.saving}
-                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>Saving…
+                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>{$LL.viewer.meeting.people.saving()}
               {:else if server.state === "applying"}
                 <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>{applyingText}
                 {#if timeLeft}<span aria-hidden="true">{timeLeft}</span>{/if}
               {:else if server.state === "failed"}
-                <span title={server.lastError || undefined}>Couldn't update voices</span> ·
-                <button type="button" class="link" on:click={() => session?.retry()}>Retry</button>
+                <span title={server.lastError || undefined}>{$LL.viewer.meeting.people.update_failed()}</span> ·
+                <button type="button" class="link" on:click={() => session?.retry()}>{$LL.viewer.meeting.people.retry()}</button>
               {:else if $store.reloading}
-                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>Loading the updated recording…
+                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>{$LL.viewer.meeting.people.loading_updated()}
               {:else if stale}
-                Voices updated ·
-                <button type="button" class="link" on:click={() => dispatch("reload")}>Reload</button>
+                {$LL.viewer.meeting.people.voices_updated()} ·
+                <button type="button" class="link" on:click={() => dispatch("reload")}>{$LL.viewer.meeting.people.reload()}</button>
               {/if}
             </p>
             {#if changed}
@@ -405,21 +422,21 @@
                 <label class="pp-rewrite">
                   <input type="checkbox" class="checkbox checkbox-xs" bind:checked={rewriteSummary} disabled={busy || locked} />
                   <span>
-                    Also rewrite the summary for these names
+                    {$LL.viewer.meeting.people.rewrite_summary()}
                     {#if summaryCost}<span class="pp-rewrite-cost">{summaryCost}</span>{/if}
                   </span>
                 </label>
               {/if}
               <div class="pp-actions">
-                <button type="button" class="btn btn-ghost btn-xs" on:click={() => session?.discard()}>Cancel</button>
+                <button type="button" class="btn btn-ghost btn-xs" on:click={() => session?.discard()}>{$LL.viewer.meeting.people.cancel()}</button>
                 <button
                   type="button"
                   class="btn btn-neutral btn-xs"
                   disabled={busy || locked || Boolean(problem)}
-                  title={busy ? "Wait until the recording is updated" : undefined}
+                  title={busy ? $LL.viewer.meeting.people.wait_title() : undefined}
                   on:click={save}
                 >
-                  Save
+                  {$LL.viewer.meeting.people.save()}
                 </button>
               </div>
             {/if}
@@ -450,35 +467,35 @@
       use:focusFirst
       role="menu"
       tabindex="-1"
-      aria-label={`Actions for ${group.device.label}`}
+      aria-label={$LL.viewer.meeting.people.actions_for({ name: deviceName(group.device.label) })}
       class="tag-popover grid w-60 p-1"
       on:keydown={onMenuKeydown}
     >
       {#if isGroupSplit(group)}
         <button type="button" role="menuitem" class="pp-item" disabled={busy || locked} on:click={() => unsplit(group)}>
-          Treat as one person again
+          {$LL.viewer.meeting.people.treat_as_one()}
         </button>
       {:else}
         <button
           type="button"
           role="menuitem"
           class="pp-item pp-item-two"
-          aria-label="Separate voices"
+          aria-label={$LL.viewer.meeting.people.separate()}
           aria-describedby="pp-separate-why"
           disabled={busy || !server?.available}
           on:click={() => separate(group)}
         >
-          <span>Separate voices</span>
-          <span id="pp-separate-why" class="pp-item-sub">Several people used this device</span>
+          <span>{$LL.viewer.meeting.people.separate()}</span>
+          <span id="pp-separate-why" class="pp-item-sub">{$LL.viewer.meeting.people.separate_why()}</span>
         </button>
       {/if}
       <!-- Without the diarizer a separated device can still be made one
            person again; any other reason stops both. -->
       {#if server && server.reason && (locked || !isGroupSplit(group))}
-        <p class="pp-item-note">{UNAVAILABLE_REASONS[server.reason]}</p>
+        <p class="pp-item-note">{unavailableReasonText(server.reason)}</p>
       {/if}
       {#if busy}
-        <p class="pp-item-note">Wait until the recording is updated.</p>
+        <p class="pp-item-note">{$LL.viewer.meeting.people.wait_note()}</p>
       {/if}
     </div>
   {/if}
@@ -491,7 +508,7 @@
       use:focusFirst
       role="menu"
       tabindex="-1"
-      aria-label={`${labelOf(voice.id)} is the same person as`}
+      aria-label={$LL.viewer.meeting.people.same_as_menu({ name: labelOf(voice.id) })}
       class="tag-popover grid w-56 p-1"
       on:keydown={onMenuKeydown}
     >

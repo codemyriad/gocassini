@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
 
+  import { LL } from "../../i18n";
   import { formatPreciseTime } from "../../core/marking";
   import type { TagPick, VocabularyTag } from "../../viewer/annotations";
   import TagChip from "../tags/TagChip.svelte";
@@ -70,7 +71,7 @@
 
 {#snippet unsaved()}
   <p class="flex items-center gap-1.5 font-semibold whitespace-nowrap text-warning">
-    <span class="size-1.5 rounded-full bg-current" aria-hidden="true"></span>Unsaved changes
+    <span class="size-1.5 rounded-full bg-current" aria-hidden="true"></span>{$LL.viewer.meeting.stretch.unsaved()}
   </p>
 {/snippet}
 
@@ -87,7 +88,7 @@
     : 'st-card grid w-52 gap-1.5 border border-base-300 bg-base-100 p-1.5 shadow-md'}"
   style:border-radius={row ? undefined : "calc(var(--radius-field, 0.5rem) + 7px)"}
   role="toolbar"
-  aria-label="This section"
+  aria-label={$LL.viewer.meeting.stretch.toolbar_label()}
 >
   {#if mark}
     <!-- No tag chip in the card: the section's own chip sits directly above it
@@ -112,37 +113,37 @@
          strongest button, the one "Tag selection" has, above the rest. -->
     {#if locked || !editable}
       <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid grid-flow-col auto-cols-fr gap-1"}>
-        {#if editable}<ActionButton tone="plain" compact disabled={busy} on:click={() => dispatch("edit")}>Edit</ActionButton>{/if}
-        <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>Done</ActionButton>
+        {#if editable}<ActionButton tone="plain" compact disabled={busy} on:click={() => dispatch("edit")}>{$LL.viewer.meeting.stretch.edit()}</ActionButton>{/if}
+        <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>{$LL.viewer.meeting.stretch.done()}</ActionButton>
       </div>
     {:else}
     <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid gap-1.5"}>
       {#if moved}
-        <ActionButton tone="ink" block={!row} key={row ? "" : "↵"} disabled={busy} on:click={confirm}>Save changes</ActionButton>
+        <ActionButton tone="ink" block={!row} key={row ? "" : "↵"} disabled={busy} on:click={confirm}>{$LL.viewer.meeting.stretch.save_changes()}</ActionButton>
       {/if}
       <!-- Equal columns, so Remove is not the larger for its longer word, and
            tighter buttons, so "Cancel" and its key fit half the card. -->
       <div class="grid grid-flow-col auto-cols-fr gap-1">
-        <ActionButton tone="error" compact disabled={busy} on:click={() => dispatch("remove")}>Remove</ActionButton>
-        <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>{moved ? "Cancel" : "Done"}</ActionButton>
+        <ActionButton tone="error" compact disabled={busy} on:click={() => dispatch("remove")}>{$LL.viewer.meeting.stretch.remove()}</ActionButton>
+        <ActionButton tone="plain" compact key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>{moved ? $LL.viewer.meeting.stretch.cancel() : $LL.viewer.meeting.stretch.done()}</ActionButton>
       </div>
     </div>
     {/if}
   {:else}
     <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid gap-1.5"}>
       {#if editable}<ActionButton bind:element={tagButton} tone="ink" block={!row} key={row ? "" : "↵"} disabled={busy} aria-haspopup="dialog" aria-expanded={picking} on:click={confirm}>
-        Tag selection
+        {$LL.viewer.meeting.stretch.tag_selection()}
       </ActionButton>{/if}
-      <ActionButton tone="plain" block={!row} key={row ? "" : copyKey} on:click={() => dispatch("copy")}>{#if copied}<span class="text-success">Copied</span>{:else}Copy text{/if}</ActionButton>
-      <ActionButton tone="plain" block={!row} key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>Cancel</ActionButton>
+      <ActionButton tone="plain" block={!row} key={row ? "" : copyKey} on:click={() => dispatch("copy")}>{#if copied}<span class="text-success">{$LL.viewer.meeting.stretch.copied()}</span>{:else}{$LL.viewer.meeting.stretch.copy_text()}{/if}</ActionButton>
+      <ActionButton tone="plain" block={!row} key={row ? "" : "Esc"} on:click={() => dispatch("clear")}>{$LL.viewer.meeting.stretch.cancel()}</ActionButton>
     </div>
   {/if}
   {#if shareUrl}
-    <ActionButton tone="plain" block={!row} on:click={copyLink}>{linkCopied ? "Link copied" : "Copy link"}</ActionButton>
+    <ActionButton tone="plain" block={!row} on:click={copyLink}>{linkCopied ? $LL.viewer.meeting.stretch.link_copied() : $LL.viewer.meeting.stretch.copy_link()}</ActionButton>
     {#if fallbackUrl}
       <label class="grid gap-1 min-w-0" data-keep-selection>
-        <span role="status">Copy this link:</span>
-        <input class="input input-sm w-full" aria-label="Selection link" readonly value={fallbackUrl} on:focus={(event) => event.currentTarget.select()} />
+        <span role="status">{$LL.viewer.meeting.stretch.copy_this_link()}</span>
+        <input class="input input-sm w-full" aria-label={$LL.viewer.meeting.stretch.link_field()} readonly value={fallbackUrl} on:focus={(event) => event.currentTarget.select()} />
       </label>
     {/if}
   {/if}
@@ -153,7 +154,7 @@
 {#if picking}
   <TagPicker
     tags={vocabulary}
-    label="Tag selection"
+    label={$LL.viewer.meeting.stretch.picker_label()}
     anchor={tagButton ?? null}
     on:pick={(event) => ((picking = false), dispatch("tag", event.detail))}
     on:close={() => (picking = false)}

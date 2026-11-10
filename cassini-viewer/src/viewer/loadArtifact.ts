@@ -31,6 +31,9 @@ import {
   type PortableTranscriptDescriptor,
   type PortableTranscriptEntry,
 } from "./portable";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import { formatMeetingStartWithDay, parseRecordedAtUtc } from "./meetingTime";
 import { portableRecordedAtUtc } from "../../scripts/meeting-start.mjs";
@@ -492,6 +495,8 @@ export function classifyArtifactTimingPrecision(
   transcript: TranscriptWordsV1,
   displayTranscript: DisplayTranscriptV1 | null,
 ): ArtifactTimingPrecision {
+  // Shown under "Timing" in the meeting's details, in the reader's language.
+  const t = get(LL).viewer.meeting.timing;
   if (displayTranscript) {
     const wordTokens = displayTranscript.blocks.flatMap((block) => block.tokens)
       .filter((token) => token.kind === "word");
@@ -501,21 +506,21 @@ export function classifyArtifactTimingPrecision(
     if (wordTokens.length === 0 || timedWordTokens.length === 0) {
       return {
         level: "segment",
-        label: "Passage-timed",
-        detail: "Seeking is precise to passages; visible words are not individually timed in this artifact.",
+        label: t.passage(),
+        detail: t.passage_detail_display(),
       };
     }
     if (timedWordTokens.length === wordTokens.length) {
       return {
         level: "word",
-        label: "Word-timed",
-        detail: "Playback highlighting can follow individual words throughout the displayed transcript.",
+        label: t.word(),
+        detail: t.word_detail_display(),
       };
     }
     return {
       level: "mixed",
-      label: "Mixed timing",
-      detail: "Some displayed words have individual timing, while rewritten or unmatched words remain passage-timed.",
+      label: t.mixed(),
+      detail: t.mixed_detail_display(),
     };
   }
 
@@ -524,21 +529,21 @@ export function classifyArtifactTimingPrecision(
   if (textWordCount === 0 || timedWordCount === 0) {
     return {
       level: "segment",
-      label: "Passage-timed",
-      detail: "This artifact exposes passage timing but not individual word timing.",
+      label: t.passage(),
+      detail: t.passage_detail(),
     };
   }
   if (timedWordCount >= textWordCount) {
     return {
       level: "word",
-      label: "Word-timed",
-      detail: "Playback highlighting can follow individual words throughout the transcript.",
+      label: t.word(),
+      detail: t.word_detail(),
     };
   }
   return {
     level: "mixed",
-    label: "Mixed timing",
-    detail: "Some transcript passages have word timing, while others only have passage timing.",
+    label: t.mixed(),
+    detail: t.mixed_detail(),
   };
 }
 
@@ -570,7 +575,7 @@ async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): 
   if (new URL(audioUrl).pathname.toLowerCase().endsWith(".json")) {
     // no-store already bypasses the HTTP cache, so it also covers a fresh load.
     const response = await fetch(audioUrl, {...init, cache: "no-store"});
-    if (!response.ok) throw new Error(`Could not load ${audioUrl}.`);
+    if (!response.ok) throw new Error(get(LL).viewer.meeting.load.could_not_load({ url: audioUrl }));
     return extractTranscriptionDocument(await response.json());
   }
 
@@ -581,7 +586,7 @@ async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): 
     },
   });
   if (!partialResponse.ok) {
-    throw new Error(`Could not load ${audioUrl}.`);
+    throw new Error(get(LL).viewer.meeting.load.could_not_load({ url: audioUrl }));
   }
 
   const partialBuffer = await partialResponse.arrayBuffer();
@@ -595,7 +600,7 @@ async function fetchPortableManifest(audioUrl: string, init: RequestInit = {}): 
 
   const fullResponse = await fetch(audioUrl, init);
   if (!fullResponse.ok) {
-    throw new Error(`Could not load ${audioUrl}.`);
+    throw new Error(get(LL).viewer.meeting.load.could_not_load({ url: audioUrl }));
   }
   return extractPortableManifestFromArrayBuffer(await fullResponse.arrayBuffer());
 }

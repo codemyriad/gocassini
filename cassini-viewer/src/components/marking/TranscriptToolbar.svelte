@@ -2,6 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import { ChevronDown, ChevronUp, ListFilter, Search, X } from "@lucide/svelte";
 
+  import { LL, numberFormat } from "../../i18n";
   import Kbd from "../ui/Kbd.svelte";
 
   export let query = "";
@@ -34,7 +35,7 @@
   }
 </script>
 
-<div class="flex flex-wrap items-center gap-x-2 gap-y-1.5" role="toolbar" aria-label="Transcript">
+<div class="flex flex-wrap items-center gap-x-2 gap-y-1.5" role="toolbar" aria-label={$LL.viewer.meeting.find.toolbar_label()}>
   <div class="flex min-w-0 flex-[1_1_15rem] items-center gap-1" role="search">
     <label class="tt-field input min-w-0 flex-1 border-base-300 shadow-none">
       <Search size={16} class="shrink-0 opacity-50" aria-hidden="true" />
@@ -44,8 +45,8 @@
         type="search"
         autocomplete="off"
         spellcheck="false"
-        placeholder="Find in transcript"
-        aria-label="Find in transcript"
+        placeholder={$LL.viewer.meeting.find.field()}
+        aria-label={$LL.viewer.meeting.find.field()}
         aria-keyshortcuts="Control+F Meta+F"
         on:keydown={onKeydown}
       />
@@ -60,30 +61,32 @@
           class="tt-filter"
           class:on={onlyMatching}
           aria-pressed={onlyMatching}
-          aria-label="Show only matching turns"
+          aria-label={$LL.viewer.meeting.find.only_matching()}
           title={onlyMatching
-            ? "Showing only the turns that mention your search. Click to show the whole transcript again."
-            : "Hide every turn that doesn't mention your search, so you can read the matches together."}
+            ? $LL.viewer.meeting.find.only_matching_on_title()
+            : $LL.viewer.meeting.find.only_matching_off_title()}
           on:click={() => (onlyMatching = !onlyMatching)}
         >
           <ListFilter size={13} aria-hidden="true" />
         </button>
         <span class="tt-matches">
           <span class="tt-count tabular-nums" role="status">
-            {stops > 0 ? `${current + 1} of ${stops}` : "No matches"}
+            {stops > 0
+              ? $LL.viewer.meeting.find.position({ current: numberFormat().format(current + 1), count: numberFormat().format(stops) })
+              : $LL.viewer.meeting.find.no_matches()}
           </span>
-          <button type="button" class="tt-step" disabled={stops === 0} aria-label="Previous match" title="Previous match (Shift+Enter)" on:click={() => dispatch("step", -1)}>
+          <button type="button" class="tt-step" disabled={stops === 0} aria-label={$LL.viewer.meeting.find.previous()} title={$LL.viewer.meeting.find.previous_title()} on:click={() => dispatch("step", -1)}>
             <ChevronUp size={13} aria-hidden="true" />
           </button>
-          <button type="button" class="tt-step" disabled={stops === 0} aria-label="Next match" title="Next match (Enter)" on:click={() => dispatch("step", 1)}>
+          <button type="button" class="tt-step" disabled={stops === 0} aria-label={$LL.viewer.meeting.find.next()} title={$LL.viewer.meeting.find.next_title()} on:click={() => dispatch("step", 1)}>
             <ChevronDown size={13} aria-hidden="true" />
           </button>
         </span>
         <button
           type="button"
           class="tt-clear"
-          aria-label="Clear the search"
-          title="Clear the search"
+          aria-label={$LL.viewer.meeting.find.clear()}
+          title={$LL.viewer.meeting.find.clear()}
           on:click={() => ((query = ""), field?.focus())}
         >
           <X size={13} aria-hidden="true" />
