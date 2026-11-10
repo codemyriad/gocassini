@@ -7,6 +7,7 @@ import { loadedFormatters, loadedLocales, locales } from './i18n-util.js'
 
 import da from './da/index.js'
 import de from './de/index.js'
+import de_DE from './de-DE/index.js'
 import en from './en/index.js'
 import es from './es/index.js'
 import fr from './fr/index.js'
@@ -20,6 +21,8 @@ import da_app from './da/app/index.js'
 import da_viewer from './da/viewer/index.js'
 import de_app from './de/app/index.js'
 import de_viewer from './de/viewer/index.js'
+import de_DE_app from './de-DE/app/index.js'
+import de_DE_viewer from './de-DE/viewer/index.js'
 import en_app from './en/app/index.js'
 import en_viewer from './en/viewer/index.js'
 import es_app from './es/app/index.js'
@@ -47,6 +50,11 @@ const localeTranslations = {
 		...de,
 		app: de_app,
 		viewer: de_viewer
+	},
+	'de-DE': {
+		...de_DE,
+		app: de_DE_app,
+		viewer: de_DE_viewer
 	},
 	en: {
 		...en,

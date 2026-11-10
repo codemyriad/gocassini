@@ -1,6 +1,6 @@
 ---
 title: Help translate Cassini
-description: Cassini's buttons, menus and messages come in ten languages, translated by the people who use them. How to fix a word, finish a language, or ask for a new one.
+description: Cassini's buttons, menus and messages come in eleven languages, translated by the people who use them. How to fix a word, finish a language, or ask for a new one.
 source: docs/translations.md
 copied: "2026-11-10"
 ---
@@ -25,8 +25,12 @@ What you can't translate there:
 
 ## Languages
 
-English, French, Spanish, Italian, Portuguese (Portugal), German, Dutch,
-Danish, Polish and Croatian.
+English, French, Spanish, Italian, Portuguese (Portugal), German (informal,
+"du"), German (formal, "Sie"), Dutch, Danish, Polish and Croatian.
+
+The two Germans match Nextcloud's: **Deutsch (Persönlich: Du)** gets the
+informal one, **Deutsch (Förmlich: Sie)** the formal one. A string not yet
+translated into formal German shows the informal German until it is.
 
 Cassini uses the language set in your Nextcloud account (**Personal settings ›
 Personal info › Language**). If yours isn't on the list, you see English.

@@ -57,8 +57,10 @@ const ALIASES: Record<string, Locales> = {
 // most-preferred first, in any of the spellings in use: Nextcloud's "de_DE",
 // a browser's "de-DE", an HTML lang="de".
 //
-// Nextcloud's two Germans ("de" informal, "de_DE" formal) both get our one
-// German, which is informal (docs/translations.md).
+// Nextcloud's two Germans map one to one: "de" is informal ("du"), "de_DE"
+// formal ("Sie"). A browser's "de-DE" names a region, not a register, but gets
+// the formal German too, the safer default for a stranger's page
+// (docs/translations.md).
 export function matchLocale(candidates: readonly (string | null | undefined)[]): Locales {
   const byLower = new Map(locales.map((l) => [l.toLowerCase(), l]));
   for (const raw of candidates) {

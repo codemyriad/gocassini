@@ -30,7 +30,8 @@ written into a component appears in English in every language.
 | `es` | Spanish | |
 | `it` | Italian | |
 | `pt-PT` | Portuguese (Portugal) | Also shown to Brazilian Portuguese users, as the closest we have. |
-| `de` | German | Informal ("du"). Nextcloud's formal German (`de_DE`) also gets it. |
+| `de` | German | Informal ("du"), Nextcloud's `de`. |
+| `de-DE` | German (formal) | Formal ("Sie"), Nextcloud's `de_DE`. A string not translated here shows the informal German, then English. A browser's `de-DE` also gets it. |
 | `nl` | Dutch | |
 | `da` | Danish | |
 | `pl` | Polish | |
@@ -49,8 +50,11 @@ case and accepts `de_DE` or `de-DE`, and falls back to the base language
 | The standalone viewer and the operator's `/viewer` page | A `?lang=` on the address (e.g. `?lang=pt-PT`), then the browser |
 | The public embed (`cassini-viewer/src/public.ts`) | The element's `lang` attribute, then the nearest `lang` on the page around it, then the browser |
 
-Every language is bundled. The embedded entry points must stay a single file
-(`scripts/assert-embedded-single-bundle.mjs`), and the dictionaries are small.
+Every language is bundled: the embedded entry points must stay a single file
+(`scripts/assert-embedded-single-bundle.mjs`). Builds drop untranslated
+(empty) strings, and the public embed carries only the `common` and `viewer`
+strings (`cassini-viewer/scripts/i18n-bundle-plugin.mjs`). Loading the embed's
+languages on demand is D-920.
 
 ## Dates, times and numbers
 

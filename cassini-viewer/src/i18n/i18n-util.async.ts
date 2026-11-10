@@ -8,6 +8,7 @@ import { loadedFormatters, loadedLocales, locales } from './i18n-util.js'
 const localeTranslationLoaders = {
 	da: () => import('./da/index.js'),
 	de: () => import('./de/index.js'),
+	'de-DE': () => import('./de-DE/index.js'),
 	en: () => import('./en/index.js'),
 	es: () => import('./es/index.js'),
 	fr: () => import('./fr/index.js'),
@@ -26,6 +27,10 @@ const localeNamespaceLoaders = {
 	de: {
 		app: () => import('./de/app/index.js'),
 		viewer: () => import('./de/viewer/index.js')
+	},
+	'de-DE': {
+		app: () => import('./de-DE/app/index.js'),
+		viewer: () => import('./de-DE/viewer/index.js')
 	},
 	en: {
 		app: () => import('./en/app/index.js'),

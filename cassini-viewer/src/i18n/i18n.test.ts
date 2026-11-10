@@ -14,7 +14,9 @@ afterEach(() => {
 describe("matchLocale", () => {
   it("reads every spelling a language arrives in", () => {
     expect(matchLocale(["fr"])).toBe("fr");
-    expect(matchLocale(["de_DE"])).toBe("de"); // Nextcloud
+    expect(matchLocale(["de_DE"])).toBe("de-DE"); // Nextcloud's formal German
+    expect(matchLocale(["de"])).toBe("de"); // Nextcloud's informal German
+    expect(matchLocale(["de-AT"])).toBe("de");
     expect(matchLocale(["nl-BE"])).toBe("nl"); // a browser
     expect(matchLocale(["PT-pt"])).toBe("pt-PT");
   });
@@ -30,8 +32,8 @@ describe("matchLocale", () => {
     expect(matchLocale([])).toBe("en");
   });
 
-  it("knows the ten languages the app ships", () => {
-    expect([...locales].sort()).toEqual(["da", "de", "en", "es", "fr", "hr", "it", "nl", "pl", "pt-PT"]);
+  it("knows the eleven languages the app ships", () => {
+    expect([...locales].sort()).toEqual(["da", "de", "de-DE", "en", "es", "fr", "hr", "it", "nl", "pl", "pt-PT"]);
   });
 });
 
