@@ -1,9 +1,6 @@
 // Insights in the viewer: the insight list, cards and documents, the prepare panel and summary requests.
 //
 // Keys are grouped by component or module, in snake_case. See docs/translations.md.
-//
-// `as const` keeps each string's own type, so a string with a {placeholder}
-// still matches the generated types when another language is merged over it.
 const insights = {
   // An insight run's state, as a short badge on its card and a line in its
   // document. The operator's four states.
@@ -204,6 +201,6 @@ const insights = {
     // {file} is the downloaded file's name.
     downloaded: "Downloaded {file}.",
   },
-} as const;
+};
 
 export default insights;

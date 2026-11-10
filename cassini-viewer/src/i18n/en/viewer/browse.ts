@@ -2,9 +2,6 @@
 //
 // Keys are grouped by component or module, in snake_case. See docs/translations.md.
 //
-// `as const` keeps each string's literal type, so the generated types can
-// check that every language keeps its {placeholders}.
-//
 // Counts: a key ending in `_one` is shown for exactly one, `_other` for any
 // other number ({count}). The code picks between them.
 const browse = {
@@ -554,6 +551,6 @@ const browse = {
     confirm_delete: "Delete",
     confirm_cancel: "Cancel",
   },
-} as const;
+};
 
 export default browse;

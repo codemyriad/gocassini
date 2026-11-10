@@ -1,9 +1,6 @@
 // Insights in the shell: insight templates and generating insights.
 //
 // Keys are grouped by component or module, in snake_case. See docs/translations.md.
-//
-// `as const` keeps each string's own type, so a string with a {placeholder}
-// still matches the generated types when another language is merged over it.
 const insights = {
   // The "Create an insight" card in the Prepare panel.
   generate_card: {
@@ -182,6 +179,6 @@ const insights = {
     step_lead_local: "Sends each transcript to {provider} on your own network. One request per meeting.",
     step_lead_external: "Sends each transcript to {provider}. One request per meeting, which it may bill.",
   },
-} as const;
+};
 
 export default insights;

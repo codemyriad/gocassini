@@ -2,9 +2,6 @@
 //
 // Keys are grouped by component or module, in snake_case. See docs/translations.md.
 //
-// `as const` keeps each string's own type, which the other languages' files
-// are checked against: a translation must keep every {placeholder}.
-//
 // Counts come as `_one` / `_other` pairs, picked in code. Every {count},
 // {seconds}, {minutes} and {max} arrives already written as a number in the
 // reader's locale.
@@ -340,6 +337,6 @@ const meeting = {
     label: "{word} — seek to {time}, {speaker}",
     estimated_title: "Estimated word timing",
   },
-} as const;
+};
 
 export default meeting;

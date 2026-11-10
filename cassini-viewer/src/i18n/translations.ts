@@ -4,7 +4,11 @@
 //
 // Deep on purpose: typesafe-i18n's extendDictionary merges one level only, so a
 // section with one translated string would lose every English string beside it.
-export function mergeTranslations<T>(base: T, json: unknown): T {
+//
+// `base` is untyped because the English source types each string as plain
+// `string`, while T (generated) types a string with a {placeholder} as a
+// template. T is generated from that same English, so the cast is safe.
+export function mergeTranslations<T>(base: unknown, json: unknown): T {
   return merge(base, json) as T;
 }
 
