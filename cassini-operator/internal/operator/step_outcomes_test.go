@@ -429,8 +429,15 @@ func TestRecordAttemptStepOutcomesClearsAFallbackTheRewriteDidNotHave(t *testing
 // this pass that rewrote the summary with the configured template must not
 // inherit the earlier pass's template_fallback.
 func TestABuildClaimedAgainForgetsTheEarlierPassesSummaryReason(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
+	// A bare store, not newTestRuntime: a runtime starts its own build worker,
+	// which races this test for the queued build and sometimes claims it first.
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	rt := &Runtime{store: store}
 	ctx := context.Background()
 	const jobID = "job-summary-reclaimed"
 	insertJob(t, rt.store.db, jobID, nowUTCString())
