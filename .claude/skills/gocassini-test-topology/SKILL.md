@@ -100,7 +100,7 @@ Integration tests that stub out production components to simplify the harness te
   - `/opt/cassini/cache`: Static bundled-model root where `deployment/Dockerfile.exapp` embeds default models (int8 Parakeet + Silero VAD) and CUDA base embeds fp32.
   - Runtime writable cache: Redirected by the operator to persistent storage (`APP_PERSISTENT_STORAGE` / `operator/models`) for quality tiers not bundled in the image.
   - `EnsureModel` serializes downloads across all models using a single cache-wide lock (`.install.lock` via `withCacheLock`), guarding the volume's shared free-space budget against concurrent download overruns. Validated via completion markers.
-- **Path deny-list filtering**: Docs and planning changes are skipped via `paths-ignore` deny-lists in `ci.yml` and mirrored in `scripts/classify-image-relevance.sh` (D-505).
+- **Path deny-list filtering**: Docs and planning changes are skipped via `paths-ignore` deny-lists in `ci.yml` and mirrored in `scripts/classify-image-relevance.sh` (D-505). The image classifier also skips paths that are not docs but never reach the image (`NOT_IMAGE_GLOBS`: other workflows, the microsite, `.claude/`). Those stay out of `ci.yml`'s `paths-ignore`, so its required checks still report; the recorder classifier reuses its `OTHER_WORKFLOWS` list.
 
 ---
 

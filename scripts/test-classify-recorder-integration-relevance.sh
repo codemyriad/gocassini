@@ -17,6 +17,7 @@ expect false $'cassini-operator/internal/operator/record_runtime.go\nchangelog.d
 expect false $'.github/workflows/pr-conflict-impact.yml\nCONTRIBUTING.md'
 expect false $'cassini-microsite/src/pages/index.astro\n.github/workflows/microsite.yml'
 expect false $'docs/guide.md\n\n'
+expect false $'.github/workflows/lint.yml\n.github/workflows/changelog-check.yml'
 # Shared inputs and unknown/new paths remain relevant, even in a mixed PR.
 for path in \
   cassini-go-recorder/internal/talk/recorder.go \

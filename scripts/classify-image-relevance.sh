@@ -3,7 +3,8 @@
 #
 # Reads newline-delimited changed paths on stdin and prints `true` or `false`:
 #   false -> skip the expensive gate; emitted ONLY when EVERY changed path is
-#            provably docs/notes/assets ("no non-docs file changed").
+#            provably docs/notes/assets, or in NOT_IMAGE_GLOBS (workflows
+#            that don't build or test the image, the website, agent config).
 #   true  -> run the gate; emitted the moment ANY changed path is not.
 #
 # This is a DENY-list, deliberately mirroring .github/workflows/ci.yml's
@@ -30,11 +31,42 @@ DENY_GLOBS=(
   'media-kit.*'     # ci.yml: media-kit.*
 )
 
-# classify_path_is_docs PATH -> 0 (true) when PATH matches a deny glob, i.e. the
-# path is provably docs/assets; 1 otherwise.
-classify_path_is_docs() {
+# Workflow files that neither build the image nor run ci.yml's test suites, so
+# a change to one tests nothing in either workflow (D-906). Named one by one so
+# a NEW workflow is relevant until someone lists it here. Never list a workflow
+# that another workflow calls (`uses: ./.github/workflows/...`), nor anything
+# under .github/actions/: those run inside the suites.
+OTHER_WORKFLOWS=(
+  '.github/workflows/backport.yml'
+  '.github/workflows/changelog-check.yml'
+  '.github/workflows/deploy-preview.yml'
+  '.github/workflows/deploy-sandbox.yml'
+  '.github/workflows/lint.yml'
+  '.github/workflows/microsite.yml'
+  '.github/workflows/nextcloud-canary.yml'
+  '.github/workflows/pr-conflict-impact.yml'
+  '.github/workflows/registry-housekeeping.yml'
+  '.github/workflows/release.yml'
+)
+
+# Paths that are not docs but never reach the image or its tests (D-906). These
+# apply to the image gate only and stay OUT of DENY_GLOBS: ci.yml's paths-ignore
+# must not skip them, or its required checks would never report on such a PR.
+# ci.yml itself is here because it runs its own suite on its own change.
+NOT_IMAGE_GLOBS=(
+  "${OTHER_WORKFLOWS[@]}"
+  '.github/workflows/ci.yml'
+  '.github/FUNDING.yml'
+  '.github/actionlint.yaml'
+  '.claude/*'              # agent skills and settings
+  'cassini-microsite/*'    # the website: not an npm workspace, never COPYed
+)
+
+# classify_path_matches PATH GLOB... -> 0 (true) when PATH matches any GLOB.
+classify_path_matches() {
   local path="$1" glob
-  for glob in "${DENY_GLOBS[@]}"; do
+  shift
+  for glob in "$@"; do
     # RHS is an intentional glob, not a literal -- do not quote it.
     # shellcheck disable=SC2053
     [[ "$path" == $glob ]] && return 0
@@ -42,8 +74,20 @@ classify_path_is_docs() {
   return 1
 }
 
-# classify_stream reads changed paths on stdin and prints the ALL-docs verdict:
-# "no non-docs path changed" -> false; first non-docs path -> true.
+# classify_path_is_docs PATH -> 0 (true) when PATH matches a deny glob, i.e. the
+# path is provably docs/assets; 1 otherwise.
+classify_path_is_docs() {
+  classify_path_matches "$1" "${DENY_GLOBS[@]}"
+}
+
+# classify_path_skips_image PATH -> 0 (true) when a change to PATH alone cannot
+# change the image or what its tests exercise.
+classify_path_skips_image() {
+  classify_path_is_docs "$1" || classify_path_matches "$1" "${NOT_IMAGE_GLOBS[@]}"
+}
+
+# classify_stream reads changed paths on stdin and prints the verdict: false
+# when every path is docs or in NOT_IMAGE_GLOBS; true at the first other path.
 classify_stream() {
   local relevant=false path
   # `|| [[ -n "$path" ]]` processes a final line with no trailing newline too:
@@ -58,7 +102,7 @@ classify_stream() {
     # EVERY docs-only PR -- this guard is load-bearing, not decorative (see
     # test-classify-image-relevance.sh).
     [[ -n "$path" ]] || continue
-    if ! classify_path_is_docs "$path"; then
+    if ! classify_path_skips_image "$path"; then
       relevant=true
       break
     fi
