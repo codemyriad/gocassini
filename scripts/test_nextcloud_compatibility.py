@@ -192,6 +192,16 @@ class ReleaseTests(unittest.TestCase):
                         self.build()
                     self.jobs[job]['result'] = 'success'
 
+    def test_legacy_job_names_still_qualify_an_earlier_release(self):
+        # Evidence recorded before D-906 merged jobs names the old ones.
+        self.jobs = {j: {'result': 'success'} for j in evidence.LEGACY_REQUIRED_JOBS}
+        self.jobs['build-image']['outputs'] = {'digest': self.images['cpu']['digest']}
+        self.jobs['build-image-cuda']['outputs'] = {'digest': self.images['cuda']['digest']}
+        self.build()
+        self.jobs['e2e-entrypoint']['result'] = 'failure'
+        with self.assertRaisesRegex(ValueError, 'required job'):
+            self.build()
+
     def test_required_jobs_match_release_evidence_needs(self):
         # The qualify job runs only on a release tag, so a required job the
         # workflow no longer has would otherwise surface first as a blocked
