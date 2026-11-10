@@ -51,10 +51,15 @@
       ],
     },
     {
-      // Last and on its own: asking for support is not a setting, and it sits
-      // where an administrator finds it without it ever getting in the way.
+      // Last and on its own: asking for help, or helping the project, is not a
+      // setting, and it sits where an administrator finds it without it ever
+      // getting in the way. Help holds the installation's support bundle
+      // (D-910); Browse's own Help links here for an administrator.
       label: "Support",
-      items: [{ id: "support", label: "Support Cassini" }],
+      items: [
+        { id: "help", label: "Help" },
+        { id: "support", label: "Support Cassini" },
+      ],
     },
   ];
 

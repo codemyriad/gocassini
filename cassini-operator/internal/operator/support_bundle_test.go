@@ -826,3 +826,26 @@ func TestSupportRetentionSkipsWhenAFileIsUnreadable(t *testing.T) {
 		t.Fatalf("retention deleted unread history: %v", err)
 	}
 }
+
+// A reader's README says which mode they chose and what their bundle holds
+// (D-910); it never describes logs or job references they do not have.
+func TestSupportUserReadmeDescribesTheReadersBundle(t *testing.T) {
+	for _, scrub := range []bool{false, true} {
+		b, err := newSupportBundle(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scrub {
+			b.manifest.Privacy = "scrubbed"
+		}
+		var out bytes.Buffer
+		if err := b.writeZIP(&out); err != nil {
+			t.Fatal(err)
+		}
+		readme := string(b.entries["README.txt"])
+		want := map[bool]string{false: "filtering is OFF", true: "filtering is ON"}[scrub]
+		if !strings.Contains(readme, want) || !strings.Contains(readme, "Nextcloud user ID") || strings.Contains(readme, "job references") {
+			t.Fatalf("scrub=%v: reader README is wrong:\n%s", scrub, readme)
+		}
+	}
+}

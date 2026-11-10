@@ -1,19 +1,29 @@
 # Download a support bundle
 
-Open Cassini and press **Download support bundle** above the meeting browser.
-The button is available even when your meeting list is empty or fails to load.
-Administrators can also find it in **Operator → Doctor**.
+In the meeting browser, open **Help** at the bottom of the left sidebar and press
+**Download support bundle**. It is there even when your meeting list is empty or
+fails to load. This downloads your own bundle: it describes your browser and the
+recordings shared with you.
+
+Administrators download the installation bundle, with logs and job history,
+from **Operator › Help**. The meeting browser's Help links there for them.
 
 Cassini downloads a ZIP named
 `cassini-support-<original|scrubbed>-<UTC time>-<id>.zip`. Review it before
 attaching it to your support request. Nothing is uploaded automatically.
 
-**Original diagnostics are the default.** They retain log text, unfamiliar error
+A reader's bundle holds their Nextcloud user ID, details about their browser and
+the recordings shared with them, with any error messages exactly as received. It
+holds no meeting content and no server logs. **Scrub sensitive information**
+leaves out the user ID and the error text, and keeps the share counts, status
+codes and failure categories.
+
+**In Operator › Help, original diagnostics are the default.** They retain log text, unfamiliar error
 messages and diagnostic identifiers, which can contain names, URLs, credentials
 or meeting text. You can send the ZIP as downloaded, or extract it, edit/remove
 sensitive information and create a new ZIP yourself.
 
-Select **Scrub sensitive information** before downloading if you want Cassini to
+There, select **Scrub sensitive information** before downloading if you want Cassini to
 produce a filtered bundle instead. This replaces original logs and error messages
 with diagnostic categories/status codes and pseudonymizes job identifiers. It
 can remove information needed to diagnose an unfamiliar failure. You can download

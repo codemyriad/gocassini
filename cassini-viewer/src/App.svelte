@@ -81,8 +81,9 @@
   import type { RoomNameState } from "./viewer/roomNames";
   import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
+  import SupportPanel from "./components/SupportPanel.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
-  import { focusLayer } from "./components/ui/focusLayer";
+  import { focusLayer, focusLayerWhile } from "./components/ui/focusLayer";
 
   // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
   // is selected, which meeting is open, the `meeting` hash param, theme, and
@@ -125,6 +126,10 @@
   // waiting for them to accept, or one a sharing setting refused. Any other
   // missing meeting keeps the plain not-found card.
   export let notFoundFilledFor: readonly string[] = [];
+  // Whether the shell fills the Help sheet (D-910). A slot cannot be
+  // provided conditionally, so the viewer is told; without it the rail shows
+  // no Help section.
+  export let supportOffered = false;
 
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
@@ -174,6 +179,9 @@
   let prepareOpen = false;
   // The Connect an agent panel (D-813), opened from the rooms rail's footer.
   let agentOpen = false;
+  // Help, opened from the rooms rail footer (D-910).
+  let supportOpen = false;
+  $: if (!supportOffered) supportOpen = false;
   // The floating bar's real height, so the list can leave exactly that much
   // room under its last row.
   let selectionDockHeight = 0;
@@ -197,7 +205,7 @@
   // a screen reader wanders into a page the reader cannot see for the drawer
   // over it. Prepare and Connect an agent share a level: each is opened from a
   // control the other makes inert, so they are never open together.
-  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen || agentOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  $: topLayer = deleteConfirm ? 5 : tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen || agentOpen || supportOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
   $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
@@ -573,6 +581,10 @@
       agentOpen = false;
       return;
     }
+    if (supportOpen) {
+      supportOpen = false;
+      return;
+    }
     if (importOpen) {
       importOpen = false;
       return;
@@ -600,6 +612,10 @@
     }
     if (agentOpen) {
       agentOpen = false;
+      return;
+    }
+    if (supportOpen) {
+      supportOpen = false;
       return;
     }
     if (importOpen) {
@@ -1634,6 +1650,9 @@
       agentOffered={agentConnection !== null}
       {agentOpen}
       on:connectAgent={() => (agentOpen = true)}
+      helpOffered={supportOffered}
+      {supportOpen}
+      on:openSupport={() => (supportOpen = true)}
     />
     </div>
 
@@ -1921,6 +1940,34 @@
       </aside>
     {/if}
 
+    <!-- Help (D-910), opened from the rail footer. Same sheet geometry and
+         clear scrim as Connect an agent; the body is the shell's. Hidden rather
+         than unmounted when closed, like Import: a download started before
+         closing must not be cancelled by closing. -->
+    {#if supportOpen}
+      <button
+        type="button"
+        class="shell-scrim agent-scrim"
+        tabindex="-1"
+        inert={topLayer > 2}
+        aria-label="Close Help"
+        on:click={() => (supportOpen = false)}
+      ></button>
+    {/if}
+    {#if supportOffered}
+      <aside
+        class="agent-sheet"
+        class:support-sheet-closed={!supportOpen}
+        aria-label="Help"
+        inert={!supportOpen || topLayer > 2}
+        use:focusLayerWhile={supportOpen}
+      >
+        <SupportPanel on:close={() => (supportOpen = false)}>
+          <slot name="support" close={() => (supportOpen = false)} />
+        </SupportPanel>
+      </aside>
+    {/if}
+
     <!-- Kept mounted while closed, so a job started before closing still reports. -->
     {#if dataProvider.updateTag}
       <TagManager
@@ -1987,7 +2034,8 @@
     border-left: 1px solid var(--color-base-300);
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
   }
-  .import-sheet-closed {
+  .import-sheet-closed,
+  .support-sheet-closed {
     display: none;
   }
 

@@ -2,7 +2,7 @@
   import { Pencil } from "@lucide/svelte";
   import { createEventDispatcher } from "svelte";
   import { fade } from "svelte/transition";
-  import { Lock, Plug, Settings } from "@lucide/svelte";
+  import { LifeBuoy, Lock, Plug, Settings } from "@lucide/svelte";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
   import { matchTags, type VocabularyTag } from "../viewer/annotations";
@@ -57,6 +57,10 @@
   // sits under the narrowings rather than beside them.
   export let agentOffered = false;
   export let agentOpen = false;
+  // Help (D-910), in the footer: offered only when the shell has something to put
+  // in the sheet; a standalone export does not.
+  export let helpOffered = false;
+  export let supportOpen = false;
 
   const dispatch = createEventDispatcher<{
     select: string | null;
@@ -67,6 +71,7 @@
     tagMatch: TagMatch;
     manageTags: void;
     connectAgent: void;
+    openSupport: void;
   }>();
 
   const TAG_MATCHES: TagMatch[] = ["any", "all"];
@@ -319,21 +324,41 @@
     </div>
   {/if}
 
-  {#if agentOffered}
+  {#if helpOffered || agentOffered}
+    <!-- Help and Connect an agent share the footer: both are things done
+         once in a while, not ways through the archive, so they sit below
+         every list rather than as a section among them (D-910). -->
     <div class="rail-foot">
-      <button
-        type="button"
-        class="rail-foot-link"
-        aria-haspopup="dialog"
-        aria-expanded={agentOpen}
-        on:click={() => {
-          dispatch("connectAgent");
-          dispatch("close");
-        }}
-      >
-        <Plug size={14} aria-hidden="true" />
-        Connect an agent
-      </button>
+      {#if helpOffered}
+        <button
+          type="button"
+          class="rail-foot-link"
+          aria-haspopup="dialog"
+          aria-expanded={supportOpen}
+          on:click={() => {
+            dispatch("openSupport");
+            dispatch("close");
+          }}
+        >
+          <LifeBuoy size={14} aria-hidden="true" />
+          Help
+        </button>
+      {/if}
+      {#if agentOffered}
+        <button
+          type="button"
+          class="rail-foot-link rail-foot-end"
+          aria-haspopup="dialog"
+          aria-expanded={agentOpen}
+          on:click={() => {
+            dispatch("connectAgent");
+            dispatch("close");
+          }}
+        >
+          <Plug size={14} aria-hidden="true" />
+          Connect an agent
+        </button>
+      {/if}
     </div>
   {/if}
 </nav>
@@ -576,7 +601,8 @@
     bottom: 0;
     margin-top: auto;
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
     padding: 6px 10px 0;
     background-color: var(--color-base-200);
   }
@@ -592,6 +618,9 @@
     font-size: 0.78rem;
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
+  /* Connect an agent keeps the right-hand corner it always had; Help, when
+     offered, takes the left. */
+  .rail-foot-end { margin-left: auto; }
   .rail-foot-link:hover,
   .rail-foot-link[aria-expanded="true"] {
     background-color: color-mix(in oklch, var(--color-primary) 18%, transparent);
