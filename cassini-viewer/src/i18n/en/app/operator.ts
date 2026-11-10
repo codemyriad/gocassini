@@ -70,7 +70,7 @@ const operator = {
       nextcloud: "Read Nextcloud's guide",
     },
     // The second half of Doctor's heading (doctor.verdict_and_follow_up),
-    // drawn as a link to the test recording row; lowercase.
+    // drawn as a link to the test recording row; mid-sentence; use your language's capitalisation.
     test_follow_up: {
       failed: "your test recording did not finish",
       play: "play your test recording to finish it",
@@ -89,20 +89,21 @@ const operator = {
       unknown: "Something went wrong. Try again.",
     },
     // Recording sharing row: published meetings Nextcloud refused to share
-    // with someone in the room. {since}: a short date ("12 Oct"). {who}: one
-    // of the people/groups phrases below.
+    // with someone in the room. {since}: a short date ("12 Oct"). When the
+    // operator says who, `missing` follows as a second sentence.
     unshared: {
-      summary_one: "1 recording was not shared with {who}.",
-      summary_one_since: "1 recording since {since} was not shared with {who}.",
-      summary_other: "{count} recordings were not shared with {who}.",
-      summary_other_since: "{count} recordings since {since} were not shared with {who}.",
+      summary_one: "1 recording was not shared with everyone.",
+      summary_one_since: "1 recording since {since} was not shared with everyone.",
+      summary_other: "{count} recordings were not shared with everyone.",
+      summary_other_since: "{count} recordings since {since} were not shared with everyone.",
+      // {who}: one of the people/groups phrases below.
+      missing: "Missing: {who}.",
       people_one: "1 person",
       people_other: "{count} people",
       groups_one: "1 group",
       groups_other: "{count} groups",
       // {people} and {groups}: the phrases above, e.g. "3 people and 1 group".
       who_both: "{people} and {groups}",
-      who_everyone: "everyone",
     },
     // Recording sharing row: recipients Nextcloud's share limit held back.
     // {since}: a short date ("6 Nov").
@@ -178,7 +179,7 @@ const operator = {
     // The line beside "Re-share with the room" after it ran.
     reshare: {
       // {recipients}: "1 recipient" or "3 recipients".
-      held_back: "Nextcloud's share limit still held back {recipients}; re-share in 10 minutes.",
+      held_back: "Still held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes.",
       // {held_back}: the sentence above.
       shared_again_held_back: "Shared again. {held_back}",
       shared_with_everyone: "Shared with everyone.",
@@ -198,10 +199,11 @@ const operator = {
         "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
       // {recipients}: "1 recipient" or "3 recipients".
       held_back:
-        "Published, but Nextcloud's share limit held back {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
+        "Published. Held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
       // {count} of {audience}: refused recipients out of everyone in the room.
       partial_of: "Published, but not shared with {count} of {audience} recipients",
-      partial: "Published, but not shared with {recipients}",
+      // {recipients}: "1 recipient" or "3 recipients".
+      partial: "Published. Not shared: {recipients}",
       // A disclosure; {count}: how many are listed in it.
       who_was_refused: "Who was refused ({count})",
       partial_hint: "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
@@ -218,12 +220,14 @@ const operator = {
       record: "Record",
       build: "Build",
       summary: "Summary",
+      // Packs the built meeting into the one portable .opus file that is published.
       seal: "Seal",
       publish: "Publish",
     },
     // The Record step after its recording was deleted.
     record_deleted: "Record (deleted)",
-    // Said in place of a time under the Summary step.
+    // Said in place of a time under the Summary step; each describes the
+    // summary. "In Build": it was written as part of the Build step.
     summary_note: {
       completed: "In Build",
       skipped: "Skipped",
@@ -291,7 +295,7 @@ const operator = {
     off_downloading: "Off · downloading",
     off_downloading_percent: "Off · downloading {percent}%",
     unknown: "Unknown",
-    // Why a step is amber or busy; lowercase, after the state.
+    // Why a step is amber or busy, after the state; mid-sentence; use your language's capitalisation.
     reason: {
       previous_model_meanwhile: "previous model transcribes meanwhile",
       downloading_model: "downloading the model",
@@ -301,7 +305,7 @@ const operator = {
       needs_transcript: "needs a transcript",
       needs_transcribe_on: "needs Transcribe on",
     },
-    // A small badge beside a step; lowercase.
+    // A small badge beside a step; mid-sentence; use your language's capitalisation.
     badge: {
       download_model: "download a model",
       needs_transcript: "needs a transcript",
@@ -541,7 +545,7 @@ const operator = {
     confirmed: "Confirmed {age}",
     // The heading, then a follow-up drawn as a link to the test recording row.
     // {verdict}: Doctor's heading. {follow_up}: one of
-    // readiness.test_follow_up, lowercase.
+    // readiness.test_follow_up (mid-sentence; use your language's capitalisation).
     verdict_and_follow_up: "{verdict}; {follow_up}",
     // When the checks passed but the test recording failed.
     verdict_but_follow_up: "{verdict}, but {follow_up}",
@@ -596,7 +600,7 @@ const operator = {
       step_speak: "Say a few words, then stop the recording in Talk.",
       step_play: "Wait for it to publish, then play the audio and confirm you can hear it.",
       // Read by screen readers before a finished step.
-      step_done: "Done: ",
+      step_done: "Done:",
       note: "A recording captures a call, so the call needs someone in it: Cassini joins to record, not to talk. The conversation and the test recording are both ordinary ones, and can be deleted afterwards.",
       // {stage} and {state}: the operator's internal names, e.g. "build: running".
       status: "{stage}: {state}",
@@ -642,7 +646,7 @@ const operator = {
       offline: "Offline",
       unknown: "Unknown",
     },
-    // On hover over the connection badge; lowercase.
+    // On hover over the connection badge; mid-sentence; use your language's capitalisation.
     stream: {
       live: "live",
       connecting: "connecting…",
@@ -667,7 +671,8 @@ const operator = {
     empty_title: "No recordings yet",
     // “Record a meeting” is the button above; use its translation.
     empty_body: "Start one with “Record a meeting”.",
-    // {number}: the attempt number, 2 or more.
+    // A badge on a run in the list once it has been retried. {number}: the
+    // attempt number, 2 or more.
     attempt_badge: "Attempt {number}",
     // A build waiting for resources. {time}: a date and time. {count}: how
     // many times the build was put off.
@@ -705,7 +710,9 @@ const operator = {
       join_failed: "Failed to join room",
       record_process_exit_nonzero: "Process exited with error",
     },
-    // A run's or an attempt's status.
+    // A run's or an attempt's status. Each describes the run (one recording's
+    // trip through the pipeline) or one attempt at it; agree with that noun if
+    // your language needs to.
     status: {
       build_blocked: "Build blocked",
       waiting_for_resources: "Waiting for resources",
@@ -741,7 +748,7 @@ const operator = {
     build_includes_summary: "Includes {span} waiting on the summary model",
     // On hover over a step taken from an earlier attempt. {attempt}: its number.
     from_attempt: "From attempt {attempt}",
-    // Under a step that has not finished.
+    // Under a step that has not finished; each describes the step.
     unfinished: {
       active: "In progress",
       queued: "Queued",
@@ -758,8 +765,8 @@ const operator = {
     rerun: "Rerun",
     no_selection_title: "No recording selected",
     no_selection_body: "Choose one from the list.",
-    // After the status, lowercase. {age}: e.g. "just now" or "6 min ago".
-    updated_ago: "· updated {age}",
+    // After the status and a " · "; mid-sentence; use your language's capitalisation. {age}: e.g. "now" or "6 min ago".
+    updated_ago: "updated {age}",
     next_retry: "Next retry",
     resource_deferrals: "Resource deferrals",
     exit_code: "Exit code",
@@ -787,18 +794,20 @@ const operator = {
     open_in_files: "Open in Files",
     technical_details: "Technical details",
     attempt_history: "Attempt history",
-    // {number}: the attempt number.
+    // The heading of one attempt in the run detail. {number}: the attempt number.
     attempt: "Attempt {number}",
-    // What started an attempt, after its number.
+    // What started an attempt, after its number ("Attempt 2 · Rerun"): the
+    // first run, a rerun, a summary written later, or a refine after speaker
+    // edits. Each describes the attempt.
     trigger_kind: {
       initial: "Initial",
       rerun: "Rerun",
       summarize: "Summarize",
       refine: "Refine",
     },
-    // After an attempt's status. {span}: a duration, e.g. "12m".
-    processed_in: "· processed in {span}",
-    recorded_for: "· recorded {span}",
+    // After an attempt's status and a " · ". {span}: a duration, e.g. "12m".
+    processed_in: "processed in {span}",
+    recorded_for: "recorded {span}",
     // On hover over the speech model. {revision}: a revision id.
     revision: "Revision {revision}",
     // An attempt's log buttons, one per step.
@@ -817,8 +826,8 @@ const operator = {
     log_gone: "No longer on disk: retention or a cleanup removed it",
     log_not_part: "Not part of this attempt: only the first one records",
     log_not_written: "This step has not written a log",
-    // Beside the log's name when only its last part is shown.
-    log_truncated: "· the end of it",
+    // Beside the log's name, after a " · ", when only its last part is shown.
+    log_truncated: "the end of it",
     download: "Download",
     close_log: "Close the log",
     loading: "Loading…",
@@ -831,7 +840,7 @@ const operator = {
       site: "Site artifact",
     },
     // After a path.
-    no_longer_on_disk: " (no longer on disk)",
+    no_longer_on_disk: "(no longer on disk)",
   },
   // SupportBundle.svelte and support/client.ts: the "Download support bundle"
   // control in Browse and Operator.

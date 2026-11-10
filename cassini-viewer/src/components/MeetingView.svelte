@@ -2008,9 +2008,7 @@
               {#if row.over.length > 0}
                 <span
                   class="text-sm text-base-content/55 min-w-0"
-                  title={row.over.length > 1
-                    ? $LL.viewer.meeting.transcript.simultaneous_title_other({ names: formatSpeakerList(row.over) })
-                    : $LL.viewer.meeting.transcript.simultaneous_title_one({ names: formatSpeakerList(row.over) })}
+                  title={$LL.viewer.meeting.transcript.simultaneous_title({ names: formatSpeakerList(row.over) })}
                 ><span class="sr-only">{$LL.viewer.meeting.transcript.simultaneous_sr({ names: formatSpeakerList(row.over) })}</span><span aria-hidden="true">({$LL.viewer.meeting.transcript.over({ names: formatSpeakerList(row.over) })})</span></span>
               {/if}
             </div>

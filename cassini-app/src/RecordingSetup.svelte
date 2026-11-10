@@ -411,7 +411,7 @@
           <p class="my-2 text-sm">{$LL.app.operator.doctor.test.intro()}</p>
           <ol class="my-3 list-inside list-decimal space-y-2 text-sm">
             {#each testSteps as step, stepIndex}
-              <li class={testStepsDone[stepIndex] ? "text-base-content/50" : ""}>{#if testStepsDone[stepIndex]}<span class="sr-only">{$LL.app.operator.doctor.test.step_done()}</span><Check size={14} class="mr-1 inline align-[-2px]" aria-hidden="true" /><span class="line-through">{step}</span>{:else}{step}{/if}</li>
+              <li class={testStepsDone[stepIndex] ? "text-base-content/50" : ""}>{#if testStepsDone[stepIndex]}<span class="sr-only">{$LL.app.operator.doctor.test.step_done()} </span><Check size={14} class="mr-1 inline align-[-2px]" aria-hidden="true" /><span class="line-through">{step}</span>{:else}{step}{/if}</li>
             {/each}
           </ol>
           <p class="mb-3 text-sm text-base-content/70">{$LL.app.operator.doctor.test.note()}</p>

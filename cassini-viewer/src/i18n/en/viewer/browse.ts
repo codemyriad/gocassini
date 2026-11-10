@@ -186,7 +186,10 @@ const browse = {
     manage_tags: "Manage tags",
     filter_by_tag: "Filter by tag",
     no_tags: "No tags yet.",
-    // Before the Any / All switch, shown once two or more tags are ticked.
+    // Before the Any / All switch, shown once two or more tags are ticked; it
+    // reads "Match any / all" of the ticked tags. match_any and match_all are
+    // the switch's two words (mid-sentence; use your language's capitalisation),
+    // and the *_label keys are their accessible names.
     match: "Match",
     match_group: "Show meetings with",
     match_any: "any",
@@ -315,6 +318,8 @@ const browse = {
     // Nextcloud Teams (formerly Circles).
     group_teams: "Teams",
     you: "You",
+    // Beside "You" in the sharing list: the person importing the meeting.
+    // Mid-sentence; use your language's capitalisation.
     importer: "importer",
     recent_heading: "Recent imports",
     clear_finished: "Clear finished",
@@ -450,6 +455,7 @@ const browse = {
       purple: "Purple",
       pink: "Pink",
     },
+    // A tag icon's name, on hover and for screen readers.
     icons: {
       star: "Star",
       flag: "Flag",

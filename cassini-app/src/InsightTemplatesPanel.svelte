@@ -457,9 +457,9 @@
     >
       {#if editor.id === null}
         <p class="tpl-editor-title">
-          {$LL.app.insights.templates_panel.new_template()}{#if editor.from}<span class="tpl-hint">
-              · {$LL.app.insights.templates_panel.copy_of({ name: editor.from })}</span
-            >{/if}
+          {editor.from
+            ? $LL.app.insights.templates_panel.editor_heading_copy({ name: editor.from })
+            : $LL.app.insights.templates_panel.new_template()}
         </p>
       {/if}
       <!-- Hints sit between a label and its field, read before typing, and

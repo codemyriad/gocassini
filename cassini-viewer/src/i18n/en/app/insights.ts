@@ -42,13 +42,16 @@ const insights = {
     editor_new_label: "New insight template",
     editor_edit_label: "Edit insight template",
     new_template: "New template",
-    // After "New template", when it starts as a copy. {name} is the original template's name.
-    copy_of: "a copy of {name}",
+    // The editor's heading instead of "New template" when it starts as a copy.
+    // {name} is the original template's name.
+    editor_heading_copy: "New template, copied from {name}",
     // The name given to a duplicated template. {name} is the original's name.
     copy_name: "{name} (copy)",
     name_label: "Name",
     description_label: "Description",
     description_hint: "Shown to the person choosing it, so they know what it does.",
+    // The template editor's field for the prompt (prompt_toggle is the button
+    // that shows a template's prompt in the list).
     prompt_label: "Prompt",
     prompt_hint: "The instruction the model receives, together with the transcripts.",
     // {placeholder} is the literal text {{QUESTION}}, shown in code style.

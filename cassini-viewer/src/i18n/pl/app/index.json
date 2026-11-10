@@ -189,12 +189,12 @@
         "summary_one_since": "",
         "summary_other": "",
         "summary_other_since": "",
+        "missing": "",
         "people_one": "",
         "people_other": "",
         "groups_one": "",
         "groups_other": "",
-        "who_both": "",
-        "who_everyone": ""
+        "who_both": ""
       },
       "share_limited": {
         "summary_one": "",
@@ -926,8 +926,7 @@
       "keep_forever": "",
       "preset_days_other": "",
       "custom": "",
-      "keep_for_before": "",
-      "keep_for_after": "",
+      "keep_for": "",
       "custom_days_label": ""
     },
     "retention_actions": {
@@ -1124,7 +1123,7 @@
       "editor_new_label": "",
       "editor_edit_label": "",
       "new_template": "",
-      "copy_of": "",
+      "editor_heading_copy": "",
       "copy_name": "",
       "name_label": "",
       "description_label": "",

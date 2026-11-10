@@ -1621,7 +1621,7 @@
                     </h3>
                     <p class="text-sm {jobStatusToneClass(selectedJob.job)}">
                       {jobStatusLabel(selectedJob.job)}
-                      <span class="text-base-content/50">{$LL.app.operator.console.updated_ago({ age: relativeTime(selectedJob.job.updated_at) })}</span>
+                      <span class="text-base-content/50">· {$LL.app.operator.console.updated_ago({ age: relativeTime(selectedJob.job.updated_at) })}</span>
                     </p>
                   </div>
 
@@ -1939,9 +1939,9 @@
                             <span class="mx-1.5 text-base-content/40">·</span>
                             <span class={jobStatusToneClass(attempt)}>{jobStatusLabel(attempt)}</span>
                             {#if attemptSpeed}
-                              <span class="text-base-content/50"> {$LL.app.operator.console.processed_in({ span: formatSpan(attemptSpeed.ms) })}</span>
+                              <span class="text-base-content/50"> · {$LL.app.operator.console.processed_in({ span: formatSpan(attemptSpeed.ms) })}</span>
                             {:else if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
-                              <span class="text-base-content/50"> {$LL.app.operator.console.recorded_for({ span: formatDuration(attempt.record_started_at, attempt.record_finished_at) ?? "" })}</span>
+                              <span class="text-base-content/50"> · {$LL.app.operator.console.recorded_for({ span: formatDuration(attempt.record_started_at, attempt.record_finished_at) ?? "" })}</span>
                             {/if}
                           </span>
                         </summary>
@@ -2069,7 +2069,7 @@
                                 <div class="flex items-center gap-2 border-b border-base-300 px-3 py-1.5 text-xs">
                                   <span class="font-medium">{$LL.app.operator.console.log_name[openLog.stage]()}</span>
                                   {#if openLog.truncated}
-                                    <span class="text-base-content/55">{$LL.app.operator.console.log_truncated()}</span>
+                                    <span class="text-base-content/55">· {$LL.app.operator.console.log_truncated()}</span>
                                   {/if}
                                   <span class="flex-1"></span>
                                   {#if operatorClient}
@@ -2106,7 +2106,7 @@
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">{entry.label}</dt>
                                   <dd class="font-mono text-xs break-all">
-                                    {#if entry.path}{entry.path}{entry.missing ? $LL.app.operator.console.no_longer_on_disk() : ""}{:else}{@render notAvailable()}{/if}
+                                    {#if entry.path}{entry.path}{entry.missing ? ` ${$LL.app.operator.console.no_longer_on_disk()}` : ""}{:else}{@render notAvailable()}{/if}
                                   </dd>
                                 </div>
                               {/each}

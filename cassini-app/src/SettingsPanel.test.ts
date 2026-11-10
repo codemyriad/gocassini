@@ -28,8 +28,8 @@ describe("SettingsPanel device policy", () => {
     // The "In use" line names the saved model and the effective device.
     expect(settingsPanelSource).toContain('savedDevice = settings?.effective?.device');
     expect(settingsPanelSource).toContain('<strong>{inUseModel?.name}</strong>');
-    expect(settingsPanelSource).toContain("t.in_use_transcribing({ model: slot(\"model\"), device: runsOnLine })");
-    expect(t.in_use_transcribing({ model: "M", device: "the CPU" })).toBe("Transcribing with M on the CPU.");
+    expect(settingsPanelSource).toContain("t.in_use_transcribing({ model: slot(\"model\"), where: runsOnLine })");
+    expect(t.in_use_transcribing({ model: "M", where: t.runs_on_cpu() })).toBe("Transcribing with M on the CPU.");
     expect(settingsPanelSource).toContain("settings.effective.note");
   });
 
@@ -39,12 +39,12 @@ describe("SettingsPanel device policy", () => {
     expect(settingsPanelSource).toContain("inUseModelState(inUseModel, inUseDownload)");
     expect(settingsPanelSource).toContain('class:in-use-warn={inUseState === "missing"}');
     expect(settingsPanelSource).toContain('{#if inUseModel && inUseState === "missing"}');
-    expect(settingsPanelSource).toContain("t.in_use_stand_in_missing({ model: slot(\"model\"), device: runsOnLine })");
-    expect(t.in_use_stand_in_missing({ model: "M", device: "D" })).toContain("the previous model transcribes recordings on D meanwhile.");
+    expect(settingsPanelSource).toContain("t.in_use_stand_in_missing({ model: slot(\"model\"), where: runsOnLine })");
+    expect(t.in_use_stand_in_missing({ model: "M", where: "on D" })).toContain("the previous model transcribes recordings on D meanwhile.");
     // Installed files that failed their check: v3 transcribes, not because
     // Ultra is downloading or missing.
     expect(settingsPanelSource).toContain("t.in_use_stand_in_failed_check(");
-    expect(t.in_use_stand_in_failed_check({ model: "M", device: "D" })).toContain("is installed but failed its runtime check; the previous model");
+    expect(t.in_use_stand_in_failed_check({ model: "M", where: "on D" })).toContain("is installed but failed its runtime check; the previous model");
     expect(settingsPanelSource).toContain("t.in_use_downloading({ model: slot(\"model\") })");
     expect(t.in_use_downloading({ model: "M" })).toContain("; recordings wait for it.");
   });

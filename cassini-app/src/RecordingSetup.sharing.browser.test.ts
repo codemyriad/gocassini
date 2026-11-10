@@ -65,7 +65,7 @@ it("warns, naming the groups it can reach, when sharing is limited to group memb
   expect(row.textContent).toContain("which is only in “admin”, the administrators' group. Anyone who is not an administrator cannot open the recordings of their meetings, and a recording they start is not published at all.");
   // What the setting has already cost, under the message, and the way to
   // the runs where each meeting is re-shared.
-  expect(row.textContent).toContain("7 recordings since 12 Oct were not shared with 3 people and 1 group.");
+  expect(row.textContent).toContain("7 recordings since 12 Oct were not shared with everyone. Missing: 3 people and 1 group.");
   await userEvent.click(page.getByRole("button", { name: "Open the runs" }));
   expect(openedRuns).toBe(1);
   // A warning leaves the test's own starter reachable.

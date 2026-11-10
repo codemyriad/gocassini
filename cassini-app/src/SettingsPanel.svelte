@@ -604,18 +604,18 @@
       : inUseModel && inUseState === "stand-in"
         ? inUseDownload
           ? inUsePercent === null
-            ? t.in_use_stand_in_downloading({ model: slot("model"), device: runsOnLine })
-            : t.in_use_stand_in_downloading_percent({ model: slot("model"), device: runsOnLine, percent: inUsePercent })
+            ? t.in_use_stand_in_downloading({ model: slot("model"), where: runsOnLine })
+            : t.in_use_stand_in_downloading_percent({ model: slot("model"), where: runsOnLine, percent: inUsePercent })
           : inUseModel.installed
-            ? t.in_use_stand_in_failed_check({ model: slot("model"), device: runsOnLine })
-            : t.in_use_stand_in_missing({ model: slot("model"), device: runsOnLine })
+            ? t.in_use_stand_in_failed_check({ model: slot("model"), where: runsOnLine })
+            : t.in_use_stand_in_missing({ model: slot("model"), where: runsOnLine })
         : inUseModel && inUseState === "downloading"
           ? inUsePercent === null
             ? t.in_use_downloading({ model: slot("model") })
             : t.in_use_downloading_percent({ model: slot("model"), percent: inUsePercent })
           : transcriptionEnabled && inUseModel
-            ? t.in_use_transcribing({ model: slot("model"), device: runsOnLine })
-            : t.in_use_runs_on({ device: runsOnLine }),
+            ? t.in_use_transcribing({ model: slot("model"), where: runsOnLine })
+            : t.in_use_runs_on({ where: runsOnLine }),
   );
   // The tier rows. On the GPU every tier runs the same model, so the rows
   // then carry no model of their own and one model row follows them.

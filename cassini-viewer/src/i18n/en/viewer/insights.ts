@@ -3,7 +3,8 @@
 // Keys are grouped by component or module, in snake_case. See docs/translations.md.
 const insights = {
   // An insight run's state, as a short badge on its card and a line in its
-  // document. The operator's four states.
+  // document. The operator's four states. Each describes the insight (the run
+  // and its document): agree with that noun if your language needs to.
   status: {
     queued: "Queued",
     running: "Running",
@@ -69,6 +70,7 @@ const insights = {
   },
   // An insight open in the side sheet.
   document: {
+    // Accessible name of the region holding one insight's document.
     region_label: "Insight",
     name_input_label: "Insight name",
     rename_button_label: "Rename the insight",

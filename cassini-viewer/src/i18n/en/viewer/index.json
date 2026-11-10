@@ -489,8 +489,7 @@
       "interjection_sr": "Interjection by {name}:",
       "over": "over {names}",
       "simultaneous_sr": "Simultaneous speech over {names}",
-      "simultaneous_title_one": "Simultaneous speech: {names} was speaking at the same time.",
-      "simultaneous_title_other": "Simultaneous speech: {names} were speaking at the same time."
+      "simultaneous_title": "Speaking at the same time: {names}"
     },
     "player": {
       "play": "Play",

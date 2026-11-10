@@ -94,7 +94,7 @@ export interface UnsharedCount {
   since?: string;
 }
 
-// "7 recordings since 12 Oct were not shared with 3 people and 1 group."
+// "7 recordings since 12 Oct were not shared with everyone. Missing: 3 people and 1 group."
 // Singulars handled, a kind with none omitted. The date is the compact
 // en-GB form the viewer uses for its own dates, with the year only when it is
 // not this one.
@@ -103,11 +103,12 @@ export function unsharedSummary(unshared: UnsharedCount, now: Date = new Date())
   const since = formatSince(unshared.since, now);
   const people = unshared.users === 0 ? "" : unshared.users === 1 ? t.people_one() : t.people_other({ count: formatCount(unshared.users) });
   const groups = unshared.groups === 0 ? "" : unshared.groups === 1 ? t.groups_one() : t.groups_other({ count: formatCount(unshared.groups) });
-  const who = people && groups ? t.who_both({ people, groups }) : people || groups || t.who_everyone();
-  if (unshared.jobs === 1) return since ? t.summary_one_since({ since, who }) : t.summary_one({ who });
-  return since
-    ? t.summary_other_since({ count: formatCount(unshared.jobs), since, who })
-    : t.summary_other({ count: formatCount(unshared.jobs), who });
+  const who = people && groups ? t.who_both({ people, groups }) : people || groups;
+  const count = formatCount(unshared.jobs);
+  const summary = unshared.jobs === 1
+    ? since ? t.summary_one_since({ since }) : t.summary_one()
+    : since ? t.summary_other_since({ count, since }) : t.summary_other({ count });
+  return who ? `${summary} ${t.missing({ who })}` : summary;
 }
 
 function formatSince(iso: string | undefined, now: Date): string {

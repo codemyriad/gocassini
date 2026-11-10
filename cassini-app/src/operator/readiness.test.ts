@@ -513,20 +513,20 @@ describe("what is currently unshared", () => {
   const now = new Date("2026-11-04T12:00:00Z");
   it("counts recordings, people and groups with their singulars", () => {
     expect(unsharedSummary({ jobs: 7, users: 3, groups: 1, since: "2026-10-12T12:00:00Z" }, now))
-      .toBe("7 recordings since 12 Oct were not shared with 3 people and 1 group.");
+      .toBe("7 recordings since 12 Oct were not shared with everyone. Missing: 3 people and 1 group.");
     expect(unsharedSummary({ jobs: 1, users: 1, groups: 2, since: "2026-10-12T12:00:00Z" }, now))
-      .toBe("1 recording since 12 Oct was not shared with 1 person and 2 groups.");
+      .toBe("1 recording since 12 Oct was not shared with everyone. Missing: 1 person and 2 groups.");
   });
   it("omits a kind with none, and a date it does not have", () => {
     expect(unsharedSummary({ jobs: 2, users: 0, groups: 1, since: "2026-10-12T12:00:00Z" }, now))
-      .toBe("2 recordings since 12 Oct were not shared with 1 group.");
-    expect(unsharedSummary({ jobs: 2, users: 4, groups: 0 }, now)).toBe("2 recordings were not shared with 4 people.");
-    expect(unsharedSummary({ jobs: 2, users: 4, groups: 0, since: "soon" }, now)).toBe("2 recordings were not shared with 4 people.");
+      .toBe("2 recordings since 12 Oct were not shared with everyone. Missing: 1 group.");
+    expect(unsharedSummary({ jobs: 2, users: 4, groups: 0 }, now)).toBe("2 recordings were not shared with everyone. Missing: 4 people.");
+    expect(unsharedSummary({ jobs: 2, users: 4, groups: 0, since: "soon" }, now)).toBe("2 recordings were not shared with everyone. Missing: 4 people.");
     expect(unsharedSummary({ jobs: 2, users: 0, groups: 0 }, now)).toBe("2 recordings were not shared with everyone.");
   });
   it("names the year only when it is not this one", () => {
     expect(unsharedSummary({ jobs: 3, users: 1, groups: 0, since: "2025-12-30T12:00:00Z" }, now))
-      .toBe("3 recordings since 30 Dec 2025 were not shared with 1 person.");
+      .toBe("3 recordings since 30 Dec 2025 were not shared with everyone. Missing: 1 person.");
   });
 });
 

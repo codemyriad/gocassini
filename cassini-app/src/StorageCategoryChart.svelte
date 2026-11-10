@@ -109,8 +109,8 @@
         </div>
       </div>
     </div>
-    {#if cutoff && policy}
-      <p class="cutoff-note">{$LL.app.operator.storage.chart.cutoff_note({ date: chartDate(cutoff), days: policy.count ?? 0 })}</p>
+    {#if cutoff && policy?.count}
+      <p class="cutoff-note">{$LL.app.operator.storage.chart.cutoff_note({ date: chartDate(cutoff), days: formatCount(policy.count) })}</p>
     {/if}
     <p class="bar-detail" aria-live="polite">{#if active}<strong>{bucketLabel(active)}</strong> · {formatStorageBytes(active.bytes)} · {active.files === 1 ? $LL.app.operator.storage.chart.files_one() : $LL.app.operator.storage.chart.files_other({ count: count(active.files) })}{:else}{$LL.app.operator.storage.chart.bar_hint()}{/if}</p>
     <details class="values"><summary>{$LL.app.operator.storage.chart.data_summary()}</summary>

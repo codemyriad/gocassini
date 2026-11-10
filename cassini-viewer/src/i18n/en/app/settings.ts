@@ -45,20 +45,22 @@ const settings = {
     // {pack} and {import} are the commands "cassini models pack" and "cassini models import", drawn as code.
     downloads_disabled: "Downloads are disabled. Prepare a package with {pack} on a connected machine, copy it here, and run {import} inside this server's Cassini runtime. Imported models appear here automatically.",
     transcript_only_without: "Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.",
-    // Where transcription runs, used as {device} in the sentences below ("…on the CPU.").
-    runs_on_gpu: "the GPU (CUDA)",
-    runs_on_cpu: "the CPU",
-    runs_on_cpu_no_gpu: "the CPU (no GPU found)",
-    // The step's footer. {model} is a speech model's name, in bold; {device} is one of the runs_on_* phrases; {percent} is 0–100.
+    // Where transcription runs, used as {where} in the sentences below
+    // ("Transcription runs on the CPU."). Include the preposition your
+    // language needs.
+    runs_on_gpu: "on the GPU (CUDA)",
+    runs_on_cpu: "on the CPU",
+    runs_on_cpu_no_gpu: "on the CPU (no GPU found)",
+    // The step's footer. {model} is a speech model's name, in bold; {where} is one of the runs_on_* phrases; {percent} is 0–100.
     in_use_missing: "{model} isn't installed, so recordings get no transcript.",
-    in_use_stand_in_downloading: "Downloading {model}; the previous model transcribes recordings on {device} meanwhile.",
-    in_use_stand_in_downloading_percent: "Downloading {model} ({percent}%); the previous model transcribes recordings on {device} meanwhile.",
-    in_use_stand_in_failed_check: "{model} is installed but failed its runtime check; the previous model transcribes recordings on {device} meanwhile.",
-    in_use_stand_in_missing: "{model} isn't installed; the previous model transcribes recordings on {device} meanwhile.",
+    in_use_stand_in_downloading: "Downloading {model}; the previous model transcribes recordings {where} meanwhile.",
+    in_use_stand_in_downloading_percent: "Downloading {model} ({percent}%); the previous model transcribes recordings {where} meanwhile.",
+    in_use_stand_in_failed_check: "{model} is installed but failed its runtime check; the previous model transcribes recordings {where} meanwhile.",
+    in_use_stand_in_missing: "{model} isn't installed; the previous model transcribes recordings {where} meanwhile.",
     in_use_downloading: "Downloading {model}; recordings wait for it.",
     in_use_downloading_percent: "Downloading {model} ({percent}%); recordings wait for it.",
-    in_use_transcribing: "Transcribing with {model} on {device}.",
-    in_use_runs_on: "Transcription runs on {device}.",
+    in_use_transcribing: "Transcribing with {model} {where}.",
+    in_use_runs_on: "Transcription runs {where}.",
     // Toggle that opens the hardware details.
     hardware: "Hardware",
     hw_gpu: "GPU",
@@ -171,11 +173,10 @@ const settings = {
     // A preset button. {count} is 7, 30, 60 or 90, never 1.
     preset_days_other: "{count} days",
     custom: "Custom",
-    // "Keep for [ 45 ] days": the two halves around a number input. Leave one empty if your language needs it.
-    keep_for_before: "Keep for",
-    keep_for_after: "days",
+    // {days} is where a number input goes: "Keep for [ 45 ] days".
+    keep_for: "Keep for {days} days",
     // Screen-reader label of the number input. {label} is the kind of file, e.g. "Recordings".
-    custom_days_label: "{label} days",
+    custom_days_label: "Days to keep: {label}",
   },
   // The footer under the retention editor.
   retention_actions: {

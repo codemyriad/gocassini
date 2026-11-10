@@ -185,16 +185,16 @@
         "unknown": "Something went wrong. Try again."
       },
       "unshared": {
-        "summary_one": "1 recording was not shared with {who}.",
-        "summary_one_since": "1 recording since {since} was not shared with {who}.",
-        "summary_other": "{count} recordings were not shared with {who}.",
-        "summary_other_since": "{count} recordings since {since} were not shared with {who}.",
+        "summary_one": "1 recording was not shared with everyone.",
+        "summary_one_since": "1 recording since {since} was not shared with everyone.",
+        "summary_other": "{count} recordings were not shared with everyone.",
+        "summary_other_since": "{count} recordings since {since} were not shared with everyone.",
+        "missing": "Missing: {who}.",
         "people_one": "1 person",
         "people_other": "{count} people",
         "groups_one": "1 group",
         "groups_other": "{count} groups",
-        "who_both": "{people} and {groups}",
-        "who_everyone": "everyone"
+        "who_both": "{people} and {groups}"
       },
       "share_limited": {
         "summary_one": "Nextcloud's share limit held back recipients of 1 recording. Re-share each from its run, or raise the limit.",
@@ -248,7 +248,7 @@
         "list_more": "{names} and {count} more"
       },
       "reshare": {
-        "held_back": "Nextcloud's share limit still held back {recipients}; re-share in 10 minutes.",
+        "held_back": "Still held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes.",
         "shared_again_held_back": "Shared again. {held_back}",
         "shared_with_everyone": "Shared with everyone.",
         "still_refused": "Shared again. Nextcloud still refused {recipients} ({names}). Check Doctor › Recording sharing.",
@@ -259,9 +259,9 @@
         "starter_refused_named": "Not published: Nextcloud refused to share it with {starter}, who started the recording.",
         "starter_refused_hint_rerun": "Fix the setting Doctor › Recording sharing names, then Rerun. Rerun publishes it and shares it with the whole room.",
         "starter_refused_hint_no_rerun": "Fix the setting Doctor › Recording sharing names so later recordings publish. This run cannot be rerun.",
-        "held_back": "Published, but Nextcloud's share limit held back {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
+        "held_back": "Published. Held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).",
         "partial_of": "Published, but not shared with {count} of {audience} recipients",
-        "partial": "Published, but not shared with {recipients}",
+        "partial": "Published. Not shared: {recipients}",
         "who_was_refused": "Who was refused ({count})",
         "partial_hint": "Nextcloud refused them because of a sharing setting. Doctor › Recording sharing names it and the fix.",
         "also_held_back": "Nextcloud's share limit also held back {count}.",
@@ -569,7 +569,7 @@
         "step_record": "Open the room, join the call, and use Talk’s Start recording action.",
         "step_speak": "Say a few words, then stop the recording in Talk.",
         "step_play": "Wait for it to publish, then play the audio and confirm you can hear it.",
-        "step_done": "Done: ",
+        "step_done": "Done:",
         "note": "A recording captures a call, so the call needs someone in it: Cassini joins to record, not to talk. The conversation and the test recording are both ordinary ones, and can be deleted afterwards.",
         "status": "{stage}: {state}",
         "stage_unknown": "Test",
@@ -697,7 +697,7 @@
       "rerun": "Rerun",
       "no_selection_title": "No recording selected",
       "no_selection_body": "Choose one from the list.",
-      "updated_ago": "· updated {age}",
+      "updated_ago": "updated {age}",
       "next_retry": "Next retry",
       "resource_deferrals": "Resource deferrals",
       "exit_code": "Exit code",
@@ -731,8 +731,8 @@
         "summarize": "Summarize",
         "refine": "Refine"
       },
-      "processed_in": "· processed in {span}",
-      "recorded_for": "· recorded {span}",
+      "processed_in": "processed in {span}",
+      "recorded_for": "recorded {span}",
       "revision": "Revision {revision}",
       "log_name": {
         "record": "Record log",
@@ -749,7 +749,7 @@
       "log_gone": "No longer on disk: retention or a cleanup removed it",
       "log_not_part": "Not part of this attempt: only the first one records",
       "log_not_written": "This step has not written a log",
-      "log_truncated": "· the end of it",
+      "log_truncated": "the end of it",
       "download": "Download",
       "close_log": "Close the log",
       "loading": "Loading…",
@@ -760,7 +760,7 @@
         "opus": "Sealed meeting",
         "site": "Site artifact"
       },
-      "no_longer_on_disk": " (no longer on disk)"
+      "no_longer_on_disk": "(no longer on disk)"
     },
     "support_bundle": {
       "region_label": "Cassini support",
@@ -829,18 +829,18 @@
       "loading_inventory": "Loading model inventory…",
       "downloads_disabled": "Downloads are disabled. Prepare a package with {pack} on a connected machine, copy it here, and run {import} inside this server's Cassini runtime. Imported models appear here automatically.",
       "transcript_only_without": "Saved settings publish transcript-only meetings with no transcript. Save to publish the audio instead.",
-      "runs_on_gpu": "the GPU (CUDA)",
-      "runs_on_cpu": "the CPU",
-      "runs_on_cpu_no_gpu": "the CPU (no GPU found)",
+      "runs_on_gpu": "on the GPU (CUDA)",
+      "runs_on_cpu": "on the CPU",
+      "runs_on_cpu_no_gpu": "on the CPU (no GPU found)",
       "in_use_missing": "{model} isn't installed, so recordings get no transcript.",
-      "in_use_stand_in_downloading": "Downloading {model}; the previous model transcribes recordings on {device} meanwhile.",
-      "in_use_stand_in_downloading_percent": "Downloading {model} ({percent}%); the previous model transcribes recordings on {device} meanwhile.",
-      "in_use_stand_in_failed_check": "{model} is installed but failed its runtime check; the previous model transcribes recordings on {device} meanwhile.",
-      "in_use_stand_in_missing": "{model} isn't installed; the previous model transcribes recordings on {device} meanwhile.",
+      "in_use_stand_in_downloading": "Downloading {model}; the previous model transcribes recordings {where} meanwhile.",
+      "in_use_stand_in_downloading_percent": "Downloading {model} ({percent}%); the previous model transcribes recordings {where} meanwhile.",
+      "in_use_stand_in_failed_check": "{model} is installed but failed its runtime check; the previous model transcribes recordings {where} meanwhile.",
+      "in_use_stand_in_missing": "{model} isn't installed; the previous model transcribes recordings {where} meanwhile.",
       "in_use_downloading": "Downloading {model}; recordings wait for it.",
       "in_use_downloading_percent": "Downloading {model} ({percent}%); recordings wait for it.",
-      "in_use_transcribing": "Transcribing with {model} on {device}.",
-      "in_use_runs_on": "Transcription runs on {device}.",
+      "in_use_transcribing": "Transcribing with {model} {where}.",
+      "in_use_runs_on": "Transcription runs {where}.",
       "hardware": "Hardware",
       "hw_gpu": "GPU",
       "hw_gpu_found": "Found",
@@ -926,9 +926,8 @@
       "keep_forever": "Keep forever",
       "preset_days_other": "{count} days",
       "custom": "Custom",
-      "keep_for_before": "Keep for",
-      "keep_for_after": "days",
-      "custom_days_label": "{label} days"
+      "keep_for": "Keep for {days} days",
+      "custom_days_label": "Days to keep: {label}"
     },
     "retention_actions": {
       "takes_effect": "Changes take effect at the next cleanup. Saving never deletes files immediately."
@@ -1124,7 +1123,7 @@
       "editor_new_label": "New insight template",
       "editor_edit_label": "Edit insight template",
       "new_template": "New template",
-      "copy_of": "a copy of {name}",
+      "editor_heading_copy": "New template, copied from {name}",
       "copy_name": "{name} (copy)",
       "name_label": "Name",
       "description_label": "Description",

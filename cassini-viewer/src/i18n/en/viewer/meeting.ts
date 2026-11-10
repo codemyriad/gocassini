@@ -72,7 +72,7 @@ const meeting = {
     no_matches: "Nothing in this transcript matches “{query}”.",
     // Who spoke when the transcript does not say.
     unknown_speaker: "Unknown speaker",
-    // A small warning badge on a turn; lower case, like a remark.
+    // A small warning badge on a turn, read like a remark: mid-sentence; use your language's capitalisation.
     crosstalk_badge: "probably crosstalk",
     // {name} is the speaker the turn is credited to.
     crosstalk_title:
@@ -87,8 +87,8 @@ const meeting = {
     over: "over {names}",
     // The same, read aloud.
     simultaneous_sr: "Simultaneous speech over {names}",
-    simultaneous_title_one: "Simultaneous speech: {names} was speaking at the same time.",
-    simultaneous_title_other: "Simultaneous speech: {names} were speaking at the same time.",
+    // On hover. {names}: one or more speakers, "Ana and Ben".
+    simultaneous_title: "Speaking at the same time: {names}",
   },
   // The player under the transcript.
   player: {
@@ -114,9 +114,11 @@ const meeting = {
     duration: "Duration",
     room: "Room",
     about: "About this recording",
+    // In the details, before when the transcript was made (a date).
     transcribed: "Transcribed",
     model: "Model",
-    // Not `length`: typesafe-i18n cannot take a key a function already has.
+    // How long the recording lasts (a duration follows), not a file size.
+    // Named `size` because typesafe-i18n cannot take `length` as a key.
     size: "Length",
     timing: "Timing",
     // Short for the meeting's identifier.
@@ -321,6 +323,7 @@ const meeting = {
   },
   // Find in the transcript (TranscriptToolbar.svelte).
   find: {
+    // Accessible name of the find-in-transcript toolbar.
     toolbar_label: "Transcript",
     field: "Find in transcript",
     only_matching: "Show only matching turns",

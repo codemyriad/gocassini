@@ -836,29 +836,30 @@ export type NamespaceAppTranslation = {
 			}
 			unshared: {
 				/**
-				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​w​a​s​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​w​h​o​}​.
-				 * @param {unknown} who
+				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​w​a​s​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
 				 */
-				summary_one: RequiredParams<'who'>
+				summary_one: string
 				/**
-				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​ ​w​a​s​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​w​h​o​}​.
+				 * 1​ ​r​e​c​o​r​d​i​n​g​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​ ​w​a​s​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
 				 * @param {unknown} since
-				 * @param {unknown} who
 				 */
-				summary_one_since: RequiredParams<'since' | 'who'>
+				summary_one_since: RequiredParams<'since'>
 				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​w​e​r​e​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​w​h​o​}​.
+				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​w​e​r​e​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
 				 * @param {unknown} count
-				 * @param {unknown} who
 				 */
-				summary_other: RequiredParams<'count' | 'who'>
+				summary_other: RequiredParams<'count'>
 				/**
-				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​ ​w​e​r​e​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​w​h​o​}​.
+				 * {​c​o​u​n​t​}​ ​r​e​c​o​r​d​i​n​g​s​ ​s​i​n​c​e​ ​{​s​i​n​c​e​}​ ​w​e​r​e​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​e​v​e​r​y​o​n​e​.
 				 * @param {unknown} count
 				 * @param {unknown} since
+				 */
+				summary_other_since: RequiredParams<'count' | 'since'>
+				/**
+				 * M​i​s​s​i​n​g​:​ ​{​w​h​o​}​.
 				 * @param {unknown} who
 				 */
-				summary_other_since: RequiredParams<'count' | 'since' | 'who'>
+				missing: RequiredParams<'who'>
 				/**
 				 * 1​ ​p​e​r​s​o​n
 				 */
@@ -883,10 +884,6 @@ export type NamespaceAppTranslation = {
 				 * @param {unknown} people
 				 */
 				who_both: RequiredParams<'groups' | 'people'>
-				/**
-				 * e​v​e​r​y​o​n​e
-				 */
-				who_everyone: string
 			}
 			share_limited: {
 				/**
@@ -1068,7 +1065,7 @@ export type NamespaceAppTranslation = {
 			}
 			reshare: {
 				/**
-				 * N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​s​t​i​l​l​ ​h​e​l​d​ ​b​a​c​k​ ​{​r​e​c​i​p​i​e​n​t​s​}​;​ ​r​e​-​s​h​a​r​e​ ​i​n​ ​1​0​ ​m​i​n​u​t​e​s​.
+				 * S​t​i​l​l​ ​h​e​l​d​ ​b​a​c​k​ ​b​y​ ​N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​:​ ​{​r​e​c​i​p​i​e​n​t​s​}​.​ ​R​e​-​s​h​a​r​e​ ​i​n​ ​1​0​ ​m​i​n​u​t​e​s​.
 				 * @param {unknown} recipients
 				 */
 				held_back: RequiredParams<'recipients'>
@@ -1113,7 +1110,7 @@ export type NamespaceAppTranslation = {
 				 */
 				starter_refused_hint_no_rerun: string
 				/**
-				 * P​u​b​l​i​s​h​e​d​,​ ​b​u​t​ ​N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​ ​h​e​l​d​ ​b​a​c​k​ ​{​r​e​c​i​p​i​e​n​t​s​}​.​ ​R​e​-​s​h​a​r​e​ ​i​n​ ​1​0​ ​m​i​n​u​t​e​s​,​ ​o​r​ ​r​a​i​s​e​ ​t​h​e​ ​l​i​m​i​t​ ​(​D​o​c​t​o​r​ ​›​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​)​.
+				 * P​u​b​l​i​s​h​e​d​.​ ​H​e​l​d​ ​b​a​c​k​ ​b​y​ ​N​e​x​t​c​l​o​u​d​'​s​ ​s​h​a​r​e​ ​l​i​m​i​t​:​ ​{​r​e​c​i​p​i​e​n​t​s​}​.​ ​R​e​-​s​h​a​r​e​ ​i​n​ ​1​0​ ​m​i​n​u​t​e​s​,​ ​o​r​ ​r​a​i​s​e​ ​t​h​e​ ​l​i​m​i​t​ ​(​D​o​c​t​o​r​ ​›​ ​R​e​c​o​r​d​i​n​g​ ​s​h​a​r​i​n​g​)​.
 				 * @param {unknown} recipients
 				 */
 				held_back: RequiredParams<'recipients'>
@@ -1124,7 +1121,7 @@ export type NamespaceAppTranslation = {
 				 */
 				partial_of: RequiredParams<'audience' | 'count'>
 				/**
-				 * P​u​b​l​i​s​h​e​d​,​ ​b​u​t​ ​n​o​t​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​{​r​e​c​i​p​i​e​n​t​s​}
+				 * P​u​b​l​i​s​h​e​d​.​ ​N​o​t​ ​s​h​a​r​e​d​:​ ​{​r​e​c​i​p​i​e​n​t​s​}
 				 * @param {unknown} recipients
 				 */
 				partial: RequiredParams<'recipients'>
@@ -2266,7 +2263,7 @@ export type NamespaceAppTranslation = {
 				 */
 				step_play: string
 				/**
-				 * D​o​n​e​:​ 
+				 * D​o​n​e​:
 				 */
 				step_done: string
 				/**
@@ -2733,7 +2730,7 @@ export type NamespaceAppTranslation = {
 			 */
 			no_selection_body: string
 			/**
-			 * ·​ ​u​p​d​a​t​e​d​ ​{​a​g​e​}
+			 * u​p​d​a​t​e​d​ ​{​a​g​e​}
 			 * @param {unknown} age
 			 */
 			updated_ago: RequiredParams<'age'>
@@ -2859,12 +2856,12 @@ export type NamespaceAppTranslation = {
 				refine: string
 			}
 			/**
-			 * ·​ ​p​r​o​c​e​s​s​e​d​ ​i​n​ ​{​s​p​a​n​}
+			 * p​r​o​c​e​s​s​e​d​ ​i​n​ ​{​s​p​a​n​}
 			 * @param {unknown} span
 			 */
 			processed_in: RequiredParams<'span'>
 			/**
-			 * ·​ ​r​e​c​o​r​d​e​d​ ​{​s​p​a​n​}
+			 * r​e​c​o​r​d​e​d​ ​{​s​p​a​n​}
 			 * @param {unknown} span
 			 */
 			recorded_for: RequiredParams<'span'>
@@ -2922,7 +2919,7 @@ export type NamespaceAppTranslation = {
 			 */
 			log_not_written: string
 			/**
-			 * ·​ ​t​h​e​ ​e​n​d​ ​o​f​ ​i​t
+			 * t​h​e​ ​e​n​d​ ​o​f​ ​i​t
 			 */
 			log_truncated: string
 			/**
@@ -2960,7 +2957,7 @@ export type NamespaceAppTranslation = {
 				site: string
 			}
 			/**
-			 *  ​(​n​o​ ​l​o​n​g​e​r​ ​o​n​ ​d​i​s​k​)
+			 * (​n​o​ ​l​o​n​g​e​r​ ​o​n​ ​d​i​s​k​)
 			 */
 			no_longer_on_disk: string
 		}
@@ -3218,15 +3215,15 @@ export type NamespaceAppTranslation = {
 			 */
 			transcript_only_without: string
 			/**
-			 * t​h​e​ ​G​P​U​ ​(​C​U​D​A​)
+			 * o​n​ ​t​h​e​ ​G​P​U​ ​(​C​U​D​A​)
 			 */
 			runs_on_gpu: string
 			/**
-			 * t​h​e​ ​C​P​U
+			 * o​n​ ​t​h​e​ ​C​P​U
 			 */
 			runs_on_cpu: string
 			/**
-			 * t​h​e​ ​C​P​U​ ​(​n​o​ ​G​P​U​ ​f​o​u​n​d​)
+			 * o​n​ ​t​h​e​ ​C​P​U​ ​(​n​o​ ​G​P​U​ ​f​o​u​n​d​)
 			 */
 			runs_on_cpu_no_gpu: string
 			/**
@@ -3235,30 +3232,30 @@ export type NamespaceAppTranslation = {
 			 */
 			in_use_missing: RequiredParams<'model'>
 			/**
-			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​o​n​ ​{​d​e​v​i​c​e​}​ ​m​e​a​n​w​h​i​l​e​.
-			 * @param {unknown} device
+			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​{​w​h​e​r​e​}​ ​m​e​a​n​w​h​i​l​e​.
 			 * @param {unknown} model
+			 * @param {unknown} where
 			 */
-			in_use_stand_in_downloading: RequiredParams<'device' | 'model'>
+			in_use_stand_in_downloading: RequiredParams<'model' | 'where'>
 			/**
-			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​ ​(​{​p​e​r​c​e​n​t​}​%​)​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​o​n​ ​{​d​e​v​i​c​e​}​ ​m​e​a​n​w​h​i​l​e​.
-			 * @param {unknown} device
+			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​ ​(​{​p​e​r​c​e​n​t​}​%​)​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​{​w​h​e​r​e​}​ ​m​e​a​n​w​h​i​l​e​.
 			 * @param {unknown} model
 			 * @param {unknown} percent
+			 * @param {unknown} where
 			 */
-			in_use_stand_in_downloading_percent: RequiredParams<'device' | 'model' | 'percent'>
+			in_use_stand_in_downloading_percent: RequiredParams<'model' | 'percent' | 'where'>
 			/**
-			 * {​m​o​d​e​l​}​ ​i​s​ ​i​n​s​t​a​l​l​e​d​ ​b​u​t​ ​f​a​i​l​e​d​ ​i​t​s​ ​r​u​n​t​i​m​e​ ​c​h​e​c​k​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​o​n​ ​{​d​e​v​i​c​e​}​ ​m​e​a​n​w​h​i​l​e​.
-			 * @param {unknown} device
+			 * {​m​o​d​e​l​}​ ​i​s​ ​i​n​s​t​a​l​l​e​d​ ​b​u​t​ ​f​a​i​l​e​d​ ​i​t​s​ ​r​u​n​t​i​m​e​ ​c​h​e​c​k​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​{​w​h​e​r​e​}​ ​m​e​a​n​w​h​i​l​e​.
 			 * @param {unknown} model
+			 * @param {unknown} where
 			 */
-			in_use_stand_in_failed_check: RequiredParams<'device' | 'model'>
+			in_use_stand_in_failed_check: RequiredParams<'model' | 'where'>
 			/**
-			 * {​m​o​d​e​l​}​ ​i​s​n​'​t​ ​i​n​s​t​a​l​l​e​d​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​o​n​ ​{​d​e​v​i​c​e​}​ ​m​e​a​n​w​h​i​l​e​.
-			 * @param {unknown} device
+			 * {​m​o​d​e​l​}​ ​i​s​n​'​t​ ​i​n​s​t​a​l​l​e​d​;​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​m​o​d​e​l​ ​t​r​a​n​s​c​r​i​b​e​s​ ​r​e​c​o​r​d​i​n​g​s​ ​{​w​h​e​r​e​}​ ​m​e​a​n​w​h​i​l​e​.
 			 * @param {unknown} model
+			 * @param {unknown} where
 			 */
-			in_use_stand_in_missing: RequiredParams<'device' | 'model'>
+			in_use_stand_in_missing: RequiredParams<'model' | 'where'>
 			/**
 			 * D​o​w​n​l​o​a​d​i​n​g​ ​{​m​o​d​e​l​}​;​ ​r​e​c​o​r​d​i​n​g​s​ ​w​a​i​t​ ​f​o​r​ ​i​t​.
 			 * @param {unknown} model
@@ -3271,16 +3268,16 @@ export type NamespaceAppTranslation = {
 			 */
 			in_use_downloading_percent: RequiredParams<'model' | 'percent'>
 			/**
-			 * T​r​a​n​s​c​r​i​b​i​n​g​ ​w​i​t​h​ ​{​m​o​d​e​l​}​ ​o​n​ ​{​d​e​v​i​c​e​}​.
-			 * @param {unknown} device
+			 * T​r​a​n​s​c​r​i​b​i​n​g​ ​w​i​t​h​ ​{​m​o​d​e​l​}​ ​{​w​h​e​r​e​}​.
 			 * @param {unknown} model
+			 * @param {unknown} where
 			 */
-			in_use_transcribing: RequiredParams<'device' | 'model'>
+			in_use_transcribing: RequiredParams<'model' | 'where'>
 			/**
-			 * T​r​a​n​s​c​r​i​p​t​i​o​n​ ​r​u​n​s​ ​o​n​ ​{​d​e​v​i​c​e​}​.
-			 * @param {unknown} device
+			 * T​r​a​n​s​c​r​i​p​t​i​o​n​ ​r​u​n​s​ ​{​w​h​e​r​e​}​.
+			 * @param {unknown} where
 			 */
-			in_use_runs_on: RequiredParams<'device'>
+			in_use_runs_on: RequiredParams<'where'>
 			/**
 			 * H​a​r​d​w​a​r​e
 			 */
@@ -3631,15 +3628,12 @@ export type NamespaceAppTranslation = {
 			 */
 			custom: string
 			/**
-			 * K​e​e​p​ ​f​o​r
+			 * K​e​e​p​ ​f​o​r​ ​{​d​a​y​s​}​ ​d​a​y​s
+			 * @param {unknown} days
 			 */
-			keep_for_before: string
+			keep_for: RequiredParams<'days'>
 			/**
-			 * d​a​y​s
-			 */
-			keep_for_after: string
-			/**
-			 * {​l​a​b​e​l​}​ ​d​a​y​s
+			 * D​a​y​s​ ​t​o​ ​k​e​e​p​:​ ​{​l​a​b​e​l​}
 			 * @param {unknown} label
 			 */
 			custom_days_label: RequiredParams<'label'>
@@ -4362,10 +4356,10 @@ export type NamespaceAppTranslation = {
 			 */
 			new_template: string
 			/**
-			 * a​ ​c​o​p​y​ ​o​f​ ​{​n​a​m​e​}
+			 * N​e​w​ ​t​e​m​p​l​a​t​e​,​ ​c​o​p​i​e​d​ ​f​r​o​m​ ​{​n​a​m​e​}
 			 * @param {unknown} name
 			 */
-			copy_of: RequiredParams<'name'>
+			editor_heading_copy: RequiredParams<'name'>
 			/**
 			 * {​n​a​m​e​}​ ​(​c​o​p​y​)
 			 * @param {unknown} name
@@ -6679,15 +6673,10 @@ export type NamespaceViewerTranslation = {
 			 */
 			simultaneous_sr: RequiredParams<'names'>
 			/**
-			 * S​i​m​u​l​t​a​n​e​o​u​s​ ​s​p​e​e​c​h​:​ ​{​n​a​m​e​s​}​ ​w​a​s​ ​s​p​e​a​k​i​n​g​ ​a​t​ ​t​h​e​ ​s​a​m​e​ ​t​i​m​e​.
+			 * S​p​e​a​k​i​n​g​ ​a​t​ ​t​h​e​ ​s​a​m​e​ ​t​i​m​e​:​ ​{​n​a​m​e​s​}
 			 * @param {unknown} names
 			 */
-			simultaneous_title_one: RequiredParams<'names'>
-			/**
-			 * S​i​m​u​l​t​a​n​e​o​u​s​ ​s​p​e​e​c​h​:​ ​{​n​a​m​e​s​}​ ​w​e​r​e​ ​s​p​e​a​k​i​n​g​ ​a​t​ ​t​h​e​ ​s​a​m​e​ ​t​i​m​e​.
-			 * @param {unknown} names
-			 */
-			simultaneous_title_other: RequiredParams<'names'>
+			simultaneous_title: RequiredParams<'names'>
 		}
 		player: {
 			/**
@@ -8797,21 +8786,25 @@ export type TranslationFunctions = {
 				}
 				unshared: {
 					/**
-					 * 1 recording was not shared with {who}.
+					 * 1 recording was not shared with everyone.
 					 */
-					summary_one: (arg: { who: unknown }) => LocalizedString
+					summary_one: () => LocalizedString
 					/**
-					 * 1 recording since {since} was not shared with {who}.
+					 * 1 recording since {since} was not shared with everyone.
 					 */
-					summary_one_since: (arg: { since: unknown, who: unknown }) => LocalizedString
+					summary_one_since: (arg: { since: unknown }) => LocalizedString
 					/**
-					 * {count} recordings were not shared with {who}.
+					 * {count} recordings were not shared with everyone.
 					 */
-					summary_other: (arg: { count: unknown, who: unknown }) => LocalizedString
+					summary_other: (arg: { count: unknown }) => LocalizedString
 					/**
-					 * {count} recordings since {since} were not shared with {who}.
+					 * {count} recordings since {since} were not shared with everyone.
 					 */
-					summary_other_since: (arg: { count: unknown, since: unknown, who: unknown }) => LocalizedString
+					summary_other_since: (arg: { count: unknown, since: unknown }) => LocalizedString
+					/**
+					 * Missing: {who}.
+					 */
+					missing: (arg: { who: unknown }) => LocalizedString
 					/**
 					 * 1 person
 					 */
@@ -8832,10 +8825,6 @@ export type TranslationFunctions = {
 					 * {people} and {groups}
 					 */
 					who_both: (arg: { groups: unknown, people: unknown }) => LocalizedString
-					/**
-					 * everyone
-					 */
-					who_everyone: () => LocalizedString
 				}
 				share_limited: {
 					/**
@@ -9001,7 +8990,7 @@ export type TranslationFunctions = {
 				}
 				reshare: {
 					/**
-					 * Nextcloud's share limit still held back {recipients}; re-share in 10 minutes.
+					 * Still held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes.
 					 */
 					held_back: (arg: { recipients: unknown }) => LocalizedString
 					/**
@@ -9039,7 +9028,7 @@ export type TranslationFunctions = {
 					 */
 					starter_refused_hint_no_rerun: () => LocalizedString
 					/**
-					 * Published, but Nextcloud's share limit held back {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).
+					 * Published. Held back by Nextcloud's share limit: {recipients}. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).
 					 */
 					held_back: (arg: { recipients: unknown }) => LocalizedString
 					/**
@@ -9047,7 +9036,7 @@ export type TranslationFunctions = {
 					 */
 					partial_of: (arg: { audience: unknown, count: unknown }) => LocalizedString
 					/**
-					 * Published, but not shared with {recipients}
+					 * Published. Not shared: {recipients}
 					 */
 					partial: (arg: { recipients: unknown }) => LocalizedString
 					/**
@@ -10111,7 +10100,7 @@ export type TranslationFunctions = {
 					 */
 					step_play: () => LocalizedString
 					/**
-					 * Done: 
+					 * Done:
 					 */
 					step_done: () => LocalizedString
 					/**
@@ -10560,7 +10549,7 @@ export type TranslationFunctions = {
 				 */
 				no_selection_body: () => LocalizedString
 				/**
-				 * · updated {age}
+				 * updated {age}
 				 */
 				updated_ago: (arg: { age: unknown }) => LocalizedString
 				/**
@@ -10684,11 +10673,11 @@ export type TranslationFunctions = {
 					refine: () => LocalizedString
 				}
 				/**
-				 * · processed in {span}
+				 * processed in {span}
 				 */
 				processed_in: (arg: { span: unknown }) => LocalizedString
 				/**
-				 * · recorded {span}
+				 * recorded {span}
 				 */
 				recorded_for: (arg: { span: unknown }) => LocalizedString
 				/**
@@ -10744,7 +10733,7 @@ export type TranslationFunctions = {
 				 */
 				log_not_written: () => LocalizedString
 				/**
-				 * · the end of it
+				 * the end of it
 				 */
 				log_truncated: () => LocalizedString
 				/**
@@ -10782,7 +10771,7 @@ export type TranslationFunctions = {
 					site: () => LocalizedString
 				}
 				/**
-				 *  (no longer on disk)
+				 * (no longer on disk)
 				 */
 				no_longer_on_disk: () => LocalizedString
 			}
@@ -11034,15 +11023,15 @@ export type TranslationFunctions = {
 				 */
 				transcript_only_without: () => LocalizedString
 				/**
-				 * the GPU (CUDA)
+				 * on the GPU (CUDA)
 				 */
 				runs_on_gpu: () => LocalizedString
 				/**
-				 * the CPU
+				 * on the CPU
 				 */
 				runs_on_cpu: () => LocalizedString
 				/**
-				 * the CPU (no GPU found)
+				 * on the CPU (no GPU found)
 				 */
 				runs_on_cpu_no_gpu: () => LocalizedString
 				/**
@@ -11050,21 +11039,21 @@ export type TranslationFunctions = {
 				 */
 				in_use_missing: (arg: { model: unknown }) => LocalizedString
 				/**
-				 * Downloading {model}; the previous model transcribes recordings on {device} meanwhile.
+				 * Downloading {model}; the previous model transcribes recordings {where} meanwhile.
 				 */
-				in_use_stand_in_downloading: (arg: { device: unknown, model: unknown }) => LocalizedString
+				in_use_stand_in_downloading: (arg: { model: unknown, where: unknown }) => LocalizedString
 				/**
-				 * Downloading {model} ({percent}%); the previous model transcribes recordings on {device} meanwhile.
+				 * Downloading {model} ({percent}%); the previous model transcribes recordings {where} meanwhile.
 				 */
-				in_use_stand_in_downloading_percent: (arg: { device: unknown, model: unknown, percent: unknown }) => LocalizedString
+				in_use_stand_in_downloading_percent: (arg: { model: unknown, percent: unknown, where: unknown }) => LocalizedString
 				/**
-				 * {model} is installed but failed its runtime check; the previous model transcribes recordings on {device} meanwhile.
+				 * {model} is installed but failed its runtime check; the previous model transcribes recordings {where} meanwhile.
 				 */
-				in_use_stand_in_failed_check: (arg: { device: unknown, model: unknown }) => LocalizedString
+				in_use_stand_in_failed_check: (arg: { model: unknown, where: unknown }) => LocalizedString
 				/**
-				 * {model} isn't installed; the previous model transcribes recordings on {device} meanwhile.
+				 * {model} isn't installed; the previous model transcribes recordings {where} meanwhile.
 				 */
-				in_use_stand_in_missing: (arg: { device: unknown, model: unknown }) => LocalizedString
+				in_use_stand_in_missing: (arg: { model: unknown, where: unknown }) => LocalizedString
 				/**
 				 * Downloading {model}; recordings wait for it.
 				 */
@@ -11074,13 +11063,13 @@ export type TranslationFunctions = {
 				 */
 				in_use_downloading_percent: (arg: { model: unknown, percent: unknown }) => LocalizedString
 				/**
-				 * Transcribing with {model} on {device}.
+				 * Transcribing with {model} {where}.
 				 */
-				in_use_transcribing: (arg: { device: unknown, model: unknown }) => LocalizedString
+				in_use_transcribing: (arg: { model: unknown, where: unknown }) => LocalizedString
 				/**
-				 * Transcription runs on {device}.
+				 * Transcription runs {where}.
 				 */
-				in_use_runs_on: (arg: { device: unknown }) => LocalizedString
+				in_use_runs_on: (arg: { where: unknown }) => LocalizedString
 				/**
 				 * Hardware
 				 */
@@ -11411,15 +11400,11 @@ export type TranslationFunctions = {
 				 */
 				custom: () => LocalizedString
 				/**
-				 * Keep for
+				 * Keep for {days} days
 				 */
-				keep_for_before: () => LocalizedString
+				keep_for: (arg: { days: unknown }) => LocalizedString
 				/**
-				 * days
-				 */
-				keep_for_after: () => LocalizedString
-				/**
-				 * {label} days
+				 * Days to keep: {label}
 				 */
 				custom_days_label: (arg: { label: unknown }) => LocalizedString
 			}
@@ -12107,9 +12092,9 @@ export type TranslationFunctions = {
 				 */
 				new_template: () => LocalizedString
 				/**
-				 * a copy of {name}
+				 * New template, copied from {name}
 				 */
-				copy_of: (arg: { name: unknown }) => LocalizedString
+				editor_heading_copy: (arg: { name: unknown }) => LocalizedString
 				/**
 				 * {name} (copy)
 				 */
@@ -14247,13 +14232,9 @@ export type TranslationFunctions = {
 				 */
 				simultaneous_sr: (arg: { names: unknown }) => LocalizedString
 				/**
-				 * Simultaneous speech: {names} was speaking at the same time.
+				 * Speaking at the same time: {names}
 				 */
-				simultaneous_title_one: (arg: { names: unknown }) => LocalizedString
-				/**
-				 * Simultaneous speech: {names} were speaking at the same time.
-				 */
-				simultaneous_title_other: (arg: { names: unknown }) => LocalizedString
+				simultaneous_title: (arg: { names: unknown }) => LocalizedString
 			}
 			player: {
 				/**

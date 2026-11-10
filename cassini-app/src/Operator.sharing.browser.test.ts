@@ -78,7 +78,7 @@ it("flags a partly shared run and lists who it was not shared with", async () =>
   // The flag on the run card, before anyone opens the run.
   const card = document.querySelector(".run-card")!;
   expect(card.textContent).toContain("Not shared with everyone");
-  await expect.element(page.getByText("Published, but not shared with 2 recipients", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Published. Not shared: 2 recipients", { exact: true })).toBeVisible();
   // Closed by default, the count in its summary.
   const disclosure = document.querySelector<HTMLDetailsElement>(".op-detail-pane details")!;
   expect(disclosure.open).toBe(false);
@@ -134,7 +134,7 @@ it("flags a run Nextcloud's share limit held back, and offers the re-share", asy
     deferred: [{ type: "user", id: "dave" }, { type: "user", id: "erin" }, { type: "group", id: "marketing" }],
   });
   await open("All hands");
-  await expect.element(page.getByText("Published, but Nextcloud's share limit held back 3 recipients. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Published. Held back by Nextcloud's share limit: 3 recipients. Re-share in 10 minutes, or raise the limit (Doctor › Recording sharing).", { exact: true })).toBeVisible();
   // The flag is how an administrator finds it.
   expect(document.querySelector(".run-card")!.textContent).toContain("Not shared with everyone");
   expect(document.querySelector(".op-detail-pane")!.textContent).not.toContain("refused");
@@ -149,7 +149,7 @@ it("adds the held-back sentence under the refused notice when both happened", as
     deferred: [{ type: "user", id: "dave" }],
   });
   await open("All hands");
-  await expect.element(page.getByText("Published, but not shared with 1 recipient", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Published. Not shared: 1 recipient", { exact: true })).toBeVisible();
   await expect.element(page.getByText("Nextcloud's share limit also held back 1.", { exact: true })).toBeVisible();
   await expect.element(page.getByText("Who was refused (1)", { exact: true })).toBeVisible();
   expect(document.querySelector(".run-card")!.textContent).toContain("Not shared with everyone");
@@ -174,7 +174,7 @@ it("answers a re-share the limit held back again with how many and when to try",
   }));
   await open("Standup");
   await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
-  await expect.element(page.getByText("Shared again. Nextcloud's share limit still held back 2 recipients; re-share in 10 minutes.", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Shared again. Still held back by Nextcloud's share limit: 2 recipients. Re-share in 10 minutes.", { exact: true })).toBeVisible();
 });
 
 function serveReshare(recording: ReturnType<typeof job>, answer: "fixed" | "fails") {
@@ -206,7 +206,7 @@ function serveReshare(recording: ReturnType<typeof job>, answer: "fixed" | "fail
 it("re-shares a partly shared meeting once the policy is fixed", async () => {
   const posts = serveReshare(job("Standup", "succeeded", { unshared_count: 1 }), "fixed");
   await open("Standup");
-  await expect.element(page.getByText("Published, but not shared with 1 recipient", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Published. Not shared: 1 recipient", { exact: true })).toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
   await expect.poll(() => posts).toEqual(["/operator/jobs/Standup/reshare"]);
   // The notice goes with the next read of the run; the answer stays.
@@ -260,7 +260,7 @@ it("says beside the button why a re-share failed", async () => {
   await userEvent.click(page.getByRole("button", { name: "Re-share with the room" }));
   await expect.element(page.getByRole("alert").filter({ hasText: "could not share the meeting again" })).toBeVisible();
   // The warning stays: nothing changed.
-  await expect.element(page.getByText("Published, but not shared with 1 recipient", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Published. Not shared: 1 recipient", { exact: true })).toBeVisible();
 });
 
 it("acknowledges a re-share that Nextcloud still partly refused", async () => {
