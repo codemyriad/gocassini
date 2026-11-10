@@ -3,6 +3,7 @@
   import { createEventDispatcher } from "svelte";
   import { fade } from "svelte/transition";
   import { Lock, Plug, Settings } from "@lucide/svelte";
+  import { LL } from "../i18n";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
   import { matchTags, type VocabularyTag } from "../viewer/annotations";
@@ -113,19 +114,16 @@
   $: if (tagRows) remember(TAGS_KEY, tagRows.length);
 
   export let audience: "" | "participants" = "";
-  const AUDIENCE = {
+  $: text = $LL.viewer.browse.rooms_rail;
+  $: AUDIENCE = {
     participants: {
-      label: "Shared with participants",
+      label: text.audience_participants(),
       // Same points as "Who can see recordings" in Operator › Publish pipeline
       // (cassini-app DirectShareAccessPanel.svelte); change both together.
-      points: [
-        "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.",
-        "Guests without a Nextcloud account can't open it.",
-        "Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.",
-      ],
+      points: [text.audience_point_all(), text.audience_point_guests(), text.audience_point_public()],
     },
-  } as const;
-  const AUDIENCE_LEAD = "Nextcloud Files controls who can read each recording.";
+  };
+  $: AUDIENCE_LEAD = text.audience_lead();
   let audienceEl: HTMLElement;
   let audienceOpen = false;
   // Placed from the label each time it shows: the rail scrolls, so a popover
@@ -150,9 +148,9 @@
 
 <svelte:window on:click={closeAudienceOutside} />
 
-<nav aria-label="Rooms" class="rooms-rail" data-open={open}>
+<nav aria-label={text.nav_label()} class="rooms-rail" data-open={open}>
   <div class="rail-head rail-head-row rooms-head">
-    <h2>Rooms</h2>
+    <h2>{text.rooms_heading()}</h2>
     {#if audience}
       <span class="audience" bind:this={audienceEl} on:mouseenter={placeAudience} on:focusin={placeAudience}>
         <button
@@ -196,7 +194,7 @@
       aria-pressed={selectedRoomKey === null}
       class="room-button"
     >
-      <span class="room-name">All meetings</span>
+      <span class="room-name">{text.all_meetings()}</span>
       <span class="room-count">{roomsLoading ? "" : totalCount}</span>
     </button>
 
@@ -217,7 +215,7 @@
           <span class="room-count">{room.count}</span>
         </button>
         {#if editable && room.roomId}
-          <button type="button" class="room-edit" aria-label={`Rename room ${room.name}`} title="Rename room"
+          <button type="button" class="room-edit" aria-label={text.rename_room_named({ name: room.name })} title={text.rename_room()}
             on:click={() => dispatch("rename", room.roomId!)}><Pencil size={14} aria-hidden="true" /></button>
         {/if}
       </div>
@@ -226,19 +224,19 @@
 
   {#if tagsOffered}
     <div class="rail-head rail-head-sub rail-head-row">
-      <h2>Tags</h2>
+      <h2>{text.tags_heading()}</h2>
       <button
         type="button"
         class="manage-tags"
-        aria-label="Manage tags"
-        title="Manage tags"
+        aria-label={text.manage_tags()}
+        title={text.manage_tags()}
         on:click={() => dispatch("manageTags")}
       >
         <Settings size={14} aria-hidden="true" />
       </button>
     </div>
     {#if tagRows}
-      <div class="rail-list" role="group" aria-label="Filter by tag">
+      <div class="rail-list" role="group" aria-label={text.filter_by_tag()}>
         {#each tagRows as tag (tag.tagId)}
           <label class="type-row" data-tag-color={colorFor(tag)} in:fade={{ duration: SWAP_MS }}>
             <input
@@ -253,27 +251,27 @@
             <span class="room-count">{tag.meetings}</span>
           </label>
         {:else}
-          <p class="rail-note">No tags yet.</p>
+          <p class="rail-note">{text.no_tags()}</p>
         {/each}
       </div>
       {#if selectedTagIds.length >= 2}
         <div class="tag-match">
-          <span class="tag-match-label" aria-hidden="true">Match</span>
-          <div class="segmented" role="group" aria-label="Show meetings with">
+          <span class="tag-match-label" aria-hidden="true">{text.match()}</span>
+          <div class="segmented" role="group" aria-label={text.match_group()}>
             {#each TAG_MATCHES as mode}
               <button
                 type="button"
                 aria-pressed={tagMatch === mode}
-                aria-label={`${mode} of the ticked tags`}
+                aria-label={mode === "any" ? text.match_any_label() : text.match_all_label()}
                 class="segment"
-                on:click={() => dispatch("tagMatch", mode)}>{mode}</button
+                on:click={() => dispatch("tagMatch", mode)}>{mode === "any" ? text.match_any() : text.match_all()}</button
               >
             {/each}
           </div>
         </div>
       {/if}
     {:else if tagsFailed}
-      <p class="rail-note">Tags are unavailable right now.</p>
+      <p class="rail-note">{text.tags_unavailable()}</p>
     {:else if tagsLoading}
       <div class="rail-list" aria-hidden="true" out:swapOut>
         {#each SKELETON_WIDTHS.slice(0, tagPlaceholders) as width, index (index)}
@@ -287,8 +285,8 @@
   {/if}
 
   {#if insightsOffered}
-    <h2 class="rail-head rail-head-sub">Show</h2>
-    <div class="rail-list" role="group" aria-label="Show">
+    <h2 class="rail-head rail-head-sub">{text.show_heading()}</h2>
+    <div class="rail-list" role="group" aria-label={text.show_heading()}>
       <!-- The last one standing cannot be turned off: an empty list is not a
            filter state anyone wants to land in, and it is reached in one click
            from here. -->
@@ -301,7 +299,7 @@
           disabled={isLastBrowseType(types, "meetings")}
           on:change={() => dispatch("toggleType", "meetings")}
         />
-        <span class="room-name">Meetings</span>
+        <span class="room-name">{text.show_meetings()}</span>
         <span class="room-count">{roomsLoading ? "" : meetingCount}</span>
       </label>
       <label class="type-row">
@@ -313,7 +311,7 @@
           disabled={isLastBrowseType(types, "insights")}
           on:change={() => dispatch("toggleType", "insights")}
         />
-        <span class="room-name">Insights</span>
+        <span class="room-name">{text.show_insights()}</span>
         <span class="room-count">{insightsLoading ? "" : insightCount}</span>
       </label>
     </div>
@@ -332,7 +330,7 @@
         }}
       >
         <Plug size={14} aria-hidden="true" />
-        Connect an agent
+        {text.connect_agent()}
       </button>
     </div>
   {/if}

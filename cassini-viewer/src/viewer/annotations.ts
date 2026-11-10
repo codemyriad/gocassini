@@ -1,3 +1,6 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import { colorFor, TAG_ICONS, type TagColorId, type TagIconId } from "./tagPalette";
 
 // The wire of the annotation routes (D-737, D-746). Time ranges are half-open
@@ -335,16 +338,19 @@ export function retryDelay(error: unknown, attempt: number): number | null {
   return Math.min(2_000 * 2 ** attempt, 60_000);
 }
 
-const ERROR_MESSAGES: Record<string, string> = {
-  unresolved: "Remove the marks that can't be placed first.",
-  busy: "Tags are being changed elsewhere. Try again in a moment.",
+// Read when the error is described, so it is in the reader's language.
+const ERROR_MESSAGES: Record<string, () => string> = {
+  unresolved: () => get(LL).viewer.browse.tags.error_unresolved(),
+  busy: () => get(LL).viewer.browse.tags.error_busy(),
 };
 
 export function describeAnnotationError(error: unknown): string {
   if (error instanceof AnnotationError) {
-    return ERROR_MESSAGES[error.code] ?? error.message;
+    return ERROR_MESSAGES[error.code]?.() ?? error.message;
   }
   return error instanceof Error ? error.message : String(error);
 }
 
+// English only. Kept for callers outside the browse area that have not moved
+// to the dictionaries yet; new text uses `_one` / `_other` keys instead.
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

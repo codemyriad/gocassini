@@ -2,6 +2,8 @@
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
+  import { get } from "svelte/store";
+  import { LL } from "./i18n";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
   import {
     filterMeetingCatalogEntries,
@@ -518,7 +520,7 @@
     const entry = async () => {
       const found = catalogMeetings.find((meeting) => meeting.id === meetingId);
       if (!found) {
-        throw new Error(`Meeting not found in catalog: ${meetingId}`);
+        throw new Error(get(LL).viewer.browse.app.meeting_not_found({ id: meetingId }));
       }
       return found;
     };
@@ -550,7 +552,7 @@
   function loadSelectedBundle(): Promise<string> {
     const provider = dataProvider;
     if (!provider.loadContextBundle) {
-      return Promise.reject(new Error("This build cannot assemble a context bundle."));
+      return Promise.reject(new Error(get(LL).viewer.browse.app.no_context_bundle()));
     }
     return provider.loadContextBundle(pickedMeetings);
   }
@@ -637,7 +639,7 @@
       const found = catalogMeetings.find((entry) => entry.id === urlMeetingId);
       selectedMeetingId = urlMeetingId;
       if (!found) {
-        notFoundMessage = `Meeting not found in catalog: ${urlMeetingId}`;
+        notFoundMessage = get(LL).viewer.browse.app.meeting_not_found({ id: urlMeetingId });
       }
     } else {
       selectedMeetingId = "";
@@ -761,7 +763,7 @@
       }
       if (run === searchRun) {
         searchState = "failed";
-        searchMessage = "Could not search the meetings.";
+        searchMessage = get(LL).viewer.browse.app.search_failed();
       }
       return;
     }
@@ -888,8 +890,8 @@
       catalogMeetings = sortMeetingCatalogEntries([...restored.values()]);
       deleteNotice =
         failed.length === 1
-          ? `“${failed[0].title}” could not be deleted.`
-          : `${failed.length} meetings could not be deleted.`;
+          ? get(LL).viewer.browse.app.delete_failed_one({ title: failed[0].title })
+          : get(LL).viewer.browse.app.delete_failed_other({ count: failed.length });
     }
     deleteFailed = failed;
     deleteBusy = false;
@@ -1058,7 +1060,7 @@
       } else if (selectedMeetingId) {
         notFoundMessage = listedMeetings.some((entry) => entry.id === selectedMeetingId)
           ? ""
-          : `Meeting not found in catalog: ${selectedMeetingId}`;
+          : get(LL).viewer.browse.app.meeting_not_found({ id: selectedMeetingId });
       }
       pendingMeetingId = null;
     } catch (error) {
@@ -1183,7 +1185,7 @@
     if (renamingInsightId !== "") {
       // Said, not swallowed: the sheet keeps its input open on an error, and a
       // request that was never sent must not close it as if it had been.
-      insightRenameError = { id: record.id, message: "Another rename is still saving. Try again in a moment." };
+      insightRenameError = { id: record.id, message: get(LL).viewer.browse.app.insight_rename_busy() };
       return;
     }
     renamingInsightId = record.id;
@@ -1446,11 +1448,12 @@
   $: selectedMeeting = selectedMeetingId
     ? catalogMeetings.find((entry) => entry.id === selectedMeetingId) ?? null
     : null;
+  $: appText = $LL.viewer.browse.app;
   $: documentTitle = selectedMeeting
-    ? `${selectedMeeting.title} | Cassini Viewer`
+    ? appText.document_title_meeting({ title: selectedMeeting.title })
     : catalogMeetings.length > 0
-      ? "Cassini Meetings"
-      : "Cassini Viewer";
+      ? appText.document_title_list()
+      : appText.document_title_default();
 
   onMount(async () => {
     window.addEventListener("popstate", handlePopState);
@@ -1571,7 +1574,7 @@
   <title>{documentTitle}</title>
   <meta
     name="description"
-    content="Static audio and transcript viewer for transcript.words.v1 meeting artifacts."
+    content={appText.meta_description()}
   />
 </svelte:head>
 
@@ -1723,7 +1726,7 @@
     </div>
 
     {#if importsOffered}
-      <aside class="import-sheet" class:import-sheet-closed={!importOpen} aria-label="Import meetings" inert={topLayer > 0}>
+      <aside class="import-sheet" class:import-sheet-closed={!importOpen} aria-label={appText.import_sheet_label()} inert={topLayer > 0}>
         <ImportPanel
           {dataProvider}
           open={importOpen}
@@ -1773,7 +1776,7 @@
         class="shell-scrim rail-scrim"
         tabindex="-1"
         inert={topLayer > 3}
-        aria-label="Close the room list"
+        aria-label={appText.close_room_list()}
         transition:fade={scrimFade()}
         on:click={() => (railOpen = false)}
       ></button>
@@ -1792,7 +1795,7 @@
         class="shell-scrim sheet-scrim"
         tabindex="-1"
         inert={topLayer > 1}
-        aria-label={selectedInsight ? "Close the insight" : "Close the meeting"}
+        aria-label={selectedInsight ? appText.close_insight() : appText.close_meeting()}
         transition:fade={scrimFade()}
         on:click={closeSheet}
       ></button>
@@ -1873,7 +1876,7 @@
         class="shell-scrim prepare-scrim"
         tabindex="-1"
         inert={topLayer > 2}
-        aria-label="Close Prepare"
+        aria-label={appText.close_prepare()}
         transition:fade={scrimFade()}
         on:click={() => (prepareOpen = false)}
       ></button>
@@ -1913,7 +1916,7 @@
         class="shell-scrim agent-scrim"
         tabindex="-1"
         inert={topLayer > 2}
-        aria-label="Close Connect an agent"
+        aria-label={appText.close_connect_agent()}
         on:click={() => (agentOpen = false)}
       ></button>
       <aside class="agent-sheet" inert={topLayer > 2} use:focusLayer transition:sheetSlide={{}}>
@@ -1937,10 +1940,12 @@
     {#if deleteConfirm}
       <ConfirmDialog
         title={deleteConfirm.length === 1
-          ? `Delete “${deleteConfirm[0].title}”?`
-          : `Delete ${deleteConfirm.length} meetings?`}
-        body="Deleting removes the recording, transcript and tags for everyone who can see it. This cannot be undone."
-        confirmLabel={deleteConfirm.length === 1 ? "Delete meeting" : `Delete ${deleteConfirm.length} meetings`}
+          ? appText.delete_confirm_title_one({ title: deleteConfirm[0].title })
+          : appText.delete_confirm_title_other({ count: deleteConfirm.length })}
+        body={appText.delete_confirm_body()}
+        confirmLabel={deleteConfirm.length === 1
+          ? appText.delete_confirm_button_one()
+          : appText.delete_confirm_button_other({ count: deleteConfirm.length })}
         busy={deleteBusy}
         on:cancel={() => (deleteConfirm = null)}
         on:confirm={confirmDeleteMeetings}

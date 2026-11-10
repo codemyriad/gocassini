@@ -1,7 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { Sun, Moon, Search, PanelLeft, Tag, Trash2, TriangleAlert, Users, X } from "@lucide/svelte";
-  import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
+  import { LL } from "../i18n";
+  import type { TagPick, VocabularyTag } from "../viewer/annotations";
   import { filterByTagLabel, wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
   import TagChip from "./tags/TagChip.svelte";
@@ -34,9 +35,9 @@
   function importedTitle(imported: { by?: string; atUtc?: string }): string {
     const by = imported.by?.trim() ?? "";
     const day = (imported.atUtc ?? "").slice(0, 10);
-    if (by && day) return `Imported by ${by} on ${day}`;
-    if (by) return `Imported by ${by}`;
-    return day ? `Imported on ${day}` : "Imported into this archive";
+    if (by && day) return text.imported_by_on({ name: by, date: day });
+    if (by) return text.imported_by({ name: by });
+    return day ? text.imported_on({ date: day }) : text.imported_here();
   }
 
   // Already narrowed to the selected room by the shell. The room filter is NOT
@@ -227,13 +228,14 @@
       localStorage.setItem(TAGS_SEARCHABLE_KEY, meetingTags.size > 0 ? "1" : "0");
     } catch {}
   }
+  $: searchLabels = text.search_label[kind];
   $: searchBoxLabel = searchOffered
     ? tagsSearchable
-      ? `Search ${matchNounPlural}, their tags and what was said in them`
-      : `Search ${matchNounPlural} and what was said in them`
+      ? searchLabels.said_and_tags()
+      : searchLabels.said()
     : tagsSearchable
-      ? `Search ${matchNounPlural} by name, date or tag`
-      : `Search ${matchNounPlural} by name or date`;
+      ? searchLabels.name_date_tag()
+      : searchLabels.name_date();
 
   $: localMatchIds = new Set([
     ...filterMeetingCatalogEntries(meetings, filter).map((meeting) => meeting.id),
@@ -268,7 +270,7 @@
     searchCoverage.searched >= searchCoverage.visible;
   $: searchProblem =
     searchState === "rateLimited" || searchState === "indexUnavailable" || searchState === "failed"
-      ? searchMessage || "Search is unavailable right now."
+      ? searchMessage || text.search_unavailable()
       : "";
   // Both kinds are narrowed by the same search box, and both counts are
   // computed whether or not their kind is being shown: the count is what
@@ -315,16 +317,22 @@
   // The empty state names what it looked for, so a list showing both kinds
   // does not report that no MEETING matched while an insight was hidden by the
   // same search.
-  $: matchNoun = insightsOnly
-    ? "insight"
-    : insightsOffered && types.insights
-      ? "meeting or insight"
-      : "meeting";
-  $: matchNounPlural = insightsOnly
-    ? "insights"
-    : insightsOffered && types.insights
-      ? "meetings or insights"
-      : "meetings";
+  $: kind = (insightsOnly ? "insights" : insightsOffered && types.insights ? "both" : "meetings") as
+    | "meetings"
+    | "insights"
+    | "both";
+  $: text = $LL.viewer.browse.meeting_list;
+  // The result line: "3 of 12 meetings" while something narrows the list, else the total.
+  $: meetingCountLine = narrowed
+    ? text.meetings_shown({ shown: visibleMeetings.length, total: totalCount })
+    : totalCount === 1
+      ? text.meetings_count_one()
+      : text.meetings_count_other({ count: totalCount });
+  $: insightCountLine = narrowed
+    ? text.insights_shown({ shown: visibleInsights.length, total: totalInsightCount })
+    : totalInsightCount === 1
+      ? text.insights_count_one()
+      : text.insights_count_other({ count: totalInsightCount });
   // The text filter is list-local by design, so the shell cannot compute what
   // the list is actually showing — and it has to, to say how many picked
   // meetings this narrowing hides (D-626). Reported rather than moved: the
@@ -343,7 +351,7 @@
 </script>
 
 <section
-  aria-label="Meeting list"
+  aria-label={text.list_label()}
   class="meeting-list flex flex-col min-w-0 min-h-0 h-full bg-base-100"
 >
   <header class="searchbar flex-none" class:searchbar-pending={!shown} class:searchbar-in={fadingIn}>
@@ -355,11 +363,15 @@
         type="button"
         class="rooms-button"
         on:click={() => dispatch("openRooms")}
-        aria-label="Choose a room"
+        aria-label={text.choose_room()}
       >
         <PanelLeft size={15} aria-hidden="true" />
         <span
-          >{selectedRoomName ?? "All"}{tagFilterCount > 0 ? ` · ${plural(tagFilterCount, "tag")}` : ""}</span
+          >{tagFilterCount === 0
+            ? (selectedRoomName ?? text.all_rooms_short())
+            : tagFilterCount === 1
+              ? text.room_button_tags_one({ room: selectedRoomName ?? text.all_rooms_short() })
+              : text.room_button_tags_other({ room: selectedRoomName ?? text.all_rooms_short(), count: tagFilterCount })}</span
         >
       </button>
 
@@ -375,12 +387,12 @@
           bind:value={filter}
         />
         {#if isSearching}
-          <span class="search-status" aria-live="polite">Searching…</span>
+          <span class="search-status" aria-live="polite">{text.searching()}</span>
         {/if}
         <!-- Our own, because the one the browser draws for type="search" is
              unthemeable: a blue gradient disc in the middle of a dark field. -->
         {#if trimmedFilter}
-          <button type="button" class="search-clear" aria-label="Clear search" on:click={() => (filter = "")}>
+          <button type="button" class="search-clear" aria-label={text.clear_search()} on:click={() => (filter = "")}>
             <X size={14} aria-hidden="true" />
           </button>
         {/if}
@@ -395,7 +407,7 @@
           <input
             type="checkbox"
             class="toggle toggle-xs rounded-lg text-base-content/80"
-            aria-label="Toggle light or dark theme"
+            aria-label={text.toggle_theme()}
             checked={themeMode === "saturn-dark"}
             on:change={() => dispatch("toggleTheme")}
           />
@@ -413,7 +425,7 @@
     <div class="resultline" role="status">
       {#if shown}
       {#if types.meetings}
-        <span>{isSearching ? "Finding matching meetings…" : narrowed ? `${visibleMeetings.length} of ${totalCount} meetings` : plural(totalCount, "meeting")}</span>
+        <span>{isSearching ? text.finding_meetings() : meetingCountLine}</span>
       {/if}
       <!-- A count once a listing has come back and there is something to
            count, the fact that it did not when it failed, and nothing at all
@@ -421,11 +433,11 @@
       {#if insightsOffered && insightsLoaded}
         {#if types.insights && totalInsightCount > 0}
           {#if types.meetings}<span class="rule" aria-hidden="true"></span>{/if}
-          <span>{narrowed ? `${visibleInsights.length} of ${totalInsightCount} insights` : plural(totalInsightCount, "insight")}</span>
+          <span>{insightCountLine}</span>
         {/if}
       {:else if insightsOffered && insightsError}
         <span class="rule" aria-hidden="true"></span>
-        <span>Insights could not be listed.</span>
+        <span>{text.insights_failed()}</span>
       {/if}
       {/if}
       {#if selectedRoomName !== null}
@@ -434,7 +446,7 @@
           <button
             type="button"
             on:click={() => dispatch("clearRoom")}
-            aria-label="Show every room"
+            aria-label={text.show_every_room()}
           >
             <X size={12} aria-hidden="true" />
           </button>
@@ -455,8 +467,8 @@
         </span>
       {:else if tagFilterCount > 0 && filterTags.length === 0}
         <span class="chip">
-          {plural(tagFilterCount, "tag")}
-          <button type="button" on:click={() => dispatch("clearTags")} aria-label="Clear tag filters">
+          {tagFilterCount === 1 ? text.tag_filter_count_one() : text.tag_filter_count_other({ count: tagFilterCount })}
+          <button type="button" on:click={() => dispatch("clearTags")} aria-label={text.clear_tag_filters()}>
             <X size={12} aria-hidden="true" />
           </button>
         </span>
@@ -464,13 +476,13 @@
       {#if trimmedFilter}
         <span class="chip">
           “{trimmedFilter}”
-          <button type="button" on:click={() => (filter = "")} aria-label="Clear search">
+          <button type="button" on:click={() => (filter = "")} aria-label={text.clear_search()}>
             <X size={12} aria-hidden="true" />
           </button>
         </span>
       {/if}
       {#if narrowed}
-        <button type="button" class="clear-filters" on:click={clearFilters}>Clear filters</button>
+        <button type="button" class="clear-filters" on:click={clearFilters}>{text.clear_filters()}</button>
       {/if}
     </div>
   </header>
@@ -487,7 +499,7 @@
     {#if insightsError}
       <p class="list-note list-note-error" role="status">
         <TriangleAlert size={14} aria-hidden="true" />
-        <span>Insights could not be listed.</span>
+        <span>{text.insights_failed()}</span>
       </p>
     {/if}
     {#if tagNotice}
@@ -496,9 +508,9 @@
         <span>
           {tagNotice}
           {#if tagRetryable}
-            <button type="button" class="link" on:click={() => dispatch("retryTag")}>Retry tag update</button>
+            <button type="button" class="link" on:click={() => dispatch("retryTag")}>{text.retry_tag_update()}</button>
           {:else}
-            <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+            <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>{text.dismiss()}</button>
           {/if}
         </span>
       </p>
@@ -509,9 +521,9 @@
         <span>
           {deleteNotice}
           {#if deleteRetryable}
-            <button type="button" class="link" on:click={() => dispatch("retryDelete")}>Retry delete</button>
+            <button type="button" class="link" on:click={() => dispatch("retryDelete")}>{text.retry_delete()}</button>
           {/if}
-          <button type="button" class="link" on:click={() => dispatch("dismissDeleteNotice")}>Dismiss</button>
+          <button type="button" class="link" on:click={() => dispatch("dismissDeleteNotice")}>{text.dismiss()}</button>
         </span>
       </p>
     {/if}
@@ -528,12 +540,12 @@
         <slot name="list-empty" />
       {:else}
       <div class="list-empty">
-        <strong>No meetings yet</strong>
-        <span>Recordings you publish from Talk show up here.</span>
+        <strong>{text.empty_title()}</strong>
+        <span>{text.empty_body()}</span>
         {#if importOffered}
           <span>
-            Moving from another Cassini?
-            <button type="button" class="link link-primary" on:click={() => dispatch("openImport")}>Import meetings</button>
+            {text.empty_import_lead()}
+            <button type="button" class="link link-primary" on:click={() => dispatch("openImport")}>{text.empty_import_link()}</button>
           </span>
         {/if}
       </div>
@@ -546,8 +558,8 @@
          room" way out of the room case. -->
     {:else if feedItems.length === 0 && insightsOnly && !trimmedFilter && selectedRoomName === null && insightsLoaded && !insightsError && totalInsightCount === 0}
       <div class="list-empty">
-        <strong>No insights yet</strong>
-        <span>Pick some meetings, ask one question of them, and the answer is kept here beside them.</span>
+        <strong>{text.no_insights_title()}</strong>
+        <span>{text.no_insights_body()}</span>
       </div>
       <!-- Everything the branch above will not claim. The last two arms are the
            states it is gated on: nothing is narrowing the list and it is still
@@ -556,55 +568,58 @@
            have none". -->
     {:else if feedItems.length === 0 && insightsOnly && !trimmedFilter && selectedRoomName === null && !insightsLoaded && !insightsError}
       <div class="list-empty">
-        <strong>Loading insights…</strong>
+        <strong>{text.loading_insights()}</strong>
       </div>
       <!-- Only while there is nothing else to show. Name, date and tag matches
            are already known, so they stay on screen while the transcript half
            of the question is out; the result line says it is still going. -->
     {:else if isSearching && types.meetings && feedItems.length === 0}
       <div class="list-empty" role="status">
-        <strong>Searching meetings…</strong>
-        <span>Looking for “{trimmedFilter}” in what was said.</span>
+        <strong>{text.searching_meetings()}</strong>
+        <span>{text.searching_said({ query: trimmedFilter })}</span>
       </div>
     {:else if feedItems.length === 0}
       <div class="list-empty">
-        <strong>{searchProblem && types.meetings ? "Search could not finish" : "Nothing matches"}</strong>
+        <strong>{searchProblem && types.meetings ? text.search_not_finished() : text.nothing_matches()}</strong>
         <span>
           {#if tagFilterCount > 0 && insightsOnly}
-            Insights carry no tags, so a tag filter hides them.
+            {text.insights_have_no_tags()}
           {:else if trimmedFilter && searchProblem && types.meetings}
             <!-- NOT "nothing matches", whatever else is narrowing the list: the
                  transcript half of the question was never answered, and saying
                  nothing matched would be a claim the search never got to make. -->
-            Names and dates match no {matchNoun}{tagFilterCount > 0 || selectedRoomName !== null
-              ? " here"
-              : ""}, and what was said could not be searched.
+            {tagFilterCount > 0 || selectedRoomName !== null
+              ? text.names_dates_no_match_here[kind]()
+              : text.names_dates_no_match[kind]()}
           {:else if tagFilterCount > 0}
-            No meeting here has {tagFilterCount === 1 ? "that tag" : "those tags"}{trimmedFilter
-              ? " and matches that search"
-              : ""}.
+            {tagFilterCount === 1
+              ? trimmedFilter
+                ? text.no_meeting_has_tag_and_search()
+                : text.no_meeting_has_tag()
+              : trimmedFilter
+                ? text.no_meeting_has_tags_and_search()
+                : text.no_meeting_has_tags()}
           {:else if selectedRoomName !== null && trimmedFilter}
-            No {matchNoun} in {selectedRoomName} matches that search.
+            {text.no_match_in_room[kind]({ room: selectedRoomName })}
           {:else if selectedRoomName !== null}
-            {selectedRoomName} has no {matchNounPlural}.
+            {text.room_has_none[kind]({ room: selectedRoomName })}
           {:else if trimmedFilter && !searchCoveredEverything}
-            No {matchNoun} matches that search — but only {searchCoverage?.searched}
-            of {searchCoverage?.visible} could be searched for what was said in them.
+            {text.no_match_partial[kind]({ searched: searchCoverage?.searched ?? 0, total: searchCoverage?.visible ?? 0 })}
           {:else if trimmedFilter}
-            No {matchNoun} matches that search.
+            {text.no_match[kind]()}
           {:else if insightsOnly && insightsError}
-            Insights could not be listed.
+            {text.insights_failed()}
           {:else}
-            There are no {matchNounPlural} to show.
+            {text.nothing_to_show[kind]()}
           {/if}
         </span>
         {#if tagFilterCount > 0}
           <button type="button" class="list-empty-action" on:click={() => dispatch("clearTags")}>
-            Clear tag filter
+            {text.clear_tag_filter()}
           </button>
         {:else if trimmedFilter}
           <button type="button" class="list-empty-action" on:click={() => (filter = "")}>
-            Clear search
+            {text.clear_search()}
           </button>
         {:else if selectedRoomName !== null}
           <button
@@ -612,7 +627,7 @@
             class="list-empty-action"
             on:click={() => dispatch("clearRoom")}
           >
-            Show every room
+            {text.show_every_room()}
           </button>
         {/if}
       </div>
@@ -659,7 +674,7 @@
                     type="checkbox"
                     class="cassini-check"
                     checked={pickedIds.has(meeting.id)}
-                    aria-label={`Select ${meeting.title}`}
+                    aria-label={text.select_meeting({ title: meeting.title })}
                     on:change={() => dispatch("pick", meeting)}
                   />
                 </label>
@@ -674,12 +689,12 @@
                   <span class="row-title">{meeting.title}</span>
                   <span class="row-meta">
                     <span>{formatMeetingStartWithDay(meeting)}</span>
-                    <span class="badge badge-ghost badge-xs">{meeting.meetingPath ? "Transcription only" : "Audio included"}</span>
+                    <span class="badge badge-ghost badge-xs">{meeting.meetingPath ? text.transcription_only() : text.audio_included()}</span>
                     {#if meeting.imported}
                       <span
                         class="badge badge-ghost badge-xs"
                         title={importedTitle(meeting.imported)}
-                      >Imported</span>
+                      >{text.imported_badge()}</span>
                     {/if}
                     {#if showRoom}
                       <span class="rule" aria-hidden="true"></span>
@@ -689,8 +704,8 @@
                       <span class="rule" aria-hidden="true"></span>
                       <span
                         class="row-speakers"
-                        title={plural(meeting.speakerCount, "speaker")}
-                        aria-label={plural(meeting.speakerCount, "speaker")}
+                        title={meeting.speakerCount === 1 ? text.speakers_one() : text.speakers_other({ count: meeting.speakerCount })}
+                        aria-label={meeting.speakerCount === 1 ? text.speakers_one() : text.speakers_other({ count: meeting.speakerCount })}
                       >
                         <Users size={12} aria-hidden="true" />{meeting.speakerCount}
                       </span>
@@ -716,8 +731,8 @@
                   class="row-tag"
                   aria-haspopup="dialog"
                   aria-expanded={tagging?.meeting.id === meeting.id}
-                  aria-label={`Tag ${meeting.title}`}
-                  title="Tag this meeting"
+                  aria-label={text.tag_meeting({ title: meeting.title })}
+                  title={text.tag_this_meeting()}
                   on:click={(event) => toggleTagging(meeting, event.currentTarget)}
                 >
                   <Tag size={16} aria-hidden="true" />
@@ -727,8 +742,8 @@
                 <button
                   type="button"
                   class="row-tag row-delete"
-                  aria-label={`Delete ${meeting.title}`}
-                  title="Delete this meeting"
+                  aria-label={text.delete_meeting({ title: meeting.title })}
+                  title={text.delete_this_meeting()}
                   on:click={() => dispatch("deleteMeeting", meeting)}
                 >
                   <Trash2 size={16} aria-hidden="true" />
@@ -757,12 +772,12 @@
                         })}
                     >
                       <span class="row-moment-at">{formatClockTime(moment.startMs)}</span>
-                      <span class="row-snippet">{moment.snippet || "matched here"}</span>
+                      <span class="row-snippet">{moment.snippet || text.matched_here()}</span>
                       {#if moment.matched === "alias"}
                         <!-- Finding "casino" is not the same as finding
                              "cassini", and a row that hides the difference is
                              lying by omission. -->
-                        <span class="row-moment-alias" title="Matched a known mistranscription">~</span>
+                        <span class="row-moment-alias" title={text.matched_alias()}>~</span>
                       {/if}
                     </button>
                   {/each}
@@ -774,7 +789,7 @@
       {/each}
       {#if feedItems.length > displayedFeedItems.length}
         <button type="button" class="list-empty-action" on:click={() => (displayLimit += 100)}>
-          Show more ({feedItems.length - displayedFeedItems.length} remaining)
+          {text.show_more({ count: feedItems.length - displayedFeedItems.length })}
         </button>
       {/if}
     {/if}
@@ -785,7 +800,7 @@
     {@const meeting = tagging.meeting}
     <TagPicker
       {tags}
-      label={`Tag ${meeting.title}`}
+      label={text.tag_meeting({ title: meeting.title })}
       multiple
       selected={wholeTagState(meetingTags, [meeting.id]).selected}
       anchor={tagging.anchor}
@@ -806,7 +821,7 @@
     <footer class="flex-none flex flex-col gap-3 px-4 py-4">
       <section class="alert alert-warning items-start">
         <div>
-          <h2 class="text-xs font-bold uppercase tracking-widest mb-1">Load note</h2>
+          <h2 class="text-xs font-bold uppercase tracking-widest mb-1">{text.load_note()}</h2>
           <p>{errorMessage}</p>
         </div>
       </section>

@@ -1,3 +1,6 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 import { dateFormat } from "../i18n/format";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import {
@@ -113,9 +116,7 @@ export async function loadMeetingCatalog(
     if (response.status === 404) {
       return null;
     }
-    throw new Error(
-      `Could not load the meeting list (HTTP ${response.status}).`,
-    );
+    throw new Error(get(LL).viewer.browse.catalog.load_failed({ status: response.status }));
   }
   return materializeCatalog(await response.json(), response.url);
 }
@@ -214,7 +215,7 @@ async function meetingsListErrorMessage(response: Response): Promise<string> {
     // A non-JSON body (a proxy error page, a truncated response) is not worth
     // reporting verbatim; fall through to the status.
   }
-  return `Could not load the meeting list (HTTP ${response.status}).`;
+  return get(LL).viewer.browse.catalog.load_failed({ status: response.status });
 }
 
 export function validateMeetingCatalog(value: unknown): MeetingCatalog {
@@ -450,10 +451,11 @@ export function formatMeetingDate(dateLabel: string): string {
 // recording never reads as an empty one.
 export function formatMeetingDuration(durationMs: number): string {
   const minutes = Math.max(1, Math.round(durationMs / 60000));
+  const text = get(LL).viewer.browse.meeting_list;
   if (minutes < 60) {
-    return `${minutes}m`;
+    return text.duration_minutes({ minutes });
   }
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return text.duration_hours({ hours: Math.floor(minutes / 60), minutes: minutes % 60 });
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

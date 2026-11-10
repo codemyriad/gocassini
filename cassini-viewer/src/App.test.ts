@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "./i18n";
 
 import appSource from "./App.svelte?raw";
 
@@ -84,7 +87,8 @@ describe("the shell's insight rename", () => {
 
   it("says, rather than swallows, a rename asked while another is saving", () => {
     expect(appSource).toContain('if (renamingInsightId !== "") {');
-    expect(appSource).toContain("Another rename is still saving. Try again in a moment.");
+    expect(appSource).toContain("message: get(LL).viewer.browse.app.insight_rename_busy() };");
+    expect(get(LL).viewer.browse.app.insight_rename_busy()).toBe("Another rename is still saving. Try again in a moment.");
   });
 
   it("keeps a refusal only while the sheet it was shown in is open", () => {

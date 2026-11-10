@@ -1,3 +1,9 @@
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
+
+const MAX_ROOM_NAME_LENGTH = 200;
+
 export interface RoomNameState {
   roomId: string;
   displayName: string;
@@ -14,7 +20,8 @@ export class RoomNameError extends Error {
 }
 
 export function validateRoomName(name: string): string | null {
-  if (/[\u0000-\u001f\u007f-\u009f]/u.test(name)) return "Use a name without control characters.";
+  const text = get(LL).viewer.browse.room_name;
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(name)) return text.invalid_characters();
   const length = [...name.trim()].length;
-  return length < 1 || length > 200 ? "Use a name between 1 and 200 characters." : null;
+  return length < 1 || length > MAX_ROOM_NAME_LENGTH ? text.invalid_length({ max: MAX_ROOM_NAME_LENGTH }) : null;
 }
