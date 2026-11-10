@@ -40,7 +40,8 @@
     "demo:embed": "node ./scripts/serve-embed-demo.mjs",
     "i18n": "typesafe-i18n",
     "i18n:generate": "typesafe-i18n --no-watch",
-    "i18n:sync": "node --experimental-strip-types --no-warnings scripts/i18n-sync.mjs"
+    "i18n:sync": "node --experimental-strip-types --no-warnings scripts/i18n-sync.mjs",
+    "i18n:explain": "node scripts/i18n-explain.mjs"
   },
   "devDependencies": {
     "@lucide/svelte": "^1.11.0",
