@@ -224,7 +224,7 @@
                   type="button"
                   class="btn btn-sm"
                   disabled={busy}
-                  aria-label={$LL.app.shell.sharing_notice.accept_row_aria({ title: pendingRowTitle(entry) })}
+                  aria-label={$LL.app.shell.sharing_notice.accept_row_label({ title: pendingRowTitle(entry) })}
                   on:click={() => acceptRows([entry])}
                 >
                   {#if rowBusy(entry, inFlight) && !acceptingAll}
@@ -265,7 +265,7 @@
                     type="button"
                     class="btn btn-sm"
                     disabled={dismissing.size > 0}
-                    aria-label={$LL.app.shell.sharing_notice.dismiss_row_aria({ label: noticeRowLabel(entry) })}
+                    aria-label={$LL.app.shell.sharing_notice.dismiss_row_label({ label: noticeRowLabel(entry) })}
                     on:click={() => dismissRows([entry.jobId])}
                   >
                     {#if dismissing.has(entry.jobId) && dismissing.size === 1}
@@ -304,7 +304,7 @@
                 type="button"
                 class="btn btn-ghost btn-xs btn-square"
                 title={dismissLabel()}
-                aria-label={$LL.app.shell.sharing_notice.dismiss_notice_aria({ title: kind.title(entry) })}
+                aria-label={$LL.app.shell.sharing_notice.dismiss_notice_label({ title: kind.title(entry) })}
                 disabled={dismissing.size > 0}
                 on:click={() => dismissRows([entry.jobId])}
               >

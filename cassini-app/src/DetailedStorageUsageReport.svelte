@@ -136,7 +136,7 @@
           {#each rows as category (category.id)}
             {@const info = presentation(category.id)}
             {#if category.id === "history"}
-              <button type="button" class="comparison-row" aria-expanded={splitHistory} on:click={() => splitHistory = !splitHistory} aria-label={$LL.app.operator.storage.report.row_aria({ category: info.label, size: formatStorageBytes(category.bytes) })}>
+              <button type="button" class="comparison-row" aria-expanded={splitHistory} on:click={() => splitHistory = !splitHistory} aria-label={$LL.app.operator.storage.report.row_label({ category: info.label, size: formatStorageBytes(category.bytes) })}>
                 <span class="category-label">{info.label} <span class="expand-sign" aria-hidden="true">{splitHistory ? "−" : "+"}</span></span>
                 <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? category.bytes / largest * 100 : 0}%`} style:background={info.color}></span></span>
                 <strong>{formatStorageBytes(category.bytes)}</strong>
@@ -144,7 +144,7 @@
               {#if splitHistory}
                 {#each kinds as kind (kind.id)}
                   {@const kindInfo = presentation(kind.id)}
-                  <button type="button" class="comparison-row kind-row" on:click={() => openCategory(kind.id)} aria-label={$LL.app.operator.storage.report.explore_aria({ category: kindInfo.label, size: formatStorageBytes(kind.bytes) })}>
+                  <button type="button" class="comparison-row kind-row" on:click={() => openCategory(kind.id)} aria-label={$LL.app.operator.storage.report.explore_label({ category: kindInfo.label, size: formatStorageBytes(kind.bytes) })}>
                     <span class="category-label">{kindInfo.label}</span>
                     <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? kind.bytes / largest * 100 : 0}%`} style:background={kindInfo.color}></span></span>
                     <strong>{formatStorageBytes(kind.bytes)}</strong>
@@ -152,7 +152,7 @@
                 {/each}
               {/if}
             {:else}
-              <button type="button" class="comparison-row" on:click={() => openCategory(category.id)} aria-label={$LL.app.operator.storage.report.explore_aria({ category: info.label, size: formatStorageBytes(category.bytes) })}>
+              <button type="button" class="comparison-row" on:click={() => openCategory(category.id)} aria-label={$LL.app.operator.storage.report.explore_label({ category: info.label, size: formatStorageBytes(category.bytes) })}>
                 <span class="category-label">{info.label}</span>
                 <span class="comparison-track" aria-hidden="true"><span style:width={`${largest > 0 ? category.bytes / largest * 100 : 0}%`} style:background={info.color}></span></span>
                 <strong>{category.id === "published" && publishedPartial ? `${$LL.app.operator.storage.report.partial_prefix()} · ` : ""}{formatStorageBytes(category.bytes)}</strong>

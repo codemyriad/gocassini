@@ -1437,7 +1437,7 @@
         {#if isDesktop || !selectedJobId}
         <section class="flex min-w-0 flex-col overflow-hidden">
           <header class="op-pane-head flex min-h-14 items-center justify-between gap-3 px-4 py-3 @min-[981px]:h-14">
-            <h2 class="font-semibold">{$LL.app.operator.console.list_title()}</h2>
+            <h2 class="font-semibold">{$LL.app.operator.console.list_heading()}</h2>
             <button class="icon-btn" on:click={refreshJobs} type="button" aria-label={$LL.app.operator.console.refresh_jobs()}>
               <RefreshCw size={16} aria-hidden="true" />
             </button>
@@ -1549,7 +1549,7 @@
                 </button>
               {/if}
               <div class="min-w-0 @min-[981px]:flex @min-[981px]:items-center @min-[981px]:gap-2">
-                <h2 class="truncate font-semibold @min-[981px]:shrink-0">{$LL.app.operator.console.detail_title()}</h2>
+                <h2 class="truncate font-semibold @min-[981px]:shrink-0">{$LL.app.operator.console.detail_heading()}</h2>
                 <p class="truncate text-xs text-base-content/60 @min-[981px]:min-w-0">
                   {$LL.app.operator.console.detail_subtitle()}
                 </p>

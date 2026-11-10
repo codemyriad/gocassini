@@ -453,8 +453,8 @@ const operator = {
       by_type: "By type",
       by_date: "By date",
       // {category}: a category name. {size}: e.g. "1.5 GB".
-      row_aria: "{category}: {size}",
-      explore_aria: "Explore {category}: {size}",
+      row_label: "{category}: {size}",
+      explore_label: "Explore {category}: {size}",
       // Before a size that is incomplete: "Partial · 1.5 GB".
       partial_prefix: "Partial",
       partial_category: "Partial result: some files could not be measured or dated.",
@@ -463,15 +463,15 @@ const operator = {
     chart: {
       range_label: "Time range",
       // {category}: the chart's category name, e.g. "Recordings".
-      range_aria: "{category} time range",
+      range_select_label: "{category} time range",
       range_all: "All time",
       range_last_days: "Last {count} days",
       range_last_year: "Last year",
       range_custom: "Custom range",
       from: "From",
       through: "Through",
-      from_aria: "{category} from date",
-      through_aria: "{category} through date",
+      from_label: "{category} from date",
+      through_label: "{category} through date",
       // {size}: e.g. "1.5 GB".
       undated_one: "{size} in 1 file without a known date. Included in the total, not in the chart.",
       undated_other: "{size} in {count} files without a known date. Included in the total, not in the chart.",
@@ -487,10 +487,10 @@ const operator = {
       empty_range: "No retained bytes in this date range. Try a wider range.",
       scroll_earlier: "Earlier",
       scroll_later: "Later",
-      scroll_earlier_aria: "Scroll {category} earlier",
-      scroll_later_aria: "Scroll {category} later",
+      scroll_earlier_label: "Scroll {category} earlier",
+      scroll_later_label: "Scroll {category} later",
       scroll_hint: "Scroll left or right to explore all {count} bars.",
-      plot_aria: "{category} usage by date",
+      plot_label: "{category} usage by date",
       // A short label on the chart's cleanup line.
       cutoff_marker: "removed at next cleanup",
       // {date}: the cutoff date. {days}: the retention policy in days.
@@ -498,7 +498,7 @@ const operator = {
       files_one: "1 file",
       files_other: "{count} files",
       // {range}: a date or range. {size}: e.g. "1.5 GB". {files}: "1 file" or "3 files".
-      bar_aria: "{range}: {size}, {files}",
+      bar_label: "{range}: {size}, {files}",
       bar_hint: "Hover, focus or tap a bar for its dates and exact usage.",
       data_summary: "View chart data",
       data_caption_lifecycle: "{category} · bytes by UTC lifecycle date",
@@ -661,7 +661,7 @@ const operator = {
     start_recording: "Start recording",
     meeting_url_required: "Meeting URL is required.",
     // The run list.
-    list_title: "Recordings",
+    list_heading: "Recordings",
     refresh_jobs: "Refresh jobs",
     loading_jobs: "Loading jobs…",
     empty_title: "No recordings yet",
@@ -750,7 +750,7 @@ const operator = {
     not_available: "Not available",
     // The run detail.
     back_to_recordings: "Back to recordings",
-    detail_title: "Run detail",
+    detail_heading: "Run detail",
     detail_subtitle: "Status and history for the selected recording",
     stopping: "Stopping…",
     stop: "Stop",

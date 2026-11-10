@@ -111,7 +111,7 @@ const shell = {
     accept: "Accept",
     accept_all: "Accept all {count}",
     // {title}: the recording's title, or its date.
-    accept_row_aria: "Accept {title}",
+    accept_row_label: "Accept {title}",
     why_accept:
       "Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.",
     accept_refused: "Nextcloud did not accept this share.",
@@ -150,9 +150,9 @@ const shell = {
     a_recording: "A recording",
     dismiss_all: "Dismiss all",
     // {label}: the room or title, and the date.
-    dismiss_row_aria: "Dismiss {label}",
+    dismiss_row_label: "Dismiss {label}",
     // {title}: the notice's sentence.
-    dismiss_notice_aria: "Dismiss: {title}",
+    dismiss_notice_label: "Dismiss: {title}",
     // {link} becomes a link whose text is send_link; it opens the app.
     admin_fix: "An administrator can fix that: {link}.",
     send_link: "send them this link",

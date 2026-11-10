@@ -464,7 +464,7 @@ export type NamespaceAppTranslation = {
 			 * A​c​c​e​p​t​ ​{​t​i​t​l​e​}
 			 * @param {unknown} title
 			 */
-			accept_row_aria: RequiredParams<'title'>
+			accept_row_label: RequiredParams<'title'>
 			/**
 			 * W​h​y​?​ ​Y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​c​c​e​p​t​s​ ​s​h​a​r​e​d​ ​f​i​l​e​s​ ​b​y​ ​h​a​n​d​ ​(​P​e​r​s​o​n​a​l​ ​s​e​t​t​i​n​g​s​ ​›​ ​S​h​a​r​i​n​g​)​,​ ​o​r​ ​t​h​i​s​ ​s​e​r​v​e​r​ ​a​s​k​s​ ​e​v​e​r​y​o​n​e​ ​t​o​.​ ​C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​a​c​c​e​p​t​s​ ​f​o​r​ ​y​o​u​.
 			 */
@@ -589,12 +589,12 @@ export type NamespaceAppTranslation = {
 			 * D​i​s​m​i​s​s​ ​{​l​a​b​e​l​}
 			 * @param {unknown} label
 			 */
-			dismiss_row_aria: RequiredParams<'label'>
+			dismiss_row_label: RequiredParams<'label'>
 			/**
 			 * D​i​s​m​i​s​s​:​ ​{​t​i​t​l​e​}
 			 * @param {unknown} title
 			 */
-			dismiss_notice_aria: RequiredParams<'title'>
+			dismiss_notice_label: RequiredParams<'title'>
 			/**
 			 * A​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​a​n​ ​f​i​x​ ​t​h​a​t​:​ ​{​l​i​n​k​}​.
 			 * @param {unknown} link
@@ -1829,13 +1829,13 @@ export type NamespaceAppTranslation = {
 				 * @param {unknown} category
 				 * @param {unknown} size
 				 */
-				row_aria: RequiredParams<'category' | 'size'>
+				row_label: RequiredParams<'category' | 'size'>
 				/**
 				 * E​x​p​l​o​r​e​ ​{​c​a​t​e​g​o​r​y​}​:​ ​{​s​i​z​e​}
 				 * @param {unknown} category
 				 * @param {unknown} size
 				 */
-				explore_aria: RequiredParams<'category' | 'size'>
+				explore_label: RequiredParams<'category' | 'size'>
 				/**
 				 * P​a​r​t​i​a​l
 				 */
@@ -1858,7 +1858,7 @@ export type NamespaceAppTranslation = {
 				 * {​c​a​t​e​g​o​r​y​}​ ​t​i​m​e​ ​r​a​n​g​e
 				 * @param {unknown} category
 				 */
-				range_aria: RequiredParams<'category'>
+				range_select_label: RequiredParams<'category'>
 				/**
 				 * A​l​l​ ​t​i​m​e
 				 */
@@ -1888,12 +1888,12 @@ export type NamespaceAppTranslation = {
 				 * {​c​a​t​e​g​o​r​y​}​ ​f​r​o​m​ ​d​a​t​e
 				 * @param {unknown} category
 				 */
-				from_aria: RequiredParams<'category'>
+				from_label: RequiredParams<'category'>
 				/**
 				 * {​c​a​t​e​g​o​r​y​}​ ​t​h​r​o​u​g​h​ ​d​a​t​e
 				 * @param {unknown} category
 				 */
-				through_aria: RequiredParams<'category'>
+				through_label: RequiredParams<'category'>
 				/**
 				 * {​s​i​z​e​}​ ​i​n​ ​1​ ​f​i​l​e​ ​w​i​t​h​o​u​t​ ​a​ ​k​n​o​w​n​ ​d​a​t​e​.​ ​I​n​c​l​u​d​e​d​ ​i​n​ ​t​h​e​ ​t​o​t​a​l​,​ ​n​o​t​ ​i​n​ ​t​h​e​ ​c​h​a​r​t​.
 				 * @param {unknown} size
@@ -1950,12 +1950,12 @@ export type NamespaceAppTranslation = {
 				 * S​c​r​o​l​l​ ​{​c​a​t​e​g​o​r​y​}​ ​e​a​r​l​i​e​r
 				 * @param {unknown} category
 				 */
-				scroll_earlier_aria: RequiredParams<'category'>
+				scroll_earlier_label: RequiredParams<'category'>
 				/**
 				 * S​c​r​o​l​l​ ​{​c​a​t​e​g​o​r​y​}​ ​l​a​t​e​r
 				 * @param {unknown} category
 				 */
-				scroll_later_aria: RequiredParams<'category'>
+				scroll_later_label: RequiredParams<'category'>
 				/**
 				 * S​c​r​o​l​l​ ​l​e​f​t​ ​o​r​ ​r​i​g​h​t​ ​t​o​ ​e​x​p​l​o​r​e​ ​a​l​l​ ​{​c​o​u​n​t​}​ ​b​a​r​s​.
 				 * @param {unknown} count
@@ -1965,7 +1965,7 @@ export type NamespaceAppTranslation = {
 				 * {​c​a​t​e​g​o​r​y​}​ ​u​s​a​g​e​ ​b​y​ ​d​a​t​e
 				 * @param {unknown} category
 				 */
-				plot_aria: RequiredParams<'category'>
+				plot_label: RequiredParams<'category'>
 				/**
 				 * r​e​m​o​v​e​d​ ​a​t​ ​n​e​x​t​ ​c​l​e​a​n​u​p
 				 */
@@ -1991,7 +1991,7 @@ export type NamespaceAppTranslation = {
 				 * @param {unknown} range
 				 * @param {unknown} size
 				 */
-				bar_aria: RequiredParams<'files' | 'range' | 'size'>
+				bar_label: RequiredParams<'files' | 'range' | 'size'>
 				/**
 				 * H​o​v​e​r​,​ ​f​o​c​u​s​ ​o​r​ ​t​a​p​ ​a​ ​b​a​r​ ​f​o​r​ ​i​t​s​ ​d​a​t​e​s​ ​a​n​d​ ​e​x​a​c​t​ ​u​s​a​g​e​.
 				 */
@@ -2446,7 +2446,7 @@ export type NamespaceAppTranslation = {
 			/**
 			 * R​e​c​o​r​d​i​n​g​s
 			 */
-			list_title: string
+			list_heading: string
 			/**
 			 * R​e​f​r​e​s​h​ ​j​o​b​s
 			 */
@@ -2703,7 +2703,7 @@ export type NamespaceAppTranslation = {
 			/**
 			 * R​u​n​ ​d​e​t​a​i​l
 			 */
-			detail_title: string
+			detail_heading: string
 			/**
 			 * S​t​a​t​u​s​ ​a​n​d​ ​h​i​s​t​o​r​y​ ​f​o​r​ ​t​h​e​ ​s​e​l​e​c​t​e​d​ ​r​e​c​o​r​d​i​n​g
 			 */
@@ -8442,7 +8442,7 @@ export type TranslationFunctions = {
 				/**
 				 * Accept {title}
 				 */
-				accept_row_aria: (arg: { title: unknown }) => LocalizedString
+				accept_row_label: (arg: { title: unknown }) => LocalizedString
 				/**
 				 * Why? Your account accepts shared files by hand (Personal settings › Sharing), or this server asks everyone to. Cassini never accepts for you.
 				 */
@@ -8554,11 +8554,11 @@ export type TranslationFunctions = {
 				/**
 				 * Dismiss {label}
 				 */
-				dismiss_row_aria: (arg: { label: unknown }) => LocalizedString
+				dismiss_row_label: (arg: { label: unknown }) => LocalizedString
 				/**
 				 * Dismiss: {title}
 				 */
-				dismiss_notice_aria: (arg: { title: unknown }) => LocalizedString
+				dismiss_notice_label: (arg: { title: unknown }) => LocalizedString
 				/**
 				 * An administrator can fix that: {link}.
 				 */
@@ -9709,11 +9709,11 @@ export type TranslationFunctions = {
 					/**
 					 * {category}: {size}
 					 */
-					row_aria: (arg: { category: unknown, size: unknown }) => LocalizedString
+					row_label: (arg: { category: unknown, size: unknown }) => LocalizedString
 					/**
 					 * Explore {category}: {size}
 					 */
-					explore_aria: (arg: { category: unknown, size: unknown }) => LocalizedString
+					explore_label: (arg: { category: unknown, size: unknown }) => LocalizedString
 					/**
 					 * Partial
 					 */
@@ -9735,7 +9735,7 @@ export type TranslationFunctions = {
 					/**
 					 * {category} time range
 					 */
-					range_aria: (arg: { category: unknown }) => LocalizedString
+					range_select_label: (arg: { category: unknown }) => LocalizedString
 					/**
 					 * All time
 					 */
@@ -9763,11 +9763,11 @@ export type TranslationFunctions = {
 					/**
 					 * {category} from date
 					 */
-					from_aria: (arg: { category: unknown }) => LocalizedString
+					from_label: (arg: { category: unknown }) => LocalizedString
 					/**
 					 * {category} through date
 					 */
-					through_aria: (arg: { category: unknown }) => LocalizedString
+					through_label: (arg: { category: unknown }) => LocalizedString
 					/**
 					 * {size} in 1 file without a known date. Included in the total, not in the chart.
 					 */
@@ -9819,11 +9819,11 @@ export type TranslationFunctions = {
 					/**
 					 * Scroll {category} earlier
 					 */
-					scroll_earlier_aria: (arg: { category: unknown }) => LocalizedString
+					scroll_earlier_label: (arg: { category: unknown }) => LocalizedString
 					/**
 					 * Scroll {category} later
 					 */
-					scroll_later_aria: (arg: { category: unknown }) => LocalizedString
+					scroll_later_label: (arg: { category: unknown }) => LocalizedString
 					/**
 					 * Scroll left or right to explore all {count} bars.
 					 */
@@ -9831,7 +9831,7 @@ export type TranslationFunctions = {
 					/**
 					 * {category} usage by date
 					 */
-					plot_aria: (arg: { category: unknown }) => LocalizedString
+					plot_label: (arg: { category: unknown }) => LocalizedString
 					/**
 					 * removed at next cleanup
 					 */
@@ -9851,7 +9851,7 @@ export type TranslationFunctions = {
 					/**
 					 * {range}: {size}, {files}
 					 */
-					bar_aria: (arg: { files: unknown, range: unknown, size: unknown }) => LocalizedString
+					bar_label: (arg: { files: unknown, range: unknown, size: unknown }) => LocalizedString
 					/**
 					 * Hover, focus or tap a bar for its dates and exact usage.
 					 */
@@ -10284,7 +10284,7 @@ export type TranslationFunctions = {
 				/**
 				 * Recordings
 				 */
-				list_title: () => LocalizedString
+				list_heading: () => LocalizedString
 				/**
 				 * Refresh jobs
 				 */
@@ -10530,7 +10530,7 @@ export type TranslationFunctions = {
 				/**
 				 * Run detail
 				 */
-				detail_title: () => LocalizedString
+				detail_heading: () => LocalizedString
 				/**
 				 * Status and history for the selected recording
 				 */

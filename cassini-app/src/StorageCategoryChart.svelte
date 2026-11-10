@@ -55,7 +55,7 @@
 <div class="category-chart" style:--chart-color={color}>
   <div class="controls">
     <label>{$LL.app.operator.storage.chart.range_label()}
-      <select class="select select-bordered" aria-label={$LL.app.operator.storage.chart.range_aria({ category: label })} bind:value={range}>
+      <select class="select select-bordered" aria-label={$LL.app.operator.storage.chart.range_select_label({ category: label })} bind:value={range}>
         <option value="all">{$LL.app.operator.storage.chart.range_all()}</option>
         <option value="7">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(7) })}</option><option value="30">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(30) })}</option>
         <option value="90">{$LL.app.operator.storage.chart.range_last_days({ count: formatCount(90) })}</option><option value="365">{$LL.app.operator.storage.chart.range_last_year()}</option>
@@ -63,8 +63,8 @@
       </select>
     </label>
     {#if range === "custom"}
-      <label>{$LL.app.operator.storage.chart.from()}<input class="input input-bordered" aria-label={$LL.app.operator.storage.chart.from_aria({ category: label })} type="date" bind:value={from} /></label>
-      <label>{$LL.app.operator.storage.chart.through()}<input class="input input-bordered" aria-label={$LL.app.operator.storage.chart.through_aria({ category: label })} type="date" bind:value={to} /></label>
+      <label>{$LL.app.operator.storage.chart.from()}<input class="input input-bordered" aria-label={$LL.app.operator.storage.chart.from_label({ category: label })} type="date" bind:value={from} /></label>
+      <label>{$LL.app.operator.storage.chart.through()}<input class="input input-bordered" aria-label={$LL.app.operator.storage.chart.through_label({ category: label })} type="date" bind:value={to} /></label>
     {/if}
   </div>
   {#if category.undated_files > 0}
@@ -79,15 +79,15 @@
     {#if rangeBytes === 0}<p class="chart-message">{$LL.app.operator.storage.chart.empty_range()}</p>{/if}
     {#if canScrollEarlier || canScrollLater}
       <div class="timeline-navigation">
-        <button class="op-btn" type="button" aria-label={$LL.app.operator.storage.chart.scroll_earlier_aria({ category: label })} disabled={!canScrollEarlier} on:click={() => scrollTimeline(-1)}>← {$LL.app.operator.storage.chart.scroll_earlier()}</button>
+        <button class="op-btn" type="button" aria-label={$LL.app.operator.storage.chart.scroll_earlier_label({ category: label })} disabled={!canScrollEarlier} on:click={() => scrollTimeline(-1)}>← {$LL.app.operator.storage.chart.scroll_earlier()}</button>
         <span>{$LL.app.operator.storage.chart.scroll_hint({ count: count(result.buckets.length) })}</span>
-        <button class="op-btn" type="button" aria-label={$LL.app.operator.storage.chart.scroll_later_aria({ category: label })} disabled={!canScrollLater} on:click={() => scrollTimeline(1)}>{$LL.app.operator.storage.chart.scroll_later()} →</button>
+        <button class="op-btn" type="button" aria-label={$LL.app.operator.storage.chart.scroll_later_label({ category: label })} disabled={!canScrollLater} on:click={() => scrollTimeline(1)}>{$LL.app.operator.storage.chart.scroll_later()} →</button>
       </div>
     {/if}
     <div class="plot" class:marked={cutoffIndex >= 0}>
       <div class="y-axis" aria-hidden="true"><span>{formatStorageBytes(maximum)}</span><span>{formatStorageBytes(maximum / 2)}</span><span>0 B</span></div>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (The scroll region needs keyboard focus for native arrow-key scrolling.) -->
-      <div class="plot-scroll" use:trackScroll role="region" tabindex="0" aria-label={$LL.app.operator.storage.chart.plot_aria({ category: label })}>
+      <div class="plot-scroll" use:trackScroll role="region" tabindex="0" aria-label={$LL.app.operator.storage.chart.plot_label({ category: label })}>
         <div class="chart-timeline" style:min-width={`${Math.max(240,result.buckets.length*14)}px`}>
         {#if cutoffIndex >= 0}
           <div class="cutoff-marker" class:flip={markerLeft < 0.3} aria-hidden="true"
@@ -98,7 +98,7 @@
         <div class="bars">
           {#each result.buckets as bucket, index (bucket.from)}
             <button type="button" class="bar-target" class:active={selected === index} class:removed={!!cutoff && bucket.from <= cutoff}
-              aria-label={$LL.app.operator.storage.chart.bar_aria({ range: bucketLabel(bucket), size: formatStorageBytes(bucket.bytes), files: bucket.files === 1 ? $LL.app.operator.storage.chart.files_one() : $LL.app.operator.storage.chart.files_other({ count: count(bucket.files) }) })}
+              aria-label={$LL.app.operator.storage.chart.bar_label({ range: bucketLabel(bucket), size: formatStorageBytes(bucket.bytes), files: bucket.files === 1 ? $LL.app.operator.storage.chart.files_one() : $LL.app.operator.storage.chart.files_other({ count: count(bucket.files) }) })}
               title={`${bucketLabel(bucket)} · ${formatStorageBytes(bucket.bytes)} · ${bucket.files === 1 ? $LL.app.operator.storage.chart.files_one() : $LL.app.operator.storage.chart.files_other({ count: count(bucket.files) })}`}
               on:focus={() => selected = index} on:mouseenter={() => selected = index} on:click={() => selected = index}>
               <span class="bar" class:empty={bucket.bytes === 0} style:height={`${maximum > 0 ? Math.max(bucket.bytes > 0 ? 1 : 0, bucket.bytes / maximum * 100) : 0}%`}></span>
