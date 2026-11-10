@@ -630,7 +630,7 @@
         type="button"
         class="cassini-shell-nav-close"
         tabindex="-1"
-        aria-label={$LL.app.shell.app.close_overlay()}
+        aria-label={$LL.common.action.close()}
         on:click={() => viewerApp?.closeOverlay()}
       ></button>
     {/if}
@@ -655,7 +655,7 @@
         aria-current={surface === "operator" ? "page" : undefined}
         on:click={() => selectSurface("operator")}
       >
-        {$LL.app.shell.app.tab_operator()}
+        {$LL.common.place.operator()}
       </button>
     </nav>
 

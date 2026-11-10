@@ -119,11 +119,11 @@ const operator = {
   // SetupNotice.svelte and buildSetupNotice (operator/setupHealth.ts): the
   // strip above Browse's meeting list when recordings cannot be saved.
   setup_notice: {
-    try_again: "Try again",
     checking: "Checking…",
     show_details: "Show details",
     details_heading: "Details for administrators",
-    open_publish_pipeline: "Open Operator › Publish pipeline",
+    // A link. {place} is the path to a settings page, "Operator › Publish pipeline".
+    open_publish_pipeline: "Open {place}",
     title_failing: "Cassini can't save recordings right now",
     title_unchecked: "Cassini hasn't checked that it can save recordings",
     summary_failing: "You can still browse recordings. Calls will still run, but their recordings will fail until this is fixed.",
@@ -131,7 +131,8 @@ const operator = {
     // Shown to someone who is not an administrator, above the app's address.
     share_label: "Send this link to an administrator for setup instructions.",
     step_rerun_setup: "Re-run Cassini's setup by disabling and enabling the app",
-    step_open_settings: "Open Operator › Publish pipeline to check the recordings account",
+    // {place}: as open_publish_pipeline.
+    step_open_settings: "Open {place} to check the recordings account",
     // {user}: the account name, "cassini".
     step_create_account: "Create the {user} account in Nextcloud",
     // {variable}: an environment variable name, CASSINI_NC_ADMIN_USER.
@@ -156,7 +157,8 @@ const operator = {
     summaries_summary: "Summaries need an AI endpoint and the summarise step switched on.",
     summaries_summary_ask_admin:
       "Summaries need an AI endpoint and the summarise step switched on. Ask a Nextcloud administrator.",
-    action: "Open AI providers",
+    // A button. {place} is the section's name, "AI providers".
+    action: "Open {place}",
     // A narrow button; the same words as the button on the AI providers panel.
     action_short: "Add a provider",
     insights_action_title: "Add a provider to create insights",
@@ -178,7 +180,7 @@ const operator = {
     summary: {
       template_fallback: "Summarised with the built-in template: the configured summary template could not run",
       template_fallback_hint:
-        "The build log says why. Fix the template in Insight templates, or choose another one for summaries in Settings.",
+        "The build log says why. Fix the template in {templates}, or choose another one for summaries in {pipeline}.",
       failed: "No summary: the summary could not be generated",
       failed_hint: "The build log has the language model's error.",
       disabled: "No summary: summaries are turned off",
@@ -647,7 +649,6 @@ const operator = {
     waiting_title: "This recording is waiting for you",
     // Stands in for a recording with no title and no date.
     a_recording: "A recording",
-    dismiss: "Dismiss",
     dismiss_all: "Dismiss all",
     // {label}: the room or title, and the date.
     dismiss_row_aria: "Dismiss {label}",
@@ -668,7 +669,6 @@ const operator = {
     intro: "What Cassini needs to record and search meetings, and what to do when something needs attention.",
     refresh_failed: "Couldn’t refresh the checks",
     trying: "Trying…",
-    try_again: "Try again",
     // {age}: how long ago, e.g. "6 minutes ago" or "just now".
     last_checked: "Last checked {age}",
     checked: "Checked {age}",
@@ -700,7 +700,6 @@ const operator = {
     test_picks_up: "Cassini picks the recording up by itself, so there is no need to reload this page.",
     reindex_updates: "This row updates by itself when re-indexing finishes, so there is no need to reload this page.",
     confirm_playback: "I played the recording and could hear the audio",
-    close: "Close",
     // The form for Talk's signaling server secret.
     secret: {
       title: "Connect to Talk’s signaling server",
@@ -763,11 +762,6 @@ const operator = {
       group_settings: "Settings",
       group_support: "Support",
       recordings: "Recordings",
-      doctor: "Doctor",
-      endpoints: "AI providers",
-      pipeline: "Publish pipeline",
-      templates: "Insight templates",
-      storage: "Storage",
       support: "Support Cassini",
       // On narrow screens the nav is a drawer behind a button.
       open_label: "Choose an Operator section",
@@ -901,7 +895,6 @@ const operator = {
     no_selection_body: "Choose one from the list.",
     // After the status, lowercase. {age}: e.g. "just now" or "6 min ago".
     updated_ago: "· updated {age}",
-    cancel: "Cancel",
     next_retry: "Next retry",
     resource_deferrals: "Resource deferrals",
     exit_code: "Exit code",

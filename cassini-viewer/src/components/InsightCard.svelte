@@ -88,7 +88,7 @@
         disabled={retrying}
         on:click={() => dispatch("retry")}
       >
-        {retrying ? $LL.viewer.insights.card.retrying() : $LL.viewer.insights.card.retry()}
+        {retrying ? $LL.common.action.retrying() : $LL.common.action.retry()}
       </button>
       {#if retryError}
         <p class="insight-retry-error" role="status">{retryError}</p>

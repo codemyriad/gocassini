@@ -124,9 +124,9 @@
     <div class="actions">
       {#if state?.customName !== null && state}<button type="button" disabled={busy || inaccessible} on:click={() => save(true)}>{text.use_default()}</button>{/if}
       <span class="spacer"></span>
-      <button type="button" disabled={busy} on:click={() => cancel()}>{text.cancel()}</button>
-      {#if !state && !loading && !inaccessible}<button type="button" on:click={load}>{text.retry()}</button>{/if}
-      <button class="save" type="submit" disabled={!state || loading || busy || inaccessible || !!validation}>{busy ? text.saving() : text.save()}</button>
+      <button type="button" disabled={busy} on:click={() => cancel()}>{$LL.common.action.cancel()}</button>
+      {#if !state && !loading && !inaccessible}<button type="button" on:click={load}>{$LL.common.action.retry()}</button>{/if}
+      <button class="save" type="submit" disabled={!state || loading || busy || inaccessible || !!validation}>{busy ? $LL.common.action.saving() : $LL.common.action.save()}</button>
     </div>
   </form>
 </dialog>

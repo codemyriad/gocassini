@@ -124,7 +124,7 @@
         {#if $session.retryable}
           <button type="button" class="link" on:click={() => session.retryWrite()}>{$LL.viewer.meeting.tags.retry_saving()}</button>
         {:else}
-          <button type="button" class="link" on:click={() => session.dismissError()}>{$LL.viewer.meeting.tags.dismiss()}</button>
+          <button type="button" class="link" on:click={() => session.dismissError()}>{$LL.common.action.dismiss()}</button>
         {/if}
       {/if}
     {:else if $session.status === "preparing"}
@@ -144,7 +144,7 @@
     class="tag-popover grid p-1"
   >
     <button type="button" role="menuitem" class="mt-item mt-remove" disabled={$session.busy} aria-label={$LL.viewer.meeting.tags.remove_tag({ tag: openLook.tag.label })} on:click={removeOpenTag}>
-      <Trash2 size={12} aria-hidden="true" />{$LL.viewer.meeting.tags.remove()}
+      <Trash2 size={12} aria-hidden="true" />{$LL.common.action.remove()}
       <TagChip label={openLook.tag.label} color={openLook.color} icon={openLook.icon} />
     </button>
   </div>

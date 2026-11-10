@@ -395,7 +395,7 @@
           {#if $store.error}
             <p class="pp-note text-error" role="alert">
               {$store.error}
-              <button type="button" class="link" on:click={() => session?.dismissError()}>{$LL.viewer.meeting.people.dismiss()}</button>
+              <button type="button" class="link" on:click={() => session?.dismissError()}>{$LL.common.action.dismiss()}</button>
             </p>
           {:else if problem}
             <p class="pp-note text-error" role="alert">{problem}</p>
@@ -403,13 +403,13 @@
           <div class="pp-status-row">
             <p class="pp-status" role="status">
               {#if $store.saving}
-                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>{$LL.viewer.meeting.people.saving()}
+                <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>{$LL.common.action.saving()}
               {:else if server.state === "applying"}
                 <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>{applyingText}
                 {#if timeLeft}<span aria-hidden="true">{timeLeft}</span>{/if}
               {:else if server.state === "failed"}
                 <span title={server.lastError || undefined}>{$LL.viewer.meeting.people.update_failed()}</span> ·
-                <button type="button" class="link" on:click={() => session?.retry()}>{$LL.viewer.meeting.people.retry()}</button>
+                <button type="button" class="link" on:click={() => session?.retry()}>{$LL.common.action.retry()}</button>
               {:else if $store.reloading}
                 <span class="cassini-spinner pp-spinner" aria-hidden="true"></span>{$LL.viewer.meeting.people.loading_updated()}
               {:else if stale}
@@ -428,7 +428,7 @@
                 </label>
               {/if}
               <div class="pp-actions">
-                <button type="button" class="btn btn-ghost btn-xs" on:click={() => session?.discard()}>{$LL.viewer.meeting.people.cancel()}</button>
+                <button type="button" class="btn btn-ghost btn-xs" on:click={() => session?.discard()}>{$LL.common.action.cancel()}</button>
                 <button
                   type="button"
                   class="btn btn-neutral btn-xs"
@@ -436,7 +436,7 @@
                   title={busy ? $LL.viewer.meeting.people.wait_title() : undefined}
                   on:click={save}
                 >
-                  {$LL.viewer.meeting.people.save()}
+                  {$LL.common.action.save()}
                 </button>
               </div>
             {/if}

@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 
-import { LL } from "../i18n";
+import { LL, operatorPlace } from "../i18n";
 import type { TranslationFunctions } from "../i18n/i18n-types";
 import { dateFormat } from "../i18n/format";
 import type { MeetingCatalogEntry } from "./catalog";
@@ -130,7 +130,10 @@ export const INSIGHT_REASONS: readonly InsightReason[] = [
 export function insightFailureCopy(reason: InsightReason): { title: string; line: string } {
   const key = reason.replace(/-/g, "_") as keyof TranslationFunctions["viewer"]["insights"]["failure"];
   const copy = get(LL).viewer.insights.failure[key];
-  return { title: copy.title(), line: copy.line() };
+  // Two lines name a settings page as {place}; the rest take no arguments and
+  // ignore it.
+  const line = copy.line as (args: { place: string }) => string;
+  return { title: copy.title(), line: line({ place: operatorPlace("ai_providers") }) };
 }
 
 function isInsightReason(value: string): value is InsightReason {

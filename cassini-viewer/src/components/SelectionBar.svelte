@@ -174,7 +174,7 @@
           on:click={() => dispatch("delete")}
         >
           <Trash2 size={14} aria-hidden="true" />
-          {text.delete()}
+          {$LL.common.action.delete()}
         </button>
       {/if}
       <button

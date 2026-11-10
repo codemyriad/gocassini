@@ -41,7 +41,7 @@
     const { tag, anchor } = menu;
     menu = null;
     if (id === "merge") merging = { tag, anchor };
-    else if (id === "delete") confirming = { action: { kind: "delete", tagId: tag.tagId }, title: text.delete_title({ name: tag.label }), verb: text.delete() };
+    else if (id === "delete") confirming = { action: { kind: "delete", tagId: tag.tagId }, title: text.delete_title({ name: tag.label }), verb: $LL.common.action.delete() };
     else editing = { tagId: tag.tagId, choosing: id === "color" ? "color" : null, conflict: null };
   }
 
@@ -148,7 +148,7 @@
           >{tags.length === 1 ? text.manager_count_one() : text.manager_count_other({ count: formatCount(tags.length) })}</span
         >
       </h2>
-      <CloseButton label={text.close()} data-close on:click={() => dispatch("close")} />
+      <CloseButton label={$LL.common.action.close()} data-close on:click={() => dispatch("close")} />
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-8 pt-1.5 max-[720px]:px-2">
       {#if $jobs.notice}<p role="alert" class="alert alert-warning alert-soft sticky top-0 z-10 my-1.5 py-2 text-sm">{$jobs.notice}</p>{/if}
@@ -197,7 +197,7 @@
                 <p class="font-medium">{pending.title}</p>
                 <p class="text-xs text-base-content/65">{confirmLine(tag.meetings)}</p>
                 <div class="mt-1 flex justify-end gap-2">
-                  <button type="button" class="btn btn-ghost btn-sm" on:click={dismiss}>{text.cancel()}</button>
+                  <button type="button" class="btn btn-ghost btn-sm" on:click={dismiss}>{$LL.common.action.cancel()}</button>
                   <button type="button" use:focus class="btn btn-sm {pending.action.kind === 'delete' ? 'btn-error' : 'btn-neutral'}"
                     on:click={() => run(pending.action)}>{pending.verb}</button>
                 </div>

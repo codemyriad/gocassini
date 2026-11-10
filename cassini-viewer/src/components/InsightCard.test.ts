@@ -91,9 +91,9 @@ describe("InsightCard surface", () => {
     expect(insightCardSource).toContain(".insight-card {\n    position: relative;");
     expect(insightCardSource).toContain(".insight-retry {\n    position: absolute;");
     expect(insightCardSource).toContain(
-      "{retrying ? $LL.viewer.insights.card.retrying() : $LL.viewer.insights.card.retry()}",
+      "{retrying ? $LL.common.action.retrying() : $LL.common.action.retry()}",
     );
-    expect(get(LL).viewer.insights.card.retry()).toBe("Retry");
+    expect(get(LL).common.action.retry()).toBe("Retry");
     expect(insightCardSource).toContain('<p class="insight-retry-error" role="status">{retryError}</p>');
   });
 });

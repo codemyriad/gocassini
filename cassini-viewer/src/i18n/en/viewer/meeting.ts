@@ -14,10 +14,8 @@ const meeting = {
     no_meeting_heading: "Meeting transcript viewer",
     rename: "Rename meeting",
     title_field: "Meeting title",
-    rename_save: "Save",
     rename_reset: "Reset",
     rename_reset_title: "Restore the default title",
-    rename_cancel: "Cancel",
     // A small red badge beside the transcript switcher; keep it short.
     switch_failed: "Switch failed",
     // {error} is the message of what went wrong.
@@ -129,7 +127,6 @@ const meeting = {
     passages_other: "{count} passages",
     copy_id: "Copy meeting ID",
     id_copied: "Meeting ID copied",
-    copied: "Copied",
     // The audio's channels, in the recording's details after the codec and
     // sample rate ("OPUS · 48 kHz · mono"). Mid-sentence; use your language's
     // capitalisation.
@@ -202,17 +199,12 @@ const meeting = {
     summary_stale: "The summary was written before these speaker changes.",
     summary_stale_who: "An administrator or a moderator of the room can rewrite it.",
     inconclusive: "Couldn't separate voices on {device}: only one voice found",
-    dismiss: "Dismiss",
-    saving: "Saving…",
     update_failed: "Couldn't update voices",
-    retry: "Retry",
     loading_updated: "Loading the updated recording…",
     // Followed by a Reload button.
     voices_updated: "Voices updated",
     reload: "Reload",
     rewrite_summary: "Also rewrite the summary for these names",
-    cancel: "Cancel",
-    save: "Save",
     wait_title: "Wait until the recording is updated",
     wait_note: "Wait until the recording is updated.",
     treat_as_one: "Treat as one person again",
@@ -256,7 +248,6 @@ const meeting = {
     add_tag: "Add tag",
     tag_options: "{tag} tag options",
     remove_tag: "Remove {tag}",
-    remove: "Remove",
     picker_label: "Tag the whole meeting",
     // Marks made on another version of the recording.
     lost_one: "{count} mark can't be placed on this recording",
@@ -270,7 +261,6 @@ const meeting = {
     sync_blocked: "Tags saved · recording needs attention",
     retry_sync: "Retry recording update",
     retry_saving: "Retry saving annotations",
-    dismiss: "Dismiss",
     preparing: "Tags are being prepared…",
     // {error} is the reason, from the server.
     unavailable: "Tags aren't available right now: {error}",
@@ -319,15 +309,11 @@ const meeting = {
   stretch: {
     toolbar_label: "This section",
     unsaved: "Unsaved changes",
-    edit: "Edit",
     done: "Done",
     save_changes: "Save changes",
-    remove: "Remove",
-    cancel: "Cancel",
     tag_selection: "Tag selection",
     picker_label: "Tag selection",
     copy_text: "Copy text",
-    copied: "Copied",
     copy_link: "Copy link",
     link_copied: "Link copied",
     copy_this_link: "Copy this link:",

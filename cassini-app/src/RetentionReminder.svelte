@@ -26,10 +26,10 @@
     <button class="btn btn-sm" on:click={() => dispatch("review")}>{$LL.app.settings.retention_reminder.review()}</button>
     {#if settings?.revision === 0}
       <button class="btn btn-sm btn-ghost" disabled={dirty || busy || loading} on:click={() => dispatch("ignore")}>
-        {dismissing ? $LL.app.settings.retention_reminder.dismissing() : $LL.app.settings.retention_reminder.dismiss()}
+        {dismissing ? $LL.app.settings.retention_reminder.dismissing() : $LL.common.action.dismiss()}
       </button>
     {/if}
-    {#if error}<button class="btn btn-sm" disabled={loading || busy} on:click={() => dispatch("retry")}>{loading ? $LL.app.settings.retention_reminder.retrying() : $LL.app.settings.retention_reminder.retry()}</button>{/if}
+    {#if error}<button class="btn btn-sm" disabled={loading || busy} on:click={() => dispatch("retry")}>{loading ? $LL.common.action.retrying() : $LL.common.action.retry()}</button>{/if}
   </div>
 </section>
 

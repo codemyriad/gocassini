@@ -59,8 +59,8 @@
     title={text.icon()} aria-label={icon ? text.icon_named({ name: text.icons[icon]() }) : text.add_icon()} aria-haspopup="true" aria-expanded={choosing === "icon"} on:click={() => toggle("icon")}>
     {#if icon}<TagIcon {icon} size={15} />{:else}<Plus size={14} class="text-base-content/50" />{/if}
   </button>
-  <button type="button" class="tm-cancel cursor-pointer px-1" on:click={() => dispatch("cancel")}>{text.cancel()}</button>
-  <button type="button" class="tm-save btn btn-neutral btn-sm px-4 font-semibold" disabled={!label.trim()} on:click={save}>{text.save()}</button>
+  <button type="button" class="tm-cancel cursor-pointer px-1" on:click={() => dispatch("cancel")}>{$LL.common.action.cancel()}</button>
+  <button type="button" class="tm-save btn btn-neutral btn-sm px-4 font-semibold" disabled={!label.trim()} on:click={save}>{$LL.common.action.save()}</button>
   {#if conflict}
     {@const other = conflict}
     <p class="basis-full text-xs">

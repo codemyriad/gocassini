@@ -516,10 +516,10 @@
       {/if}
       <div class="tpl-actions">
         <button class="op-btn" type="submit" disabled={!editorFilled || saving}>
-          {saving ? $LL.app.insights.templates_panel.saving() : $LL.app.insights.templates_panel.save()}
+          {saving ? $LL.common.action.saving() : $LL.common.action.save()}
         </button>
         <button class="link-btn op-cancel" type="button" disabled={saving} on:click={() => (editor = null)}>
-          {$LL.app.insights.templates_panel.cancel()}
+          {$LL.common.action.cancel()}
         </button>
         {#if editor.id !== null}
           {@const editing = customs.find((workflow) => workflow.id === editor?.id)}
@@ -531,7 +531,7 @@
               aria-haspopup="dialog"
               on:click={() => void askDelete(editing)}
             >
-              {$LL.app.insights.templates_panel.delete()}
+              {$LL.common.action.delete()}
             </button>
           {/if}
         {/if}
@@ -555,7 +555,7 @@
       <div class="tpl-row-actions">
         {#if custom}
           <button class="link-btn" type="button" disabled={saving} on:click={() => void openEditor(editExisting(workflow))}>
-            {$LL.app.insights.templates_panel.edit()}
+            {$LL.common.action.edit()}
           </button>
         {/if}
         {#if !workflow.error}
@@ -573,7 +573,7 @@
             aria-haspopup="dialog"
             on:click={() => void askDelete(workflow)}
           >
-            {$LL.app.insights.templates_panel.delete()}
+            {$LL.common.action.delete()}
           </button>
         {/if}
       </div>
@@ -718,9 +718,9 @@
           {/if}
         </p>
         <div class="tpl-dialog-actions">
-          <button class="link-btn op-cancel" type="button" bind:this={deleteCancel} on:click={closeDelete}>{$LL.app.insights.templates_panel.cancel()}</button>
+          <button class="link-btn op-cancel" type="button" bind:this={deleteCancel} on:click={closeDelete}>{$LL.common.action.cancel()}</button>
           {#if deletion.inUse === "summary"}
-            <button class="op-btn" type="button" on:click={openPipeline}>{$LL.app.insights.templates_panel.open_pipeline()}</button>
+            <button class="op-btn" type="button" on:click={openPipeline}>{$LL.app.insights.templates_panel.open_pipeline({ place: $LL.common.place.publish_pipeline() })}</button>
           {:else}
             <button class="op-btn" type="button" on:click={closeDelete}>{$LL.app.insights.templates_panel.ok()}</button>
           {/if}
@@ -734,10 +734,10 @@
         {/if}
         <div class="tpl-dialog-actions">
           <button class="link-btn op-cancel" type="button" disabled={saving} bind:this={deleteCancel} on:click={closeDelete}>
-            {$LL.app.insights.templates_panel.cancel()}
+            {$LL.common.action.cancel()}
           </button>
           <button class="btn btn-sm btn-error" type="button" disabled={saving} on:click={() => void remove()}>
-            {saving ? $LL.app.insights.templates_panel.deleting() : $LL.app.insights.templates_panel.delete()}
+            {saving ? $LL.app.insights.templates_panel.deleting() : $LL.common.action.delete()}
           </button>
         </div>
       {/if}

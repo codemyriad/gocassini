@@ -20,7 +20,7 @@
     <div class="button-row">
       {#if dirty}<button class="btn btn-ghost" type="button" {disabled} on:click={() => dispatch("reload")}>{$LL.app.settings.retention_actions.discard()}</button>{/if}
       <!-- Native form association preserves validation when actions sit outside the scroller. -->
-      <button class="btn btn-primary" type="submit" form={formId} disabled={disabled || !canSave}>{$LL.app.settings.retention_actions.save()}</button>
+      <button class="btn btn-primary" type="submit" form={formId} disabled={disabled || !canSave}>{$LL.common.action.save()}</button>
     </div>
   </div>
   {#if $leavePrompt}

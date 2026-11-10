@@ -32,7 +32,7 @@
     TextAlignStart,
     TriangleAlert,
   } from "@lucide/svelte";
-  import { formatCount, LL } from "cassini-viewer/i18n";
+  import { formatCount, LL, operatorPlace } from "cassini-viewer/i18n";
   import ModelCombobox from "./ModelCombobox.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import type {
@@ -585,7 +585,7 @@
           >
             {#if saving}
               <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-              {$LL.app.settings.llm.saving()}
+              {$LL.common.action.saving()}
             {:else}
               {$LL.app.settings.llm.save_provider()}
             {/if}
@@ -597,7 +597,7 @@
               disabled={saving}
               on:click={() => (draft = null)}
             >
-              {$LL.app.settings.llm.cancel()}
+              {$LL.common.action.cancel()}
             </button>
           {/if}
         </div>
@@ -672,7 +672,7 @@
                one go — and that is a decision about what leaves this
                deployment, so it is not a surprise worth saving for later. -->
           <p class="ep-note">
-            {#each firstSave as part}{#if part.slot === "place"}<strong>{$LL.app.settings.llm.publish_pipeline_place()}</strong>{:else}{part.text}{/if}{/each}
+            {#each firstSave as part}{#if part.slot === "place"}<strong>{operatorPlace("publish_pipeline")}</strong>{:else}{part.text}{/if}{/each}
           </p>
         </section>
       {:else}
@@ -746,7 +746,7 @@
                       disabled={saving}
                       on:click={() => (draft = editDraft(provider))}
                     >
-                      {$LL.app.settings.llm.edit()}
+                      {$LL.common.action.edit()}
                     </button>
                     <button
                       class="link-btn danger"
@@ -755,7 +755,7 @@
                       aria-expanded={pendingRemoval?.id === provider.id}
                       on:click={() => (pendingRemoval = provider)}
                     >
-                      {$LL.app.settings.llm.remove()}
+                      {$LL.common.action.remove()}
                     </button>
                   </div>
                 </div>
@@ -793,7 +793,7 @@
                           {/if}
                           {#if stepsRunningOn(provider).length > 0}
                             <li>
-                              {#each segments(stopsSentence(stepsRunningOn(provider))) as part}{#if part.slot === "place"}<strong>{$LL.app.settings.llm.publish_pipeline_place()}</strong>{:else}{part.text}{/if}{/each}
+                              {#each segments(stopsSentence(stepsRunningOn(provider))) as part}{#if part.slot === "place"}<strong>{operatorPlace("publish_pipeline")}</strong>{:else}{part.text}{/if}{/each}
                             </li>
                           {/if}
                           <li>{$LL.app.settings.llm.remove_keeps_summaries()}</li>
@@ -815,7 +815,7 @@
                         disabled={saving}
                         on:click={() => (pendingRemoval = null)}
                       >
-                        {$LL.app.settings.llm.cancel()}
+                        {$LL.common.action.cancel()}
                       </button>
                     </div>
                   </div>
@@ -852,7 +852,7 @@
             {:else}
               {$LL.app.settings.llm.summaries_off()}
             {/if}
-            {#each changeInPipeline as part}{#if part.slot === "place"}<strong>{$LL.app.settings.llm.publish_pipeline_place()}</strong>{:else}{part.text}{/if}{/each}
+            {#each changeInPipeline as part}{#if part.slot === "place"}<strong>{operatorPlace("publish_pipeline")}</strong>{:else}{part.text}{/if}{/each}
           </p>
           <p class="ep-note">
             {#each insightUsage as part}{#if part.slot === "provider"}<span class="font-medium">{providerName(effectiveInsight.provider)}</span>{:else if part.slot === "model"}<code class="ep-model">{effectiveInsight.model}</code>{:else}{part.text}{/if}{/each}

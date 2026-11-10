@@ -83,8 +83,11 @@ export function missingSummaryText(summary: SummaryStatus | undefined): string |
 }
 
 // "1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5K input tokens, 5,213 words"
-export function summaryCostLine(state: SummaryRequestState): string {
-  const t = get(LL).viewer.insights.summary;
+// Shared with the administrator's run detail (cassini-app summaryAction.ts).
+export function summaryCostLine(
+  state: Pick<SummaryRequestState, "calls" | "words" | "estimatedInputTokens" | "provider" | "model">,
+): string {
+  const t = get(LL).common.summary_request;
   const target = state.model
     ? state.provider
       ? t.cost_target({ model: state.model, provider: state.provider })
@@ -97,8 +100,8 @@ export function summaryCostLine(state: SummaryRequestState): string {
     : t.cost_other({ count: numberFormat().format(state.calls), target, tokens, words });
 }
 
-export function summaryEndpointLine(state: SummaryRequestState): string {
-  const t = get(LL).viewer.insights.summary;
+export function summaryEndpointLine(state: Pick<SummaryRequestState, "external">): string {
+  const t = get(LL).common.summary_request;
   return state.external ? t.endpoint_external() : t.endpoint_local();
 }
 

@@ -257,7 +257,7 @@
       <p class="font-semibold text-base-content">{$LL.app.operator.doctor.refresh_failed()}</p>
       <p class="mt-0.5 text-base-content/80">{refreshFailure}</p>
       <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" disabled={busy} on:click={() => load(lastLoad.check, lastLoad.only)}><RefreshCw size={15} class="shrink-0" aria-hidden="true" />{busy ? $LL.app.operator.doctor.trying() : $LL.app.operator.doctor.try_again()}</button>
+        <button type="button" class="op-btn inline-flex h-auto min-h-8 items-center gap-1.5 py-1.5 text-left text-xs!" disabled={busy} on:click={() => load(lastLoad.check, lastLoad.only)}><RefreshCw size={15} class="shrink-0" aria-hidden="true" />{busy ? $LL.app.operator.doctor.trying() : $LL.common.action.try_again()}</button>
         {#if shared}<p class="text-xs text-base-content/70" title={dateFormat({ dateStyle: "medium", timeStyle: "short" }).format(new Date(shared.checkedAt))}>{$LL.app.operator.doctor.last_checked({ age: formatAge(shared.checkedAt) })}</p>{/if}
       </div>
     </div>
@@ -376,7 +376,7 @@
           {/if}
     {#if panel && panelOwner === check.id && rows.findIndex(row => row.id === check.id) === index}
       <div class="relative mt-3 rounded-box border border-base-300 bg-base-200 p-4">
-        <button class="btn btn-ghost btn-sm btn-square absolute top-3 right-3" type="button" aria-label={$LL.app.operator.doctor.close()} on:click={() => { panel = ""; secret = ""; }}><X size={16} aria-hidden="true" /></button>
+        <button class="btn btn-ghost btn-sm btn-square absolute top-3 right-3" type="button" aria-label={$LL.common.action.close()} on:click={() => { panel = ""; secret = ""; }}><X size={16} aria-hidden="true" /></button>
         {#if panel === "configure_talk"}
           <h3 class="pr-10 font-semibold">{$LL.app.operator.doctor.secret.title()}</h3>
           <p class="my-2 text-sm">{$LL.app.operator.doctor.secret.intro()}</p>

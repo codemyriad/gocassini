@@ -118,12 +118,12 @@
   $: AUDIENCE = {
     participants: {
       label: text.audience_participants(),
-      // Same points as "Who can see recordings" in Operator › Publish pipeline
-      // (cassini-app DirectShareAccessPanel.svelte); change both together.
-      points: [text.audience_point_all(), text.audience_point_guests(), text.audience_point_public()],
+      // The same points as "Who can see recordings" in Operator › Publish
+      // pipeline (cassini-app DirectShareAccessPanel.svelte): common.audience.
+      points: [$LL.common.audience.point_participants(), $LL.common.audience.point_guests(), $LL.common.audience.point_public_links()],
     },
   };
-  $: AUDIENCE_LEAD = text.audience_lead();
+  $: AUDIENCE_LEAD = $LL.common.audience.intro();
   let audienceEl: HTMLElement;
   let audienceOpen = false;
   // Placed from the label each time it shows: the rail scrolls, so a popover

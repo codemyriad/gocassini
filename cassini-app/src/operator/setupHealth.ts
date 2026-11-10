@@ -1,5 +1,5 @@
 import { get } from "svelte/store";
-import { LL } from "cassini-viewer/i18n";
+import { LL, operatorPlace } from "cassini-viewer/i18n";
 import type { OperatorPanel } from "../surfaceRouting";
 
 export interface SetupFeatures { summaries: boolean; insights: boolean }
@@ -220,7 +220,7 @@ const rerunSetup = (): SetupNoticeStep => ({
   commands: [`occ app_api:app:disable ${APP_ID}`, `occ app_api:app:enable ${APP_ID}`],
 });
 const settingsOffer = (): SetupNoticeStep => ({
-  label: get(LL).app.operator.setup_notice.step_open_settings(),
+  label: get(LL).app.operator.setup_notice.step_open_settings({ place: operatorPlace("publish_pipeline") }),
   commands: [], action: "settings",
 });
 
@@ -332,7 +332,7 @@ export function buildFeatureNotice(options: {
       ? isAdmin ? t.insights_summary() : t.insights_summary_ask_admin()
       : isAdmin ? t.summaries_summary() : t.summaries_summary_ask_admin(),
     panel: isAdmin ? AI_PANEL : "",
-    actionLabel: isAdmin ? t.action() : "",
+    actionLabel: isAdmin ? t.action({ place: get(LL).common.place.ai_providers() }) : "",
     actionTitle: isAdmin ? (insights ? t.insights_action_title() : t.summaries_action_title()) : undefined,
     actionShortLabel: isAdmin ? t.action_short() : undefined,
   };

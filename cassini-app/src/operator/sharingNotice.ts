@@ -143,7 +143,7 @@ export function noticeRowLabel(entry: RecordingNotice, options: DateFormatOption
   return parts.filter((part) => part !== "").join(" · ");
 }
 
-export const dismissLabel = (): string => copy().dismiss();
+export const dismissLabel = (): string => get(LL).common.action.dismiss();
 export const dismissAllLabel = (): string => copy().dismiss_all();
 
 // "An administrator can fix that: send them this link." The link is the app's

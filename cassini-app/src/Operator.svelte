@@ -47,15 +47,15 @@
     },
     {
       get label() { return nav().group_diagnostics(); },
-      items: [{ id: "doctor", get label() { return nav().doctor(); } }],
+      items: [{ id: "doctor", get label() { return get(LL).common.place.doctor(); } }],
     },
     {
       get label() { return nav().group_settings(); },
       items: [
-        { id: "endpoints", get label() { return nav().endpoints(); } },
-        { id: "pipeline", get label() { return nav().pipeline(); } },
-        { id: "templates", get label() { return nav().templates(); } },
-        { id: "storage", get label() { return nav().storage(); } },
+        { id: "endpoints", get label() { return get(LL).common.place.ai_providers(); } },
+        { id: "pipeline", get label() { return get(LL).common.place.publish_pipeline(); } },
+        { id: "templates", get label() { return get(LL).common.place.insight_templates(); } },
+        { id: "storage", get label() { return get(LL).common.place.storage(); } },
       ],
     },
     {
@@ -1703,7 +1703,7 @@
                             {summaryActionLabel(summaryPlan)}
                           </button>
                           <button class="btn btn-sm btn-ghost" type="button" disabled={submittingSummary} on:click={() => (confirmingSummary = false)}>
-                            {$LL.app.operator.console.cancel()}
+                            {$LL.common.action.cancel()}
                           </button>
                         </div>
                       </div>

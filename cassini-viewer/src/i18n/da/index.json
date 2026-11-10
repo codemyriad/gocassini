@@ -1,5 +1,46 @@
 {
   "common": {
-    "help_translate": ""
+    "action": {
+      "cancel": "",
+      "save": "",
+      "saving": "",
+      "retry": "",
+      "retrying": "",
+      "dismiss": "",
+      "delete": "",
+      "remove": "",
+      "edit": "",
+      "close": "",
+      "try_again": ""
+    },
+    "summary_request": {
+      "write": "",
+      "regenerate": "",
+      "confirm_write_title": "",
+      "confirm_replace_title": "",
+      "cost_one": "",
+      "cost_other": "",
+      "cost_target_fallback": "",
+      "cost_target": "",
+      "endpoint_external": "",
+      "endpoint_local": ""
+    },
+    "audience": {
+      "intro": "",
+      "point_participants": "",
+      "point_guests": "",
+      "point_public_links": ""
+    },
+    "place": {
+      "operator": "",
+      "publish_pipeline": "",
+      "ai_providers": "",
+      "insight_templates": "",
+      "doctor": "",
+      "storage": ""
+    },
+    "status": {
+      "copied": ""
+    }
   }
 }

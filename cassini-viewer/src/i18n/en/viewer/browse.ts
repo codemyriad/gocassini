@@ -93,7 +93,6 @@ const browse = {
     clear_tag_filters: "Clear tag filters",
     clear_filters: "Clear filters",
     retry_tag_update: "Retry tag update",
-    dismiss: "Dismiss",
     retry_delete: "Retry delete",
     empty_title: "No meetings yet",
     empty_body: "Recordings you publish from Talk show up here.",
@@ -179,11 +178,6 @@ const browse = {
     nav_label: "Rooms",
     rooms_heading: "Rooms",
     audience_participants: "Shared with participants",
-    // The same points as "Who can see recordings" in the app's settings; keep them in step.
-    audience_lead: "Nextcloud Files controls who can read each recording.",
-    audience_point_all: "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.",
-    audience_point_guests: "Guests without a Nextcloud account can't open it.",
-    audience_point_public: "Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.",
     all_meetings: "All meetings",
     // {name} is the room's name.
     rename_room_named: "Rename room {name}",
@@ -222,7 +216,6 @@ const browse = {
     over_cap_other: "You can work with up to {max} meetings at once. Unpick {count}.",
     retry_tag_update: "Retry tag update",
     tag: "Tag",
-    delete: "Delete",
     prepare: "Prepare",
     item_not_shown: "Not shown here",
     unpick: "Unpick {title}",
@@ -258,10 +251,6 @@ const browse = {
     checking: "Checking room details…",
     scope: "This name is shared with everyone who can access this room in Cassini.",
     use_default: "Use default",
-    cancel: "Cancel",
-    retry: "Retry",
-    saving: "Saving…",
-    save: "Save",
     invalid_characters: "Use a name without control characters.",
     // {max} is the longest a name can be.
     invalid_length: "Use a name between 1 and {max} characters.",
@@ -333,11 +322,8 @@ const browse = {
     // After the row's status, for a meeting with no recording.
     transcript_only_suffix: "transcript only",
     cancel_named: "Cancel {name}",
-    retry: "Retry",
-    remove: "Remove",
     remove_title: "Delete the temporary upload and remove this attempt.",
     open: "Open",
-    dismiss: "Dismiss",
     dismiss_title: "Hide this row. It stays in the server's import history.",
     ready: "{count} ready",
     ready_skipped: "{count} ready · {skipped} skipped",
@@ -408,8 +394,6 @@ const browse = {
     // {name} is an icon from `icons`.
     icon_named: "Icon: {name}",
     add_icon: "Add an icon",
-    cancel: "Cancel",
-    save: "Save",
     // {name} is the other tag's name.
     already_exists: "“{name}” already exists.",
     merge_instead: "Merge into “{name}” instead",
@@ -418,14 +402,12 @@ const browse = {
     manager_count_one: "1 tag",
     manager_count_other: "{count} tags",
     manager_close_scrim: "Close Manage tags",
-    close: "Close",
     none_yet: "No tags yet.",
     menu_rename: "Rename",
     menu_colour: "Change colour",
     menu_merge: "Merge into…",
     menu_delete: "Delete…",
     delete_title: "Delete “{name}”?",
-    delete: "Delete",
     merge_title: "Merge “{name}” into “{into}”?",
     merge: "Merge",
     merge_into: "Merge “{name}” into",
@@ -542,7 +524,6 @@ const browse = {
   // Small shared controls.
   ui: {
     copy_command: "Copy command",
-    copied: "Copied",
     copy_blocked: "Copying is blocked here. It is selected: press ⌘C or Ctrl+C.",
     confirm_delete: "Delete",
     confirm_cancel: "Cancel",

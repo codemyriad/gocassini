@@ -331,14 +331,14 @@
            input's. -->
       <div class="ins-head-controls">
         {#if editingName}
-          <button type="button" class="ins-name-cancel" on:click={cancelRename}>{$LL.viewer.insights.document.rename_cancel()}</button>
+          <button type="button" class="ins-name-cancel" on:click={cancelRename}>{$LL.common.action.cancel()}</button>
           <button
             type="button"
             class="btn btn-neutral btn-sm px-4 font-semibold"
             disabled={!nameSaveable}
             on:click={saveRename}
           >
-            {renaming ? $LL.viewer.insights.document.rename_saving() : $LL.viewer.insights.document.rename_save()}
+            {renaming ? $LL.common.action.saving() : $LL.common.action.save()}
           </button>
         {:else if canRename}
           <button
@@ -480,7 +480,7 @@
                that endpoint has since been removed. -->
           <div class="ins-retry">
             <button type="button" disabled={retrying} on:click={() => dispatch("retry")}>
-              {retrying ? $LL.viewer.insights.document.retrying() : $LL.viewer.insights.document.retry()}
+              {retrying ? $LL.common.action.retrying() : $LL.common.action.retry()}
             </button>
           </div>
           {#if retryError}

@@ -37,6 +37,14 @@ export {
 export type { DurationParts, DurationStyle } from "./format.js";
 export type { Locales };
 
+// Where a section of the administrator's surface is, as a path: "Operator ›
+// Publish pipeline". Sentences that send someone there take it as {place}.
+export type OperatorPlace = "publish_pipeline" | "ai_providers" | "insight_templates" | "doctor" | "storage";
+export function operatorPlace(place: OperatorPlace): string {
+  const names = get(LL).common.place;
+  return `${names.operator()} › ${names[place]()}`;
+}
+
 // A language people may ask for under another name. Nextcloud's pt_BR and
 // plain "pt" get European Portuguese, the only Portuguese we have, which reads
 // better to a Brazilian than English does.

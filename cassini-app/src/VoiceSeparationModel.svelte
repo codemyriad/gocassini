@@ -46,9 +46,9 @@
     <ModelStatusRow name={model.name} size={mebibytes(model.download_bytes)} {state} quiet>
       <svelte:fragment slot="action">
         {#if running && job}
-          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act("cancel")}>{t.cancel()}</button>
+          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act("cancel")}>{$LL.common.action.cancel()}</button>
         {:else if !model.ready && !unsupported && (model.installed || inventory?.downloads_allowed)}
-          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act(job ? "retry" : "install")}>{model.installed ? t.check() : job ? t.retry() : t.download()}</button>
+          <button type="button" class="btn btn-xs" disabled={busy} on:click={() => act(job ? "retry" : "install")}>{model.installed ? t.check() : job ? $LL.common.action.retry() : t.download()}</button>
         {/if}
       </svelte:fragment>
       {#if running && job && job.state === "downloading" && job.progress.total_bytes > 0}

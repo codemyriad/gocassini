@@ -19,11 +19,11 @@
   const dispatch = createEventDispatcher<{ request: { replace: boolean } }>();
   let confirming = false;
 
-  $: label = mode === "write" ? $LL.viewer.insights.summary.request.write() : $LL.viewer.insights.summary.request.regenerate();
+  $: label = mode === "write" ? $LL.common.summary_request.write() : $LL.common.summary_request.regenerate();
   $: confirmTitle =
     mode === "write"
-      ? $LL.viewer.insights.summary.request.confirm_write_title()
-      : $LL.viewer.insights.summary.request.confirm_replace_title();
+      ? $LL.common.summary_request.confirm_write_title()
+      : $LL.common.summary_request.confirm_replace_title();
   $: offered = mode === "write" ? state.canWrite : state.canRegenerate;
   $: if (state.state === "writing") confirming = false;
 
@@ -58,7 +58,7 @@
         {/if}
         <div class="sr-actions">
           <button type="button" class="btn btn-sm btn-primary" on:click={confirm}>{label}</button>
-          <button type="button" class="btn btn-sm btn-ghost" on:click={() => (confirming = false)}>{$LL.viewer.insights.summary.request.cancel()}</button>
+          <button type="button" class="btn btn-sm btn-ghost" on:click={() => (confirming = false)}>{$LL.common.action.cancel()}</button>
         </div>
       </div>
     {:else if offered}

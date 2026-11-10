@@ -68,12 +68,7 @@ const insights = {
       "{file} cannot be saved under its own name. Saving keeps this as a new template and removes that file.",
     // {file} is a file name; {error} is a technical reason, in English.
     replace_remove_failed: "Saved as a new template, but {file} could not be removed: {error}",
-    save: "Save",
-    saving: "Saving…",
-    cancel: "Cancel",
-    edit: "Edit",
     duplicate: "Duplicate",
-    delete: "Delete",
     deleting: "Deleting…",
     // {file} is a file name, shown in code style; {error} is the server's reason, in English.
     cannot_run: "{file} cannot run: {error}",
@@ -96,7 +91,8 @@ const insights = {
       "This template is being used for generating summaries after calls are transcribed. Replace it with another template before deleting it.",
     in_use_insight:
       "This template is being used as the default for new insights. Replace it with another template before deleting it.",
-    open_pipeline: "Open the Publish pipeline",
+    // A button. {place} is the section's name, "Publish pipeline".
+    open_pipeline: "Open {place}",
     ok: "OK",
     delete_note: "Insights that have already been produced from it will keep a reference to its name, id, version and hash.",
   },
@@ -154,24 +150,11 @@ const insights = {
   // Writing or rewriting a meeting's summary from Operator, and what Settings
   // says the summary step costs.
   summary_action: {
-    write: "Write summary",
-    regenerate: "Regenerate summary",
-    confirm_write_title: "Write a summary for this meeting?",
-    confirm_replace_title: "Replace this meeting's summary?",
-    // What writing a summary costs. {target} is a model and provider, e.g.
-    // "deepseek-v4 (Open Router)"; {tokens} is a rounded number, e.g. "7.5K";
-    // {words} is a number.
-    cost_one: "1 call to {target} · about {tokens} input tokens, {words} words",
-    cost_other: "{count} calls to {target} · about {tokens} input tokens, {words} words",
-    // {target} when no model is named.
-    cost_target_fallback: "the summary model",
-    // {model} with the provider it runs on.
-    cost_target: "{model} ({provider})",
-    endpoint_external: "The transcript is sent to an external service, which may bill for it.",
-    endpoint_local: "The model runs on your own network.",
+    // Under the confirmation, when a summary is being replaced from the run
+    // detail. (The meeting's own block has its own wording: "this one".)
     replace_note: "Everyone who can open the meeting sees the new summary instead of the current one.",
-    // "Settings › Publish pipeline" is the path to a settings page.
-    summaries_off: "Summaries are off. Turn them on in Settings › Publish pipeline to write one.",
+    // {place} is the path to a settings page, "Operator › Publish pipeline".
+    summaries_off: "Summaries are off. Turn them on in {place} to write one.",
     no_local_copy: "This server no longer keeps a copy of the meeting, so a summary can't be written for this run.",
     // In Settings, under the summary step. {provider} is the AI provider's name.
     step_lead_local: "Sends each transcript to {provider} on your own network. One request per meeting.",

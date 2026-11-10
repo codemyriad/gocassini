@@ -159,7 +159,7 @@ describe("AI providers card layout (D-749)", () => {
     expect(llmSettingsPanelSource).not.toContain("flex flex-wrap items-start justify-between");
     expect(llmSettingsPanelSource).toContain('class="flex flex-none items-center gap-3"');
     const row = llmSettingsPanelSource.indexOf(header);
-    const remove = llmSettingsPanelSource.indexOf("{$LL.app.settings.llm.remove()}\n                    </button>", row);
+    const remove = llmSettingsPanelSource.indexOf("{$LL.common.action.remove()}\n                    </button>", row);
     const warning = llmSettingsPanelSource.indexOf("reason: modelListUnavailable(state.status", row);
     expect(row).toBeGreaterThan(-1);
     expect(remove).toBeGreaterThan(row);

@@ -27,10 +27,153 @@ export type Translations = RootTranslation &
 
 type RootTranslation = {
 	common: {
-		/**
-		 * H​e​l​p​ ​t​r​a​n​s​l​a​t​e​ ​C​a​s​s​i​n​i
-		 */
-		help_translate: string
+		action: {
+			/**
+			 * C​a​n​c​e​l
+			 */
+			cancel: string
+			/**
+			 * S​a​v​e
+			 */
+			save: string
+			/**
+			 * S​a​v​i​n​g​…
+			 */
+			saving: string
+			/**
+			 * R​e​t​r​y
+			 */
+			retry: string
+			/**
+			 * R​e​t​r​y​i​n​g​…
+			 */
+			retrying: string
+			/**
+			 * D​i​s​m​i​s​s
+			 */
+			dismiss: string
+			/**
+			 * D​e​l​e​t​e
+			 */
+			'delete': string
+			/**
+			 * R​e​m​o​v​e
+			 */
+			remove: string
+			/**
+			 * E​d​i​t
+			 */
+			edit: string
+			/**
+			 * C​l​o​s​e
+			 */
+			close: string
+			/**
+			 * T​r​y​ ​a​g​a​i​n
+			 */
+			try_again: string
+		}
+		summary_request: {
+			/**
+			 * W​r​i​t​e​ ​s​u​m​m​a​r​y
+			 */
+			write: string
+			/**
+			 * R​e​g​e​n​e​r​a​t​e​ ​s​u​m​m​a​r​y
+			 */
+			regenerate: string
+			/**
+			 * W​r​i​t​e​ ​a​ ​s​u​m​m​a​r​y​ ​f​o​r​ ​t​h​i​s​ ​m​e​e​t​i​n​g​?
+			 */
+			confirm_write_title: string
+			/**
+			 * R​e​p​l​a​c​e​ ​t​h​i​s​ ​m​e​e​t​i​n​g​'​s​ ​s​u​m​m​a​r​y​?
+			 */
+			confirm_replace_title: string
+			/**
+			 * 1​ ​c​a​l​l​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​}​ ​i​n​p​u​t​ ​t​o​k​e​n​s​,​ ​{​w​o​r​d​s​}​ ​w​o​r​d​s
+			 * @param {unknown} target
+			 * @param {unknown} tokens
+			 * @param {unknown} words
+			 */
+			cost_one: RequiredParams<'target' | 'tokens' | 'words'>
+			/**
+			 * {​c​o​u​n​t​}​ ​c​a​l​l​s​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​}​ ​i​n​p​u​t​ ​t​o​k​e​n​s​,​ ​{​w​o​r​d​s​}​ ​w​o​r​d​s
+			 * @param {unknown} count
+			 * @param {unknown} target
+			 * @param {unknown} tokens
+			 * @param {unknown} words
+			 */
+			cost_other: RequiredParams<'count' | 'target' | 'tokens' | 'words'>
+			/**
+			 * t​h​e​ ​s​u​m​m​a​r​y​ ​m​o​d​e​l
+			 */
+			cost_target_fallback: string
+			/**
+			 * {​m​o​d​e​l​}​ ​(​{​p​r​o​v​i​d​e​r​}​)
+			 * @param {unknown} model
+			 * @param {unknown} provider
+			 */
+			cost_target: RequiredParams<'model' | 'provider'>
+			/**
+			 * T​h​e​ ​t​r​a​n​s​c​r​i​p​t​ ​i​s​ ​s​e​n​t​ ​t​o​ ​a​n​ ​e​x​t​e​r​n​a​l​ ​s​e​r​v​i​c​e​,​ ​w​h​i​c​h​ ​m​a​y​ ​b​i​l​l​ ​f​o​r​ ​i​t​.
+			 */
+			endpoint_external: string
+			/**
+			 * T​h​e​ ​m​o​d​e​l​ ​r​u​n​s​ ​o​n​ ​y​o​u​r​ ​o​w​n​ ​n​e​t​w​o​r​k​.
+			 */
+			endpoint_local: string
+		}
+		audience: {
+			/**
+			 * N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s​ ​c​o​n​t​r​o​l​s​ ​w​h​o​ ​c​a​n​ ​r​e​a​d​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​.
+			 */
+			intro: string
+			/**
+			 * E​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​a​l​l​ ​o​f​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​p​a​r​t​i​c​i​p​a​n​t​s​,​ ​w​h​e​t​h​e​r​ ​t​h​e​y​ ​w​e​r​e​ ​p​r​e​s​e​n​t​ ​o​n​ ​t​h​e​ ​c​a​l​l​ ​o​r​ ​n​o​t​.
+			 */
+			point_participants: string
+			/**
+			 * G​u​e​s​t​s​ ​w​i​t​h​o​u​t​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​c​c​o​u​n​t​ ​c​a​n​'​t​ ​o​p​e​n​ ​i​t​.
+			 */
+			point_guests: string
+			/**
+			 * C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​c​r​e​a​t​e​s​ ​a​ ​p​u​b​l​i​c​ ​l​i​n​k​.​ ​I​n​ ​p​u​b​l​i​c​ ​r​o​o​m​s​,​ ​p​e​o​p​l​e​ ​c​a​n​ ​r​e​s​h​a​r​e​ ​t​h​e​ ​f​i​l​e​ ​i​f​ ​t​h​i​s​ ​N​e​x​t​c​l​o​u​d​ ​a​l​l​o​w​s​ ​i​t​.
+			 */
+			point_public_links: string
+		}
+		place: {
+			/**
+			 * O​p​e​r​a​t​o​r
+			 */
+			operator: string
+			/**
+			 * P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e
+			 */
+			publish_pipeline: string
+			/**
+			 * A​I​ ​p​r​o​v​i​d​e​r​s
+			 */
+			ai_providers: string
+			/**
+			 * I​n​s​i​g​h​t​ ​t​e​m​p​l​a​t​e​s
+			 */
+			insight_templates: string
+			/**
+			 * D​o​c​t​o​r
+			 */
+			doctor: string
+			/**
+			 * S​t​o​r​a​g​e
+			 */
+			storage: string
+		}
+		status: {
+			/**
+			 * C​o​p​i​e​d
+			 */
+			copied: string
+		}
 	}
 }
 
@@ -45,14 +188,6 @@ export type NamespaceAppTranslation = {
 			 * B​r​o​w​s​e
 			 */
 			tab_browse: string
-			/**
-			 * O​p​e​r​a​t​o​r
-			 */
-			tab_operator: string
-			/**
-			 * C​l​o​s​e
-			 */
-			close_overlay: string
 			/**
 			 * R​e​c​o​r​d​i​n​g​ ​s​e​t​u​p​ ​n​e​e​d​s​ ​a​n​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​’​s​ ​a​t​t​e​n​t​i​o​n​.
 			 */
@@ -506,10 +641,6 @@ export type NamespaceAppTranslation = {
 		}
 		setup_notice: {
 			/**
-			 * T​r​y​ ​a​g​a​i​n
-			 */
-			try_again: string
-			/**
 			 * C​h​e​c​k​i​n​g​…
 			 */
 			checking: string
@@ -522,9 +653,10 @@ export type NamespaceAppTranslation = {
 			 */
 			details_heading: string
 			/**
-			 * O​p​e​n​ ​O​p​e​r​a​t​o​r​ ​›​ ​P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e
+			 * O​p​e​n​ ​{​p​l​a​c​e​}
+			 * @param {unknown} place
 			 */
-			open_publish_pipeline: string
+			open_publish_pipeline: RequiredParams<'place'>
 			/**
 			 * C​a​s​s​i​n​i​ ​c​a​n​'​t​ ​s​a​v​e​ ​r​e​c​o​r​d​i​n​g​s​ ​r​i​g​h​t​ ​n​o​w
 			 */
@@ -550,9 +682,10 @@ export type NamespaceAppTranslation = {
 			 */
 			step_rerun_setup: string
 			/**
-			 * O​p​e​n​ ​O​p​e​r​a​t​o​r​ ​›​ ​P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e​ ​t​o​ ​c​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t
+			 * O​p​e​n​ ​{​p​l​a​c​e​}​ ​t​o​ ​c​h​e​c​k​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​s​ ​a​c​c​o​u​n​t
+			 * @param {unknown} place
 			 */
-			step_open_settings: string
+			step_open_settings: RequiredParams<'place'>
 			/**
 			 * C​r​e​a​t​e​ ​t​h​e​ ​{​u​s​e​r​}​ ​a​c​c​o​u​n​t​ ​i​n​ ​N​e​x​t​c​l​o​u​d
 			 * @param {unknown} user
@@ -616,9 +749,10 @@ export type NamespaceAppTranslation = {
 			 */
 			summaries_summary_ask_admin: string
 			/**
-			 * O​p​e​n​ ​A​I​ ​p​r​o​v​i​d​e​r​s
+			 * O​p​e​n​ ​{​p​l​a​c​e​}
+			 * @param {unknown} place
 			 */
-			action: string
+			action: RequiredParams<'place'>
 			/**
 			 * A​d​d​ ​a​ ​p​r​o​v​i​d​e​r
 			 */
@@ -670,9 +804,11 @@ export type NamespaceAppTranslation = {
 				 */
 				template_fallback: string
 				/**
-				 * T​h​e​ ​b​u​i​l​d​ ​l​o​g​ ​s​a​y​s​ ​w​h​y​.​ ​F​i​x​ ​t​h​e​ ​t​e​m​p​l​a​t​e​ ​i​n​ ​I​n​s​i​g​h​t​ ​t​e​m​p​l​a​t​e​s​,​ ​o​r​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​o​n​e​ ​f​o​r​ ​s​u​m​m​a​r​i​e​s​ ​i​n​ ​S​e​t​t​i​n​g​s​.
+				 * T​h​e​ ​b​u​i​l​d​ ​l​o​g​ ​s​a​y​s​ ​w​h​y​.​ ​F​i​x​ ​t​h​e​ ​t​e​m​p​l​a​t​e​ ​i​n​ ​{​t​e​m​p​l​a​t​e​s​}​,​ ​o​r​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​o​n​e​ ​f​o​r​ ​s​u​m​m​a​r​i​e​s​ ​i​n​ ​{​p​i​p​e​l​i​n​e​}​.
+				 * @param {unknown} pipeline
+				 * @param {unknown} templates
 				 */
-				template_fallback_hint: string
+				template_fallback_hint: RequiredParams<'pipeline' | 'templates'>
 				/**
 				 * N​o​ ​s​u​m​m​a​r​y​:​ ​t​h​e​ ​s​u​m​m​a​r​y​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​g​e​n​e​r​a​t​e​d
 				 */
@@ -1991,10 +2127,6 @@ export type NamespaceAppTranslation = {
 			 */
 			a_recording: string
 			/**
-			 * D​i​s​m​i​s​s
-			 */
-			dismiss: string
-			/**
 			 * D​i​s​m​i​s​s​ ​a​l​l
 			 */
 			dismiss_all: string
@@ -2051,10 +2183,6 @@ export type NamespaceAppTranslation = {
 			 * T​r​y​i​n​g​…
 			 */
 			trying: string
-			/**
-			 * T​r​y​ ​a​g​a​i​n
-			 */
-			try_again: string
 			/**
 			 * L​a​s​t​ ​c​h​e​c​k​e​d​ ​{​a​g​e​}
 			 * @param {unknown} age
@@ -2151,10 +2279,6 @@ export type NamespaceAppTranslation = {
 			 * I​ ​p​l​a​y​e​d​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​a​n​d​ ​c​o​u​l​d​ ​h​e​a​r​ ​t​h​e​ ​a​u​d​i​o
 			 */
 			confirm_playback: string
-			/**
-			 * C​l​o​s​e
-			 */
-			close: string
 			secret: {
 				/**
 				 * C​o​n​n​e​c​t​ ​t​o​ ​T​a​l​k​’​s​ ​s​i​g​n​a​l​i​n​g​ ​s​e​r​v​e​r
@@ -2307,26 +2431,6 @@ export type NamespaceAppTranslation = {
 				 * R​e​c​o​r​d​i​n​g​s
 				 */
 				recordings: string
-				/**
-				 * D​o​c​t​o​r
-				 */
-				doctor: string
-				/**
-				 * A​I​ ​p​r​o​v​i​d​e​r​s
-				 */
-				endpoints: string
-				/**
-				 * P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e
-				 */
-				pipeline: string
-				/**
-				 * I​n​s​i​g​h​t​ ​t​e​m​p​l​a​t​e​s
-				 */
-				templates: string
-				/**
-				 * S​t​o​r​a​g​e
-				 */
-				storage: string
 				/**
 				 * S​u​p​p​o​r​t​ ​C​a​s​s​i​n​i
 				 */
@@ -2721,10 +2825,6 @@ export type NamespaceAppTranslation = {
 			 * @param {unknown} age
 			 */
 			updated_ago: RequiredParams<'age'>
-			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
 			/**
 			 * N​e​x​t​ ​r​e​t​r​y
 			 */
@@ -3554,14 +3654,6 @@ export type NamespaceAppTranslation = {
 			 */
 			saving_changes: string
 			/**
-			 * S​a​v​i​n​g​…
-			 */
-			saving: string
-			/**
-			 * S​a​v​e
-			 */
-			save: string
-			/**
 			 * L​e​a​v​e​ ​w​i​t​h​o​u​t​ ​s​a​v​i​n​g​?
 			 */
 			leave_title: string
@@ -3724,10 +3816,6 @@ export type NamespaceAppTranslation = {
 			 */
 			discard: string
 			/**
-			 * S​a​v​e
-			 */
-			save: string
-			/**
 			 * L​e​a​v​e​ ​w​i​t​h​o​u​t​ ​s​a​v​i​n​g​?
 			 */
 			leave_title: string
@@ -3766,21 +3854,9 @@ export type NamespaceAppTranslation = {
 			 */
 			review: string
 			/**
-			 * D​i​s​m​i​s​s
-			 */
-			dismiss: string
-			/**
 			 * D​i​s​m​i​s​s​i​n​g​…
 			 */
 			dismissing: string
-			/**
-			 * R​e​t​r​y
-			 */
-			retry: string
-			/**
-			 * R​e​t​r​y​i​n​g​…
-			 */
-			retrying: string
 		}
 		speech_models: {
 			/**
@@ -3859,17 +3935,9 @@ export type NamespaceAppTranslation = {
 			 */
 			state_not_installed: string
 			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
-			/**
 			 * C​h​e​c​k
 			 */
 			check: string
-			/**
-			 * R​e​t​r​y
-			 */
-			retry: string
 			/**
 			 * D​o​w​n​l​o​a​d
 			 */
@@ -3901,17 +3969,9 @@ export type NamespaceAppTranslation = {
 			 */
 			state_not_installed: string
 			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
-			/**
 			 * C​h​e​c​k
 			 */
 			check: string
-			/**
-			 * R​e​t​r​y
-			 */
-			retry: string
 			/**
 			 * D​o​w​n​l​o​a​d
 			 */
@@ -3964,10 +4024,6 @@ export type NamespaceAppTranslation = {
 			 */
 			copy: string
 			/**
-			 * C​o​p​i​e​d
-			 */
-			copied: string
-			/**
 			 * Y​o​u​r​ ​b​r​o​w​s​e​r​ ​b​l​o​c​k​e​d​ ​c​o​p​y​i​n​g​.​ ​T​h​e​ ​p​a​s​s​w​o​r​d​ ​i​s​ ​s​e​l​e​c​t​e​d​ ​a​b​o​v​e​,​ ​s​o​ ​c​o​p​y​ ​i​t​ ​w​i​t​h​ ​y​o​u​r​ ​k​e​y​b​o​a​r​d​.
 			 */
 			copy_blocked: string
@@ -3985,22 +4041,6 @@ export type NamespaceAppTranslation = {
 			 * W​h​o​ ​c​a​n​ ​s​e​e​ ​r​e​c​o​r​d​i​n​g​s
 			 */
 			heading: string
-			/**
-			 * N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s​ ​c​o​n​t​r​o​l​s​ ​w​h​o​ ​c​a​n​ ​r​e​a​d​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​.
-			 */
-			intro: string
-			/**
-			 * E​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​a​l​l​ ​o​f​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​p​a​r​t​i​c​i​p​a​n​t​s​,​ ​w​h​e​t​h​e​r​ ​t​h​e​y​ ​w​e​r​e​ ​p​r​e​s​e​n​t​ ​o​n​ ​t​h​e​ ​c​a​l​l​ ​o​r​ ​n​o​t​.
-			 */
-			point_participants: string
-			/**
-			 * G​u​e​s​t​s​ ​w​i​t​h​o​u​t​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​c​c​o​u​n​t​ ​c​a​n​'​t​ ​o​p​e​n​ ​i​t​.
-			 */
-			point_guests: string
-			/**
-			 * C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​c​r​e​a​t​e​s​ ​a​ ​p​u​b​l​i​c​ ​l​i​n​k​.​ ​I​n​ ​p​u​b​l​i​c​ ​r​o​o​m​s​,​ ​p​e​o​p​l​e​ ​c​a​n​ ​r​e​s​h​a​r​e​ ​t​h​e​ ​f​i​l​e​ ​i​f​ ​t​h​i​s​ ​N​e​x​t​c​l​o​u​d​ ​a​l​l​o​w​s​ ​i​t​.
-			 */
-			point_public_links: string
 			/**
 			 * C​h​e​c​k​i​n​g​ ​r​e​c​o​r​d​i​n​g​s​ ​s​e​t​u​p​…
 			 */
@@ -4161,10 +4201,6 @@ export type NamespaceAppTranslation = {
 			 */
 			first_save_turns_on: RequiredParams<'place'>
 			/**
-			 * O​p​e​r​a​t​o​r​ ​›​ ​P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e
-			 */
-			publish_pipeline_place: string
-			/**
 			 * N​e​w​ ​p​r​o​v​i​d​e​r
 			 */
 			new_provider: string
@@ -4266,17 +4302,9 @@ export type NamespaceAppTranslation = {
 			 */
 			token_limit_placeholder: RequiredParams<'tokens'>
 			/**
-			 * S​a​v​i​n​g​…
-			 */
-			saving: string
-			/**
 			 * S​a​v​e​ ​p​r​o​v​i​d​e​r
 			 */
 			save_provider: string
-			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
 			/**
 			 * T​h​i​s​ ​e​n​d​p​o​i​n​t​ ​a​n​s​w​e​r​e​d​ ​w​i​t​h​ ​i​t​s​ ​m​o​d​e​l​ ​l​i​s​t
 			 */
@@ -4325,14 +4353,6 @@ export type NamespaceAppTranslation = {
 			 * @param {unknown} tokens
 			 */
 			token_limit_fact: RequiredParams<'tokens'>
-			/**
-			 * E​d​i​t
-			 */
-			edit: string
-			/**
-			 * R​e​m​o​v​e
-			 */
-			remove: string
 			/**
 			 * C​o​n​f​i​r​m​ ​r​e​m​o​v​i​n​g​ ​t​h​i​s​ ​e​n​d​p​o​i​n​t
 			 */
@@ -4583,29 +4603,9 @@ export type NamespaceAppTranslation = {
 			 */
 			replace_remove_failed: RequiredParams<'error' | 'file'>
 			/**
-			 * S​a​v​e
-			 */
-			save: string
-			/**
-			 * S​a​v​i​n​g​…
-			 */
-			saving: string
-			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
-			/**
-			 * E​d​i​t
-			 */
-			edit: string
-			/**
 			 * D​u​p​l​i​c​a​t​e
 			 */
 			duplicate: string
-			/**
-			 * D​e​l​e​t​e
-			 */
-			'delete': string
 			/**
 			 * D​e​l​e​t​i​n​g​…
 			 */
@@ -4670,9 +4670,10 @@ export type NamespaceAppTranslation = {
 			 */
 			in_use_insight: string
 			/**
-			 * O​p​e​n​ ​t​h​e​ ​P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e
+			 * O​p​e​n​ ​{​p​l​a​c​e​}
+			 * @param {unknown} place
 			 */
-			open_pipeline: string
+			open_pipeline: RequiredParams<'place'>
 			/**
 			 * O​K
 			 */
@@ -4839,62 +4840,14 @@ export type NamespaceAppTranslation = {
 		}
 		summary_action: {
 			/**
-			 * W​r​i​t​e​ ​s​u​m​m​a​r​y
-			 */
-			write: string
-			/**
-			 * R​e​g​e​n​e​r​a​t​e​ ​s​u​m​m​a​r​y
-			 */
-			regenerate: string
-			/**
-			 * W​r​i​t​e​ ​a​ ​s​u​m​m​a​r​y​ ​f​o​r​ ​t​h​i​s​ ​m​e​e​t​i​n​g​?
-			 */
-			confirm_write_title: string
-			/**
-			 * R​e​p​l​a​c​e​ ​t​h​i​s​ ​m​e​e​t​i​n​g​'​s​ ​s​u​m​m​a​r​y​?
-			 */
-			confirm_replace_title: string
-			/**
-			 * 1​ ​c​a​l​l​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​}​ ​i​n​p​u​t​ ​t​o​k​e​n​s​,​ ​{​w​o​r​d​s​}​ ​w​o​r​d​s
-			 * @param {unknown} target
-			 * @param {unknown} tokens
-			 * @param {unknown} words
-			 */
-			cost_one: RequiredParams<'target' | 'tokens' | 'words'>
-			/**
-			 * {​c​o​u​n​t​}​ ​c​a​l​l​s​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​}​ ​i​n​p​u​t​ ​t​o​k​e​n​s​,​ ​{​w​o​r​d​s​}​ ​w​o​r​d​s
-			 * @param {unknown} count
-			 * @param {unknown} target
-			 * @param {unknown} tokens
-			 * @param {unknown} words
-			 */
-			cost_other: RequiredParams<'count' | 'target' | 'tokens' | 'words'>
-			/**
-			 * t​h​e​ ​s​u​m​m​a​r​y​ ​m​o​d​e​l
-			 */
-			cost_target_fallback: string
-			/**
-			 * {​m​o​d​e​l​}​ ​(​{​p​r​o​v​i​d​e​r​}​)
-			 * @param {unknown} model
-			 * @param {unknown} provider
-			 */
-			cost_target: RequiredParams<'model' | 'provider'>
-			/**
-			 * T​h​e​ ​t​r​a​n​s​c​r​i​p​t​ ​i​s​ ​s​e​n​t​ ​t​o​ ​a​n​ ​e​x​t​e​r​n​a​l​ ​s​e​r​v​i​c​e​,​ ​w​h​i​c​h​ ​m​a​y​ ​b​i​l​l​ ​f​o​r​ ​i​t​.
-			 */
-			endpoint_external: string
-			/**
-			 * T​h​e​ ​m​o​d​e​l​ ​r​u​n​s​ ​o​n​ ​y​o​u​r​ ​o​w​n​ ​n​e​t​w​o​r​k​.
-			 */
-			endpoint_local: string
-			/**
 			 * E​v​e​r​y​o​n​e​ ​w​h​o​ ​c​a​n​ ​o​p​e​n​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​s​e​e​s​ ​t​h​e​ ​n​e​w​ ​s​u​m​m​a​r​y​ ​i​n​s​t​e​a​d​ ​o​f​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​o​n​e​.
 			 */
 			replace_note: string
 			/**
-			 * S​u​m​m​a​r​i​e​s​ ​a​r​e​ ​o​f​f​.​ ​T​u​r​n​ ​t​h​e​m​ ​o​n​ ​i​n​ ​S​e​t​t​i​n​g​s​ ​›​ ​P​u​b​l​i​s​h​ ​p​i​p​e​l​i​n​e​ ​t​o​ ​w​r​i​t​e​ ​o​n​e​.
+			 * S​u​m​m​a​r​i​e​s​ ​a​r​e​ ​o​f​f​.​ ​T​u​r​n​ ​t​h​e​m​ ​o​n​ ​i​n​ ​{​p​l​a​c​e​}​ ​t​o​ ​w​r​i​t​e​ ​o​n​e​.
+			 * @param {unknown} place
 			 */
-			summaries_off: string
+			summaries_off: RequiredParams<'place'>
 			/**
 			 * T​h​i​s​ ​s​e​r​v​e​r​ ​n​o​ ​l​o​n​g​e​r​ ​k​e​e​p​s​ ​a​ ​c​o​p​y​ ​o​f​ ​t​h​e​ ​m​e​e​t​i​n​g​,​ ​s​o​ ​a​ ​s​u​m​m​a​r​y​ ​c​a​n​'​t​ ​b​e​ ​w​r​i​t​t​e​n​ ​f​o​r​ ​t​h​i​s​ ​r​u​n​.
 			 */
@@ -5192,10 +5145,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			retry_tag_update: string
 			/**
-			 * D​i​s​m​i​s​s
-			 */
-			dismiss: string
-			/**
 			 * R​e​t​r​y​ ​d​e​l​e​t​e
 			 */
 			retry_delete: string
@@ -5454,22 +5403,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			audience_participants: string
 			/**
-			 * N​e​x​t​c​l​o​u​d​ ​F​i​l​e​s​ ​c​o​n​t​r​o​l​s​ ​w​h​o​ ​c​a​n​ ​r​e​a​d​ ​e​a​c​h​ ​r​e​c​o​r​d​i​n​g​.
-			 */
-			audience_lead: string
-			/**
-			 * E​a​c​h​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​s​h​a​r​e​d​ ​w​i​t​h​ ​a​l​l​ ​o​f​ ​t​h​e​ ​T​a​l​k​ ​r​o​o​m​'​s​ ​p​a​r​t​i​c​i​p​a​n​t​s​,​ ​w​h​e​t​h​e​r​ ​t​h​e​y​ ​w​e​r​e​ ​p​r​e​s​e​n​t​ ​o​n​ ​t​h​e​ ​c​a​l​l​ ​o​r​ ​n​o​t​.
-			 */
-			audience_point_all: string
-			/**
-			 * G​u​e​s​t​s​ ​w​i​t​h​o​u​t​ ​a​ ​N​e​x​t​c​l​o​u​d​ ​a​c​c​o​u​n​t​ ​c​a​n​'​t​ ​o​p​e​n​ ​i​t​.
-			 */
-			audience_point_guests: string
-			/**
-			 * C​a​s​s​i​n​i​ ​n​e​v​e​r​ ​c​r​e​a​t​e​s​ ​a​ ​p​u​b​l​i​c​ ​l​i​n​k​.​ ​I​n​ ​p​u​b​l​i​c​ ​r​o​o​m​s​,​ ​p​e​o​p​l​e​ ​c​a​n​ ​r​e​s​h​a​r​e​ ​t​h​e​ ​f​i​l​e​ ​i​f​ ​t​h​i​s​ ​N​e​x​t​c​l​o​u​d​ ​a​l​l​o​w​s​ ​i​t​.
-			 */
-			audience_point_public: string
-			/**
 			 * A​l​l​ ​m​e​e​t​i​n​g​s
 			 */
 			all_meetings: string
@@ -5598,10 +5531,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			tag: string
 			/**
-			 * D​e​l​e​t​e
-			 */
-			'delete': string
-			/**
 			 * P​r​e​p​a​r​e
 			 */
 			prepare: string
@@ -5714,22 +5643,6 @@ export type NamespaceViewerTranslation = {
 			 * U​s​e​ ​d​e​f​a​u​l​t
 			 */
 			use_default: string
-			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
-			/**
-			 * R​e​t​r​y
-			 */
-			retry: string
-			/**
-			 * S​a​v​i​n​g​…
-			 */
-			saving: string
-			/**
-			 * S​a​v​e
-			 */
-			save: string
 			/**
 			 * U​s​e​ ​a​ ​n​a​m​e​ ​w​i​t​h​o​u​t​ ​c​o​n​t​r​o​l​ ​c​h​a​r​a​c​t​e​r​s​.
 			 */
@@ -5948,14 +5861,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			cancel_named: RequiredParams<'name'>
 			/**
-			 * R​e​t​r​y
-			 */
-			retry: string
-			/**
-			 * R​e​m​o​v​e
-			 */
-			remove: string
-			/**
 			 * D​e​l​e​t​e​ ​t​h​e​ ​t​e​m​p​o​r​a​r​y​ ​u​p​l​o​a​d​ ​a​n​d​ ​r​e​m​o​v​e​ ​t​h​i​s​ ​a​t​t​e​m​p​t​.
 			 */
 			remove_title: string
@@ -5963,10 +5868,6 @@ export type NamespaceViewerTranslation = {
 			 * O​p​e​n
 			 */
 			open: string
-			/**
-			 * D​i​s​m​i​s​s
-			 */
-			dismiss: string
 			/**
 			 * H​i​d​e​ ​t​h​i​s​ ​r​o​w​.​ ​I​t​ ​s​t​a​y​s​ ​i​n​ ​t​h​e​ ​s​e​r​v​e​r​'​s​ ​i​m​p​o​r​t​ ​h​i​s​t​o​r​y​.
 			 */
@@ -6205,14 +6106,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			add_icon: string
 			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
-			/**
-			 * S​a​v​e
-			 */
-			save: string
-			/**
 			 * “​{​n​a​m​e​}​”​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.
 			 * @param {unknown} name
 			 */
@@ -6240,10 +6133,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			manager_close_scrim: string
 			/**
-			 * C​l​o​s​e
-			 */
-			close: string
-			/**
 			 * N​o​ ​t​a​g​s​ ​y​e​t​.
 			 */
 			none_yet: string
@@ -6268,10 +6157,6 @@ export type NamespaceViewerTranslation = {
 			 * @param {unknown} name
 			 */
 			delete_title: RequiredParams<'name'>
-			/**
-			 * D​e​l​e​t​e
-			 */
-			'delete': string
 			/**
 			 * M​e​r​g​e​ ​“​{​n​a​m​e​}​”​ ​i​n​t​o​ ​“​{​i​n​t​o​}​”​?
 			 * @param {unknown} into
@@ -6668,10 +6553,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			copy_command: string
 			/**
-			 * C​o​p​i​e​d
-			 */
-			copied: string
-			/**
 			 * C​o​p​y​i​n​g​ ​i​s​ ​b​l​o​c​k​e​d​ ​h​e​r​e​.​ ​I​t​ ​i​s​ ​s​e​l​e​c​t​e​d​:​ ​p​r​e​s​s​ ​⌘​C​ ​o​r​ ​C​t​r​l​+​C​.
 			 */
 			copy_blocked: string
@@ -6708,10 +6589,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			title_field: string
 			/**
-			 * S​a​v​e
-			 */
-			rename_save: string
-			/**
 			 * R​e​s​e​t
 			 */
 			rename_reset: string
@@ -6719,10 +6596,6 @@ export type NamespaceViewerTranslation = {
 			 * R​e​s​t​o​r​e​ ​t​h​e​ ​d​e​f​a​u​l​t​ ​t​i​t​l​e
 			 */
 			rename_reset_title: string
-			/**
-			 * C​a​n​c​e​l
-			 */
-			rename_cancel: string
 			/**
 			 * S​w​i​t​c​h​ ​f​a​i​l​e​d
 			 */
@@ -7058,10 +6931,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			id_copied: string
 			/**
-			 * C​o​p​i​e​d
-			 */
-			copied: string
-			/**
 			 * m​o​n​o
 			 */
 			audio_mono: string
@@ -7275,21 +7144,9 @@ export type NamespaceViewerTranslation = {
 			 */
 			inconclusive: RequiredParams<'device'>
 			/**
-			 * D​i​s​m​i​s​s
-			 */
-			dismiss: string
-			/**
-			 * S​a​v​i​n​g​…
-			 */
-			saving: string
-			/**
 			 * C​o​u​l​d​n​'​t​ ​u​p​d​a​t​e​ ​v​o​i​c​e​s
 			 */
 			update_failed: string
-			/**
-			 * R​e​t​r​y
-			 */
-			retry: string
 			/**
 			 * L​o​a​d​i​n​g​ ​t​h​e​ ​u​p​d​a​t​e​d​ ​r​e​c​o​r​d​i​n​g​…
 			 */
@@ -7306,14 +7163,6 @@ export type NamespaceViewerTranslation = {
 			 * A​l​s​o​ ​r​e​w​r​i​t​e​ ​t​h​e​ ​s​u​m​m​a​r​y​ ​f​o​r​ ​t​h​e​s​e​ ​n​a​m​e​s
 			 */
 			rewrite_summary: string
-			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
-			/**
-			 * S​a​v​e
-			 */
-			save: string
 			/**
 			 * W​a​i​t​ ​u​n​t​i​l​ ​t​h​e​ ​r​e​c​o​r​d​i​n​g​ ​i​s​ ​u​p​d​a​t​e​d
 			 */
@@ -7445,10 +7294,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			remove_tag: RequiredParams<'tag'>
 			/**
-			 * R​e​m​o​v​e
-			 */
-			remove: string
-			/**
 			 * T​a​g​ ​t​h​e​ ​w​h​o​l​e​ ​m​e​e​t​i​n​g
 			 */
 			picker_label: string
@@ -7498,10 +7343,6 @@ export type NamespaceViewerTranslation = {
 			 * R​e​t​r​y​ ​s​a​v​i​n​g​ ​a​n​n​o​t​a​t​i​o​n​s
 			 */
 			retry_saving: string
-			/**
-			 * D​i​s​m​i​s​s
-			 */
-			dismiss: string
 			/**
 			 * T​a​g​s​ ​a​r​e​ ​b​e​i​n​g​ ​p​r​e​p​a​r​e​d​…
 			 */
@@ -7622,10 +7463,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			unsaved: string
 			/**
-			 * E​d​i​t
-			 */
-			edit: string
-			/**
 			 * D​o​n​e
 			 */
 			done: string
@@ -7633,14 +7470,6 @@ export type NamespaceViewerTranslation = {
 			 * S​a​v​e​ ​c​h​a​n​g​e​s
 			 */
 			save_changes: string
-			/**
-			 * R​e​m​o​v​e
-			 */
-			remove: string
-			/**
-			 * C​a​n​c​e​l
-			 */
-			cancel: string
 			/**
 			 * T​a​g​ ​s​e​l​e​c​t​i​o​n
 			 */
@@ -7653,10 +7482,6 @@ export type NamespaceViewerTranslation = {
 			 * C​o​p​y​ ​t​e​x​t
 			 */
 			copy_text: string
-			/**
-			 * C​o​p​i​e​d
-			 */
-			copied: string
 			/**
 			 * C​o​p​y​ ​l​i​n​k
 			 */
@@ -7780,9 +7605,10 @@ export type NamespaceViewerTranslation = {
 				 */
 				title: string
 				/**
-				 * A​d​d​ ​o​n​e​ ​u​n​d​e​r​ ​O​p​e​r​a​t​o​r​ ​›​ ​A​I​ ​p​r​o​v​i​d​e​r​s​.
+				 * A​d​d​ ​o​n​e​ ​u​n​d​e​r​ ​{​p​l​a​c​e​}​.
+				 * @param {unknown} place
 				 */
-				line: string
+				line: RequiredParams<'place'>
 			}
 			provider_refused: {
 				/**
@@ -7790,9 +7616,10 @@ export type NamespaceViewerTranslation = {
 				 */
 				title: string
 				/**
-				 * C​h​e​c​k​ ​i​t​s​ ​k​e​y​,​ ​q​u​o​t​a​ ​o​r​ ​m​o​d​e​l​ ​n​a​m​e​ ​u​n​d​e​r​ ​O​p​e​r​a​t​o​r​ ​›​ ​A​I​ ​p​r​o​v​i​d​e​r​s​.
+				 * C​h​e​c​k​ ​i​t​s​ ​k​e​y​,​ ​q​u​o​t​a​ ​o​r​ ​m​o​d​e​l​ ​n​a​m​e​ ​u​n​d​e​r​ ​{​p​l​a​c​e​}​.
+				 * @param {unknown} place
 				 */
-				line: string
+				line: RequiredParams<'place'>
 			}
 			model_failed: {
 				/**
@@ -7945,14 +7772,6 @@ export type NamespaceViewerTranslation = {
 			 * @param {unknown} count
 			 */
 			meetings_other: RequiredParams<'count'>
-			/**
-			 * R​e​t​r​y
-			 */
-			retry: string
-			/**
-			 * R​e​t​r​y​i​n​g​…
-			 */
-			retrying: string
 		}
 		document: {
 			/**
@@ -7963,18 +7782,6 @@ export type NamespaceViewerTranslation = {
 			 * I​n​s​i​g​h​t​ ​n​a​m​e
 			 */
 			name_input_label: string
-			/**
-			 * C​a​n​c​e​l
-			 */
-			rename_cancel: string
-			/**
-			 * S​a​v​e
-			 */
-			rename_save: string
-			/**
-			 * S​a​v​i​n​g​…
-			 */
-			rename_saving: string
 			/**
 			 * R​e​n​a​m​e​ ​t​h​e​ ​i​n​s​i​g​h​t
 			 */
@@ -8053,14 +7860,6 @@ export type NamespaceViewerTranslation = {
 			 * @param {unknown} status
 			 */
 			pending: RequiredParams<'status'>
-			/**
-			 * R​e​t​r​y
-			 */
-			retry: string
-			/**
-			 * R​e​t​r​y​i​n​g​…
-			 */
-			retrying: string
 			/**
 			 * T​h​i​s​ ​b​u​i​l​d​ ​c​a​n​n​o​t​ ​f​e​t​c​h​ ​t​h​e​ ​d​o​c​u​m​e​n​t​ ​—​ ​t​h​e​ ​r​u​n​ ​a​n​d​ ​w​h​a​t​ ​i​t​ ​r​e​a​d​ ​a​r​e​ ​a​l​l​ ​i​t​ ​c​a​n​ ​s​h​o​w​.
 			 */
@@ -8143,39 +7942,6 @@ export type NamespaceViewerTranslation = {
 			 */
 			missing_not_configured: string
 			/**
-			 * 1​ ​c​a​l​l​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​}​ ​i​n​p​u​t​ ​t​o​k​e​n​s​,​ ​{​w​o​r​d​s​}​ ​w​o​r​d​s
-			 * @param {unknown} target
-			 * @param {unknown} tokens
-			 * @param {unknown} words
-			 */
-			cost_one: RequiredParams<'target' | 'tokens' | 'words'>
-			/**
-			 * {​c​o​u​n​t​}​ ​c​a​l​l​s​ ​t​o​ ​{​t​a​r​g​e​t​}​ ​·​ ​a​b​o​u​t​ ​{​t​o​k​e​n​s​}​ ​i​n​p​u​t​ ​t​o​k​e​n​s​,​ ​{​w​o​r​d​s​}​ ​w​o​r​d​s
-			 * @param {unknown} count
-			 * @param {unknown} target
-			 * @param {unknown} tokens
-			 * @param {unknown} words
-			 */
-			cost_other: RequiredParams<'count' | 'target' | 'tokens' | 'words'>
-			/**
-			 * t​h​e​ ​s​u​m​m​a​r​y​ ​m​o​d​e​l
-			 */
-			cost_target_fallback: string
-			/**
-			 * {​m​o​d​e​l​}​ ​(​{​p​r​o​v​i​d​e​r​}​)
-			 * @param {unknown} model
-			 * @param {unknown} provider
-			 */
-			cost_target: RequiredParams<'model' | 'provider'>
-			/**
-			 * T​h​e​ ​t​r​a​n​s​c​r​i​p​t​ ​i​s​ ​s​e​n​t​ ​t​o​ ​a​n​ ​e​x​t​e​r​n​a​l​ ​s​e​r​v​i​c​e​,​ ​w​h​i​c​h​ ​m​a​y​ ​b​i​l​l​ ​f​o​r​ ​i​t​.
-			 */
-			endpoint_external: string
-			/**
-			 * T​h​e​ ​m​o​d​e​l​ ​r​u​n​s​ ​o​n​ ​y​o​u​r​ ​o​w​n​ ​n​e​t​w​o​r​k​.
-			 */
-			endpoint_local: string
-			/**
 			 * A​ ​s​u​m​m​a​r​y​ ​i​s​ ​a​l​r​e​a​d​y​ ​b​e​i​n​g​ ​w​r​i​t​t​e​n​ ​f​o​r​ ​t​h​i​s​ ​m​e​e​t​i​n​g​.
 			 */
 			error_busy: string
@@ -8202,14 +7968,6 @@ export type NamespaceViewerTranslation = {
 			error_other: RequiredParams<'error'>
 			request: {
 				/**
-				 * W​r​i​t​e​ ​s​u​m​m​a​r​y
-				 */
-				write: string
-				/**
-				 * R​e​g​e​n​e​r​a​t​e​ ​s​u​m​m​a​r​y
-				 */
-				regenerate: string
-				/**
 				 * W​r​i​t​i​n​g​ ​t​h​e​ ​s​u​m​m​a​r​y​…​ ​I​t​ ​a​p​p​e​a​r​s​ ​h​e​r​e​ ​w​h​e​n​ ​i​t​ ​i​s​ ​r​e​a​d​y​.
 				 */
 				writing: string
@@ -8218,14 +7976,6 @@ export type NamespaceViewerTranslation = {
 				 */
 				last_failed: string
 				/**
-				 * W​r​i​t​e​ ​a​ ​s​u​m​m​a​r​y​ ​f​o​r​ ​t​h​i​s​ ​m​e​e​t​i​n​g​?
-				 */
-				confirm_write_title: string
-				/**
-				 * R​e​p​l​a​c​e​ ​t​h​i​s​ ​m​e​e​t​i​n​g​'​s​ ​s​u​m​m​a​r​y​?
-				 */
-				confirm_replace_title: string
-				/**
 				 * E​v​e​r​y​o​n​e​ ​w​h​o​ ​c​a​n​ ​o​p​e​n​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​w​i​l​l​ ​s​e​e​ ​i​t​.
 				 */
 				note_write: string
@@ -8233,10 +7983,6 @@ export type NamespaceViewerTranslation = {
 				 * E​v​e​r​y​o​n​e​ ​w​h​o​ ​c​a​n​ ​o​p​e​n​ ​t​h​e​ ​m​e​e​t​i​n​g​ ​s​e​e​s​ ​t​h​e​ ​n​e​w​ ​s​u​m​m​a​r​y​ ​i​n​s​t​e​a​d​ ​o​f​ ​t​h​i​s​ ​o​n​e​.
 				 */
 				note_replace: string
-				/**
-				 * C​a​n​c​e​l
-				 */
-				cancel: string
 			}
 		}
 		prepare: {
@@ -8408,10 +8154,144 @@ type DisallowNamespaces = {
 
 export type TranslationFunctions = {
 	common: {
-		/**
-		 * Help translate Cassini
-		 */
-		help_translate: () => LocalizedString
+		action: {
+			/**
+			 * Cancel
+			 */
+			cancel: () => LocalizedString
+			/**
+			 * Save
+			 */
+			save: () => LocalizedString
+			/**
+			 * Saving…
+			 */
+			saving: () => LocalizedString
+			/**
+			 * Retry
+			 */
+			retry: () => LocalizedString
+			/**
+			 * Retrying…
+			 */
+			retrying: () => LocalizedString
+			/**
+			 * Dismiss
+			 */
+			dismiss: () => LocalizedString
+			/**
+			 * Delete
+			 */
+			'delete': () => LocalizedString
+			/**
+			 * Remove
+			 */
+			remove: () => LocalizedString
+			/**
+			 * Edit
+			 */
+			edit: () => LocalizedString
+			/**
+			 * Close
+			 */
+			close: () => LocalizedString
+			/**
+			 * Try again
+			 */
+			try_again: () => LocalizedString
+		}
+		summary_request: {
+			/**
+			 * Write summary
+			 */
+			write: () => LocalizedString
+			/**
+			 * Regenerate summary
+			 */
+			regenerate: () => LocalizedString
+			/**
+			 * Write a summary for this meeting?
+			 */
+			confirm_write_title: () => LocalizedString
+			/**
+			 * Replace this meeting's summary?
+			 */
+			confirm_replace_title: () => LocalizedString
+			/**
+			 * 1 call to {target} · about {tokens} input tokens, {words} words
+			 */
+			cost_one: (arg: { target: unknown, tokens: unknown, words: unknown }) => LocalizedString
+			/**
+			 * {count} calls to {target} · about {tokens} input tokens, {words} words
+			 */
+			cost_other: (arg: { count: unknown, target: unknown, tokens: unknown, words: unknown }) => LocalizedString
+			/**
+			 * the summary model
+			 */
+			cost_target_fallback: () => LocalizedString
+			/**
+			 * {model} ({provider})
+			 */
+			cost_target: (arg: { model: unknown, provider: unknown }) => LocalizedString
+			/**
+			 * The transcript is sent to an external service, which may bill for it.
+			 */
+			endpoint_external: () => LocalizedString
+			/**
+			 * The model runs on your own network.
+			 */
+			endpoint_local: () => LocalizedString
+		}
+		audience: {
+			/**
+			 * Nextcloud Files controls who can read each recording.
+			 */
+			intro: () => LocalizedString
+			/**
+			 * Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.
+			 */
+			point_participants: () => LocalizedString
+			/**
+			 * Guests without a Nextcloud account can't open it.
+			 */
+			point_guests: () => LocalizedString
+			/**
+			 * Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.
+			 */
+			point_public_links: () => LocalizedString
+		}
+		place: {
+			/**
+			 * Operator
+			 */
+			operator: () => LocalizedString
+			/**
+			 * Publish pipeline
+			 */
+			publish_pipeline: () => LocalizedString
+			/**
+			 * AI providers
+			 */
+			ai_providers: () => LocalizedString
+			/**
+			 * Insight templates
+			 */
+			insight_templates: () => LocalizedString
+			/**
+			 * Doctor
+			 */
+			doctor: () => LocalizedString
+			/**
+			 * Storage
+			 */
+			storage: () => LocalizedString
+		}
+		status: {
+			/**
+			 * Copied
+			 */
+			copied: () => LocalizedString
+		}
 	}
 	app: {
 		shell: {
@@ -8424,14 +8304,6 @@ export type TranslationFunctions = {
 				 * Browse
 				 */
 				tab_browse: () => LocalizedString
-				/**
-				 * Operator
-				 */
-				tab_operator: () => LocalizedString
-				/**
-				 * Close
-				 */
-				close_overlay: () => LocalizedString
 				/**
 				 * Recording setup needs an administrator’s attention.
 				 */
@@ -8861,10 +8733,6 @@ export type TranslationFunctions = {
 			}
 			setup_notice: {
 				/**
-				 * Try again
-				 */
-				try_again: () => LocalizedString
-				/**
 				 * Checking…
 				 */
 				checking: () => LocalizedString
@@ -8877,9 +8745,9 @@ export type TranslationFunctions = {
 				 */
 				details_heading: () => LocalizedString
 				/**
-				 * Open Operator › Publish pipeline
+				 * Open {place}
 				 */
-				open_publish_pipeline: () => LocalizedString
+				open_publish_pipeline: (arg: { place: unknown }) => LocalizedString
 				/**
 				 * Cassini can't save recordings right now
 				 */
@@ -8905,9 +8773,9 @@ export type TranslationFunctions = {
 				 */
 				step_rerun_setup: () => LocalizedString
 				/**
-				 * Open Operator › Publish pipeline to check the recordings account
+				 * Open {place} to check the recordings account
 				 */
-				step_open_settings: () => LocalizedString
+				step_open_settings: (arg: { place: unknown }) => LocalizedString
 				/**
 				 * Create the {user} account in Nextcloud
 				 */
@@ -8963,9 +8831,9 @@ export type TranslationFunctions = {
 				 */
 				summaries_summary_ask_admin: () => LocalizedString
 				/**
-				 * Open AI providers
+				 * Open {place}
 				 */
-				action: () => LocalizedString
+				action: (arg: { place: unknown }) => LocalizedString
 				/**
 				 * Add a provider
 				 */
@@ -9016,9 +8884,9 @@ export type TranslationFunctions = {
 					 */
 					template_fallback: () => LocalizedString
 					/**
-					 * The build log says why. Fix the template in Insight templates, or choose another one for summaries in Settings.
+					 * The build log says why. Fix the template in {templates}, or choose another one for summaries in {pipeline}.
 					 */
-					template_fallback_hint: () => LocalizedString
+					template_fallback_hint: (arg: { pipeline: unknown, templates: unknown }) => LocalizedString
 					/**
 					 * No summary: the summary could not be generated
 					 */
@@ -10235,10 +10103,6 @@ export type TranslationFunctions = {
 				 */
 				a_recording: () => LocalizedString
 				/**
-				 * Dismiss
-				 */
-				dismiss: () => LocalizedString
-				/**
 				 * Dismiss all
 				 */
 				dismiss_all: () => LocalizedString
@@ -10292,10 +10156,6 @@ export type TranslationFunctions = {
 				 * Trying…
 				 */
 				trying: () => LocalizedString
-				/**
-				 * Try again
-				 */
-				try_again: () => LocalizedString
 				/**
 				 * Last checked {age}
 				 */
@@ -10384,10 +10244,6 @@ export type TranslationFunctions = {
 				 * I played the recording and could hear the audio
 				 */
 				confirm_playback: () => LocalizedString
-				/**
-				 * Close
-				 */
-				close: () => LocalizedString
 				secret: {
 					/**
 					 * Connect to Talk’s signaling server
@@ -10535,26 +10391,6 @@ export type TranslationFunctions = {
 					 * Recordings
 					 */
 					recordings: () => LocalizedString
-					/**
-					 * Doctor
-					 */
-					doctor: () => LocalizedString
-					/**
-					 * AI providers
-					 */
-					endpoints: () => LocalizedString
-					/**
-					 * Publish pipeline
-					 */
-					pipeline: () => LocalizedString
-					/**
-					 * Insight templates
-					 */
-					templates: () => LocalizedString
-					/**
-					 * Storage
-					 */
-					storage: () => LocalizedString
 					/**
 					 * Support Cassini
 					 */
@@ -10934,10 +10770,6 @@ export type TranslationFunctions = {
 				 * · updated {age}
 				 */
 				updated_ago: (arg: { age: unknown }) => LocalizedString
-				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
 				/**
 				 * Next retry
 				 */
@@ -11722,14 +11554,6 @@ export type TranslationFunctions = {
 				 */
 				saving_changes: () => LocalizedString
 				/**
-				 * Saving…
-				 */
-				saving: () => LocalizedString
-				/**
-				 * Save
-				 */
-				save: () => LocalizedString
-				/**
 				 * Leave without saving?
 				 */
 				leave_title: () => LocalizedString
@@ -11890,10 +11714,6 @@ export type TranslationFunctions = {
 				 */
 				discard: () => LocalizedString
 				/**
-				 * Save
-				 */
-				save: () => LocalizedString
-				/**
 				 * Leave without saving?
 				 */
 				leave_title: () => LocalizedString
@@ -11932,21 +11752,9 @@ export type TranslationFunctions = {
 				 */
 				review: () => LocalizedString
 				/**
-				 * Dismiss
-				 */
-				dismiss: () => LocalizedString
-				/**
 				 * Dismissing…
 				 */
 				dismissing: () => LocalizedString
-				/**
-				 * Retry
-				 */
-				retry: () => LocalizedString
-				/**
-				 * Retrying…
-				 */
-				retrying: () => LocalizedString
 			}
 			speech_models: {
 				/**
@@ -12022,17 +11830,9 @@ export type TranslationFunctions = {
 				 */
 				state_not_installed: () => LocalizedString
 				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
-				/**
 				 * Check
 				 */
 				check: () => LocalizedString
-				/**
-				 * Retry
-				 */
-				retry: () => LocalizedString
 				/**
 				 * Download
 				 */
@@ -12064,17 +11864,9 @@ export type TranslationFunctions = {
 				 */
 				state_not_installed: () => LocalizedString
 				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
-				/**
 				 * Check
 				 */
 				check: () => LocalizedString
-				/**
-				 * Retry
-				 */
-				retry: () => LocalizedString
 				/**
 				 * Download
 				 */
@@ -12122,10 +11914,6 @@ export type TranslationFunctions = {
 				 */
 				copy: () => LocalizedString
 				/**
-				 * Copied
-				 */
-				copied: () => LocalizedString
-				/**
 				 * Your browser blocked copying. The password is selected above, so copy it with your keyboard.
 				 */
 				copy_blocked: () => LocalizedString
@@ -12143,22 +11931,6 @@ export type TranslationFunctions = {
 				 * Who can see recordings
 				 */
 				heading: () => LocalizedString
-				/**
-				 * Nextcloud Files controls who can read each recording.
-				 */
-				intro: () => LocalizedString
-				/**
-				 * Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.
-				 */
-				point_participants: () => LocalizedString
-				/**
-				 * Guests without a Nextcloud account can't open it.
-				 */
-				point_guests: () => LocalizedString
-				/**
-				 * Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.
-				 */
-				point_public_links: () => LocalizedString
 				/**
 				 * Checking recordings setup…
 				 */
@@ -12314,10 +12086,6 @@ export type TranslationFunctions = {
 				 */
 				first_save_turns_on: (arg: { place: unknown }) => LocalizedString
 				/**
-				 * Operator › Publish pipeline
-				 */
-				publish_pipeline_place: () => LocalizedString
-				/**
 				 * New provider
 				 */
 				new_provider: () => LocalizedString
@@ -12414,17 +12182,9 @@ export type TranslationFunctions = {
 				 */
 				token_limit_placeholder: (arg: { tokens: unknown }) => LocalizedString
 				/**
-				 * Saving…
-				 */
-				saving: () => LocalizedString
-				/**
 				 * Save provider
 				 */
 				save_provider: () => LocalizedString
-				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
 				/**
 				 * This endpoint answered with its model list
 				 */
@@ -12469,14 +12229,6 @@ export type TranslationFunctions = {
 				 * {tokens} token limit
 				 */
 				token_limit_fact: (arg: { tokens: unknown }) => LocalizedString
-				/**
-				 * Edit
-				 */
-				edit: () => LocalizedString
-				/**
-				 * Remove
-				 */
-				remove: () => LocalizedString
 				/**
 				 * Confirm removing this endpoint
 				 */
@@ -12708,29 +12460,9 @@ export type TranslationFunctions = {
 				 */
 				replace_remove_failed: (arg: { error: unknown, file: unknown }) => LocalizedString
 				/**
-				 * Save
-				 */
-				save: () => LocalizedString
-				/**
-				 * Saving…
-				 */
-				saving: () => LocalizedString
-				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
-				/**
-				 * Edit
-				 */
-				edit: () => LocalizedString
-				/**
 				 * Duplicate
 				 */
 				duplicate: () => LocalizedString
-				/**
-				 * Delete
-				 */
-				'delete': () => LocalizedString
 				/**
 				 * Deleting…
 				 */
@@ -12792,9 +12524,9 @@ export type TranslationFunctions = {
 				 */
 				in_use_insight: () => LocalizedString
 				/**
-				 * Open the Publish pipeline
+				 * Open {place}
 				 */
-				open_pipeline: () => LocalizedString
+				open_pipeline: (arg: { place: unknown }) => LocalizedString
 				/**
 				 * OK
 				 */
@@ -12944,53 +12676,13 @@ export type TranslationFunctions = {
 			}
 			summary_action: {
 				/**
-				 * Write summary
-				 */
-				write: () => LocalizedString
-				/**
-				 * Regenerate summary
-				 */
-				regenerate: () => LocalizedString
-				/**
-				 * Write a summary for this meeting?
-				 */
-				confirm_write_title: () => LocalizedString
-				/**
-				 * Replace this meeting's summary?
-				 */
-				confirm_replace_title: () => LocalizedString
-				/**
-				 * 1 call to {target} · about {tokens} input tokens, {words} words
-				 */
-				cost_one: (arg: { target: unknown, tokens: unknown, words: unknown }) => LocalizedString
-				/**
-				 * {count} calls to {target} · about {tokens} input tokens, {words} words
-				 */
-				cost_other: (arg: { count: unknown, target: unknown, tokens: unknown, words: unknown }) => LocalizedString
-				/**
-				 * the summary model
-				 */
-				cost_target_fallback: () => LocalizedString
-				/**
-				 * {model} ({provider})
-				 */
-				cost_target: (arg: { model: unknown, provider: unknown }) => LocalizedString
-				/**
-				 * The transcript is sent to an external service, which may bill for it.
-				 */
-				endpoint_external: () => LocalizedString
-				/**
-				 * The model runs on your own network.
-				 */
-				endpoint_local: () => LocalizedString
-				/**
 				 * Everyone who can open the meeting sees the new summary instead of the current one.
 				 */
 				replace_note: () => LocalizedString
 				/**
-				 * Summaries are off. Turn them on in Settings › Publish pipeline to write one.
+				 * Summaries are off. Turn them on in {place} to write one.
 				 */
-				summaries_off: () => LocalizedString
+				summaries_off: (arg: { place: unknown }) => LocalizedString
 				/**
 				 * This server no longer keeps a copy of the meeting, so a summary can't be written for this run.
 				 */
@@ -13264,10 +12956,6 @@ export type TranslationFunctions = {
 				 */
 				retry_tag_update: () => LocalizedString
 				/**
-				 * Dismiss
-				 */
-				dismiss: () => LocalizedString
-				/**
 				 * Retry delete
 				 */
 				retry_delete: () => LocalizedString
@@ -13508,22 +13196,6 @@ export type TranslationFunctions = {
 				 */
 				audience_participants: () => LocalizedString
 				/**
-				 * Nextcloud Files controls who can read each recording.
-				 */
-				audience_lead: () => LocalizedString
-				/**
-				 * Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.
-				 */
-				audience_point_all: () => LocalizedString
-				/**
-				 * Guests without a Nextcloud account can't open it.
-				 */
-				audience_point_guests: () => LocalizedString
-				/**
-				 * Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.
-				 */
-				audience_point_public: () => LocalizedString
-				/**
 				 * All meetings
 				 */
 				all_meetings: () => LocalizedString
@@ -13646,10 +13318,6 @@ export type TranslationFunctions = {
 				 */
 				tag: () => LocalizedString
 				/**
-				 * Delete
-				 */
-				'delete': () => LocalizedString
-				/**
 				 * Prepare
 				 */
 				prepare: () => LocalizedString
@@ -13749,22 +13417,6 @@ export type TranslationFunctions = {
 				 * Use default
 				 */
 				use_default: () => LocalizedString
-				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
-				/**
-				 * Retry
-				 */
-				retry: () => LocalizedString
-				/**
-				 * Saving…
-				 */
-				saving: () => LocalizedString
-				/**
-				 * Save
-				 */
-				save: () => LocalizedString
 				/**
 				 * Use a name without control characters.
 				 */
@@ -13970,14 +13622,6 @@ export type TranslationFunctions = {
 				 */
 				cancel_named: (arg: { name: unknown }) => LocalizedString
 				/**
-				 * Retry
-				 */
-				retry: () => LocalizedString
-				/**
-				 * Remove
-				 */
-				remove: () => LocalizedString
-				/**
 				 * Delete the temporary upload and remove this attempt.
 				 */
 				remove_title: () => LocalizedString
@@ -13985,10 +13629,6 @@ export type TranslationFunctions = {
 				 * Open
 				 */
 				open: () => LocalizedString
-				/**
-				 * Dismiss
-				 */
-				dismiss: () => LocalizedString
 				/**
 				 * Hide this row. It stays in the server's import history.
 				 */
@@ -14212,14 +13852,6 @@ export type TranslationFunctions = {
 				 */
 				add_icon: () => LocalizedString
 				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
-				/**
-				 * Save
-				 */
-				save: () => LocalizedString
-				/**
 				 * “{name}” already exists.
 				 */
 				already_exists: (arg: { name: unknown }) => LocalizedString
@@ -14244,10 +13876,6 @@ export type TranslationFunctions = {
 				 */
 				manager_close_scrim: () => LocalizedString
 				/**
-				 * Close
-				 */
-				close: () => LocalizedString
-				/**
 				 * No tags yet.
 				 */
 				none_yet: () => LocalizedString
@@ -14271,10 +13899,6 @@ export type TranslationFunctions = {
 				 * Delete “{name}”?
 				 */
 				delete_title: (arg: { name: unknown }) => LocalizedString
-				/**
-				 * Delete
-				 */
-				'delete': () => LocalizedString
 				/**
 				 * Merge “{name}” into “{into}”?
 				 */
@@ -14624,10 +14248,6 @@ export type TranslationFunctions = {
 				 */
 				copy_command: () => LocalizedString
 				/**
-				 * Copied
-				 */
-				copied: () => LocalizedString
-				/**
 				 * Copying is blocked here. It is selected: press ⌘C or Ctrl+C.
 				 */
 				copy_blocked: () => LocalizedString
@@ -14664,10 +14284,6 @@ export type TranslationFunctions = {
 				 */
 				title_field: () => LocalizedString
 				/**
-				 * Save
-				 */
-				rename_save: () => LocalizedString
-				/**
 				 * Reset
 				 */
 				rename_reset: () => LocalizedString
@@ -14675,10 +14291,6 @@ export type TranslationFunctions = {
 				 * Restore the default title
 				 */
 				rename_reset_title: () => LocalizedString
-				/**
-				 * Cancel
-				 */
-				rename_cancel: () => LocalizedString
 				/**
 				 * Switch failed
 				 */
@@ -14994,10 +14606,6 @@ export type TranslationFunctions = {
 				 */
 				id_copied: () => LocalizedString
 				/**
-				 * Copied
-				 */
-				copied: () => LocalizedString
-				/**
 				 * mono
 				 */
 				audio_mono: () => LocalizedString
@@ -15190,21 +14798,9 @@ export type TranslationFunctions = {
 				 */
 				inconclusive: (arg: { device: unknown }) => LocalizedString
 				/**
-				 * Dismiss
-				 */
-				dismiss: () => LocalizedString
-				/**
-				 * Saving…
-				 */
-				saving: () => LocalizedString
-				/**
 				 * Couldn't update voices
 				 */
 				update_failed: () => LocalizedString
-				/**
-				 * Retry
-				 */
-				retry: () => LocalizedString
 				/**
 				 * Loading the updated recording…
 				 */
@@ -15221,14 +14817,6 @@ export type TranslationFunctions = {
 				 * Also rewrite the summary for these names
 				 */
 				rewrite_summary: () => LocalizedString
-				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
-				/**
-				 * Save
-				 */
-				save: () => LocalizedString
 				/**
 				 * Wait until the recording is updated
 				 */
@@ -15354,10 +14942,6 @@ export type TranslationFunctions = {
 				 */
 				remove_tag: (arg: { tag: unknown }) => LocalizedString
 				/**
-				 * Remove
-				 */
-				remove: () => LocalizedString
-				/**
 				 * Tag the whole meeting
 				 */
 				picker_label: () => LocalizedString
@@ -15405,10 +14989,6 @@ export type TranslationFunctions = {
 				 * Retry saving annotations
 				 */
 				retry_saving: () => LocalizedString
-				/**
-				 * Dismiss
-				 */
-				dismiss: () => LocalizedString
 				/**
 				 * Tags are being prepared…
 				 */
@@ -15518,10 +15098,6 @@ export type TranslationFunctions = {
 				 */
 				unsaved: () => LocalizedString
 				/**
-				 * Edit
-				 */
-				edit: () => LocalizedString
-				/**
 				 * Done
 				 */
 				done: () => LocalizedString
@@ -15529,14 +15105,6 @@ export type TranslationFunctions = {
 				 * Save changes
 				 */
 				save_changes: () => LocalizedString
-				/**
-				 * Remove
-				 */
-				remove: () => LocalizedString
-				/**
-				 * Cancel
-				 */
-				cancel: () => LocalizedString
 				/**
 				 * Tag selection
 				 */
@@ -15549,10 +15117,6 @@ export type TranslationFunctions = {
 				 * Copy text
 				 */
 				copy_text: () => LocalizedString
-				/**
-				 * Copied
-				 */
-				copied: () => LocalizedString
 				/**
 				 * Copy link
 				 */
@@ -15671,9 +15235,9 @@ export type TranslationFunctions = {
 					 */
 					title: () => LocalizedString
 					/**
-					 * Add one under Operator › AI providers.
+					 * Add one under {place}.
 					 */
-					line: () => LocalizedString
+					line: (arg: { place: unknown }) => LocalizedString
 				}
 				provider_refused: {
 					/**
@@ -15681,9 +15245,9 @@ export type TranslationFunctions = {
 					 */
 					title: () => LocalizedString
 					/**
-					 * Check its key, quota or model name under Operator › AI providers.
+					 * Check its key, quota or model name under {place}.
 					 */
-					line: () => LocalizedString
+					line: (arg: { place: unknown }) => LocalizedString
 				}
 				model_failed: {
 					/**
@@ -15833,14 +15397,6 @@ export type TranslationFunctions = {
 				 * {count} meetings
 				 */
 				meetings_other: (arg: { count: unknown }) => LocalizedString
-				/**
-				 * Retry
-				 */
-				retry: () => LocalizedString
-				/**
-				 * Retrying…
-				 */
-				retrying: () => LocalizedString
 			}
 			document: {
 				/**
@@ -15851,18 +15407,6 @@ export type TranslationFunctions = {
 				 * Insight name
 				 */
 				name_input_label: () => LocalizedString
-				/**
-				 * Cancel
-				 */
-				rename_cancel: () => LocalizedString
-				/**
-				 * Save
-				 */
-				rename_save: () => LocalizedString
-				/**
-				 * Saving…
-				 */
-				rename_saving: () => LocalizedString
 				/**
 				 * Rename the insight
 				 */
@@ -15935,14 +15479,6 @@ export type TranslationFunctions = {
 				 * {status}. The answer appears here when it finishes.
 				 */
 				pending: (arg: { status: unknown }) => LocalizedString
-				/**
-				 * Retry
-				 */
-				retry: () => LocalizedString
-				/**
-				 * Retrying…
-				 */
-				retrying: () => LocalizedString
 				/**
 				 * This build cannot fetch the document — the run and what it read are all it can show.
 				 */
@@ -16020,30 +15556,6 @@ export type TranslationFunctions = {
 				 */
 				missing_not_configured: () => LocalizedString
 				/**
-				 * 1 call to {target} · about {tokens} input tokens, {words} words
-				 */
-				cost_one: (arg: { target: unknown, tokens: unknown, words: unknown }) => LocalizedString
-				/**
-				 * {count} calls to {target} · about {tokens} input tokens, {words} words
-				 */
-				cost_other: (arg: { count: unknown, target: unknown, tokens: unknown, words: unknown }) => LocalizedString
-				/**
-				 * the summary model
-				 */
-				cost_target_fallback: () => LocalizedString
-				/**
-				 * {model} ({provider})
-				 */
-				cost_target: (arg: { model: unknown, provider: unknown }) => LocalizedString
-				/**
-				 * The transcript is sent to an external service, which may bill for it.
-				 */
-				endpoint_external: () => LocalizedString
-				/**
-				 * The model runs on your own network.
-				 */
-				endpoint_local: () => LocalizedString
-				/**
 				 * A summary is already being written for this meeting.
 				 */
 				error_busy: () => LocalizedString
@@ -16069,14 +15581,6 @@ export type TranslationFunctions = {
 				error_other: (arg: { error: unknown }) => LocalizedString
 				request: {
 					/**
-					 * Write summary
-					 */
-					write: () => LocalizedString
-					/**
-					 * Regenerate summary
-					 */
-					regenerate: () => LocalizedString
-					/**
 					 * Writing the summary… It appears here when it is ready.
 					 */
 					writing: () => LocalizedString
@@ -16085,14 +15589,6 @@ export type TranslationFunctions = {
 					 */
 					last_failed: () => LocalizedString
 					/**
-					 * Write a summary for this meeting?
-					 */
-					confirm_write_title: () => LocalizedString
-					/**
-					 * Replace this meeting's summary?
-					 */
-					confirm_replace_title: () => LocalizedString
-					/**
 					 * Everyone who can open the meeting will see it.
 					 */
 					note_write: () => LocalizedString
@@ -16100,10 +15596,6 @@ export type TranslationFunctions = {
 					 * Everyone who can open the meeting sees the new summary instead of this one.
 					 */
 					note_replace: () => LocalizedString
-					/**
-					 * Cancel
-					 */
-					cancel: () => LocalizedString
 				}
 			}
 			prepare: {

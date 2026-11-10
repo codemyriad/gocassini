@@ -109,7 +109,7 @@
     <button class="btn btn-sm" type="button" on:click={copy}>
       {#if copied}
         <Check size={14} aria-hidden="true" />
-        {t.copied()}
+        {$LL.common.status.copied()}
       {:else}
         <Copy size={14} aria-hidden="true" />
         {t.copy()}

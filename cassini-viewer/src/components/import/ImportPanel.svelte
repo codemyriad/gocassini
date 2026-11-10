@@ -632,16 +632,16 @@
                     </button>
                   {/if}
                   {#if canRetry(job)}
-                    <button type="button" class="import-link" on:click={() => void retryJob(job)}>{text.retry()}</button>
+                    <button type="button" class="import-link" on:click={() => void retryJob(job)}>{$LL.common.action.retry()}</button>
                   {/if}
                   {#if canRemove(job)}
-                    <button type="button" class="import-link import-link-quiet" title={text.remove_title()} on:click={() => void removeJob(job)}>{text.remove()}</button>
+                    <button type="button" class="import-link import-link-quiet" title={text.remove_title()} on:click={() => void removeJob(job)}>{$LL.common.action.remove()}</button>
                   {/if}
                   {#if canOpen}
                     <button type="button" class="import-link" on:click={() => dispatch("openMeeting", job.contentId ?? "")}>{text.open()}</button>
                   {/if}
                   {#if dismissable(job)}
-                    <button type="button" class="import-link import-link-quiet" title={text.dismiss_title()} on:click={() => dismiss(job)}>{text.dismiss()}</button>
+                    <button type="button" class="import-link import-link-quiet" title={text.dismiss_title()} on:click={() => dismiss(job)}>{$LL.common.action.dismiss()}</button>
                   {/if}
                 </span>
               </div>

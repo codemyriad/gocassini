@@ -171,7 +171,7 @@ describe("InsightTemplatesPanel", () => {
       insightTemplatesPanelSource.indexOf("{#if deletion.inUse}"),
       insightTemplatesPanelSource.indexOf("$LL.app.insights.templates_panel.delete_note()"),
     );
-    expect(inUse).toContain("$LL.app.insights.templates_panel.open_pipeline()");
+    expect(inUse).toContain("$LL.app.insights.templates_panel.open_pipeline({ place: $LL.common.place.publish_pipeline() })");
     expect(inUse).not.toContain("remove()");
   });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { get } from "svelte/store";
-import { LL } from "cassini-viewer/i18n";
+import { LL, operatorPlace } from "cassini-viewer/i18n";
 
 import noticeSource from "./SetupNotice.svelte?raw";
 
@@ -38,8 +38,8 @@ describe("the setup notice", () => {
   it("offers the two actions from the mock, as buttons", () => {
     const showDetails = noticeSource.match(/\n\s*\{\$LL\.app\.operator\.setup_notice\.show_details\(\)\}\n\s*<\/button>/g) ?? [];
     expect(showDetails).toHaveLength(1);
-    expect(noticeSource).toContain("{busy ? $LL.app.operator.setup_notice.checking() : $LL.app.operator.setup_notice.try_again()}");
-    expect(get(LL).app.operator.setup_notice.try_again()).toBe("Try again");
+    expect(noticeSource).toContain("{busy ? $LL.app.operator.setup_notice.checking() : $LL.common.action.try_again()}");
+    expect(get(LL).common.action.try_again()).toBe("Try again");
     // Try again is a request to the operator, which the shell owns; the
     // component asks for it and does nothing itself.
     expect(noticeSource).toContain('dispatch("retry")');
@@ -49,8 +49,8 @@ describe("the setup notice", () => {
   it("sends the step that is a navigation to the settings section", () => {
     // The Setup tab is gone (D-756) and the storage controls are a section of
     // Operator › Publish pipeline (D-757).
-    expect(noticeSource).toContain("$LL.app.operator.setup_notice.open_publish_pipeline()");
-    expect(get(LL).app.operator.setup_notice.open_publish_pipeline()).toBe("Open Operator › Publish pipeline");
+    expect(noticeSource).toContain("$LL.app.operator.setup_notice.open_publish_pipeline({ place: operatorPlace(\"publish_pipeline\") })");
+    expect(get(LL).app.operator.setup_notice.open_publish_pipeline({ place: operatorPlace("publish_pipeline") })).toBe("Open Operator › Publish pipeline");
     expect(noticeSource).not.toContain("Open the Setup tab");
     expect(noticeSource).toContain('dispatch("navigate", "settings")');
   });

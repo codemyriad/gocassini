@@ -118,6 +118,6 @@ it("asks before replacing a summary, and cancelling sends nothing", async () => 
 it("says why it cannot write one when an administrator can fix that", async () => {
   serve("Planning", plan({ available: false, reason: "summaries_off" }));
   await open("Planning");
-  await expect.element(page.getByText("Summaries are off. Turn them on in Settings › Publish pipeline to write one.")).toBeVisible();
+  await expect.element(page.getByText("Summaries are off. Turn them on in Operator › Publish pipeline to write one.")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Write summary", exact: true })).not.toBeInTheDocument();
 });

@@ -119,9 +119,9 @@ describe("the shell's setup features", () => {
 describe("the shell after the Setup tab", () => {
   it("has two tabs, and no way to reach a surface that no longer exists", () => {
     expect(appSource).toContain(">\n        {$LL.app.shell.app.tab_browse()}\n      </button>");
-    expect(appSource).toContain(">\n        {$LL.app.shell.app.tab_operator()}\n      </button>");
+    expect(appSource).toContain(">\n        {$LL.common.place.operator()}\n      </button>");
     expect(get(LL).app.shell.app.tab_browse()).toBe("Browse");
-    expect(get(LL).app.shell.app.tab_operator()).toBe("Operator");
+    expect(get(LL).common.place.operator()).toBe("Operator");
     expect(appSource).not.toContain('selectSurface("setup")');
     expect(appSource).not.toContain('surface === "setup"');
     expect(appSource).not.toContain('"./Setup.svelte"');

@@ -8,10 +8,6 @@ const shell = {
     nav_label: "Cassini surfaces",
     // Tab: the meeting list and meetings.
     tab_browse: "Browse",
-    // Tab: the administrator's surface (jobs, settings, storage).
-    tab_operator: "Operator",
-    // On a phone, the invisible button over the tabs that closes an open sheet.
-    close_overlay: "Close",
     recording_needs_action: "Recording setup needs an administrator’s attention.",
     open_recording_setup: "Open recording setup",
     retention_load_failed: "Could not load retention settings.",

@@ -143,8 +143,6 @@ const settings = {
     unsaved_region: "Unsaved changes",
     unsaved: "You have unsaved changes",
     saving_changes: "Saving changes…",
-    saving: "Saving…",
-    save: "Save",
     leave_title: "Leave without saving?",
     leave_prompt: "You have unsaved changes. Leave without saving?",
     stay: "Stay",
@@ -201,7 +199,6 @@ const settings = {
   retention_actions: {
     takes_effect: "Changes take effect at the next cleanup. Saving never deletes files immediately.",
     discard: "Discard changes",
-    save: "Save",
     leave_title: "Leave without saving?",
     leave_prompt: "You have unsaved changes. Leave without saving?",
     stay: "Stay",
@@ -214,10 +211,7 @@ const settings = {
     keeps_forever: "Recordings and published meetings are kept indefinitely until you set a limit.",
     unsaved_first: "Save or discard your changes before dismissing.",
     review: "Review",
-    dismiss: "Dismiss",
     dismissing: "Dismissing…",
-    retry: "Retry",
-    retrying: "Retrying…",
   },
   // Speech and voice separation model downloads.
   speech_models: {
@@ -248,9 +242,7 @@ const settings = {
     state_cancelled: "Download cancelled. Retry resumes it.",
     state_not_installed: "Not installed",
     // Small buttons.
-    cancel: "Cancel",
     check: "Check",
-    retry: "Retry",
     download: "Download",
     progress_label: "Voice separation download progress",
   },
@@ -262,9 +254,7 @@ const settings = {
     state_cancelled: "Download cancelled. Retry resumes it.",
     state_not_installed: "Not installed",
     // Small buttons.
-    cancel: "Cancel",
     check: "Check",
-    retry: "Retry",
     download: "Download",
     // Badge on the model new recordings use.
     in_use: "In use",
@@ -284,7 +274,6 @@ const settings = {
     only_time: "This is the only time it's shown. Cassini doesn't store it and can't show it again. You only need it to sign in as {user} yourself; Cassini connects another way. If you lose it, set a new one here.",
     field_label: "Generated password",
     copy: "Copy",
-    copied: "Copied",
     copy_blocked: "Your browser blocked copying. The password is selected above, so copy it with your keyboard.",
     // Disclosure over the occ command that sets a password on the server.
     set_on_server: "Or set one on the server instead",
@@ -293,10 +282,6 @@ const settings = {
   // Operator › Publish pipeline: the "Who can see recordings" card.
   direct_share: {
     heading: "Who can see recordings",
-    intro: "Nextcloud Files controls who can read each recording.",
-    point_participants: "Each recording is shared with all of the Talk room's participants, whether they were present on the call or not.",
-    point_guests: "Guests without a Nextcloud account can't open it.",
-    point_public_links: "Cassini never creates a public link. In public rooms, people can reshare the file if this Nextcloud allows it.",
     checking: "Checking recordings setup…",
     needs_account: "Cassini needs its recordings account before it can publish.",
     needs_attention: "Recordings setup needs attention.",
@@ -351,10 +336,8 @@ const settings = {
     feature_insights: "Insights",
     feature_insights_description: "Answers drawn from meetings you choose.",
     only_for_ai: "Recording and transcription run on your own servers. A provider is only needed for summaries and insights.",
-    // {place} is the name of the settings page, drawn in bold (publish_pipeline_place).
+    // {place} is the path to the settings page, "Operator › Publish pipeline", drawn in bold.
     first_save_turns_on: "Saving your first provider turns on summaries for every meeting. You can turn them off in {place}.",
-    // Where the pipeline steps are switched on and off. Bold inside other sentences.
-    publish_pipeline_place: "Operator › Publish pipeline",
     // Form headings. {name} is the provider's name or address.
     new_provider: "New provider",
     editing: "Editing {name}",
@@ -389,9 +372,7 @@ const settings = {
     token_limit_field: "Response token limit",
     // {tokens} is the default limit.
     token_limit_placeholder: "{tokens} (default)",
-    saving: "Saving…",
     save_provider: "Save provider",
-    cancel: "Cancel",
     // A provider's card.
     probe_ok: "This endpoint answered with its model list",
     probe_failed: "This endpoint did not list its models",
@@ -407,14 +388,12 @@ const settings = {
     timeout_fact: "{seconds}s timeout",
     // {tokens} is a number of tokens.
     token_limit_fact: "{tokens} token limit",
-    edit: "Edit",
-    remove: "Remove",
     // The confirmation before a provider is removed.
     remove_confirm_label: "Confirm removing this endpoint",
     // {name} is the provider's name or address.
     remove_confirm_title: "Remove {name}?",
     remove_deletes_key: "The saved API key is deleted and can't be recovered.",
-    // {place} is publish_pipeline_place, drawn in bold.
+    // {place} is the path to the settings page, "Operator › Publish pipeline", drawn in bold.
     remove_stops_summaries: "This stops meeting summaries until you choose another provider in {place}.",
     remove_stops_insights: "This stops insights until you choose another provider in {place}.",
     remove_stops_both: "This stops meeting summaries and insights until you choose another provider in {place}.",
@@ -424,7 +403,7 @@ const settings = {
     summary_uses: "Summaries use {provider}.",
     summary_uses_with_model: "Summaries use {provider} with {model}.",
     summaries_off: "Summaries are off.",
-    // {place} is publish_pipeline_place, drawn in bold.
+    // {place} is the path to the settings page, "Operator › Publish pipeline", drawn in bold.
     change_in_pipeline: "Change this in {place}.",
     insight_default: "Whoever creates an insight picks which provider it uses. If they don't pick one, it uses {provider}.",
     insight_default_with_model: "Whoever creates an insight picks which provider it uses. If they don't pick one, it uses {provider} with {model}.",

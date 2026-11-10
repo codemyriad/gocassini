@@ -220,7 +220,7 @@
                 <dt>{$LL.viewer.meeting.facts.id()}</dt>
                 <dd class="mf-id">
                   <code title={meetingId}>{shortId(meetingId)}</code>
-                  <button type="button" class="mf-copy" aria-label={copied ? $LL.viewer.meeting.facts.id_copied() : $LL.viewer.meeting.facts.copy_id()} title={copied ? $LL.viewer.meeting.facts.copied() : $LL.viewer.meeting.facts.copy_id()} on:click={copyId}>
+                  <button type="button" class="mf-copy" aria-label={copied ? $LL.viewer.meeting.facts.id_copied() : $LL.viewer.meeting.facts.copy_id()} title={copied ? $LL.common.status.copied() : $LL.viewer.meeting.facts.copy_id()} on:click={copyId}>
                     {#if copied}<Check size={12} aria-hidden="true" />{:else}<Copy size={12} aria-hidden="true" />{/if}
                   </button>
                 </dd>

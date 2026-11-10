@@ -58,11 +58,11 @@
 <span class="model-action">
   {#if model}
     {#if running && job}
-      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action("cancel")}>{t.cancel()}</button>
+      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action("cancel")}>{$LL.common.action.cancel()}</button>
     {:else if model.ready}
       {#if selected}<span class="model-inuse">{t.in_use()}</span>{/if}
     {:else if model.installed || inventory?.downloads_allowed}
-      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? t.check() : job ? t.retry() : t.download()}</button>
+      <button type="button" class="btn btn-xs" disabled={busy} on:click={() => action(job ? "retry" : "install")}>{model.installed ? t.check() : job ? $LL.common.action.retry() : t.download()}</button>
     {/if}
   {/if}
 </span>

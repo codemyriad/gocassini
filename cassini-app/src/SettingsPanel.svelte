@@ -1159,9 +1159,9 @@
           <button class="sb-btn sb-light" type="button" disabled={saving || !isDirty || (sourceRetention === "delete-after-processing" && (!transcriptionEnabled || !activeModel || !activeRevision))} on:click={handleSave}>
             {#if saving}
               <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-              {t.saving()}
+              {$LL.common.action.saving()}
             {:else}
-              {t.save()}
+              {$LL.common.action.save()}
             {/if}
           </button>
         {/if}

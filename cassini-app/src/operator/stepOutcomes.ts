@@ -93,7 +93,7 @@ export function summaryNotice(attempt: JobAttempt): OutcomeNotice | null {
     return {
       tone: "warning",
       title: t.template_fallback(),
-      hint: t.template_fallback_hint(),
+      hint: t.template_fallback_hint({ templates: get(LL).common.place.insight_templates(), pipeline: get(LL).common.place.publish_pipeline() }),
     };
   }
   if (status === "" || status === "completed" || reason === "no_transcript") return null;

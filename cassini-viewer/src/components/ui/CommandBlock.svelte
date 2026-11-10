@@ -60,8 +60,8 @@
   <button
     type="button"
     class="btn btn-ghost btn-xs btn-square absolute top-1.5 right-1.5"
-    aria-label={copied ? $LL.viewer.browse.ui.copied() : copyText}
-    title={copied ? $LL.viewer.browse.ui.copied() : copyText}
+    aria-label={copied ? $LL.common.status.copied() : copyText}
+    title={copied ? $LL.common.status.copied() : copyText}
     on:click={copy}
   >
     {#if copied}<Check size={14} aria-hidden="true" />{:else}<Copy size={14} aria-hidden="true" />{/if}

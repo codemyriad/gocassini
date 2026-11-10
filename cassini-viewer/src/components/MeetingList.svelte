@@ -511,7 +511,7 @@
           {#if tagRetryable}
             <button type="button" class="link" on:click={() => dispatch("retryTag")}>{text.retry_tag_update()}</button>
           {:else}
-            <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>{text.dismiss()}</button>
+            <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>{$LL.common.action.dismiss()}</button>
           {/if}
         </span>
       </p>
@@ -524,7 +524,7 @@
           {#if deleteRetryable}
             <button type="button" class="link" on:click={() => dispatch("retryDelete")}>{text.retry_delete()}</button>
           {/if}
-          <button type="button" class="link" on:click={() => dispatch("dismissDeleteNotice")}>{text.dismiss()}</button>
+          <button type="button" class="link" on:click={() => dispatch("dismissDeleteNotice")}>{$LL.common.action.dismiss()}</button>
         </span>
       </p>
     {/if}

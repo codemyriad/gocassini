@@ -1630,7 +1630,7 @@
             {renameError}
           </span>
         {/if}
-        <button type="submit" class="btn btn-primary btn-xs flex-none" disabled={renameBusy}>{$LL.viewer.meeting.view.rename_save()}</button>
+        <button type="submit" class="btn btn-primary btn-xs flex-none" disabled={renameBusy}>{$LL.common.action.save()}</button>
         <button
           type="button"
           class="btn btn-ghost btn-xs flex-none"
@@ -1641,7 +1641,7 @@
           {$LL.viewer.meeting.view.rename_reset()}
         </button>
         <button type="button" class="btn btn-ghost btn-xs flex-none" disabled={renameBusy} on:click={cancelRename}>
-          {$LL.viewer.meeting.view.rename_cancel()}
+          {$LL.common.action.cancel()}
         </button>
       </form>
     {:else}

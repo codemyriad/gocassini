@@ -114,7 +114,7 @@
          strongest button, the one "Tag selection" has, above the rest. -->
     {#if locked || !editable}
       <div class={row ? "ml-auto flex flex-wrap items-center justify-end gap-1.5" : "grid grid-flow-col auto-cols-fr gap-1"}>
-        {#if editable}<ActionButton tone="plain" compact disabled={busy} on:click={() => dispatch("edit")}>{$LL.viewer.meeting.stretch.edit()}</ActionButton>{/if}
+        {#if editable}<ActionButton tone="plain" compact disabled={busy} on:click={() => dispatch("edit")}>{$LL.common.action.edit()}</ActionButton>{/if}
         <ActionButton tone="plain" compact key={row ? "" : $LL.viewer.meeting.keys.escape()} on:click={() => dispatch("clear")}>{$LL.viewer.meeting.stretch.done()}</ActionButton>
       </div>
     {:else}
@@ -125,8 +125,8 @@
       <!-- Equal columns, so Remove is not the larger for its longer word, and
            tighter buttons, so "Cancel" and its key fit half the card. -->
       <div class="grid grid-flow-col auto-cols-fr gap-1">
-        <ActionButton tone="error" compact disabled={busy} on:click={() => dispatch("remove")}>{$LL.viewer.meeting.stretch.remove()}</ActionButton>
-        <ActionButton tone="plain" compact key={row ? "" : $LL.viewer.meeting.keys.escape()} on:click={() => dispatch("clear")}>{moved ? $LL.viewer.meeting.stretch.cancel() : $LL.viewer.meeting.stretch.done()}</ActionButton>
+        <ActionButton tone="error" compact disabled={busy} on:click={() => dispatch("remove")}>{$LL.common.action.remove()}</ActionButton>
+        <ActionButton tone="plain" compact key={row ? "" : $LL.viewer.meeting.keys.escape()} on:click={() => dispatch("clear")}>{moved ? $LL.common.action.cancel() : $LL.viewer.meeting.stretch.done()}</ActionButton>
       </div>
     </div>
     {/if}
@@ -135,8 +135,8 @@
       {#if editable}<ActionButton bind:element={tagButton} tone="ink" block={!row} key={row ? "" : "↵"} disabled={busy} aria-haspopup="dialog" aria-expanded={picking} on:click={confirm}>
         {$LL.viewer.meeting.stretch.tag_selection()}
       </ActionButton>{/if}
-      <ActionButton tone="plain" block={!row} key={row ? "" : copyKey} on:click={() => dispatch("copy")}>{#if copied}<span class="text-success">{$LL.viewer.meeting.stretch.copied()}</span>{:else}{$LL.viewer.meeting.stretch.copy_text()}{/if}</ActionButton>
-      <ActionButton tone="plain" block={!row} key={row ? "" : $LL.viewer.meeting.keys.escape()} on:click={() => dispatch("clear")}>{$LL.viewer.meeting.stretch.cancel()}</ActionButton>
+      <ActionButton tone="plain" block={!row} key={row ? "" : copyKey} on:click={() => dispatch("copy")}>{#if copied}<span class="text-success">{$LL.common.status.copied()}</span>{:else}{$LL.viewer.meeting.stretch.copy_text()}{/if}</ActionButton>
+      <ActionButton tone="plain" block={!row} key={row ? "" : $LL.viewer.meeting.keys.escape()} on:click={() => dispatch("clear")}>{$LL.common.action.cancel()}</ActionButton>
     </div>
   {/if}
   {#if shareUrl}

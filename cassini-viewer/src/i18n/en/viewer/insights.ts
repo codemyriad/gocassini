@@ -16,11 +16,12 @@ const insights = {
   // saying what to do. Shown on the failed insight's document.
   failure: {
     bad_request: { title: "This request could not be run", line: "Check the app log." },
-    // "Operator › AI providers" is the path to a settings page in the app.
-    no_provider: { title: "No AI endpoint", line: "Add one under Operator › AI providers." },
+    // {place} is the path to a settings page in the app, "Operator › AI providers".
+    no_provider: { title: "No AI endpoint", line: "Add one under {place}." },
     provider_refused: {
       title: "The endpoint refused the request",
-      line: "Check its key, quota or model name under Operator › AI providers.",
+      // {place}: as above.
+      line: "Check its key, quota or model name under {place}.",
     },
     model_failed: { title: "The model did not answer", line: "Retry, or pick fewer meetings." },
     template_changed: {
@@ -65,16 +66,11 @@ const insights = {
     // How many of the insight's meetings the reader can see.
     meetings_one: "{count} meeting",
     meetings_other: "{count} meetings",
-    retry: "Retry",
-    retrying: "Retrying…",
   },
   // An insight open in the side sheet.
   document: {
     region_label: "Insight",
     name_input_label: "Insight name",
-    rename_cancel: "Cancel",
-    rename_save: "Save",
-    rename_saving: "Saving…",
     rename_button_label: "Rename the insight",
     // Tooltip on the pencil button.
     rename_tooltip: "Rename",
@@ -100,8 +96,6 @@ const insights = {
       "{count} source meetings are no longer available (deleted, or no longer shared with you).",
     // {status} is "Queued" or "Running".
     pending: "{status}. The answer appears here when it finishes.",
-    retry: "Retry",
-    retrying: "Retrying…",
     cannot_load: "This build cannot fetch the document — the run and what it read are all it can show.",
     loading: "Loading the answer…",
     // {error} is a technical reason, in English.
@@ -135,17 +129,6 @@ const insights = {
     missing_failed: "No summary: it could not be generated when the meeting was published.",
     missing_disabled: "No summary: summaries were turned off when this meeting was published.",
     missing_not_configured: "No summary: no language model was set up for summaries when this meeting was published.",
-    // What writing a summary costs. {target} is a model and provider, e.g.
-    // "deepseek-v4 (Open Router)"; {tokens} is a rounded number, e.g. "7.5K";
-    // {words} is a number.
-    cost_one: "1 call to {target} · about {tokens} input tokens, {words} words",
-    cost_other: "{count} calls to {target} · about {tokens} input tokens, {words} words",
-    // {target} when no model is named.
-    cost_target_fallback: "the summary model",
-    // {model} with the provider it runs on.
-    cost_target: "{model} ({provider})",
-    endpoint_external: "The transcript is sent to an external service, which may bill for it.",
-    endpoint_local: "The model runs on your own network.",
     error_busy: "A summary is already being written for this meeting.",
     error_has_summary: "This meeting has a summary now. Reload it to see it.",
     error_forbidden: "Only an administrator or a moderator of the room can replace this summary.",
@@ -155,15 +138,10 @@ const insights = {
     error_other: "Couldn't ask for the summary: {error}",
     // The summary request block on a meeting.
     request: {
-      write: "Write summary",
-      regenerate: "Regenerate summary",
       writing: "Writing the summary… It appears here when it is ready.",
       last_failed: "The last attempt to write a summary failed.",
-      confirm_write_title: "Write a summary for this meeting?",
-      confirm_replace_title: "Replace this meeting's summary?",
       note_write: "Everyone who can open the meeting will see it.",
       note_replace: "Everyone who can open the meeting sees the new summary instead of this one.",
-      cancel: "Cancel",
     },
   },
   // The Prepare panel: picked meetings, ready to copy or download as context.

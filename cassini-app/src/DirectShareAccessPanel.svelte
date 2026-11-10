@@ -53,11 +53,11 @@
   <div class="access-body grid gap-3 text-sm">
     <!-- Same points as the rooms rail's "Shared with participants" note
          (cassini-viewer RoomsRail.svelte); change both together. -->
-    <p>{$LL.app.settings.direct_share.intro()}</p>
+    <p>{$LL.common.audience.intro()}</p>
     <ul class="access-points">
-      <li>{$LL.app.settings.direct_share.point_participants()}</li>
-      <li>{$LL.app.settings.direct_share.point_guests()}</li>
-      <li>{$LL.app.settings.direct_share.point_public_links()}</li>
+      <li>{$LL.common.audience.point_participants()}</li>
+      <li>{$LL.common.audience.point_guests()}</li>
+      <li>{$LL.common.audience.point_public_links()}</li>
     </ul>
     {#if loading}
       <p role="status">{$LL.app.settings.direct_share.checking()}</p>

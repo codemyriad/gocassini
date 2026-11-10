@@ -214,9 +214,9 @@ describe("InsightDocument", () => {
 
     it("has Cancel and Save beside the name, as the tag editor does, and does not leave on blur", () => {
       expect(insightDocumentSource).toContain(
-        "on:click={cancelRename}>{$LL.viewer.insights.document.rename_cancel()}</button>",
+        "on:click={cancelRename}>{$LL.common.action.cancel()}</button>",
       );
-      expect(get(LL).viewer.insights.document.rename_cancel()).toBe("Cancel");
+      expect(get(LL).common.action.cancel()).toBe("Cancel");
       expect(insightDocumentSource).toContain("on:click={saveRename}");
       expect(insightDocumentSource).not.toContain("on:blur");
     });
