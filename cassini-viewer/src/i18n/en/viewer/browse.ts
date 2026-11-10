@@ -201,6 +201,8 @@ const browse = {
     show_meetings: "Meetings",
     show_insights: "Insights",
     connect_agent: "Connect an agent",
+    // Opens Help (getting help, the support bundle). In the rail's footer.
+    help: "Help",
   },
 
   // The bar that floats over the list once meetings are picked.

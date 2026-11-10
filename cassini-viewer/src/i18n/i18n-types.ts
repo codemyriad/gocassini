@@ -2341,6 +2341,10 @@ export type NamespaceAppTranslation = {
 				 */
 				recordings: string
 				/**
+				 * H​e​l​p
+				 */
+				help: string
+				/**
 				 * S​u​p​p​o​r​t​ ​C​a​s​s​i​n​i
 				 */
 				support: string
@@ -5361,6 +5365,10 @@ export type NamespaceViewerTranslation = {
 			 * C​o​n​n​e​c​t​ ​a​n​ ​a​g​e​n​t
 			 */
 			connect_agent: string
+			/**
+			 * H​e​l​p
+			 */
+			help: string
 		}
 		selection_bar: {
 			/**
@@ -10174,6 +10182,10 @@ export type TranslationFunctions = {
 					 */
 					recordings: () => LocalizedString
 					/**
+					 * Help
+					 */
+					help: () => LocalizedString
+					/**
 					 * Support Cassini
 					 */
 					support: () => LocalizedString
@@ -13025,6 +13037,10 @@ export type TranslationFunctions = {
 				 * Connect an agent
 				 */
 				connect_agent: () => LocalizedString
+				/**
+				 * Help
+				 */
+				help: () => LocalizedString
 			}
 			selection_bar: {
 				/**

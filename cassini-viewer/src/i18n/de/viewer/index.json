@@ -161,7 +161,8 @@
       "show_heading": "",
       "show_meetings": "",
       "show_insights": "",
-      "connect_agent": ""
+      "connect_agent": "",
+      "help": ""
     },
     "selection_bar": {
       "region_label": "",

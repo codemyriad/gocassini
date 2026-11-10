@@ -57,3 +57,21 @@ export function focusLayer(node: HTMLElement) {
     },
   };
 }
+
+// focusLayer for a sheet that stays mounted while closed (so work started in it
+// survives closing): the layer exists only while `open` is true.
+export function focusLayerWhile(node: HTMLElement, open: boolean) {
+  let layer = open ? focusLayer(node) : null;
+  return {
+    update(next: boolean) {
+      if (next && !layer) layer = focusLayer(node);
+      else if (!next && layer) {
+        layer.destroy();
+        layer = null;
+      }
+    },
+    destroy() {
+      layer?.destroy();
+    },
+  };
+}

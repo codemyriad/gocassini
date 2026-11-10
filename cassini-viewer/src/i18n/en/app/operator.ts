@@ -631,6 +631,8 @@ const operator = {
       group_settings: "Settings",
       group_support: "Support",
       recordings: "Recordings",
+      // Getting help with this installation, and its support bundle.
+      help: "Help",
       support: "Support Cassini",
       // On narrow screens the nav is a drawer behind a button.
       open_label: "Choose an Operator section",

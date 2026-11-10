@@ -161,7 +161,8 @@
       "show_heading": "Show",
       "show_meetings": "Meetings",
       "show_insights": "Insights",
-      "connect_agent": "Connect an agent"
+      "connect_agent": "Connect an agent",
+      "help": "Help"
     },
     "selection_bar": {
       "region_label": "Selected meetings",

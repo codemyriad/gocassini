@@ -130,3 +130,23 @@ describe("RoomsRail audience notice", () => {
     expect(rail).not.toContain("Shared with participants");
   });
 });
+
+describe("RoomsRail Help (D-910)", () => {
+  it("shows Help in the footer only when the shell offers it", () => {
+    // A standalone export has nothing to download, so no Help at all.
+    expect(render(RoomsRail as never, { props: {} } as never).body).not.toContain("rail-foot");
+    const offered = render(RoomsRail as never, { props: { helpOffered: true } } as never).body;
+    expect(offered).toMatch(/class="rail-foot[^"]*"[\s\S]*lucide-life-buoy[\s\S]*Help<\/button>/);
+  });
+
+  it("puts Help before Connect an agent in the one footer", () => {
+    const both = render(RoomsRail as never, { props: { helpOffered: true, agentOffered: true } } as never).body;
+    expect(both.match(/class="rail-foot /g)).toHaveLength(1);
+    expect(both.indexOf("Help</button>")).toBeLessThan(both.indexOf("Connect an agent"));
+  });
+
+  it("opens the sheet and closes the drawer", () => {
+    expect(roomsRailSource).toMatch(/dispatch\("openSupport"\);\s*dispatch\("close"\);/);
+    expect(roomsRailSource).toContain("aria-expanded={supportOpen}");
+  });
+});

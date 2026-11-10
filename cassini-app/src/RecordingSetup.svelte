@@ -1,6 +1,5 @@
 <script lang="ts">
   import { dateFormat, LL } from "cassini-viewer/i18n";
-  import SupportBundle from "./SupportBundle.svelte";
   import { createEventDispatcher, onMount } from "svelte";
   import { BookOpen, Check, CircleAlert, CircleCheck, Clock, FileSearch, Headphones, Info, ListChecks, Play, RefreshCw, Settings, TextSearch, TriangleAlert, Video, X } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
@@ -249,7 +248,6 @@
     <p>{$LL.app.operator.doctor.intro()}</p>
   </div>
 </header>
-<SupportBundle administrator={true} surface="operator" />
 {#if stale}
   <div class="alert alert-soft alert-warning alert-tinted items-start gap-2 px-3 py-2 text-sm" role="alert">
     <TriangleAlert size={16} class="mt-0.5 shrink-0 {toneClasses.warning}" aria-hidden="true" />

@@ -276,7 +276,14 @@ func (b *supportBundle) writeZIP(w io.Writer) error {
 	// Fixed entry names and generated pseudonyms only. No persisted filename
 	// or error text can control a ZIP entry name.
 	privacyNote := "Privacy filtering is OFF. Original diagnostic logs and error messages may contain\nnames, URLs, credentials or meeting text. Review and edit the files before sharing\nif needed, then create a new ZIP, or download again with scrubbing enabled.\n"
-	if b.scrubbed() {
+	switch {
+	case b.manifest.Scope == "user" && b.scrubbed():
+		privacyNote = "Privacy filtering is ON. Your Nextcloud user ID and original error messages are\nleft out; share counts, status codes and failure categories remain. Review before sharing.\n"
+	case b.manifest.Scope == "user":
+		// A reader's bundle holds no logs, but it does hold who they are and
+		// error text as Nextcloud returned it (D-910).
+		privacyNote = "Privacy filtering is OFF. This bundle holds your Nextcloud user ID, details about\nyour browser and the recordings shared with you, with error messages exactly as\nreceived. It holds no meeting content and no server logs. Review before sharing,\nor download again with scrubbing enabled.\n"
+	case b.scrubbed():
 		privacyNote = "Privacy filtering is ON. This bundle uses projected diagnostics and pseudonymous\njob references; original log prose and error details are excluded. Review before sharing.\n"
 	}
 	// The initial byte reserve covers mandatory metadata and this explanation,

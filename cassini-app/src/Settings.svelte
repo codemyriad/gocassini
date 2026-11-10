@@ -20,6 +20,7 @@
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
   import SupportPanel from "./SupportPanel.svelte";
+  import HelpPanel from "./HelpPanel.svelte";
   import { applyJob, applyPanel, type OperatorPanel } from "./surfaceRouting";
 
   export let panel: OperatorPanel = "endpoints";
@@ -89,6 +90,8 @@
       on:openProviders={() => dispatch("panel", "endpoints")}
       on:openPipeline={(event) => openPipeline(event.detail)}
     />
+  {:else if panel === "help"}
+    <HelpPanel />
   {:else if panel === "support"}
     <SupportPanel />
   {:else}
