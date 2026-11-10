@@ -59,6 +59,7 @@
   import { ChevronDown, Pencil } from "@lucide/svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
   import { defaultInsightName, INSIGHT_NAME_MAX } from "cassini-viewer/insightName";
+  import { LL } from "cassini-viewer/i18n";
 
   import ModelCombobox from "./ModelCombobox.svelte";
   import { loadConfig } from "./operator/config";
@@ -151,7 +152,7 @@
   // "Generate insight", as the design has it. The count is already on the rows
   // above it and on the selection bar behind the panel, and repeating it on the
   // button made the one action read as a summary of the thing above it.
-  const generateLabel = "Generate insight";
+  $: generateLabel = $LL.app.insights.generate_card.generate();
   // The probe that decides whether there is an operator surface at all is the
   // same one that produced this client. There is no second notion of admin here
   // to drift from the first.
@@ -337,7 +338,7 @@
      the last meeting is unpicked anyway. -->
 {#snippet nameField()}
   <label class="tpl-field">
-    <span>Name</span>
+    <span>{$LL.app.insights.generate_card.name_label()}</span>
     <input
       class="gc-input gc-text"
       type="text"
@@ -347,17 +348,16 @@
       bind:value={name}
       on:input={() => (nameTouched = true)}
     />
-    <span class="tpl-hint">You can rename it later from the insight.</span>
+    <span class="tpl-hint">{$LL.app.insights.generate_card.name_hint()}</span>
   </label>
 {/snippet}
 
 {#if entries.length > 0}
-  <section class="ins-card" aria-label="Create an insight">
+  <section class="ins-card" aria-label={$LL.app.insights.generate_card.region_label()}>
     <div>
-      <h3 class="ins-card-title">Create an insight</h3>
+      <h3 class="ins-card-title">{$LL.app.insights.generate_card.title()}</h3>
       <p class="ins-card-sub">
-        A written answer drawn from these meetings, saved alongside the meeting bundle rather
-        than inside it.
+        {$LL.app.insights.generate_card.intro()}
       </p>
     </div>
 
@@ -371,9 +371,9 @@
              trips over it. -->
         <div class="tpl-field">
           <div class="tpl-field-head">
-            <label for={templatePickerId}>Insight template</label>
+            <label for={templatePickerId}>{$LL.app.insights.generate_card.template_label()}</label>
             {#if isAdmin}
-              <a class="tpl-edit-link" href={templatesUrl()} on:pointerenter={refreshTemplatesHref} on:focus={refreshTemplatesHref} on:click={openTemplates}><Pencil size={11} aria-hidden="true" />Edit templates</a>
+              <a class="tpl-edit-link" href={templatesUrl()} on:pointerenter={refreshTemplatesHref} on:focus={refreshTemplatesHref} on:click={openTemplates}><Pencil size={11} aria-hidden="true" />{$LL.app.insights.generate_card.edit_templates()}</a>
             {/if}
           </div>
           <span class="gc-select">
@@ -395,11 +395,11 @@
                Offered only by one with somewhere to put it, so a box that
                appears is a box the operator will accept. -->
           <label class="tpl-field">
-            <span>Question</span>
+            <span>{$LL.app.insights.generate_card.question_label()}</span>
             <textarea
               class="tpl-question-box textarea textarea-sm textarea-bordered w-full"
               rows="3"
-              placeholder="What should this insight answer?"
+              placeholder={$LL.app.insights.generate_card.question_placeholder()}
               bind:value={question}
             ></textarea>
           </label>
@@ -412,11 +412,11 @@
       <!-- No list to pick from: still loading, or an operator that does not
            serve one. Saying which template runs is the honest substitute. -->
       <p class="ins-card-sub">
-        This runs the template your administrator configured for insights.
+        {$LL.app.insights.generate_card.configured_template()}
       </p>
       {@render nameField()}
       {#if workflowsError}
-        <p class="text-xs text-warning">Templates could not be listed. The configured one runs.</p>
+        <p class="text-xs text-warning">{$LL.app.insights.generate_card.templates_unlisted()}</p>
       {/if}
     {/if}
 
@@ -431,7 +431,7 @@
       <details class="ins-endpoint">
         <summary class="ins-endpoint-toggle">
           <span class="ins-endpoint-chev" aria-hidden="true"></span>
-          <span class="ins-endpoint-name">Provider and model</span>
+          <span class="ins-endpoint-name">{$LL.app.insights.generate_card.provider_and_model()}</span>
           <span class="ins-endpoint-now">
             {#if providerName(chosenProvider)}
               <code>{providerName(chosenProvider)}</code>
@@ -443,7 +443,7 @@
         </summary>
         <div class="ins-endpoint-body">
         <label class="tpl-field tpl-field-row">
-          <span>Provider</span>
+          <span>{$LL.app.insights.generate_card.provider_label()}</span>
           <span class="gc-select">
             <select
               class="gc-input"
@@ -462,11 +462,11 @@
              what you type and never gates it. -->
         <ModelCombobox
           bind:value={chosenModel}
-          label="Model"
+          label={$LL.app.insights.generate_card.model_label()}
           models={modelsByProvider[chosenProvider] ?? []}
           loading={modelsLoadingByProvider[chosenProvider] === true}
           error={modelsErrorByProvider[chosenProvider] ?? ""}
-          placeholder="endpoint default"
+          placeholder={$LL.app.insights.generate_card.model_placeholder()}
           on:open={() => void loadModels(chosenProvider)}
         />
         </div>
@@ -483,24 +483,27 @@
         disabled={creating || questionMissing || textless.length > 0}
         on:click={generate}
       >
-        {creating ? "Starting…" : generateLabel}
+        {creating ? $LL.app.insights.generate_card.starting() : generateLabel}
       </button>
       {#if questionMissing}
         <p class="ins-card-note">
-          This template asks whatever you type above, so it needs a question.
+          {$LL.app.insights.generate_card.question_missing()}
         </p>
       {/if}
 
       <!-- Where the transcripts go and where the answer lands, said before
            the run rather than discovered after it (D-700). -->
       <p class="ins-card-note">
-        These meetings' transcripts are sent to the AI provider to be read. The insight comes
-        back as a document in your Nextcloud files.
+        {$LL.app.insights.generate_card.where_it_goes()}
       </p>
     </div>
 
     {#if textless.length > 0}
-      <p class="text-xs" role="status">{textless.length} selected recording(s) have no transcript text. Remove them from the selection to generate an insight. Their audio is still available.</p>
+      <p class="text-xs" role="status">
+        {textless.length === 1
+          ? $LL.app.insights.generate_card.textless_one()
+          : $LL.app.insights.generate_card.textless_other({ count: textless.length })}
+      </p>
     {/if}
     {#if createError}
       <p class="text-xs text-error" role="alert">{createError}</p>

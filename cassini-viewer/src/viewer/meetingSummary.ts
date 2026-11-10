@@ -9,6 +9,11 @@
 // a moderator of the meeting's room, which the operator decides and reports as
 // canRegenerate.
 
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
+import { numberFormat } from "../i18n/format";
+
 export type SummaryRequestRunState = "idle" | "writing" | "failed";
 
 export interface SummaryRequestState {
@@ -65,12 +70,13 @@ export function readSummaryStatus(processing: unknown): SummaryStatus | undefine
 // transcript, which the transcript itself already explains.
 export function missingSummaryText(summary: SummaryStatus | undefined): string | null {
   if (!summary || summary.status === "completed") return null;
-  if (summary.status === "failed") return "No summary: it could not be generated when the meeting was published.";
+  const t = get(LL).viewer.insights.summary;
+  if (summary.status === "failed") return t.missing_failed();
   switch (summary.reason) {
     case "disabled":
-      return "No summary: summaries were turned off when this meeting was published.";
+      return t.missing_disabled();
     case "not_configured":
-      return "No summary: no language model was set up for summaries when this meeting was published.";
+      return t.missing_not_configured();
     default:
       return null;
   }
@@ -78,38 +84,45 @@ export function missingSummaryText(summary: SummaryStatus | undefined): string |
 
 // "1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5k input tokens, 5,213 words"
 export function summaryCostLine(state: SummaryRequestState): string {
-  const calls = `${state.calls} ${state.calls === 1 ? "call" : "calls"}`;
+  const t = get(LL).viewer.insights.summary;
   const target = state.model
-    ? `${state.model}${state.provider ? ` (${state.provider})` : ""}`
-    : state.provider || "the summary model";
-  return `${calls} to ${target} · about ${approxTokens(state.estimatedInputTokens)} input tokens, ${state.words.toLocaleString("en-US")} words`;
+    ? state.provider
+      ? t.cost_target({ model: state.model, provider: state.provider })
+      : state.model
+    : state.provider || t.cost_target_fallback();
+  const tokens = approxTokens(state.estimatedInputTokens);
+  const words = numberFormat().format(state.words);
+  return state.calls === 1
+    ? t.cost_one({ target, tokens, words })
+    : t.cost_other({ count: numberFormat().format(state.calls), target, tokens, words });
 }
 
 export function summaryEndpointLine(state: SummaryRequestState): string {
-  return state.external
-    ? "The transcript is sent to an external service, which may bill for it."
-    : "The model runs on your own network.";
+  const t = get(LL).viewer.insights.summary;
+  return state.external ? t.endpoint_external() : t.endpoint_local();
 }
 
 function approxTokens(tokens: number): string {
-  if (tokens < 1000) return String(tokens);
-  return `${(Math.round(tokens / 100) / 10).toLocaleString("en-US")}k`;
+  if (tokens < 1000) return numberFormat().format(tokens);
+  const thousands = numberFormat({ maximumFractionDigits: 1 }).format(Math.round(tokens / 100) / 10);
+  return get(LL).viewer.insights.summary.tokens_thousands({ value: thousands });
 }
 
 export function describeSummaryRequestError(error: unknown): string {
+  const t = get(LL).viewer.insights.summary;
   if (error instanceof SummaryRequestError) {
     switch (error.code) {
       case "busy":
-        return "A summary is already being written for this meeting.";
+        return t.error_busy();
       case "has-summary":
-        return "This meeting has a summary now. Reload it to see it.";
+        return t.error_has_summary();
       case "forbidden":
-        return "Only an administrator or a moderator of the room can replace this summary.";
+        return t.error_forbidden();
       case "rate-limited":
-        return "Too many summaries asked for in a short time. Try again later.";
+        return t.error_rate_limited();
       case "unavailable":
-        return "A summary can't be written for this meeting now.";
+        return t.error_unavailable();
     }
   }
-  return `Couldn't ask for the summary: ${error instanceof Error ? error.message : String(error)}`;
+  return t.error_other({ error: error instanceof Error ? error.message : String(error) });
 }

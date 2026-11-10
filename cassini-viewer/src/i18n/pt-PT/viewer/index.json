@@ -1,7 +1,188 @@
 {
   "browse": {},
   "meeting": {},
-  "insights": {},
+  "insights": {
+    "status": {
+      "queued": "",
+      "running": "",
+      "succeeded": "",
+      "failed": ""
+    },
+    "headline_fallback": "",
+    "failure": {
+      "bad_request": {
+        "title": "",
+        "line": ""
+      },
+      "no_provider": {
+        "title": "",
+        "line": ""
+      },
+      "provider_refused": {
+        "title": "",
+        "line": ""
+      },
+      "model_failed": {
+        "title": "",
+        "line": ""
+      },
+      "template_changed": {
+        "title": "",
+        "line": ""
+      },
+      "write_failed": {
+        "title": "",
+        "line": ""
+      },
+      "deliver_failed": {
+        "title": "",
+        "line": ""
+      },
+      "timeout": {
+        "title": "",
+        "line": ""
+      },
+      "staging_failed": {
+        "title": "",
+        "line": ""
+      },
+      "catalog_failed": {
+        "title": "",
+        "line": ""
+      },
+      "meeting_unavailable": {
+        "title": "",
+        "line": ""
+      },
+      "download_failed": {
+        "title": "",
+        "line": ""
+      },
+      "assemble_failed": {
+        "title": "",
+        "line": ""
+      },
+      "interrupted": {
+        "title": "",
+        "line": ""
+      },
+      "unknown": {
+        "title": "",
+        "line": ""
+      }
+    },
+    "default_name": {
+      "template_fallback": "",
+      "untitled_meeting": "",
+      "meetings_other": ""
+    },
+    "card": {
+      "kind": "",
+      "meetings_one": "",
+      "meetings_other": "",
+      "retry": "",
+      "retrying": ""
+    },
+    "document": {
+      "region_label": "",
+      "name_input_label": "",
+      "rename_cancel": "",
+      "rename_save": "",
+      "rename_saving": "",
+      "rename_button_label": "",
+      "rename_tooltip": "",
+      "close_label": "",
+      "rooms_other": "",
+      "export_label": "",
+      "copy_markdown": "",
+      "download_markdown": "",
+      "open_in_files": "",
+      "clipboard_unavailable": "",
+      "copied": "",
+      "clipboard_blocked": "",
+      "downloaded": "",
+      "sources_heading_one": "",
+      "sources_heading_other": "",
+      "sources_heading_none": "",
+      "missing_sources_one": "",
+      "missing_sources_other": "",
+      "pending": "",
+      "retry": "",
+      "retrying": "",
+      "cannot_load": "",
+      "loading": "",
+      "load_failed": "",
+      "document_missing": "",
+      "run_heading": "",
+      "asked_by": "",
+      "asked_by_unknown": "",
+      "status_label": "",
+      "template_label": "",
+      "provider_label": "",
+      "attempt_label": ""
+    },
+    "export": {
+      "written_by": "",
+      "template": "",
+      "model": "",
+      "sources": ""
+    },
+    "summary": {
+      "missing_failed": "",
+      "missing_disabled": "",
+      "missing_not_configured": "",
+      "cost_one": "",
+      "cost_other": "",
+      "cost_target_fallback": "",
+      "cost_target": "",
+      "tokens_thousands": "",
+      "endpoint_external": "",
+      "endpoint_local": "",
+      "error_busy": "",
+      "error_has_summary": "",
+      "error_forbidden": "",
+      "error_rate_limited": "",
+      "error_unavailable": "",
+      "error_other": "",
+      "request": {
+        "write": "",
+        "regenerate": "",
+        "writing": "",
+        "last_failed": "",
+        "confirm_write_title": "",
+        "confirm_replace_title": "",
+        "note_write": "",
+        "note_replace": "",
+        "cancel": ""
+      }
+    },
+    "prepare": {
+      "title": "",
+      "region_label": "",
+      "export_label": "",
+      "close_label": "",
+      "in_bundle": "",
+      "blocks_prepare": "",
+      "length_unknown": "",
+      "unpick": "",
+      "total": "",
+      "selection_changed_bundle": "",
+      "selection_changed": "",
+      "preparing_transcripts": "",
+      "clipboard_unavailable": "",
+      "transcripts_copied": "",
+      "transcripts_copy_failed": "",
+      "transcripts_downloaded": "",
+      "preparing_files": "",
+      "file_downloaded": "",
+      "files_downloaded": "",
+      "earlier_files_downloaded": "",
+      "preparing": "",
+      "copied_characters": "",
+      "clipboard_blocked": "",
+      "downloaded": ""
+    }
+  },
   "embed": {
     "badge": ""
   },

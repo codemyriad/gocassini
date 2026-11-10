@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import appSource from "../App.svelte?raw";
 import insightDocumentSource from "../components/InsightDocument.svelte?raw";
@@ -107,7 +110,10 @@ describe("the insight document's gone sources", () => {
     );
     expect(insightDocumentSource).toContain("export let missingSourceCount = 0;");
     expect(insightDocumentSource).toContain("{#if sources.length > 0 || missingSourceCount > 0}");
-    expect(insightDocumentSource).toContain("no longer available (deleted, or no longer shared with you)");
+    expect(insightDocumentSource).toContain("$LL.viewer.insights.document.missing_sources_other({ count: missingSourceCount })");
+    expect(get(LL).viewer.insights.document.missing_sources_one()).toContain(
+      "no longer available (deleted, or no longer shared with you)",
+    );
   });
 });
 

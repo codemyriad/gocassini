@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { get } from "svelte/store";
+
+import { LL } from "../i18n";
 
 import insightCardSource from "./InsightCard.svelte?raw";
 
@@ -87,7 +90,10 @@ describe("InsightCard surface", () => {
     // Laid over the card rather than taking a flex slot from the open button.
     expect(insightCardSource).toContain(".insight-card {\n    position: relative;");
     expect(insightCardSource).toContain(".insight-retry {\n    position: absolute;");
-    expect(insightCardSource).toContain('{retrying ? "Retrying…" : "Retry"}');
+    expect(insightCardSource).toContain(
+      "{retrying ? $LL.viewer.insights.card.retrying() : $LL.viewer.insights.card.retry()}",
+    );
+    expect(get(LL).viewer.insights.card.retry()).toBe("Retry");
     expect(insightCardSource).toContain('<p class="insight-retry-error" role="status">{retryError}</p>');
   });
 });

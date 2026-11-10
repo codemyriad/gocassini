@@ -3,52 +3,64 @@
 // calls a language model, which may be billed, so nothing is sent before the
 // administrator has seen how many calls, to which model, of what size, and
 // whether it leaves this network. Pure so the wording can be tested.
+import { get } from "svelte/store";
+import { LL, numberFormat } from "cassini-viewer/i18n";
+
 import type { SummaryPlan } from "./types";
 
 export function summaryActionLabel(plan: SummaryPlan): string {
-  return plan.has_summary ? "Regenerate summary" : "Write summary";
+  const t = get(LL).app.insights.summary_action;
+  return plan.has_summary ? t.regenerate() : t.write();
 }
 
 export function summaryConfirmTitle(plan: SummaryPlan): string {
-  return plan.has_summary ? "Replace this meeting's summary?" : "Write a summary for this meeting?";
+  const t = get(LL).app.insights.summary_action;
+  return plan.has_summary ? t.confirm_replace_title() : t.confirm_write_title();
 }
 
 // "1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5k input tokens, 5,213 words"
 export function summaryCostText(plan: SummaryPlan): string {
-  const calls = `${plan.calls} ${plan.calls === 1 ? "call" : "calls"}`;
+  const t = get(LL).app.insights.summary_action;
   const target = plan.model
-    ? `${plan.model}${plan.provider ? ` (${plan.provider})` : ""}`
-    : plan.provider || "the summary model";
-  return `${calls} to ${target} · about ${approxTokens(plan.estimated_input_tokens)} input tokens, ${plan.words.toLocaleString("en-US")} words`;
+    ? plan.provider
+      ? t.cost_target({ model: plan.model, provider: plan.provider })
+      : plan.model
+    : plan.provider || t.cost_target_fallback();
+  const tokens = approxTokens(plan.estimated_input_tokens);
+  const words = numberFormat().format(plan.words);
+  return plan.calls === 1
+    ? t.cost_one({ target, tokens, words })
+    : t.cost_other({ count: numberFormat().format(plan.calls), target, tokens, words });
 }
 
 export function summaryEndpointText(plan: SummaryPlan): string {
-  return plan.external
-    ? "The transcript is sent to an external service, which may bill for it."
-    : "The model runs on your own network.";
+  const t = get(LL).app.insights.summary_action;
+  return plan.external ? t.endpoint_external() : t.endpoint_local();
 }
 
 export function summaryReplaceText(plan: SummaryPlan): string | null {
-  return plan.has_summary ? "Everyone who can open the meeting sees the new summary instead of the current one." : null;
+  return plan.has_summary ? get(LL).app.insights.summary_action.replace_note() : null;
 }
 
 // Why the action is not offered, when an administrator can do something
 // about it; null when there is nothing to say (no transcript, not published,
 // busy: the run detail already says so).
 export function summaryUnavailableText(plan: SummaryPlan): string | null {
+  const t = get(LL).app.insights.summary_action;
   switch (plan.reason) {
     case "summaries_off":
-      return "Summaries are off. Turn them on in Settings › Publish pipeline to write one.";
+      return t.summaries_off();
     case "no_local_copy":
-      return "This server no longer keeps a copy of the meeting, so a summary can't be written for this run.";
+      return t.no_local_copy();
     default:
       return null;
   }
 }
 
 function approxTokens(tokens: number): string {
-  if (tokens < 1000) return String(tokens);
-  return `${(Math.round(tokens / 100) / 10).toLocaleString("en-US")}k`;
+  if (tokens < 1000) return numberFormat().format(tokens);
+  const thousands = numberFormat({ maximumFractionDigits: 1 }).format(Math.round(tokens / 100) / 10);
+  return get(LL).app.insights.summary_action.tokens_thousands({ value: thousands });
 }
 
 // Whether an LLM endpoint is on this host or network, by the operator's rule
@@ -75,7 +87,8 @@ export function isLocalEndpoint(baseUrl: string): boolean {
 
 // What Settings says about the summary step's cost, for the chosen provider.
 export function summaryStepLead(providerName: string, baseUrl: string): string {
+  const t = get(LL).app.insights.summary_action;
   return isLocalEndpoint(baseUrl)
-    ? `Sends each transcript to ${providerName} on your own network. One request per meeting.`
-    : `Sends each transcript to ${providerName}. One request per meeting, which it may bill.`;
+    ? t.step_lead_local({ provider: providerName })
+    : t.step_lead_external({ provider: providerName });
 }

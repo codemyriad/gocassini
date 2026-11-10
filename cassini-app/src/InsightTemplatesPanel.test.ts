@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
+import { LL } from "cassini-viewer/i18n";
 
 import insightTemplatesPanelSource from "./InsightTemplatesPanel.svelte?raw";
 import { promptProblem, shortHash, templateIdFromName, usableTemplateId } from "./InsightTemplatesPanel.svelte";
@@ -113,29 +115,40 @@ describe("InsightTemplatesPanel", () => {
   });
 
   it("shows why a custom template cannot run instead of hiding it", () => {
-    expect(insightTemplatesPanelSource).toContain("cannot run: {workflow.error}");
+    expect(insightTemplatesPanelSource).toContain(
+      "$LL.app.insights.templates_panel.cannot_run({ file: MARK, error: workflow.error })",
+    );
+    expect(insightTemplatesPanelSource).toContain("{errorBefore}<code>{workflow.id}.md</code>{errorAfter}");
+    expect(get(LL).app.insights.templates_panel.cannot_run({ file: "risks.md", error: "no prompt" })).toBe(
+      "risks.md cannot run: no prompt",
+    );
     expect(insightTemplatesPanelSource).toContain("`${workflow.origin}:${workflow.id}`");
   });
 
   it("keeps the panel's claim about where these templates are used true", () => {
     // The summary step runs a registry workflow by id, so this sentence
     // describes the code rather than an intention (D-718).
-    expect(insightTemplatesPanelSource).toContain("Used for insights and meeting summaries.");
+    expect(insightTemplatesPanelSource).toContain("{$LL.app.insights.templates_panel.intro()}");
+    expect(get(LL).app.insights.templates_panel.intro()).toContain("Used for insights and meeting summaries.");
   });
 
   it("keeps loading, an empty registry and a failed fetch as three answers", () => {
     // Collapsing any two of these tells an administrator something false:
     // "Cassini ships no templates" when the fetch failed, or the reverse.
-    expect(insightTemplatesPanelSource).toContain("Loading insight templates…");
-    expect(insightTemplatesPanelSource).toContain("This build ships no templates.");
+    expect(insightTemplatesPanelSource).toContain("$LL.app.insights.templates_panel.loading()");
+    expect(insightTemplatesPanelSource).toContain("$LL.app.insights.templates_panel.none_shipped()");
     expect(insightTemplatesPanelSource).toContain("{#if loadError}");
-    expect(insightTemplatesPanelSource).toContain("Templates could not be listed.");
+    expect(insightTemplatesPanelSource).toContain("$LL.app.insights.templates_panel.load_failed()");
+    const t = get(LL).app.insights.templates_panel;
+    expect(new Set([t.loading(), t.none_shipped(), t.load_failed()]).size).toBe(3);
+    expect(t.none_shipped()).toBe("This build ships no templates.");
   });
 
   it("edits custom templates and only duplicates built-ins", () => {
     // Built-ins are compiled into the image: the only thing to do with one
     // here is copy it. A custom one is a file the operator writes.
-    expect(insightTemplatesPanelSource).toContain("Duplicate");
+    expect(insightTemplatesPanelSource).toContain("$LL.app.insights.templates_panel.duplicate()");
+    expect(get(LL).app.insights.templates_panel.duplicate()).toBe("Duplicate");
     expect(insightTemplatesPanelSource).not.toContain("Start from this");
     expect(insightTemplatesPanelSource).toContain(
       "client.saveInsightTemplate(id, toRequest(current.draft), { createOnly: creating })",
@@ -149,14 +162,16 @@ describe("InsightTemplatesPanel", () => {
 
   it("asks before deleting in a modal dialog, and offers no Delete for a template a step runs", () => {
     expect(insightTemplatesPanelSource).toContain('<dialog\n  class="modal"');
-    expect(insightTemplatesPanelSource).toContain("Delete <strong>{name}</strong>?");
+    expect(insightTemplatesPanelSource).toContain("{deleteBefore}<strong>{name}</strong>{deleteAfter}");
+    expect(insightTemplatesPanelSource).toContain("$LL.app.insights.templates_panel.delete_title({ name: MARK })");
+    expect(get(LL).app.insights.templates_panel.delete_title({ name: "Risks" })).toBe("Delete Risks?");
     expect(insightTemplatesPanelSource).toContain("error instanceof OperatorHttpError && error.status === 409");
     // The in-use state is its own branch, with no Delete in it.
     const inUse = insightTemplatesPanelSource.slice(
       insightTemplatesPanelSource.indexOf("{#if deletion.inUse}"),
-      insightTemplatesPanelSource.indexOf("Insights that have already been produced from it"),
+      insightTemplatesPanelSource.indexOf("$LL.app.insights.templates_panel.delete_note()"),
     );
-    expect(inUse).toContain("Open the Publish pipeline");
+    expect(inUse).toContain("$LL.app.insights.templates_panel.open_pipeline()");
     expect(inUse).not.toContain("remove()");
   });
 
@@ -210,9 +225,17 @@ describe("the prompt check", () => {
   });
 
   it("has three fields, Name, Description and Prompt, and no question checkbox", () => {
-    expect(insightTemplatesPanelSource).toContain('<label class="op-field-label" for="tpl-name">Name</label>');
-    expect(insightTemplatesPanelSource).toContain('<label class="op-field-label" for="tpl-description">Description</label>');
-    expect(insightTemplatesPanelSource).toContain('<label class="op-field-label" for="tpl-prompt">Prompt</label>');
+    for (const [id, key] of [
+      ["tpl-name", "name_label"],
+      ["tpl-description", "description_label"],
+      ["tpl-prompt", "prompt_label"],
+    ]) {
+      expect(insightTemplatesPanelSource).toContain(
+        `<label class="op-field-label" for="${id}">{$LL.app.insights.templates_panel.${key}()}</label>`,
+      );
+    }
+    const t = get(LL).app.insights.templates_panel;
+    expect([t.name_label(), t.description_label(), t.prompt_label()]).toEqual(["Name", "Description", "Prompt"]);
     expect(insightTemplatesPanelSource.match(/class="op-field-label"/g)).toHaveLength(3);
     expect(insightTemplatesPanelSource).not.toContain('type="checkbox"');
     expect(insightTemplatesPanelSource).not.toContain("What it asks");

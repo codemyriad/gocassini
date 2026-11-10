@@ -1,7 +1,188 @@
 {
   "browse": {},
   "meeting": {},
-  "insights": {},
+  "insights": {
+    "status": {
+      "queued": "Queued",
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed"
+    },
+    "headline_fallback": "Insight",
+    "failure": {
+      "bad_request": {
+        "title": "This request could not be run",
+        "line": "Check the app log."
+      },
+      "no_provider": {
+        "title": "No AI endpoint",
+        "line": "Add one under Operator › AI providers."
+      },
+      "provider_refused": {
+        "title": "The endpoint refused the request",
+        "line": "Check its key, quota or model name under Operator › AI providers."
+      },
+      "model_failed": {
+        "title": "The model did not answer",
+        "line": "Retry, or pick fewer meetings."
+      },
+      "template_changed": {
+        "title": "The template changed before this insight ran",
+        "line": "Generate it again to use the template as it is now."
+      },
+      "write_failed": {
+        "title": "The insight could not be written to disk",
+        "line": "Check the app's storage."
+      },
+      "deliver_failed": {
+        "title": "The insight could not be saved to your Nextcloud files",
+        "line": "Check your space, then retry."
+      },
+      "timeout": {
+        "title": "Stopped after an hour",
+        "line": "Retry with fewer meetings or a faster endpoint."
+      },
+      "staging_failed": {
+        "title": "The meetings could not be staged",
+        "line": "Check the app's storage."
+      },
+      "catalog_failed": {
+        "title": "Your meeting list could not be read",
+        "line": "Retry in a moment."
+      },
+      "meeting_unavailable": {
+        "title": "One of these meetings is no longer available to you",
+        "line": "Unpick it and ask again."
+      },
+      "download_failed": {
+        "title": "A meeting could not be downloaded from Nextcloud",
+        "line": "Retry in a moment."
+      },
+      "assemble_failed": {
+        "title": "The meetings could not be assembled into one document",
+        "line": "Check the app log."
+      },
+      "interrupted": {
+        "title": "Cassini restarted before this insight finished",
+        "line": "Retry it."
+      },
+      "unknown": {
+        "title": "The insight failed",
+        "line": "Retry, or check the app log."
+      }
+    },
+    "default_name": {
+      "template_fallback": "Insight",
+      "untitled_meeting": "1 meeting",
+      "meetings_other": "{count} meetings"
+    },
+    "card": {
+      "kind": "Insight",
+      "meetings_one": "{count} meeting",
+      "meetings_other": "{count} meetings",
+      "retry": "Retry",
+      "retrying": "Retrying…"
+    },
+    "document": {
+      "region_label": "Insight",
+      "name_input_label": "Insight name",
+      "rename_cancel": "Cancel",
+      "rename_save": "Save",
+      "rename_saving": "Saving…",
+      "rename_button_label": "Rename the insight",
+      "rename_tooltip": "Rename",
+      "close_label": "Close the insight",
+      "rooms_other": "{count} rooms",
+      "export_label": "Export this insight",
+      "copy_markdown": "Copy as markdown",
+      "download_markdown": "Download markdown",
+      "open_in_files": "Open in Files",
+      "clipboard_unavailable": "Clipboard unavailable here — download the markdown instead.",
+      "copied": "Copied as markdown.",
+      "clipboard_blocked": "Clipboard blocked here — try Copy again, or download the markdown.",
+      "downloaded": "Downloaded {file}.",
+      "sources_heading_one": "Context from {count} meeting",
+      "sources_heading_other": "Context from {count} meetings",
+      "sources_heading_none": "Context sources",
+      "missing_sources_one": "1 source meeting is no longer available (deleted, or no longer shared with you).",
+      "missing_sources_other": "{count} source meetings are no longer available (deleted, or no longer shared with you).",
+      "pending": "{status}. The answer appears here when it finishes.",
+      "retry": "Retry",
+      "retrying": "Retrying…",
+      "cannot_load": "This build cannot fetch the document — the run and what it read are all it can show.",
+      "loading": "Loading the answer…",
+      "load_failed": "The answer could not be loaded: {error}",
+      "document_missing": "This run succeeded, but its document is no longer at {path} in your Nextcloud files.",
+      "run_heading": "This run",
+      "asked_by": "Asked by",
+      "asked_by_unknown": "unknown",
+      "status_label": "Status",
+      "template_label": "Template",
+      "provider_label": "Provider",
+      "attempt_label": "Attempt"
+    },
+    "export": {
+      "written_by": "Written by Cassini on {date}",
+      "template": "Template: {template}",
+      "model": "Model: {model}",
+      "sources": "Drawn from these meetings:"
+    },
+    "summary": {
+      "missing_failed": "No summary: it could not be generated when the meeting was published.",
+      "missing_disabled": "No summary: summaries were turned off when this meeting was published.",
+      "missing_not_configured": "No summary: no language model was set up for summaries when this meeting was published.",
+      "cost_one": "1 call to {target} · about {tokens} input tokens, {words} words",
+      "cost_other": "{count} calls to {target} · about {tokens} input tokens, {words} words",
+      "cost_target_fallback": "the summary model",
+      "cost_target": "{model} ({provider})",
+      "tokens_thousands": "{value}k",
+      "endpoint_external": "The transcript is sent to an external service, which may bill for it.",
+      "endpoint_local": "The model runs on your own network.",
+      "error_busy": "A summary is already being written for this meeting.",
+      "error_has_summary": "This meeting has a summary now. Reload it to see it.",
+      "error_forbidden": "Only an administrator or a moderator of the room can replace this summary.",
+      "error_rate_limited": "Too many summaries asked for in a short time. Try again later.",
+      "error_unavailable": "A summary can't be written for this meeting now.",
+      "error_other": "Couldn't ask for the summary: {error}",
+      "request": {
+        "write": "Write summary",
+        "regenerate": "Regenerate summary",
+        "writing": "Writing the summary… It appears here when it is ready.",
+        "last_failed": "The last attempt to write a summary failed.",
+        "confirm_write_title": "Write a summary for this meeting?",
+        "confirm_replace_title": "Replace this meeting's summary?",
+        "note_write": "Everyone who can open the meeting will see it.",
+        "note_replace": "Everyone who can open the meeting sees the new summary instead of this one.",
+        "cancel": "Cancel"
+      }
+    },
+    "prepare": {
+      "title": "Prepare context",
+      "region_label": "Prepare context",
+      "export_label": "Export selected meetings",
+      "close_label": "Close Prepare",
+      "in_bundle": "In this bundle",
+      "blocks_prepare": "Blocks Prepare",
+      "length_unknown": "Length not recorded",
+      "unpick": "Unpick {title}",
+      "total": "Total",
+      "selection_changed_bundle": "The selection changed while the bundle was being prepared — press again.",
+      "selection_changed": "The selection changed — press again.",
+      "preparing_transcripts": "Preparing transcripts…",
+      "clipboard_unavailable": "Clipboard unavailable here — use Export to download.",
+      "transcripts_copied": "Transcripts copied.",
+      "transcripts_copy_failed": "Couldn't copy transcripts: {error}. Press again or download them.",
+      "transcripts_downloaded": "Transcripts downloaded.",
+      "preparing_files": "Preparing meeting files…",
+      "file_downloaded": "Meeting file downloaded.",
+      "files_downloaded": "Meeting files downloaded.",
+      "earlier_files_downloaded": "Meeting files from the earlier selection downloaded.",
+      "preparing": "Preparing…",
+      "copied_characters": "Copied {count} characters.",
+      "clipboard_blocked": "Clipboard blocked here — use Export to copy again or download.",
+      "downloaded": "Downloaded {file}."
+    }
+  },
   "embed": {
     "badge": "Recorded with Cassini"
   },

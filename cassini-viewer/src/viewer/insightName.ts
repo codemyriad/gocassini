@@ -1,4 +1,7 @@
+import { get } from "svelte/store";
+
 import type { MeetingCatalogEntry } from "./catalog";
+import { LL } from "../i18n";
 import { dateFormat } from "../i18n/format";
 import { DAY_OPTIONS, formatMeetingDateShort, meetingStartDayKey, parseDateLabelMs } from "./meetingTime";
 import { NO_ROOM_KEY, roomKeyOf, roomLabelOf } from "./rooms";
@@ -9,6 +12,10 @@ import { NO_ROOM_KEY, roomKeyOf, roomLabelOf } from "./rooms";
 // The point is a list that can be told apart. Every unnamed summary used to be
 // titled "summarise", so the default says what the insight is and what it read,
 // in the words the browse list already uses for a meeting's room and date.
+//
+// Its words are the reader's language at the moment it is suggested, and the
+// name is saved as it was suggested: it does not follow a later change of
+// language, as a name somebody typed would not.
 //
 // It is the template and the selection for EVERY template, a question run
 // included. The question is not the name: it is typed in a box that takes
@@ -31,7 +38,7 @@ export interface DefaultInsightNameInput {
 // "Summary · Design review, 3 Oct 2026",
 // "Ask · Design, 4 meetings, 28 Sept – 12 Oct 2026".
 export function defaultInsightName({ templateName, entries }: DefaultInsightNameInput): string {
-  const template = oneLine(templateName ?? "") || "Insight";
+  const template = oneLine(templateName ?? "") || get(LL).viewer.insights.default_name.template_fallback();
   const read = describeSources(entries);
   return capName(read === "" ? template : `${template} · ${read}`);
 }
@@ -43,7 +50,7 @@ function describeSources(entries: readonly MeetingCatalogEntry[]): string {
   if (entries.length === 1) {
     const [entry] = entries;
     const day = meetingStartDayKey(entry);
-    const title = oneLine(entry.title ?? "") || "1 meeting";
+    const title = oneLine(entry.title ?? "") || get(LL).viewer.insights.default_name.untitled_meeting();
     return day === "" ? title : `${title}, ${formatMeetingDateShort(day)}`;
   }
   const parts: string[] = [];
@@ -53,7 +60,7 @@ function describeSources(entries: readonly MeetingCatalogEntry[]): string {
   if (rooms.size === 1 && !rooms.has(NO_ROOM_KEY)) {
     parts.push(oneLine(roomLabelOf(entries[0])));
   }
-  parts.push(`${entries.length} meetings`);
+  parts.push(get(LL).viewer.insights.default_name.meetings_other({ count: entries.length }));
   // The day each meeting is SHOWN on — local for one with recordedAtUtc — so
   // the name agrees with the list it was picked from.
   const range = formatDateRange(entries.map((entry) => meetingStartDayKey(entry)));

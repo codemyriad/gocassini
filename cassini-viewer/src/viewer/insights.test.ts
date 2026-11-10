@@ -7,7 +7,8 @@ import {
   buildBrowseFeed,
   describeInsightFailure,
   insightRetryable,
-  INSIGHT_FAILURE_COPY,
+  INSIGHT_REASONS,
+  insightFailureCopy,
   insightReasonOf,
   filterInsights,
   filterInsightsByRoom,
@@ -516,7 +517,7 @@ describe("what a failed run says (D-749)", () => {
     // September). `error` carries the same token and is not read when
     // `reason` is set.
     const said = describeInsightFailure(failed("provider-refused"));
-    expect(said).toEqual(INSIGHT_FAILURE_COPY["provider-refused"]);
+    expect(said).toEqual(insightFailureCopy("provider-refused"));
     expect(said.title).toBe("The endpoint refused the request");
     expect(said.line).toBe("Check its key, quota or model name under Operator › AI providers.");
     expect(describeInsightFailure(failed("interrupted")).title).toBe(
@@ -544,7 +545,8 @@ describe("what a failed run says (D-749)", () => {
   });
 
   it("gives every reason a title and a line that do not repeat each other", () => {
-    for (const [reason, copy] of Object.entries(INSIGHT_FAILURE_COPY)) {
+    for (const reason of INSIGHT_REASONS) {
+      const copy = insightFailureCopy(reason);
       expect(copy.title, reason).not.toBe("");
       expect(copy.line, reason).not.toBe("");
       expect(copy.title, reason).not.toBe(copy.line);

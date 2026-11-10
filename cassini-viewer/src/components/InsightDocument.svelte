@@ -4,6 +4,7 @@
   import DOMPurify from "dompurify";
   import { Calendar, ExternalLink, FileText, FileX, MessageSquare, Pencil } from "@lucide/svelte";
   import CloseButton from "./ui/CloseButton.svelte";
+  import { LL } from "../i18n";
   import ExportMenu from "./ExportMenu.svelte";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import { formatMeetingStartWithDay } from "../viewer/meetingTime";
@@ -173,7 +174,7 @@
   $: pending = insight.status === "queued" || insight.status === "running";
   $: failed = insight.status === "failed";
   // Never `insight.error` raw: the operator records a reason token and this
-  // build owns every word said for it (insights.ts, INSIGHT_FAILURE_COPY).
+  // build owns every word said for it (insights.ts, insightFailureCopy).
   $: failure = failed ? describeInsightFailure(insight) : null;
 
   // The mock files an insight under one room. A real one can span them —
@@ -187,7 +188,7 @@
     roomLabels.length === 1
       ? roomLabels[0]
       : roomLabels.length > 1
-        ? `${roomLabels.length} rooms`
+        ? $LL.viewer.insights.document.rooms_other({ count: roomLabels.length })
         : "";
 
   function renderDocumentHtml(markdown: string, quoted: boolean): string {
@@ -215,6 +216,14 @@
   }
 
   $: documentHtml = renderDocumentHtml(documentMarkdown, showQuestion);
+
+  // The sentence about a document that has gone keeps its path in code style:
+  // the translation is cut where {path} goes, and the path is put back between
+  // the two halves.
+  const PATH_MARK = "\uE000";
+  $: [missingBefore, missingAfter] = $LL.viewer.insights.document
+    .document_missing({ path: PATH_MARK })
+    .split(PATH_MARK);
 
   // The offline copy (D-792) is offered only for an answer that is on screen:
   // copying a run that has not finished, or one whose file has gone, would
@@ -255,7 +264,7 @@
     // the click without a promised ClipboardItem.
     const clipboard = navigator.clipboard;
     if (!clipboard || typeof clipboard.writeText !== "function") {
-      exportStatus = { tone: "warn", text: "Clipboard unavailable here — download the markdown instead." };
+      exportStatus = { tone: "warn", text: $LL.viewer.insights.document.clipboard_unavailable() };
       return;
     }
     // The write can wait on a permission prompt, and the sheet can be holding
@@ -265,13 +274,13 @@
     let next: { tone: StatusTone; text: string };
     try {
       await clipboard.writeText(exportText());
-      next = { tone: "ok", text: "Copied as markdown." };
+      next = { tone: "ok", text: $LL.viewer.insights.document.copied() };
     } catch (error) {
       // Said on screen and logged: a permission the browser refused, a
       // document that would not render and an insecure context all read the
       // same to the person, and differently to whoever is asked why.
       console.warn("insight copy: clipboard write failed", error);
-      next = { tone: "warn", text: "Clipboard blocked here — try Copy again, or download the markdown." };
+      next = { tone: "warn", text: $LL.viewer.insights.document.clipboard_blocked() };
     }
     if (insight.id === copied) {
       exportStatus = next;
@@ -281,11 +290,11 @@
   function handleDownload() {
     const name = exportFileName(insight);
     saveTranscript(exportText(), name);
-    exportStatus = { tone: "ok", text: `Downloaded ${name}.` };
+    exportStatus = { tone: "ok", text: $LL.viewer.insights.document.downloaded({ file: name }) };
   }
 </script>
 
-<section class="ins-doc" aria-label="Insight">
+<section class="ins-doc" aria-label={$LL.viewer.insights.document.region_label()}>
   <!-- The insight's own identity, and it stays put while the answer scrolls
        under it. The eyebrow that used to be the whole header said only which
        KIND of thing the sheet was holding, which the amber rule down its side
@@ -301,7 +310,7 @@
             bind:value={draftName}
             type="text"
             class="input input-sm ins-name-input"
-            aria-label="Insight name"
+            aria-label={$LL.viewer.insights.document.name_input_label()}
             aria-invalid={renameError ? "true" : undefined}
             aria-describedby={renameError ? renameErrorId : undefined}
             maxlength={INSIGHT_NAME_MAX}
@@ -322,28 +331,28 @@
            input's. -->
       <div class="ins-head-controls">
         {#if editingName}
-          <button type="button" class="ins-name-cancel" on:click={cancelRename}>Cancel</button>
+          <button type="button" class="ins-name-cancel" on:click={cancelRename}>{$LL.viewer.insights.document.rename_cancel()}</button>
           <button
             type="button"
             class="btn btn-neutral btn-sm px-4 font-semibold"
             disabled={!nameSaveable}
             on:click={saveRename}
           >
-            {renaming ? "Saving…" : "Save"}
+            {renaming ? $LL.viewer.insights.document.rename_saving() : $LL.viewer.insights.document.rename_save()}
           </button>
         {:else if canRename}
           <button
             bind:this={renameButton}
             type="button"
             class="ins-rename btn btn-sm btn-square btn-quiet"
-            aria-label="Rename the insight"
-            title="Rename"
+            aria-label={$LL.viewer.insights.document.rename_button_label()}
+            title={$LL.viewer.insights.document.rename_tooltip()}
             on:click={startRename}
           >
             <Pencil size={14} aria-hidden="true" />
           </button>
         {/if}
-        <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
+        <CloseButton label={$LL.viewer.insights.document.close_label()} on:click={() => dispatch("close")} />
       </div>
     </div>
     {#if editingName && renameError}
@@ -374,9 +383,9 @@
         <div class="ins-actions">
           {#if exportable}
             <ExportMenu
-              label="Export this insight"
-              copyLabel="Copy as markdown"
-              transcriptLabel="Download markdown"
+              label={$LL.viewer.insights.document.export_label()}
+              copyLabel={$LL.viewer.insights.document.copy_markdown()}
+              transcriptLabel={$LL.viewer.insights.document.download_markdown()}
               includeAudio={false}
               on:copy={handleCopy}
               on:transcript={handleDownload}
@@ -385,7 +394,7 @@
           {#if filesLinkable}
             <a class="btn btn-sm btn-quiet gap-1.5" href={filesUrl} target="_blank" rel="noopener">
               <ExternalLink size={14} aria-hidden="true" />
-              Open in Files
+              {$LL.viewer.insights.document.open_in_files()}
             </a>
           {/if}
         </div>
@@ -405,10 +414,11 @@
       <section class="ins-sources ins-card">
         <h3 class="ins-card-title">
           {#if sources.length > 0}
-            Context from {sources.length}
-            {sources.length === 1 ? "meeting" : "meetings"}
+            {sources.length === 1
+              ? $LL.viewer.insights.document.sources_heading_one({ count: sources.length })
+              : $LL.viewer.insights.document.sources_heading_other({ count: sources.length })}
           {:else}
-            Context sources
+            {$LL.viewer.insights.document.sources_heading_none()}
           {/if}
         </h3>
         <ul>
@@ -434,8 +444,8 @@
               <FileX size={14} aria-hidden="true" />
               <span>
                 {missingSourceCount === 1
-                  ? "1 source meeting is no longer available (deleted, or no longer shared with you)."
-                  : `${missingSourceCount} source meetings are no longer available (deleted, or no longer shared with you).`}
+                  ? $LL.viewer.insights.document.missing_sources_one()
+                  : $LL.viewer.insights.document.missing_sources_other({ count: missingSourceCount })}
               </span>
             </li>
           {/if}
@@ -456,7 +466,7 @@
     <!-- 3. The answer, or the honest reason there is not one yet. -->
     {#if pending}
       <p class="ins-note" role="status">
-        {formatInsightStatus(insight.status)}. The answer appears here when it finishes.
+        {$LL.viewer.insights.document.pending({ status: formatInsightStatus(insight.status) })}
       </p>
     {:else if failure}
       <div class="ins-note ins-note-error" role="status">
@@ -470,7 +480,7 @@
                that endpoint has since been removed. -->
           <div class="ins-retry">
             <button type="button" disabled={retrying} on:click={() => dispatch("retry")}>
-              {retrying ? "Retrying…" : "Retry"}
+              {retrying ? $LL.viewer.insights.document.retrying() : $LL.viewer.insights.document.retry()}
             </button>
           </div>
           {#if retryError}
@@ -480,13 +490,13 @@
       </div>
     {:else if !canLoadDocument}
       <p class="ins-note" role="status">
-        This build cannot fetch the document — the run and what it read are all it can show.
+        {$LL.viewer.insights.document.cannot_load()}
       </p>
     {:else if documentLoading}
-      <p class="ins-note" role="status">Loading the answer…</p>
+      <p class="ins-note" role="status">{$LL.viewer.insights.document.loading()}</p>
     {:else if documentError}
       <p class="ins-note ins-note-error" role="status">
-        The answer could not be loaded: {documentError}
+        {$LL.viewer.insights.document.load_failed({ error: documentError })}
       </p>
     {:else if documentHtml}
       <!-- Markdown rendered via {@html} cannot receive Svelte-scoped styles, so
@@ -517,8 +527,7 @@
            is not where it was written, not that the model wrote nothing. It
            is the requester's own file; they may have moved or deleted it. -->
       <p class="ins-note" role="status">
-        This run succeeded, but its document is no longer at
-        <code>{insight.documentPath}</code> in your Nextcloud files.
+        {missingBefore}<code>{insight.documentPath}</code>{missingAfter}
       </p>
     {/if}
 
@@ -531,29 +540,29 @@
          asked for it and how it ended have to be ON the document or two
          attempts are indistinguishable. -->
     <section class="ins-prov">
-      <h3 class="ins-title">This run</h3>
+      <h3 class="ins-title">{$LL.viewer.insights.document.run_heading()}</h3>
       <dl>
         <div>
-          <dt>Asked by</dt>
-          <dd>{insight.createdBy || "unknown"}</dd>
+          <dt>{$LL.viewer.insights.document.asked_by()}</dt>
+          <dd>{insight.createdBy || $LL.viewer.insights.document.asked_by_unknown()}</dd>
         </div>
         <div>
-          <dt>Status</dt>
+          <dt>{$LL.viewer.insights.document.status_label()}</dt>
           <dd>{formatInsightStatus(insight.status)}</dd>
         </div>
         <div>
-          <dt>Template</dt>
+          <dt>{$LL.viewer.insights.document.template_label()}</dt>
           <dd><code>{insight.workflowId}</code> {insight.workflowVersion}</dd>
         </div>
         {#if insight.provider}
           <div>
-            <dt>Provider</dt>
+            <dt>{$LL.viewer.insights.document.provider_label()}</dt>
             <dd>{insight.provider}</dd>
           </div>
         {/if}
         {#if insight.attemptNumber > 1}
           <div>
-            <dt>Attempt</dt>
+            <dt>{$LL.viewer.insights.document.attempt_label()}</dt>
             <dd>{insight.attemptNumber}</dd>
           </div>
         {/if}

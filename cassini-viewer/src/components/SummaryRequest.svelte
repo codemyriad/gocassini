@@ -2,6 +2,8 @@
   import { createEventDispatcher } from "svelte";
   import { FileText } from "@lucide/svelte";
 
+  import { LL } from "../i18n";
+
   import { summaryCostLine, summaryEndpointLine, type SummaryRequestState } from "../viewer/meetingSummary";
 
   // Asking for a meeting's summary (D-814): "write" fills a missing one, which
@@ -17,7 +19,11 @@
   const dispatch = createEventDispatcher<{ request: { replace: boolean } }>();
   let confirming = false;
 
-  $: label = mode === "write" ? "Write summary" : "Regenerate summary";
+  $: label = mode === "write" ? $LL.viewer.insights.summary.request.write() : $LL.viewer.insights.summary.request.regenerate();
+  $: confirmTitle =
+    mode === "write"
+      ? $LL.viewer.insights.summary.request.confirm_write_title()
+      : $LL.viewer.insights.summary.request.confirm_replace_title();
   $: offered = mode === "write" ? state.canWrite : state.canRegenerate;
   $: if (state.state === "writing") confirming = false;
 
@@ -34,25 +40,25 @@
   {#if state.state === "writing"}
     <p class="sr-status" role="status">
       <span class="cassini-spinner sr-spinner" aria-hidden="true"></span>
-      Writing the summary… It appears here when it is ready.
+      {$LL.viewer.insights.summary.request.writing()}
     </p>
   {:else}
     {#if state.state === "failed"}
-      <p class="sr-status sr-failed" role="status">The last attempt to write a summary failed.</p>
+      <p class="sr-status sr-failed" role="status">{$LL.viewer.insights.summary.request.last_failed()}</p>
     {/if}
     {#if confirming}
-      <div class="sr-confirm" role="alertdialog" aria-label={mode === "write" ? "Write a summary for this meeting?" : "Replace this meeting's summary?"}>
-        <p class="sr-confirm-title">{mode === "write" ? "Write a summary for this meeting?" : "Replace this meeting's summary?"}</p>
+      <div class="sr-confirm" role="alertdialog" aria-label={confirmTitle}>
+        <p class="sr-confirm-title">{confirmTitle}</p>
         <p>{summaryCostLine(state)}</p>
         <p class="sr-note">{summaryEndpointLine(state)}</p>
         {#if mode === "write"}
-          <p class="sr-note">Everyone who can open the meeting will see it.</p>
+          <p class="sr-note">{$LL.viewer.insights.summary.request.note_write()}</p>
         {:else}
-          <p class="sr-note">Everyone who can open the meeting sees the new summary instead of this one.</p>
+          <p class="sr-note">{$LL.viewer.insights.summary.request.note_replace()}</p>
         {/if}
         <div class="sr-actions">
           <button type="button" class="btn btn-sm btn-primary" on:click={confirm}>{label}</button>
-          <button type="button" class="btn btn-sm btn-ghost" on:click={() => (confirming = false)}>Cancel</button>
+          <button type="button" class="btn btn-sm btn-ghost" on:click={() => (confirming = false)}>{$LL.viewer.insights.summary.request.cancel()}</button>
         </div>
       </div>
     {:else if offered}
