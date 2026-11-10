@@ -83,7 +83,9 @@ it("writes a missing summary only after the cost is shown and confirmed", async 
   await userEvent.click(page.getByRole("button", { name: "Write summary", exact: true }));
   const confirm = page.getByRole("alertdialog", { name: "Write a summary for this meeting?" });
   await expect.element(confirm).toBeVisible();
-  await expect.element(confirm.getByText("1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5K input tokens, 5,213 words")).toBeVisible();
+  // Compact numbers differ between ICU versions ("7.5K" in older CLDR, "7.5k" in newer en-GB).
+  const tokens = new Intl.NumberFormat("en-GB", { notation: "compact", maximumFractionDigits: 1 }).format(7480);
+  await expect.element(confirm.getByText(`1 call to deepseek/deepseek-v4.1-flash (Open Router) · about ${tokens} input tokens, 5,213 words`)).toBeVisible();
   await expect.element(confirm.getByText("The transcript is sent to an external service, which may bill for it.")).toBeVisible();
   expect(posts).toEqual([]);
   await page.screenshot({ element: document.querySelector(".op-detail-pane")!, path: `${SHOTS}/01-confirm-write.png` });

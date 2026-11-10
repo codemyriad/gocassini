@@ -33,7 +33,9 @@ describe("meeting summary", () => {
   });
 
   it("says the cost before anything is sent", () => {
-    expect(summaryCostLine(state)).toBe("1 call to deepseek/deepseek-v4.1-flash (Open Router) · about 7.5K input tokens, 5,213 words");
+    // Compact numbers differ between ICU versions ("7.5K" in older CLDR, "7.5k" in newer en-GB).
+    const tokens = new Intl.NumberFormat("en-GB", { notation: "compact", maximumFractionDigits: 1 }).format(7480);
+    expect(summaryCostLine(state)).toBe(`1 call to deepseek/deepseek-v4.1-flash (Open Router) · about ${tokens} input tokens, 5,213 words`);
     expect(summaryEndpointLine(state)).toContain("external service");
     expect(summaryEndpointLine({ ...state, external: false })).toBe("The model runs on your own network.");
   });
