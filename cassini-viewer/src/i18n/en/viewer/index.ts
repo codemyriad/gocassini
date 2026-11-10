@@ -1,8 +1,14 @@
 import type { BaseTranslation } from "../../i18n-types.js";
+import browse from "./browse.js";
+import insights from "./insights.js";
+import meeting from "./meeting.js";
 
 // The viewing layer: the meeting list, a meeting, its transcript and insights,
 // and the public <cassini-meeting> embed.
 const en_viewer = {
+  browse,
+  meeting,
+  insights,
   embed: {
     badge: "Recorded with Cassini",
   },

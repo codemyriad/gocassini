@@ -14,8 +14,29 @@
 // types, so node can load them without a build.
 
 import fs from "node:fs/promises";
+import { register } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// The English files import each other the way the app's bundler wants
+// ("./browse.js" for browse.ts). Node looks for a .js file, so point it at the
+// .ts beside it when there is no .js.
+register(
+  "data:text/javascript," +
+    encodeURIComponent(`
+      import { existsSync } from "node:fs";
+      import { fileURLToPath } from "node:url";
+      export async function resolve(specifier, context, next) {
+        if (specifier.startsWith(".") && specifier.endsWith(".js") && context.parentURL?.endsWith(".ts")) {
+          const ts = new URL(specifier.slice(0, -3) + ".ts", context.parentURL);
+          if (!existsSync(fileURLToPath(new URL(specifier, context.parentURL))) && existsSync(fileURLToPath(ts))) {
+            return next(ts.href, context);
+          }
+        }
+        return next(specifier, context);
+      }
+    `),
+);
 
 const I18N_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/i18n");
 const BASE = "en";

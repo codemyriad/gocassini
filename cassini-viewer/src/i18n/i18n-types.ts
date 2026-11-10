@@ -35,6 +35,14 @@ type RootTranslation = {
 }
 
 export type NamespaceAppTranslation = {
+	shell: {
+	}
+	operator: {
+	}
+	settings: {
+	}
+	insights: {
+	}
 	setup_notice: {
 		/**
 		 * T​r​y​ ​a​g​a​i​n
@@ -60,6 +68,12 @@ export type NamespaceAppTranslation = {
 }
 
 export type NamespaceViewerTranslation = {
+	browse: {
+	}
+	meeting: {
+	}
+	insights: {
+	}
 	embed: {
 		/**
 		 * R​e​c​o​r​d​e​d​ ​w​i​t​h​ ​C​a​s​s​i​n​i
@@ -132,6 +146,14 @@ export type TranslationFunctions = {
 		help_translate: () => LocalizedString
 	}
 	app: {
+		shell: {
+		}
+		operator: {
+		}
+		settings: {
+		}
+		insights: {
+		}
 		setup_notice: {
 			/**
 			 * Try again
@@ -156,6 +178,12 @@ export type TranslationFunctions = {
 		}
 	}
 	viewer: {
+		browse: {
+		}
+		meeting: {
+		}
+		insights: {
+		}
 		embed: {
 			/**
 			 * Recorded with Cassini
