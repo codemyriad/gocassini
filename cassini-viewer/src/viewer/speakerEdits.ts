@@ -11,8 +11,11 @@
 // result is kept and has no effect, so names come back when a split is redone.
 // The viewer only ever sends whole documents; it never re-cuts a transcript.
 
+import { get } from "svelte/store";
+
 import type { TranscriptSpeaker } from "../core/types";
 import { voiceParent } from "../core/speakers";
+import { LL, numberFormat } from "../i18n";
 
 export const SPEAKER_EDITS_FORMAT = "cassini.speaker-edits.v1";
 // The annotation label rule, which the operator applies to these labels too.
@@ -151,53 +154,69 @@ export class SpeakerEditsError extends Error {
   }
 }
 
-const ERROR_MESSAGES: Record<SpeakerEditsErrorCode, string> = {
-  "revision-conflict": "Someone else changed the voices in this meeting. Their changes are shown now; try again.",
-  busy: "This recording is being updated. Try again when it is done.",
-  invalid: "Cassini could not accept these changes.",
-  "diarization-unavailable": "Voice separation is not installed on this server. An administrator can download it in Cassini's Settings.",
-  unavailable: "The voices in this recording cannot be changed any more.",
-  "rate-limited": "Too many changes in a short time. Try again later.",
-  "not-found": "This meeting is not available to you any more.",
-};
+// Read when asked, so the message is in the reader's language.
+function errorMessage(code: SpeakerEditsErrorCode): string {
+  const t = get(LL).viewer.meeting.speaker_edits;
+  switch (code) {
+    case "revision-conflict": return t.error_revision_conflict();
+    case "busy": return t.error_busy();
+    case "invalid": return t.error_invalid();
+    case "diarization-unavailable": return t.reason_diarization_unavailable();
+    case "unavailable": return t.error_unavailable();
+    case "rate-limited": return t.error_rate_limited();
+    case "not-found": return t.error_not_found();
+  }
+}
 
 // "Too many changes in a short time. Try again in N min.": whole minutes,
 // rounded up, and never "0 min".
 export function rateLimitedMessage(retryAfterMs: number | undefined): string {
   if (retryAfterMs === undefined || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) {
-    return ERROR_MESSAGES["rate-limited"];
+    return errorMessage("rate-limited");
   }
-  return `Too many changes in a short time. Try again in ${Math.max(1, Math.ceil(retryAfterMs / 60_000))} min.`;
+  const minutes = numberFormat().format(Math.max(1, Math.ceil(retryAfterMs / 60_000)));
+  return get(LL).viewer.meeting.speaker_edits.error_rate_limited_in({ minutes });
 }
 
 export function describeSpeakerEditsError(error: unknown): string {
   if (error instanceof SpeakerEditsError) {
     if (error.code === "invalid" && error.detail) {
-      return `${ERROR_MESSAGES.invalid} ${error.detail}`;
+      return get(LL).viewer.meeting.speaker_edits.error_invalid_detail({ detail: error.detail });
     }
-    if (error.code === "unavailable" && error.reason && error.reason in UNAVAILABLE_REASONS) {
-      return UNAVAILABLE_REASONS[error.reason as SpeakerEditsUnavailableReason];
+    if (error.code === "unavailable" && error.reason && UNAVAILABLE_REASONS.includes(error.reason as SpeakerEditsUnavailableReason)) {
+      return unavailableReasonText(error.reason as SpeakerEditsUnavailableReason);
     }
     if (error.code === "rate-limited") {
       return rateLimitedMessage(error.retryAfterMs);
     }
-    return (error.code && ERROR_MESSAGES[error.code]) || error.message;
+    return (error.code && errorMessage(error.code)) || error.message;
   }
   return error instanceof Error ? error.message : String(error);
 }
 
+// The reasons the feature can be absent on one meeting.
+export const UNAVAILABLE_REASONS: readonly SpeakerEditsUnavailableReason[] = [
+  "no-job",
+  "no-source-audio",
+  "no-transcript",
+  "diarization-unavailable",
+  "unpublished-rebuild",
+];
+
 // The sentence for each reason the feature is absent on one meeting.
-export const UNAVAILABLE_REASONS: Record<SpeakerEditsUnavailableReason, string> = {
-  // "no-job" covers both origins honestly: an imported meeting (D-828) and a
-  // recording from before per-participant audio existed look identical here —
-  // this installation has no recording job, so it holds nobody's own audio.
-  "no-job": "This Cassini doesn't hold each participant's own audio for this recording — it was imported, or made before Cassini kept it.",
-  "no-source-audio": "Each participant's own audio was not kept for this recording.",
-  "no-transcript": "This recording has no transcript to separate.",
-  "diarization-unavailable": "Voice separation is not installed on this server. An administrator can download it in Cassini's Settings.",
-  "unpublished-rebuild":
-    "This recording was processed again and the new version was not published. An administrator can run it again from Cassini Admin.",
-};
+export function unavailableReasonText(reason: SpeakerEditsUnavailableReason): string {
+  const t = get(LL).viewer.meeting.speaker_edits;
+  switch (reason) {
+    // "no-job" covers both origins honestly: an imported meeting (D-828) and a
+    // recording from before per-participant audio existed look identical here —
+    // this installation has no recording job, so it holds nobody's own audio.
+    case "no-job": return t.reason_no_job();
+    case "no-source-audio": return t.reason_no_source_audio();
+    case "no-transcript": return t.reason_no_transcript();
+    case "diarization-unavailable": return t.reason_diarization_unavailable();
+    case "unpublished-rebuild": return t.reason_unpublished_rebuild();
+  }
+}
 
 // Whether nothing can be saved for this meeting at all. Without the diarizer
 // only NEW splits are impossible: names, "same person" and undoing a split
@@ -253,11 +272,11 @@ export function emptyPending(): PendingSpeakerEdits {
 export function labelProblem(label: string): string {
   const trimmed = label.trim();
   if ([...trimmed].length > MAX_SPEAKER_LABEL_LENGTH) {
-    return `Names can be at most ${MAX_SPEAKER_LABEL_LENGTH} characters.`;
+    return get(LL).viewer.meeting.speaker_edits.label_too_long({ max: numberFormat().format(MAX_SPEAKER_LABEL_LENGTH) });
   }
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
-    return "Names cannot contain control characters.";
+    return get(LL).viewer.meeting.speaker_edits.label_control_characters();
   }
   return "";
 }
@@ -345,18 +364,33 @@ export function progressNow(progress: SpeakerEditsProgress, sinceMs: number): Sp
 // "about 50 s left", "about 2 min left", "almost done". Seconds go in steps of
 // five, rounded up: an estimate said to the second would promise too much.
 export function remainingText(remainingMs: number): string {
-  if (remainingMs <= 0) return "almost done";
-  if (remainingMs <= 55_000) return `about ${Math.ceil(remainingMs / 5000) * 5} s left`;
-  return `about ${Math.max(1, Math.round(remainingMs / 60_000))} min left`;
+  const t = get(LL).viewer.meeting.speaker_edits;
+  if (remainingMs <= 0) return t.almost_done();
+  if (remainingMs <= 55_000) return t.seconds_left({ seconds: numberFormat().format(Math.ceil(remainingMs / 5000) * 5) });
+  return t.minutes_left({ minutes: numberFormat().format(Math.max(1, Math.round(remainingMs / 60_000))) });
 }
 
-const PHASE_TEXT: Record<SpeakerEditsPhaseNow, string> = {
-  starting: "Starting…",
-  queued: "Waiting for other recordings…",
-  separating: "Separating voices…",
-  updating: "Updating the recording…",
-};
-
 export function phaseText(phase: SpeakerEditsPhaseNow): string {
-  return PHASE_TEXT[phase] ?? PHASE_TEXT.updating;
+  const t = get(LL).viewer.meeting.speaker_edits;
+  switch (phase) {
+    case "starting": return t.phase_starting();
+    case "queued": return t.phase_queued();
+    case "separating": return t.phase_separating();
+    default: return t.phase_updating();
+  }
+}
+
+// How many people a meeting's speakers add up to (countPeople), as the People
+// panel heads its list and the details chip names it: "3 participants", or,
+// once a shared device is separated, "4 voices on 2 devices". Every device
+// listed has at least one voice, so there are never fewer voices than devices.
+export function peopleCountText(people: { voices: number; devices: number; split: boolean }): string {
+  const p = get(LL).viewer.meeting.people;
+  const voices = numberFormat().format(people.voices);
+  if (!people.split) {
+    return people.voices === 1 ? p.count_one({ count: voices }) : p.count_other({ count: voices });
+  }
+  if (people.voices <= 1) return p.split_one();
+  if (people.devices === 1) return p.split_one_device({ voices });
+  return p.split_other({ voices, devices: numberFormat().format(people.devices) });
 }

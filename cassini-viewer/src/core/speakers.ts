@@ -24,6 +24,10 @@ export function voiceNumber(id: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+// What a separated device with no name of its own is called. Kept in English
+// here, as the label other code compares; PeoplePanel shows it translated.
+export const SHARED_DEVICE_LABEL = "Shared device";
+
 // The default label of a voice: "<device label> · Speaker n" (DefaultVoiceLabel).
 const DEFAULT_VOICE_LABEL = /^(.*) · Speaker \d+$/;
 
@@ -81,7 +85,7 @@ export function groupSpeakers(
     group.device.label ||= named.get(group.device.id) ?? "";
     if (!group.device.label) {
       const named = group.voices.map((voice) => DEFAULT_VOICE_LABEL.exec(voice.label)?.[1]).find(Boolean);
-      group.device.label = named ?? "Shared device";
+      group.device.label = named ?? SHARED_DEVICE_LABEL;
     }
   }
   return listed;
