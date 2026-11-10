@@ -582,3 +582,66 @@ func TestRecordedAtFileWorkerLeavesAnUnreadableIndexAlone(t *testing.T) {
 		t.Fatalf("annotate show ran %d times on a file the index holds as unreadable", n)
 	}
 }
+
+// refusingShowCLI is retagCLI whose `annotate show` refuses the file, as the
+// real CLI does for unreadable marks.
+func refusingShowCLI(t *testing.T) string {
+	t.Helper()
+	inner := retagCLI(t, 0)
+	name := filepath.Join(t.TempDir(), "cassini")
+	script := "#!/bin/sh\nif [ \"$1\" = annotate ] && [ \"$2\" = show ]; then echo 'unreadable annotations' >&2; exit 1; fi\nexec " + inner + " \"$@\"\n"
+	if err := os.WriteFile(name, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+// A file whose marks the CLI refuses still finishes: rewritten once (or
+// settled), recorded as unreadable in the index, never retried forever.
+func TestRecordedAtFileWorkerFinishesAFileWithUnreadableMarks(t *testing.T) {
+	t.Run("rewrite", func(t *testing.T) {
+		f := newFileWorkerFixture(t, 0)
+		f.w.bin = refusingShowCLI(t)
+		f.w.drain(context.Background())
+		if row := f.row(t); row.state != recordedAtStateDone {
+			t.Fatalf("row = %+v, want done; logs: %s", row, f.logs)
+		}
+		if n := len(f.nc.ifMatches()); n != 1 {
+			t.Fatalf("PUTs = %d, want 1", n)
+		}
+		f.requireUnavailable(t)
+	})
+	t.Run("settle", func(t *testing.T) {
+		f := newFileWorkerFixture(t, 0)
+		var r map[string]any
+		if err := json.Unmarshal([]byte(f.nc.recording(annTestRecording)), &r); err != nil {
+			t.Fatal(err)
+		}
+		r["recordedAtUtc"] = testRecordedAt
+		ours, _ := json.Marshal(r)
+		f.nc.seed(annTestRecording, string(ours), nil)
+		if _, err := f.w.rt.meetingMetadata.db.Exec(`UPDATE recorded_at_file_backfill SET state='uploading'`); err != nil {
+			t.Fatal(err)
+		}
+		f.w.bin = refusingShowCLI(t)
+		f.w.drain(context.Background())
+		if row := f.row(t); row.state != recordedAtStateDone {
+			t.Fatalf("row = %+v, want done; logs: %s", row, f.logs)
+		}
+		if n := len(f.nc.ifMatches()); n != 0 {
+			t.Fatalf("PUTs = %d, want 0", n)
+		}
+		f.requireUnavailable(t)
+	})
+}
+
+func (f *fileWorkerFixture) requireUnavailable(t *testing.T) {
+	t.Helper()
+	var state string
+	if err := f.store.db.QueryRow(`SELECT state FROM meeting_annotations WHERE opus_name=?`, path.Base(annTestRecording)).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != annotationsStateUnavailable {
+		t.Fatalf("index state = %q, want %q", state, annotationsStateUnavailable)
+	}
+}

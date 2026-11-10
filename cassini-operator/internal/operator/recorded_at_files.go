@@ -587,8 +587,23 @@ func (w *recordedAtFileWorker) reconcileAnnotations(ctx context.Context, name, d
 	if store == nil {
 		return nil
 	}
+	var indexState string
+	err := store.db.QueryRowContext(ctx, `SELECT state FROM meeting_annotations WHERE opus_name=?`, name).Scan(&indexState)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if indexState == annotationsStateUnavailable {
+		return nil
+	}
 	shown, err := runAnnotateShow(ctx, w.bin, delivered)
 	if err != nil {
+		// The CLI read the file and refused its marks: record the file as
+		// unreadable, as the annotation backfill and publish do, rather than
+		// leaving the row to retry forever. Launch and transport errors stay
+		// errors and are retried.
+		if annotateExitCode(err) != 0 && ctx.Err() == nil {
+			return store.MarkUnavailable(ctx, name, "")
+		}
 		return err
 	}
 	if shown.Unsupported {
