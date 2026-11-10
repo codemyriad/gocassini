@@ -1,46 +1,46 @@
 {
   "common": {
     "action": {
-      "cancel": "",
-      "save": "",
-      "saving": "",
-      "retry": "",
-      "retrying": "",
-      "dismiss": "",
-      "delete": "",
-      "remove": "",
-      "edit": "",
-      "close": "",
-      "try_again": ""
+      "cancel": "Annuler",
+      "save": "Enregistrer",
+      "saving": "Sauvegarde…",
+      "retry": "Réessayer",
+      "retrying": "Nouvelle tentative…",
+      "dismiss": "Ignorer",
+      "delete": "Supprimer",
+      "remove": "Retirer",
+      "edit": "Modifier",
+      "close": "Fermer",
+      "try_again": "Réessayer"
     },
     "summary_request": {
-      "write": "",
-      "regenerate": "",
-      "confirm_write_title": "",
-      "confirm_replace_title": "",
-      "cost": "",
-      "cost_target_fallback": "",
-      "cost_target": "",
-      "endpoint_external": "",
-      "endpoint_local": ""
+      "write": "Rédiger le résumé",
+      "regenerate": "Régénérer le résumé",
+      "confirm_write_title": "Rédiger un résumé pour cette réunion ?",
+      "confirm_replace_title": "Remplacer le résumé de cette réunion ?",
+      "cost": "{count:number|num} {{count:|appel|||appels|appels}} à {target} · environ {tokens:number|compact} {{tokens:|jeton|||jetons|jetons}} en entrée, {words:number|num} {{words:|mot|||mots|mots}}",
+      "cost_target_fallback": "le modèle de résumé",
+      "cost_target": "{model} ({provider})",
+      "endpoint_external": "La transcription est envoyée à un service externe, qui peut la facturer.",
+      "endpoint_local": "Le modèle s’exécute sur votre propre réseau."
     },
     "audience": {
-      "intro": "",
-      "point_participants": "",
-      "point_guests": "",
-      "point_public_links": ""
+      "intro": "Nextcloud Fichiers détermine qui peut lire chaque enregistrement.",
+      "point_participants": "Chaque enregistrement est partagé avec tous les participants de la conversation Talk, qu’ils aient été présents à l’appel ou non.",
+      "point_guests": "Les invités sans compte Nextcloud ne peuvent pas l’ouvrir.",
+      "point_public_links": "Cassini ne crée jamais de lien public. Dans les conversations publiques, les participants peuvent repartager le fichier si ce Nextcloud l’autorise."
     },
     "place": {
-      "operator": "",
-      "publish_pipeline": "",
-      "ai_providers": "",
-      "insight_templates": "",
-      "doctor": "",
-      "storage": "",
-      "help": ""
+      "operator": "Opérateur",
+      "publish_pipeline": "Chaîne de publication",
+      "ai_providers": "Fournisseurs d’IA",
+      "insight_templates": "Gabarits d’analyse",
+      "doctor": "Diagnostic",
+      "storage": "Stockage",
+      "help": "Aide"
     },
     "status": {
-      "copied": ""
+      "copied": "Copié"
     }
   }
 }
